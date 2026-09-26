@@ -1,0 +1,644 @@
+<meta charset="utf-8">
+<title>Crosshatch v1 Recon</title>
+<style>:root{
+  --paper:#F3F4F1; --panel:#FAFBF8; --ink:#1C211E; --ink-2:#4B554F; --rule:#D3D8D2;
+  --grey-1:#E4E7E2; --accent:#1F5B66; --accent-ink:#FFFFFF;
+  --ok:#2E6B45; --ok-bg:#E3EFE6; --warn:#8A5A00; --warn-bg:#FBEFD2; --bad:#9C2B23; --bad-bg:#F8E1DE;
+  --inf:#4E4A7A; --inf-bg:#E9E7F5;
+  --serif:"Iowan Old Style","Charter","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#141816; --panel:#1B201D; --ink:#E3E7E3; --ink-2:#A6B0AA; --rule:#2F3632;
+    --grey-1:#252B28; --accent:#7FB8C2; --accent-ink:#0F1412;
+    --ok:#8FCB9F; --ok-bg:#1D2E23; --warn:#F0C46A; --warn-bg:#352A12; --bad:#F29A90; --bad-bg:#3A1E1B;
+    --inf:#BEB8EE; --inf-bg:#27253A;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#141816; --panel:#1B201D; --ink:#E3E7E3; --ink-2:#A6B0AA; --rule:#2F3632;
+  --grey-1:#252B28; --accent:#7FB8C2; --accent-ink:#0F1412;
+  --ok:#8FCB9F; --ok-bg:#1D2E23; --warn:#F0C46A; --warn-bg:#352A12; --bad:#F29A90; --bad-bg:#3A1E1B;
+  --inf:#BEB8EE; --inf-bg:#27253A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--sans)}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:28px 64px}
+.masthead{display:grid;gap:14px;padding-block:8px 24px;border-bottom:1px solid var(--rule)}
+.eyebrow{margin:0;font:600 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{margin:0;font:600 clamp(26px,4vw,38px)/1.15 var(--serif);text-wrap:balance;max-width:24ch}
+.decision{margin:0;font-size:18px;max-width:62ch;color:var(--ink)}
+.decision .k,.meta dt{font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-right:8px}
+.meta{display:flex;flex-wrap:wrap;gap:10px 28px;margin:0}
+.meta div{display:flex;flex-direction:column;gap:4px}
+.meta dd{margin:0;font:14px/1.3 var(--mono);font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;margin-top:28px}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:14px}
+.toc summary{font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);cursor:pointer;padding-block:6px}
+.toc ol{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:2px;border-left:2px solid var(--rule)}
+.toc a{display:block;padding:4px 10px;color:var(--ink-2);text-decoration:none;line-height:1.35}
+.toc a:hover,.toc a:focus-visible{color:var(--accent)}
+main{min-width:0;max-width:760px}
+main h2{font:600 26px/1.25 var(--serif);text-wrap:balance;margin:56px 0 12px;padding-top:14px;border-top:1px solid var(--rule);scroll-margin-top:16px}
+main h3{font:600 17px/1.35 var(--sans);margin:30px 0 8px}
+main p,main li{max-width:68ch}
+main ul,main ol{padding-left:22px}
+main li{margin:4px 0}
+main li>ul,main li>ol{margin-top:4px}
+strong{font-weight:650}
+code{font:0.88em var(--mono);background:var(--grey-1);padding:1px 5px;border-radius:3px}
+a{color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.lead-card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:4px 24px 20px}
+.lead-card h2{border-top:0;margin-top:14px}
+.tw{overflow-x:auto;margin:14px 0;border:1px solid var(--rule);border-radius:4px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.45}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule)}
+th{font:600 11px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);background:var(--grey-1)}
+tr:last-child td{border-bottom:0}
+td{font-variant-numeric:tabular-nums}
+.sources td:first-child{font-family:var(--mono);white-space:nowrap}
+.sources tr:target{background:var(--warn-bg)}
+.appendix summary{cursor:pointer;font-weight:600;color:var(--accent);padding-block:6px}
+.cite{display:inline-block;font:600 11px/1.5 var(--mono);text-decoration:none;padding:0 5px;margin:0 1px;border-radius:3px;vertical-align:1px;border:1px solid transparent;font-variant-numeric:tabular-nums;white-space:nowrap}
+.c-high,.c-verified{color:var(--ok);background:var(--ok-bg)}
+.c-medium{color:var(--ink-2);background:var(--grey-1)}
+.c-low{color:var(--warn);background:var(--warn-bg)}
+.c-unverified{color:var(--warn);background:var(--warn-bg);border-color:var(--warn)}
+.c-disputed,.c-overturned{color:var(--bad);background:var(--bad-bg);border-color:var(--bad)}
+.badge{display:inline-block;font:600 11px/1.5 var(--mono);letter-spacing:.02em;padding:0 6px;border-radius:3px;white-space:normal}
+.b-high{color:var(--ok);background:var(--ok-bg)}
+.b-medium{color:var(--ink-2);background:var(--grey-1)}
+.b-low,.b-unverified{color:var(--warn);background:var(--warn-bg);border:1px solid var(--warn)}
+.b-inf{color:var(--inf);background:var(--inf-bg);text-transform:uppercase;letter-spacing:.06em}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-2)}
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr;gap:8px}
+  .toc{position:static;background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:6px 12px}
+  .wrap{padding-inline:16px}
+  .lead-card{padding:2px 16px 16px}
+}
+</style>
+<div class="wrap">
+<header class="masthead">
+  <p class="eyebrow">Competitive research · crosshatch-player</p>
+  <h1>CrossPlay and SUMI teardown for crosshatch-player v1 scope</h1>
+  <p class="decision"><span class="k">Decision</span> What crosshatch-player v1 should include and where it should diverge from CrossPlay</p>
+  <dl class="meta">
+    <div><dt>Date</dt><dd>2026-09-26</dd></div>
+    <div><dt>Depth</dt><dd>standard · 4 areas · 2 rounds</dd></div>
+    <div><dt>Verification</dt><dd>normal</dd></div>
+    <div><dt>Sources</dt><dd>72</dd></div>
+    <div><dt>Claim ledger</dt><dd>9 verified · 9 unverified · 1 overturned</dd></div>
+  </dl>
+  <div class="legend" aria-label="Citation legend">
+    <span><a class="cite c-high">7</a> high confidence or verified</span>
+    <span><a class="cite c-medium">7<span class="lv"> · medium</span></a></span>
+    <span><a class="cite c-low">7<span class="lv"> · low</span></a></span>
+    <span><a class="cite c-unverified">7<span class="lv"> · unverified</span></a></span>
+    <span><a class="cite c-overturned">7<span class="lv"> · overturned</span></a></span>
+    <span><span class="badge b-inf">Inference</span> reasoning, not a sourced claim</span>
+  </div>
+</header>
+<div class="layout">
+<nav class="toc" aria-label="Contents"><details open><summary>Contents</summary><ol><li><a href="#executive-summary">Executive summary</a></li><li><a href="#1-crossplay-teardown">1. CrossPlay teardown</a></li><li><a href="#2-sumi-teardown-what-its-lua-system-actually-is">2. SUMI teardown: what its Lua system actually is</a></li><li><a href="#3-feasibility-on-esp32-s3-hardware-scripting-eng">3. Feasibility on ESP32-S3: hardware, scripting engines, multi-device radio, pass-and-play</a></li><li><a href="#4-the-wider-field-and-the-game-catalog">4. The wider field and the game catalog</a></li><li><a href="#cross-dimension-insights">Cross-dimension insights</a></li><li><a href="#recommendations">Recommendations</a></li><li><a href="#open-questions">Open questions</a></li><li><a href="#sources">Source appendix</a></li><li><a href="#staleness-map">Staleness map</a></li></ol></details></nav>
+<main>
+<section class="lead-card"><h2 id="executive-summary">Executive summary</h2>
+<p><strong>Recommendation.</strong> Scope v1 as a <strong>social pen-and-paper game platform</strong>. The core is one multiplayer model where each player's "seat" can be a person on this device, a person on a nearby device, or the computer. Pass-and-play, Play Nearby, and play with more than two players then become the same feature. On top of it, add a Lua scripting layer that is touch-first and multiplayer-aware.</p>
+<p><strong>Three findings drive this.</strong></p>
+<ol>
+<li><strong>The gap is social play, not catalog size.</strong><ul>
+<li><strong>No project for the Sticky or the X4 Pro combines these pieces.</strong></li>
+<li><strong>CrossPlay</strong> has Play Nearby, but it is built for exactly two players <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>. Among its two-player board games, pass-and-play exists only in Chess and Go <a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a><a class="cite c-high" href="#src-67" title="Source 67: high">67</a>, and every game is hand-written C++ of more than 1.2k lines <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-unverified" href="#src-10" title="Source 10: unverified">10<span class="lv"> · unverified</span></a>.</li>
+<li><strong>CrossMux</strong> already ships builds for both boards, but its README and apps guide describe only built-in games and mention no scripting or multiplayer <a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a><a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a>.</li>
+<li><strong>Upstream CrossPoint</strong> closed a request for games as not planned <a class="cite c-unverified" href="#src-57" title="Source 57: unverified">57<span class="lv"> · unverified</span></a>, and a games fork reports that games are out of scope upstream <a class="cite c-high" href="#src-55" title="Source 55: high">55</a>.</li>
+<li><strong>Other game forks</strong> converge on overlapping subsets of Sudoku, Minesweeper, 2048, and Chess <a class="cite c-unverified" href="#src-52" title="Source 52: unverified">52<span class="lv"> · unverified</span></a><a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a><a class="cite c-medium" href="#src-56" title="Source 56: medium">56<span class="lv"> · medium</span></a>.</li>
+</ul>
+</li>
+<li><strong>Going beyond two players is a software design job, not a radio limit.</strong> ESP-NOW allows 20 peers and broadcast <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a><a class="cite c-high" href="#src-68" title="Source 68: high">68</a>. CrossPlay's limit comes from its session, turn order, and screens, which all assume two seats <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a><a class="cite c-high" href="#src-4" title="Source 4: high">4</a>. No turn-based ESP-NOW game for three to eight devices was found <a class="cite c-medium" href="#src-51" title="Source 51: medium">51<span class="lv"> · medium</span></a>, so this would be new engineering.</li>
+<li><strong>What's worth taking from SUMI is its sandbox recipe, not a library of scripted games.</strong><ul>
+<li><strong>The recipe:</strong> Lua 5.4 compiled as C, so it needs no C++ exceptions, plus a per-script heap cap, an instruction limit, trimmed libraries, and a jailed data folder <a class="cite c-high" href="#src-22" title="Source 22: high">22</a><a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a><a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-high" href="#src-25" title="Source 25: high">25</a><a class="cite c-verified" href="#src-70" title="Source 70: verified">70</a>. SUMI is MIT-licensed <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>.</li>
+<li><strong>What SUMI lacks:</strong> it targets button-only ESP32-C3 devices, ships no Lua games, and has been quiet since May <a class="cite c-high" href="#src-21" title="Source 21: high">21</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a><a class="cite c-unverified" href="#src-31" title="Source 31: unverified">31<span class="lv"> · unverified</span></a>. Its script API has no touch input, 1-bit drawing only, no refresh control, and no multiplayer <a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-high" href="#src-27" title="Source 27: high">27</a><a class="cite c-high" href="#src-28" title="Source 28: high">28</a>.</li>
+<li>So most of crosshatch-player's scripting API would be new design.</li>
+</ul>
+</li>
+</ol>
+<p><strong>Biggest caveat.</strong> Demand is not evidenced. Reddit was unreachable from the research environment, CrossPlay has 12 issues and none are about multiplayer <a class="cite c-medium" href="#src-19" title="Source 19: medium">19<span class="lv"> · medium</span></a>, and no usage data exists for any e-ink game. The radio's battery cost during a match is also unmeasured, even by CrossPlay <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a>.</p>
+<p><strong>Where v1 diverges from CrossPlay.</strong> Each point restates evidence from the sections below.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th></th>
+<th>CrossPlay</th>
+<th>crosshatch-player v1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Players</td>
+<td>Two seats, a single peer <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a></td>
+<td>Two to eight seats, each local, nearby, or the computer</td>
+</tr>
+<tr>
+<td>Pass-and-play</td>
+<td>Chess and Go only <a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a></td>
+<td>Every turn-based game, with a full-refresh hand-off for hidden information <a class="cite c-unverified" href="#src-48" title="Source 48: unverified">48<span class="lv"> · unverified</span></a></td>
+</tr>
+<tr>
+<td>Adding a game</td>
+<td>Hand-written C++, more than 1.2k lines <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-unverified" href="#src-10" title="Source 10: unverified">10<span class="lv"> · unverified</span></a></td>
+<td>A Lua script, or C++ for first-party games</td>
+</tr>
+<tr>
+<td>Fork shape</td>
+<td>169 upstream files modified <a class="cite c-high" href="#src-12" title="Source 12: high">12</a></td>
+<td>Purely additive, behind device and capability guards</td>
+</tr>
+<tr>
+<td>Play with CrossPlay devices</td>
+<td>Not applicable</td>
+<td>Not in v1 (see Open questions)</td>
+</tr>
+</tbody>
+</table></div>
+</section><h2 id="1-crossplay-teardown">1. CrossPlay teardown</h2>
+<p><strong>Takeaway.</strong> CrossPlay proves that Play Nearby works on these boards, and its link layer has patterns worth borrowing. But its multiplayer is two-player throughout, and every game is hand-written C++. It is MIT-licensed <a class="cite c-high" href="#src-16" title="Source 16: high">16</a>. Except where noted, this section is read from its source at <code>xteink@31d94db1</code> (2026-09-22) <a class="cite c-high" href="#src-1" title="Source 1: high">1</a>.</p>
+<h3>Catalog and modes</h3>
+<p><strong>Catalog.</strong> The launcher registers 22 games <a class="cite c-high" href="#src-1" title="Source 1: high">1</a>. The board, puzzle, and abstract ones are:
+- Connect Four
+- Checkers
+- Chess
+- Go (9×9 and 13×13)
+- Battleship
+- Minesweeper
+- Sudoku
+- Picross and D&amp;Diagrams
+- Murdle
+- Yahtzee
+- Knucklebones</p>
+<p>It ships none of the classic pen-and-paper games: tic-tac-toe, dots-and-boxes, hangman, SOS, or mancala. Guess Who exists only as a design doc <a class="cite c-high" href="#src-1" title="Source 1: high">1</a>.</p>
+<p><strong>Multiplayer modes.</strong>
+- <strong>Play Nearby</strong> covers ten games: Chess, Connect Four, Battleship, Jaipur, Checkers, Yahtzee, Knucklebones, Sea Salt, Toy Battle, and Go <a class="cite c-high" href="#src-2" title="Source 2: high">2</a>.
+- <strong>Pass-and-play on one device.</strong> Among the two-player board games, only Chess and Go offer it <a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a><a class="cite c-high" href="#src-67" title="Source 67: high">67</a>:
+    - <strong>Chess</strong> has Computer, Pass-and-play, and Face-to-face modes, and rotates the board in pass-and-play.
+    - <strong>Go</strong> has Computer and Human modes.</p>
+<pre><code>The other eight Play Nearby games are solo or against the computer when played on one device <span class="badge b-medium">confidence: medium, found by searching the code</span> <a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a>.
+</code></pre>
+<ul>
+<li><strong>Party games on one shared device.</strong> Forehead, Wavelength, and Insider are played by handing one device around. Insider takes four to eight people, and Wavelength shows a "PASS THE DEVICE" screen. Trivia is read aloud to the room <a class="cite c-high" href="#src-4" title="Source 4: high">4</a><a class="cite c-high" href="#src-67" title="Source 67: high">67</a>.</li>
+</ul>
+<h3>How Play Nearby works</h3>
+<ul>
+<li><strong>Radio.</strong> It uses ESP-NOW on fixed Wi-Fi channel 1, with no router. It takes over Wi-Fi, so a match can't run alongside a Wi-Fi connection <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a>.</li>
+<li><strong>Discovery.</strong> Devices find each other through a broadcast Hello, and a coin toss decides who moves first <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a><a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.</li>
+<li><strong>Messages.</strong> Each packet is a custom binary header plus a payload of at most 192 bytes, for at most 204 bytes in total. That keeps the packet under ESP-NOW v1's 250-byte limit. The payload is the raw bytes of a C++ struct, so both devices must run the same build <a class="cite c-high" href="#src-6" title="Source 6: high">6</a>.</li>
+<li><strong>Keeping in sync.</strong> Each turn sends the whole game state, not the move. An unacknowledged state is resent every 400 ms, and a silent peer is dropped after 10 s. There is no reconnect or resume <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.</li>
+<li><strong>No security.</strong> Nothing is encrypted or authenticated, so the design assumes everyone in the room is cooperating <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a>.</li>
+</ul>
+<p><strong>It is built for exactly two players.</strong>
+- <strong>The session.</strong> It stores one peer and uses one true/false flag for whose turn it is and another for who hosts <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.
+- <strong>Three devices.</strong> Pairing pairs them off two at a time instead of forming a group <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.
+- <strong>The screens.</strong> The lobby screen draws two seats <a class="cite c-high" href="#src-4" title="Source 4: high">4</a>.
+- <strong>Hearts.</strong> It is one human against three computer players, and it doesn't offer Play Nearby because "the radio seats two" <a class="cite c-high" href="#src-4" title="Source 4: high">4</a>.</p>
+<p>The ESP-NOW radio itself allows 20 peers <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a>. So going past two players means redesigning the session, the turn order, and the screens; it is not a matter of changing a constant <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.</p>
+<p><strong>Two engineering choices are worth borrowing:</strong>
+- <strong>Nothing is allocated when a message arrives.</strong> Incoming packets go into a fixed six-slot buffer.
+- <strong>The link logic runs without hardware.</strong> It has no Arduino dependency, so host tests can play thousands of matches over a fake link that drops, delays, and reorders packets <a class="cite c-high" href="#src-8" title="Source 8: high">8</a>.</p>
+<h3>Adding a game and tooling</h3>
+<p><strong>Adding a game.</strong> Every game is hand-written C++. A multiplayer game implements about 12 methods of a shared <code>LinkActivity</code> base class, keeps its state in 192 bytes or less, and gets a game ID plus one line in the launcher's game list. The link layer supplies the searching, disconnect, and rematch screens <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>. Each game directory has more than 1.2k non-blank lines. The simplest take about 1.3k–1.5k, and Chess and Go take about 3k–4k <a class="cite c-unverified" href="#src-10" title="Source 10: unverified">10<span class="lv"> · unverified</span></a>. There is no scripting or data-driven way to define a game <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>.</p>
+<p><strong>Browser build.</strong> A WebAssembly build of the real firmware runs in a browser, and two browser instances can play each other <a class="cite c-high" href="#src-15" title="Source 15: high">15</a>.</p>
+<p><strong>Hardware use.</strong> On the Sticky, the fork turns on PSRAM (<code>-DBOARD_HAS_PSRAM</code>), which upstream leaves off. Go's search tree lives in PSRAM <a class="cite c-high" href="#src-14" title="Source 14: high">14</a>.
+- <strong>Refresh timing.</strong> Partial refreshes take about 0.3 s and full refreshes take 1–2 s. Chess spends exactly two partial refreshes per move <a class="cite c-high" href="#src-14" title="Source 14: high">14</a>.
+- <strong>Battery.</strong> CrossPlay estimates that a game's display refreshes cost a fraction of a percent of the battery <a class="cite c-high" href="#src-14" title="Source 14: high">14</a>. The radio's cost is marked unmeasured in its code <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a>.</p>
+<h3>Launcher scaling and fork maintenance</h3>
+<p><strong>Launcher scaling.</strong> The launcher broke down somewhere between 10 and 16 games: it had a silent cap of 16 items, and items below the fold couldn't be reached by touch. The fix was a paged folder <a class="cite c-high" href="#src-11" title="Source 11: high">11</a>.</p>
+<p><strong>Fork maintenance.</strong>
+- <strong>Development process.</strong> Games are built by LLM agents, with "critic" agents checking rules, looks, and play <a class="cite c-high" href="#src-11" title="Source 11: high">11</a>.
+- <strong>Drift from upstream.</strong> Measured against the last merged upstream commit, the fork adds 1,430 files and modifies 169 upstream files <a class="cite c-high" href="#src-12" title="Source 12: high">12</a>.
+- <strong>Merges.</strong> A daily agent routine is set up to merge upstream. One such merge silently deleted a piece of fork code, and the maintainer then added a check that every fork-added line is still present <a class="cite c-high" href="#src-13" title="Source 13: high">13</a>.</p>
+<h3>Momentum and users</h3>
+<ul>
+<li><strong>Size:</strong> 74 stars and 16 forks at access <a class="cite c-medium" href="#src-17" title="Source 17: medium">17<span class="lv"> · medium</span></a>.</li>
+<li><strong>Releases:</strong> frequent and cut by a bot, but the recent ones are about "Live", a phone-to-device picture app <a class="cite c-unverified" href="#src-18" title="Source 18: unverified">18<span class="lv"> · unverified</span></a>.</li>
+<li><strong>Multiplayer activity:</strong> the last link-layer commits in the fetched history are from 2026-09-12, when Go was added to Play Nearby <a class="cite c-unverified" href="#src-18" title="Source 18: unverified">18<span class="lv"> · unverified</span></a> <span class="badge b-medium">confidence: medium, since the clone goes back only 200 commits</span>.</li>
+<li><strong>User feedback is thin:</strong> 12 issues, none about multiplayer. The only game request (#202) asks for word lists for party games <a class="cite c-medium" href="#src-19" title="Source 19: medium">19<span class="lv"> · medium</span></a>.</li>
+<li><strong>Roadmap:</strong> the maintainer's own records show that 1 of 378 work cards came from a user other than the maintainer. Most were found by LLM agents in audits and reviews <a class="cite c-high" href="#src-20" title="Source 20: high">20</a>.</li>
+</ul>
+<h2 id="2-sumi-teardown-what-its-lua-system-actually-is">2. SUMI teardown: what its Lua system actually is</h2>
+<p><strong>Takeaway.</strong> SUMI's Lua support is a well-built sandbox with a thin API and no scripted games. What's worth borrowing is the sandbox recipe and its MIT-licensed code.</p>
+<h3>What it is</h3>
+<p>SUMI is MIT-licensed firmware for the ESP32-C3 Xteink X4 and X3. Those devices have buttons and no touchscreen, so SUMI does not target crosshatch-player's boards <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>. Its lineage is CrossPoint → Papyrix → SUMI <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>.</p>
+<h3>The engine</h3>
+<ul>
+<li><strong>Lua build.</strong> It uses stock PUC Lua 5.4.7, compiled as C with <code>LUA_32BITS</code>. It connects Lua to the firmware with hand-written C functions, not a binding library <a class="cite c-high" href="#src-22" title="Source 22: high">22</a>.</li>
+<li><strong>Error handling.</strong> Every callback into a script runs through <code>lua_pcall</code>. Because Lua is compiled as C, errors use setjmp/longjmp instead of C++ exceptions <a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a><a class="cite c-high" href="#src-38" title="Source 38: high">38</a>. That is the pattern that works with crosshatch-player's <code>-fno-exceptions</code> build.</li>
+<li><strong>Trimmed libraries.</strong> Lua's startup list of libraries is cut to base, table, string, math, and utf8. So <code>require</code>, <code>io</code>, <code>os</code>, <code>debug</code>, and coroutines don't exist, and game logic must be written as explicit state machines <a class="cite c-high" href="#src-25" title="Source 25: high">25</a>.</li>
+</ul>
+<h3>Limits and sandboxing</h3>
+<ul>
+<li><strong>Memory and time.</strong> A custom allocator caps each script's VM at 40 KB of regular heap. Scripts are at most 16 KB of source, and a hook raises an error after 100,000 VM instructions in one callback <a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a>.</li>
+<li><strong>Errors.</strong> Any error shows a "Lua Error" screen instead of crashing the device <a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a>.</li>
+<li><strong>Files.</strong> Scripts can read and write only under <code>/custom/&lt;name&gt;_data/</code>. Path traversal is rejected, and writes are atomic <a class="cite c-high" href="#src-24" title="Source 24: high">24</a>.</li>
+<li><strong>Removed globals.</strong> <code>load</code>, <code>dofile</code>, and the <code>raw*</code> functions are set to nil <a class="cite c-high" href="#src-24" title="Source 24: high">24</a>.</li>
+</ul>
+<h3>How scripts plug in</h3>
+<ul>
+<li><strong>Discovery.</strong> The firmware scans <code>/custom/*.lua</code> (flat, no subfolders) and loads at most eight scripts. There is no manifest or icon; a script's display name comes from its filename <a class="cite c-high" href="#src-26" title="Source 26: high">26</a>.</li>
+<li><strong>Callbacks.</strong> A script must define <code>draw()</code> and <code>onButton(btn)</code>. <code>init(w,h)</code> is optional, and so is <code>update()</code>, which runs at 10 Hz <a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a>.</li>
+<li><strong>API.</strong> It has 46 flat globals: 1-bit drawing primitives, text, seven UI helpers, <code>millis</code> and <code>random</code>, sandboxed file functions, time, and battery <a class="cite c-high" href="#src-24" title="Source 24: high">24</a>.</li>
+<li><strong>What's missing.</strong> There is no touch input, and no button-release events, bitmaps, sprites, or greyscale (the absence of touch was found by searching the code) <a class="cite c-high" href="#src-24" title="Source 24: high">24</a>. Scripts can't control the e-ink refresh: the host redraws everything on every render and forces a full refresh every 30 renders <a class="cite c-high" href="#src-27" title="Source 27: high">27</a>.</li>
+<li><strong>Networking.</strong> The only networking is a BLE "bridge" that swaps JSON messages of up to 480 bytes with a web page. There is no device-to-device or multiplayer support <a class="cite c-high" href="#src-28" title="Source 28: high">28</a>.</li>
+</ul>
+<h3>What ships in Lua</h3>
+<ul>
+<li><strong>Games.</strong> Every game SUMI ships is C++: Chess, Sudoku, Minesweeper, Checkers, 2048, and a Game Boy emulator. The only Lua example in the repo is an 86-line doorbell script <a class="cite c-high" href="#src-29" title="Source 29: high">29</a>.</li>
+<li><strong>Author tooling.</strong> Authoring support is an LLM prompt to copy and paste, plus a browser playground running Fengari. Fengari is Lua 5.3, not the device's 5.4, and it doesn't simulate file I/O. There is no hot reload, and installing a script requires a reboot <a class="cite c-high" href="#src-30" title="Source 30: high">30</a>.</li>
+<li><strong>Sharing.</strong> There is no gallery or sharing mechanism <a class="cite c-high" href="#src-30" title="Source 30: high">30</a>.</li>
+<li><strong>Docs vs. firmware.</strong> The repo docs describe a <code>sumi.*</code> namespace and <code>os.time()</code>, but the firmware exposes neither. A file-I/O bug report (#20) was closed without a reply <a class="cite c-high" href="#src-32" title="Source 32: high">32</a>.</li>
+</ul>
+<h3>Maturity</h3>
+<p>It has one author and 47 commits, each a release dump. The last commit was 2026-05-30, about four months before this research, and it has about 180 stars <a class="cite c-unverified" href="#src-31" title="Source 31: unverified">31<span class="lv"> · unverified</span></a>. PocketInk calls it "the only genuine on-device scriptable plugins in the scene" <a class="cite c-high" href="#src-33" title="Source 33: high">33</a>.</p>
+<h2 id="3-feasibility-on-esp32-s3-hardware-scripting-eng">3. Feasibility on ESP32-S3: hardware, scripting engines, multi-device radio, pass-and-play</h2>
+<p><strong>Takeaway.</strong> Both boards have 8 MB of PSRAM, which gives room for a scripting VM. Lua compiled as C works under <code>-fno-exceptions</code>. ESP-NOW broadcast can carry more than two players. And hidden-information hand-offs need a full e-ink refresh.</p>
+<h3>Target hardware</h3>
+<ul>
+<li><strong>reTerminal Sticky</strong> <a class="cite c-high" href="#src-63" title="Source 63: high">63</a>:<ul>
+<li>ESP32-S3R8 with 8 MB PSRAM and 32 MB flash.</li>
+<li>3.97" 800×480 display with 4 grey levels.</li>
+<li>Capacitive touch.</li>
+<li>Wi-Fi 4 and BLE 5.0.</li>
+<li>750 mAh battery.</li>
+</ul>
+</li>
+<li><strong>X4 Pro:</strong><ul>
+<li>4.3" touchscreen at 219 PPI, a 1,100 mAh battery, and pogo-pin charging <a class="cite c-medium" href="#src-62" title="Source 62: medium">62<span class="lv"> · medium</span></a>.</li>
+<li>The vendor doesn't disclose its chip; reports say ESP32-S3 <a class="cite c-medium" href="#src-62" title="Source 62: medium">62<span class="lv"> · medium</span></a>.</li>
+<li>Upstream CrossPoint's <code>x4pro</code> build targets an ESP32-S3 board profile with 16 MB flash and 8 MB octal PSRAM, and turns PSRAM on <a class="cite c-verified" href="#src-71" title="Source 71: verified">71</a>. A third-party issue agrees <a class="cite c-medium" href="#src-65" title="Source 65: medium">65<span class="lv"> · medium</span></a>. Both sources describe build settings, not a datasheet.</li>
+</ul>
+</li>
+<li><strong>Refresh in practice:</strong> a hands-on review calls the X4 Pro's touch responsive and its refresh "fast enough that it's not bothersome" <a class="cite c-medium" href="#src-64" title="Source 64: medium">64<span class="lv"> · medium</span></a>.</li>
+</ul>
+<h3>Scripting engines</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Footprint (vendor-reported)</th>
+<th>Works with <code>-fno-exceptions</code></th>
+<th>License</th>
+<th>ESP32 track record</th>
+<th>Watch-outs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Lua 5.4</strong> (compiled as C)</td>
+<td>Not measured on ESP32 in this run. SUMI caps each VM at 40 KB <a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a>. NodeMCU reports as little as 17 KB of free RAM for apps (Lua 5.1, ESP8266) <a class="cite c-high" href="#src-46" title="Source 46: high">46</a></td>
+<td>Yes, when compiled as C (setjmp/longjmp) <a class="cite c-high" href="#src-38" title="Source 38: high">38</a><a class="cite c-verified" href="#src-70" title="Source 70: verified">70</a><a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a></td>
+<td>MIT <a class="cite c-high" href="#src-45" title="Source 45: high">45</a></td>
+<td>SUMI <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>, NodeMCU <a class="cite c-high" href="#src-46" title="Source 46: high">46</a>, Espressif's own IDF component guide <a class="cite c-high" href="#src-45" title="Source 45: high">45</a></td>
+<td>A Lua error jumps over C++ stack frames without running their destructors. sol2 without exceptions can't catch errors from bound C++ functions <a class="cite c-high" href="#src-39" title="Source 39: high">39</a></td>
+</tr>
+<tr>
+<td><strong>Berry</strong></td>
+<td>Core under 40 KB of code <a class="cite c-high" href="#src-40" title="Source 40: high">40</a>. "Less than 4KiB heap" on a Cortex-M4 <a class="cite c-high" href="#src-72" title="Source 72: high">72</a>. On ESP32, Tasmota says RAM "starts at ~10KB" <span class="badge b-unverified">unverified by a second source</span>, and it uses PSRAM <a class="cite c-unverified" href="#src-41" title="Source 41: unverified">41<span class="lv"> · unverified</span></a></td>
+<td>Not confirmed in this run</td>
+<td>MIT <a class="cite c-high" href="#src-40" title="Source 40: high">40</a><a class="cite c-high" href="#src-72" title="Source 72: high">72</a></td>
+<td>Tasmota, a large ESP32 deployment <a class="cite c-unverified" href="#src-41" title="Source 41: unverified">41<span class="lv"> · unverified</span></a></td>
+<td>Tasmota advises scripts never block for more than 50 ms <a class="cite c-unverified" href="#src-41" title="Source 41: unverified">41<span class="lv"> · unverified</span></a>. Much smaller author community than Lua</td>
+</tr>
+<tr>
+<td><strong>MicroPython</strong> (embed port)</td>
+<td>8 KB heap in the official example <a class="cite c-high" href="#src-44" title="Source 44: high">44</a></td>
+<td>Likely, since it's a C library (not confirmed in this run)</td>
+<td>MIT</td>
+<td>Many ESP32 users, but the embed port is young</td>
+<td>The host must supply the correct C stack top for its garbage collector <a class="cite c-high" href="#src-44" title="Source 44: high">44</a></td>
+</tr>
+<tr>
+<td><strong>wasm3</strong></td>
+<td>About 64 KB of code and 10 KB of RAM <a class="cite c-high" href="#src-42" title="Source 42: high">42</a></td>
+<td>Likely, since it's written in C (not confirmed in this run)</td>
+<td>MIT</td>
+<td>Supports ESP32</td>
+<td>In "minimal maintenance" <a class="cite c-high" href="#src-42" title="Source 42: high">42</a></td>
+</tr>
+<tr>
+<td><strong>Elk (JS)</strong></td>
+<td>About 20 KB of flash <a class="cite c-high" href="#src-43" title="Source 43: high">43</a></td>
+<td>Likely, since it's written in C (not confirmed in this run)</td>
+<td><strong>AGPLv3 or commercial</strong> <a class="cite c-high" href="#src-43" title="Source 43: high">43</a></td>
+<td>Small</td>
+<td>No arrays or closures <a class="cite c-high" href="#src-43" title="Source 43: high">43</a>. Unsuitable</td>
+</tr>
+</tbody>
+</table></div>
+<p>The engine comparison rests on vendor-reported numbers. No benchmark comparing these engines on the S3 was found (see Open questions).</p>
+<h3>Radios for multiplayer</h3>
+<p><strong>ESP-NOW.</strong>
+- <strong>Peers:</strong> at most 20. Some can be encrypted: the default is six or seven (the header and the docs differ), and the configurable maximum is 17 <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a><a class="cite c-high" href="#src-68" title="Source 68: high">68</a>.
+- <strong>Payload size:</strong> 250 B in v1 and 1,470 B in v2. A v1 device receives only v2 packets of 250 B or less <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a><a class="cite c-high" href="#src-68" title="Source 68: high">68</a>.
+- <strong>Arduino-ESP32 support:</strong> it exposes v2 through <code>getVersion()</code> and <code>getMaxDataLen()</code>. That was added in PR #11524, first shipped in Arduino-ESP32 3.2.1, and listed again in 3.3.0 <a class="cite c-verified" href="#src-69" title="Source 69: verified">69</a>.
+- <strong>Broadcast:</strong> supported. It needs no pairing with each receiver, only adding the broadcast address once as a peer <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a>.
+- <strong>Delivery:</strong> acknowledged only at the radio (MAC) layer, so games need their own sequence numbers and acks <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a>.</p>
+<p><strong>SoftAP.</strong> When a device acts as a hotspot (SoftAP), its station slots and encrypted ESP-NOW peers share the same hardware key slots, so each reduces what's left for the other <a class="cite c-high" href="#src-35" title="Source 35: high">35</a>. SoftAP <code>max_connection</code> has been configured to 15 on S3, but no run with 15 connected stations was found <span class="badge b-low">confidence: low</span> <a class="cite c-overturned" href="#src-47" title="Source 47: overturned">47<span class="lv"> · overturned</span></a>.</p>
+<p><strong>BLE.</strong> At most 10 BLE activities in total: connections, scanning, and advertising combined, each using about 828 B. The NimBLE host defaults to three connections <a class="cite c-unverified" href="#src-36" title="Source 36: unverified">36<span class="lv"> · unverified</span></a><a class="cite c-medium" href="#src-37" title="Source 37: medium">37<span class="lv"> · medium</span></a>. The 10-activity limit comes from the configuration shared by C3 and S3; that it applies to S3 is inferred <span class="badge b-medium">confidence: medium</span> <a class="cite c-unverified" href="#src-36" title="Source 36: unverified">36<span class="lv"> · unverified</span></a>.</p>
+<p><strong>What exists already.</strong> Public ESP32 multiplayer projects are almost all two-player, or a hotspot that phones join through a browser. No turn-based ESP-NOW game for three to eight devices was found <a class="cite c-medium" href="#src-51" title="Source 51: medium">51<span class="lv"> · medium</span></a>.</p>
+<p><span class="badge b-inf">Inference</span> ESP-NOW broadcast for discovery, with one host device keeping the authoritative game state, is the best fit for three to eight players on these boards. That's also the direction CrossPlay's existing design would extend in.</p>
+<h3>Pass-and-play</h3>
+<p><strong>Existing designs.</strong>
+- <strong>Tabletopia:</strong> its hotseat mode hides the current player's hand at "End Turn" <a class="cite c-high" href="#src-50" title="Source 50: high">50</a>.
+- <strong>DuelBox:</strong> its spec requires a full blackout "pass to <player>" screen and "no leak of hidden state in any frame during hand-off". Each game opts in through its manifest <a class="cite c-high" href="#src-49" title="Source 49: high">49</a>.
+- <strong>Mobile apps:</strong> Nature ships pass-and-play for up to four players, and Ticket to Ride also offers it <span class="badge b-medium">confidence: medium</span> <a class="cite c-medium" href="#src-66" title="Source 66: medium">66<span class="lv"> · medium</span></a>.</p>
+<p><strong>E-ink ghosting leaks hidden information.</strong> On a Kobo, typed password keys stayed faintly visible after a partial refresh until the next full refresh <a class="cite c-unverified" href="#src-48" title="Source 48: unverified">48<span class="lv"> · unverified</span></a>. <span class="badge b-inf">Inference</span> a hand-off screen that hides information has to use a full refresh.</p>
+<h2 id="4-the-wider-field-and-the-game-catalog">4. The wider field and the game catalog</h2>
+<p><strong>Takeaway.</strong> One competitor (CrossMux) already covers both boards with single-player built-in games. Beyond CrossPlay, no fork documents local multiplayer. KOReader shows that a large Lua game ecosystem on e-ink is possible.</p>
+<h3>Competitors</h3>
+<ul>
+<li><strong>CrossMux</strong> (0x1abin, 219 stars) is a CrossPoint fork already publishing nightly builds for <strong>the Sticky and the X4 Pro</strong>. It says the target list "is not a claim that every feature has passed hardware acceptance" <a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a>.<ul>
+<li><strong>Games:</strong> its apps are compiled in and listed in one table: Sudoku, Gomoku, Minesweeper, 2048, Chinese Chess, Sokoban, and others. Most games are hidden on a fresh install.</li>
+<li><strong>Not documented:</strong> its README and apps guide mention no scripting or multiplayer. Whether Gomoku and Chinese Chess can be played by two people is not documented <a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a>.</li>
+</ul>
+</li>
+<li><strong>CrossInk Games Edition</strong> runs only on the X4 Pro. It was created 2026-09-14 and has one star. It notes that games are "deliberately out of scope" in both CrossInk and CrossPoint <a class="cite c-high" href="#src-55" title="Source 55: high">55</a>.</li>
+<li><strong>Upstream CrossPoint</strong> closed issue #678 ("Add Quick Mental Games") as not planned, with no maintainer comment <a class="cite c-unverified" href="#src-57" title="Source 57: unverified">57<span class="lv"> · unverified</span></a>. Games have to live in forks.</li>
+<li><strong>Other Xteink forks</strong> (CrossPet, noah-ing/X4) converge on overlapping subsets of Sudoku, Minesweeper, 2048, and Chess <a class="cite c-unverified" href="#src-52" title="Source 52: unverified">52<span class="lv"> · unverified</span></a><a class="cite c-medium" href="#src-56" title="Source 56: medium">56<span class="lv"> · medium</span></a>.<ul>
+<li><span class="badge b-inf">Inference</span> apart from CrossPlay, no Xteink fork found documents local multiplayer, pass-and-play, or human-vs-human pen-and-paper games such as dots-and-boxes <span class="badge b-medium">confidence: medium</span> <a class="cite c-unverified" href="#src-52" title="Source 52: unverified">52<span class="lv"> · unverified</span></a><a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a><a class="cite c-medium" href="#src-56" title="Source 56: medium">56<span class="lv"> · medium</span></a>.</li>
+</ul>
+</li>
+<li><strong>KOReader</strong> is the precedent for scripted games on e-ink <a class="cite c-unverified" href="#src-58" title="Source 58: unverified">58<span class="lv"> · unverified</span></a>:<ul>
+<li>One index lists 70 Lua plugins, about 66 of them games.</li>
+<li>Titles include Battleship, Connect4, Hangman, Mastermind, Gomoku, backgammon, and about 20 pencil-puzzle variants.</li>
+<li>It has four single-device "Party" games (Boggle, Pictionary, Quiz, Taboo).</li>
+<li>It also has a shared game library and an on-device plugin manager.</li>
+</ul>
+</li>
+</ul>
+<h3>Borrowing puzzles</h3>
+<p>Simon Tatham's Portable Puzzle Collection is MIT-licensed <a class="cite c-high" href="#src-59" title="Source 59: high">59</a> and has 41 puzzles, all single-player <a class="cite c-high" href="#src-60" title="Source 60: high">60</a>.
+- <strong>PocketBook port:</strong> it needed rework for each game: greyscale instead of colour, reworked dragging, and thicker lines <a class="cite c-high" href="#src-60" title="Source 60: high">60</a>.
+- <strong>Kindle port:</strong> some games need right-click or a keyboard <a class="cite c-high" href="#src-61" title="Source 61: high">61</a>.
+- <strong>ESP32:</strong> our search found no port.</p>
+<h3>Candidate catalog</h3>
+<p>This is derived from game rules, not usage data, so confidence is low.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Fit</th>
+<th>Games</th>
+<th>Players</th>
+<th>Hidden information needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pen-and-paper, open information</td>
+<td>Tic-tac-toe, Ultimate tic-tac-toe, Dots and Boxes, SOS, Sprouts, Nine Men's Morris, Connect Four*, Gomoku, Othello, Checkers*</td>
+<td>Two; Dots and Boxes and SOS work with three or more</td>
+<td>None. Pass-and-play is trivial</td>
+</tr>
+<tr>
+<td>Hidden information</td>
+<td>Battleship*, Hangman, Mastermind / Bulls and Cows, most card games</td>
+<td>Two; Hangman can rotate the setter among three or more</td>
+<td>Play Nearby, or a pass-and-play hand-off with a full refresh</td>
+</tr>
+<tr>
+<td>Solo puzzles (Tatham, MIT)</td>
+<td>Sudoku, nonograms, Minesweeper, Mastermind (Guess), Loopy, Bridges</td>
+<td>One</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Poor fit</td>
+<td>Real-time games (Snake, Tetris, Flappy), drag-heavy puzzles</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table></div>
+<p>* Already in CrossPlay <a class="cite c-high" href="#src-1" title="Source 1: high">1</a>.</p>
+<h2 id="cross-dimension-insights">Cross-dimension insights</h2>
+<ol>
+<li>
+<p><strong>Pass-and-play, Play Nearby, and more-than-two-player play fit one "seat" model.</strong> CrossPlay built them as three separate mechanisms:</p>
+<ul>
+<li>per-game opponent settings for pass-and-play <a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a></li>
+<li>a two-player radio link for Play Nearby <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a></li>
+<li>party games where one device is handed around <a class="cite c-high" href="#src-4" title="Source 4: high">4</a></li>
+</ul>
+<p>A model where each seat is a person on this device, a person nearby, or the computer would give every game all three modes at once. It would also give hidden-information games one shared hand-off screen with a full refresh <a class="cite c-unverified" href="#src-48" title="Source 48: unverified">48<span class="lv"> · unverified</span></a><a class="cite c-high" href="#src-49" title="Source 49: high">49</a>. <span class="badge b-inf">Inference</span> no source documents this pattern.
+2. <strong>Scripted games and multiplayer fit together naturally.</strong>
+- <strong>How CrossPlay syncs.</strong> It sends the whole game state each turn, capped at 192 B, not individual moves <a class="cite c-high" href="#src-6" title="Source 6: high">6</a><a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.
+- <strong>What SUMI shows.</strong> Sending messages from a script works, but only to a web page over BLE <a class="cite c-high" href="#src-28" title="Source 28: high">28</a>.
+- <span class="badge b-inf">Inference</span> a script that declares its game state as a small serializable table could get Play Nearby and pass-and-play from the host without ever touching the radio. It needs a spike to confirm the state fits in the payload (1,470 B with ESP-NOW v2 <a class="cite c-verified" href="#src-69" title="Source 69: verified">69</a>).
+3. <strong>E-ink refresh constrains every area.</strong>
+- CrossPlay timed its 400 ms resend to hide under a repaint <a class="cite c-high" href="#src-14" title="Source 14: high">14</a>.
+- SUMI scripts can't control refresh at all <a class="cite c-high" href="#src-27" title="Source 27: high">27</a>.
+- Ghosting leaks hidden information <a class="cite c-unverified" href="#src-48" title="Source 48: unverified">48<span class="lv"> · unverified</span></a>.
+- The PocketBook port of Tatham's puzzles needed rework for each game <a class="cite c-high" href="#src-60" title="Source 60: high">60</a>.</p>
+<p>So refresh policy must be part of the script API (dirty regions and a way to request a full refresh), not left entirely to the host.
+4. <strong>Catalog size breaks launchers early.</strong> CrossPlay's launcher broke down between 10 and 16 games <a class="cite c-high" href="#src-11" title="Source 11: high">11</a>, and SUMI caps scripts at eight with no manifest <a class="cite c-high" href="#src-26" title="Source 26: high">26</a>.
+5. <strong>Fork discipline is a competitive factor.</strong> CrossPlay modifies 169 upstream files and has already lost fork code in an automated merge <a class="cite c-high" href="#src-12" title="Source 12: high">12</a><a class="cite c-high" href="#src-13" title="Source 13: high">13</a>. Upstream closed a games request as not planned, and a games fork reports that games are out of scope upstream <a class="cite c-high" href="#src-55" title="Source 55: high">55</a><a class="cite c-unverified" href="#src-57" title="Source 57: unverified">57<span class="lv"> · unverified</span></a>. So game work is likely to stay in the fork permanently.</p>
+</li>
+</ol>
+<h2 id="recommendations">Recommendations</h2>
+<p>Each recommendation opens with the document it feeds and its confidence.</p>
+<ol>
+<li><strong>V1 scope: position around social play.</strong>
+    <em>Feeds:</em> the product brief's positioning and the PRD's differentiation. <em>Confidence:</em> medium. The gap among documented competitors is well evidenced <a class="cite c-unverified" href="#src-52" title="Source 52: unverified">52<span class="lv"> · unverified</span></a><a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a><a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a>; demand is not <a class="cite c-medium" href="#src-19" title="Source 19: medium">19<span class="lv"> · medium</span></a>.
+    The pitch would be: "pen-and-paper games you play <em>together</em>, on one device or across several nearby, and new games anyone can script."</li>
+<li>
+<p><strong>Build the seat-based multiplayer core first.</strong>
+    <em>Feeds:</em> the architecture spine. <em>Confidence:</em> medium on the radio limits <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a><a class="cite c-high" href="#src-68" title="Source 68: high">68</a>; low on reliability with three to eight devices and on battery cost, which nobody has measured <a class="cite c-medium" href="#src-51" title="Source 51: medium">51<span class="lv"> · medium</span></a><a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a>.
+    The design would be:</p>
+<ul>
+<li><strong>Discovery:</strong> an ESP-NOW broadcast lobby.</li>
+<li><strong>State:</strong> one host device holds the authoritative game state and sends it all each turn, with sequence numbers and app-level acks <a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a><a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.</li>
+<li><strong>Players:</strong> two to eight seats, each a person on this device, a person nearby, or the computer.</li>
+<li><strong>Hand-off:</strong> hidden-information games get a full-refresh hand-off screen <a class="cite c-unverified" href="#src-48" title="Source 48: unverified">48<span class="lv"> · unverified</span></a><a class="cite c-high" href="#src-49" title="Source 49: high">49</a>.</li>
+</ul>
+<p>Borrow CrossPlay's proven patterns as ideas, not code: a message buffer that never allocates, link logic that runs without hardware, and a fake-link test harness <a class="cite c-high" href="#src-8" title="Source 8: high">8</a>. Its session code assumes two players throughout, so reuse is limited <a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a>.
+3. <strong>Scripting: Lua 5.4 compiled as C, in S3-only code behind a capability guard, with the fork kept purely additive.</strong>
+<em>Feeds:</em> the architecture spine, as a constraint. <em>Confidence:</em> medium.
+Start from SUMI's MIT sandbox recipe <a class="cite c-high" href="#src-22" title="Source 22: high">22</a><a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a><a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-high" href="#src-25" title="Source 25: high">25</a>. Then fill its gaps:
+- touch events
+- control over which screen regions refresh
+- greyscale and bitmaps
+- a manifest with an icon, player counts, and supported modes
+- a paged launcher
+- a heap in PSRAM instead of a 40 KB cap (both boards have 8 MB PSRAM <a class="cite c-high" href="#src-63" title="Source 63: high">63</a><a class="cite c-verified" href="#src-71" title="Source 71: verified">71</a>)
+- a seat and state-sync API</p>
+<p>Lua has the ecosystem precedent: SUMI <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>, about 66 KOReader Lua games <a class="cite c-unverified" href="#src-58" title="Source 58: unverified">58<span class="lv"> · unverified</span></a>, and Espressif's own IDF component <a class="cite c-high" href="#src-45" title="Source 45: high">45</a>. Berry is the credible alternative, with a large ESP32 deployment in Tasmota <a class="cite c-unverified" href="#src-41" title="Source 41: unverified">41<span class="lv"> · unverified</span></a>, but its figure of about 10 KB of RAM is unverified. Settle the choice with a footprint spike on the S3 before committing. Keep all game and scripting code in new files so upstream merges stay cheap <a class="cite c-high" href="#src-12" title="Source 12: high">12</a><a class="cite c-high" href="#src-13" title="Source 13: high">13</a>.
+4. <strong>Author experience beats API breadth.</strong>
+<em>Feeds:</em> the PRD's non-functional requirements. <em>Confidence:</em> medium.
+SUMI's weak points were a playground running a different Lua version, docs that contradict the firmware, reboot-to-install, and no gallery <a class="cite c-high" href="#src-30" title="Source 30: high">30</a><a class="cite c-high" href="#src-32" title="Source 32: high">32</a>. CrossPlay's in-browser WebAssembly build, with two instances playing each other, is the model to match for testing scripts <a class="cite c-high" href="#src-15" title="Source 15: high">15</a>.
+5. <strong>First-party v1 catalog.</strong>
+<em>Feeds:</em> the PRD's feature list. <em>Confidence:</em> low. The catalog is derived from game rules; there is no usage data.
+Pick games that demonstrate each mode:
+- <strong>More than two players:</strong> Dots and Boxes and SOS.
+- <strong>Hidden information:</strong> Hangman and Mastermind / Bulls and Cows, to exercise the hand-off screen and Play Nearby.
+- <strong>Quick two-player games:</strong> tic-tac-toe and Ultimate tic-tac-toe.
+- <strong>Optionally:</strong> Nine Men's Morris and Sprouts.</p>
+<p>Avoid real-time and drag-heavy games <a class="cite c-high" href="#src-60" title="Source 60: high">60</a><a class="cite c-high" href="#src-61" title="Source 61: high">61</a>. Write at least two of these as Lua scripts, to prove the scripting API.
+6. <strong>Watch CrossMux.</strong>
+<em>Feeds:</em> the product brief's competitor list. <em>Confidence:</em> medium, because its current state comes from its docs, not its source <a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a><a class="cite c-medium" href="#src-54" title="Source 54: medium">54<span class="lv"> · medium</span></a>.
+It is the nearest competitor on the same hardware and has more stars than CrossPlay <a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a><a class="cite c-medium" href="#src-17" title="Source 17: medium">17<span class="lv"> · medium</span></a>. Recheck it by 2026-12-25 for any move into multiplayer or scripting.</p>
+</li>
+</ol>
+<h2 id="open-questions">Open questions</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Why it matters</th>
+<th>How to answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Do X4 Pro and Sticky owners want multiplayer or scripting?</td>
+<td>Recommendation 1 rests on a competitive gap, not demonstrated demand</td>
+<td>Run a user-voice research pass from a network that can reach Reddit (r/xteink, r/eink), or post a short poll</td>
+</tr>
+<tr>
+<td>What are Lua's and Berry's real footprint and speed on the S3 with PSRAM?</td>
+<td>Recommendation 3; no benchmark on the S3 was found</td>
+<td>A one-day spike: run the same small game in both engines and measure heap and frame time</td>
+</tr>
+<tr>
+<td>Is ESP-NOW reliable with three to eight devices, and what does a match cost in battery?</td>
+<td>Recommendation 2; there is no reference project, and CrossPlay never measured the radio's cost <a class="cite c-verified" href="#src-5" title="Source 5: verified">5</a></td>
+<td>A prototype lobby tested on real devices, plus a fake-link test harness</td>
+</tr>
+<tr>
+<td>Which Arduino-ESP32 and ESP-IDF versions does this repo's pioarduino build pin?</td>
+<td>ESP-NOW v2 (1,470 B payloads) needs Arduino-ESP32 3.2.1 or later <a class="cite c-verified" href="#src-69" title="Source 69: verified">69</a>. This is also the overdue row in the staleness map</td>
+<td>Check <code>platformio.ini</code>. This is a project check for the architect, not web research</td>
+</tr>
+<tr>
+<td>Should crosshatch-player devices be able to play with CrossPlay devices?</td>
+<td>CrossPlay's protocol assumes identical builds and raw struct payloads <a class="cite c-high" href="#src-6" title="Source 6: high">6</a></td>
+<td>A product decision. Probably not in v1</td>
+</tr>
+<tr>
+<td>What are the X4 Pro's panel resolution and touch controller?</td>
+<td>They affect layouts and touch handling</td>
+<td>Read the freeink-sdk board config, or measure on the device</td>
+</tr>
+<tr>
+<td>Do CrossMux's Gomoku and Chinese Chess support two human players?</td>
+<td>It would narrow the gap in recommendation 1</td>
+<td>Read its source or install a nightly build</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="sources">Source appendix</h2>
+<details class="appendix"><summary>Show all 72 sources</summary>
+<div class="tw"><table class="sources"><thead><tr><th>#</th><th>Supports</th><th>Publisher</th><th>Published</th><th>Accessed</th><th>Confidence</th></tr></thead><tbody><tr id="src-1"><td>[1]</td><td>22-game launcher list and board-game subset; Guess Who design doc (docs/apps/guesswho.md)</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/Shelf.cpp" target="_blank" rel="noopener">ma-r-s/crossplay, src/apps_local/Shelf.cpp and README</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-2"><td>[2]</td><td>10 Play Nearby games (GameId enum)</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/link/LinkPlay.h" target="_blank" rel="noopener">ma-r-s/crossplay, link/LinkPlay.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-3"><td>[3]</td><td>Among two-player board games, pass-and-play only in Chess and Go</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/chess/ChessScreens.h" target="_blank" rel="noopener">ma-r-s/crossplay, chess/ChessScreens.h and go/GoFlow.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-4"><td>[4]</td><td>Single-device party games; Trivia read aloud; Hearts &quot;the radio seats two&quot;; the lobby screen draws two seats</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/docs/apps/hearts.md" target="_blank" rel="noopener">ma-r-s/crossplay, docs/apps/hearts.md, forehead.md, wavelength.md, link/LinkScreens.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-5"><td>[5]</td><td>ESP-NOW on channel 1, takes over Wi-Fi, unencrypted peers; radio battery cost marked unmeasured (LinkRadio.h)</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/link/LinkRadio.cpp" target="_blank" rel="noopener">ma-r-s/crossplay, link/LinkRadio.cpp</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-6"><td>[6]</td><td>12-byte header plus 192-byte payload (204 B max); raw struct payload</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/link/LinkProtocol.h" target="_blank" rel="noopener">ma-r-s/crossplay, link/LinkProtocol.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-7"><td>[7]</td><td>Whole state sent each turn, 400 ms resend, 10 s drop, no resume; single peer and true/false turn flag</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/link/LinkSession.h" target="_blank" rel="noopener">ma-r-s/crossplay, link/LinkSession.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-8"><td>[8]</td><td>Fixed six-slot receive buffer; link logic runs without hardware; FakeLink host tests</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/link/LinkTransport.h" target="_blank" rel="noopener">ma-r-s/crossplay, link/LinkRadio.h and LinkTransport.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-9"><td>[9]</td><td>Adding a game: LinkActivity with about 12 methods, state of 192 B or less, one line in the launcher; no scripting</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/docs/building-apps.md" target="_blank" rel="noopener">ma-r-s/crossplay, docs/building-apps.md</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-10"><td>[10]</td><td>About 1.3–1.5k lines per simple game (line counts measured on the clone)</td><td><a href="https://github.com/ma-r-s/crossplay/tree/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local" target="_blank" rel="noopener">ma-r-s/crossplay, src/apps_local</a></td><td>2026-09-22</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-11"><td>[11]</td><td>LLM-agent build cycle; launcher broke at 10–16 games</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/docs/games-at-scale.md" target="_blank" rel="noopener">ma-r-s/crossplay, docs/games-at-scale.md</a></td><td>2026-08-08</td><td>2026-09-26</td><td>high</td></tr><tr id="src-12"><td>[12]</td><td>1,430 files added and 169 upstream files modified vs upstream ce2b4fcd (git diff on the clone)</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/LOCAL_SCOPE.md" target="_blank" rel="noopener">ma-r-s/crossplay, LOCAL_SCOPE.md</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-13"><td>[13]</td><td>Daily agent-run upstream merges; one silently deleted fork code</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/docs/workflow/upstream-sync.md" target="_blank" rel="noopener">ma-r-s/crossplay, docs/workflow/upstream-sync.md</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-14"><td>[14]</td><td>PSRAM turned on for the Sticky; Go tree in PSRAM (docs/apps/go.md); refresh timings; refresh battery estimate</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/platformio.ini" target="_blank" rel="noopener">ma-r-s/crossplay, docs/building-apps.md and platformio.ini</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-15"><td>[15]</td><td>WebAssembly browser build with two devices playing each other</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/README.md" target="_blank" rel="noopener">ma-r-s/crossplay, README.md</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-16"><td>[16]</td><td>MIT license</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/LICENSE" target="_blank" rel="noopener">ma-r-s/crossplay, LICENSE</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-17"><td>[17]</td><td>74 stars, 16 forks</td><td><a href="https://github.com/ma-r-s/crossplay" target="_blank" rel="noopener">GitHub, ma-r-s/crossplay repo page</a></td><td>2026-09-26</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-18"><td>[18]</td><td>Release cadence; recent work on the &quot;Live&quot; app; last link-layer commits 2026-09-12 (clone git log)</td><td><a href="https://github.com/ma-r-s/crossplay/releases" target="_blank" rel="noopener">GitHub, ma-r-s/crossplay releases</a></td><td>2026-09-22</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-19"><td>[19]</td><td>12 issues, none about multiplayer; #202 asks for party-game word lists</td><td><a href="https://github.com/ma-r-s/crossplay/issues/202" target="_blank" rel="noopener">GitHub, ma-r-s/crossplay issue #202</a></td><td>2026-09-13</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-20"><td>[20]</td><td>1 of 378 work cards from a non-maintainer user</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/docs/workflow/what-mario-reported.md" target="_blank" rel="noopener">ma-r-s/crossplay, docs/workflow/what-mario-reported.md</a></td><td>2026-09-06</td><td>2026-09-26</td><td>high</td></tr><tr id="src-21"><td>[21]</td><td>SUMI: MIT, ESP32-C3 X4/X3, buttons only; CrossPoint → Papyrix → SUMI</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/README.md" target="_blank" rel="noopener">psychoplath9450/SUMI, LICENSE and README</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-22"><td>[22]</td><td>PUC Lua 5.4.7 compiled as C, LUA_32BITS, hand-written bindings</td><td><a href="https://github.com/psychoplath9450/SUMI/tree/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/lib/lua54" target="_blank" rel="noopener">psychoplath9450/SUMI, lib/lua54</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-23"><td>[23]</td><td>40 KB VM cap, 16 KB scripts, 100k-instruction hook, lua_pcall, error screen, callbacks</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/src/plugins/LuaPlugin.cpp" target="_blank" rel="noopener">psychoplath9450/SUMI, src/plugins/LuaPlugin.cpp</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-24"><td>[24]</td><td>46-global API; sandboxed file paths; no touch or bitmaps</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/src/plugins/LuaBindings.h" target="_blank" rel="noopener">psychoplath9450/SUMI, src/plugins/LuaBindings.h</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-25"><td>[25]</td><td>linit trimmed: no require, io, os, debug or coroutines</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/lib/lua54/linit.c" target="_blank" rel="noopener">psychoplath9450/SUMI, lib/lua54/linit.c</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-26"><td>[26]</td><td>Flat /custom/*.lua scan, at most 8 scripts, no manifest</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/src/states/PluginListState.cpp" target="_blank" rel="noopener">psychoplath9450/SUMI, src/states/PluginListState.cpp</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-27"><td>[27]</td><td>Host redraws everything; full refresh every 30 renders; no refresh control for scripts</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/src/states/PluginHostState.cpp" target="_blank" rel="noopener">psychoplath9450/SUMI, src/states/PluginHostState.cpp</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-28"><td>[28]</td><td>BLE bridge to a web page with 480 B JSON; no device-to-device play</td><td><a href="https://github.com/psychoplath9450/SUMI/blob/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/docs/PLUGIN_BRIDGE.md" target="_blank" rel="noopener">psychoplath9450/SUMI, docs/PLUGIN_BRIDGE.md</a></td><td>2026-04</td><td>2026-09-26</td><td>high</td></tr><tr id="src-29"><td>[29]</td><td>Built-in games are C++; the only Lua example is doorbell.lua</td><td><a href="https://github.com/psychoplath9450/SUMI/tree/1a1c47c3fc4fa7a7c2d4ffba0f55e1e7dfdad1cb/docs/plugin_examples" target="_blank" rel="noopener">psychoplath9450/SUMI, docs/plugin_examples</a></td><td>2026-05-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-30"><td>[30]</td><td>AI-prompt authoring; Fengari (Lua 5.3) playground; reboot to install; no gallery</td><td><a href="https://sumi.page/plugins/" target="_blank" rel="noopener">sumi.page, plugins</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-31"><td>[31]</td><td>One author, 47 commits, last commit 2026-05-30, about 180 stars</td><td><a href="https://github.com/psychoplath9450/SUMI" target="_blank" rel="noopener">GitHub, psychoplath9450/SUMI</a></td><td>2026-09-26</td><td>2026-09-26</td><td>high</td></tr><tr id="src-32"><td>[32]</td><td>Docs describe sumi.* and os.time, which the firmware doesn&#x27;t expose; #20 closed with no reply</td><td><a href="https://github.com/psychoplath9450/SUMI/issues/20" target="_blank" rel="noopener">GitHub, SUMI issue #20</a></td><td>2026-05-02</td><td>2026-09-26</td><td>high</td></tr><tr id="src-33"><td>[33]</td><td>&quot;The only genuine on-device scriptable plugins in the scene&quot;</td><td><a href="https://pocketink.io/firmware/sumi/" target="_blank" rel="noopener">PocketInk, SUMI firmware page</a></td><td>2026-05 or later</td><td>2026-09-26</td><td>high</td></tr><tr id="src-34"><td>[34]</td><td>ESP-NOW: 20 peers (7 to 17 encrypted), 250/1470 B payloads, broadcast, delivery acked only at the radio layer</td><td><a href="https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/network/esp_now.html" target="_blank" rel="noopener">Espressif, ESP-IDF ESP-NOW API reference (ESP32-S3)</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-35"><td>[35]</td><td>SoftAP and ESP-NOW share encryption keys</td><td><a href="https://raw.githubusercontent.com/espressif/esp-idf/master/components/esp_wifi/include/esp_wifi_types_generic.h" target="_blank" rel="noopener">Espressif, esp-idf esp_wifi_types_generic.h</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-36"><td>[36]</td><td>S3/C3 BLE controller: at most 10 activities, 828 B each</td><td><a href="https://raw.githubusercontent.com/espressif/esp-idf/master/components/bt/controller/esp32c3/Kconfig.in" target="_blank" rel="noopener">Espressif, esp-idf bt/controller/esp32c3/Kconfig.in</a></td><td>unknown</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-37"><td>[37]</td><td>NimBLE host defaults to 3 connections</td><td><a href="https://raw.githubusercontent.com/espressif/esp-idf/master/components/bt/host/nimble/Kconfig.in" target="_blank" rel="noopener">Espressif, esp-idf nimble Kconfig.in</a></td><td>unknown</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-38"><td>[38]</td><td>Lua compiled as C uses setjmp/longjmp; compiled as C++ uses throw</td><td><a href="https://github.com/lua/lua/blob/master/ldo.c" target="_blank" rel="noopener">Lua.org, lua/ldo.c</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-39"><td>[39]</td><td>sol2 SOL_NO_EXCEPTIONS disables catching errors from bound C++ functions</td><td><a href="https://sol2.readthedocs.io/en/latest/exceptions.html" target="_blank" rel="noopener">sol2 docs, exceptions</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-40"><td>[40]</td><td>Berry core under 40 KiB, MIT</td><td><a href="https://github.com/berry-lang/berry" target="_blank" rel="noopener">berry-lang, README</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-41"><td>[41]</td><td>Berry RAM &quot;starts at ~10KB&quot; (single source), uses PSRAM, don&#x27;t block more than 50 ms</td><td><a href="https://tasmota.github.io/docs/Berry/" target="_blank" rel="noopener">Tasmota, Berry docs</a></td><td>unknown</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-42"><td>[42]</td><td>wasm3 in minimal maintenance; about 64 KB code and 10 KB RAM</td><td><a href="https://github.com/wasm3/wasm3" target="_blank" rel="noopener">wasm3, README</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-43"><td>[43]</td><td>Elk is AGPLv3 or commercial; no arrays or closures</td><td><a href="https://github.com/cesanta/elk" target="_blank" rel="noopener">Cesanta, elk README</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-44"><td>[44]</td><td>MicroPython embed port; 8 KB heap example; host supplies the stack top</td><td><a href="https://raw.githubusercontent.com/micropython/micropython/master/examples/embedding/main.c" target="_blank" rel="noopener">MicroPython, examples/embedding/main.c</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-45"><td>[45]</td><td>Lua as an ESP-IDF component, MIT, scripts loaded from a filesystem</td><td><a href="https://developer.espressif.com/blog/using-lua-as-esp-idf-component-with-esp32/" target="_blank" rel="noopener">Espressif Developer Portal, Lua as an ESP-IDF component</a></td><td>2024-10-22 (updated 2026-04-29)</td><td>2026-09-26</td><td>high</td></tr><tr id="src-46"><td>[46]</td><td>NodeMCU Lua 5.1: as little as 17 KB of RAM for apps; LTR saves 20–25 KB</td><td><a href="https://nodemcu.readthedocs.io/en/dev-esp32/lua-developer-faq/" target="_blank" rel="noopener">NodeMCU, Lua developer FAQ</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-47"><td>[47]</td><td>SoftAP max_connection configured to 15 on S3; only one station connected in that report</td><td><a href="https://github.com/espressif/esp-idf/issues/10511" target="_blank" rel="noopener">espressif/esp-idf, issue #10511</a></td><td>2023-01</td><td>2026-09-26</td><td>low</td></tr><tr id="src-48"><td>[48]</td><td>E-ink ghosting leaked typed keys until a full refresh</td><td><a href="https://goodereader.com/blog/kobo-ereader-news/e-ink-ghosting-effect-can-reveal-sensitive-info-such-as-passwords" target="_blank" rel="noopener">Good e-Reader</a></td><td>2024-05-08</td><td>2026-09-26</td><td>high</td></tr><tr id="src-49"><td>[49]</td><td>Pass-and-play hand-off: full blackout, no hidden state in any frame, opt-in per game through its manifest</td><td><a href="https://github.com/DuelBox/DuelBox-Web/issues/134" target="_blank" rel="noopener">DuelBox, issue #134</a></td><td>2026-08-19</td><td>2026-09-26</td><td>high</td></tr><tr id="src-50"><td>[50]</td><td>Hotseat hides the current player&#x27;s hand at End Turn</td><td><a href="https://help.tabletopia.com/knowledge-base/game-modes-solo-hotseat-online/" target="_blank" rel="noopener">Tabletopia help center</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-51"><td>[51]</td><td>ESP32 multiplayer projects are 2-player or phones-join-a-hotspot</td><td><a href="https://github.com/nirinovich/gamebox-esp32" target="_blank" rel="noopener">GitHub hobby projects, e.g. gamebox-esp32</a></td><td>unknown</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-52"><td>[52]</td><td>About 20 CrossPoint forks listed; game forks converge on the same games; most forks drop BLE on the C3</td><td><a href="https://pocketink.io/firmware/" target="_blank" rel="noopener">PocketInk, firmware directory</a></td><td>2026-08-24</td><td>2026-09-26</td><td>high</td></tr><tr id="src-53"><td>[53]</td><td>CrossMux Nightly builds for Sticky and X4 Pro</td><td><a href="https://github.com/0x1abin/crossmux" target="_blank" rel="noopener">0x1abin/crossmux, README</a></td><td>2026-09</td><td>2026-09-26</td><td>high</td></tr><tr id="src-54"><td>[54]</td><td>CrossMux games compiled in, hidden by default; its docs mention no scripting or multiplayer</td><td><a href="https://github.com/0x1abin/crossmux/blob/HEAD/src/activities/apps/README.md" target="_blank" rel="noopener">0x1abin/crossmux, src/activities/apps/README.md</a></td><td>2026-09</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-55"><td>[55]</td><td>CrossInk Games Edition X4 Pro-only; games out of scope in CrossInk and CrossPoint</td><td><a href="https://github.com/LegendaryDrogan/crossink-games-edition" target="_blank" rel="noopener">LegendaryDrogan/crossink-games-edition, README</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-56"><td>[56]</td><td>noah-ing/X4: Chess, Minesweeper, Snake, 2048 on the C3</td><td><a href="https://github.com/noah-ing/X4" target="_blank" rel="noopener">noah-ing/X4</a></td><td>2026-08-20</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-57"><td>[57]</td><td>CrossPoint #678 (games request) closed as not planned</td><td><a href="https://github.com/crosspoint-reader/crosspoint-reader/issues/678" target="_blank" rel="noopener">crosspoint-reader, issue #678</a></td><td>2026-02-03</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-58"><td>[58]</td><td>70 KOReader Lua plugins (about 66 games), including party games and a plugin manager</td><td><a href="https://github.com/t2ym5u/koreader-plugins" target="_blank" rel="noopener">t2ym5u/koreader-plugins</a></td><td>2026</td><td>2026-09-26</td><td>high</td></tr><tr id="src-59"><td>[59]</td><td>Tatham puzzles are MIT</td><td><a href="https://www.chiark.greenend.org.uk/~sgtatham/puzzles/doc/licence.html" target="_blank" rel="noopener">Simon Tatham, licence</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-60"><td>[60]</td><td>41 single-player puzzles; PocketBook port needed per-game rework (greyscale, reworked dragging)</td><td><a href="https://github.com/SteffenBauer/PocketPuzzles" target="_blank" rel="noopener">SteffenBauer/PocketPuzzles</a></td><td>2020–2026</td><td>2026-09-26</td><td>high</td></tr><tr id="src-61"><td>[61]</td><td>Kindle port: some games need right-click or a keyboard</td><td><a href="https://github.com/kbarni/kindlepuzzles" target="_blank" rel="noopener">kbarni/kindlepuzzles</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-62"><td>[62]</td><td>X4 Pro specs; chip not disclosed by the vendor (reported as ESP32-S3)</td><td><a href="https://www.cnx-software.com/2026/07/23/99-xteink-x4-pro-4-3-inch-touchscreen-ereader-to-support-crosspoint-reader-open-source-firmware/" target="_blank" rel="noopener">CNX Software, X4 Pro</a></td><td>2026-07-23</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-63"><td>[63]</td><td>reTerminal Sticky: ESP32-S3R8, 8 MB PSRAM, 800×480, touch, BLE 5</td><td><a href="https://www.cnx-software.com/2026/07/31/reterminal-sticky-3-97-inch-magnetic-touch-epaper-display-is-supported-by-four-open-source-firmware-projects/" target="_blank" rel="noopener">CNX Software, reTerminal Sticky</a></td><td>2026-07-31</td><td>2026-09-26</td><td>high</td></tr><tr id="src-64"><td>[64]</td><td>X4 Pro touch is responsive; refresh &quot;not bothersome&quot;</td><td><a href="https://abstractnonsense.xyz/microblog/2026-09-07-xteink-x4-pro-review/" target="_blank" rel="noopener">Abstract Nonsense, X4 Pro review</a></td><td>2026-09-07</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-65"><td>[65]</td><td>X4 Pro is an ESP32-S3 with 8 MB PSRAM</td><td><a href="https://github.com/clackups/draftling/issues/40" target="_blank" rel="noopener">clackups/draftling, issue #40</a></td><td>2026-08-18</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-66"><td>[66]</td><td>Nature ships pass-and-play for up to four players; Ticket to Ride also offers it (snippet)</td><td><a href="https://apps.apple.com/us/app/nature-board-game/id6738703558" target="_blank" rel="noopener">App Store, Nature board game</a></td><td>unknown</td><td>2026-09-26</td><td>medium</td></tr><tr id="src-67"><td>[67]</td><td>Verification: pass-and-play modes in Chess and Go; Insider (4–8 people) and Wavelength&#x27;s &quot;PASS THE DEVICE&quot;</td><td><a href="https://github.com/ma-r-s/crossplay/blob/31d94db1e10f6fd40a44cf6fb6a6768edc6efa00/src/apps_local/wavelength/WavelengthCore.h" target="_blank" rel="noopener">ma-r-s/crossplay, wavelength/WavelengthCore.h and insider/InsiderActivity.h</a></td><td>2026-09-22</td><td>2026-09-26</td><td>high</td></tr><tr id="src-68"><td>[68]</td><td>esp_now.h: 20 total peers, 6 encrypted by default, 250/1470 B payloads</td><td><a href="https://raw.githubusercontent.com/espressif/esp-idf/master/components/esp_wifi/include/esp_now.h" target="_blank" rel="noopener">Espressif, esp-idf esp_now.h</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-69"><td>[69]</td><td>Arduino-ESP32 ESP-NOW v2 support (PR #11524, merged 2025-06-30; first shipped in 3.2.1, listed again in 3.3.0)</td><td><a href="https://github.com/espressif/arduino-esp32/pull/11524" target="_blank" rel="noopener">espressif/arduino-esp32, PR #11524</a></td><td>2025-06-30</td><td>2026-09-26</td><td>high</td></tr><tr id="src-70"><td>[70]</td><td>Lua uses longjmp for errors, or exceptions if compiled as C++</td><td><a href="https://www.lua.org/manual/5.4/manual.html" target="_blank" rel="noopener">Lua.org, Lua 5.4 manual §4.4</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr><tr id="src-71"><td>[71]</td><td>Upstream x4pro build: esp32-s3-devkitc1-n16r8 board profile, octal PSRAM, BOARD_HAS_PSRAM</td><td><a href="https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/platformio.ini" target="_blank" rel="noopener">crosspoint-reader, platformio.ini (develop)</a></td><td>2026-09</td><td>2026-09-26</td><td>high</td></tr><tr id="src-72"><td>[72]</td><td>Berry is MIT; runs on &quot;less than 4KiB heap&quot; on a Cortex-M4</td><td><a href="https://berry-lang.github.io/" target="_blank" rel="noopener">berry-lang docs site</a></td><td>unknown</td><td>2026-09-26</td><td>high</td></tr></tbody></table></div>
+</details>
+<h2 id="staleness-map">Staleness map</h2>
+<p>This was computed with <code>recon_kit.py staleness</code> using the pack's freshness windows: features 3 months, trajectory 6, sentiment 12, versions 1, architecture 24, performance and catalog 12. Where a source has no publication date, the access date is used.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Class</th>
+<th>Published</th>
+<th>Recheck by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a class="cite c-verified" href="#src-69" title="Source 69: verified">69</a> Arduino-ESP32 ESP-NOW v2 support</td>
+<td>version</td>
+<td>2025-06-30</td>
+<td><strong>overdue</strong>: recheck against the pinned platform (see Open questions)</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-71" title="Source 71: verified">71</a> X4 Pro is an ESP32-S3 with 8 MB PSRAM (upstream build config)</td>
+<td>version</td>
+<td>2026-09</td>
+<td>2026-10-26</td>
+</tr>
+<tr>
+<td><a class="cite c-unverified" href="#src-31" title="Source 31: unverified">31<span class="lv"> · unverified</span></a> SUMI quiet since May</td>
+<td>trajectory</td>
+<td>2026-05-30</td>
+<td>2026-11-30</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-3" title="Source 3: verified">3</a> Pass-and-play only in Chess and Go (CrossPlay)</td>
+<td>feature</td>
+<td>2026-09-22</td>
+<td>2026-12-22</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-53" title="Source 53: verified">53</a> CrossMux on Sticky and X4 Pro, no documented multiplayer</td>
+<td>feature</td>
+<td>2026-09</td>
+<td>2026-12-25</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-34" title="Source 34: verified">34</a> ESP-NOW peer and payload limits</td>
+<td>feature</td>
+<td>unknown (accessed 2026-09-26)</td>
+<td>2026-12-26</td>
+</tr>
+<tr>
+<td><a class="cite c-unverified" href="#src-57" title="Source 57: unverified">57<span class="lv"> · unverified</span></a> Upstream closed a games request</td>
+<td>sentiment</td>
+<td>2026-02-03</td>
+<td>2027-02-03</td>
+</tr>
+<tr>
+<td><a class="cite c-unverified" href="#src-18" title="Source 18: unverified">18<span class="lv"> · unverified</span></a> CrossPlay's momentum shifted to "Live"</td>
+<td>trajectory</td>
+<td>2026-09-22</td>
+<td>2027-03-22</td>
+</tr>
+<tr>
+<td><a class="cite c-unverified" href="#src-52" title="Source 52: unverified">52<span class="lv"> · unverified</span></a> No other Xteink fork documents local multiplayer</td>
+<td>catalog</td>
+<td>2026-08-24</td>
+<td>2027-08-24</td>
+</tr>
+<tr>
+<td><a class="cite c-medium" href="#src-19" title="Source 19: medium">19<span class="lv"> · medium</span></a> CrossPlay user feedback is thin</td>
+<td>sentiment</td>
+<td>2026-09-13 (issues to 2026-09-24)</td>
+<td>2027-09-24</td>
+</tr>
+<tr>
+<td><a class="cite c-unverified" href="#src-41" title="Source 41: unverified">41<span class="lv"> · unverified</span></a> Berry uses about 10 KB of RAM on ESP32</td>
+<td>performance</td>
+<td>unknown (accessed 2026-09-26)</td>
+<td>2027-09-26</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-23" title="Source 23: verified">23</a> SUMI Lua limits and API</td>
+<td>architecture</td>
+<td>2026-05-30</td>
+<td>2028-05-30</td>
+</tr>
+<tr>
+<td><a class="cite c-verified" href="#src-7" title="Source 7: verified">7</a> CrossPlay is hard-coded to two players</td>
+<td>architecture</td>
+<td>2026-09-22</td>
+<td>2028-09-22</td>
+</tr>
+</tbody>
+</table></div>
+<p>Competitor features move fastest, so run a Refresh before the PRD is finalized if it slips past December 2026.</p>
+<footer>Generated from <code>research.md</code> in <code>_bmad-output/planning-artifacts/research/competitive-crossplay-sumi-v1-scope-2026-09-26/</code>. The markdown is the source of truth; this page is its presentation.</footer>
+</main>
+</div>
+</div>
