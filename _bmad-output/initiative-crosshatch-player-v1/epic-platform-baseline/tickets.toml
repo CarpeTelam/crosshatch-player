@@ -1,0 +1,64 @@
+# tickets.toml — epic-platform-baseline's agreed stories in build order. tickets.py reads it.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Games build flag, empty game libraries, and host suites"
+description = "Sets `FREEINK_CAP_GAMES=1` in the six x4pro and sticky envs and in `simulator_x4pro` and `simulator_sticky`, adds `lib/GameCore`, `lib/GameScript`, and `lib/GameIcons` with at least one source file each, lists them in the `[base]` `lib_deps` so every env compiles them, and adds `test/game_core` and `test/game_script` with one passing test each; entry 4 adds `lua` to the same `lib_deps` line."
+verify = "On its PR, CI builds all five envs with the three libraries compiled (named in each build log), `sim.sh build x4pro` succeeds, `pio project config` shows the flag only on the eight game envs, and ctest runs both new suites."
+covers = ["R3", "R6"]
+after = []
+hitl = false
+risk = "medium"
+unknown = "Whether the simulator envs, which set their own library options, pick up the `[base]` `lib_deps` line or need it restated in `simulator.ini`."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-3 rows 1 and 3", ".claude/skills/run-crosshatch-player/SKILL.md"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Upstream-touch ledger and its CI job"
+description = "Writes `docs/crosshatch/upstream-touches.md` with the 9 AD-3 rows, the reserve slot, and the allowlist, a fork-only script that checks a ref against it (paths present in `upstream/develop`, merge-base to HEAD, `--no-renames`, the `freeink-sdk` pointer included) and trial-merges `upstream/develop` for conflicts in game paths (`lib/Game*`, `lib/lua`, `src/games`, `src/activities/games`, `games`, `assets/game-icons`, `docs/crosshatch`), and a new fork-only workflow that runs it with full history on every PR; the owner then makes it a required check."
+verify = "Run locally, the script fails a branch editing an unledgered upstream file, fails one moving the `freeink-sdk` pointer, and passes one editing only ledgered or fork-only files; the workflow passes on its own PR."
+covers = ["R1", "R2"]
+after = []
+hitl = true
+risk = "medium"
+unknown = "How long fetching upstream's full history takes in the job."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-3", "AGENTS.md, Policy"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "x4pro flash budget gate"
+description = "Adds a fork-only workflow that builds x4pro twice on the PR's commit, with `FREEINK_CAP_GAMES` on and off, compares the `firmware.bin` sizes, prints the difference, and fails above 250 KB; the owner then makes it a required check; entry 4 is the first PR it measures with real code."
+verify = "The job passes on its own PR with a difference near zero, and fails when its limit is temporarily set below the measured difference."
+covers = ["R5"]
+after = []
+hitl = true
+risk = "low"
+unknown = "How to turn the flag off for one build without editing `platformio.ini`, and the job time of two x4pro builds per PR."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, Operational envelope"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Vendor Lua 5.5.1"
+description = "Vendors Lua 5.5.1 byte-for-byte into `lib/lua/` with a fork-owned `library.json` srcFilter excluding the eight AD-4 files and a `.clang-format` with `DisableFormat: true`, adds `lua` to the `[base]` `lib_deps` line from entry 1 and `--suppress=*:*/lib/lua/*` to `check_flags`, builds the same source list in `test/game_script`, and adds a host test that runs a Lua chunk and asserts 64-bit integers."
+verify = "CI builds all five envs with `lib/lua`; `diff -r` against the 5.5.1 tarball, whose SHA-256 is recorded, shows no change; no `LUA_COMPAT_` define appears in the build configuration; the format check, `pio check`, and the size gate pass; the `test/game_script` Lua test passes."
+covers = ["R4", "R3", "R6"]
+after = [1, 3]
+hitl = false
+risk = "medium"
+unknown = "Warnings from the shared C++ build flags on Lua's `.c` files, and how much time `pio check` spends on Lua sources despite the suppress line."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-4, AD-3 row 1"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "Refactor sweep"
+description = "Cleans up what the build records and deferred review findings of entries 1 to 4 name, with its scope set when it starts; cleanup only."
+verify = "Its PR has every CI, ledger, and size job green on all five envs."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6"]
+after = [2, 4]
+hitl = false
+risk = "low"
