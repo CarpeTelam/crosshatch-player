@@ -2,7 +2,7 @@
 
 // GameCore: the game platform's domain (roster, session, turns, snapshots, wire
 // protocol, manifests) and its ports. Host-testable C++ with no device, Lua, or
-// src/ dependencies. Empty until the game epics add units.
+// src/ dependencies.
 namespace GameCore {
 
 // Returns "GameCore". Gives the skeleton a linkable symbol for the build and the

@@ -1,6 +1,6 @@
 #if FREEINK_CAP_GAMES
 
-// Build anchor for the game libraries (architecture AD-2). PlatformIO's default
+// Build anchor for the game libraries. PlatformIO's default
 // `chain` dependency finder follows these includes without evaluating the #if, so
 // every env, C3 included, compiles lib/GameCore, lib/GameScript, and lib/GameIcons;
 // the linker drops them where nothing references them. Envs using `deep+` (the
