@@ -53,7 +53,7 @@ Build configuration, CI, the upstream-touch ledger, the vendored engine, and emp
 
 - Decision: entry 1 is the tracer bullet: the build flag, the three libraries, and the host suites wired through CI (2026-09-26).
 - Decision: entries 2 and 3 add only new files and run beside entry 1; land entry 2 first so later PRs show the ledger job passing; entry 4 waits on entries 1 and 3 (2026-09-26).
-- Decision: the game libraries and `lua` are listed in `[base]` `lib_deps` so every env compiles them; AD-3 row 1 was amended to record the second shared line (user's decision, 2026-09-26).
+- Decision: the game libraries and `lua` compile on every env through the fork-only, whole-file-guarded `src/games/GamesBuildAnchor.cpp`, not a `[base]` `lib_deps` entry, so `platformio.ini` gets no extra shared line; AD-2 records the mechanism (user's decision, 2026-09-26, replacing the same day's `lib_deps` choice).
 - Decision: `.gitignore` and `.github/PULL_REQUEST_TEMPLATE.md`, already changed by the fork, join the AD-3 allowlist instead of being reverted (user's decision, 2026-09-26).
 - Decision: the flash budget is measured as x4pro with games on minus the same commit with games off, not against a fixed baseline, so upstream merges never consume it; Done when 5 and the spine's Operational envelope were reworded (user's decision, 2026-09-26).
 - Decision: the owner adds the ledger and size jobs as required checks in branch protection; entries 2 and 3 are hitl for that step (user's decision, 2026-09-26).

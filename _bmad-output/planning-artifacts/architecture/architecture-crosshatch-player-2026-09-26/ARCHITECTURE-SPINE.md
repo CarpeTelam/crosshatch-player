@@ -65,7 +65,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 
 - **Binds:** all
 - **Prevents:** game code costing flash or RAM on C3 builds, or breaking them.
-- **Rule:** `FREEINK_CAP_GAMES=1` is set for `x4pro`, `sticky`, their `-gh_release` / `-gh_release_rc` variants, and the fork-owned simulator envs only. Every include of game code in an upstream file sits inside `#if FREEINK_CAP_GAMES`. Every `.cpp` under `src/games/` and `src/activities/games/` is wrapped whole-file in `#if FREEINK_CAP_GAMES`. `lib/Game*` has no namespace-scope objects with non-trivial constructors and no static buffers over 64 B (generated `constexpr` icon data excepted). All game libraries compile, unreferenced, for `default`, `x4c`, and `papermono`. Under `SIMULATOR`, `EspNowLink` and `nearby` are compiled out and the SHA-256 helper uses OpenSSL.
+- **Rule:** `FREEINK_CAP_GAMES=1` is set for `x4pro`, `sticky`, their `-gh_release` / `-gh_release_rc` variants, and the fork-owned simulator envs only. Every include of game code in an upstream file sits inside `#if FREEINK_CAP_GAMES`. Every `.cpp` under `src/games/` and `src/activities/games/` is wrapped whole-file in `#if FREEINK_CAP_GAMES`. `lib/Game*` has no namespace-scope objects with non-trivial constructors and no static buffers over 64 B (generated `constexpr` icon data excepted). All game libraries compile, unreferenced, for `default`, `x4c`, and `papermono`: the fork-only `src/games/GamesBuildAnchor.cpp`, whole-file guarded like every file there, includes a header from each game library and `lua.h`; PlatformIO's default `chain` dependency finder does not evaluate `#if`, so every env builds the libraries and the linker drops them where nothing references them. No `lib_deps` entry is added. Under `SIMULATOR`, `EspNowLink` and `nearby` are compiled out and the SHA-256 helper uses OpenSSL.
 
 ### AD-3: The upstream-touch ledger is the cap [ADOPTED]
 
@@ -75,7 +75,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 
   | # | Upstream file | Change | Guarded |
   | --- | --- | --- | --- |
-  | 1 | `platformio.ini` | `FREEINK_CAP_GAMES=1` in the six x4pro/sticky envs; `--suppress=*:*/lib/lua/*` in the shared `check_flags`; `GameCore`, `GameScript`, `GameIcons`, and `lua` in the shared `lib_deps`, so every env compiles them | env-scoped + two shared lines |
+  | 1 | `platformio.ini` | `FREEINK_CAP_GAMES=1` in the six x4pro/sticky envs; `--suppress=*:*/lib/lua/*` in the shared `check_flags` | env-scoped + one shared line |
   | 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys appended | append-only |
   | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
   | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |

@@ -4,13 +4,13 @@
 id = 1
 type = "story"
 title = "Games build flag, empty game libraries, and host suites"
-description = "Sets `FREEINK_CAP_GAMES=1` in the six x4pro and sticky envs and in `simulator_x4pro` and `simulator_sticky`, adds `lib/GameCore`, `lib/GameScript`, and `lib/GameIcons` with at least one source file each, lists them in the `[base]` `lib_deps` so every env compiles them, and adds `test/game_core` and `test/game_script` with one passing test each; entry 4 adds `lua` to the same `lib_deps` line."
+description = "Sets `FREEINK_CAP_GAMES=1` in the six x4pro and sticky envs and in `simulator_x4pro` and `simulator_sticky`, adds `lib/GameCore`, `lib/GameScript`, and `lib/GameIcons` with at least one source file each and a whole-file-guarded `src/games/GamesBuildAnchor.cpp` that includes a header from each so every env compiles them, and adds `test/game_core` and `test/game_script` with one passing test each; entry 4 adds `lua.h` to the same anchor."
 verify = "On its PR, CI builds all five envs with the three libraries compiled (named in each build log), `sim.sh build x4pro` succeeds, `pio project config` shows the flag only on the eight game envs, and ctest runs both new suites."
 covers = ["R3", "R6"]
 after = []
 hitl = false
 risk = "medium"
-unknown = "Whether the simulator envs, which set their own library options, pick up the `[base]` `lib_deps` line or need it restated in `simulator.ini`."
+unknown = "The simulator envs use the `deep+` dependency finder, which does evaluate `#if`, so they build the libraries only where the flag is set; whether that holds for `simulator_x4pro` and `simulator_sticky` without changes to `simulator.ini`."
 references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-3 rows 1 and 3", ".claude/skills/run-crosshatch-player/SKILL.md"]
 
 [[entry]]
@@ -43,7 +43,7 @@ references = ["_bmad-output/planning-artifacts/architecture/architecture-crossha
 id = 4
 type = "story"
 title = "Vendor Lua 5.5.1"
-description = "Vendors Lua 5.5.1 byte-for-byte into `lib/lua/` with a fork-owned `library.json` srcFilter excluding the eight AD-4 files and a `.clang-format` with `DisableFormat: true`, adds `lua` to the `[base]` `lib_deps` line from entry 1 and `--suppress=*:*/lib/lua/*` to `check_flags`, builds the same source list in `test/game_script`, and adds a host test that runs a Lua chunk and asserts 64-bit integers."
+description = "Vendors Lua 5.5.1 byte-for-byte into `lib/lua/` with a fork-owned `library.json` srcFilter excluding the eight AD-4 files and a `.clang-format` with `DisableFormat: true`, includes `lua.h` (after `<climits>`, with the `lua_Integer` size `static_assert`) in entry 1's anchor file, adds `--suppress=*:*/lib/lua/*` to `check_flags`, builds the same source list in `test/game_script`, and adds a host test that runs a Lua chunk and asserts 64-bit integers."
 verify = "CI builds all five envs with `lib/lua`; `diff -r` against the 5.5.1 tarball, whose SHA-256 is recorded, shows no change; no `LUA_COMPAT_` define appears in the build configuration; the format check, `pio check`, and the size gate pass; the `test/game_script` Lua test passes."
 covers = ["R4", "R3", "R6"]
 after = [1, 3]
