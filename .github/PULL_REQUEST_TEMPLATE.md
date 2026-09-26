@@ -1,3 +1,6 @@
+<!-- PR title must follow Conventional Commits, `type: subject` or `type(scope): subject`, or the Title Check fails.
+     Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Example: `fix: keep reading progress on wake` -->
+
 ## Summary
 
 * **What is the goal of this PR?** (e.g., Implements the new feature for file uploading.)

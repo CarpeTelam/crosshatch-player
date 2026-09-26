@@ -10,7 +10,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Keep the diff against upstream `develop` minimal so upstream merges stay clean: put fork-only code in new files or behind `FREEINK_DEVICE_*` / `FREEINK_CAP_*` guards; never reformat, rename, or reorganize upstream code you are not otherwise changing.
 - Never move the `freeink-sdk` submodule pointer or edit `.skills/` for fork-only work; propose those changes upstream.
 - Shared code must still build and run on the ESP32-C3 (~380 KB RAM, no PSRAM); apply the memory and stack rules below in S3-only code too.
-- Push feature branches to `origin` (this fork) and open PRs into its `develop`.
+- Push feature branches to `origin` (this fork) and open PRs into its `develop`. Title every PR as a Conventional Commit (`type: subject`, types `feat` `fix` `docs` `style` `refactor` `perf` `test` `build` `ci` `chore` `revert`); the `Title Check` job (`amannn/action-semantic-pull-request`) fails any other title.
 - Sync upstream by merging, with `upstream` = `https://github.com/crosspoint-reader/crosspoint-reader.git`: run `git config merge.ours.driver true` once per clone, then merge `upstream/develop` into `develop`. `AGENTS.md` is this fork's own; `.gitattributes` keeps our copy. Without the driver, resolve with `git checkout --ours AGENTS.md`; resolve an upstream `CLAUDE.md` change with `git rm CLAUDE.md`.
 - Never hand-edit generated files: `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` (from `lib/I18n/translations/*.yaml`) and `*.generated.h` (from `src/**/*.html` and `.js`); every `pio run` regenerates them.
 
