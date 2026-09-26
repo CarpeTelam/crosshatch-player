@@ -106,8 +106,8 @@ dl.adlist dd{margin:0}
     <h1>How the crosshatch game engine fits together</h1>
     <p class="lead">A guided tour of the v1 architecture spine: what the engine is for, how its pieces depend on each other, and what happens from the moment a game file lands on the SD card to the moment two players pass a device across the table.</p>
     <dl class="meta">
-      <div><dt>Status</dt><dd>Final, 2026-09-26</dd></div>
-      <div><dt>Decisions</dt><dd>AD-1 to AD-24</dd></div>
+      <div><dt>Status</dt><dd>Final, updated 2026-09-26</dd></div>
+      <div><dt>Decisions</dt><dd>AD-1 to AD-25</dd></div>
       <div><dt>Engine</dt><dd>Lua 5.5.1</dd></div>
       <div><dt>API</dt><dd>Level 1</dd></div>
       <div><dt>Devices</dt><dd>X4 Pro, Sticky</dd></div>
@@ -128,6 +128,7 @@ dl.adlist dd{margin:0}
         <li><a href="#drawing">Drawing and icons</a></li>
         <li><a href="#limits">The guardrails</a></li>
         <li><a href="#fork">Staying mergeable</a></li>
+        <li><a href="#release">Releases and updates</a></li>
         <li><a href="#open">Still open</a></li>
         <li><a href="#index">Decision index</a></li>
       </ol>
@@ -500,7 +501,7 @@ dl.adlist dd{margin:0}
 
       <h2 id="fork"><span class="stop">Stop 10</span>Staying mergeable with upstream</h2>
       <p class="ads"><span>AD-2</span><span>AD-3</span></p>
-      <p>Upstream merge pain is what started this project, so the upstream files v1 may touch are listed by name. A fork-only CI job fails any PR that changes an upstream file off this list; one spare slot exists, and anything more needs an architecture update first.</p>
+      <p>Upstream merge pain is what started this project, so the upstream files v1 may touch are listed by name. A fork-only CI job fails any PR that changes an upstream file off this list. The one spare slot now goes to the update check, so anything more needs an architecture update first. Files the fork had already changed before v1, such as <code>AGENTS.md</code> and <code>.gitignore</code>, are on a short allowlist.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Upstream file</th><th>Change</th></tr></thead>
@@ -511,26 +512,45 @@ dl.adlist dd{margin:0}
             <tr><td><code>ActivityManager.h</code>, <code>.cpp</code></td><td>The Games menu item and <code>goToGames()</code>.</td></tr>
             <tr><td><code>HomeActivity.h</code>, <code>.cpp</code></td><td>The Games entry on Home, reusing an existing list icon.</td></tr>
             <tr><td><code>CoverGridHomeUi.h</code>, <code>.cpp</code></td><td>The Games tile, drawn from the icon library.</td></tr>
+            <tr><td><code>OtaUpdater.cpp</code></td><td>Guarded calls that point fork builds at the fork's own releases (Stop 11).</td></tr>
           </tbody>
         </table>
       </div>
-      <p>That's nine files, each change guarded where the language allows. Vendored Lua is shielded from the formatter by its own <code>.clang-format</code> file instead of an edit to the upstream format script.</p>
+      <p>That's ten files, each change guarded where the language allows. The game libraries still compile on every board through one guarded fork-only anchor file, not an extra <code>platformio.ini</code> line, and a second fork-only job fails a PR whose games cost the X4 Pro image more than 250 KB, measured against the same commit with games switched off. Vendored Lua is shielded from the formatter by its own <code>.clang-format</code> file instead of an edit to the upstream format script.</p>
 
-      <h2 id="open"><span class="stop">Stop 11</span>Still open</h2>
+      <h2 id="release"><span class="stop">Stop 11</span>Releases and updates</h2>
+      <p class="ads"><span>AD-3</span><span>AD-25</span></p>
+      <p>Upstream's firmware asks upstream's releases for updates. Left alone, a fork device would install upstream firmware and lose its games, and would never see a fork release. So builds with games check the fork's own releases instead, and the fork numbers its releases so that only its own count decides what is newer.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Piece</th><th>Rule</th></tr></thead>
+          <tbody>
+            <tr><td>Version</td><td><code>1.6.5-ch.7</code>: upstream's version, then the fork build number <code>N</code>. The firmware reports exactly the tag.</td></tr>
+            <tr><td>Newer</td><td>Only <code>N</code> counts. It only goes up, even when upstream's version changes. A development build counts as 0, so any release is offered to it.</td></tr>
+            <tr><td>Update check</td><td>One tested fork header holds the fork's release address, the asset name and the comparison; <code>OtaUpdater.cpp</code> only calls it, behind the games flag.</td></tr>
+            <tr><td>Boards</td><td>The fork releases the boards that have games: X4 Pro and Sticky. Every other board keeps following upstream.</td></tr>
+            <tr><td>Release workflow</td><td>One fork-only workflow makes every release: it picks <code>N</code>, builds, checks that each image carries its own tag and the fork's address, packs every first-party game unchanged, and publishes it as the latest release.</td></tr>
+            <tr><td>Safety</td><td>Release tags can't be deleted; a bad release is replaced by the next number. Upstream's release workflows stay switched off in the fork.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Moving a device from upstream to the fork, or back, is done once by SD card from a release file. After that, fork devices update themselves over the air.</p>
+
+      <h2 id="open"><span class="stop">Stop 12</span>Still open</h2>
       <p>No blockers remain, but a few numbers wait on measurements before they're tuned:</p>
       <ul>
         <li><strong>Once a second device arrives:</strong> ESP-NOW reliability between two devices, the battery cost of a match, and how the Sticky and a mixed X4 Pro and Sticky pair behave. Until then the link code is built and tested against the simulated link, and nothing else waits on it.</li>
         <li><strong>On one device:</strong> whether memory recovers after the radio shuts down.</li>
       </ul>
       <p>Lua 5.5.1 is taken to run at least as well as the 5.4 the spike measured, so no re-run gates the API. A problem found during implementation is fixed then, with 5.4.9 as the fallback.</p>
-      <p>Deliberately left for later: a web Games page, partial-screen refresh, more than two players, reconnecting after a drop, and the game starter repo.</p>
+      <p>Deliberately left for later: a web Games page, partial-screen refresh, more than two players, reconnecting after a drop, the game starter repo, fork prereleases, and a fork web flasher.</p>
 
       <h2 id="index"><span class="stop">Reference</span>Decision index</h2>
       <p>Every decision in <a href="ARCHITECTURE-SPINE.md">the spine</a>, one line each. The full rules, and what each one prevents, are there; the game-author view is in <a href="game-api-seed.md">the API seed</a>.</p>
       <dl class="adlist">
         <dt>AD-1</dt><dd>Hexagonal host: game rules only in Lua, sessions and protocol only in GameCore, behind ports.</dd>
         <dt>AD-2</dt><dd>One build flag, <code>FREEINK_CAP_GAMES</code>; nothing reaches the C3 builds.</dd>
-        <dt>AD-3</dt><dd>The nine-file upstream ledger is the cap, checked in CI.</dd>
+        <dt>AD-3</dt><dd>The ten-file upstream ledger is the cap, checked in CI.</dd>
         <dt>AD-4</dt><dd>Lua 5.5.1, unmodified, with 64-bit integers.</dd>
         <dt>AD-5</dt><dd>The GameVM task owns the Lua state and nothing else; cooperative stop, then abandon.</dd>
         <dt>AD-6</dt><dd>Sandbox: 256 KB arena, 2 M instructions per call, text-only chunks, trimmed libraries.</dd>
@@ -552,6 +572,7 @@ dl.adlist dd{margin:0}
         <dt>AD-22</dt><dd>Player journey: three taps from Home, no typing.</dd>
         <dt>AD-23</dt><dd>Built for simple games; the API grows only in that scope.</dd>
         <dt>AD-24</dt><dd>An icon library sets the design language; games may add their own images.</dd>
+        <dt>AD-25</dt><dd>Fork builds update from the fork's own releases, numbered <code>X.Y.Z-ch.N</code> by one release workflow.</dd>
       </dl>
 
       <p class="foot">Source: <code>ARCHITECTURE-SPINE.md</code> (final, 2026-09-26), its memlog, and the two review rounds in <code>reviews/</code>. Built on the product brief and the Lua versus Berry engine spike.</p>

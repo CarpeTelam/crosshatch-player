@@ -12,7 +12,7 @@ risk: low
 
 ## Description
 
-Writes Sudoku, Ultimate tic-tac-toe, and Battleship as script packages that use only API level 1, and attaches them to each fork release through a new fork-only workflow.
+Writes Sudoku, Ultimate tic-tac-toe, and Battleship as script packages that use only API level 1, which the fork release workflow of AD-25 packs and attaches to each release.
 
 ## Outcome
 
@@ -27,12 +27,12 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 1. Sudoku (solo), Ultimate tic-tac-toe (pass, nearby), and Battleship (pass, nearby, hidden) are script packages in `games/<id>/`, and no game-specific C++ exists in the firmware.
 2. Each packs with `pack_game.py`, installs through the inbox, and plays a round on a device in every mode it declares.
 3. All three stay within API level 1 and the 1,400 B snapshot, add nothing to the API, and draw boards and markers from `GameIcons`.
-4. A fork release has the three `.cpgame` files attached by a fork-only workflow, with no change to upstream's `release.yml`.
+4. A fork release made by the release workflow (AD-25) has the three `.cpgame` files attached, packed byte-for-byte from `games/<id>/`.
 5. Merged to `develop` with the five-env build, host suites, whole-tree format check, `pio check`, and the fork-only size and ledger jobs all green.
 
 ## Boundaries
 
-`games/<id>/`, the shared 9×9 board module copied into two packages, and the fork-only release workflow. Not an enlarged-board view (later), nor any API addition.
+`games/<id>/` and the shared 9×9 board module copied into two packages. Not the release workflow (epic-platform-baseline, AD-25), which already packs every `games/<id>/`; this epic adds no workflow. Not an enlarged-board view (later), nor any API addition.
 
 ## References
 
@@ -42,7 +42,7 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 
 ## Notes
 
-- Decision: release assets are attached by a new fork-only workflow, not an edit to upstream `release.yml` (user's decision, 2026-09-26).
+- Decision: release assets are attached by the fork release workflow of AD-25, owned by epic-platform-baseline, not an edit to upstream `release.yml` (user's decision, 2026-09-26).
 - Decision: only the nearby-round entries wait on epic-play-nearby; Sudoku and the pass versions are built without it, and only this epic's closure waits for the second device (user's decision, 2026-09-26).
 - hitl: a person plays each game in each mode on a device; a second device for the nearby rounds.
 - Waits on epic-icon-library because: the icon set.

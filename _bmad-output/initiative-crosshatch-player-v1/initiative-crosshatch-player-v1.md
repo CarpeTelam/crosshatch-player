@@ -41,14 +41,15 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Touch point: `lib/ZipFile`, `lib/miniz`, `lib/PngToBmpConverter`, `Storage` / `HalFile` — consumed unchanged by the installer; owner: epic-install-and-launcher
 - Touch point: `GfxRenderer`, `RenderLock`, the sleep path, `UiAppHost`, `UiListActivity` — consumed unchanged; owner: epic-script-runtime
 - Touch point: the existing web file manager and USB — consumed unchanged to put files in `/games/`; owner: epic-install-and-launcher
-- Touch point: the fork release — first-party `.cpgame` assets attached; owner: epic-first-party-games
+- Touch point: `src/network/OtaUpdater.cpp` — guarded calls to the fork update source (ledger row 10, AD-25); owner: epic-platform-baseline
+- Touch point: the fork release — the release workflow numbers and publishes firmware and packs every `games/<id>/` (AD-25); owner: epic-platform-baseline; epic-first-party-games adds only game sources
 
 ## References
 
 - spec — _bmad-output/specs/spec-crosshatch-player/SPEC.md, sections Capabilities, Constraints, Non-goals, Success signal
 - spec — _bmad-output/specs/spec-crosshatch-player/first-party-games.md
 - spec — _bmad-output/specs/spec-crosshatch-player/glossary.md
-- architecture — _bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-1 to AD-24, Consistency Conventions, Deferred
+- architecture — _bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-1 to AD-25, Consistency Conventions, Deferred
 - architecture — _bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md
 - constraint — AGENTS.md, sections Policy and Conventions that differ from defaults
 - brief — _bmad-output/planning-artifacts/briefs/brief-crosshatch-player-2026-09-26/brief.md, for history only
@@ -60,5 +61,6 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Decision: eight epics, cut one per spec capability or coupled pair along the spine's layers, with the platform baseline first and the multiplayer layer split into pass-and-play and Play Nearby; order and prerequisites are in `tickets.toml` beside this file (user's decision, 2026-09-26).
 - Decision: epic-icon-library picks the v1 icon set and epic-game-api-docs catalogs it; AD-24 and the spec's Open Questions were amended to match (user's decision, 2026-09-26).
 - Decision: the second device gates only the closure of epic-play-nearby and epic-first-party-games; only the first-party games' nearby-round entries wait on epic-play-nearby (user's decision, 2026-09-26).
-- Decision: first-party release assets are attached by a new fork-only workflow, not by editing upstream `release.yml`, so the ledger is unchanged (user's decision, 2026-09-26).
+- Decision: first-party release assets are attached by the fork release workflow of AD-25, owned by epic-platform-baseline, not by editing upstream `release.yml` (user's decision, 2026-09-26).
 - Source conflict: spine Operational envelope, Firmware delivery — "users update through the existing OTA, SD, or web flasher paths" vs `src/network/OtaUpdater.cpp`, which checks only `crosspoint-reader/crosspoint-reader` releases/latest and compares X.Y.Z alone; a fork device would be offered upstream firmware without games and never a fork release. The fork versioning and update-source scheme is unsettled and waits on an architecture decision; epic-first-party-games (release assets) and any fork firmware release wait on it.
+- Decision: the OTA source conflict is settled by AD-25: builds with `FREEINK_CAP_GAMES` update from the fork's own releases, versioned `X.Y.Z-ch.N` by one fork release workflow, through the ledger's row 10 (`OtaUpdater.cpp`); epic-platform-baseline owns it (user's decision, 2026-09-26).
