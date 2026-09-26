@@ -91,7 +91,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 
 - **Binds:** script-runtime, api-docs, first-party-games
 - **Prevents:** a patched engine that blocks upgrades; games or saves that depend on a language level or integer width that later changes.
-- **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` can only arrive with a new `api` level and a `proto` bump. `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. Before API level 1 freezes, the spike harness is re-run once on 5.5.1 with a worst-case C-stack test (deep patterns, deep parser nesting); only a measured regression reverts the pin to 5.4.9.
+- **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` can only arrive with a new `api` level and a `proto` bump. `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. No spike re-run gates API level 1: 5.5.1 is taken to perform at least as well as the spiked 5.4.7, and a problem found during implementation is fixed when it surfaces. Reverting the pin to 5.4.9 stays the fallback, and it is cheapest before API level 1 freezes.
 
 ### AD-5: The VM task owns the Lua state and nothing else [ADOPTED]
 
@@ -336,7 +336,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 - **Binds:** script-runtime, first-party-games, api-docs, package-install-launcher
 - **Prevents:** every game drawing its own suits, dice, pieces, and arrows in a different style; runtime screens and games looking unrelated.
 - **Rule:**
-  - `lib/GameIcons` is a fork-owned, curated icon set. Its sources are SVGs in `assets/game-icons/` under an MIT, ISC, or CC0 license or original work, with attribution recorded in `docs/crosshatch/`. `scripts/gen_game_icons.py` renders each at 32 and 64 px as 1-bit bitmaps into a committed `GameIcons.generated.h`, which is never hand-edited.
+  - `lib/GameIcons` is a fork-owned, curated icon set drawn from one source: Phosphor Icons (MIT), fill weight, pinned at `@phosphor-icons/core` 2.1.1. The chosen SVGs are vendored in `assets/game-icons/` with Phosphor's license and recorded in `docs/crosshatch/`. A glyph Phosphor lacks is drawn as original work in Phosphor's fill style; icons from other libraries are not mixed in. A committed list in `assets/game-icons/` maps each crosshatch name to its source file, so a Phosphor rename or version bump never changes an API name. `scripts/gen_game_icons.py` renders each at 32 and 64 px as 1-bit bitmaps into a committed `GameIcons.generated.h`, which is never hand-edited.
   - Scripts draw icons with `ch.gfx.icon(name, x, y, size, color)`: `small` (32 px), `medium` (64 px), or `large` (128 px, the 64 px bitmap doubled). An unknown name is a script error.
   - Icon names are lowercase `snake_case` and part of the API level: a level only adds names, and never renames, removes, or redraws one into a different meaning. The v1 set covers marks, card suits, dice faces, board pieces, player markers, and common controls; the exact list is fixed in the API docs epic.
   - The launcher, the runtime views, the Home cover-grid Games tile, and first-party games use the same set. A manifest may name a library icon as the game's icon instead of shipping `icon.png`.
@@ -367,6 +367,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 | PlatformIO Core | pioarduino 6.1.19 |
 | ESP-NOW | v2 (1,470 B max payload, 20 peers) |
 | Zip / inflate, PNG | in-tree `lib/ZipFile` + `lib/miniz`, `lib/PngToBmpConverter` |
+| Icons | Phosphor Icons 2.1.1 (`@phosphor-icons/core`, MIT), fill weight |
 | SHA-256 | mbedTLS (bundled with ESP-IDF 5.5) on device, OpenSSL in the simulator, behind one helper |
 | Host tests | GoogleTest 1.17.0 via CMake, follows upstream's pin |
 
@@ -435,7 +436,7 @@ src/
   games/                  # GameLink task, EspNowLink, NearbySession, GamePackageInstaller, GameRegistry, GameSaveStore,
                           # GameAssets (source/image/store loader), FrameReplay, GameViewport, PSRAM arena backend, Sha256 helper
   activities/games/       # GamesLauncherActivity, GameModeActivity, GameLobbyActivity, GameMatchActivity
-assets/game-icons/        # icon SVG sources + licenses
+assets/game-icons/        # vendored Phosphor fill SVGs, name map, original additions, license
 games/<id>/               # first-party game sources (manifest.json, main.lua, *.png)
 scripts/pack_game.py      # games/<id>/ → <id>.cpgame, validates, prints package hash
 scripts/game_codec.py     # reference codec for golden vectors and tooling
@@ -499,5 +500,5 @@ Operational envelope:
 | Aligning with upstream "web plugins" | No upstream code exists; revisit if it ships. |
 | Starter repo | Post-v1; the API docs, LuaLS stub, and icon catalog are written to move there unchanged. |
 | Bumps to pioarduino 55.03.312+ and GoogleTest 1.18 | Follow upstream's pins through merges. |
-| Open: ESP-NOW reliability, battery cost, Sticky and mixed-device behaviour | Measure between two devices in the radio epic before tuning 400 ms / 10 s and the 100 KB threshold. |
-| Open: internal heap after ESP-NOW teardown | Measure in the radio epic; AD-18 already bounds where a `silentRestart()` may happen. |
+| Open: ESP-NOW reliability, battery cost, Sticky and mixed-device behaviour | Measure between two devices before tuning 400 ms / 10 s and the 100 KB threshold. Only one device is on hand, so this waits for the second and blocks nothing: link and session code is built against the `FakeLink` suites until then. |
+| Open: internal heap after ESP-NOW teardown | Measurable on one device (radio up and down, no peer); AD-18 already bounds where a `silentRestart()` may happen. |
