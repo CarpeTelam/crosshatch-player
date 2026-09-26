@@ -1,0 +1,26 @@
+{
+  "name": "lua",
+  "version": "5.5.1",
+  "description": "PUC Lua 5.5.1, vendored unmodified in src/; this manifest selects the core and the libraries a sandboxed host opens",
+  "license": "MIT",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src",
+    "srcFilter": [
+      "+<*>",
+      "-<lua.c>",
+      "-<luac.c>",
+      "-<linit.c>",
+      "-<liolib.c>",
+      "-<loslib.c>",
+      "-<ldblib.c>",
+      "-<loadlib.c>",
+      "-<lcorolib.c>"
+    ],
+    "flags": [
+      "-DLUA_COMPAT_GLOBAL=0"
+    ]
+  }
+}

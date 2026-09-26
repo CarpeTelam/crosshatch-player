@@ -42,8 +42,10 @@ $S build x4pro    # or: sticky | x4.  ~80 s cold, ~12 s incremental or with a wa
 
 `setup` copies `simulator.ini` (from this skill directory) into the gitignored
 `platformio.local.ini`, which `platformio.ini` already loads through
-`extra_configs`. No tracked file changes. Re-run it after editing
-`simulator.ini`; it replaces its own marked block and leaves the rest alone.
+`extra_configs`. No tracked file changes. `build` runs it first when
+`platformio.local.ini` lacks the current `simulator.ini` (never set up, or
+`simulator.ini` edited since); it replaces its own marked block and leaves the
+rest alone.
 The envs are `simulator_x4pro`, `simulator_sticky`, and `simulator` (X4).
 
 ## Run: live session (agent path)

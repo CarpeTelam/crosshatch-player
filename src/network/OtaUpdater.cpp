@@ -18,8 +18,21 @@
 #include "FirmwareBoardTag.h"
 #include "FirmwareFlasher.h"
 
+#if FREEINK_CAP_GAMES
+// Builds with games update only from the fork's own releases (see ForkRelease.h).
+#include <ForkRelease.h>
+
+#include <string_view>
+
+#include "games/ForkReleaseProbe.h"
+#endif
+
 namespace {
+#if FREEINK_CAP_GAMES
+constexpr const char* latestReleaseUrl = ForkRelease::LATEST_RELEASE_URL;
+#else
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/latest";
+#endif
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
@@ -48,7 +61,16 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
       releaseParser.feed(reinterpret_cast<const char*>(data + offset), 1);
       offset++;
       if (releaseParser.foundTag()) {
+#if FREEINK_CAP_GAMES
+        // Leaves assetName empty for a tag outside the fork's version format;
+        // isUpdateNewer() then never offers that release.
+        if (!ForkRelease::formatAssetName(assetName, sizeof(assetName), releaseParser.getTagName(),
+                                          std::string_view(board_tag::boardName(), board_tag::boardNameLen()))) {
+          LOG_INF("OTA", "Latest tag %s is not a fork release", releaseParser.getTagName());
+        }
+#else
         snprintf(assetName, sizeof(assetName), "crosspoint-%s%s.bin", releaseParser.getTagName(), assetSuffix);
+#endif
         releaseParser.setFirmwareAssetName(assetName);
         assetNameSet = true;
       }
@@ -57,6 +79,12 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
     return true;
   });
   if (!ok) {
+#if FREEINK_CAP_GAMES
+    if (ForkReleaseProbe::latestReleaseMissing()) {
+      LOG_INF("OTA", "No published release yet");
+      return NO_UPDATE;
+    }
+#endif
     LOG_ERR("OTA", "Release check fetch failed");
     return HTTP_ERROR;
   }
@@ -86,6 +114,10 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
 }
 
 bool OtaUpdater::isUpdateNewer() const {
+#if FREEINK_CAP_GAMES
+  // Fork builds compare only the -ch.N build number, never the upstream base.
+  return updateAvailable && ForkRelease::isNewer(latestVersion, CROSSPOINT_VERSION);
+#else
   if (!updateAvailable || latestVersion.empty() || latestVersion == CROSSPOINT_VERSION) {
     return false;
   }
@@ -126,6 +158,7 @@ bool OtaUpdater::isUpdateNewer() const {
   }
 
   return false;
+#endif
 }
 
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }

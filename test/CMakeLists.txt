@@ -73,3 +73,6 @@ add_subdirectory(absolute_grayscale)
 
 add_subdirectory(sd_card_font)
 add_subdirectory(glyph_bitmap)
+
+add_subdirectory(game_core)
+add_subdirectory(game_script)
