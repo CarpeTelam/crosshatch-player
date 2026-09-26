@@ -13,6 +13,8 @@ spine: 'ARCHITECTURE-SPINE.md'
 
 A crosshatch game is a Lua 5.5 script that runs on an e-ink device with a touchscreen. You write the rules and the drawing. The runtime handles everything else: turns, passing the device between players, the radio link for two-device play, saving, and errors. One script works alone, in pass-and-play, and in Play Nearby without any changes.
 
+**What it's for.** crosshatch is built for simple, turn-based games: the kind you could play with pen and paper, a board, cards, dice, or words, plus puzzles and parlor games. Think tic-tac-toe, Dots and Boxes, Battleship, Hangman, Sudoku, or a party guessing game. It is not an engine for platformers, action games, or anything that needs a frame loop: the screen is e-ink, and every update takes most of a second. The API grows only in ways that serve this kind of game.
+
 ## 1. The package
 
 A game is one `.cpgame` file: a zip archive with these files at its root and nothing else (no folders).
@@ -22,9 +24,10 @@ A game is one `.cpgame` file: a zip archive with these files at its root and not
 | `manifest.json` | yes | Describes the game (below). |
 | `main.lua` | yes | Returns the game table (section 2). |
 | `name.lua` | no | Extra modules, named with lowercase letters, digits, and `_`. Load one with `require("name")`. |
-| `icon.png` | no | The launcher icon. Must be non-interlaced. *(size: draft)* |
+| `icon.png` | no | The launcher icon, converted to 64×64 black and white. Must be non-interlaced. Or name a library icon in the manifest instead. |
+| `name.png` | no | Your own images for `ch.gfx.image`, named with lowercase letters, digits, and `_`. Non-interlaced; converted to black and white at install. |
 
-Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked. Lua files must be source text; precompiled bytecode is refused.
+Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; precompiled bytecode is refused.
 
 `manifest.json`:
 
@@ -36,7 +39,8 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
   "api": 1,
   "seats": { "min": 2, "max": 2 },
   "modes": ["pass", "nearby"],
-  "hidden": false
+  "hidden": false,
+  "icon": "mark_x"
 }
 ```
 
@@ -48,6 +52,7 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 | `api` | The API level the game needs. This document is level 1. |
 | `seats` | How many players the game takes. v1 devices support at most 2. |
 | `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
+| `icon` | Optional. The name of a library icon (section 4) to use as the game's icon when the package has no `icon.png`. |
 | `hidden` | Optional, default `false`. Set `true` if players must not see each other's screen (Battleship, Hangman). In `pass` mode the runtime then blanks the screen and asks for the device to be handed over between turns. |
 
 Unknown keys are ignored.
@@ -79,6 +84,7 @@ return game
 - **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You may change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn.
 - **A move is a small table** describing what a player did, such as `{cell = 5}`. `input` turns a tap into a move; `apply` checks it and applies it. Return `nil, "reason"` from `apply` to reject an illegal move.
 - **Rejections come back as an event.** When a move is rejected, the player's `input` receives `{kind = "rejected", reason = "..."}`. Show it however you like, for example by setting a message in `ui`.
+- **The end of a round is an event too.** When a round ends, each local player's `input` receives `{kind = "over"}` exactly once. Record per-device results such as wins there, not in `draw`, which runs many times.
 - **One move at a time.** After `input` returns a move, further moves are ignored until the result comes back.
 - **`setup` and `apply` run on one device only** (the host in Play Nearby). The others receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you.
 - **Seats are numbers from 1.** Seat 1 is the host in Play Nearby. The runtime passes moves to `apply` only from the seat that `status` names.
@@ -89,16 +95,16 @@ return game
 | Name | Contents |
 | --- | --- |
 | `ctx` (in `setup`) | `ctx.seats` (number of players in this match), `ctx.mode` (`"solo"`, `"pass"`, or `"nearby"`) |
-| `seat` (in `draw`, `input`) | The seat this screen belongs to. In `pass` mode it is the seat whose turn it is, and `0` ("everyone") once the round is over. |
-| `ev` (in `input`) | `{kind = "tap", x, y}`, `{kind = "long_press", x, y}`, `{kind = "swipe", x, y, dir}` (`x, y` is where the swipe started; `dir` is `"left"`, `"right"`, `"up"`, or `"down"`), or `{kind = "rejected", reason}` |
+| `seat` (in `draw`, `input`) | The seat this screen belongs to. In `pass` mode it is the seat whose turn it is; in a hidden game, the player who just moved until they pass the device; and `0` ("everyone") once the round is over, with its own `ui` table. |
+| `ev` (in `input`) | `{kind = "tap", x, y}`, `{kind = "long_press", x, y}`, `{kind = "swipe", x, y, dir}` (`x, y` is where the swipe started; `dir` is `"left"`, `"right"`, `"up"`, or `"down"`), `{kind = "rejected", reason}`, `{kind = "over"}`, or `{kind = "timer"}` |
 
-Some swipes belong to the device and never reach your game: a right-swipe starting in the left quarter of the screen (Back), an up-swipe from the bottom edge (Home), and a down-swipe from the top edge (Menu). Back and Home open the device's pause menu.
+There is no dragging. Some swipes belong to the device and never reach your game: a right-swipe starting in the left quarter of the screen (Back) and an up-swipe from the bottom edge (Home) open the device's pause menu, and a down-swipe from the top edge opens the device's light panel.
 
 ### When things happen
 
-- `draw` is called after every change to `state`, after every `input` call, and after the hand-off screen. There is no timer tick in level 1.
+- `draw` is called after every change to `state`, after every `input` call, and after the hand-off screen. There is no frame loop; use `ch.timer` (section 4) for countdowns.
 - When `status` says the round is over, the device shows its own end-of-round menu over your last frame: **Play again** (which calls `setup` again with the same players) or **Leave**.
-- In `pass` mode with `hidden = true`, after a move that changes whose turn it is, the mover first sees the result, then taps "Pass to player N"; the screen goes blank until the next player taps. The same blank screen appears when a hidden game starts or resumes.
+- In `pass` mode with `hidden = true`, after a move that changes whose turn it is, the mover first sees the result (your `draw` is called with the mover's seat), then taps to pass the device; the screen goes blank until the next player taps. The same blank screen appears when a hidden game starts or resumes.
 
 ## 3. What values can go in `state`
 
@@ -130,10 +136,21 @@ Call these only inside `draw`; anywhere else they raise an error. The screen sho
 | `ch.gfx.line(x1, y1, x2, y2, color)` | `"white"` or `"black"` only. |
 | `ch.gfx.circle(x, y, r, color, filled)` | *(draft)* |
 | `ch.gfx.text(x, y, str, size, color, align)` | `size`: `"small"`, `"medium"`, `"large"`; `color`: `"white"` or `"black"`; `align`: `"left"`, `"center"`, `"right"` *(draft)* |
-| `ch.gfx.text_width(str, size)` | *(draft)* |
+| `ch.gfx.icon(name, x, y, size, color)` | Draw a library icon (below) with its top-left corner at `x, y`. `size`: `"small"` (32 px), `"medium"` (64 px), `"large"` (128 px); `color`: `"white"` or `"black"`. |
+| `ch.gfx.image(name, x, y, color)` | Draw one of your package's images at its own size; `name` is the file name without `.png`. |
 | `ch.gfx.refresh(mode)` | Ask for `"fast"` (default), `"half"`, or `"full"` for this frame. The device may refresh more fully than you asked, never less. |
 
-Colors: `"white"`, `"light"`, `"dark"`, `"black"`. `"light"` and `"dark"` work for fills (they are drawn as fine dot patterns); lines and text are black or white.
+Colors: `"white"`, `"light"`, `"dark"`, `"black"`. `"light"` and `"dark"` work for fills (they are drawn as fine dot patterns); lines, text, icons, and images are black or white.
+
+`ch.text_width(str, size)` returns the width of `str` in pixels. Unlike `ch.gfx`, you can call it anywhere, for example in `input` to hit-test a line of text.
+
+### Icons
+
+The device has a built-in icon library, and using it gives your game the same look as the rest of crosshatch. Prefer a library icon over drawing your own: `ch.gfx.icon("suit_heart", x, y, "medium", "black")`.
+
+The set covers marks, card suits, dice faces, board pieces, player markers, and common controls. Names are lowercase with `_`, such as `mark_x`, `suit_spade`, `die_6`, `piece_king`, `arrow_left`. *(The full list is draft; the reference will include a catalog with pictures.)* A name that doesn't exist stops the game with an error. Icons never change meaning within an API level, and new levels only add names.
+
+When you need something the library doesn't have, ship it as a package image and draw it with `ch.gfx.image`.
 
 A frame holds at most 2,048 drawing calls; more stops the game with an error.
 
@@ -148,7 +165,7 @@ One table per game on each device that survives restarts, for things like high s
 | `ch.store.get()` | Returns the saved table, or an empty table. |
 | `ch.store.set(t)` | Saves `t` (section 3 limits apply; checked immediately). The device writes it to the card shortly after. |
 
-`ch.store` belongs to the device it runs on. Calls made in `apply` happen only on the host, so record per-player results in `draw` or `input` if each device should keep its own.
+`ch.store` belongs to the device it runs on. Calls made in `apply` happen only on the host, so record per-device results when `input` receives `{kind = "over"}`.
 
 You don't need to save unfinished games: in `solo` and `pass` mode the runtime saves after every move and offers "Continue" in the launcher.
 
@@ -157,7 +174,9 @@ You don't need to save unfinished games: in `solo` and `pass` mode the runtime s
 | Function | Notes |
 | --- | --- |
 | `ch.api` | The device's API level (an integer). |
-| `ch.time.ms()` | Milliseconds since the game started. For animation or display only; never use it in `status` or game rules. |
+| `ch.timer.after(ms)` | Deliver a `{kind = "timer"}` event to `input` after `ms` milliseconds (at least 1,000). One timer at a time: a new call replaces the pending one. For countdowns in parlor games. If time running out changes the game, return a move from `input` so it goes through `apply`. |
+| `ch.timer.cancel()` | Clear the pending timer. |
+| `ch.time.ms()` | Milliseconds since the game started. For display only; never use it in `status` or game rules. |
 | `ch.log(...)` | Writes to the device's debug log. `print` does the same. |
 
 Available standard libraries: `table`, `string`, `math`, `utf8`, and the basic functions except `load`, `loadfile`, and `dofile`. Not available: `io`, `os`, `debug`, `coroutine`, `package` (use the package-local `require`).
@@ -224,9 +243,9 @@ function game.draw(state, seat, ui)
   for i = 1, 9 do
     local m = state.board:sub(i, i)
     if m ~= "." then
-      local cx = x0 + ((i - 1) % 3) * c + c // 2
-      local cy = y0 + ((i - 1) // 3) * c + c // 2
-      ch.gfx.text(cx, cy, m:upper(), "large", "black", "center")
+      local x = x0 + ((i - 1) % 3) * c + (c - 128) // 2
+      local y = y0 + ((i - 1) // 3) * c + (c - 128) // 2
+      ch.gfx.icon(m == "x" and "mark_x" or "mark_o", x, y, "large", "black")
     end
   end
   local s = game.status(state)
