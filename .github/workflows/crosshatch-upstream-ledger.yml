@@ -1,0 +1,43 @@
+# Fork-only: keeps changes to upstream files within docs/crosshatch/upstream-touches.md so merges of
+# crosspoint-reader's develop branch stay clean. See that file for the rules and how to run the check locally.
+name: Upstream touch ledger
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-touch-ledger-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  upstream-ledger:
+    name: Upstream touch ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Full history: the check compares from the merge-base with upstream. The submodule itself is not
+      # needed; only its recorded pointer is compared.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream develop
+        run: |
+          git remote add upstream https://github.com/crosspoint-reader/crosspoint-reader.git
+          start=$SECONDS
+          git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop
+          echo "Fetched upstream/develop in $((SECONDS - start)) s"
+
+      # A regression that made the check always pass would otherwise go unnoticed on compliant PRs.
+      - name: Test the ledger check
+        run: python3 scripts/check_upstream_touches_test.py -v
+
+      # The merge driver matches the documented upstream merge, where .gitattributes keeps our AGENTS.md.
+      - name: Check the ledger and trial-merge upstream
+        run: |
+          git config merge.ours.driver true
+          python3 scripts/check_upstream_touches.py
