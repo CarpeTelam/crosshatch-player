@@ -41,10 +41,11 @@ cannot be.
 Row 10 and fork releases (AD-25): an upstream merge that touches `src/network/OtaUpdater.*`,
 `lib/JsonParser/ReleaseJsonParser.*`, `src/network/FirmwareBoardTag.*`, a release workflow, or a `*-gh_release` env in
 `platformio.ini` is not done until a dry run of the fork release workflow (`.github/workflows/crosshatch-release.yml`,
-"dry run" on, started from the Actions tab with the merge branch picked under "Use workflow from") passes. The dry run builds the release envs and checks that each image still
-reports its tag, holds the fork release URL and not upstream's, and carries its own board tag, so a clean merge that
-reroutes or strands fork devices fails there instead of on a device. Upstream's `release.yml` and
-`release_candidate.yml` stay disabled in the Actions tab and are never edited.
+"dry run" on, started from the Actions tab with the merge branch picked under "Use workflow from") passes. The dry run
+builds the release envs and checks that each image still reports its tag, holds the fork release URL and not
+upstream's, and carries its own board tag, so a clean merge that reroutes or strands fork devices fails there instead
+of on a device. Upstream's `release.yml` and `release_candidate.yml` stay disabled in the Actions tab and are never
+edited.
 
 No reserve row remains.
 

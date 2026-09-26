@@ -38,6 +38,10 @@ need_window() {
 cmd_setup() {
   local local_ini=platformio.local.ini tmp
   touch "$local_ini"
+  # Without the end marker the block replace below would drop everything after the begin marker.
+  if grep -qxF "$MARK_BEGIN" "$local_ini" && ! grep -qxF "$MARK_END" "$local_ini"; then
+    die "$local_ini has the line '$MARK_BEGIN' but not '$MARK_END'; restore it by hand"
+  fi
   tmp=$(mktemp)
   # Replace any previous managed block, keep the user's own settings.
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$local_ini" > "$tmp"
@@ -51,8 +55,20 @@ cmd_setup() {
   echo "sim: simulator envs installed into $local_ini"
 }
 
+managed_block() {
+  [ -f platformio.local.ini ] || return 0
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{on=1;next} $0==e{on=0;next} on' platformio.local.ini
+}
+
 cmd_build() {
-  pio run -e "$(env_for "${1:-}")" -j "$(nproc)"
+  local env
+  env=$(env_for "${1:-}")
+  # A missing or outdated copy (simulator.ini edited since setup) would build with the wrong flags.
+  if [ "$(managed_block)" != "$(cat "$SKILL_DIR/simulator.ini")" ]; then
+    echo "sim: platformio.local.ini lacks the current simulator.ini; running setup"
+    cmd_setup
+  fi
+  pio run -e "$env" -j "$(nproc)"
 }
 
 cmd_start() {

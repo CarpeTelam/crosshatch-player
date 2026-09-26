@@ -6,7 +6,7 @@
 namespace GameCore {
 
 // Returns "GameCore". Gives the skeleton a linkable symbol for the build and the
-// host suite; later stories may remove it.
+// host suite; it can go once the library has other source files.
 const char* libraryName();
 
 }  // namespace GameCore
