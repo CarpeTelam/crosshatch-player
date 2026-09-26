@@ -50,7 +50,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
   - **success:** Given only `docs/crosshatch/game-api.md`, its LuaLS stub, and the icon catalog, an AI writes a game that installs and plays a round on a device.
 - **CAP-10**
   - **intent:** At least three first-party games ship with each fork release, covering a solo puzzle, an open-information two-player game, and a hidden-information two-player game. Together they exercise every mode.
-  - **success:** The three `.cpgame` release assets install through the inbox and each plays a round in every mode it declares (candidates in `first-party-games.md`).
+  - **success:** Sudoku, Ultimate tic-tac-toe, and Battleship ship as `.cpgame` release assets, install through the inbox, and each plays a round in every mode it declares (`first-party-games.md`).
 - **CAP-11**
   - **intent:** Upstream `develop` merges stay clean. Game code sits outside upstream files, and changes to upstream files are capped by a ledger and enforced in CI.
   - **success:** A fork-only CI job fails any PR that changes an upstream path missing from the ledger or the baseline allowlist, and merging upstream `develop` touches no game code.
@@ -91,4 +91,3 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - How reliable is ESP-NOW, what does a match cost in battery, and how do the Sticky and a mixed X4 Pro/Sticky pair behave? This waits for the second device and blocks nothing else: radio logic is built and tested against `FakeLink` until then. Measure before tuning the 400 ms / 10 s / 100 KB values.
 - Does internal heap recover after ESP-NOW teardown, or does leaving a Nearby match need `silentRestart()`? This can be measured on one device by bringing the radio up and down without a peer.
 - What is the exact v1 icon list? The API docs epic decides it.
-- Which three titles ship as the first-party games? The games epic decides.
