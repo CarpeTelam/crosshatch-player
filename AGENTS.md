@@ -24,6 +24,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 ## Running and verifying
 
 - Run `git submodule update --init --recursive` before any firmware build; `freeink-sdk/` is empty in fresh and cloud clones, and every SDK lib dep symlinks into it.
+- See a UI change running without hardware: the desktop simulator skill `.claude/skills/run-crosshatch-player/` (`sim.sh setup`, `build x4pro`, `start`, `tap`, `ss`) builds the firmware natively and screenshots it headless.
 - Iterate with `pio run -e x4pro` and `pio run -e sticky`; bare `pio run` builds only the C3 `default` env. Before a PR also build `default`, `x4c`, and `papermono`: CI builds all five, and a fix for one board has broken another's build (049c2b5, 4598fa2).
 - Use pioarduino PlatformIO Core 6.1.19, not `pip install platformio`, and pin `pioarduino==6.1.19` inside `~/.platformio/penv`; without it the custom-sdkconfig envs fail with "No module named 'SCons.Tool.FortranCommon'" (see `.github/workflows/ci.yml`).
 - Unit tests are host GoogleTest, not `pio test`: `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j`. Delete `build/test` before switching to `pio run -t unit-tests`, which uses a different CMake generator.
