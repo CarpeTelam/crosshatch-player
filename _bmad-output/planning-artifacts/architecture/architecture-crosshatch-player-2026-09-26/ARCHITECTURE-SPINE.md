@@ -65,13 +65,13 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 
 - **Binds:** all
 - **Prevents:** game code costing flash or RAM on C3 builds, or breaking them.
-- **Rule:** `FREEINK_CAP_GAMES=1` is set for `x4pro`, `sticky`, their `-gh_release` / `-gh_release_rc` variants, and the fork-owned simulator envs only. Every include of game code in an upstream file sits inside `#if FREEINK_CAP_GAMES`. Every `.cpp` under `src/games/` and `src/activities/games/` is wrapped whole-file in `#if FREEINK_CAP_GAMES`. `lib/Game*` has no namespace-scope objects with non-trivial constructors and no static buffers over 64 B (generated `constexpr` icon data excepted). All game libraries compile, unreferenced, for `default`, `x4c`, and `papermono`. Under `SIMULATOR`, `EspNowLink` and `nearby` are compiled out and the SHA-256 helper uses OpenSSL.
+- **Rule:** `FREEINK_CAP_GAMES=1` is set for `x4pro`, `sticky`, their `-gh_release` / `-gh_release_rc` variants, and the fork-owned simulator envs only. Every include of game code in an upstream file sits inside `#if FREEINK_CAP_GAMES`. Every `.cpp` under `src/games/` and `src/activities/games/` is wrapped whole-file in `#if FREEINK_CAP_GAMES`. `lib/Game*` has no namespace-scope objects with non-trivial constructors and no static buffers over 64 B (generated `constexpr` icon data excepted). All game libraries compile, unreferenced, for `default`, `x4c`, and `papermono`: the fork-only `src/games/GamesBuildAnchor.cpp`, whole-file guarded like every file there, includes a header from each game library and `lua.h`; PlatformIO's default `chain` dependency finder does not evaluate `#if`, so every env builds the libraries and the linker drops them where nothing references them. No `lib_deps` entry is added. Under `SIMULATOR`, `EspNowLink` and `nearby` are compiled out and the SHA-256 helper uses OpenSSL.
 
 ### AD-3: The upstream-touch ledger is the cap [ADOPTED]
 
 - **Binds:** all
 - **Prevents:** the fork drifting back into CrossPlay's merge pain.
-- **Rule:** v1 changes only the upstream files in the ledger below, plus at most 1 reserve file, which must be added to the ledger in the same PR. Each change is `#if FREEINK_CAP_GAMES`-guarded where the language allows; unguardable changes are marked as such. The ledger lives in `docs/crosshatch/upstream-touches.md`. A fork-only CI job fails a PR when a path that exists in `upstream/develop` differs between `merge-base(HEAD, upstream/develop)` and `HEAD` and is in neither the ledger nor a baseline allowlist of pre-existing fork files (`AGENTS.md`, `.gitattributes`, the removed `CLAUDE.md`); the job fetches `upstream/develop` with full history. Anything beyond the reserve needs a spine update first.
+- **Rule:** v1 changes only the upstream files in the ledger below. Row 10 used the 1 reserve slot (AD-25), so no reserve remains. Each change is `#if FREEINK_CAP_GAMES`-guarded where the language allows; unguardable changes are marked as such. The ledger lives in `docs/crosshatch/upstream-touches.md`. A fork-only CI job fails a PR when a path that exists in `upstream/develop` differs between `merge-base(HEAD, upstream/develop)` and `HEAD` and is in neither the ledger nor a baseline allowlist of pre-existing fork files (`AGENTS.md`, `.gitattributes`, `.gitignore`, `.github/PULL_REQUEST_TEMPLATE.md`, the removed `CLAUDE.md`); the job fetches `upstream/develop` with full history. Any further upstream file needs a spine update first.
 
   | # | Upstream file | Change | Guarded |
   | --- | --- | --- | --- |
@@ -84,6 +84,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   | 7 | `src/activities/home/HomeActivity.cpp` | item count, switch case, label; list mode reuses an existing `UIIcon` | yes |
   | 8 | `src/components/CoverGridHomeUi.h` | tab array size | yes |
   | 9 | `src/components/CoverGridHomeUi.cpp` | Games tile drawn from a `GameIcons` bitmap | yes |
+  | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison (AD-25) | yes |
 
   The vendored engine is kept out of the whole-tree format check by a new `lib/lua/.clang-format` with `DisableFormat: true`, not by editing `bin/clang-format-fix`.
 
@@ -338,9 +339,22 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 - **Rule:**
   - `lib/GameIcons` is a fork-owned, curated icon set drawn from one source: Phosphor Icons (MIT), fill weight, pinned at `@phosphor-icons/core` 2.1.1. The chosen SVGs are vendored in `assets/game-icons/` with Phosphor's license and recorded in `docs/crosshatch/`. A glyph Phosphor lacks is drawn as original work in Phosphor's fill style; icons from other libraries are not mixed in. A committed list in `assets/game-icons/` maps each crosshatch name to its source file, so a Phosphor rename or version bump never changes an API name. `scripts/gen_game_icons.py` renders each at 32 and 64 px as 1-bit bitmaps into a committed `GameIcons.generated.h`, which is never hand-edited.
   - Scripts draw icons with `ch.gfx.icon(name, x, y, size, color)`: `small` (32 px), `medium` (64 px), or `large` (128 px, the 64 px bitmap doubled). An unknown name is a script error.
-  - Icon names are lowercase `snake_case` and part of the API level: a level only adds names, and never renames, removes, or redraws one into a different meaning. The v1 set covers marks, card suits, dice faces, board pieces, player markers, and common controls; the exact list is fixed in the API docs epic.
+  - Icon names are lowercase `snake_case` and part of the API level: a level only adds names, and never renames, removes, or redraws one into a different meaning. The v1 set covers marks, card suits, dice faces, board pieces, player markers, and common controls; the exact list is fixed in the icon library epic, which the launcher, runtime views, and Home tile need first; the API docs epic catalogs it.
   - The launcher, the runtime views, the Home cover-grid Games tile, and first-party games use the same set. A manifest may name a library icon as the game's icon instead of shipping `icon.png`.
   - Games may ship their own graphics as package images (AD-15), drawn at native size with `ch.gfx.image(name, x, y, color)`; an unknown name is a script error. Icons and images are drawn in `white` or `black` only.
+
+### AD-25: Fork releases and the update source [ADOPTED]
+
+- **Binds:** all (release pipeline, `OtaUpdater`, first-party game assets)
+- **Prevents:** a fork device updating itself to upstream firmware without games; a released image that never recognises itself as installed and re-offers its own release forever; two owners, or two readings, of the fork build number; a clean upstream merge that silently reroutes or strands fork devices; releases that ship without their games or change every package hash.
+- **Rule:**
+  - **Version.** A fork version is `<upstream X.Y.Z>-ch.<N>`, for example `1.6.5-ch.7`, where `X.Y.Z` is upstream's `[crosspoint] version` at the released commit. Tags and the firmware parser share one grammar, `^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-ch\.([1-9]\d{0,8})$` (at most 25 characters), fixed by shared test vectors. A running version yields `N` only when a prefix matches the grammar and is followed by the end of the string, `-`, or `+`; anything else, every development build included, is `N = 0`, so any release is offered to it. Release images report exactly the tag through `CROSSPOINT_VERSION` from the rewritten version line; no second `-DCROSSPOINT_VERSION` is passed. Assets are `crosspoint-<tag>-<board>.bin` and `<id>.cpgame`.
+  - **Newer.** `N` strictly increases across fork releases and never resets, including when the upstream base changes; gaps are allowed. Only `N` decides whether a release is newer. v1 makes no fork prereleases.
+  - **Update source.** One pure fork-only header, `lib/GameCore/ForkRelease.h`, holds the fork release URL (`CarpeTelam/crosshatch-player` releases/latest), the asset-name function, and the `N` parse and compare, and is tested in `test/game_core`. `OtaUpdater.cpp` calls it only inside its row-10 `#if FREEINK_CAP_GAMES` guards; `OtaUpdater.h` is unchanged. A 404 from releases/latest is `NO_UPDATE`. Builds without the flag keep upstream's source and comparison.
+  - **Boards.** The fork releases exactly the `*-gh_release` envs that set `FREEINK_CAP_GAMES=1` (today `x4pro-gh_release` and `sticky-gh_release`). Every other board (C3, x4c, papermono) follows upstream. Adding the flag to an env is an AD-2 and AD-25 change together.
+  - **Release workflow.** One fork-only `workflow_dispatch` workflow, owned by epic-platform-baseline, makes every fork release; no release is published by hand. It runs in one concurrency group without cancelling, on `develop` HEAD or an ancestor ref. In order it: fails if another active workflow triggers on `release` or builds a `*-gh_release*` env; sets `N` to one more than the largest `-ch.N` in any tag, read through the API; checks that upstream's version line matches `X.Y.Z`, rewrites it in its checkout only, and builds; checks that each image contains its tag and the fork URL and not upstream's; packs every `games/<id>/` with `scripts/pack_game.py` byte-for-byte, zero games being valid and a failed package failing the run; then pushes the tag without force, creates a draft release with `GITHUB_TOKEN`, uploads every asset, lists each package hash in the notes, and publishes with `make_latest=true`.
+  - **Tags.** A repository tag ruleset forbids deleting `*-ch.*` tags and lets only the workflow create them; where a ruleset cannot single out the workflow, repository admins are its only bypass. A bad release is withdrawn by releasing `N+1` from a good commit.
+  - **Upstream workflows.** Upstream's `release.yml` and `release_candidate.yml` are disabled in the fork's Actions tab, never edited. An upstream merge that touches `OtaUpdater.*`, `ReleaseJsonParser.*`, `FirmwareBoardTag.*`, a release workflow, or a `*-gh_release` env is not done until a dry run of the fork release workflow (build and checks, no tag) passes.
 
 ## Consistency Conventions
 
@@ -429,7 +443,7 @@ Source tree:
 ```text
 lib/
   lua/                    # Lua 5.5.1, unmodified; fork-owned library.json (srcFilter) and .clang-format (DisableFormat)
-  GameCore/               # Roster, Session, Protocol, ReliableLink, Manifest, ports
+  GameCore/               # Roster, Session, Protocol, ReliableLink, Manifest, ports; ForkRelease.h (AD-25)
   GameIcons/              # GameIcons.generated.h (names + 32/64 px 1-bit bitmaps)
   GameScript/             # VM host, arena allocator glue, budget hook, sandbox, ch.* bindings, codec, frame buffers, LuaGame
 src/
@@ -444,7 +458,7 @@ scripts/gen_game_icons.py # assets/game-icons/*.svg → lib/GameIcons/GameIcons.
 test/game_core/           # host suites incl. FakeLink, protocol, manifest, hash vector
 test/game_script/         # host suites incl. Lua on host, codec golden vectors, sandbox cases
 docs/crosshatch/          # upstream-touches.md, formats.md, game-api.md + ch.d.lua, icon catalog
-.github/workflows/        # fork-only upstream-touch ledger check (new file)
+.github/workflows/        # fork-only workflows (new files): upstream-touch ledger check, flash budget, fork release (AD-25)
 .claude/skills/run-crosshatch-player/simulator.ini   # fork-owned; simulator envs set FREEINK_CAP_GAMES
 ```
 
@@ -461,10 +475,10 @@ Operational envelope:
 
 | Concern | v1 answer |
 | --- | --- |
-| Firmware delivery | Existing release pipeline; the six x4pro/sticky envs carry `FREEINK_CAP_GAMES`; users update through the existing OTA, SD, or web flasher paths. |
-| Game delivery | `.cpgame` files. First-party games are attached to each fork release and installed through the inbox like any other game. |
+| Firmware delivery | The fork release workflow (AD-25) publishes `X.Y.Z-ch.N` firmware for the game envs; fork devices update over the air from the fork's releases, or by SD. Moving from upstream firmware to the fork, and back, is by SD from a release asset. |
+| Game delivery | `.cpgame` files. First-party games are attached to each fork release by the fork release workflow (AD-25) and installed through the inbox like any other game. |
 | CI | The existing PR workflow builds all five envs and runs the host suites, including `test/game_core` and `test/game_script`; the fork-only job checks the upstream-touch ledger. |
-| Flash budget | The whole runtime (Lua, GameCore, GameScript, GameIcons, screens) adds at most 250 KB to the x4pro image (baseline 86.3% of the app slot; Lua alone measured +124 KB; icons about 40 KB for 64 icons at two sizes). |
+| Flash budget | The whole runtime (Lua, GameCore, GameScript, GameIcons, screens) adds at most 250 KB to the x4pro image (baseline 86.3% of the app slot; Lua alone measured +124 KB; icons about 40 KB for 64 icons at two sizes). A fork-only CI job measures it as the x4pro image with `FREEINK_CAP_GAMES` on minus the same commit with it off, so upstream growth never counts against it. |
 | Internal RAM | The `GameVM` (16 KB) and `GameLink` (4 KB) stacks and the Wi-Fi/ESP-NOW driver are the internal-RAM costs; everything else is in PSRAM. A `nearby` lobby refuses to open below 100 KB free internal heap. |
 | Observability | Serial log (`GAME`, `LUA`, `LINK`) and the match error view; no telemetry. |
 | Security | Sandboxed scripts (AD-6), text-only chunks, validated flat packages (AD-15), jailed files (AD-16, AD-17), unencrypted radio in a cooperative room (AD-13). |
@@ -481,6 +495,7 @@ Operational envelope:
 | First-party games: a solo puzzle, an open-information 2P game, a hidden-information 2P game (titles chosen in the games epic) | `games/<id>/`, `scripts/pack_game.py`, release assets | AD-8, AD-10, AD-15, AD-22, AD-23, AD-24 |
 | API docs for AI authors | `docs/crosshatch/game-api.md` + `ch.d.lua` + icon catalog (seeded by `game-api-seed.md`) | AD-8, AD-19, AD-23, AD-24 |
 | Clean upstream merges | the upstream-touch ledger and its CI check | AD-2, AD-3 |
+| Fork releases and over-the-air updates | fork release workflow, guarded `OtaUpdater` change | AD-3, AD-25 |
 | The restaurant test | launcher, `GameMatchActivity` views | AD-21, AD-22 |
 
 ## Deferred
@@ -499,6 +514,7 @@ Operational envelope:
 | Simulator fake link for Play Nearby | `FakeLink` host suites cover link logic; a simulator link is later tooling. |
 | Aligning with upstream "web plugins" | No upstream code exists; revisit if it ships. |
 | Starter repo | Post-v1; the API docs, LuaLS stub, and icon catalog are written to move there unchanged. |
+| Fork prereleases; a fork web flasher; fork C3 firmware | v1 releases only the game envs, makes no prereleases, and moves devices by SD. |
 | Bumps to pioarduino 55.03.312+ and GoogleTest 1.18 | Follow upstream's pins through merges. |
 | Open: ESP-NOW reliability, battery cost, Sticky and mixed-device behaviour | Measure between two devices before tuning 400 ms / 10 s and the 100 KB threshold. Only one device is on hand, so this waits for the second and blocks nothing: link and session code is built against the `FakeLink` suites until then. |
 | Open: internal heap after ESP-NOW teardown | Measurable on one device (radio up and down, no peer); AD-18 already bounds where a `silentRestart()` may happen. |

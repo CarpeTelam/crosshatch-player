@@ -1,0 +1,56 @@
+# tickets.toml — the initiative's epics in build order. tickets.py reads it.
+
+[[epic]]
+id = 1
+slug = "epic-platform-baseline"
+title = "Game code builds everywhere and upstream merges stay clean"
+covers = ["CAP-11"]
+
+[[epic]]
+id = 2
+slug = "epic-script-runtime"
+title = "A sandboxed Lua game runs solo on the device"
+covers = ["CAP-1", "CAP-2", "CAP-7"]
+after = [{ epic = 1, needs = "build guard, vendored Lua, test subdirectories, and the ledger" }]
+
+[[epic]]
+id = 3
+slug = "epic-icon-library"
+title = "Games and runtime screens share one icon library"
+covers = ["CAP-8"]
+after = [{ epic = 2, needs = "the ch.gfx display list and binding registry, GameAssets, and the runtime views" }]
+
+[[epic]]
+id = 4
+slug = "epic-install-and-launcher"
+title = "Players install a game by dropping one file and start it in three taps"
+covers = ["CAP-3", "CAP-4", "CAP-7", "CAP-8"]
+after = [{ epic = 2, needs = "Manifest::parse, GameSaveStore, GameMatchActivity, and the minimal Games list this replaces" }, { epic = 3, needs = "the icon library for launcher rows and the .bmp layout images are read from" }]
+
+[[epic]]
+id = 5
+slug = "epic-pass-and-play"
+title = "One device passes between players and hidden information stays hidden"
+covers = ["CAP-5", "CAP-6", "CAP-7"]
+after = [{ epic = 2, needs = "Session and the match lifecycle" }, { epic = 4, needs = "the mode picker and resume" }]
+
+[[epic]]
+id = 6
+slug = "epic-play-nearby"
+title = "Two devices play one match over ESP-NOW"
+covers = ["CAP-5", "CAP-7"]
+after = [{ epic = 4, needs = "the mode picker and Manifest checks for the lobby" }, { epic = 5, needs = "the N-seat Session and Roster and the Over / Play again flow" }]
+
+[[epic]]
+id = 7
+slug = "epic-game-api-docs"
+title = "An AI writes a working game from the docs alone"
+covers = ["CAP-9"]
+after = [{ epic = 3, needs = "the icon set to catalog" }, { epic = 4, needs = "install through the inbox for the AI-authoring trial" }, { epic = 6, needs = "the complete pass and nearby behaviour the docs describe (the seed's tic-tac-toe is pass and nearby)" }]
+
+[[epic]]
+id = 8
+slug = "epic-first-party-games"
+title = "Three first-party games ship with each release"
+covers = ["CAP-10", "CAP-1"]
+after = [{ epic = 3, needs = "the icon set" }, { epic = 4, needs = "packing and install through the inbox" }, { epic = 5, needs = "pass-and-play and the hand-off" }]

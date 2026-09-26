@@ -58,7 +58,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 ## Constraints
 
 - Game code is active only in the x4pro and sticky envs, their release variants, and the simulator envs, under `FREEINK_CAP_GAMES`. The game libraries still compile, unreferenced, for `default`, `x4c`, and `papermono`, at no cost to the C3.
-- Upstream changes are limited to the 9-file ledger in AD-3 plus 1 reserve file. Going past that requires an architecture update first. The `freeink-sdk` pointer never moves.
+- Upstream changes are limited to the 10-file ledger in AD-3, with no reserve left. Going past that requires an architecture update first. The `freeink-sdk` pointer never moves.
 - Game rules live only in scripts. Roster, turn, sync, and protocol logic lives only in the host-testable `GameCore`. There is no game-specific C++.
 - Scripts reach the host only through `ch.*`: no file, radio, or framebuffer access, and text chunks only. Each callback has a budget of 2 M instructions, which answers a move in about 1 s, and each VM has a 256 KB PSRAM heap.
 - Every mode enforces the same codec limits: a snapshot of at most 1,400 B (one ESP-NOW v2 payload), a move of at most 256 B, and a `ch.store` of at most 4 KB.
@@ -90,4 +90,4 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 
 - How reliable is ESP-NOW, what does a match cost in battery, and how do the Sticky and a mixed X4 Pro/Sticky pair behave? This waits for the second device and blocks nothing else: radio logic is built and tested against `FakeLink` until then. Measure before tuning the 400 ms / 10 s / 100 KB values.
 - Does internal heap recover after ESP-NOW teardown, or does leaving a Nearby match need `silentRestart()`? This can be measured on one device by bringing the radio up and down without a peer.
-- Which icons make up the v1 set? The API docs epic picks them from Phosphor's fill set (architecture AD-24).
+- Which icons make up the v1 set? The icon library epic picks them from Phosphor's fill set, and the API docs epic catalogs them (architecture AD-24).
