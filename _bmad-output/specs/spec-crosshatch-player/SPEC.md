@@ -91,11 +91,11 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - The CAP-9 test (an AI working from the docs alone) is inferred from the brief's requirement that the API be "documented well enough for an AI to write against".
 - The restaurant test is shown by watching a child use a real device; it is not automated.
 - Where the architecture differs from the brief (the script owns turn order, whole-frame refresh, install only through the SD inbox, Lua 5.5.1), the user-confirmed architecture decides.
+- Lua 5.5.1 works as well as or better than the spiked 5.4.7. Implementation starts without the spike re-run, and any 5.5.1 problem is fixed when it surfaces, with 5.4.9 as the fallback. This replaces AD-4's re-run before the API level 1 freeze.
 
 ## Open Questions
 
-- How reliable is ESP-NOW, what does a match cost in battery, and how do the Sticky and a mixed X4 Pro/Sticky pair behave? The radio epic measures these before the 400 ms / 10 s / 100 KB values are tuned.
-- Does internal heap recover after ESP-NOW teardown, or does leaving a Nearby match need `silentRestart()`?
-- Does Lua 5.5.1 pass the spike re-run, including a worst-case C-stack test, before API level 1 freezes? A measured regression reverts to 5.4.9.
+- How reliable is ESP-NOW, what does a match cost in battery, and how do the Sticky and a mixed X4 Pro/Sticky pair behave? This waits for the second device and blocks nothing else: radio logic is built and tested against `FakeLink` until then. Measure before tuning the 400 ms / 10 s / 100 KB values.
+- Does internal heap recover after ESP-NOW teardown, or does leaving a Nearby match need `silentRestart()`? This can be measured on one device by bringing the radio up and down without a peer.
 - What is the exact v1 icon list? The API docs epic decides it.
 - Which three titles ship as the first-party games? The games epic decides.
