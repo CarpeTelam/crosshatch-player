@@ -1,0 +1,138 @@
+# crosshatch-player script-engine spike results
+# Written section by section; a file without 'status: complete' at the end did not finish.
+git_sha: 1175389644c8
+build_env: x4pro-spike
+firmware_version: 1.6.5-x4pro
+built: Sep 26 2026 05:46:19
+engine_Lua: Lua 5.4.7 (PUC, compiled as C)
+engine_Lua_config: lua_Integer 64-bit, lua_Number 64-bit; count hook every 1000 instructions; libs: base table string math (load/loadfile/dofile removed)
+engine_Berry: Berry 1.1.0 (tag v1.1.0)
+engine_Berry_config: bint 64-bit, breal 64-bit; heartbeat every 1024 instructions; modules: string math; precompiled const objects (coc)
+build_flags: -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 -DEINK_DISPLAY_SINGLE_BUFFER_MODE=1 -DDISABLE_FS_H_WARNING=1 -DDESTRUCTOR_CLOSES_FILE=1 -DXML_GE=0 -DXML_CONTEXT_BYTES=1024 -std=gnu++2a -DUSE_UTF8_LONG_NAMES=1 -DUSE_SPI_ARRAY_TRANSFER=1 -DPNG_MAX_BUFFERED_PIXELS=16416 -DFREEINK_FONT_ENABLE_AUTOHINT=1 -DFREEINK_NET_WOLFSSL=1 -DWOLFSSL_USER_SETTINGS -DWOLFSSL_OPTIONS_H -DWOLFSSL_CLIENT_EXAMPLE -DWOLFSSL_TLS13 -DWOLFSSL_HAVE_SP_ECC -DWOLFSSL_SP_SMALL -DHAVE_FFDHE_2048 -DHAVE_CURVE25519 -DHAVE_SNI -DHAVE_MAX_FRAGMENT -Wno-bidi-chars -Wl,--wrap=panic_print_backtrace,--wrap=panic_abort,--wrap=bootloader_common_check_efuse_blk_validity -fno-exceptions -DFREEINK_DEVICE_X4PRO=1 -DFREEINK_CAP_USB_MSC=1 -DBOARD_HAS_PSRAM -DUSB_PRODUCT=\"CrossPoint_X4_Pro\" -DUSB_MANUFACTURER=\"CrossPoint\" -DCROSSPOINT_VERSION=\"1.6.5-x4pro\" -DENABLE_SERIAL_LOG -DCROSSPOINT_WAIT_FOR_USB_SERIAL -DLOG_LEVEL=2 -DUSE_BLOCK_DEVICE_INTERFACE=1 -DSPIKE_SCRIPT_ENGINE -I$PROJECT_DIR/src/spike
+compiler_flags: -Wno-bidi-chars -fno-exceptions -Os -ffunction-sections -fdata-sections -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -Wno-error=extra -Wno-unused-parameter -Wno-sign-compare -Wno-enum-conversion -gdwarf-4 -ggdb -freorder-blocks -Wwrite-strings -fstack-protector -fstrict-volatile-bitfields -fno-jump-tables -fno-tree-switch-conversion -DCHIP_HAVE_CONFIG_H -Wno-error=uninitialized -Wno-error=maybe-uninitialized -Wno-missing-field-initializers -Wno-error=array-bounds -Wno-write-strings -MMD -mlongcalls -fno-builtin-memcpy -fno-builtin-memset -fno-builtin-bzero -mdisable-hardware-atomics -std=gnu17 -Wno-old-style-declaration -Wno-strict-prototypes -Werror=return-type -std=gnu++2a -mlongcalls -fno-builtin-memcpy -fno-builtin-memset -fno-builtin-bzero -mdisable-hardware-atomics -fno-rtti -std=gnu++2b -fuse-cxa-atexit -std=gnu++2a -Werror=return-type
+esp_idf: v5.5.5  arduino_esp32: 3.3.11
+chip: esp32s3 rev 2 cores 2 cpu_mhz 240 psram_bytes 8388608
+screen: 480x800 (portrait logical)
+vm_task: core 1 priority 1 stack 16384 bytes, new task per run; power-saving lock held
+free_heap_at_start: internal 187892 (largest block 139252) psram 8254476
+workload: tic-tac-toe, scripted X vs minimax O; draw() after init and after every tap
+tap_cells: 4 4 1 3 2 8 4 0 8 2 4 1 3 8 6 5
+expected_touch_codes: 1011140113011114 (0 ignored/new game, 1 continue, 2 X won, 3 O won, 4 draw)
+expected_bench_nodes: 549945
+budgets: callback 1000000000, bench 4000000000, infinite-loop test 10000000 VM instructions; memory test cap 262144 bytes (PSRAM)
+timing: esp_timer microseconds; draw excludes present(); onTouch includes the computer's search
+
+[Lua / VM heap in internal RAM]
+completed: yes
+vm_create_us: 4455
+script_compile_us: 17278
+script_toplevel_us: 923
+init_us: 360
+draw_us: avg 7185 max 8971 n 17 (excludes present)
+onTouch_us: avg 651800 max 3620279 n 16 (includes the computer's minimax)
+present_us_total: 11406504 (e-ink refresh, excluded from draw)
+touch_codes: 1011140113011114 (matches expected)
+onTouch_vm_instructions: max 7815000 total 22492000; draw total 5000
+minimax_empty_board_us: 30981557 nodes 549945 (correct) vm_instructions 67170000
+minimax_empty_board_while_loops_us: 33824968 nodes 549945 (correct) vm_instructions 79637000
+minimax_empty_board_gc_stopped_us: 31229583 heap_growth 2504
+full_gc_us: 541
+vm_destroy_us: 1677
+vm_heap_bytes: after_create 9023 after_load 22771 after_games 25339 after_bench 25551 after_full_gc 18883
+vm_heap_peak_bytes: 25727
+vm_alloc_calls: 541 frees 62 refused 0
+alloc_churn_bytes: games 2444 bench 212 bench_while 176 total 37152
+gc_cycles: n/a (Lua exposes no GC events; see gc_stopped rerun and full_gc_us)
+free_internal_bytes: before 170108 low_water_during_run 137240 sampled_min 137264 after_destroy 169892 min_since_boot 137240
+free_psram_bytes: before 8254476 low_water_during_run 8254440 sampled_min 8254440 after_destroy 8254440 min_since_boot 8254440
+vm_task_stack_bytes: size 16384 high_water_used 3380
+cpu_mhz_after_run: 240
+
+[Lua / VM heap in PSRAM]
+completed: yes
+vm_create_us: 3783
+script_compile_us: 17897
+script_toplevel_us: 864
+init_us: 358
+draw_us: avg 7583 max 9584 n 17 (excludes present)
+onTouch_us: avg 652578 max 3638010 n 16 (includes the computer's minimax)
+present_us_total: 0 (e-ink refresh, excluded from draw)
+touch_codes: 1011140113011114 (matches expected)
+onTouch_vm_instructions: max 7815000 total 22492000; draw total 5000
+minimax_empty_board_us: 30976868 nodes 549945 (correct) vm_instructions 67170000
+minimax_empty_board_while_loops_us: skipped (internal-RAM run only)
+minimax_empty_board_gc_stopped_us: skipped (internal-RAM run only)
+full_gc_us: 1264
+vm_destroy_us: 2395
+vm_heap_bytes: after_create 9023 after_load 22771 after_games 25339 after_bench 25551 after_full_gc 18883
+vm_heap_peak_bytes: 25551
+vm_alloc_calls: 529 frees 52 refused 0
+alloc_churn_bytes: games 2444 bench 212 bench_while 0 total 34472
+gc_cycles: n/a (Lua exposes no GC events; see gc_stopped rerun and full_gc_us)
+free_internal_bytes: before 169892 low_water_during_run 169828 sampled_min 169892 after_destroy 169892 min_since_boot 137240
+free_psram_bytes: before 8254476 low_water_during_run 8222224 sampled_min 8222224 after_destroy 8254440 min_since_boot 8222224
+vm_task_stack_bytes: size 16384 high_water_used 3288
+cpu_mhz_after_run: 240
+
+[Berry / VM heap in internal RAM]
+completed: yes
+vm_create_us: 1350
+script_compile_us: 25992
+script_toplevel_us: 2482
+init_us: 714
+draw_us: avg 8745 max 10740 n 17 (excludes present)
+onTouch_us: avg 10326425 max 57347794 n 16 (includes the computer's minimax)
+present_us_total: 11408728 (e-ink refresh, excluded from draw)
+touch_codes: 1011140113011114 (matches expected)
+onTouch_vm_instructions: max 11803648 total 33969152; draw total 6144
+minimax_empty_board_us: 493546767 nodes 549945 (correct) vm_instructions 101177344
+minimax_empty_board_while_loops_us: 277780730 nodes 549945 (correct) vm_instructions 110590976
+full_gc_us: 508
+vm_destroy_us: 609
+vm_heap_bytes: after_create 2640 after_load 17836 after_games 16756 after_bench 18500 after_full_gc 15244
+vm_heap_peak_bytes: 31460
+vm_alloc_calls: 1795570 frees 1795263 refused 0
+alloc_churn_bytes: games 48608016 bench 144995088 bench_while 200 total 193639652
+gc_cycles: games 4082 (6096112 us) bench 11792 (18274144 us) bench_while 0 (0 us) total 15879 (24371338 us) max_pause_us 2730
+free_internal_bytes: before 169892 low_water_during_run 132616 sampled_min 135420 after_destroy 169892 min_since_boot 132616
+free_psram_bytes: before 8254476 low_water_during_run 8254440 sampled_min 8254440 after_destroy 8254440 min_since_boot 8222224
+vm_task_stack_bytes: size 16384 high_water_used 3704
+cpu_mhz_after_run: 240
+
+[Berry / VM heap in PSRAM]
+completed: yes
+vm_create_us: 1357
+script_compile_us: 26815
+script_toplevel_us: 1583
+init_us: 710
+draw_us: avg 9656 max 11377 n 17 (excludes present)
+onTouch_us: avg 10376125 max 57674526 n 16 (includes the computer's minimax)
+present_us_total: 0 (e-ink refresh, excluded from draw)
+touch_codes: 1011140113011114 (matches expected)
+onTouch_vm_instructions: max 11803648 total 33969152; draw total 6144
+minimax_empty_board_us: 496741580 nodes 549945 (correct) vm_instructions 101177344
+minimax_empty_board_while_loops_us: skipped (internal-RAM run only)
+full_gc_us: 522
+vm_destroy_us: 613
+vm_heap_bytes: after_create 2640 after_load 17836 after_games 16756 after_bench 18500 after_full_gc 15244
+vm_heap_peak_bytes: 31460
+vm_alloc_calls: 1795565 frees 1795261 refused 0
+alloc_churn_bytes: games 48608016 bench 144995088 bench_while 0 total 193639452
+gc_cycles: games 4082 (6832800 us) bench 11792 (21076734 us) bench_while 0 (0 us) total 15879 (27910658 us) max_pause_us 3177
+free_internal_bytes: before 169892 low_water_during_run 169828 sampled_min 169892 after_destroy 169892 min_since_boot 132616
+free_psram_bytes: before 8254476 low_water_during_run 8217324 sampled_min 8220116 after_destroy 8254440 min_since_boot 8217324
+vm_task_stack_bytes: size 16384 high_water_used 3704
+cpu_mhz_after_run: 240
+
+[Lua error isolation]
+runtime_error: PASS status=error recovered=yes after_us=1444 message="[string "isolation"]:4: attempt to index a nil value (local 't')"
+infinite_loop: PASS status=budget recovered=yes after_us=3296148 message="instruction budget exceeded"
+memory_bomb: PASS status=error recovered=yes after_us=191109 message="not enough memory"
+
+[Berry error isolation]
+runtime_error: PASS status=error recovered=yes after_us=590 message="attribute_error: 'nil' value has no attribute 'x'"
+infinite_loop: PASS status=budget recovered=yes after_us=3083975 message="timeout_error: instruction budget exceeded"
+memory_bomb: PASS status=error recovered=yes after_us=215896 message="berry error code 2"
+
+total_elapsed_ms: 1789505
+status: complete
