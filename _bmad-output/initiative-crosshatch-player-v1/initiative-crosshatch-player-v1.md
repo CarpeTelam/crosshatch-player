@@ -57,3 +57,7 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 
 - Open question: ESP-NOW reliability, battery cost, and Sticky or mixed-pair behaviour wait for a second device (spec Open Questions); epic-play-nearby owns the answer and builds against `FakeLink` until then.
 - Open question: whether internal heap recovers after ESP-NOW teardown (spec Open Questions); epic-play-nearby owns the answer.
+- Decision: eight epics, cut one per spec capability or coupled pair along the spine's layers, with the platform baseline first and the multiplayer layer split into pass-and-play and Play Nearby; order and prerequisites are in `tickets.toml` beside this file (user's decision, 2026-09-26).
+- Decision: epic-icon-library picks the v1 icon set and epic-game-api-docs catalogs it; AD-24 and the spec's Open Questions were amended to match (user's decision, 2026-09-26).
+- Decision: the second device gates only the closure of epic-play-nearby and epic-first-party-games; only the first-party games' nearby-round entries wait on epic-play-nearby (user's decision, 2026-09-26).
+- Decision: first-party release assets are attached by a new fork-only workflow, not by editing upstream `release.yml`, so the ledger is unchanged (user's decision, 2026-09-26).
