@@ -17,7 +17,7 @@ references = ["_bmad-output/planning-artifacts/architecture/architecture-crossha
 id = 2
 type = "story"
 title = "Upstream-touch ledger and its CI job"
-description = "Writes `docs/crosshatch/upstream-touches.md` with the 10 AD-3 rows (no reserve remains) and the allowlist, a fork-only script that checks a ref against it (paths present in `upstream/develop`, merge-base to HEAD, `--no-renames`, the `freeink-sdk` pointer included) and trial-merges `upstream/develop` for conflicts in game paths (`lib/Game*`, `lib/lua`, `src/games`, `src/activities/games`, `games`, `assets/game-icons`, `docs/crosshatch`), and a new fork-only workflow that runs it with full history on every PR; the owner then makes it a required check."
+description = "Writes `docs/crosshatch/upstream-touches.md` with the 10 AD-3 rows (no reserve remains) and the allowlist, a fork-only script that checks a ref against it (paths present in `upstream/develop`, merge-base to HEAD, `--no-renames`, the `freeink-sdk` pointer included) and trial-merges `upstream/develop` for conflicts in game paths (`lib/Game*`, `lib/lua`, `src/games`, `src/activities/games`, `games`, `assets/game-icons`, `docs/crosshatch`, `test/game_core`, `test/game_script`, `scripts/pack_game.py`, `scripts/game_codec.py`, `scripts/gen_game_icons.py`, and the fork-only workflow files), and a new fork-only workflow that runs it with full history on every PR; the owner then makes it a required check."
 verify = "Run locally, the script fails a branch editing an unledgered upstream file, fails one moving the `freeink-sdk` pointer, and passes one editing only ledgered or fork-only files; the workflow passes on its own PR."
 covers = ["R1", "R2"]
 after = []
@@ -55,23 +55,36 @@ references = ["_bmad-output/planning-artifacts/architecture/architecture-crossha
 [[entry]]
 id = 6
 type = "story"
-title = "Fork release workflow and fork update source"
-description = "Adds `lib/GameCore/ForkRelease.h` (fork release URL, asset name, and `-ch.N` parse and compare, tested in `test/game_core` against shared version vectors), guarded calls to it in `OtaUpdater.cpp` (ledger row 10), and the one fork-only `workflow_dispatch` release workflow of AD-25, which numbers, checks, builds the game envs, packs every `games/<id>/` (none yet), and publishes; the owner disables upstream's release workflows in the Actions tab, adds the `*-ch.*` tag ruleset, and makes the first release."
-verify = "The version vectors pass in host tests; a dry run of the workflow builds both game envs and passes its image checks; an X4 Pro on a development build is offered the first fork release, installs it, and is not offered it again."
+title = "Fork update source"
+description = "Adds `lib/GameCore/ForkRelease.h` with the fork release URL, the asset-name function, and the `-ch.N` parse and compare, tested in `test/game_core` against a shared vector file `test/game_core/fork_version_vectors.json` that entry 7's workflow checks also read, and guarded calls to it in `OtaUpdater.cpp` (ledger row 10) that treat a 404 from releases/latest as `NO_UPDATE`; `OtaUpdater.h` is unchanged."
+verify = "The version vectors pass in `test/game_core`; all five envs build; the `x4pro-gh_release` image contains the fork release URL and not upstream's, and the `default` image still contains upstream's."
 covers = ["R7"]
 after = [1, 2]
+hitl = false
+risk = "high"
+unknown = "Whether `OtaUpdater.cpp`'s current structure lets the guarded calls replace the URL constant and the body of `isUpdateNewer()` without touching anything else."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-25, AD-3 row 10", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/reviews/review-ad25-adversary.md"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Fork release workflow and first release"
+description = "Adds the one fork-only `workflow_dispatch` release workflow of AD-25 with a dry-run input (build and checks, no tag), copying `ci.yml`'s toolchain setup as entry 3 does, checking tags and the version line against entry 6's vector file, and packing each `games/<id>/` with `scripts/pack_game.py` from epic-install-and-launcher (with no `games/<id>/` the step needs no script); writes AD-25's upstream-merge dry-run rule beside row 10 in `docs/crosshatch/upstream-touches.md`; after merge the owner disables upstream's release workflows in the Actions tab, adds the `*-ch.*` tag ruleset, and makes the first release."
+verify = "After merge, a dry run builds both game envs and passes its image checks; hand-pushing or deleting a `*-ch.*` tag is refused; an X4 Pro on a development build of this branch is offered the first fork release, installs it, and is not offered it again."
+covers = ["R7"]
+after = [6]
 hitl = true
 risk = "high"
-unknown = "How the workflow reads active workflows' triggers through the API, and whether a GitHub tag ruleset can exempt only this workflow on a personal repository."
-references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-25, AD-3 row 10, Operational envelope", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/reviews/review-ad25-adversary.md"]
+unknown = "How the workflow reads active workflows' triggers through the API, and whether a tag ruleset on a personal repository can exempt only this workflow; if not, repository admins are the ruleset's only bypass and the workflow still refuses an existing tag."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-25, Operational envelope", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/reviews/review-ad25-adversary.md"]
 
 [[entry]]
 id = 5
 type = "story"
 title = "Refactor sweep"
-description = "Cleans up what the build records and deferred review findings of entries 1 to 4 and 6 name, with its scope set when it starts; cleanup only."
+description = "Cleans up what the build records and deferred review findings of entries 1 to 4, 6, and 7 name, with its scope set when it starts; cleanup only."
 verify = "Its PR has every CI, ledger, and size job green on all five envs."
 covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7"]
-after = [2, 4, 6]
+after = [2, 4, 7]
 hitl = false
 risk = "low"

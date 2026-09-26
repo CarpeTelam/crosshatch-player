@@ -60,4 +60,5 @@ Build configuration, CI, the upstream-touch ledger, the vendored engine, and emp
 - Decision: the flash budget is measured as x4pro with games on minus the same commit with games off, not against a fixed baseline, so upstream merges never consume it; Done when 5 and the spine's Operational envelope were reworded (user's decision, 2026-09-26).
 - Decision: the owner adds the ledger and size jobs as required checks in branch protection; entries 2 and 3 are hitl for that step (user's decision, 2026-09-26).
 - Decision: the default refactor sweep is kept as entry 5 (2026-09-26).
-- Decision: AD-25 puts the fork release workflow and ledger row 10 in this epic; entry 6 builds them, is hitl for the Actions and tag-ruleset settings and the device check, and the sweep waits on it (from the AD-25 review, 2026-09-26).
+- Decision: AD-25 puts the fork release workflow and ledger row 10 in this epic. Entry 6 builds the update source; entry 7 builds the workflow and is hitl for the Actions and tag-ruleset settings, the first release, and the device check, because `workflow_dispatch` runs only once the file is on `develop`; the sweep waits on entry 7 (from the AD-25 review and set check, 2026-09-26).
+- Decision: if a tag ruleset cannot exempt only the workflow, repository admins are its only bypass, so no deploy key or token secret is added (2026-09-26).

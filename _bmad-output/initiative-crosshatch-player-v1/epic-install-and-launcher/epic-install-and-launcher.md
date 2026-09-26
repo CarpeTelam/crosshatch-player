@@ -32,7 +32,7 @@ Completed at inception. This epic owns CAP-3, CAP-4, solo resume through Continu
 
 ## Boundaries
 
-`GamePackageInstaller`, `GameRegistry`, `.pkg`, `Manifest::check`, `GamesLauncherActivity`, `GameModeActivity`, `resume.bin` in GameSaveStore, resume in the match, `scripts/pack_game.py`, and the SHA-256 helper. Consumes `lib/ZipFile`, `lib/miniz`, `lib/PngToBmpConverter`, `Storage`, and the web file manager unchanged. Not a web Games page (deferred).
+`GamePackageInstaller`, `GameRegistry`, `.pkg`, `Manifest::check`, `GamesLauncherActivity`, `GameModeActivity`, `resume.bin` in GameSaveStore, resume in the match, `scripts/pack_game.py`, and the SHA-256 helper. Consumes `lib/ZipFile`, `lib/miniz`, `lib/PngToBmpConverter`, `Storage`, and the web file manager unchanged. `scripts/pack_game.py` keeps the calling contract the fork release workflow (epic-platform-baseline entry 7) relies on: a `games/<id>/` directory in, `<id>.cpgame` out, the package hash printed, and a nonzero exit on an invalid package. Not a web Games page (deferred).
 
 Handoffs: epic-pass-and-play extends the mode picker with the seat choice and resume with the hand-off.
 
