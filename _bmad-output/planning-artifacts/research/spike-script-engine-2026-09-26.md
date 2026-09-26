@@ -3,7 +3,6 @@ title: 'Spike: Lua 5.4 vs Berry as the crosshatch-player script engine (X4 Pro)'
 type: 'technical'
 decision: 'Which engine runs sandboxed v1 games: PUC Lua 5.4 compiled as C, or Berry'
 status: 'complete: recommend Lua 5.4'
-branch: 'spike/script-engine (throwaway, never merged)'
 firmware_commit: '1175389644c8'
 created: '2026-09-26'
 updated: '2026-09-26'
@@ -19,7 +18,7 @@ updated: '2026-09-26'
 
 ## What was built
 
-The code described here is not on this branch. It lives on the throwaway branch `spike/script-engine`: firmware as run at `1175389`, with the vendored Berry sources last present at `22b60fb` (`lib/berry` was removed in `94cbba8`).
+The benchmark firmware was a throwaway spike and is not part of this handoff. This section records how the numbers were produced, so they can be judged.
 
 | Path | What it is |
 |---|---|
