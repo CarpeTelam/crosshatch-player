@@ -90,4 +90,4 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 
 - How reliable is ESP-NOW, what does a match cost in battery, and how do the Sticky and a mixed X4 Pro/Sticky pair behave? This waits for the second device and blocks nothing else: radio logic is built and tested against `FakeLink` until then. Measure before tuning the 400 ms / 10 s / 100 KB values.
 - Does internal heap recover after ESP-NOW teardown, or does leaving a Nearby match need `silentRestart()`? This can be measured on one device by bringing the radio up and down without a peer.
-- What is the exact v1 icon list? The API docs epic decides it.
+- Which icons make up the v1 set? The API docs epic picks them from Phosphor's fill set (architecture AD-24).

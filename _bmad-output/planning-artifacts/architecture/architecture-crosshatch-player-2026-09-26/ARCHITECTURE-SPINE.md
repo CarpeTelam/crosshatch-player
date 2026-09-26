@@ -336,7 +336,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 - **Binds:** script-runtime, first-party-games, api-docs, package-install-launcher
 - **Prevents:** every game drawing its own suits, dice, pieces, and arrows in a different style; runtime screens and games looking unrelated.
 - **Rule:**
-  - `lib/GameIcons` is a fork-owned, curated icon set. Its sources are SVGs in `assets/game-icons/` under an MIT, ISC, or CC0 license or original work, with attribution recorded in `docs/crosshatch/`. `scripts/gen_game_icons.py` renders each at 32 and 64 px as 1-bit bitmaps into a committed `GameIcons.generated.h`, which is never hand-edited.
+  - `lib/GameIcons` is a fork-owned, curated icon set drawn from one source: Phosphor Icons (MIT), fill weight, pinned at `@phosphor-icons/core` 2.1.1. The chosen SVGs are vendored in `assets/game-icons/` with Phosphor's license and recorded in `docs/crosshatch/`. A glyph Phosphor lacks is drawn as original work in Phosphor's fill style; icons from other libraries are not mixed in. A committed list in `assets/game-icons/` maps each crosshatch name to its source file, so a Phosphor rename or version bump never changes an API name. `scripts/gen_game_icons.py` renders each at 32 and 64 px as 1-bit bitmaps into a committed `GameIcons.generated.h`, which is never hand-edited.
   - Scripts draw icons with `ch.gfx.icon(name, x, y, size, color)`: `small` (32 px), `medium` (64 px), or `large` (128 px, the 64 px bitmap doubled). An unknown name is a script error.
   - Icon names are lowercase `snake_case` and part of the API level: a level only adds names, and never renames, removes, or redraws one into a different meaning. The v1 set covers marks, card suits, dice faces, board pieces, player markers, and common controls; the exact list is fixed in the API docs epic.
   - The launcher, the runtime views, the Home cover-grid Games tile, and first-party games use the same set. A manifest may name a library icon as the game's icon instead of shipping `icon.png`.
@@ -367,6 +367,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 | PlatformIO Core | pioarduino 6.1.19 |
 | ESP-NOW | v2 (1,470 B max payload, 20 peers) |
 | Zip / inflate, PNG | in-tree `lib/ZipFile` + `lib/miniz`, `lib/PngToBmpConverter` |
+| Icons | Phosphor Icons 2.1.1 (`@phosphor-icons/core`, MIT), fill weight |
 | SHA-256 | mbedTLS (bundled with ESP-IDF 5.5) on device, OpenSSL in the simulator, behind one helper |
 | Host tests | GoogleTest 1.17.0 via CMake, follows upstream's pin |
 
@@ -435,7 +436,7 @@ src/
   games/                  # GameLink task, EspNowLink, NearbySession, GamePackageInstaller, GameRegistry, GameSaveStore,
                           # GameAssets (source/image/store loader), FrameReplay, GameViewport, PSRAM arena backend, Sha256 helper
   activities/games/       # GamesLauncherActivity, GameModeActivity, GameLobbyActivity, GameMatchActivity
-assets/game-icons/        # icon SVG sources + licenses
+assets/game-icons/        # vendored Phosphor fill SVGs, name map, original additions, license
 games/<id>/               # first-party game sources (manifest.json, main.lua, *.png)
 scripts/pack_game.py      # games/<id>/ → <id>.cpgame, validates, prints package hash
 scripts/game_codec.py     # reference codec for golden vectors and tooling
