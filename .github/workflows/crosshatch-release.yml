@@ -1,0 +1,235 @@
+# Fork-only: makes every crosshatch-player release. No release is published by hand.
+#
+# Run it from the Actions tab on develop. With "dry run" on (the default) it builds and checks everything and uploads
+# the would-be release assets as a run artifact, but creates no tag and no release. Turn "dry run" off to publish.
+# A publishing run must be dispatched from develop and release develop's head or an ancestor of it ("ref" input), for
+# example to withdraw a bad release by releasing a good older commit under the next number. A dry run may use any
+# branch, such as an upstream merge before it lands.
+#
+# A release is tagged <upstream X.Y.Z>-ch.<N>. Devices with games compare only N, so each image must report exactly its
+# tag and N is never reused: N is one more than the largest -ch.N in any tag, and an existing tag is never replaced.
+# scripts/fork_release.py holds every check and how to run them locally.
+#
+# A publishing run that fails after creating the tag leaves that N unused: delete its draft release, if any, and run
+# the workflow again, which releases N+1. Tags are never deleted or reused.
+#
+# Owner settings this workflow relies on: upstream's release.yml and release_candidate.yml disabled in the Actions tab
+# (the run fails while they are active), and a tag ruleset that forbids deleting or moving *-ch.* tags.
+name: Fork release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and check only, no tag or release)
+        type: boolean
+        default: true
+      ref:
+        description: Commit to release (default the branch head); publishing needs develop or an ancestor of it
+        type: string
+        default: ''
+
+permissions: {}
+
+# One release at a time, and never cancelled halfway: two runs could otherwise pick the same N. GitHub keeps one waiting
+# run per group, so a dispatch made while another run waits replaces the waiting one (which has done nothing yet).
+concurrency:
+  group: crosshatch-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      # The script and the version vectors come from this workflow's commit; the firmware from the released commit,
+      # which may be an older one.
+      RELEASE_SCRIPT: tools/scripts/fork_release.py
+    steps:
+      - name: Check out the release tooling
+        uses: actions/checkout@v6
+        with:
+          path: tools
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Standard library only, so it fails fast before the toolchain install.
+      - name: Test the release script
+        run: python3 tools/scripts/fork_release_test.py -v
+
+      - name: Check out the commit to release
+        uses: actions/checkout@v6
+        with:
+          path: src
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          submodules: recursive
+
+      # A workflow that runs on `release`, or builds a gh_release env, could overwrite the assets with images that do
+      # not report their tag, and devices would then be offered the same release forever. The API gives each
+      # workflow's state; the triggers are read from the files of both commits a release could run them from.
+      - name: Check the ref and the other workflows
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows?per_page=100" \
+            --jq '.workflows[] | [.path, .state] | @tsv' > "$RUNNER_TEMP/workflow-states.tsv"
+          python3 "$RELEASE_SCRIPT" preflight --repo-dir src --develop-ref origin/develop \
+            --dispatch-ref "$GITHUB_REF" --dry-run "$DRY_RUN" \
+            --workflow-states "$RUNNER_TEMP/workflow-states.tsv" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" --repository "$GITHUB_REPOSITORY" \
+            --checkout src --checkout tools
+
+      # Toolchain setup (uv through the penv pin) copied from ci.yml's build job.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          # platform-espressif32's builder/main.py imports these unconditionally; its own
+          # penv bootstrap (builder/penv_setup.py) is supposed to install them automatically
+          # but isn't picking them up reliably in this runner image, so pin them explicitly.
+          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
+            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
+            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
+            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+
+      # Keyed on platformio.ini before the version rewrite below, so every release of one commit shares a cache.
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-v3-${{ runner.os }}-fork-release-${{ hashFiles('src/platformio.ini') }}
+          restore-keys: pio-v3-${{ runner.os }}-fork-release-
+
+      - name: Number the release and set its version
+        id: prepare
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[].name' > "$RUNNER_TEMP/tags.txt"
+          python3 "$RELEASE_SCRIPT" prepare --project-dir src --tags "$RUNNER_TEMP/tags.txt" --plan release/plan.json
+
+      - name: Pin pioarduino core inside the platform penv
+        working-directory: src
+        env:
+          RELEASE_ENVS: ${{ steps.prepare.outputs.envs }}
+        run: |
+          set -euo pipefail
+          # The platform bootstraps ~/.platformio/penv with an open-ended "pioarduino>=6.1.19",
+          # which resolves to a core whose tool-scons pin fights the platform's; keep the penv
+          # core on the same version as the outer core installed above (see ci.yml).
+          # See https://github.com/pioarduino/platform-espressif32/issues/529
+          for env in $RELEASE_ENVS; do
+            pio pkg install -e "$env"
+          done
+          uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
+          ~/.platformio/penv/bin/pio --version
+
+      - name: Build the release envs
+        run: python3 "$RELEASE_SCRIPT" build --plan release/plan.json --project-dir src
+
+      - name: Check the images
+        run: python3 "$RELEASE_SCRIPT" check-images --plan release/plan.json --project-dir src --dist release/dist
+
+      - name: Pack the games
+        run: python3 "$RELEASE_SCRIPT" pack-games --plan release/plan.json --project-dir src --dist release/dist
+
+      - name: Write the release notes
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: no tag or release is created. The assets are in this run's fork-release artifact." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 "$RELEASE_SCRIPT" notes --plan release/plan.json --out release/notes.md
+
+      - name: Keep the release assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: fork-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Tag and publish
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the release tooling
+        uses: actions/checkout@v6
+        with:
+          path: tools
+          sparse-checkout: |
+            scripts
+            test/game_core
+
+      - name: Fetch the checked assets
+        uses: actions/download-artifact@v4
+        with:
+          name: fork-release
+          path: release
+
+      # Only this workflow numbers releases, and runs never overlap; this catches a tag made some other way.
+      - name: Check the tag is still free
+        id: plan
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[].name' > "$RUNNER_TEMP/tags.txt"
+          python3 tools/scripts/fork_release.py recheck --plan release/plan.json --tags "$RUNNER_TEMP/tags.txt"
+
+      # Creating the ref fails when the tag exists, like a push without force.
+      - name: Create the tag
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+        run: gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$COMMIT" --silent
+
+      # Created with GITHUB_TOKEN, so no workflow runs on the release's events.
+      - name: Create a draft release and upload every asset
+        id: draft
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="$TAG" \
+            -F draft=true -F prerelease=false -F body=@release/notes.md --jq .id)"
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
+          python3 tools/scripts/fork_release.py expected-assets --plan release/plan.json \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected.txt"
+          while IFS=$'\t' read -r asset _size; do
+            curl --fail-with-body -sS --retry 3 -o /dev/null -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" --data-binary "@release/dist/$asset" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$asset"
+            echo "Uploaded $asset"
+          done < "$RUNNER_TEMP/expected.txt"
+          # Names and sizes must match what was checked, so a truncated upload is never published.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | "\(.name)\t\(.size)"' | LC_ALL=C sort > "$RUNNER_TEMP/uploaded.txt"
+          diff "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/uploaded.txt"
+
+      - name: Publish as the latest release
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true \
+            --jq '"Published " + .tag_name + ": " + .html_url'

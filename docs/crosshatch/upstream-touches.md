@@ -38,6 +38,14 @@ cannot be.
 | 9 | `src/components/CoverGridHomeUi.cpp` | Games tile drawn from a `GameIcons` bitmap | yes |
 | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison (AD-25) | yes |
 
+Row 10 and fork releases (AD-25): an upstream merge that touches `src/network/OtaUpdater.*`,
+`lib/JsonParser/ReleaseJsonParser.*`, `src/network/FirmwareBoardTag.*`, a release workflow, or a `*-gh_release` env in
+`platformio.ini` is not done until a dry run of the fork release workflow (`.github/workflows/crosshatch-release.yml`,
+"dry run" on, started from the Actions tab with the merge branch picked under "Use workflow from") passes. The dry run builds the release envs and checks that each image still
+reports its tag, holds the fork release URL and not upstream's, and carries its own board tag, so a clean merge that
+reroutes or strands fork devices fails there instead of on a device. Upstream's `release.yml` and
+`release_candidate.yml` stay disabled in the Actions tab and are never edited.
+
 No reserve row remains.
 
 ## Allowlist
@@ -72,6 +80,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_upstream_touches_test.py`
 - `scripts/check_flash_budget.py`
 - `scripts/check_flash_budget_test.py`
+- `scripts/fork_release.py`
+- `scripts/fork_release_test.py`
 - `.github/workflows/crosshatch-*.yml` -- every fork-only workflow is named with this prefix.
 
 ## Running the check locally

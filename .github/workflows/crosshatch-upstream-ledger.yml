@@ -36,6 +36,11 @@ jobs:
       - name: Test the ledger check
         run: python3 scripts/check_upstream_touches_test.py -v
 
+      # The release workflow runs only when dispatched; testing its script here shows a broken check, or an upstream
+      # merge that changes what it reads, on the pull request instead of at the next release.
+      - name: Test the release script
+        run: python3 scripts/fork_release_test.py -v
+
       # The merge driver matches the documented upstream merge, where .gitattributes keeps our AGENTS.md.
       - name: Check the ledger and trial-merge upstream
         run: |
