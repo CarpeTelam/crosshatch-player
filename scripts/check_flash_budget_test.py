@@ -68,7 +68,7 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 256000)
 
     def test_workflow_limit_matches_the_script_default(self):
-        workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-flash-budget.yml'
+        workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml'
         values = [line.split(':', 1)[1].strip() for line in workflow.read_text().splitlines()
                   if line.strip().startswith('FLASH_BUDGET_KIB:')]
         self.assertEqual(values, [str(cfb.DEFAULT_LIMIT_KIB)])

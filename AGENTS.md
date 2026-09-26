@@ -32,6 +32,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Static analysis matching CI: `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`.
 - Format with `./bin/clang-format-fix` and no arguments before committing, matching CI's whole-tree check; `-g` skips staged and new files. It exits 1 below clang-format 21; never run `clang-format` directly, since the wrapper excludes generated and vendored sources.
 - CI runs only on pull requests here (the `ci.yml` push trigger is `master`, which this fork does not use); open a PR to get a CI result.
+- Add a fork-only CI check as a job in `.github/workflows/crosshatch-ci.yml` and list it in the `Crosshatch Test Status` job's `needs`; never edit upstream's `ci.yml`. Branch protection requires only `Test Status` and `Crosshatch Test Status`.
 - Never run `git clean -fdX`; it deletes the gitignored `platformio.local.ini`. For a stale-scaffold "multiple definition of 'app_main'" error, use the `rm -rf` in `platformio.ini`.
 
 ## Conventions that differ from defaults
