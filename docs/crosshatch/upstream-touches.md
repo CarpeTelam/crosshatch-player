@@ -70,6 +70,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/gen_game_icons.py`
 - `scripts/check_upstream_touches.py`
 - `scripts/check_upstream_touches_test.py`
+- `scripts/check_flash_budget.py`
+- `scripts/check_flash_budget_test.py`
 - `.github/workflows/crosshatch-*.yml` -- every fork-only workflow is named with this prefix.
 
 ## Running the check locally
