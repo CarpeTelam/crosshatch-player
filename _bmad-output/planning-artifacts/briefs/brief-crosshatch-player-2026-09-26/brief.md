@@ -87,7 +87,7 @@ There is no technical moat here, and the brief doesn't claim one. The difference
 ## Risks and Open Questions
 
 - **Engine footprint.** How much memory and speed do Lua and Berry really cost on the S3 with PSRAM? A one-day spike settles it.
-- **Radio.** Is ESP-NOW reliable between two of these devices, and what does a match cost in battery? CrossPlay never measured it. It is also unconfirmed whether the pinned Arduino-ESP32 version supports ESP-NOW v2's larger payloads.
+- **Radio.** Is ESP-NOW reliable between two of these devices, and what does a match cost in battery? CrossPlay never measured it. (The pinned Arduino-ESP32 3.3.11 does support ESP-NOW v2's larger payloads; checked 2026-09-26.)
 - **State size.** Does a typical game's state fit in one radio payload? A payload is 250 B in ESP-NOW v1 and 1,470 B in v2.
 - **Upstream plugins.** If upstream ships its "web plugins", does crosshatch align with them or stay separate?
 - **Demand.** Whether anyone beyond the author wants this is unknown, and for a passion project that is acceptable.

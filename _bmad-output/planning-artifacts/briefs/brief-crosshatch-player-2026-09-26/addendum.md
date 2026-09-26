@@ -44,7 +44,7 @@ So the runtime is fork code, and games are the plugins. If upstream later ships 
 
 - ESP-NOW with a broadcast lobby [34].
 - The host device holds the authoritative state and sends the whole state each turn, with sequence numbers and app-level acks, as CrossPlay does with its 400 ms resend and 10 s drop [7].
-- Payloads are 250 B in ESP-NOW v1 and 1,470 B in v2. ESP-NOW v2 needs Arduino-ESP32 3.2.1 or later, so check the pinned version in `platformio.ini` [69].
+- Payloads are 250 B in ESP-NOW v1 and 1,470 B in v2. ESP-NOW v2 needs Arduino-ESP32 3.2.1 or later [69]. Checked 2026-09-26: every env extends `[base]`, which pins pioarduino platform 55.03.311, bundling Arduino-ESP32 3.3.11 on ESP-IDF 5.5.5. The Arduino `ESP_NOW` library at that tag exposes `getVersion()` and `getMaxDataLen()`, and IDF 5.5.5's `esp_now.h` defines `ESP_NOW_MAX_DATA_LEN_V2` as 1470 and caps peers at 20. A v1 peer truncates or drops v2 packets over 250 B, which doesn't matter while every device runs crosshatch.
 
 **Patterns to borrow from CrossPlay, as ideas rather than code [8]:**
 
