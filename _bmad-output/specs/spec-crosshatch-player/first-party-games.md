@@ -11,5 +11,7 @@ The research derived these candidates from game rules, not usage data:
 | Hidden-information 2P | Hangman, Mastermind / Bulls and Cows, Battleship | `pass` with hand-off, `nearby` |
 
 - Simon Tatham's puzzles are MIT-licensed but each one needs rework for e-ink.
+- Hangman in pass-and-play needs the setter to enter a word, which breaks the no-text-entry rule unless the word comes from a built-in list.
+- Battleship boards must be packed (for example as strings) to stay well under the 1,400 B snapshot limit.
 - Every first-party game stays within API level 1: turn-structured, a snapshot of at most 1,400 B, library icons or 1-bit package images.
 - Sources live in `games/<id>/`. `scripts/pack_game.py` packs them into `.cpgame` files, which are attached to each fork release and installed through the inbox, never embedded in the firmware.

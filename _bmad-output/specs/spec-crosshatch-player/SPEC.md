@@ -84,14 +84,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 
 ## Success signal
 
-- The author writes a new game with an AI in an evening, drops the `.cpgame` on the SD card, and a child picks up an X4 Pro, launches the game, and finishes a round alone, passing the device, or against a second device, without adult help and with no firmware build. The next upstream `develop` merge touches no game code.
-
-## Assumptions
-
-- The CAP-9 test (an AI working from the docs alone) is inferred from the brief's requirement that the API be "documented well enough for an AI to write against".
-- The restaurant test is shown by watching a child use a real device; it is not automated.
-- Where the architecture differs from the brief (the script owns turn order, whole-frame refresh, install only through the SD inbox, Lua 5.5.1), the user-confirmed architecture decides.
-- Lua 5.5.1 works as well as or better than the spiked 5.4.7. Implementation starts without the spike re-run, and any 5.5.1 problem is fixed when it surfaces, with 5.4.9 as the fallback. This replaces AD-4's re-run before the API level 1 freeze.
+- The author writes a new game with an AI in an evening, drops the `.cpgame` on the SD card, and a child picks up an X4 Pro, launches the game, and finishes a round alone, passing the device, or against a second device, without adult help and with no firmware build, as observed on a real device. The next upstream `develop` merge touches no game code.
 
 ## Open Questions
 

@@ -91,7 +91,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 
 - **Binds:** script-runtime, api-docs, first-party-games
 - **Prevents:** a patched engine that blocks upgrades; games or saves that depend on a language level or integer width that later changes.
-- **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` can only arrive with a new `api` level and a `proto` bump. `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. Before API level 1 freezes, the spike harness is re-run once on 5.5.1 with a worst-case C-stack test (deep patterns, deep parser nesting); only a measured regression reverts the pin to 5.4.9.
+- **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` can only arrive with a new `api` level and a `proto` bump. `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. No spike re-run gates API level 1: 5.5.1 is taken to perform at least as well as the spiked 5.4.7, and a problem found during implementation is fixed when it surfaces. Reverting the pin to 5.4.9 stays the fallback, and it is cheapest before API level 1 freezes.
 
 ### AD-5: The VM task owns the Lua state and nothing else [ADOPTED]
 
@@ -499,5 +499,5 @@ Operational envelope:
 | Aligning with upstream "web plugins" | No upstream code exists; revisit if it ships. |
 | Starter repo | Post-v1; the API docs, LuaLS stub, and icon catalog are written to move there unchanged. |
 | Bumps to pioarduino 55.03.312+ and GoogleTest 1.18 | Follow upstream's pins through merges. |
-| Open: ESP-NOW reliability, battery cost, Sticky and mixed-device behaviour | Measure between two devices in the radio epic before tuning 400 ms / 10 s and the 100 KB threshold. |
-| Open: internal heap after ESP-NOW teardown | Measure in the radio epic; AD-18 already bounds where a `silentRestart()` may happen. |
+| Open: ESP-NOW reliability, battery cost, Sticky and mixed-device behaviour | Measure between two devices before tuning 400 ms / 10 s and the 100 KB threshold. Only one device is on hand, so this waits for the second and blocks nothing: link and session code is built against the `FakeLink` suites until then. |
+| Open: internal heap after ESP-NOW teardown | Measurable on one device (radio up and down, no peer); AD-18 already bounds where a `silentRestart()` may happen. |

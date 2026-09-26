@@ -519,9 +519,10 @@ dl.adlist dd{margin:0}
       <h2 id="open"><span class="stop">Stop 11</span>Still open</h2>
       <p>No blockers remain, but a few numbers wait on measurements before they're tuned:</p>
       <ul>
-        <li><strong>Before API level 1 freezes:</strong> re-run the engine spike on Lua 5.5.1 with a worst-case stack test. Only a measured regression sends the pin back to 5.4.9.</li>
-        <li><strong>In the radio work:</strong> ESP-NOW reliability between two devices, the battery cost of a match, how the Sticky and a mixed X4 Pro and Sticky pair behave, and whether memory recovers after the radio shuts down.</li>
+        <li><strong>Once a second device arrives:</strong> ESP-NOW reliability between two devices, the battery cost of a match, and how the Sticky and a mixed X4 Pro and Sticky pair behave. Until then the link code is built and tested against the simulated link, and nothing else waits on it.</li>
+        <li><strong>On one device:</strong> whether memory recovers after the radio shuts down.</li>
       </ul>
+      <p>Lua 5.5.1 is taken to run at least as well as the 5.4 the spike measured, so no re-run gates the API. A problem found during implementation is fixed then, with 5.4.9 as the fallback.</p>
       <p>Deliberately left for later: a web Games page, partial-screen refresh, more than two players, reconnecting after a drop, and the game starter repo.</p>
 
       <h2 id="index"><span class="stop">Reference</span>Decision index</h2>
