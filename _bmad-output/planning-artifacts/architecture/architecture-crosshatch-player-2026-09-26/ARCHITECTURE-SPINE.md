@@ -5,7 +5,7 @@ purpose: build-substrate
 altitude: feature
 paradigm: 'Hexagonal host (pure GameCore domain with ports) + reducer-style script contract with host-authoritative full-state replication'
 scope: 'v1 game runtime for simple turn-based games on x4pro and sticky: Lua script runtime, icon library, seat-based multiplayer (solo, pass-and-play, Play Nearby over ESP-NOW), .cpgame packages, SD-inbox install, Home launcher'
-status: draft
+status: final
 created: '2026-09-26'
 updated: '2026-09-26'
 binds: [script-runtime, multiplayer-layer, package-install-launcher, first-party-games, api-docs]
@@ -55,13 +55,13 @@ flowchart TD
 
 Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-IDF, Lua, HAL, or `src/` header. `GameScript` includes no `GfxRenderer`, HAL, or Arduino header; platform services (arena, sources, text metrics, randomness) reach it through injected ports.
 
-### AD-1: Hexagonal host, reducer scripts [ASSUMPTION]
+### AD-1: Hexagonal host, reducer scripts [ADOPTED]
 
 - **Binds:** all
 - **Prevents:** game rules or radio logic split between C++ and Lua; a core that only runs on the device.
 - **Rule:** game logic lives only in scripts. Roster, session, turn, sync, and protocol logic lives only in `GameCore`, behind the ports `IGameRules`, `ILink`, `IClock`, `IRandom`, and `ISnapshotStore`. Adapters implement ports and hold no game rules. Every `GameCore` unit has a host GoogleTest suite; link and session suites run over a `FakeLink` that drops, delays, duplicates, and reorders frames.
 
-### AD-2: One build guard, C3-safe [ASSUMPTION]
+### AD-2: One build guard, C3-safe [ADOPTED]
 
 - **Binds:** all
 - **Prevents:** game code costing flash or RAM on C3 builds, or breaking them.
@@ -93,7 +93,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
 - **Prevents:** a patched engine that blocks upgrades; games or saves that depend on a language level or integer width that later changes.
 - **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` can only arrive with a new `api` level and a `proto` bump. `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. Before API level 1 freezes, the spike harness is re-run once on 5.5.1 with a worst-case C-stack test (deep patterns, deep parser nesting); only a measured regression reverts the pin to 5.4.9.
 
-### AD-5: The VM task owns the Lua state and nothing else [ASSUMPTION]
+### AD-5: The VM task owns the Lua state and nothing else [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer
 - **Prevents:** two tasks entering one `lua_State`; a teardown deadlock on `RenderLock` (pitfall 12cc816); a hung script freezing the device.
@@ -118,7 +118,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - `math.random` is seeded from `IRandom` (backed by `esp_random()`) when the VM is created.
   - Bindings are C-style functions. No binding holds an RAII object across a call into Lua, and no binding opens files.
 
-### AD-7: Drawing is a display list; FrameReplay owns refresh [ASSUMPTION]
+### AD-7: Drawing is a display list; FrameReplay owns refresh [ADOPTED]
 
 - **Binds:** script-runtime, first-party-games
 - **Prevents:** Lua touching the framebuffer from the wrong task; lost or doubled refresh escalations; taps landing away from what was drawn; layout that differs between devices.
@@ -131,7 +131,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - Text sizes `small`, `medium`, `large` map to built-in flash fonts only. The match passes per-size advance tables into `GameScript` at VM start, so `ch.text_width` is pure and callable in any callback. Script code never names panel sizes or firmware font IDs.
   - One `GameViewport` in `src/games` defines the script canvas (rotation, offset, the size exposed as `ch.screen`, excluded bezel insets). `FrameReplay` (logical to panel) and the input builder (panel to logical) both use it. The script owns the whole canvas; the runtime draws over it only with its own views (AD-20).
 
-### AD-8: The game contract [ASSUMPTION]
+### AD-8: The game contract [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer, first-party-games, api-docs
 - **Prevents:** games that each invent their own lifecycle, turn signalling, or rejection handling.
@@ -151,13 +151,13 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - Computer opponents, if a game has one, run inside `apply`.
   - The script decides turn order through `status`; the runtime enforces it (AD-11). This is a deliberate change from the brief's "runtime owns turn order".
 
-### AD-9: The snapshot is the source of truth [ASSUMPTION]
+### AD-9: The snapshot is the source of truth [ADOPTED]
 
 - **Binds:** multiplayer-layer, script-runtime
 - **Prevents:** host and guest diverging; `draw` or `input` mutating game state as a side effect; two devices disagreeing on whose turn it is.
 - **Rule:** the canonical state is the encoded snapshot held by `GameCore::Session` on the authority. Each `apply` receives a fresh decode of it, and its result is re-encoded to become the new snapshot. `draw`, `input`, and `status` receive a decoded copy whose changes are discarded. The authority computes `status` after each accepted move and ships it inside `STATE`; guests gate input and the end-of-round flow on that shipped status and never call `status` for control flow.
 
-### AD-10: One codec, one size limit, every mode [ASSUMPTION]
+### AD-10: One codec, one size limit, every mode [ADOPTED]
 
 - **Binds:** multiplayer-layer, script-runtime, first-party-games
 - **Prevents:** a game that works in pass-and-play and breaks in Play Nearby; a firmware update that silently corrupts saves; tooling that can't reproduce device bytes.
@@ -168,7 +168,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - The codec version is part of `proto`. Every persisted codec blob starts with `{magic, fileVersion, codecVersion}`; an unknown version is discarded with a log line, never decoded.
   - A Python reference codec in `scripts/` and the C codec pass the same encode and decode golden vectors in `test/game_script/`. The byte formats are recorded in `docs/crosshatch/formats.md`.
 
-### AD-11: Roster, seats, and authority [ASSUMPTION]
+### AD-11: Roster, seats, and authority [ADOPTED]
 
 - **Binds:** multiplayer-layer, package-install-launcher
 - **Prevents:** two seat maps; a guest claiming another seat; two-player assumptions baked into the core; moves accepted out of turn.
@@ -190,7 +190,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - The match's `onExit()`, including the sleep path, renders the blank hand-off screen and pushes it with `displayBuffer(HALF_REFRESH)`, under the `RenderLock` it already holds and without taking it again.
   - Scripts cannot draw during or suppress the hand-off. In `nearby` mode each device draws only its own seat.
 
-### AD-13: Wire protocol [ASSUMPTION]
+### AD-13: Wire protocol [ADOPTED]
 
 - **Binds:** multiplayer-layer
 - **Prevents:** the link and the session reading one counter two ways; mismatched payload layouts; matches between devices running different game code.
@@ -215,13 +215,13 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - Matching requires equal `proto` (which includes the codec version) and equal package hash. The firmware `api` level is not compared.
   - Only `ADVERT` is broadcast. Everything else is unicast to a peer registered on the STA interface. ESP-NOW v2, fixed channel 1, no encryption.
 
-### AD-14: A script failure ends the session [ASSUMPTION]
+### AD-14: A script failure ends the session [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer
 - **Prevents:** half-recovered VMs and inconsistent error handling across callbacks.
 - **Rule:** a `ScriptError` is any Lua error, budget breach, memory cap breach, codec limit breach, frame buffer overflow, unknown icon or image name, or invalid `status`. It ends the session: the VM is stopped (AD-5), a peer is sent `ABORT(script_error)`, the error is logged with `LOG_ERR`, and the match shows its error view: a short `tr()` message, the game name, the Lua message in small type, and a single Back control. There is no automatic retry. A `Cancelled` outcome shows nothing.
 
-### AD-15: Package format and the one manifest parser [ASSUMPTION]
+### AD-15: Package format and the one manifest parser [ADOPTED]
 
 - **Binds:** package-install-launcher, first-party-games, api-docs
 - **Prevents:** several package shapes and manifest dialects; path traversal and zip bombs; a package that installs but never lists.
@@ -245,7 +245,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - Removing a game (from the launcher) deletes `/.games/<id>/` and keeps `/.games-data/<id>/`.
   - All file access goes through `Storage` / `HalFile`.
 
-### AD-17: The runtime owns persistence [ASSUMPTION]
+### AD-17: The runtime owns persistence [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer, package-install-launcher
 - **Prevents:** scripts writing arbitrary files; resume formats that differ between games; SD writes from the VM task; lost saved data when the VM stops first.
@@ -254,7 +254,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - `resume.bin` holds `{magic, fileVersion, codecVersion, pkgHash[8], mode, n, ver u16}` followed by the snapshot. It is written after every committed snapshot in `solo` and `pass` and deleted when the round ends. The launcher calls `GameSaveStore::peek()` to offer "Continue". A save whose package hash or codec version differs is discarded. `nearby` matches are not saved.
   - `ch.store` is one table per game per device. `get` works in every callback. `set` encodes and validates at once (AD-10) and posts the blob to a latest-wins PSRAM slot owned by the match; the store is dirty only when the bytes differ. `GameSaveStore` writes a dirty store at most every 5 s, at round end, and in the match's `onExit()` (including sleep), which is the only SD write allowed in `onExit()`. Writes made in `apply` land only on the authority.
 
-### AD-18: Radio ownership [ASSUMPTION]
+### AD-18: Radio ownership [ADOPTED]
 
 - **Binds:** multiplayer-layer
 - **Prevents:** ESP-NOW and the web server fighting over Wi-Fi; a radio left on after a match; GameCore running on the Wi-Fi task; an upstream screen pushed over the match stalling the link.
@@ -266,13 +266,13 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - The lobby and a `nearby` match set `preventAutoSleep`.
   - Teardown never takes `RenderLock`. If internal heap does not recover after teardown, leaving the match to Home may `silentRestart()`; nothing restarts between rounds.
 
-### AD-19: One API namespace, versioned [ASSUMPTION]
+### AD-19: One API namespace, versioned [ADOPTED]
 
 - **Binds:** script-runtime, api-docs, package-install-launcher
 - **Prevents:** host functions scattered across globals; games silently running on a host too old for them.
 - **Rule:** all host functions live under one reserved global table, `ch` (`ch.api`, `ch.screen`, `ch.gfx`, `ch.text_width`, `ch.timer`, `ch.store`, `ch.time`, `ch.log`). The API is versioned by an integer `api` level, additive only within a level; the icon set (AD-24) is part of the level. The launcher shows a package whose `api` exceeds the host's as unavailable and won't start it.
 
-### AD-20: The match activity owns the session [ASSUMPTION]
+### AD-20: The match activity owns the session [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer
 - **Prevents:** a pushed screen starving the match; teardown order races that lose `ABORT`; two owners of the VM or the radio.
@@ -281,7 +281,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - A forced `onExit()` (sleep, or any Replace) takes the best-effort path under the `RenderLock` it holds: send `ABORT(left)` once without flushing, cancel then join or abandon the VM, radio off, blank screen per AD-12, flush a dirty `ch.store` (AD-17).
   - The game canvas is a declared exception to `touch-and-ui.md`: canvas taps come from `touchSnapshotFrom` through `GameViewport` and bypass the FreeInkUI interaction table, which serves only the runtime views; the exception is recorded in `docs/crosshatch/`.
 
-### AD-21: Match lifecycle [ASSUMPTION]
+### AD-21: Match lifecycle [ADOPTED]
 
 - **Binds:** script-runtime, multiplayer-layer, package-install-launcher
 - **Prevents:** each screen author inventing what Back, Home, sleep, game over, and rematch do.
@@ -315,7 +315,7 @@ Arrows are the only allowed dependencies. `GameCore` includes no Arduino, ESP-ID
   - Entering `Over` delivers the `over` event, deletes the resume save, and flushes `ch.store`. Only the authority offers Play again; a guest's end-of-round menu shows "waiting for host" and Leave.
   - Wake from sleep always lands on Home; resume goes through the launcher's "Continue".
 
-### AD-22: Player journey [ASSUMPTION]
+### AD-22: Player journey [ADOPTED]
 
 - **Binds:** package-install-launcher, multiplayer-layer, first-party-games
 - **Prevents:** a flow a child can't finish alone (the brief's restaurant test).

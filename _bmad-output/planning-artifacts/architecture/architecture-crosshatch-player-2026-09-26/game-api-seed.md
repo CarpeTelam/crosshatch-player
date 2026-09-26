@@ -5,15 +5,16 @@ api: 1
 created: '2026-09-26'
 updated: '2026-09-26'
 spine: 'ARCHITECTURE-SPINE.md'
+note: 'Seed for docs/crosshatch/game-api.md (with a LuaLS ch.d.lua stub); where this and the spine disagree, the spine wins. Drop this front matter when the doc moves to the starter repo.'
 ---
 
 # crosshatch game API, level 1
 
-> **Seed.** This is the first draft of the reference for people and AI assistants writing crosshatch games. It follows the architecture spine; where the two disagree, the spine wins. Names marked *(draft)* can change until the runtime ships. The final version lives at `docs/crosshatch/game-api.md`, next to a LuaLS `---@meta` stub (`ch.d.lua`), and later moves unchanged into the game starter repo.
+> **Draft.** Names marked *(draft)* can change until the runtime ships.
 
-A crosshatch game is a Lua 5.5 script that runs on an e-ink device with a touchscreen. You write the rules and the drawing. The runtime handles everything else: turns, passing the device between players, the radio link for two-device play, saving, and errors. One script works alone, in pass-and-play, and in Play Nearby without any changes.
+A crosshatch game is a Lua 5.5 script that runs on an e-ink device with a touchscreen. You write the rules and the drawing. The runtime handles everything else: turns, passing the device between players, the radio link for two-device play, saving, and errors. One script works alone, in pass-and-play, and in Play Nearby without any changes. Section 7 has a complete game to start from.
 
-**What it's for.** crosshatch is built for simple, turn-based games: the kind you could play with pen and paper, a board, cards, dice, or words, plus puzzles and parlor games. Think tic-tac-toe, Dots and Boxes, Battleship, Hangman, Sudoku, or a party guessing game. It is not an engine for platformers, action games, or anything that needs a frame loop: the screen is e-ink, and every update takes most of a second. The API grows only in ways that serve this kind of game.
+**What it's for.** The crosshatch runtime is built for simple, turn-based games: the kind you could play with pen and paper, a board, cards, dice, or words, plus puzzles and parlor games. Think tic-tac-toe, Dots and Boxes, Battleship, Hangman, Sudoku, or a party guessing game. It is not an engine for platformers, action games, or anything that needs a frame loop: the screen is e-ink, and every update takes most of a second. The API grows only in ways that serve this kind of game.
 
 ## 1. The package
 
@@ -23,13 +24,13 @@ A game is one `.cpgame` file: a zip archive with these files at its root and not
 | --- | --- | --- |
 | `manifest.json` | yes | Describes the game (below). |
 | `main.lua` | yes | Returns the game table (section 2). |
-| `name.lua` | no | Extra modules, named with lowercase letters, digits, and `_`. Load one with `require("name")`. |
-| `icon.png` | no | The launcher icon, converted to 64×64 black and white. Must be non-interlaced. Or name a library icon in the manifest instead. |
-| `name.png` | no | Your own images for `ch.gfx.image`, named with lowercase letters, digits, and `_`. Non-interlaced; converted to black and white at install. |
+| `<name>.lua` | no | Extra modules, named with lowercase letters, digits, and `_`. Load one with `require("name")`. |
+| `icon.png` | no | The launcher icon; must be non-interlaced. It is converted to 64×64 black and white. To use a library icon instead, set `icon` in the manifest. |
+| `<name>.png` | no | Your own images for `ch.gfx.image`, named with lowercase letters, digits, and `_`. Non-interlaced; converted to black and white at install. |
 
-Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; precompiled bytecode is refused.
+Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; the device refuses precompiled bytecode.
 
-`manifest.json`:
+`manifest.json` (this is the manifest for the section 7 example):
 
 ```json
 {
@@ -46,20 +47,20 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 
 | Key | Rule |
 | --- | --- |
-| `id` | Lowercase letters, digits, and `-`; starts with a letter or digit; at most 32 characters. Installing a package with the same `id` replaces the old one and keeps its saved data. |
+| `id` | Lowercase letters, digits, and `-`; starts with a letter or digit; at most 32 characters. A package with the same `id` replaces the old one (see "What is saved" in section 5). |
 | `name` | Shown in the launcher. |
 | `version` | Any string, for people. |
 | `api` | The API level the game needs. This document is level 1. |
-| `seats` | How many players the game takes. v1 devices support at most 2. |
+| `seats` | The minimum and maximum number of players (`min`, `max`). Devices at API level 1 support at most 2. |
 | `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
-| `icon` | Optional. The name of a library icon (section 4) to use as the game's icon when the package has no `icon.png`. |
-| `hidden` | Optional, default `false`. Set `true` if players must not see each other's screen (Battleship, Hangman). In `pass` mode the runtime then blanks the screen and asks for the device to be handed over between turns. |
+| `hidden` | Optional, default `false`. Set `true` if players must not see each other's screens (Battleship, Hangman); in pass-and-play, the runtime then adds a hand-off screen between turns (section 3). |
+| `icon` | Optional. The name of a library icon (section 5) to use as the game's icon when the package has no `icon.png`. |
 
 Unknown keys are ignored.
 
-**Install:** copy the `.cpgame` into the `/games/` folder on the SD card (with the device's web file manager, or over USB), then open Games on the device. The device installs it and removes the file. If the package is broken, the file is renamed `*.cpgame.bad` and the launcher tells you why.
+**Install.** copy the `.cpgame` into the `/games/` folder on the SD card (with the device's web file manager, or over USB), then open Games on the device. The device installs it and removes the file. If the package is broken, the file is renamed `*.cpgame.bad` and the launcher tells you why.
 
-**Changing a game:** any change to the package's files counts as a new package. Unfinished saved games of the old package are discarded, and two devices can only play Play Nearby when both have exactly the same package.
+**Changing a game.** any change to the package's files counts as a new package. Two devices can play each other in Play Nearby only when both have exactly the same package.
 
 ## 2. The game table
 
@@ -68,11 +69,11 @@ Unknown keys are ignored.
 ```lua
 local game = {}
 
-function game.setup(ctx)                   -- returns the starting state
-function game.status(state)                -- returns {turn = seat} or {over = true, winners = {...}}
-function game.apply(state, seat, move)     -- returns the new state, or nil, "reason"
-function game.draw(state, seat, ui)        -- draws the screen for this seat
-function game.input(state, seat, ui, ev)   -- returns a move, or nil
+function game.setup(ctx) end                   -- the starting state
+function game.status(state) end                -- whose turn it is, or who won
+function game.apply(state, seat, move) end     -- the new state, or a rejection
+function game.draw(state, seat, ui) end        -- draws the screen for this seat
+function game.input(state, seat, ui, ev) end   -- a move, or nothing
 
 return game
 ```
@@ -81,13 +82,10 @@ return game
 
 - **`state` is the whole game, and only `apply` changes it.** Keep everything the players share in `state`: the board, scores, whose turn it is. `apply` gets its own copy; change it and return it, or return a new table. Changes made in `draw`, `input`, or `status` are thrown away.
 - **`status` must depend only on `state`.** No clocks, no random numbers. It decides whose turn it is and when the round is over.
-- **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You may change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn.
+- **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You can change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn.
 - **A move is a small table** describing what a player did, such as `{cell = 5}`. `input` turns a tap into a move; `apply` checks it and applies it. Return `nil, "reason"` from `apply` to reject an illegal move.
-- **Rejections come back as an event.** When a move is rejected, the player's `input` receives `{kind = "rejected", reason = "..."}`. Show it however you like, for example by setting a message in `ui`.
-- **The end of a round is an event too.** When a round ends, each local player's `input` receives `{kind = "over"}` exactly once. Record per-device results such as wins there, not in `draw`, which runs many times.
-- **One move at a time.** After `input` returns a move, further moves are ignored until the result comes back.
-- **`setup` and `apply` run on one device only** (the host in Play Nearby). The others receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you.
-- **Seats are numbers from 1.** Seat 1 is the host in Play Nearby. The runtime passes moves to `apply` only from the seat that `status` names.
+- **`setup` and `apply` run on one device only** (the host in Play Nearby). Other devices receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you.
+- **Seats are numbers from 1.** Seat 1 is the host in Play Nearby. The one exception is seat `0` ("everyone"), which `draw` and `input` receive in pass-and-play once the round is over. The runtime passes moves to `apply` only from the seat that `status` names.
 - **A computer opponent**, if your game has one, plays inside `apply`: apply the human's move, then compute and apply the computer's move before returning.
 
 ### Arguments
@@ -95,54 +93,68 @@ return game
 | Name | Contents |
 | --- | --- |
 | `ctx` (in `setup`) | `ctx.seats` (number of players in this match), `ctx.mode` (`"solo"`, `"pass"`, or `"nearby"`) |
-| `seat` (in `draw`, `input`) | The seat this screen belongs to. In `pass` mode it is the seat whose turn it is; in a hidden game, the player who just moved until they pass the device; and `0` ("everyone") once the round is over, with its own `ui` table. |
-| `ev` (in `input`) | `{kind = "tap", x, y}`, `{kind = "long_press", x, y}`, `{kind = "swipe", x, y, dir}` (`x, y` is where the swipe started; `dir` is `"left"`, `"right"`, `"up"`, or `"down"`), `{kind = "rejected", reason}`, `{kind = "over"}`, or `{kind = "timer"}` |
+| `seat` (in `draw`, `input`) | The seat this screen belongs to: `1` in solo; this device's seat in Play Nearby; in pass-and-play, the seat whose turn it is (with the hidden-game and game-over exceptions in section 3). Seat `0` has its own `ui` table. |
+| `ev` (in `input`) | `{kind = "tap", x = …, y = …}`, `{kind = "long_press", x = …, y = …}`, `{kind = "swipe", x = …, y = …, dir = …}` (`x`, `y` is where the swipe started; `dir` is `"left"`, `"right"`, `"up"`, or `"down"`), `{kind = "rejected", reason = "…"}`, `{kind = "over"}`, or `{kind = "timer"}` |
 
 There is no dragging. Some swipes belong to the device and never reach your game: a right-swipe starting in the left quarter of the screen (Back) and an up-swipe from the bottom edge (Home) open the device's pause menu, and a down-swipe from the top edge opens the device's light panel.
 
-### When things happen
+### Returns
 
-- `draw` is called after every change to `state`, after every `input` call, and after the hand-off screen. There is no frame loop; use `ch.timer` (section 4) for countdowns.
-- When `status` says the round is over, the device shows its own end-of-round menu over your last frame: **Play again** (which calls `setup` again with the same players) or **Leave**.
-- In `pass` mode with `hidden = true`, after a move that changes whose turn it is, the mover first sees the result (your `draw` is called with the mover's seat), then taps to pass the device; the screen goes blank until the next player taps. The same blank screen appears when a hidden game starts or resumes.
+| Function | Returns |
+| --- | --- |
+| `setup` | The starting `state` table. |
+| `status` | `{turn = seat}` while the round is on, or `{over = true, winners = {seat, ...}}` when it ends. `winners` lists the winning seats; an empty list means a draw. |
+| `apply` | The new `state`, or `nil, "reason"` to reject the move. |
+| `draw` | Nothing. Draw with `ch.gfx`. |
+| `input` | A move table, or `nil` for no move. |
 
-## 3. What values can go in `state`
+## 3. When things happen
+
+- `draw` is called after every change to `state`, after every `input` call, and after the hand-off screen. There is no frame loop; use `ch.timer` (section 5) for countdowns.
+- **One move at a time.** After `input` returns a move, the runtime ignores further moves until that move is applied or rejected.
+- **Rejections come back as an event.** When a move is rejected, the player's `input` receives `{kind = "rejected", reason = "…"}`. Show it however you like, for example by setting a message in `ui`.
+- **The end of a round is an event too.** When a round ends, each local player's `input` receives `{kind = "over"}` exactly once. Record per-device results such as wins there, not in `draw`, which runs many times. From then on, pass-and-play calls `draw` and `input` with seat `0`. At the same time, the device shows its own end-of-round menu over your last frame: **Play again** (which calls `setup` again with the same players) or **Leave**.
+- **Hidden games in pass-and-play.** With `hidden = true`, after a move that changes whose turn it is, the mover first sees the result (your `draw` is called with the mover's seat), then taps to pass the device; the screen goes blank until the next player taps. The same blank screen appears when a hidden round starts or resumes.
+
+## 4. Values in `state`, moves, and `ch.store`
 
 `state`, moves, and `ch.store` can hold only:
 
 - `nil`, booleans, integers (64-bit), floats, strings
 - tables with string or integer keys, nested at most 16 deep
 
-No functions, metatables, or tables that contain themselves. **Size limits:** `state` at most 1,400 bytes when packed, a move at most 256 bytes, `ch.store` at most 4 KB. Breaking a limit stops the game with an error in every mode, so you find out in pass-and-play before a Play Nearby match does.
+No functions, metatables, or tables that contain themselves. **Size limits:** `state` at most 1,400 bytes as the runtime encodes it, a move at most 256 bytes, `ch.store` at most 4 KB. Exceeding a limit stops the game with an error in every mode, so you find the problem while testing in pass-and-play, before it breaks a Play Nearby match.
 
 To stay small, store a board as one string (`"x.o......"`) or a flat array of small integers rather than nested tables of strings.
 
-## 4. The `ch` library
+## 5. The `ch` library
 
 Everything the runtime offers is in the global table `ch`.
 
 ### `ch.screen`
 
-`ch.screen.w`, `ch.screen.h`: your canvas size in pixels, portrait. Always lay out from these; devices differ. You own the whole canvas.
+`ch.screen.w`, `ch.screen.h`: your canvas width and height in pixels, in portrait orientation. Always compute your layout from these values; screen sizes differ between devices. You own the whole canvas.
 
 ### `ch.gfx` (drawing)
 
 Call these only inside `draw`; anywhere else they raise an error. The screen shows what you drew when `draw` returns.
 
+Colors are `"white"`, `"light"`, `"dark"`, and `"black"`. `"light"` and `"dark"` work only for fills, where they are drawn as fine dot patterns; lines, text, icons, and images are black or white.
+
 | Function | Notes |
 | --- | --- |
-| `ch.gfx.clear(color)` | Fill the canvas. |
-| `ch.gfx.rect(x, y, w, h, color, filled)` | `filled` defaults to `false`. |
-| `ch.gfx.line(x1, y1, x2, y2, color)` | `"white"` or `"black"` only. |
-| `ch.gfx.circle(x, y, r, color, filled)` | *(draft)* |
-| `ch.gfx.text(x, y, str, size, color, align)` | `size`: `"small"`, `"medium"`, `"large"`; `color`: `"white"` or `"black"`; `align`: `"left"`, `"center"`, `"right"` *(draft)* |
-| `ch.gfx.icon(name, x, y, size, color)` | Draw a library icon (below) with its top-left corner at `x, y`. `size`: `"small"` (32 px), `"medium"` (64 px), `"large"` (128 px); `color`: `"white"` or `"black"`. |
-| `ch.gfx.image(name, x, y, color)` | Draw one of your package's images at its own size; `name` is the file name without `.png`. |
-| `ch.gfx.refresh(mode)` | Ask for `"fast"` (default), `"half"`, or `"full"` for this frame. The device may refresh more fully than you asked, never less. |
+| `ch.gfx.clear(color)` | Fills the canvas. |
+| `ch.gfx.rect(x, y, w, h, color, filled)` | Draws a rectangle; `filled` defaults to `false`. |
+| `ch.gfx.line(x1, y1, x2, y2, color)` | Draws a line. |
+| `ch.gfx.circle(x, y, r, color, filled)` | Draws a circle. *(draft)* |
+| `ch.gfx.text(x, y, str, size, color, align)` | Draws text. `size`: `"small"`, `"medium"`, `"large"`; `align` *(draft)*: `"left"`, `"center"`, `"right"`. |
+| `ch.gfx.icon(name, x, y, size, color)` | Draws a library icon (see Icons, below) with its top-left corner at `x, y`. `size`: `"small"` (32 px), `"medium"` (64 px), `"large"` (128 px). |
+| `ch.gfx.image(name, x, y, color)` | Draws one of your package's images at its own size; `name` is the file name without `.png`. `"black"` draws it as converted; `"white"` draws it inverted. |
+| `ch.gfx.refresh(mode)` | Requests `"fast"` (default), `"half"`, or `"full"` for this frame. The device may refresh more fully than you asked, never less. |
 
-Colors: `"white"`, `"light"`, `"dark"`, `"black"`. `"light"` and `"dark"` work for fills (they are drawn as fine dot patterns); lines, text, icons, and images are black or white.
+A frame holds at most 2,048 drawing calls; more stops the game with an error.
 
-`ch.text_width(str, size)` returns the width of `str` in pixels. Unlike `ch.gfx`, you can call it anywhere, for example in `input` to hit-test a line of text.
+E-ink tips: every screen update is slow (about 0.7 seconds for a fast refresh) and leaves faint ghosts of the previous image. Draw whole frames, ask for `"full"` after big changes such as a new round, and prefer high contrast.
 
 ### Icons
 
@@ -152,46 +164,42 @@ The set covers marks, card suits, dice faces, board pieces, player markers, and 
 
 When you need something the library doesn't have, ship it as a package image and draw it with `ch.gfx.image`.
 
-A frame holds at most 2,048 drawing calls; more stops the game with an error.
-
-E-ink tips: every screen update is slow (about 0.7 s for a fast refresh) and leaves faint ghosts. Draw whole frames, ask for `"full"` after big changes such as a new round, and prefer high contrast.
-
 ### `ch.store` (saved data)
 
-One table per game on each device that survives restarts, for things like high scores.
+A table that survives restarts, one per game on each device. Use it for things like high scores.
 
 | Function | Notes |
 | --- | --- |
 | `ch.store.get()` | Returns the saved table, or an empty table. |
-| `ch.store.set(t)` | Saves `t` (section 3 limits apply; checked immediately). The device writes it to the card shortly after. |
+| `ch.store.set(t)` | Saves `t`. The section 4 limits apply and are checked when you call it. The device writes the data to the SD card shortly after. |
 
-`ch.store` belongs to the device it runs on. Calls made in `apply` happen only on the host, so record per-device results when `input` receives `{kind = "over"}`.
+Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`.
 
-You don't need to save unfinished games: in `solo` and `pass` mode the runtime saves after every move and offers "Continue" in the launcher.
+**What is saved.** `ch.store` data survives reinstalling or updating the game. Unfinished rounds are separate: in `solo` and `pass` modes the runtime saves after every move and offers **Continue** in the launcher, so you don't need to save them yourself. An unfinished round is discarded when any file in the package changes.
 
 ### Other
 
 | Function | Notes |
 | --- | --- |
 | `ch.api` | The device's API level (an integer). |
-| `ch.timer.after(ms)` | Deliver a `{kind = "timer"}` event to `input` after `ms` milliseconds (at least 1,000). One timer at a time: a new call replaces the pending one. For countdowns in parlor games. If time running out changes the game, return a move from `input` so it goes through `apply`. |
-| `ch.timer.cancel()` | Clear the pending timer. |
+| `ch.text_width(str, size)` | The width of `str` in pixels at `size`. Unlike the `ch.gfx` functions, it works anywhere, for example in `input` to hit-test a line of text. |
+| `ch.timer.after(ms)` | Delivers a `{kind = "timer"}` event to `input` after `ms` milliseconds (at least 1,000). One timer at a time: a new call replaces the pending one. For countdowns in parlor games. If time running out changes the game, return a move from `input` so it goes through `apply`. |
+| `ch.timer.cancel()` | Clears the pending timer. |
 | `ch.time.ms()` | Milliseconds since the game started. For display only; never use it in `status` or game rules. |
 | `ch.log(...)` | Writes to the device's debug log. `print` does the same. |
 
-Available standard libraries: `table`, `string`, `math`, `utf8`, and the basic functions except `load`, `loadfile`, and `dofile`. Not available: `io`, `os`, `debug`, `coroutine`, `package` (use the package-local `require`).
+## 6. The Lua environment, limits, and errors
 
-Lua 5.5 notes: `global` is a reserved word, and a `for` loop's control variable is read-only (declare a local with the same name to change it).
-
-## 5. Limits and errors
-
-- **Speed.** The device runs about 2 million Lua instructions per second. Each call into your game may use at most about 2 million, roughly one second; more stops the game. Keep searches small: limit depth, prune, or use tables. Long string pattern matches count too.
+- **Libraries.** Available: `table`, `string`, `math`, `utf8`, and the basic functions except `load`, `loadfile`, and `dofile`. Not available: `io`, `os`, `debug`, `coroutine`, `package` (use the package-local `require`).
+- **Lua 5.5.** `global` is a reserved word, and a `for` loop's control variable is read-only (declare a local with the same name to change it).
+- **Speed.** The device runs about 2 million Lua instructions per second. Each call into your game can use up to about 2 million instructions (roughly one second); more stops the game. Keep searches small: limit depth, prune, or use lookup tables. Long string pattern matches count too.
 - **Memory.** Each game has 256 KB of Lua memory.
-- **Errors.** Any Lua error stops the game and shows a short message, the game name, and the Lua error with its line number. In Play Nearby, the other device is told the match ended.
+- **Other limits.** Package sizes are in section 1, value sizes in section 4, and the drawing-call cap in section 5.
+- **Errors.** These stop the game: any Lua error, the speed or memory limit, a value over its size limit, calling `ch.gfx` outside `draw`, more than 2,048 drawing calls in a frame, and an unknown icon or image name. The device shows a short message, the game name, and the Lua error with its line number. In Play Nearby, the runtime tells the other device that the match ended.
 
-## 6. A complete example
+## 7. A complete example
 
-Two-player tic-tac-toe that works in pass-and-play and Play Nearby:
+Two-player tic-tac-toe that works in pass-and-play and Play Nearby. Its manifest is the one in section 1.
 
 ```lua
 local game = {}
