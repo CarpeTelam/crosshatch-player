@@ -28,6 +28,9 @@
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#if FREEINK_CAP_GAMES
+#include "games/GamesListActivity.h"
+#endif
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -334,10 +337,26 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
+#if FREEINK_CAP_GAMES
+    if (activityName == "GamesList" || activityName == "GameMatch") {
+      initialMenuItem = HomeMenuItem::GAMES;
+    }
+#endif
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
+
+#if FREEINK_CAP_GAMES
+void ActivityManager::goToGames() {
+  auto activity = makeUniqueNoThrow<GamesListActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: games list activity");
+    return;
+  }
+  replaceActivity(std::move(activity));
+}
+#endif
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   mappedInput.resetHomeButtonInput();

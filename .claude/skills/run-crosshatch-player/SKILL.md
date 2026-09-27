@@ -74,9 +74,18 @@ Coordinates are window pixels, which equal the firmware's logical pixels
 
 | Screen | Target | X,Y |
 |---|---|---|
-| Home | Browse Files / Library / File Transfer / Settings | 240,345 / 240,418 / 240,490 / 240,562 |
+| Home | Browse Files / Library / File Transfer / Games / Settings | 240,345 / 240,418 / 240,490 / 240,562 / 240,634 |
 | List screens | first row; header back arrow | 240,138; 25,63 |
 | File Transfer | Join / Calibre / Create Hotspot | 240,145 / 240,220 / 240,285 |
+
+Games lists `fs_/.games/<id>/` folders whose `manifest.json` parses and names the
+same id. To try one, copy a fixture: `cp -r test/game_script/fixtures/tracer fs_/.games/`.
+Games run in both `x4pro` and `sticky` (both envs set `BOARD_HAS_PSRAM`). The
+`gallery` fixture draws every command and color and prints the last touch event:
+`hold X Y 800` is a long press, `swipe` a swipe; a swipe from the left quarter
+rightwards is Back. Back and Home open the game's pause menu (Resume, Leave);
+Leave, or Back from the error view, returns to Games
+(`docs/crosshatch/game-canvas.md`).
 
 ## Run: scripted (deterministic, one-shot)
 

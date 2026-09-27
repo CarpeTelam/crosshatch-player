@@ -31,22 +31,78 @@ if(LUA_EXCLUDED_COUNT EQUAL 0)
   message(FATAL_ERROR "${LUA_MANIFEST_PATH}: no -<file> entries found in srcFilter")
 endif()
 
+# The Lua build's C-level limits, which api-level-1.txt lists as limits a game can hit;
+# ApiSurfaceTest pins the list to these values.
+foreach(define IN LISTS LUA_DEFINES)
+  if(define MATCHES "^LUAI_MAXCCALLS=([0-9]+)$")
+    set(LUA_BUILD_LUAI_MAXCCALLS ${CMAKE_MATCH_1})
+  elseif(define MATCHES "^MAXCCALLS=([0-9]+)$")
+    set(LUA_BUILD_MAXCCALLS ${CMAKE_MATCH_1})
+  endif()
+endforeach()
+if(NOT DEFINED LUA_BUILD_LUAI_MAXCCALLS OR NOT DEFINED LUA_BUILD_MAXCCALLS)
+  message(FATAL_ERROR "${LUA_MANIFEST_PATH}: no -DLUAI_MAXCCALLS or -DMAXCCALLS; docs/crosshatch/api-level-1.txt lists both")
+endif()
+
 add_library(lua_vendored STATIC ${LUA_SOURCES})
 set_target_properties(lua_vendored PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(lua_vendored PUBLIC ${LUA_DIR}/src)
 target_compile_definitions(lua_vendored PRIVATE ${LUA_DEFINES})
 target_compile_options(lua_vendored PRIVATE -Wall -Wextra)
 
+# Every GameScript source, so a new file there is built and linked by the host suite.
+file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cpp)
+
 add_executable(GameScriptTest
   GameScriptTest.cpp
   LuaOnHostTest.cpp
-  ${REPO_ROOT}/lib/GameScript/GameScript.cpp
+  ApiSurfaceTest.cpp
+  ArenaAllocatorTest.cpp
+  CallGuardTest.cpp
+  CanvasClipTest.cpp
+  CodecTest.cpp
+  DisplayListTest.cpp
+  GameTimerTest.cpp
+  GameTouchTest.cpp
+  GfxBindingsTest.cpp
+  HostBindingsTest.cpp
+  LuaGameTest.cpp
+  RefreshPolicyTest.cpp
+  SandboxTest.cpp
+  SessionGameTest.cpp
+  SoloRoundsTest.cpp
+  StoreSlotTest.cpp
+  TextMetricsTest.cpp
+  ${GAME_SCRIPT_SOURCES}
+  ${REPO_ROOT}/lib/GameCore/Roster.cpp
+  ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
+  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  # TextMetrics decodes with the renderer's UTF-8 reader.
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
 target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameScript
+  ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/GameIcons
+  ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/lib/Utf8
+  # GameTouch.h (header-only, pure) and the SDK's swipe classification it uses.
+  ${REPO_ROOT}/src/games
+  ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
+  # ApiLevelList.h, the API list reader ApiLevelTest shares.
+  ${REPO_ROOT}/test/game_core
+)
+
+# Fixture games stay under test/, never games/ (the release packs games/).
+target_compile_definitions(GameScriptTest PRIVATE
+  GAME_SCRIPT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+  # Read at run time so this suite and scripts/game_codec_test.py share one vector file.
+  CODEC_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/codec_vectors.json"
+  API_LEVEL_LIST_DIR="${REPO_ROOT}/docs/crosshatch"
+  LUA_BUILD_LUAI_MAXCCALLS=${LUA_BUILD_LUAI_MAXCCALLS}
+  LUA_BUILD_MAXCCALLS=${LUA_BUILD_MAXCCALLS}
 )
 
 target_link_libraries(GameScriptTest PRIVATE
@@ -56,3 +112,32 @@ target_link_libraries(GameScriptTest PRIVATE
 )
 
 gtest_discover_tests(GameScriptTest)
+
+# GameSaveStore (src/games) over a fake SD card and a captured log: store.bin's
+# restore rules and its tmp-then-rename write. The stubs stand in for HalStorage.h
+# and Logging.h, so this is its own executable.
+add_executable(GameSaveStoreTest
+  GameSaveStoreTest.cpp
+  ${REPO_ROOT}/src/games/GameSaveStore.cpp
+  ${REPO_ROOT}/lib/GameScript/BlobHeader.cpp
+  ${REPO_ROOT}/lib/GameScript/Codec.cpp
+  ${REPO_ROOT}/lib/GameScript/StoreSlot.cpp
+)
+
+target_include_directories(GameSaveStoreTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/save_store_stubs
+  ${REPO_ROOT}/lib/GameScript
+  ${REPO_ROOT}/lib/GameCore
+  ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/src/games
+)
+
+target_compile_definitions(GameSaveStoreTest PRIVATE FREEINK_CAP_GAMES=1)
+
+target_link_libraries(GameSaveStoreTest PRIVATE
+  crosspoint_test_common
+  lua_vendored
+  GTest::gtest_main
+)
+
+gtest_discover_tests(GameSaveStoreTest)

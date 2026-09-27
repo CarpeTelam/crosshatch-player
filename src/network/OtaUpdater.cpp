@@ -54,6 +54,10 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
              board_tag::boardName());
   }
   char assetName[48] = {};
+#if FREEINK_CAP_GAMES
+  static_assert(sizeof(assetName) == ForkRelease::ASSET_NAME_CAPACITY,
+                "fork releases size asset names by ForkRelease::ASSET_NAME_CAPACITY; change it and the vectors too");
+#endif
   bool assetNameSet = false;
   const bool ok = HttpDownloader::fetchUrl(latestReleaseUrl, [&](const uint8_t* data, size_t len) {
     size_t offset = 0;

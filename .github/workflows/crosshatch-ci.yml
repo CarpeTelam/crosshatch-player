@@ -4,13 +4,21 @@
 #
 # - Upstream touch ledger: keeps changes to upstream files within docs/crosshatch/upstream-touches.md so merges
 #   of crosspoint-reader's develop branch stay clean. That file has the rules and how to run the check locally.
-# - x4pro flash budget: caps the flash the game runtime adds to the X4 Pro firmware. Builds x4pro on the PR's
-#   commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image with games is more than
-#   the limit larger. Both images come from the same commit, so upstream growth never uses up the budget.
-#   scripts/check_flash_budget.py holds the logic and how to run it locally.
+# - x4pro flash budget: caps the flash and the static internal RAM the game runtime adds to the X4 Pro firmware.
+#   Builds x4pro on the PR's commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image
+#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit more than the RAM
+#   limit larger. Both builds come from the same commit, so upstream growth never uses up the budget. It also fails
+#   a game object (lib/Game*, src/games, src/activities/games) with a static initializer or a mutable static over
+#   64 B (spine AD-2). scripts/check_flash_budget.py holds the logic and how to run it locally.
 # - Simulator build: builds the desktop simulator for the X4 Pro and the Sticky, both of which turn FREEINK_CAP_GAMES
 #   on, so game code that only builds on the device fails here and not in a later session. Device-only files guard
 #   themselves with !defined(SIMULATOR); .claude/skills/run-crosshatch-player/ has the simulator and how to run it.
+# - Fork script tests: runs every scripts/*_test.py, the sidecar tests of the fork's scripts, including those of the
+#   release workflow's script, which otherwise runs only when dispatched. A regression that made a check always pass
+#   would go unnoticed on compliant PRs. docs/crosshatch/fork-scripts.md has the script conventions.
+# - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
+#   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
+#   scripts/check_api_freeze.py holds the rule and how to run it locally.
 name: Crosshatch CI
 
 on:
@@ -43,15 +51,6 @@ jobs:
           git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop
           echo "Fetched upstream/develop in $((SECONDS - start)) s"
 
-      # A regression that made the check always pass would otherwise go unnoticed on compliant PRs.
-      - name: Test the ledger check
-        run: python3 scripts/check_upstream_touches_test.py -v
-
-      # The release workflow runs only when dispatched; testing its script here shows a broken check, or an upstream
-      # merge that changes what it reads, on the pull request instead of at the next release.
-      - name: Test the release script
-        run: python3 scripts/fork_release_test.py -v
-
       # The merge driver matches the documented upstream merge, where .gitattributes keeps our AGENTS.md.
       - name: Check the ledger and trial-merge upstream
         run: |
@@ -66,6 +65,8 @@ jobs:
       # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 250 KiB is
       # 256,000 bytes. Set it below the measured difference to see the job fail.
       FLASH_BUDGET_KIB: 250
+      # Static internal RAM limit in bytes (1 KiB), the same way.
+      RAM_BUDGET_BYTES: 1024
     steps:
       # Toolchain setup (checkout through the penv pin) copied from ci.yml's build job.
       - uses: actions/checkout@v6
@@ -75,11 +76,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-
-      # Standard library only, so it runs before the toolchain install and fails fast. A regression that made the
-      # check always pass would otherwise go unnoticed while the difference is small.
-      - name: Test the budget check
-        run: python3 scripts/check_flash_budget_test.py -v
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -118,13 +114,21 @@ jobs:
           ~/.platformio/penv/bin/pio --version
 
       - name: Build x4pro with games on
+        id: build-on
         run: python3 scripts/check_flash_budget.py build on
 
       - name: Build x4pro with games off
         run: python3 scripts/check_flash_budget.py build off
 
-      - name: Compare image sizes
-        run: python3 scripts/check_flash_budget.py compare --limit-kib "$FLASH_BUDGET_KIB"
+      - name: Compare flash and static RAM
+        run: |
+          python3 scripts/check_flash_budget.py compare --limit-kib "$FLASH_BUDGET_KIB" \
+            --ram-limit-bytes "$RAM_BUDGET_BYTES"
+
+      # Needs only the games-on build, so it also reports when the games-off build or the comparison failed.
+      - name: Check game objects
+        if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}
+        run: python3 scripts/check_flash_budget.py objects
 
   simulator-build:
     name: Simulator build
@@ -173,6 +177,53 @@ jobs:
       - name: Build simulator_sticky
         run: .claude/skills/run-crosshatch-player/sim.sh build sticky
 
+  fork-script-tests:
+    name: Fork script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The tests need neither history nor the submodule: they build their own throwaway repositories.
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Each file in its own process, so one file's environment changes cannot leak into another, and every file runs
+      # even after one fails. Standard library and git only, as docs/crosshatch/fork-scripts.md requires.
+      - name: Run every scripts/*_test.py
+        run: |
+          status=0
+          found=0
+          for test in scripts/*_test.py; do
+            [ -f "$test" ] || continue
+            found=1
+            echo "::group::$test"
+            if ! python3 "$test" -v; then
+              status=1
+              echo "::error::$test failed"
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no scripts/*_test.py found"
+            exit 1
+          fi
+          exit "$status"
+
+  api-freeze:
+    name: API freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history: the check compares the PR with its merge-base with the base branch.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check the frozen API levels
+        run: python3 scripts/check_api_freeze.py --base-ref "origin/$GITHUB_BASE_REF"
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -181,6 +232,8 @@ jobs:
       - upstream-ledger
       - flash-budget
       - simulator-build
+      - fork-script-tests
+      - api-freeze
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -96,6 +96,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Binds:** script-runtime, api-docs, first-party-games
 - **Prevents:** a patched engine that blocks upgrades; games or saves that depend on a language level or integer width that later changes.
 - **Rule:** PUC Lua 5.5.1 is vendored byte-for-byte in `lib/lua/` and compiled as C, with every `LUA_COMPAT_*` option off. 5.5.1 defaults `LUA_COMPAT_GLOBAL` on, so `library.json` passes `-DLUA_COMPAT_GLOBAL=0` to the Lua units only; that is the one compat define, and `luaconf.h` stays unedited. `library.json` passes exactly that define; any other, `LUA_USER_H` included, needs a spine update, because includers of the public Lua headers compile without it. A fork-owned `lib/lua/library.json` `srcFilter` excludes `lua.c`, `luac.c`, `linit.c`, `liolib.c`, `loslib.c`, `ldblib.c`, `loadlib.c`, and `lcorolib.c`; `test/game_script` builds the same source list. Games target the Lua 5.5 language (`global` is reserved; `for` control variables are read-only) with 64-bit integers; `LUA_32BITS` would break older games and needs a spine update with a plan for them (AD-19). `lua_newstate`'s hash seed comes from `IRandom`. Every C++ file that includes `lua.h` includes `<climits>` first and `static_assert`s `sizeof(lua_Integer) == 8`. No spike re-run gates API level 1: 5.5.1 is taken to perform at least as well as the spiked 5.4.7, and a problem found during implementation is fixed when it surfaces. Reverting the pin to 5.4.9 stays the fallback, and it is cheapest before API level 1 freezes.
+- **Amended 2026-09-27 (owner):** `library.json` also passes, to the Lua units only, `LUAI_MAXCCALLS` and `MAXCCALLS` (lstrlib's pattern-matcher depth) sized so parser and pattern recursion fit the 16 KB `GameVM` stack, and an `l_randomizePivot` define so `table.sort` never calls `time()`. Each is read only inside Lua's own `.c` files and internal headers, never by `lua.h`, `luaconf.h`, or `lauxlib.h`, so includers stay consistent; `test/game_script` passes the same defines, and the Lua sources stay byte-for-byte.
 
 ### AD-5: The VM task owns the Lua state and nothing else [ADOPTED]
 
@@ -108,6 +109,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - While a callback runs, the match's `skipLoopDelay()` returns true, which keeps the CPU at full clock for the budget.
   - Stopping is cooperative: the match sets an atomic cancel flag that the count hook turns into a Lua error, and posts `Quit`. The VM task unwinds, closes the state, and signals a join semaphore. If the join has not happened 500 ms after cancel (a script stuck inside a C library call), the match **abandons** the VM once an atomic `inSwap` flag is clear: it deletes the task and frees the arena without calling `lua_close`.
   - A cancel yields the outcome `Cancelled`, which is distinct from `ScriptError` and never triggers AD-14.
+  - **Amended 2026-09-27 (owner):** a callback still running 3 s after it started (wall clock) is a stuck script, whatever its instruction count: the match cancels it, abandons it 500 ms later if it has not joined, and shows AD-14's error view. This covers C loops that run no Lua instructions (`table.move` over a huge range, pattern backtracking).
 
 ### AD-6: Sandbox and budgets [ADOPTED from the spike, amended]
 
@@ -121,6 +123,8 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - Every chunk is loaded from memory in text mode (`"t"`); binary chunks are rejected at install and at load.
   - `math.random` is seeded from `IRandom` (backed by `esp_random()`) when the VM is created.
   - Bindings are C-style functions. No binding holds an RAII object across a call into Lua, and no binding opens files.
+  - **Amended 2026-09-27 (owner):** `setmetatable` refuses a metatable with a `__gc` field, because finalizers run with hooks off and escape the budget and the stack check; `table.move`, `table.insert`, and `table.remove` refuse element counts past a sandbox limit; until `print` maps to `ch.log` it is a no-op, never a stdout write. A binding that takes a lock marks itself so an abandon never deletes the task while it holds one.
+  - **Amended 2026-09-27 (owner):** the 256 KB is Lua's cap, counted in the bytes Lua requests, not the arena's size. Lua gets its own PSRAM region sized as the cap plus a block-header and fragmentation margin (448 KiB), so the cap always binds first on the host and the device alike; beside it a separate reserve (16 KiB) holds the Session and codec scratch, which Lua can never touch. Both regions are slices of one PSRAM block, freed in one call.
 
 ### AD-7: Drawing is a display list; FrameReplay owns refresh [ADOPTED]
 

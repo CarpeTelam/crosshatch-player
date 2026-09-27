@@ -16,8 +16,9 @@ Usage: python3 scripts/check_upstream_touches.py [--ref HEAD] [--upstream upstre
 import argparse
 import fnmatch
 import re
-import subprocess
 import sys
+
+from fork_common import SetupError, exit_code, git, git_text
 
 LEDGER_PATH = 'docs/crosshatch/upstream-touches.md'
 SDK_PATH = 'freeink-sdk'
@@ -25,23 +26,6 @@ SECTIONS = ('Ledger', 'Allowlist', 'Game paths')
 # `git merge-tree --write-tree` (a trial merge that touches no worktree, index, or ref) arrived in git 2.38.
 MIN_GIT = (2, 38)
 CODE_SPAN = re.compile(r'`([^`]+)`')
-
-
-class SetupError(Exception):
-    pass
-
-
-def git(*args, ok_codes=(0,)):
-    """Run git and return (exit code, stdout bytes); any exit code outside ok_codes is a SetupError."""
-    proc = subprocess.run(['git', *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if proc.returncode not in ok_codes:
-        err = proc.stderr.decode(errors='replace').strip()
-        raise SetupError(f'git {" ".join(args)} failed ({proc.returncode}): {err}')
-    return proc.returncode, proc.stdout
-
-
-def git_text(*args):
-    return git(*args)[1].decode().strip()
 
 
 def nul_list(data):
@@ -185,11 +169,7 @@ def main():
     args = parser.parse_args()
     # Paths that are not valid UTF-8 arrive surrogate-escaped; print them escaped rather than crash.
     sys.stdout.reconfigure(errors='backslashreplace')
-    try:
-        return run(args.ref, args.upstream)
-    except SetupError as err:
-        print(f'error: {err}', file=sys.stderr)
-        return 2
+    return exit_code(lambda: run(args.ref, args.upstream))
 
 
 if __name__ == '__main__':

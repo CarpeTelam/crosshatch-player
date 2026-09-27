@@ -33,6 +33,11 @@ int HomeActivity::getMenuItemCount() const {
   if (hasOpdsServers) {
     count++;
   }
+#if FREEINK_CAP_GAMES
+  if (showsGamesItem()) {
+    count++;
+  }
+#endif
   return count;
 }
 
@@ -322,6 +327,11 @@ void HomeActivity::loop() {
       case HomeMenuItem::SETTINGS_MENU:
         onSettingsOpen();
         break;
+#if FREEINK_CAP_GAMES
+      case HomeMenuItem::GAMES:
+        onGamesOpen();
+        break;
+#endif
       default:
         break;
     }
@@ -516,6 +526,14 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin() + 2, Blocks);
   }
 
+#if FREEINK_CAP_GAMES
+  if (showsGamesItem()) {
+    // Just above Settings; list mode reuses an existing icon.
+    menuItems.insert(menuItems.end() - 1, tr(STR_GAMES_TITLE));
+    menuIcons.insert(menuIcons.end() - 1, Blocks);
+  }
+#endif
+
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
     menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
@@ -559,3 +577,9 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+#if FREEINK_CAP_GAMES
+bool HomeActivity::showsGamesItem() { return !UITheme::hasCoverGridHome(); }
+
+void HomeActivity::onGamesOpen() { activityManager.goToGames(); }
+#endif
