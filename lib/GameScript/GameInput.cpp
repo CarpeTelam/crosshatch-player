@@ -24,4 +24,10 @@ bool InputQueue::pop(InputEvent& out) {
   return true;
 }
 
+void InputQueue::clear() {
+  std::lock_guard<std::mutex> lock(mutex);
+  head = 0;
+  size = 0;
+}
+
 }  // namespace GameScript

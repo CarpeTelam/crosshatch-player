@@ -24,6 +24,8 @@ class InputQueue {
   bool push(const InputEvent& event);
   // False when empty.
   bool pop(InputEvent& out);
+  // Drops every queued event (Play again: they were aimed at the last round).
+  void clear();
 
  private:
   std::mutex mutex;

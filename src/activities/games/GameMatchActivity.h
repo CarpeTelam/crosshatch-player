@@ -105,6 +105,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // flushStore() at round end, on Leave, and in onExit().
   std::unique_ptr<GameSaveStore> saves;
   std::unique_ptr<GameVM> vm;
+  // An abandon left the VM task alive: the slot is still flushed on Leave and in
+  // onExit, and the destructor leaks it (and saves' buffer) with the task.
+  bool slotLeaked = false;
 
   GameCore::MatchLifecycle lifecycle;  // loop task
   // lifecycle's state for render, stored by handle() after each transition.

@@ -35,6 +35,8 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
       return StrId::STR_GAMES_FOLDER_MISSING;
     case GameAssets::LoadResult::NoSources:
       return StrId::STR_GAMES_NO_SOURCES;
+    case GameAssets::LoadResult::BadSourceName:
+      return StrId::STR_GAMES_BAD_SOURCE_NAME;
     case GameAssets::LoadResult::TooLarge:
       return StrId::STR_GAMES_SOURCES_TOO_LARGE;
     case GameAssets::LoadResult::OutOfMemory:
@@ -75,7 +77,12 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
     : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
-GameMatchActivity::~GameMatchActivity() = default;
+GameMatchActivity::~GameMatchActivity() {
+  if (!slotLeaked) return;
+  // A leaked VM task may still call ch.store.set; its slot must outlive it.
+  static_cast<void>(store.release());
+  static_cast<void>(storeStorage.release());
+}
 
 void GameMatchActivity::onEnter() {
   Activity::onEnter();
@@ -153,7 +160,12 @@ void GameMatchActivity::handle(const MatchEvent event) {
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
-      if (event == MatchEvent::PlayAgain) vm->playAgain();
+      if (event == MatchEvent::PlayAgain) {
+        // Frames the last round drew after it ended are never shown; the new
+        // round's first frame is the next one asked for.
+        shownFrame = vm->frameGen();
+        vm->playAgain();
+      }
       // A new round's first frame asks for its own render; a resumed one is redrawn.
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
       break;
@@ -200,17 +212,18 @@ void GameMatchActivity::stopVm() {
 }
 
 void GameMatchActivity::flushStore() {
-  // Gone when abandonVm leaked the slot with a task that may still write it.
-  if (!store || !saves) return;
+  if (!store || !saves) return;  // the match never got that far
+  // Safe with a leaked task too: the slot's mutex is held only for a copy inside
+  // a locked binding, which an abandon never deletes nor leaves suspended, so the
+  // flush waits at most one copy, and it saves every set until the leak.
   saves->flush(*store, millis());
 }
 
 void GameMatchActivity::abandonVm() {
   if (GameVM::abandon(std::move(vm))) return;
-  // The leaked task may still call ch.store.set; its slot must outlive it.
-  static_cast<void>(store.release());
-  static_cast<void>(storeStorage.release());
-  LOG_ERR("GAME", "Leaked the ch.store slot with the VM");
+  // The leaked task may still call ch.store.set; the destructor leaks the slot.
+  slotLeaked = true;
+  LOG_ERR("GAME", "The ch.store slot stays with the leaked VM");
 }
 
 void GameMatchActivity::stopStuckVm() {
@@ -234,6 +247,10 @@ void GameMatchActivity::stopStuckVm() {
 }
 
 bool GameMatchActivity::vmHealthy() {
+  if (vm->failedOutOfMemory()) {
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
+    return false;
+  }
   if (vm->failed()) {
     fail(StrId::STR_GAMES_ERROR, vm->errorMessage());
     return false;
@@ -407,6 +424,9 @@ void GameMatchActivity::renderView(const MatchState state) {
   // buildView draws this state's dialog, even if the loop moves on meanwhile.
   viewState = state;
   renderUi();
+  // handle() may have closed routing after this render read its state; the
+  // table just published is the old view's and must not route taps.
+  if (shown.load() != state) closeRouting();
   viewOnScreen = true;
   const bool menu = state != MatchState::Error;
   const char* back = "";  // Back does nothing in the end-of-round menu

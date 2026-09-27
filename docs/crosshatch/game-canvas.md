@@ -36,7 +36,7 @@ the only place that changes state and runs what entering a state requires. Any e
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; the end-of-round menu (Play again, Leave) opens over the last frame. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. |
 | Paused, Over | Leave | Leaving | See Leaving. |
-| Over | Play again | Playing | The VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting. |
+| Over | Play again | Playing | The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
 | Error | Back | Leaving | See Leaving. |
 | any but Leaving | forced exit (sleep, any Replace) | Leaving | See the forced exit. |
@@ -52,7 +52,9 @@ Over when the count moves, so a round that ends while the pause menu is open sho
 
 A user exit runs from `loop()`: take `RenderLock`, cancel the VM and join it for up to 500 ms or abandon it, release the
 lock, flush a dirty `ch.store`, then `goToGames()`. When an abandon leaves the task alive (the simulator always does,
-since it cannot stop a thread), the store slot is leaked with it and not flushed, since the task may still write it.
+since it cannot stop a thread), the slot is still flushed, then leaked with the task when the match is destroyed: the
+slot's mutex is held only for a copy inside a locked binding, which an abandon never deletes or leaves suspended, so
+the flush waits at most one copy and saves every set made before the leak.
 
 ### The forced exit
 
@@ -70,6 +72,8 @@ Each view is one framed option dialog: the game's name as a small caption, a `tr
 | End-of-round menu | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
 | Error view | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
 
-The error view's reasons for a failed start are `tr()` keys: not enough memory, the game's folder is missing, no Lua
-files, Lua files too large, and cannot read the files. A stuck call shows "It stopped responding: one step ran over 3
+The error view's reasons for a failed start are `tr()` keys: not enough memory (also when the Session does not fit in
+the arena), the game's folder is missing, no Lua files, a Lua file name that is not valid (the only `.lua` files have
+names no module can have), Lua files too large, and cannot read the files (an SD error, or a file gone between the
+loader's two passes). A stuck call shows "It stopped responding: one step ran over 3
 seconds", unless the VM ended on its own error meanwhile, whose message says more.

@@ -70,6 +70,7 @@ add_executable(GameScriptTest
   RefreshPolicyTest.cpp
   SandboxTest.cpp
   SessionGameTest.cpp
+  SoloRoundsTest.cpp
   StoreSlotTest.cpp
   TextMetricsTest.cpp
   ${GAME_SCRIPT_SOURCES}

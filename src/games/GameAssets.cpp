@@ -4,6 +4,7 @@
 
 #include <HalStorage.h>
 #include <Logging.h>
+#include <strings.h>
 
 #include <cstdio>
 #include <cstring>
@@ -31,6 +32,12 @@ bool moduleNameOf(const char* fileName, const size_t length,
   return true;
 }
 
+// True for a name ending in ".lua" in any case, which a player means as a source.
+bool looksLikeLua(const char* fileName, const size_t length) {
+  constexpr size_t EXT = 4;
+  return length > EXT && strcasecmp(fileName + length - EXT, ".lua") == 0;
+}
+
 }  // namespace
 
 GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
@@ -39,9 +46,17 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
 
   char path[PATH_BUFFER];
   snprintf(path, sizeof(path), "/.games/%s", gameId);
-  auto dir = Storage.open(path);
-  if (!dir || !dir.isDirectory()) {
+  if (!Storage.exists(path)) {
     LOG_ERR("GAME", "No game folder %s", path);
+    return LoadResult::FolderMissing;
+  }
+  auto dir = Storage.open(path);
+  if (!dir) {
+    LOG_ERR("GAME", "Cannot open %s", path);
+    return LoadResult::CannotRead;
+  }
+  if (!dir.isDirectory()) {
+    LOG_ERR("GAME", "%s is not a folder", path);
     return LoadResult::FolderMissing;
   }
 
@@ -49,19 +64,26 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
   char name[NAME_BUFFER];
   char module[GameScript::SourceSpan::MAX_NAME_BYTES + 1];
   size_t count = 0;
+  size_t misnamed = 0;
   size_t textBytes = 0;
   dir.rewindDirectory();
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     const size_t length = file.getName(name, sizeof(name));
-    if (file.isDirectory() || length == 0 || length >= sizeof(name) - 1 || !moduleNameOf(name, length, module)) {
+    if (file.isDirectory() || length == 0) continue;
+    if (length >= sizeof(name) - 1 || !moduleNameOf(name, length, module)) {
+      // A .lua file no require can name: said, so it never goes missing silently.
+      if (looksLikeLua(name, length)) {
+        ++misnamed;
+        LOG_ERR("GAME", "%s/%s is not loaded: a module name is [a-z0-9_]{1,32}.lua", path, name);
+      }
       continue;
     }
     ++count;
     textBytes += file.fileSize();
   }
   if (count == 0) {
-    LOG_ERR("GAME", "%s holds no Lua sources", path);
-    return LoadResult::NoSources;
+    LOG_ERR("GAME", "%s holds no loadable Lua sources", path);
+    return misnamed > 0 ? LoadResult::BadSourceName : LoadResult::NoSources;
   }
   if (count > MAX_SOURCES || textBytes > MAX_SOURCE_BYTES) {
     LOG_ERR("GAME", "%s: %u Lua files, %u bytes; limits %u and %u", path, static_cast<unsigned>(count),
@@ -102,6 +124,14 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
     span.offset = static_cast<uint32_t>(offset);
     span.length = static_cast<uint32_t>(size);
     offset += size;
+  }
+
+  if (loaded != count) {
+    // The folder lost a file between the passes.
+    LOG_ERR("GAME", "Read %u of %u Lua files from %s", static_cast<unsigned>(loaded), static_cast<unsigned>(count),
+            path);
+    block.reset();
+    return LoadResult::CannotRead;
   }
 
   view.spans = spans;

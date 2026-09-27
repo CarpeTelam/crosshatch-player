@@ -4,6 +4,7 @@
 #include <GameInput.h>
 #include <HalMemory.h>
 #include <LuaGame.h>
+#include <SoloRounds.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -65,9 +66,10 @@ class GameVM {
   // Rounds that have ended so far: the VM counts one when the status turns over,
   // after the Session has delivered `over` and the round's last frame is
   // published. The match enters Over when the count moves (AD-21). Any task.
-  uint32_t roundsEnded() const { return endedRounds.load(std::memory_order_acquire); }
-  // Asks the VM for a new round (Play again): before its next event it cancels the
-  // pending timer and runs Session::start() and draw(), so ver keeps counting.
+  uint32_t roundsEnded() const { return rounds.roundsEnded(); }
+  // Asks the VM for a new round (Play again): drops the queued events, and before
+  // its next event the VM cancels the pending timer and runs Session::start() and
+  // draw(), so ver keeps counting (GameScript::SoloRounds).
   void playAgain();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
@@ -81,7 +83,10 @@ class GameVM {
   bool finished() const { return done.load(std::memory_order_acquire); }
   // Ended with a ScriptError; errorMessage() then holds Lua's message.
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
-  const char* errorMessage() const { return failure ? failure : game.errorMessage(); }
+  const char* errorMessage() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
+  // Failed because the arena's reserve had no room for the Session, before any Lua
+  // ran: the match shows its own out-of-memory text, not a Lua message.
+  bool failedOutOfMemory() const { return failed() && sessionOutOfMemory; }
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }
@@ -134,16 +139,15 @@ class GameVM {
   GameLog log;
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
+  GameScript::SoloRounds rounds{game.timer(), queue};
   TaskHandle_t task = nullptr;
   std::mutex taskMutex;    // guards taskAlive against the task's exit
   bool taskAlive = false;  // true from start() until run() is about to end
   std::atomic<bool> quitRequested{false};
-  std::atomic<bool> restartRequested{false};
-  std::atomic<uint32_t> endedRounds{0};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};
-  // Set (to a literal) when the VM fails outside Lua; errorMessage() then shows it.
-  const char* failure = nullptr;
+  // Set by the task before `done` when the Session did not fit in the arena.
+  bool sessionOutOfMemory = false;
   // runningForMs's view of the current call (loop task only).
   uint32_t watchedCall = 0;
   uint32_t watchedSinceMs = 0;

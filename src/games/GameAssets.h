@@ -23,7 +23,8 @@ class GameAssets {
   static constexpr size_t MAX_SOURCE_BYTES = 256 * 1024;
 
   // Why a load failed; the match shows each as a translated reason (AD-14).
-  enum class LoadResult : uint8_t { Ok, FolderMissing, NoSources, TooLarge, OutOfMemory, CannotRead };
+  // BadSourceName: the only .lua files have names no module can have.
+  enum class LoadResult : uint8_t { Ok, FolderMissing, NoSources, BadSourceName, TooLarge, OutOfMemory, CannotRead };
 
   // Ok, or why not (already logged). Once the sources are loaded, restores the
   // saved store into `store` (empty when there is none or it was discarded).

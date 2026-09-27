@@ -16,12 +16,15 @@ namespace {
 
 constexpr uint32_t STOP_POLL_MS = 5;
 
-// VM task: starts a round and draws it (setup, status, and `over` if it is already over).
-GameCore::Outcome startRound(GameCore::Session& session) {
-  const GameCore::Outcome outcome = session.start();
-  if (outcome != GameCore::Outcome::Ok) return outcome;
-  LOG_INF("GAME", "Round started at ver %u", static_cast<unsigned>(session.ver()));
-  return session.draw();
+// VM task, after a round started (`started`) or an event: logs the start, and an
+// end counted since `endedBefore`.
+void logRound(const GameCore::Session& session, const GameScript::SoloRounds& rounds, const uint32_t endedBefore,
+              const bool started) {
+  if (started) LOG_INF("GAME", "Round started at ver %u", static_cast<unsigned>(session.ver()));
+  if (rounds.roundsEnded() != endedBefore) {
+    LOG_INF("GAME", "Round over at ver %u; winners mask 0x%x", static_cast<unsigned>(session.ver()),
+            static_cast<unsigned>(session.status().winners));
+  }
 }
 
 }  // namespace
@@ -95,27 +98,17 @@ void GameVM::run() {
   if (session) {
     outcome = game.load();
   } else {
-    failure = "not enough memory";
+    sessionOutOfMemory = true;
   }
-  if (outcome == Outcome::Ok) outcome = startRound(*session);
-  // Whether the current round is over, so each round is counted once when its
-  // status turns over (the Session has delivered `over` by then).
-  bool roundOver = false;
-  const auto countRoundEnd = [&] {
-    if (roundOver || !session->status().over) return;
-    roundOver = true;
-    LOG_INF("GAME", "Round over at ver %u; winners mask 0x%x", static_cast<unsigned>(session->ver()),
-            static_cast<unsigned>(session->status().winners));
-    endedRounds.fetch_add(1, std::memory_order_acq_rel);
-  };
-  if (outcome == Outcome::Ok) countRoundEnd();
+  if (outcome == Outcome::Ok) {
+    outcome = rounds.start(*session);
+    if (outcome == Outcome::Ok) logRound(*session, rounds, 0, true);
+  }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
-    if (restartRequested.exchange(false, std::memory_order_acq_rel)) {
-      // Play again: the last round's timer and its stale events belong to it.
-      game.timer().cancel();
-      outcome = startRound(*session);
-      roundOver = false;
-      if (outcome == Outcome::Ok) countRoundEnd();
+    const uint32_t endedBefore = rounds.roundsEnded();
+    if (rounds.takePlayAgain()) {
+      outcome = rounds.restart();
+      if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, true);
       continue;
     }
     GameScript::InputEvent event;
@@ -123,12 +116,8 @@ void GameVM::run() {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
-    // A timer the game re-armed or cancelled after this event fired is not due.
-    if (!game.timer().accepts(event)) continue;
-    outcome = session->handle(event);
-    if (outcome == Outcome::Ok) outcome = session->applyPending();
-    if (outcome == Outcome::Ok) outcome = session->draw();
-    if (outcome == Outcome::Ok) countRoundEnd();
+    outcome = rounds.step(event);
+    if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, false);
   }
   if (outcome == Outcome::ScriptError) {
     LOG_ERR("LUA", "Script error: %s", errorMessage());
@@ -152,7 +141,7 @@ void GameVM::run() {
 }
 
 void GameVM::playAgain() {
-  restartRequested.store(true, std::memory_order_release);
+  rounds.requestPlayAgain();
   notifyTask();
 }
 
