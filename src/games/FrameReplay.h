@@ -1,6 +1,7 @@
 #pragma once
 
 #include <HalDisplay.h>
+#include <TextMetrics.h>
 
 class GfxRenderer;
 class GameViewport;
@@ -22,4 +23,8 @@ class FrameReplay {
   // and the fast-refresh counter arrive.
   // cppcheck-suppress functionStatic // see draw()
   HalDisplay::RefreshMode refreshMode() const { return HalDisplay::FULL_REFRESH; }
+  // The advance tables of the fonts text is drawn in, one per size, for
+  // ch.text_width; the match passes them to the VM at start (AD-7). The stand-in
+  // until the size-to-font map (entry 11) supplies the real tables.
+  static constexpr GameScript::TextMetrics textMetrics() { return GameScript::TextMetrics::standIn(); }
 };

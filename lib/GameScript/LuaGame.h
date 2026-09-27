@@ -47,7 +47,9 @@ class LuaGame : public GameCore::IGameRules {
   // One scratch serves every encode (they never overlap); sized for the largest limit.
   static constexpr size_t SCRATCH_BYTES = Codec::scratchBytes(Codec::STORE_LIMIT);
 
-  LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random);
+  // `canvas` (copied) is what ch.screen and ch.text_width report.
+  LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random,
+          const Canvas& canvas);
   ~LuaGame() override;
   LuaGame(const LuaGame&) = delete;
   LuaGame& operator=(const LuaGame&) = delete;
@@ -136,6 +138,7 @@ class LuaGame : public GameCore::IGameRules {
   FrameBuffers& frames;
   const GameSources& sources;
   GameCore::IRandom& random;
+  const Canvas canvas;
   BindingContext bindings;
   CallGuard guard;
   std::atomic<bool> running{false};

@@ -108,7 +108,8 @@ class LuaGameTest : public ::testing::Test {
   // The GameVM task's composition (GameVM::run): a solo Session in the arena, taken
   // before the Lua state, over a LuaGame; each step is followed by a draw.
   struct SessionGame {
-    SessionGame(LuaGameTest& test) : arena(test.arena), game(test.arena, test.frames, test.sources, test.random) {
+    SessionGame(LuaGameTest& test)
+        : arena(test.arena), game(test.arena, test.frames, test.sources, test.random, test.canvas) {
       session = arena.create<GameCore::Session>(GameCore::Roster::solo(), game);
     }
     ~SessionGame() {
@@ -183,6 +184,8 @@ class LuaGameTest : public ::testing::Test {
   std::vector<uint8_t> back;
   GameScript::FrameBuffers frames;
   FixedRandom random;
+  // The X4 Pro's portrait canvas size, with the stand-in text metrics.
+  GameScript::Canvas canvas{480, 800, GameScript::TextMetrics::standIn()};
   std::string text;
   std::vector<GameScript::SourceSpan> spans;
   GameScript::GameSources sources;

@@ -58,6 +58,10 @@ void FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
         // Every size draws in one UI font until the size-to-font map arrives.
         renderer.drawText(UI_12_FONT_ID, ox + command.x, oy + command.y, command.text, inked(command.color));
         break;
+      case GameScript::Op::Line:
+      case GameScript::Op::Circle:
+        // Recorded in the frame; drawn once replay covers every command kind.
+        break;
     }
   }
   renderer.setClipRect(savedClip[0], savedClip[1], savedClip[2], savedClip[3]);

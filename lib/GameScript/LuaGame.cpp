@@ -124,8 +124,9 @@ void copyReason(lua_State* L, const std::span<char> out) {
 
 }  // namespace
 
-LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random)
-    : arena(arena), frames(frames), sources(sources), random(random) {}
+LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random,
+                 const Canvas& canvas)
+    : arena(arena), frames(frames), sources(sources), random(random), canvas(canvas) {}
 
 LuaGame::~LuaGame() { close(); }
 
@@ -147,6 +148,7 @@ Outcome LuaGame::load() {
   if (!scratch) return fail("not enough memory");
   L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, random.next32());
   if (!L) return fail("not enough memory");
+  bindings.canvas = &canvas;
   bindings.sources = &sources;
   bindings.guard = &guard;
   bindings.lockedSections = &lockedSections;

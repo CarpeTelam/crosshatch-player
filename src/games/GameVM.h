@@ -37,8 +37,9 @@ class GameVM {
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
   // Takes the loaded sources and allocates the arena and both frame buffers in
-  // PSRAM. Null (logged) when memory runs out.
-  static std::unique_ptr<GameVM> create(GameAssets&& assets);
+  // PSRAM; `canvas` is what the game sees as ch.screen and ch.text_width. Null
+  // (logged) when memory runs out.
+  static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameScript::Canvas& canvas);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -87,7 +88,7 @@ class GameVM {
   static void abandon(std::unique_ptr<GameVM> vm);
 
  private:
-  GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage);
+  GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas);
   static void taskEntry(void* param);
   void run();
   void postInput(const GameScript::InputEvent& event);

@@ -34,7 +34,9 @@ void GameMatchActivity::onEnter() {
     showError(problem);
     return;
   }
-  auto created = GameVM::create(std::move(assets));
+  const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
+                                  FrameReplay::textMetrics()};
+  auto created = GameVM::create(std::move(assets), canvas);
   if (!created) {
     showError("out of memory");
     return;

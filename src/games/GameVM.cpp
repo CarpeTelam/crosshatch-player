@@ -18,7 +18,7 @@ constexpr uint32_t STOP_POLL_MS = 5;
 
 }  // namespace
 
-std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets) {
+std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Canvas& canvas) {
   constexpr size_t frameBytes = 2 * GameScript::MAX_BYTES;
   auto frameStorage = HalMemory::allocatePsram(frameBytes);
   if (!frameStorage) {
@@ -27,7 +27,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets) {
   }
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
-  std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage)));
+  std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -36,11 +36,11 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets) {
   return vm;
 }
 
-GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage)
+GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas)
     : assets(std::move(loaded)),
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
-      game(arena.allocator(), frameBuffers, assets.sources(), random) {}
+      game(arena.allocator(), frameBuffers, assets.sources(), random, canvas) {}
 
 bool GameVM::start() {
   {

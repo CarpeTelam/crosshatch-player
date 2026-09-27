@@ -48,14 +48,18 @@ add_executable(GameScriptTest
   CanvasClipTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp
+  GfxBindingsTest.cpp
   LuaGameTest.cpp
   SandboxTest.cpp
   SessionGameTest.cpp
+  TextMetricsTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  # TextMetrics decodes with the renderer's UTF-8 reader.
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
 target_include_directories(GameScriptTest PRIVATE
@@ -63,6 +67,7 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/lib/Utf8
 )
 
 # Fixture games stay under test/, never games/ (the release packs games/).

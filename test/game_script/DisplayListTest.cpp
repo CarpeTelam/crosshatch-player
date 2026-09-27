@@ -45,6 +45,64 @@ TEST(DisplayListTest, RoundTripsEachCommand) {
   EXPECT_FALSE(list.reader().next(c));
 }
 
+TEST(DisplayListTest, RoundTripsLinesCirclesAndAlignedText) {
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  ASSERT_TRUE(list.appendLine(-1, 2, 70000, -70000, Color::White));
+  ASSERT_TRUE(list.appendCircle(10, 20, 30, Color::Light, true));
+  ASSERT_TRUE(list.appendCircle(1, 2, -3, Color::Black, false));
+  ASSERT_TRUE(list.appendText(5, 6, "Hi", 2, TextSize::Small, Color::White, Align::Right));
+  ASSERT_TRUE(list.appendText(7, 8, "Yo", 2, TextSize::Medium, Color::Black));
+  // Line 10 B, circles 9 B each, texts 10 B of header plus the bytes and a NUL.
+  EXPECT_EQ(list.bytes(), 10u + 9u + 9u + 13u + 13u);
+
+  auto reader = list.reader();
+  DrawCommand c;
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Line);
+  EXPECT_EQ(c.color, Color::White);
+  EXPECT_EQ(c.x, -1);
+  EXPECT_EQ(c.y, 2);
+  EXPECT_EQ(c.x2, INT16_MAX);  // clamped
+  EXPECT_EQ(c.y2, INT16_MIN);
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Circle);
+  EXPECT_EQ(c.color, Color::Light);
+  EXPECT_TRUE(c.filled);
+  EXPECT_EQ(c.x, 10);
+  EXPECT_EQ(c.y, 20);
+  EXPECT_EQ(c.r, 30);
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Circle);
+  EXPECT_FALSE(c.filled);
+  EXPECT_EQ(c.r, -3);
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Text);
+  EXPECT_EQ(c.align, Align::Right);
+  EXPECT_EQ(c.size, TextSize::Small);
+  EXPECT_EQ(c.color, Color::White);
+  EXPECT_EQ(std::string(c.text), "Hi");
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.align, Align::Left);  // the default
+  EXPECT_EQ(std::string(c.text), "Yo");
+  EXPECT_FALSE(reader.next(c));
+}
+
+TEST(DisplayListTest, TheRefreshRequestKeepsTheLargestAndIsNotACommand) {
+  std::vector<uint8_t> storage(1024);
+  DisplayList list(storage.data(), storage.size());
+  EXPECT_EQ(list.refresh(), Refresh::Fast);
+  list.requestRefresh(Refresh::Full);
+  list.requestRefresh(Refresh::Half);
+  EXPECT_EQ(list.refresh(), Refresh::Full);
+  EXPECT_EQ(list.count(), 0);
+  EXPECT_EQ(list.bytes(), 0u);
+  list.clear();
+  EXPECT_EQ(list.refresh(), Refresh::Fast);
+  list.requestRefresh(Refresh::Half);
+  EXPECT_EQ(list.refresh(), Refresh::Half);
+}
+
 TEST(DisplayListTest, RefusesThePastCommandLimit) {
   std::vector<uint8_t> storage(MAX_BYTES);
   DisplayList list(storage.data(), storage.size());
