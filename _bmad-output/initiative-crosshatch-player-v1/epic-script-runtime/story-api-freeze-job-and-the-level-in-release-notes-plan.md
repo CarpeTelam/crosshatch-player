@@ -3,7 +3,7 @@ title: 'API freeze job and the level in release notes'
 type: 'feature'
 ticket: '5'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: 'b4b8631a18459d33a47bdf974285b3a3cc10e4db'
 route: 'full'
 route_source: 'auto'
@@ -119,7 +119,7 @@ Pass 1 (no subagents in this session; each lens run here one at a time, its prom
 - `python3 scripts/check_upstream_touches.py` -- exit 0.
 
 **Manual checks:**
-- Owner (pending): Actions → "Fork release" → Run workflow from this branch with "Dry run" on → the run summary's notes show "Game API 1 (preview)".
+- Owner: Actions → "Fork release" → Run workflow from this branch with "Dry run" on → passed (2026-09-27): "Build and check" succeeded in 20 min 7 s, and "Write the release notes" opened with "1.6.5-ch.3 · Game API 1 (preview)", from commit b3f89a32eccc7ed6f737a54d6b79878a7a5999f9, with both images checked (sticky 5,630,880 B, x4pro 5,743,168 B).
 
 **Verification record (2026-09-27, Python 3.11.15, git 2.43.0, pioarduino 6.1.19; builds under the shared flock):**
 - Sidecar tests: all five `scripts/*_test.py` files pass (`check_api_freeze_test.py` 10, `check_flash_budget_test.py` 63, `check_upstream_touches_test.py` 18, `fork_common_test.py` 23, `fork_release_test.py` 66). Matrix audit: every row has a passing test (freeze rows in `CheckScriptTest`; notes in `PublishTest`; frozen release in `FreezeTest`; vectors in `PrepareTest`/`BuildTest`; clean-on-checksum in `BuildTest.test_a_later_run_that_cleans_the_build_dir_loses_no_image`).
