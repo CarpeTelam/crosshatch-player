@@ -3,7 +3,7 @@ title: 'Solo match lifecycle and the error view'
 type: 'feature'
 ticket: '13'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '169ae2916a31af890a422a9d8ca14cf50b3f3d55'
 route: 'full'
 route_source: 'auto'
