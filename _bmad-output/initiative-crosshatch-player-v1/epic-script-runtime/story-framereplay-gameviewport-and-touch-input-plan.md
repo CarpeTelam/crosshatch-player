@@ -3,7 +3,7 @@ title: 'FrameReplay, GameViewport, and touch input'
 type: 'feature'
 ticket: '11'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '2b65f1efb2752b2c4d779bca2344f4d9caedd9b7'
 route: 'full'
 route_source: 'auto'
