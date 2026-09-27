@@ -105,10 +105,6 @@ int guardedXpcall(lua_State* L) {
   return callWrapped(L);
 }
 
-// print(...) writes nothing until entry 10 maps it to ch.log: the base print
-// would write to stdout, under newlib's stream lock.
-int silentPrint(lua_State*) { return 0; }
-
 // setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
 // a metatable with a __gc field. Finalizers run with hooks off, so a __gc would
 // escape the budget and the stack check; Lua marks an object for finalization
@@ -168,6 +164,20 @@ lua_Integer seedWord(GameCore::IRandom& random) {
   return static_cast<lua_Integer>((high << 32) | low);
 }
 
+// math.randomseed(...): Lua's (upvalue 1), except that with no argument the seed
+// comes from IRandom (upvalue 2): Lua's own no-argument seed calls time(), which
+// takes a newlib lock an abandon could leave held. With arguments it is unchanged.
+int guardedRandomseed(lua_State* L) {
+  if (lua_isnone(L, 1)) {
+    auto& random = *static_cast<GameCore::IRandom*>(lua_touserdata(L, lua_upvalueindex(2)));
+    const lua_Integer first = seedWord(random);
+    const lua_Integer second = seedWord(random);
+    lua_pushinteger(L, first);
+    lua_pushinteger(L, second);
+  }
+  return callWrapped(L);
+}
+
 }  // namespace
 
 void openSandbox(lua_State* L, GameCore::IRandom& random) {
@@ -189,7 +199,7 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   lua_setglobal(L, "xpcall");
   lua_pushcfunction(L, &guardedSetmetatable);
   lua_setglobal(L, "setmetatable");
-  lua_pushcfunction(L, &silentPrint);
+  lua_pushcfunction(L, &chLog);
   lua_setglobal(L, "print");
   lua_getglobal(L, LUA_TABLIBNAME);
   wrapField(L, "move", &guardedMove);
@@ -197,6 +207,8 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   wrapField(L, "remove", &guardedRemove);
   lua_pop(L, 1);
 
+  // luaopen_math above seeded itself with luaL_makeseed, which calls time() once;
+  // that is here in load(), before any game code runs, and is reseeded now.
   lua_getglobal(L, LUA_MATHLIBNAME);
   lua_getfield(L, -1, "randomseed");
   const lua_Integer first = seedWord(random);
@@ -204,6 +216,10 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   lua_pushinteger(L, first);
   lua_pushinteger(L, second);
   lua_call(L, 2, 0);
+  lua_getfield(L, -1, "randomseed");
+  lua_pushlightuserdata(L, &random);
+  lua_pushcclosure(L, &guardedRandomseed, 2);
+  lua_setfield(L, -2, "randomseed");
   lua_pop(L, 1);
 }
 

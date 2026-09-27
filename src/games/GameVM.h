@@ -14,15 +14,22 @@
 
 #include "GameArena.h"
 #include "GameAssets.h"
+#include "GameClock.h"
+#include "GameLog.h"
 #include "GameRandom.h"
+
+namespace GameScript {
+class StoreSlot;
+}
 
 class FrameReplay;
 class GameViewport;
 class GfxRenderer;
 
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
-// the frame buffers, the input queue, the LuaGame, and, in the arena while the task
-// runs, the solo GameCore::Session that drives it. The task alone calls into
+// the frame buffers, the input queue, the LuaGame with its clock and log, and, in
+// the arena while the task runs, the solo GameCore::Session that drives it. The
+// ch.store slot is the match's, borrowed. The task alone calls into
 // Lua; it never takes RenderLock, calls ActivityManager, or touches Storage. The
 // match posts input and reads frames, and destroys this object only after join()
 // returns true (or before start()); otherwise it hands it to abandon().
@@ -37,9 +44,11 @@ class GameVM {
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
   // Takes the loaded sources and allocates the arena and both frame buffers in
-  // PSRAM; `canvas` is what the game sees as ch.screen and ch.text_width. Null
-  // (logged) when memory runs out.
-  static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameScript::Canvas& canvas);
+  // PSRAM; `canvas` is what the game sees as ch.screen and ch.text_width, `gameId`
+  // tags its log lines, and `store` (which must outlive the task) backs ch.store.
+  // Null (logged) when memory runs out.
+  static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameScript::Canvas& canvas, const char* gameId,
+                                        GameScript::StoreSlot& store);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -49,6 +58,9 @@ class GameVM {
   bool start();
   // Queues a tap at canvas (x, y) for input(); a full queue drops its oldest event.
   void postTap(int16_t x, int16_t y);
+  // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
+  // The VM drops it if the game re-armed or cancelled the timer meanwhile.
+  void pollTimer();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
   // Draws the front frame with `replay` under the frame mutex; false (nothing
@@ -84,11 +96,14 @@ class GameVM {
   // leaked, since the task may hold its mutexes. If that never happens within
   // ABANDON_WAIT_MS, or in the simulator (which cannot stop a thread), all of it
   // is leaked. Call from the loop task while the render task is not reading
-  // frames (RenderLock held, as in onExit).
-  static void abandon(std::unique_ptr<GameVM> vm);
+  // frames (RenderLock held, as in onExit). Returns true when the task is gone
+  // (ended or deleted); false when it may still run, and so still post to the
+  // store slot, which the caller must then leak too.
+  static bool abandon(std::unique_ptr<GameVM> vm);
 
  private:
-  GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas);
+  GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
+         GameScript::StoreSlot& store);
   static void taskEntry(void* param);
   void run();
   void postInput(const GameScript::InputEvent& event);
@@ -106,6 +121,8 @@ class GameVM {
   HalMemory::PsramBuffer frameStorage;
   GameScript::FrameBuffers frameBuffers;
   GameRandom random;
+  GameClock clock;
+  GameLog log;
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
   TaskHandle_t task = nullptr;

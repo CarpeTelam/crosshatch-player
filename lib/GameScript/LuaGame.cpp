@@ -1,5 +1,6 @@
 #include "LuaGame.h"
 
+#include <IClock.h>
 #include <IRandom.h>
 #include <Session.h>
 
@@ -57,6 +58,11 @@ void pushEvent(lua_State* L, const GameCore::GameEvent& event) {
     case EventKind::Over:
       lua_createtable(L, 0, 1);
       lua_pushliteral(L, "over");
+      lua_setfield(L, -2, "kind");
+      return;
+    case EventKind::Timer:
+      lua_createtable(L, 0, 1);
+      lua_pushliteral(L, "timer");
       lua_setfield(L, -2, "kind");
       return;
   }
@@ -124,9 +130,9 @@ void copyReason(lua_State* L, const std::span<char> out) {
 
 }  // namespace
 
-LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random,
+LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
                  const Canvas& canvas)
-    : arena(arena), frames(frames), sources(sources), random(random), canvas(canvas) {}
+    : arena(arena), frames(frames), sources(sources), ports(ports), canvas(canvas) {}
 
 LuaGame::~LuaGame() { close(); }
 
@@ -146,12 +152,19 @@ Outcome LuaGame::load() {
   // From the reserve, which the Lua heap can never take.
   scratch = arena.allocate(SCRATCH_BYTES);
   if (!scratch) return fail("not enough memory");
-  L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, random.next32());
+  L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, ports.random.next32());
   if (!L) return fail("not enough memory");
   bindings.canvas = &canvas;
   bindings.sources = &sources;
   bindings.guard = &guard;
   bindings.lockedSections = &lockedSections;
+  bindings.clock = &ports.clock;
+  bindings.startMs = ports.clock.nowMs();
+  bindings.timer = &pendingTimer;
+  bindings.store = &ports.store;
+  bindings.scratch = scratch;
+  bindings.scratchBytes = SCRATCH_BYTES;
+  bindings.log = &ports.log;
   setBindingContext(L, &bindings);
   guard.install(L);
   Call call;
@@ -235,6 +248,7 @@ void LuaGame::close() {
     lua_close(L);
     running.store(false, std::memory_order_release);
   }
+  pendingTimer.cancel();
   arena.release(scratch);
   abandon();
 }
@@ -316,7 +330,7 @@ int LuaGame::trampoline(lua_State* L) {
 }
 
 void LuaGame::loadEntry(lua_State* L) {
-  openSandbox(L, random);
+  openSandbox(L, ports.random);
   openChLibrary(L);
 
   const SourceSpan* main = sources.find("main");

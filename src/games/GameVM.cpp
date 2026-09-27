@@ -18,7 +18,8 @@ constexpr uint32_t STOP_POLL_MS = 5;
 
 }  // namespace
 
-std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Canvas& canvas) {
+std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Canvas& canvas, const char* gameId,
+                                       GameScript::StoreSlot& store) {
   constexpr size_t frameBytes = 2 * GameScript::MAX_BYTES;
   auto frameStorage = HalMemory::allocatePsram(frameBytes);
   if (!frameStorage) {
@@ -27,7 +28,8 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Ca
   }
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
-  std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas));
+  std::unique_ptr<GameVM> vm(new (std::nothrow)
+                                 GameVM(std::move(assets), std::move(frameStorage), canvas, gameId, store));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -36,11 +38,14 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Ca
   return vm;
 }
 
-GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas)
+GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas,
+               const char* gameId, GameScript::StoreSlot& store)
     : assets(std::move(loaded)),
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
-      game(arena.allocator(), frameBuffers, assets.sources(), random, canvas) {}
+      log(gameId),
+      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store},
+           canvas) {}
 
 bool GameVM::start() {
   {
@@ -98,6 +103,8 @@ void GameVM::run() {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
+    // A timer the game re-armed or cancelled after this event fired is not due.
+    if (!game.timer().accepts(event)) continue;
     outcome = session->handle(event);
     if (outcome == Outcome::Ok) outcome = session->applyPending();
     if (outcome == Outcome::Ok) outcome = session->draw();
@@ -137,6 +144,15 @@ void GameVM::postTap(const int16_t x, const int16_t y) {
   postInput(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
 }
 
+void GameVM::pollTimer() {
+  uint32_t serial = 0;
+  if (!game.timer().takeDue(clock.nowMs(), serial)) return;
+  GameScript::InputEvent event;
+  event.kind = GameScript::InputKind::Timer;
+  event.serial = serial;
+  postInput(event);
+}
+
 bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, const FrameReplay& replay) {
   if (frameBuffers.frameGen() == 0) return false;
   frameBuffers.readFront([&](const GameScript::DisplayList& frame) { replay.draw(renderer, viewport, frame); });
@@ -173,8 +189,8 @@ bool GameVM::stop(const uint32_t timeoutMs) {
   return join(timeoutMs);
 }
 
-void GameVM::abandon(std::unique_ptr<GameVM> vm) {
-  if (!vm) return;
+bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
+  if (!vm) return true;
   // Leaked from here on unless the task ends after all: it may hold this object's
   // mutexes (input queue, task mutex), and deleting a task releases nothing it holds.
   GameVM* stuck = vm.release();
@@ -183,14 +199,15 @@ void GameVM::abandon(std::unique_ptr<GameVM> vm) {
   // which would keep running in the arena; waiting cannot help.
   if (stuck->finished()) {
     delete stuck;
-    return;
+    return true;
   }
   LOG_ERR("GAME", "VM stuck; the simulator cannot stop its thread, so all of it is leaked");
+  return false;
 #else
   for (uint32_t waited = 0; waited < ABANDON_WAIT_MS; waited += STOP_POLL_MS) {
     if (stuck->finished()) {
       delete stuck;
-      return;
+      return true;
     }
     if (stuck->deleteIfStuckInLua()) {
       // The Lua state lives in the arena, and nothing else points into it.
@@ -200,11 +217,12 @@ void GameVM::abandon(std::unique_ptr<GameVM> vm) {
       stuck->assets.release();
       LOG_ERR("GAME", "Abandoned the stuck VM: freed its PSRAM, leaked %u bytes",
               static_cast<unsigned>(sizeof(GameVM)));
-      return;
+      return true;
     }
     vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
   }
   LOG_ERR("GAME", "VM stuck and not safely deletable; leaking all of it");
+  return false;
 #endif
 }
 

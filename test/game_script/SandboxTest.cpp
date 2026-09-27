@@ -19,7 +19,8 @@ class SandboxTest : public GameScriptTestSupport::LuaGameTest {
  protected:
   // Runs setup and one draw; returns the drawn text, or the error prefixed "error: ".
   std::string startAndDraw(GameCore::IRandom& rng) {
-    DirectGame game(arena, frames, sources, rng, canvas);
+    const HostPorts withRng{rng, clock, log, store};
+    DirectGame game(arena, frames, sources, withRng, canvas);
     Outcome outcome = game.start();
     if (outcome == Outcome::Ok) outcome = game.draw();
     if (outcome != Outcome::Ok) return std::string("error: ") + game.errorMessage();
@@ -75,7 +76,7 @@ TEST_F(SandboxTest, ForbiddenLibrariesAndLoadersAreScriptErrors) {
   };
   for (const auto& c : cases) {
     useFault(c.fixture);
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << c.fixture;
     EXPECT_TRUE(contains(game.errorMessage(), c.message)) << c.fixture << " -> " << game.errorMessage();
   }
@@ -89,7 +90,7 @@ TEST_F(SandboxTest, ForbiddenLibrariesAndLoadersAreScriptErrors) {
 TEST_F(SandboxTest, TableLoopsPastTheLimitAreRefused) {
   for (const char* fixture : {"table_move", "table_insert_len"}) {
     useFault(fixture);
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << fixture;
     EXPECT_TRUE(contains(game.errorMessage(), "more than 65536 elements")) << fixture << " -> " << game.errorMessage();
   }
@@ -106,7 +107,7 @@ TEST_F(SandboxTest, TableLoopsPastTheLimitAreRefused) {
 TEST_F(SandboxTest, SetmetatableRefusesGcFinalizers) {
   for (const char* fixture : {"gc_recursive", "gc_loop"}) {
     useFault(fixture);
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << fixture;
     EXPECT_TRUE(contains(game.errorMessage(), "setmetatable: __gc metamethods are not supported"))
@@ -124,13 +125,16 @@ TEST_F(SandboxTest, SetmetatableRefusesGcFinalizers) {
             "5 | bad argument #1 to 'setmetatable' (table expected, got number) | cannot change a protected metatable");
 }
 
-TEST_F(SandboxTest, PrintWritesNothing) {
-  useSource("main",
-            std::string("return { setup = function() print('hello', 1) return { result = 'ok' } end,") + DRAW_RESULT);
+TEST_F(SandboxTest, PrintIsChLogNeverStdout) {
+  useSource(
+      "main",
+      std::string("return { setup = function() print('hello', 1) return { result = tostring(print == ch.log) } end,") +
+          DRAW_RESULT);
   testing::internal::CaptureStdout();
   const std::string drawn = startAndDraw();
   EXPECT_EQ(testing::internal::GetCapturedStdout(), "");
-  EXPECT_EQ(drawn, "ok");
+  EXPECT_EQ(drawn, "true");
+  EXPECT_EQ(log.lines, std::vector<std::string>{"hello\t1"});
 }
 
 TEST_F(SandboxTest, RequireNeedsParserHeadroom) {
@@ -139,7 +143,7 @@ TEST_F(SandboxTest, RequireNeedsParserHeadroom) {
               {"util", readFixture("modules/util.lua")},
               {"quiet", readFixture("modules/quiet.lua")}});
   {
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   }
@@ -154,7 +158,7 @@ TEST_F(SandboxTest, RequireNeedsParserHeadroom) {
                "f(12)\n"
                "return {}"},
               {"util", readFixture("modules/util.lua")}});
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   modelTaskStack(game);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_TRUE(contains(game.errorMessage(), "script recursion too deep to load a module")) << game.errorMessage();
@@ -176,7 +180,7 @@ TEST_F(SandboxTest, LockedSectionsAreCountedForAbandon) {
   lua_close(L);
 
   useSource("main", readFixture("tracer/main.lua"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   EXPECT_FALSE(game.inLockedBinding());
 }
@@ -192,7 +196,7 @@ TEST_F(SandboxTest, RequireLoadsModulesOnceFromTheSourceTable) {
 TEST_F(SandboxTest, RequireFaultsAreScriptErrors) {
   useFault("missing_require");
   {
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
     EXPECT_TRUE(contains(game.errorMessage(), "main.lua:2: module 'nothere' not found")) << game.errorMessage();
   }
@@ -200,13 +204,13 @@ TEST_F(SandboxTest, RequireFaultsAreScriptErrors) {
               {"cycle_a", readFixture("modules/cycle_a.lua")},
               {"cycle_b", readFixture("modules/cycle_b.lua")}});
   {
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
     EXPECT_TRUE(contains(game.errorMessage(), "circular require of 'cycle_a'")) << game.errorMessage();
   }
   useSources({{"main", "require('bin') return {}"}, {"bin", binaryChunk()}});
   {
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
     EXPECT_TRUE(contains(game.errorMessage(), "attempt to load a binary chunk")) << game.errorMessage();
   }

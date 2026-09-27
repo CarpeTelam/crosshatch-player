@@ -18,11 +18,12 @@ inline constexpr size_t TABLE_ELEMENTS_LIMIT = 65536;
 // Opens the libraries a game gets (AD-6): base without load, loadfile, and dofile;
 // table, string, math, and utf8; and a global require(name) that runs name.lua
 // from the game's own sources (BindingContext::sources) in text mode, once, and
-// returns its value (true for nil). math.random is seeded from `random`. No io,
-// os, debug, coroutine, or package. setmetatable refuses __gc, print writes
-// nothing (until entry 10), xpcall skips its handler for a CallGuard fault, and
-// table.move/insert/remove refuse more than TABLE_ELEMENTS_LIMIT elements. May raise a Lua error (out of memory), so
-// call it only inside a protected call.
+// returns its value (true for nil). math.random is seeded from `random`, and so is
+// a no-argument math.randomseed() (which `random` must outlive). No io, os, debug,
+// coroutine, or package. setmetatable refuses __gc, print is ch.log (chLog), xpcall
+// skips its handler for a CallGuard fault, and table.move/insert/remove refuse more
+// than TABLE_ELEMENTS_LIMIT elements. May raise a Lua error (out of memory), so call
+// it only inside a protected call.
 void openSandbox(lua_State* L, GameCore::IRandom& random);
 
 }  // namespace GameScript

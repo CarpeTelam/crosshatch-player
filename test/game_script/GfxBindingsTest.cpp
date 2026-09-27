@@ -104,7 +104,7 @@ TEST_F(GfxBindingsTest, EveryCallAndArgumentFormDecodes) {
     ch.gfx.text(3.0, 4, 12, "medium", "black", nil)
     ch.gfx.refresh("half")
   )"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
   const std::vector<std::string> expected = {
@@ -151,14 +151,14 @@ TEST_F(GfxBindingsTest, RefreshRequestsTheLargestModeOfTheFrame) {
   };
   for (const auto& c : cases) {
     useSource("main", drawing(c.body));
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
     ASSERT_EQ(game.draw(), Outcome::Ok) << c.body << ": " << game.errorMessage();
     EXPECT_EQ(frontRefresh(), c.expected) << c.body;
   }
   // The next frame starts at fast again.
   useSource("main", drawing("if ui.again then return end; ui.again = true; ch.gfx.refresh('full')"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok);
   EXPECT_EQ(frontRefresh(), Refresh::Full);
@@ -189,7 +189,7 @@ TEST_F(GfxBindingsTest, EveryGfxCallOutsideDrawIsAScriptError) {
     };
     for (const auto& source : sourcesFor) {
       useSource("main", source);
-      DirectGame game(arena, frames, sources, random, canvas);
+      DirectGame game(arena, frames, sources, ports, canvas);
       Outcome outcome = game.start();
       if (outcome == Outcome::Ok) outcome = game.input(InputEvent{InputKind::Tap, 1, 1});
       EXPECT_EQ(outcome, Outcome::ScriptError) << source;
@@ -223,14 +223,14 @@ TEST_F(GfxBindingsTest, GfxInStatusOrApplyIsAScriptError) {
 TEST_F(GfxBindingsTest, TheCommandLimitIs2048AndRefreshIsNotACommand) {
   useSource("main", drawing("for i = 1, 2048 do ch.gfx.line(0, 0, i, i, 'black') end\n"
                             "ch.gfx.refresh('full')"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontCommands().size(), MAX_COMMANDS);
   game.close();  // one VM per arena, as on the device: the reserve holds one scratch
 
   useSource("main", drawing("for i = 1, 2049 do ch.gfx.clear('white') end"));
-  DirectGame over(arena, frames, sources, random, canvas);
+  DirectGame over(arena, frames, sources, ports, canvas);
   ASSERT_EQ(over.start(), Outcome::Ok) << over.errorMessage();
   EXPECT_EQ(over.draw(), Outcome::ScriptError);
   EXPECT_STREQ(over.errorMessage(), "main.lua:3: frame is full (at most 2048 drawing calls or 32768 bytes)");
@@ -241,14 +241,14 @@ TEST_F(GfxBindingsTest, TheByteLimitIs32KiB) {
   // One text command takes 10 header bytes, its text, and a NUL: 32,757 characters
   // fill the frame exactly, and one more passes it.
   useSource("main", drawing("ch.gfx.text(0, 0, string.rep('x', 32757), 'small', 'black')"));
-  DirectGame exact(arena, frames, sources, random, canvas);
+  DirectGame exact(arena, frames, sources, ports, canvas);
   ASSERT_EQ(exact.start(), Outcome::Ok) << exact.errorMessage();
   ASSERT_EQ(exact.draw(), Outcome::Ok) << exact.errorMessage();
   frames.readFront([](const DisplayList& list) { EXPECT_EQ(list.bytes(), MAX_BYTES); });
   exact.close();  // one VM per arena, as on the device: the reserve holds one scratch
 
   useSource("main", drawing("ch.gfx.text(0, 0, string.rep('x', 32758), 'small', 'black')"));
-  DirectGame one(arena, frames, sources, random, canvas);
+  DirectGame one(arena, frames, sources, ports, canvas);
   ASSERT_EQ(one.start(), Outcome::Ok) << one.errorMessage();
   EXPECT_EQ(one.draw(), Outcome::ScriptError);
   EXPECT_STREQ(one.errorMessage(), "main.lua:3: frame is full (at most 2048 drawing calls or 32768 bytes)");
@@ -256,7 +256,7 @@ TEST_F(GfxBindingsTest, TheByteLimitIs32KiB) {
 
   // Many small commands reach it too.
   useSource("main", drawing("for i = 1, 400 do ch.gfx.text(0, 0, string.rep('y', 90), 'small', 'black') end"));
-  DirectGame many(arena, frames, sources, random, canvas);
+  DirectGame many(arena, frames, sources, ports, canvas);
   ASSERT_EQ(many.start(), Outcome::Ok) << many.errorMessage();
   EXPECT_EQ(many.draw(), Outcome::ScriptError);
   EXPECT_TRUE(contains(many.errorMessage(), "frame is full")) << many.errorMessage();
@@ -285,7 +285,7 @@ TEST_F(GfxBindingsTest, BadArgumentsAreScriptErrors) {
   };
   for (const auto& c : cases) {
     useSource("main", drawing(c[0]));
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
     EXPECT_EQ(game.draw(), Outcome::ScriptError) << c[0];
     EXPECT_TRUE(contains(game.errorMessage(), c[1])) << c[0] << " -> " << game.errorMessage();
@@ -299,14 +299,14 @@ TEST_F(GfxBindingsTest, ScreenIsTheCanvasPassedAtStart) {
             "return { setup = function() return { size = w .. 'x' .. h } end,\n"
             "  draw = function(s) ch.gfx.text(0, 0, s.size .. ' ' .. math.type(ch.screen.w), 'small', 'black') end }");
   {
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
     ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
     EXPECT_EQ(frontText(), "480x800 integer");
   }
   // LuaGame keeps its own copy: the match's canvas is a local of onEnter.
   Canvas small{123, 45, TextMetrics::standIn()};
-  DirectGame game(arena, frames, sources, random, small);
+  DirectGame game(arena, frames, sources, ports, small);
   small = Canvas{1, 1, TextMetrics::standIn()};
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
@@ -324,7 +324,7 @@ TEST_F(GfxBindingsTest, TextWidthWorksInInputAndEveryCallback) {
             "    ch.gfx.text(0, 0, s.atLoad .. ' ' .. s.atSetup .. ' ' .. tostring(ui.inInput) .. ' ' ..\n"
             "      ch.text_width('', 'small') .. ' ' .. math.type(ch.text_width('x', 'small')), 'small', 'black')\n"
             "  end }");
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontText(), "24 20 nil 0 integer");
@@ -352,7 +352,7 @@ TEST_F(GfxBindingsTest, TextWidthReadsTheTablesPassedAtStart) {
             "  input = function(s, seat, ui) ui.w = ch.text_width('ABAz', 'large') .. ' ' ..\n"
             "    ch.text_width('ABAz', 'small') end,\n"
             "  draw = function(s, seat, ui) ch.gfx.text(0, 0, tostring(ui.w), 'small', 'black') end }");
-  DirectGame game(arena, frames, sources, random, custom);
+  DirectGame game(arena, frames, sources, ports, custom);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.input(InputEvent{InputKind::Tap, 1, 1}), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
@@ -370,7 +370,7 @@ TEST_F(GfxBindingsTest, TextWidthBadArgumentsAreScriptErrors) {
     useSource("main", std::string("return { setup = function() return {} end, draw = function() end,\n"
                                   "  input = function() ") +
                           c[0] + " end }");
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
     EXPECT_EQ(game.input(InputEvent{InputKind::Tap, 1, 1}), Outcome::ScriptError) << c[0];
     EXPECT_TRUE(contains(game.errorMessage(), c[1])) << c[0] << " -> " << game.errorMessage();

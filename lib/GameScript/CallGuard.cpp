@@ -49,6 +49,7 @@ void CallGuard::trip(lua_State* L, lua_Debug* ar, const Fault fault) {
       }
       shown = text;
       break;
+    case Fault::Codec:  // raise() formats its own message
     case Fault::None:
       break;
   }
@@ -73,6 +74,20 @@ void CallGuard::hook(lua_State* L, lua_Debug* ar) {
   lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
   lua_pushstring(L, guard.shown);
   lua_error(L);
+}
+
+int CallGuard::raise(lua_State* L, const char* message) {
+  tripped = Fault::Codec;
+  lua_Debug caller;
+  if (lua_getstack(L, 1, &caller) && lua_getinfo(L, "Sl", &caller) && caller.currentline > 0) {
+    snprintf(text, sizeof(text), "%s:%d: %s", caller.short_src, caller.currentline, message);
+  } else {
+    snprintf(text, sizeof(text), "%s", message);
+  }
+  shown = text;
+  lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
+  lua_pushstring(L, shown);
+  return lua_error(L);
 }
 
 bool CallGuard::hasHeadroom(const size_t bytes) const { return floor == 0 || stackPointer() >= floor + bytes; }

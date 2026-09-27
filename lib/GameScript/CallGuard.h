@@ -12,8 +12,9 @@ namespace GameScript {
 // The GameVM task's stack (AD-5): 16 KiB of internal RAM.
 inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
 
-// Why the guard stopped a call.
-enum class Fault : uint8_t { None, Budget, Cancelled, Stack };
+// Why the guard stopped a call. Codec: a binding refused a value under AD-10's
+// limits (ch.store.set), which ends the call as surely as a state over its limit.
+enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Codec };
 
 // The limits on one call into a game, enforced from a single Lua hook (AD-6, and
 // the owner's stack decision of 2026-09-27): the instruction budget, the cancel
@@ -37,6 +38,11 @@ class CallGuard {
   // parser runs no hook, and LUAI_MAXCCALLS (30, lib/lua/library.json) levels of
   // it cost up to 30 x 320 B = 9.6 KB on the ESP32-S3.
   static constexpr size_t PARSE_HEADROOM_BYTES = 10 * 1024;
+  // ch.log, print, and ch.store refuse to run with less stack than this left: a
+  // binding call is only sure of STACK_HEADROOM_BYTES, while the codec at depth 16
+  // needs about 1.8 KB on the ESP32-S3 plus Lua's allocations, and logPrintf a 256 B
+  // buffer plus vsnprintf and the serial write (about 1.5 KB).
+  static constexpr size_t BINDING_HEADROOM_BYTES = 4 * 1024;
 
   CallGuard() = default;
   CallGuard(const CallGuard&) = delete;
@@ -65,6 +71,11 @@ class CallGuard {
   const char* message() const { return shown; }
 
   static void hook(lua_State* L, lua_Debug* ar);
+
+  // From a binding: records a Codec fault with `message`, prefixed with the calling
+  // script's chunk and line, and raises it; like every fault it is sticky, so the
+  // script's own pcall cannot keep the call going. Does not return.
+  int raise(lua_State* L, const char* message);
 
  private:
   void trip(lua_State* L, lua_Debug* ar, Fault fault);

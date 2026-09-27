@@ -15,7 +15,7 @@ namespace {
 
 TEST_F(LuaGameTest, TracerSetupAndDrawThroughTheTrampoline) {
   useSource("main", readFixture("tracer/main.lua"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   EXPECT_GT(arena.bytesInUse(), 0u);    // the VM heap lives in the arena
   EXPECT_FALSE(game.snapshot.empty());  // setup's state, encoded
@@ -40,7 +40,7 @@ TEST_F(LuaGameTest, TracerSetupAndDrawThroughTheTrampoline) {
 
 TEST_F(LuaGameTest, ATapComesBackAsAMoveInCodecBytes) {
   useSource("main", readFixture("tracer/main.lua"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.input(InputEvent{InputKind::Tap, 100, 200}), Outcome::Ok) << game.errorMessage();
   // {x = 100, y = 200}: table, narr 0, nrec 2, "x" = int zigzag 200, "y" = int zigzag 400.
@@ -54,7 +54,7 @@ TEST_F(LuaGameTest, ATapComesBackAsAMoveInCodecBytes) {
 TEST_F(LuaGameTest, EachEntryIntoLuaBumpsTheCallSerial) {
   // GameVM's watchdog times each call on its own by watching this counter.
   useSource("main", readFixture("tracer/main.lua"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   EXPECT_EQ(game.callSerial(), 0u);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();  // load, setup
   EXPECT_EQ(game.callSerial(), 2u);
@@ -82,7 +82,7 @@ TEST_F(LuaGameTest, ErrorsBecomeScriptErrorsWithTheirMessage) {
   };
   for (const auto& c : cases) {
     useSource("main", c.source);
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << c.source;
     EXPECT_NE(std::string(game.errorMessage()).find(c.message), std::string::npos)
         << c.source << " -> " << game.errorMessage();
@@ -91,7 +91,7 @@ TEST_F(LuaGameTest, ErrorsBecomeScriptErrorsWithTheirMessage) {
 
 TEST_F(LuaGameTest, MissingMainIsAScriptError) {
   useSource("helper", "return {}");
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_STREQ(game.errorMessage(), "main.lua not found");
 }
@@ -101,7 +101,7 @@ TEST_F(LuaGameTest, DrawAndInputErrorsDoNotPublish) {
             "return { setup = function() return {} end,\n"
             "  draw = function(s, seat, ui) ch.gfx.clear('white'); if ui.bad then ch.gfx.clear('grey') end end,\n"
             "  input = function(s, seat, ui, ev) if ev.x > 10 then error('bad tap') end; ui.bad = true end }");
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok);
   EXPECT_EQ(game.input(InputEvent{InputKind::Tap, 50, 0}), Outcome::ScriptError);
@@ -116,7 +116,7 @@ TEST_F(LuaGameTest, HeapExhaustionIsAScriptError) {
   // A small arena stands in for the 256 KiB cap.
   arena.reset(arenaBlock.data(), 48 * 1024);
   useSource("main", "local t = {} for i = 1, 1e7 do t[i] = tostring(i) end return {}");
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_NE(std::string(game.errorMessage()).find("not enough memory"), std::string::npos) << game.errorMessage();
 }
@@ -125,7 +125,7 @@ TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
   useFault("heap");
   {
     // The default cap on the full 256 KiB arena.
-    DirectGame game(arena, frames, sources, random, canvas);
+    DirectGame game(arena, frames, sources, ports, canvas);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
     EXPECT_TRUE(contains(game.errorMessage(), "not enough memory")) << game.errorMessage();
     EXPECT_LE(arena.luaBytes(), LUA_HEAP_BYTES);
@@ -136,7 +136,7 @@ TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
   // A lower cap stops it while the arena still has room: the counter is the cap.
   arena.reset(arenaBlock.data(), arenaBlock.size());
   arena.setLuaLimit(64 * 1024);
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_TRUE(contains(game.errorMessage(), "not enough memory")) << game.errorMessage();
   EXPECT_LE(arena.peakBytes(), arena.capacity() / 2);
@@ -144,7 +144,7 @@ TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
 
 TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {
   useSource("main", readFixture("tracer/main.lua"));
-  DirectGame game(arena, frames, sources, random, canvas);
+  DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   const size_t held = arena.bytesInUse();
   game.abandon();

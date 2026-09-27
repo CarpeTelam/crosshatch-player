@@ -48,10 +48,13 @@ add_executable(GameScriptTest
   CanvasClipTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp
+  GameTimerTest.cpp
   GfxBindingsTest.cpp
+  HostBindingsTest.cpp
   LuaGameTest.cpp
   SandboxTest.cpp
   SessionGameTest.cpp
+  StoreSlotTest.cpp
   TextMetricsTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/Roster.cpp

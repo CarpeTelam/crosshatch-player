@@ -8,9 +8,9 @@
 
 namespace GameScript {
 
-// Events the loop task posts to the VM for input(), in canvas coordinates: the
-// domain's event type (GameCore/GameEvent.h). Later stories add LongPress and Swipe
-// (touch) and Timer.
+// Events the loop task posts to the VM for input(): taps in canvas coordinates and
+// due timers (GameVM::pollTimer), as the domain's event type (GameCore/GameEvent.h).
+// Later stories add LongPress and Swipe.
 using InputKind = GameCore::EventKind;
 using InputEvent = GameCore::GameEvent;
 

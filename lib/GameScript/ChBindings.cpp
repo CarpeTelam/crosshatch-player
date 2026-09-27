@@ -1,10 +1,19 @@
 #include "ChBindings.h"
 
+#include <ApiLevel.h>
+#include <IClock.h>
+#include <IGameLog.h>
+
 #include <climits>
+#include <cstdio>
 #include <cstring>
 #include <lua.hpp>
 
+#include "CallGuard.h"
+#include "Codec.h"
 #include "DisplayList.h"
+#include "GameTimer.h"
+#include "StoreSlot.h"
 
 static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 static_assert(LUA_EXTRASPACE >= sizeof(void*), "the binding context pointer lives in the state's extra space");
@@ -125,11 +134,133 @@ int textWidth(lua_State* L) {
   return 1;
 }
 
+// Raises unless the stack has room for a binding that runs deep C code (the codec,
+// the logger); see CallGuard::BINDING_HEADROOM_BYTES.
+void requireHeadroom(lua_State* L, const char* function) {
+  const CallGuard* guard = bindingContext(L)->guard;
+  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) {
+    luaL_error(L, "%s: script recursion too deep to call it", function);
+  }
+}
+
+// ch.timer.after(ms): replaces the pending timer (AD-23).
+int timerAfter(lua_State* L) {
+  const lua_Integer ms = luaL_checkinteger(L, 1);
+  if (ms < static_cast<lua_Integer>(TIMER_MIN_MS)) {
+    return luaL_argerror(L, 1, lua_pushfstring(L, "at least %d ms", static_cast<int>(TIMER_MIN_MS)));
+  }
+  const BindingContext& context = *bindingContext(L);
+  const uint64_t now = context.clock->nowMs();
+  enterLockedSection(L);
+  context.timer->arm(now, static_cast<uint64_t>(ms));
+  leaveLockedSection(L);
+  return 0;
+}
+
+// ch.timer.cancel()
+int timerCancel(lua_State* L) {
+  enterLockedSection(L);
+  bindingContext(L)->timer->cancel();
+  leaveLockedSection(L);
+  return 0;
+}
+
+// ch.time.ms(): milliseconds since the game loaded, for display only.
+int timeMs(lua_State* L) {
+  const BindingContext& context = *bindingContext(L);
+  lua_pushinteger(L, static_cast<lua_Integer>(context.clock->nowMs() - context.startMs));
+  return 1;
+}
+
+// ch.store.set(t): encoded at once under the store limit (AD-10, AD-17) and posted
+// to the slot, which marks itself dirty only when the bytes changed.
+int storeSet(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  requireHeadroom(L, "ch.store.set");
+  const BindingContext& context = *bindingContext(L);
+  const Codec::Encoded encoded = Codec::encode(L, 1, Codec::STORE_LIMIT, context.scratch, context.scratchBytes);
+  if (encoded.error != Codec::Error::None) {
+    char message[96];
+    if (encoded.error == Codec::Error::TooLarge) {
+      snprintf(message, sizeof(message), "ch.store.set: the store is too large (over %d bytes)",
+               static_cast<int>(Codec::STORE_LIMIT));
+    } else {
+      snprintf(message, sizeof(message), "ch.store.set: the store cannot be encoded (%s)",
+               Codec::errorName(encoded.error));
+    }
+    return context.guard->raise(L, message);
+  }
+  enterLockedSection(L);
+  context.store->post({encoded.data, encoded.length});
+  leaveLockedSection(L);
+  return 0;
+}
+
+// ch.store.get(): a fresh copy of the saved table, or an empty table. The slot is
+// copied into the scratch under its lock and decoded outside it, since decoding
+// allocates and may raise.
+int storeGet(lua_State* L) {
+  requireHeadroom(L, "ch.store.get");
+  const BindingContext& context = *bindingContext(L);
+  auto* scratch = static_cast<uint8_t*>(context.scratch);
+  enterLockedSection(L);
+  const size_t length = context.store->read({scratch, context.scratchBytes});
+  leaveLockedSection(L);
+  if (length == 0) {
+    lua_createtable(L, 0, 0);
+    return 1;
+  }
+  const Codec::Error error = Codec::decode(L, scratch, length, Codec::STORE_LIMIT);
+  if (error != Codec::Error::None) {
+    return luaL_error(L, "ch.store.get: the saved store cannot be decoded (%s)", Codec::errorName(error));
+  }
+  return 1;
+}
+
 constexpr luaL_Reg GFX_FUNCTIONS[] = {{"clear", gfxClear},   {"rect", gfxRect}, {"line", gfxLine},
                                       {"circle", gfxCircle}, {"text", gfxText}, {"refresh", gfxRefresh},
                                       {nullptr, nullptr}};
+constexpr luaL_Reg TIMER_FUNCTIONS[] = {{"after", timerAfter}, {"cancel", timerCancel}, {nullptr, nullptr}};
+constexpr luaL_Reg STORE_FUNCTIONS[] = {{"get", storeGet}, {"set", storeSet}, {nullptr, nullptr}};
+constexpr luaL_Reg TIME_FUNCTIONS[] = {{"ms", timeMs}, {nullptr, nullptr}};
+
+// Where a line of `length` bytes of UTF-8 may be cut to keep at most `room` bytes.
+size_t utf8Cut(const char* text, const size_t length, const size_t room) {
+  if (length <= room) return length;
+  size_t kept = room;
+  while (kept > 0 && (static_cast<uint8_t>(text[kept]) & 0xC0) == 0x80) --kept;
+  return kept;
+}
 
 }  // namespace
+
+int chLog(lua_State* L) {
+  requireHeadroom(L, "ch.log");
+  char line[LOG_LINE_BYTES + 1];
+  size_t used = 0;
+  const int count = lua_gettop(L);
+  for (int i = 1; i <= count && used < LOG_LINE_BYTES; ++i) {
+    if (i > 1) line[used++] = '\t';
+    size_t length = 0;
+    // May call __tostring, so it runs before the locked section.
+    const char* text = luaL_tolstring(L, i, &length);
+    const size_t kept = utf8Cut(text, length, LOG_LINE_BYTES - used);
+    std::memcpy(line + used, text, kept);
+    used += kept;
+    lua_pop(L, 1);
+  }
+  for (size_t i = 0; i < used; ++i) {
+    const auto byte = static_cast<uint8_t>(line[i]);
+    // One line per call: newlines and other control bytes become spaces; the tab
+    // separator stays.
+    if ((byte < 0x20 && byte != '\t') || byte == 0x7F) line[i] = ' ';
+  }
+  line[used] = '\0';
+  enterLockedSection(L);
+  bindingContext(L)->log->write(line);
+  leaveLockedSection(L);
+  return 0;
+}
 
 void setBindingContext(lua_State* L, BindingContext* context) {
   std::memcpy(lua_getextraspace(L), &context, sizeof(context));
@@ -151,7 +282,9 @@ void leaveLockedSection(lua_State* L) {
 
 void openChLibrary(lua_State* L) {
   const Canvas& canvas = *bindingContext(L)->canvas;
-  lua_createtable(L, 0, 3);  // ch
+  lua_createtable(L, 0, 8);  // ch
+  lua_pushinteger(L, API_LEVEL);
+  lua_setfield(L, -2, "api");
   lua_createtable(L, 0, 2);  // ch.screen
   lua_pushinteger(L, canvas.width);
   lua_setfield(L, -2, "w");
@@ -162,6 +295,14 @@ void openChLibrary(lua_State* L) {
   lua_setfield(L, -2, "gfx");
   lua_pushcfunction(L, textWidth);
   lua_setfield(L, -2, "text_width");
+  luaL_newlib(L, TIMER_FUNCTIONS);
+  lua_setfield(L, -2, "timer");
+  luaL_newlib(L, STORE_FUNCTIONS);
+  lua_setfield(L, -2, "store");
+  luaL_newlib(L, TIME_FUNCTIONS);
+  lua_setfield(L, -2, "time");
+  lua_pushcfunction(L, chLog);
+  lua_setfield(L, -2, "log");
   lua_setglobal(L, "ch");
 }
 

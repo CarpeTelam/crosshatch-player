@@ -3,9 +3,11 @@
 #include "GameMatchActivity.h"
 
 #include <Arduino.h>
+#include <Codec.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdio>
 #include <utility>
@@ -36,7 +38,16 @@ void GameMatchActivity::onEnter() {
   }
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   FrameReplay::textMetrics()};
-  auto created = GameVM::create(std::move(assets), canvas);
+  // Empty until GameSaveStore (entry 12) restores store.bin into it.
+  storeStorage = HalMemory::allocatePsram(GameScript::Codec::STORE_LIMIT);
+  if (storeStorage)
+    store = makeUniqueNoThrow<GameScript::StoreSlot>(storeStorage.get(), GameScript::Codec::STORE_LIMIT);
+  if (!store) {
+    LOG_ERR("GAME", "OOM: ch.store slot");
+    showError("out of memory");
+    return;
+  }
+  auto created = GameVM::create(std::move(assets), canvas, manifest.id, *store);
   if (!created) {
     showError("out of memory");
     return;
@@ -61,10 +72,18 @@ void GameMatchActivity::onExit() {
   // deadlock, and render cannot be reading the frames abandon frees.
   if (vm && !vm->stop(STOP_TIMEOUT_MS)) {
     LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
-    GameVM::abandon(std::move(vm));
+    abandonVm();
     return;
   }
   vm.reset();
+}
+
+void GameMatchActivity::abandonVm() {
+  if (GameVM::abandon(std::move(vm))) return;
+  // The leaked task may still call ch.store.set; its slot must outlive it.
+  static_cast<void>(store.release());
+  static_cast<void>(storeStorage.release());
+  LOG_ERR("GAME", "Leaked the ch.store slot with the VM");
 }
 
 void GameMatchActivity::stopStuckVm() {
@@ -81,7 +100,7 @@ void GameMatchActivity::stopStuckVm() {
       vm.reset();
     } else {
       LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
-      GameVM::abandon(std::move(vm));
+      abandonVm();
     }
   }
   showError(detail);
@@ -118,6 +137,7 @@ void GameMatchActivity::loop() {
   if (snap.touchReleased && snap.touchX >= 0 && viewport.toCanvas(snap.touchX, snap.touchY, x, y)) {
     vm->postTap(x, y);
   }
+  vm->pollTimer();
 
   const uint32_t frame = vm->frameGen();
   if (frame != shownFrame) {

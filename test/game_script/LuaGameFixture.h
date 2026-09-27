@@ -17,9 +17,12 @@
 #include "FrameBuffers.h"
 #include "GameInput.h"
 #include "GameSources.h"
+#include "IClock.h"
+#include "IGameLog.h"
 #include "IRandom.h"
 #include "LuaGame.h"
 #include "Session.h"
+#include "StoreSlot.h"
 
 namespace GameScriptTestSupport {
 
@@ -30,6 +33,29 @@ class FixedRandom : public GameCore::IRandom {
 
  private:
   uint32_t value;
+};
+
+// A clock the test moves by hand.
+class FakeClock : public GameCore::IClock {
+ public:
+  uint64_t nowMs() const override { return now; }
+  void advance(uint64_t ms) { now += ms; }
+
+  uint64_t now = 1000000;  // any start; ch.time.ms counts from load()
+};
+
+// Keeps every ch.log and print line, and whether `watched` (when set) was inside a
+// locked binding as it wrote.
+class CapturingLog : public GameCore::IGameLog {
+ public:
+  void write(const char* line) override {
+    lines.emplace_back(line);
+    if (watched) lockedAtWrite.push_back(watched->inLockedBinding());
+  }
+
+  std::vector<std::string> lines;
+  const GameScript::LuaGame* watched = nullptr;
+  std::vector<bool> lockedAtWrite;
 };
 
 inline std::string readFixture(const std::string& relative) {
@@ -109,7 +135,7 @@ class LuaGameTest : public ::testing::Test {
   // before the Lua state, over a LuaGame; each step is followed by a draw.
   struct SessionGame {
     SessionGame(LuaGameTest& test)
-        : arena(test.arena), game(test.arena, test.frames, test.sources, test.random, test.canvas) {
+        : arena(test.arena), game(test.arena, test.frames, test.sources, test.ports, test.canvas) {
       session = arena.create<GameCore::Session>(GameCore::Roster::solo(), game);
     }
     ~SessionGame() {
@@ -184,6 +210,11 @@ class LuaGameTest : public ::testing::Test {
   std::vector<uint8_t> back;
   GameScript::FrameBuffers frames;
   FixedRandom random;
+  FakeClock clock;
+  CapturingLog log;
+  std::vector<uint8_t> storeBytes = std::vector<uint8_t>(GameScript::Codec::STORE_LIMIT);
+  GameScript::StoreSlot store{storeBytes.data(), storeBytes.size()};
+  GameScript::HostPorts ports{random, clock, log, store};
   // The X4 Pro's portrait canvas size, with the stand-in text metrics.
   GameScript::Canvas canvas{480, 800, GameScript::TextMetrics::standIn()};
   std::string text;

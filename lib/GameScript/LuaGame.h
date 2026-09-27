@@ -10,18 +10,32 @@
 #include "CallGuard.h"
 #include "ChBindings.h"
 #include "Codec.h"
+#include "GameTimer.h"
 
 struct lua_State;
 
 namespace GameCore {
+class IClock;
+class IGameLog;
 class IRandom;
-}
+}  // namespace GameCore
 
 namespace GameScript {
 
 class ArenaAllocator;
 class FrameBuffers;
+class StoreSlot;
 struct GameSources;
+
+// The host services a game's VM borrows, each outliving it: seeds (the string
+// hash, math.random), the clock behind ch.time and ch.timer, the log behind ch.log
+// and print, and the match's ch.store slot.
+struct HostPorts {
+  GameCore::IRandom& random;
+  GameCore::IClock& clock;
+  GameCore::IGameLog& log;
+  StoreSlot& store;
+};
 
 // How a call into the game ended (GameCore's): a ScriptError ends the session
 // (AD-14); a Cancelled call was stopped by the runtime (requestCancel) and shows nothing.
@@ -39,16 +53,17 @@ using Outcome = GameCore::Outcome;
 // work, goes through one lua_pcall trampoline, so no Lua error can escape to the
 // C++ caller, and each is limited by the CallGuard (budget, cancel, stack
 // headroom). Confined to the task that calls load() (the GameVM task on the
-// device), except requestCancel(), inLua(), inLockedBinding(), and callSerial(),
-// which any task may call.
+// device), except requestCancel(), inLua(), inLockedBinding(), callSerial(), and
+// timer(), which any task may call.
 class LuaGame : public GameCore::IGameRules {
  public:
   static constexpr size_t ERROR_CAPACITY = 160;
-  // One scratch serves every encode (they never overlap); sized for the largest limit.
+  // One scratch serves every encode and ch.store.get's copy (they never overlap: an
+  // encode's output is copied out before Lua runs again); sized for the largest limit.
   static constexpr size_t SCRATCH_BYTES = Codec::scratchBytes(Codec::STORE_LIMIT);
 
   // `canvas` (copied) is what ch.screen and ch.text_width report.
-  LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, GameCore::IRandom& random,
+  LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
           const Canvas& canvas);
   ~LuaGame() override;
   LuaGame(const LuaGame&) = delete;
@@ -62,7 +77,7 @@ class LuaGame : public GameCore::IGameRules {
   // api}; status must return {turn = seat} or {over = true, winners = {seat...}};
   // apply returns the new state, or nil and a reason (a string, or nil for "");
   // draw draws into the back buffer and publishes it on success; input returns a
-  // move table or nil.
+  // move table or nil (a Timer event arrives as {kind = "timer"}).
   Outcome setup(const GameCore::GameContext& ctx, std::span<const uint8_t>& state) override;
   Outcome status(std::span<const uint8_t> state, const GameCore::Roster& roster, GameCore::Status& out) override;
   Outcome apply(std::span<const uint8_t> state, uint8_t seat, std::span<const uint8_t> move,
@@ -71,9 +86,9 @@ class LuaGame : public GameCore::IGameRules {
   Outcome input(std::span<const uint8_t> state, uint8_t seat, const GameCore::GameEvent& event,
                 std::span<const uint8_t>& move) override;
 
-  // Closes the state and returns the scratch; all of its memory goes back to the
-  // arena. With the Lua stack empty between calls, lua_close runs no script code
-  // except __gc finalizers.
+  // Closes the state, clears the timer, and returns the scratch; all of its memory
+  // goes back to the arena. With the Lua stack empty between calls, lua_close runs
+  // no script code except __gc finalizers.
   void close();
   // Forgets the state and the scratch without lua_close, for a VM whose task was
   // deleted mid-call (GameVM::abandon); the owner then frees the arena in one piece.
@@ -93,6 +108,8 @@ class LuaGame : public GameCore::IGameRules {
   // each call on its own.
   uint32_t callSerial() const { return calls.load(std::memory_order_acquire); }
   const CallGuard& callGuard() const { return guard; }
+  // Any task: ch.timer's pending timer, which the owner polls (GameTimer).
+  GameTimer& timer() { return pendingTimer; }
 
   bool started() const { return L != nullptr; }
   // The last ScriptError's message (Lua's, with its chunk and line when it has
@@ -137,8 +154,9 @@ class LuaGame : public GameCore::IGameRules {
   ArenaAllocator& arena;
   FrameBuffers& frames;
   const GameSources& sources;
-  GameCore::IRandom& random;
+  const HostPorts ports;
   const Canvas canvas;
+  GameTimer pendingTimer;
   BindingContext bindings;
   CallGuard guard;
   std::atomic<bool> running{false};
