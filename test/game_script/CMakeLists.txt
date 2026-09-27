@@ -31,6 +31,19 @@ if(LUA_EXCLUDED_COUNT EQUAL 0)
   message(FATAL_ERROR "${LUA_MANIFEST_PATH}: no -<file> entries found in srcFilter")
 endif()
 
+# The Lua build's C-level limits, which api-level-1.txt lists as limits a game can hit;
+# ApiSurfaceTest pins the list to these values.
+foreach(define IN LISTS LUA_DEFINES)
+  if(define MATCHES "^LUAI_MAXCCALLS=([0-9]+)$")
+    set(LUA_BUILD_LUAI_MAXCCALLS ${CMAKE_MATCH_1})
+  elseif(define MATCHES "^MAXCCALLS=([0-9]+)$")
+    set(LUA_BUILD_MAXCCALLS ${CMAKE_MATCH_1})
+  endif()
+endforeach()
+if(NOT DEFINED LUA_BUILD_LUAI_MAXCCALLS OR NOT DEFINED LUA_BUILD_MAXCCALLS)
+  message(FATAL_ERROR "${LUA_MANIFEST_PATH}: no -DLUAI_MAXCCALLS or -DMAXCCALLS; docs/crosshatch/api-level-1.txt lists both")
+endif()
+
 add_library(lua_vendored STATIC ${LUA_SOURCES})
 set_target_properties(lua_vendored PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(lua_vendored PUBLIC ${LUA_DIR}/src)
@@ -43,6 +56,7 @@ file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cp
 add_executable(GameScriptTest
   GameScriptTest.cpp
   LuaOnHostTest.cpp
+  ApiSurfaceTest.cpp
   ArenaAllocatorTest.cpp
   CallGuardTest.cpp
   CanvasClipTest.cpp
@@ -76,6 +90,8 @@ target_include_directories(GameScriptTest PRIVATE
   # GameTouch.h (header-only, pure) and the SDK's swipe classification it uses.
   ${REPO_ROOT}/src/games
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
+  # ApiLevelList.h, the API list reader ApiLevelTest shares.
+  ${REPO_ROOT}/test/game_core
 )
 
 # Fixture games stay under test/, never games/ (the release packs games/).
@@ -83,6 +99,9 @@ target_compile_definitions(GameScriptTest PRIVATE
   GAME_SCRIPT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
   # Read at run time so this suite and scripts/game_codec_test.py share one vector file.
   CODEC_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/codec_vectors.json"
+  API_LEVEL_LIST_DIR="${REPO_ROOT}/docs/crosshatch"
+  LUA_BUILD_LUAI_MAXCCALLS=${LUA_BUILD_LUAI_MAXCCALLS}
+  LUA_BUILD_MAXCCALLS=${LUA_BUILD_MAXCCALLS}
 )
 
 target_link_libraries(GameScriptTest PRIVATE

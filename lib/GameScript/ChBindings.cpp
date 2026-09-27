@@ -7,6 +7,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <lua.hpp>
 
 #include "CallGuard.h"
@@ -22,15 +23,16 @@ namespace GameScript {
 
 namespace {
 
-// Fills take all four colors; lines, outlines, and text only white or black (AD-7).
-constexpr const char* const COLOR_NAMES[] = {"white", "light", "dark", "black", nullptr};
+// The values of the header's *_NAMES, index for index. Fills take all four colors;
+// lines, outlines, and text only white or black (AD-7).
 constexpr Color COLOR_VALUES[] = {Color::White, Color::Light, Color::Dark, Color::Black};
-constexpr const char* const SIZE_NAMES[] = {"small", "medium", "large", nullptr};
 constexpr TextSize SIZE_VALUES[] = {TextSize::Small, TextSize::Medium, TextSize::Large};
-constexpr const char* const ALIGN_NAMES[] = {"left", "center", "right", nullptr};
 constexpr Align ALIGN_VALUES[] = {Align::Left, Align::Center, Align::Right};
-constexpr const char* const REFRESH_NAMES[] = {"fast", "half", "full", nullptr};
 constexpr Refresh REFRESH_VALUES[] = {Refresh::Fast, Refresh::Half, Refresh::Full};
+static_assert(std::size(COLOR_NAMES) == std::size(COLOR_VALUES) + 1, "one value per color name");
+static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value per size name");
+static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
+static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
 
 // The frame being drawn; raises unless draw is running.
 DisplayList& drawTarget(lua_State* L, const char* function) {

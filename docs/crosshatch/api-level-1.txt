@@ -28,15 +28,15 @@
 #       marks an optional key.
 #   limit <name> <integer>
 #       One named limit; the unit ends the name (_bytes, _ms, _count, ...).
-#   lib <global>
-#       One global from Lua 5.5.1's standard libraries, unmodified (AD-4); a
-#       library table stands for the whole table.
+#   lib <global>[.<member>]
+#       One global from Lua 5.5.1's standard libraries (AD-4), or one member of
+#       a library table; every member a game can reach is listed after its table.
 #   icon <name>
 #       One library icon name (appended by epic-icon-library).
 #   seats_max <integer>
 #       The most seats a match can have.
 #
-# The script's globals are ch, the fn entries without a dot, and the lib entries.
+# The script's globals are ch and the fn and lib entries without a dot.
 #
 # API_SURFACE_CRC is the CRC-32 (zlib's) of every entry line of the level files
 # in level order, each followed by "\n", leaving out comments and blank lines;
@@ -89,12 +89,76 @@ lib type
 lib warn
 lib xpcall
 
-# Lua 5.5.1 library tables (table.move, table.insert, and table.remove refuse
-# more than table_elements_count elements)
+# Lua 5.5.1 library tables and their members. table.move, table.insert, and
+# table.remove refuse more than table_elements_count elements; math.randomseed()
+# with no argument seeds from the host's random source instead of the time.
 lib math
+lib math.abs
+lib math.acos
+lib math.asin
+lib math.atan
+lib math.ceil
+lib math.cos
+lib math.deg
+lib math.exp
+lib math.floor
+lib math.fmod
+lib math.frexp
+lib math.huge
+lib math.ldexp
+lib math.log
+lib math.max
+lib math.maxinteger
+lib math.min
+lib math.mininteger
+lib math.modf
+lib math.pi
+lib math.rad
+lib math.random
+lib math.randomseed
+lib math.sin
+lib math.sqrt
+lib math.tan
+lib math.tointeger
+lib math.type
+lib math.ult
+
 lib string
+lib string.byte
+lib string.char
+lib string.dump
+lib string.find
+lib string.format
+lib string.gmatch
+lib string.gsub
+lib string.len
+lib string.lower
+lib string.match
+lib string.pack
+lib string.packsize
+lib string.rep
+lib string.reverse
+lib string.sub
+lib string.unpack
+lib string.upper
+
 lib table
+lib table.concat
+lib table.create
+lib table.insert
+lib table.move
+lib table.pack
+lib table.remove
+lib table.sort
+lib table.unpack
+
 lib utf8
+lib utf8.char
+lib utf8.charpattern
+lib utf8.codepoint
+lib utf8.codes
+lib utf8.len
+lib utf8.offset
 
 # Enums
 enum color white
@@ -161,5 +225,16 @@ limit call_instructions_count 2000000
 limit table_elements_count 65536
 limit timer_min_ms 1000
 limit timers_pending_count 1
+# Lua's C-level limit (LUAI_MAXCCALLS in lib/lua/library.json): nested C calls
+# (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
+# the parser's nesting of expressions and blocks (right-associative .. or ^
+# chains, nested parentheses, tables, functions, and blocks, about 28 deep)
+# share it; past it the call or the load fails with "C stack overflow".
+limit c_stack_levels_count 30
+# Lua's pattern-matcher depth (MAXCCALLS in lib/lua/library.json): a match nests
+# one level, plus one for each capture's start and end and each item with ?, *,
+# +, or - before the rest of the pattern ("(%w+)=(%w+)" takes 7); past it
+# string.find, match, gmatch, and gsub fail with "pattern too complex".
+limit pattern_depth_count 16
 
 seats_max 2

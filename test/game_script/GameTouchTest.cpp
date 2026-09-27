@@ -1,6 +1,5 @@
-#include <gtest/gtest.h>
-
 #include <GameEvent.h>
+#include <gtest/gtest.h>
 
 #include "GameTouch.h"
 #include "GameViewport.h"

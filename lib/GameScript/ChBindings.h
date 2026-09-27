@@ -25,6 +25,14 @@ struct GameSources;
 // so it fits logPrintf's 256 B entry after its timestamp, level, and game id.
 inline constexpr size_t LOG_LINE_BYTES = 160;
 
+// The strings each ch.gfx option accepts (api-level-1.txt's `enum color`, `size`,
+// `align`, and `refresh`), null-terminated for luaL_checkoption; ChBindings.cpp maps
+// them, index for index, to the DisplayList values.
+inline constexpr const char* const COLOR_NAMES[] = {"white", "light", "dark", "black", nullptr};
+inline constexpr const char* const SIZE_NAMES[] = {"small", "medium", "large", nullptr};
+inline constexpr const char* const ALIGN_NAMES[] = {"left", "center", "right", nullptr};
+inline constexpr const char* const REFRESH_NAMES[] = {"fast", "half", "full", nullptr};
+
 // The host's screen as a game sees it, fixed at VM start (AD-7): the canvas size
 // (GameViewport's), exposed as ch.screen, and the text metrics behind
 // ch.text_width (FrameReplay's font tables).

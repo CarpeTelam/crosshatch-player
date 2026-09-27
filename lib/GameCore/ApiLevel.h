@@ -17,6 +17,6 @@
 #define API_LEVEL 1
 #define API_MIN_LEVEL 1
 #define API_LEVEL_FROZEN false
-#define API_SURFACE_CRC 0xCAF107E5
+#define API_SURFACE_CRC 0x5DC1F144
 
 static_assert(API_MIN_LEVEL >= 1 && API_MIN_LEVEL <= API_LEVEL, "API_MIN_LEVEL must be in 1..API_LEVEL");
