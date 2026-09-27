@@ -94,7 +94,7 @@ Line numbers are at `d0d5d6d0`.
     - 2.7: the hook-blind paths, fixed in 376a4c62 (2.7 plan, Plan Change Log, change 2: "H1 … M1 … L1").
     - 2.13: stale taps after Play again, fixed in b64f455d.
   - The self-reviews rated none of these high. 2.13's triage row 6 says so directly: "Corrected after the independent review: the verdict 'false' assumed the queue always drains during Over". The item was first dismissed.
-- Effect: the 14 stories without an independent review (2.2–2.6, 2.8–2.12, 2.14, 2.15, 2.17) were reviewed only by the agent that wrote them. The cross-ticket reviews in this retro still found open defects in that code (R-findings below, F1 and F2).
+- Effect: the 14 stories without an independent review (2.2–2.6, 2.8–2.12, 2.14, 2.15, 2.17) were reviewed only by the agent that wrote them. The cross-ticket reviews in this retro still found medium defects in that code: R1 and R2 at the 2.9 × 2.10 × 2.11 boundaries, and F1 and F2 in the 2.3, 2.4, and 2.14 gates.
 - Instance: **accept** (it is history). The open defects are routed individually.
 - Prevention: AI-1. The orchestrator runs the review step with context-free subagents for every story, not only the high-risk ones.
 
@@ -181,7 +181,65 @@ Line numbers are at `d0d5d6d0`.
 
 ### Runtime lane: cross-ticket review [rev-rt]
 
-_Pending the runtime-lane review; see below._
+The reviewer ran the adversarial, edge-case, and verification-gap lenses in turn over `lib/GameScript`, `lib/GameCore`, `src/games`, `src/activities/games`, and the ledgered Home and ActivityManager hooks. It weighted the boundaries between tickets and reproduced its suspicions in a scratch host project built from the real sources. This retro re-checked R1, R2, and R5 against the code.
+
+**R1. Two `ch.gfx` faults can be caught with `pcall`, so a game survives them and a truncated frame is published.** Medium.
+- Evidence:
+  - `frameFull` and `drawTarget` raise with `luaL_error` (`lib/GameScript/ChBindings.cpp:38-47`), which `pcall` catches.
+  - `ch.store.set` over its limit uses the guard's uncatchable `context.guard->raise` (:193), and so do the budget and headroom faults.
+  - Reproduced: a `draw` that runs `pcall(ch.gfx.rect, …)` 2,100 times returns Ok, and the frame publishes cut at 2,048 commands (`outcome=0 gen=1 cmds=2048`). `pcall(ch.gfx.clear)` in `setup` also returns Ok.
+  - The contract says both "stop the game" (`game-api-seed.md:198`), and the 2.9 plan's matrix says "frame not published".
+  - `GfxBindingsTest` covers only the uncaught case.
+- Boundary: 2.9 (the gfx limits) × 2.7/2.10 (the sticky-fault mechanism, which 2.9 did not use).
+- Instance: **fix now** (AI-13). Raise both through `guard->raise`, and add `pcall` cases to `GfxBindingsTest`. Do it before level 1 freezes, or games may come to depend on catching them.
+- Prevention: one rule for every contract-stopping fault ("raise through the guard"), and a test that runs each one under `pcall`.
+
+**R2. A timer event can be evicted from the input queue, and the game's clock then stops for good.** Medium.
+- Evidence:
+  - `GameVM::pollTimer` calls `GameTimer::takeDue`, which clears `armed` (`GameTimer.cpp:23-29`), then posts a `Timer` event (`GameVM.cpp:158-165`).
+  - `InputQueue::push` drops the oldest event of any kind when the queue is full (`GameInput.cpp:5-16`).
+  - Result: if a queue's worth of touches arrives before the VM pops the timer event, the event is dropped while `pending()` is already false.
+- Effect: a game that re-arms only from its `timer` event never ticks again. The `solo` fixture works this way (`main.lua:111-112`), so its 60 s round would never time out. It needs a slow `input` or `draw` and fast touching.
+- 2.10's triage covers a timer evicting taps, not taps evicting a timer. No test covers it. Traced end to end; re-checked here.
+- Boundary: 2.10 × 2.11.
+- Instance: **fix now** (AI-13). Never evict a `Timer` event (evict the oldest touch instead), or disarm the timer only when the VM pops its event. Add a test.
+
+**R3. Play again can still flash one old-round frame.** Low; PLAUSIBLE.
+- Evidence: Play again snapshots `shownFrame = frameGen()` (`GameMatchActivity.cpp:163-167`). A step that the VM popped during Over and is still running can publish after that snapshot. The new round then full-refreshes that frame before its own first frame.
+- b64f455d's fix (dropping queued taps) covers the queue, not a step already running.
+- Instance: **defer** (AI-11).
+
+**R4. Coordinates are clamped to int16 before clipping, which changes what is drawn.** Low.
+- Evidence: `DisplayList.cpp:19-23` saturates to int16 at append time, before `FrameReplay` clips (`FrameReplay.cpp:115-140`). So `rect(-40000, 0, 80480, 800, …, true)` becomes a rect that is entirely off-canvas, and circles and far-anchored text move.
+- Instance: **defer** (AI-11). Clip in wider integers at append time, or document the ±32,767 range in `api-level-1.txt` before the freeze.
+
+**R5. Two SD failures in a row can delete the only saved copy of `ch.store`.** Low; reproduced.
+- Evidence: in `GameSaveStore.cpp:86-105`:
+  1. A flush removes `store.bin`, then fails its rename. The tmp file is now the only copy, and `loadStore` reads it (:34-38).
+  2. The next flush opens that tmp file for writing, which truncates it. If that write fails, `Storage.remove(tmpPath)` deletes it.
+- Reproduced: `store=0 tmp=0`, and a restart restored 0 bytes. The tests cover only single failures (`GameSaveStoreTest.cpp:207-250`).
+- Instance: **fix now** (AI-13, small). While `store.bin` is missing, write to a second name, or promote the tmp file first.
+
+**R6–R10. Low items.**
+- R6, the error text can end in a broken character: `LuaGame::fail` cuts at 160 B with `snprintf` and can split a UTF-8 character that the error view then shows (`LuaGame.cpp:176-178`); `utf8Cut` exists in ChBindings.
+- R7, abandon's wait undercounts: its loop counts only 5 ms per turn and ignores the settle ticks (`GameVM.cpp:219-237`). This is the same as deferred item (d) and AI-4.
+- R8, a game cannot force a refresh of an unchanged frame: `ch.gfx.refresh("full")` on an identical frame is skipped, and the hint is reset (`RefreshPolicy.cpp:6`, `FrameBuffers.h:49-53`). That follows AD-7 literally, but it is undocumented for game authors.
+- R9, binding tests drive a copy of the production loop: `LuaGameFixture.h:128-157`'s `SessionGame` copies the pre-`SoloRounds` loop, and `HostBindingsTest.cpp:40-55` re-implements `pollTimer`. A regression in `SoloRounds::step` fails only `SoloRoundsTest`.
+- R10, the watchdog pauses while the light panel is open over a match (see the deferred-item note).
+- Instance: R7 → AI-4. R6, R8, R9, and R10 → **defer** (AI-11). R8 is a line in the API docs (epic-game-api-docs).
+
+**Checked and clean:**
+- **No `RenderLock` deadlock.** It is taken only on the loop task (`onEnter` after unlock, `leave()`, `stopStuckVm()`), never in `onExit` or the destructor, and never by the VM; the frame mutex is always taken after it.
+- **Render never reads a freed VM**, because every write to `vm` is under `RenderLock`.
+- **Only the Session and one codec scratch use the arena reserve.** A `static_assert` bounds them (`LuaGame.cpp:25-28`, 13,720 B + ~1.8 KB < 16 KiB).
+- **Both abandon paths are consistent:** delete-in-Lua frees the PSRAM; leak-all keeps the store slot.
+- **The VM never touches `Storage`.** Every exit path flushes the store.
+- **Stale events are handled:** old-round timers and post-cancel timers are dropped by serial, queued taps are cleared on Play again, and `frameGen` cannot cross matches.
+- **No torn frames:** publish runs outside `inLua`, and render reads the front buffer under the mutex.
+- **Without `pcall`, display-list overflow** reaches the error view unpublished.
+- **All 22 `faults/*.lua` scripts reach the fixtures README's error text** when run through the Session path in a scratch harness that models the device's 16 KiB stack. The 43561686 fix holds, and AI-6's test is cheap to write.
+
+**Sleep's worst case**, traced: `goToSleep` runs one more `loop()` pass, which does at most one `flushIfDue` write or one `stopStuckVm`. Then `onExit` waits up to 500 ms to join, up to about 500 ms more to abandon (more on another core; R7), and does one store flush. That is about 1 s plus up to two SD writes, all under `RenderLock`. 2.13's plan records it as a residual risk (line 133).
 
 ### CI and scripts lane: cross-ticket review [rev-ci]
 
@@ -390,15 +448,16 @@ All items are **proposed**; this retro applied none of them. *Remediation* goes 
 | AI-1 | process, fix now | **Independent review for every story.** The orchestrator runs each story's review step with context-free subagents, since a build subagent cannot start its own. Either the build runs with `review=none` and the orchestrator runs `bmad-review` (or bmad-build's thorough lenses) on the story's commit, or the orchestrator reviews after each build commit. The build agent then triages the findings into the plan's Review Triage Log, so every plan, 2.1-style reviews included, keeps its record. Written into the orchestration doc (AI-12) | O1, O2 | owner (process), orchestrator |
 | AI-2 | remediation, fix now | **Close the `src/games` harness gap.** Build a host harness that links `GameVM`, `GameAssets`, `FrameReplay`, and `GameMatchActivity` against the simulator's FreeRTOS shim (or stubs), or add a scripted simulator run to the `Simulator build` job (`sim.sh script …` over the fixtures README's steps, asserting log lines). It covers the seven open deferred entries on that gap | Spec, deferred work | dev loop: the first ticket of the next epic that touches `src/games` (epic-install-and-launcher) |
 | AI-3 | deferred check, owner | **Record the device evidence the closing run did not.** On an X4 Pro, run the `loop` fixture and note each band's outcome and the "VM stopped" line's stack high-water mark, including which abandon path "Stuck in one C call" took ("Abandoned the stuck VM" or "leaking all of it"). This closes `deferred-work.md:68` and gives the one device measurement of abandon | Spec, deferred work | owner (hitl) |
-| AI-4 | remediation, defer | **Bound sleep's time under `RenderLock`.** `onExit` runs under ActivityManager's RenderLock: a 500 ms join, then `abandon`, whose loop counts only `STOP_POLL_MS` (5 ms) per turn while `deleteIfStuckInLua` can add up to 10 `vTaskDelay(1)` ticks each turn (`GameVM.cpp:219-250`). The stated worst case of about 1 s can therefore be exceeded. Count real elapsed time (`millis()`) in both loops, and record the bound in `deferred-work.md` and game-canvas.md | Deferred item (d), re-checked | dev loop |
+| AI-4 | remediation, defer | **Bound sleep's time under `RenderLock`** (also R7). `onExit` runs under ActivityManager's RenderLock: a 500 ms join, then `abandon`, whose loop counts only `STOP_POLL_MS` (5 ms) per turn while `deleteIfStuckInLua` can add up to 10 `vTaskDelay(1)` ticks each turn (`GameVM.cpp:219-250`). The stated worst case of about 1 s can therefore be exceeded. Count real elapsed time (`millis()`) in both loops, and record the bound in `deferred-work.md` and game-canvas.md | Deferred item (d), re-checked | dev loop |
 | AI-5 | remediation, fix now | **Restore the Screens layering.** Remove `StoreSlot.h`/`Codec.h` and the `GameScript::` uses from `GameMatchActivity` by routing through `GameVM`/`GameSaveStore`, or amend the spine's Screens row (`ARCHITECTURE-SPINE.md:37`) to allow `lib/GameScript`. Then add a small fork CI check (or a step in the ledger job) that fails an `#include` edge the spine's layer table does not allow | O3, A1 | dev loop; owner picks fix vs amend |
 | AI-6 | remediation, fix now | **One test that every fixture reaches its named fault as a game.** A host test that runs each `faults/*.lua` and each `loop` band through the Session composition (as `SessionGameTest.EveryLimitsFixtureBandIsAScriptError` does for `limits`) and asserts the fixtures README's error text | O4 | dev loop |
 | AI-7 | remediation, fix now | **Stop the false red on superseded commits.** In `Crosshatch Test Status`, before the fail step, compare the run's SHA with the PR's current head (`gh api …/pulls/N --jq .head.sha`, `pull-requests: read`); if they differ, pass with a notice. Keep `cancelled` fatal for the head, and do not use `!cancelled()` | O9 | dev loop (CI chore; fresh-clone gate rule applies) |
 | AI-8 | remediation, deferred with trigger | **Before API level 1 freezes:** make the surface test check each `fn`'s arity and return type (or move signatures out of the list into `ch.d.lua`), and close the stale-base window with required up-to-date branches, a merge queue, or a `push: develop` run of the freeze check | F1, F3 | dev loop: epic-first-party-games, before the freeze; owner for the branch setting |
 | AI-9 | remediation, fix now | **Close the static-initializer scan's COMDAT escape.** In `check_flash_budget.py`, test `_ZGV*` before the COMDAT skip and stop skipping COMDAT symbols in game namespaces; add sidecar tests for the inline-function static, the template static member, and the function-template static | F2 | dev loop (gate change: fresh-clone run) |
 | AI-10 | spec reconciliation | **Update the spine and epic to the as-built:** AD-6's first bullet and R4, Done when 2, and tickets.toml entry 1 say 256 KB, against the 256 KiB cap in a 448 + 16 KiB block; R6 notes the watchdog's error view; AD-21 gets `Starting` and Paused+Back=Resume; AD-5's join wording (polling, an atomic plus a notify); the envelope's CI row adds `Simulator build` and `API freeze`; the Structural Seed names (A2); the allowed edges (A1); the leak-all fallback and `reject_reason_bytes`; the epic Notes' flash delta names its −15,136 B baseline (≈ +165.6 KB of runtime); F4, whether a release may ship frozen level N while level N+1 is a preview | Spec, A1, A2, F4 | owner, via `bmad-architecture` update |
-| AI-11 | remediation, defer | **One hardening chore:** F5 (IRAM in the RAM gate), F6 (document the objects scan's scope), F7 (fail on "Ran 0"), F8 (decide whether the preview CRC should cover comment-level behaviour, before epic-play-nearby), F9 (`CodecError` for lone surrogates); A3 (split the vector notation out of `game_codec.py` when `pack_game.py` imports it); A4 (shared message and headroom helpers; the `/.games` and path-size constants; `fork_common` exit codes); A5 (translate or classify the runtime error strings; AD-4 `static_assert`s in three tests) | F5–F9, A3–A5 | dev loop: the sweep of the next epic |
+| AI-11 | remediation, defer | **One hardening chore:** F5 (IRAM in the RAM gate), F6 (document the objects scan's scope), F7 (fail on "Ran 0"), F8 (decide whether the preview CRC should cover comment-level behaviour, before epic-play-nearby), F9 (`CodecError` for lone surrogates); A3 (split the vector notation out of `game_codec.py` when `pack_game.py` imports it); A4 (shared message and headroom helpers; the `/.games` and path-size constants; `fork_common` exit codes); A5 (translate or classify the runtime error strings; AD-4 `static_assert`s in three tests); R3 (skip frames published before the new round's first); R4 (clip before the int16 clamp, or document the range); R6 (`utf8Cut` in `LuaGame::fail`); R8 (document that an unchanged frame never refreshes); R9 (move the `SessionGame` fixture and `HostBindingsTest`'s poll onto `SoloRounds`/`GameVM::pollTimer`); R10 (watchdog while the light panel is open) | F5–F9, A3–A5, R3, R4, R6, R8–R10 | dev loop: the sweep of the next epic; R8 to epic-game-api-docs |
 | AI-12 | process, fix now | **Give the rules file a permanent home** (decision below), and fold in the orchestration lessons: formatter last and twice (O6), worktree cleanup (O7), measure before quoting (O8), `merge=union` for `deferred-work.md` (O10), archive trees for fresh-clone gates (O11), the PyPI and two-bundle toolchain facts (O12), and the combined-tree host-test run before each push (O5) | O5–O8, O10–O12; the owner's request | owner, via `bmad-project-context` (AGENTS.md) and a docs commit |
+| AI-13 | remediation, fix now | **Three runtime defects at ticket boundaries:** (a) `frameFull` and `drawTarget` raise through `guard->raise`, so `pcall` cannot swallow them, with `pcall` cases in `GfxBindingsTest` (R1); (b) a `Timer` event is never evicted from the input queue, or the timer disarms only when its event is popped, with a test (R2); (c) `GameSaveStore::flush` never truncates the tmp file while it is the only copy (R5), with a two-failure test. All three before API level 1 freezes | R1, R2, R5 | dev loop: one fix story before or at the start of the next epic |
 
 **AI-12, decided placement of `orchestrator-rules.md`.** Its content is split by who needs it, rather than kept in one file:
 
@@ -444,7 +503,7 @@ All items are **proposed**; this retro applied none of them. *Remediation* goes 
 | Done when | Result | Evidence |
 |-----------|--------|----------|
 | 1. Solo fixture from Home → Games, played to game over on an X4 Pro with every input kind, `ch.timer`, and `ch.store` across a restart | met | owner device run (2.16, 6634faae); this retro's simulator run; `SoloRoundsTest` |
-| 2. Each fault ends in the error view with Back, in host tests and on the device, and the device stays responsive | met, with the deviation that the "256 KB arena" is the 256 KiB cap in a 464 KiB block (owner decision), and the narrowings that the binary chunk and the frame byte limit are host-only on their exact path | host tests (error-kind map); owner device run; this retro's simulator run |
+| 2. Each fault ends in the error view with Back, in host tests and on the device, and the device stays responsive | met as worded, with the deviation that the "256 KB arena" is the 256 KiB cap in a 464 KiB block (owner decision), and the narrowings that the binary chunk and the frame byte limit are host-only on their exact path. Beyond the criterion: frame overflow and gfx-outside-draw can be swallowed by `pcall` (R1) | host tests (error-kind map); owner device run; this retro's simulator run |
 | 3. The C codec and `game_codec.py` pass the same golden vectors; `formats.md` records the bytes | met | `codec_vectors.json`; `CodecTest`; `game_codec_test.py` |
 | 4. Back and Home open pause, Leave, Play again, sleep without deadlock; the canvas exception recorded | met | owner device run; this retro's simulator run; `docs/crosshatch/game-canvas.md` |
 | 5. Merged with the five-env build, host suites, format, `pio check`, and every fork job green | met | PR #13, 17/17 green on the head |
@@ -452,7 +511,8 @@ All items are **proposed**; this retro applied none of them. *Remediation* goes 
 | 7. `ASSET_NAME_CAPACITY` vectors and a guarded `static_assert`; the probe values beside row 10 | met | `ForkReleaseTest`; `OtaUpdater.cpp:57-60`; `upstream-touches.md` |
 
 No finding is blocking. Every Done-when criterion holds in the final state and is supported by CI, host tests, the owner's device run, and this retro's simulator run. The verdict carries open items:
-- **Fix-now remediations:** AI-5, AI-6, AI-7, and AI-9.
+- **Fix-now remediations:** AI-5, AI-6, AI-7, AI-9, and AI-13.
+  - R1 and R2 break the game contract (a stopping fault that a game can survive; a timer that can stop for good), but only when a script uses `pcall` on purpose or while touches pile up. The owner's device run did not hit either, and level 1 is still a preview (`API_LEVEL_FROZEN false`), so they are fixable without an API break. For those reasons they are not blocking.
 - **The device evidence the closing run did not record:** AI-3.
 - **The biggest verification debt:** AI-2, the untested `src/games` wiring.
 - **Spec reconciliation:** AI-10.
@@ -463,6 +523,7 @@ No finding is blocking. Every Done-when criterion holds in the final state and i
 
 ## Open questions
 
+- **R1/R2 as blocking?** This retro treats them as fix-now, not blocking, because level 1 is a preview. If the owner treats contract breaks as blocking, the verdict becomes rejected until AI-13 lands.
 - **AI-5:** restore the Screens layering by routing the store through `GameVM`, or amend the spine to let screens use `lib/GameScript`?
 - **F4 / AI-10:** may a fork release ship while a later API level is an open preview?
 - **F3 / AI-8:** is "require branches to be up to date" on for `develop`? If so, F3 cannot happen, and AI-8 needs only the surface-test half.
