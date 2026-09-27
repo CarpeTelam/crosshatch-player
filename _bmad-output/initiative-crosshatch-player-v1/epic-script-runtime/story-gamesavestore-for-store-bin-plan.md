@@ -3,7 +3,7 @@ title: 'GameSaveStore for store.bin'
 type: 'feature'
 ticket: '12'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '9592a64265d7e79c0698679b2ec446ee44221826'
 route: 'full'
 route_source: 'auto'
