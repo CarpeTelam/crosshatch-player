@@ -3,7 +3,7 @@ title: 'Static RAM and static-initializer gates'
 type: 'feature'
 ticket: '3'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: 'e3969f232e006178d2912863f3c0ad65a0c5ec0e'
 route: 'full'
 route_source: 'auto'

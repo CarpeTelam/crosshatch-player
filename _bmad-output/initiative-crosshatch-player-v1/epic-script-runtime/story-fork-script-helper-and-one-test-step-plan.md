@@ -3,7 +3,7 @@ title: 'Fork script helper and one test step'
 type: 'refactor'
 ticket: '2'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '799d5add2829300d2fe7368a5b3ba63790a67808'
 route: 'full'
 route_source: 'auto'
