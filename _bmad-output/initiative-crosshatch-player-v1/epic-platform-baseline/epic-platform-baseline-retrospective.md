@@ -1,14 +1,12 @@
 ---
 epic: epic-platform-baseline
 date: 2026-09-27
-verdict: rejected
+verdict: accepted-with-open-items
 criteria: declared
 headless: false
 ---
 
 # Retrospective: epic-platform-baseline
-
-> Working draft. Phase 1 (Gather) is complete; Phase 2 (Analyze) is in progress. The `verdict` above is a placeholder, not a judgment; Phase 4 sets it.
 
 ## Epic summary
 
@@ -197,7 +195,19 @@ Each finding carries its source and two dispositions: **instance** (fix now / de
 
 ## Behavior verification
 
-_Pending: Phase 2._
+This epic changed runtime behavior in one place: the update check in game builds (`OtaUpdater.cpp` through `ForkRelease.h` and the probe). The rest is build configuration and CI. What was exercised end to end:
+
+| Flow | How | Observed |
+|------|-----|----------|
+| OTA from the fork's releases | Owner, on an X4 Pro: `1.6.5-ch.1` installed, then a check with `1.6.5-ch.2` published | ch.2 offered, installed over the air, then no update offered |
+| Fork release workflow | Owner-dispatched runs 1 (dry run), 2 (`1.6.5-ch.1`), and 3 (`1.6.5-ch.2`), all from `d578b4e3` | all succeeded; image checks passed; two releases published |
+| Ledger gate | `python3 scripts/check_upstream_touches.py --ref d578b4e3` against `upstream/develop` `4a6283db` (this retro) | exit 0; trial merge clean; 7 accepted paths |
+| Script gates' failure paths | `check_upstream_touches_test.py`, `check_flash_budget_test.py`, `fork_release_test.py` (this retro) | 18, 24, and 50 pass |
+| Host suites | `GameCoreTest` and `GameScriptTest` built and run in scratch (this retro) | 17/17 pass |
+| Five-env build, format, cppcheck, unit tests, both fork gates | PR #10 CI on `20994d6a` | all green |
+| Simulator build | only the sweep's local `sim.sh build x4pro`, after `8e1bc5a4` (`story-refactor-sweep-plan.md`) | builds. **No CI coverage** (P4, AI-1) |
+
+Narrowed: this retro did not rebuild firmware locally. A background build check (firmware envs, a fresh-tree flash gate, and the simulator) was still running when the owner accepted the verdict; see the addendum below if it was appended. The 404 → no-update and network-failure rows were not exercised (AI-2).
 
 ## Previous-retro follow-through
 
@@ -237,8 +247,10 @@ Not an action here: the seven tickets are still at `built`. Closing them (`done`
 
 No finding is blocking: each open item is a hardening, cleanup, or documentation change with a named owner. The verdict carries open items because AI-1, AI-3, and AI-4 are fix-now remediations, AI-2 is the remaining deferred device check, and AI-5, AI-6, and AI-9 are deferred or spec reconciliations. P1–P3 record that the path to the final state skipped the epic's own delivery plan (one PR instead of per-ticket PRs, and a merge over a red gate). That weighs on process (AI-7, AI-8), not on whether the final state meets the criteria.
 
-**Human decision:** _pending._
+**Human decision: accepted-with-open-items.** The owner accepted the machine verdict on 2026-09-27. The open items are AI-1 to AI-9 above.
 
 ## Open questions
 
-_Pending._
+- AI-2: is covering the 404 → "no update" row by host tests and the probe's design enough, now that the fork has releases and the real endpoint no longer returns 404?
+- P3/AI-3: does PlatformIO's clean-on-checksum actually threaten `fr build`? It did not fire in three release runs, and no one has explained why.
+- AI-7: should per-ticket PRs become the build loop's rule for epics whose tickets name CI in `verify`, or should the verify wording change instead?
