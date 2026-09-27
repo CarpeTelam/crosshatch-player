@@ -34,21 +34,20 @@ import pathlib
 import subprocess
 import sys
 
+import fork_common
+from fork_common import SetupError
+
 PIO_ENV = 'x4pro'
-FLAG = 'FREEINK_CAP_GAMES'
+FLAG = fork_common.GAMES_MACRO
 # Written as the define appears in platformio.ini; compare checks the result, so an unflag that stops matching fails
 # the job instead of passing it.
-UNFLAG = f'-D{FLAG}=1'
+UNFLAG = fork_common.GAMES_BUILD_FLAG
 KIB = 1024
 DEFAULT_LIMIT_KIB = 250
 PROJECT_DIR = pathlib.Path(__file__).resolve().parent.parent
 OFF_BUILD_DIR = PROJECT_DIR / '.pio' / 'build-games-off'
 DEFAULT_METADATA_DIR = PROJECT_DIR / '.pio' / 'flash-budget'
 STATES = ('on', 'off')
-
-
-class SetupError(Exception):
-    pass
 
 
 def build_environment(state, base=None):
@@ -164,8 +163,7 @@ def compare(metadata_dir, limit_bytes, summary_path=None):
     within, text = report(sizes['on'], sizes['off'], limit_bytes)
     print(text)
     if summary_path:
-        with open(summary_path, 'a', encoding='utf-8') as summary:
-            summary.write(text + '\n')
+        fork_common.write_step_summary(text + '\n', summary_path)
     return 0 if within else 1
 
 
@@ -181,7 +179,7 @@ def main(argv=None):
     limit.add_argument('--limit-bytes', type=int, help='limit in bytes')
     args = parser.parse_args(argv)
 
-    try:
+    def step():
         if args.command == 'build':
             build(args.state, args.metadata_dir)
             return 0
@@ -190,14 +188,9 @@ def main(argv=None):
         else:
             limit_bytes = (DEFAULT_LIMIT_KIB if args.limit_kib is None else args.limit_kib) * KIB
         return compare(args.metadata_dir, limit_bytes, os.environ.get('GITHUB_STEP_SUMMARY'))
-    except SetupError as exc:
-        print(f'error: {exc}', file=sys.stderr)
-        # Also in the job summary, so a check that could not run does not look like an empty report.
-        summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
-        if summary_path:
-            with open(summary_path, 'a', encoding='utf-8') as summary:
-                summary.write(f'## x4pro flash budget\n\nThe check could not run: {exc}\n')
-        return 2
+
+    # A SetupError also goes to the job summary, so a check that could not run does not look like an empty report.
+    return fork_common.exit_code(step, summary_heading='x4pro flash budget')
 
 
 if __name__ == '__main__':

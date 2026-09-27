@@ -83,6 +83,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_flash_budget_test.py`
 - `scripts/fork_release.py`
 - `scripts/fork_release_test.py`
+- `scripts/fork_common.py` -- shared by the fork scripts; `docs/crosshatch/fork-scripts.md` has the conventions.
+- `scripts/fork_common_test.py`
 - `.github/workflows/crosshatch-*.yml` -- every fork-only workflow is named with this prefix.
 
 ## Running the check locally

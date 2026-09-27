@@ -47,12 +47,15 @@ import subprocess
 import sys
 import tempfile
 
+import fork_common
+from fork_common import Failure, SetupError
+
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_VECTORS = TOOLS_DIR / 'test' / 'game_core' / 'fork_version_vectors.json'
 
 DEVELOP_BRANCH_REF = 'refs/heads/develop'
 RELEASE_ENV_SUFFIX = '-gh_release'
-GAMES_FLAG = '-DFREEINK_CAP_GAMES=1'
+GAMES_FLAG = fork_common.GAMES_BUILD_FLAG
 VERSION_DEFINE = 'CROSSPOINT_VERSION'
 # A second source for the version or the flags could override the rewritten line.
 BUILD_OVERRIDES = ('PLATFORMIO_BUILD_FLAGS', 'PLATFORMIO_BUILD_UNFLAGS', 'PLATFORMIO_SRC_BUILD_FLAGS')
@@ -75,14 +78,6 @@ GAME_ID = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
 WORKFLOW_SUFFIXES = ('.yml', '.yaml')
 TOP_LEVEL_ON = re.compile(r'''^(?:on|"on"|'on')\s*:(.*)$''')
 TRIGGER_NAME = re.compile(r'''^["']?([A-Za-z_][\w-]*)["']?\s*(?::|$)''')
-
-
-class Failure(Exception):
-    """A release rule is broken (exit 1)."""
-
-
-class SetupError(Exception):
-    """The step could not run (exit 2)."""
 
 
 # --- Shared rules -------------------------------------------------------------------------------------------------
@@ -158,13 +153,6 @@ def write_outputs(values):
                 out.write(f'{key}={value}\n')
 
 
-def git(repo_dir, *args):
-    try:
-        return subprocess.run(['git', '-C', str(repo_dir), *args], capture_output=True, text=True)
-    except OSError as exc:
-        raise SetupError(f'cannot run git: {exc}')
-
-
 def sha256_file(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as stream:
@@ -180,11 +168,9 @@ def ref_problems(repo_dir, commit, develop_ref, dispatch_ref):
     problems = []
     if dispatch_ref != DEVELOP_BRANCH_REF:
         problems.append(f'dispatched from {dispatch_ref or "an unknown ref"}, not {DEVELOP_BRANCH_REF}')
-    result = git(repo_dir, 'merge-base', '--is-ancestor', commit, develop_ref)
-    if result.returncode == 1:
+    code, _ = fork_common.git('merge-base', '--is-ancestor', commit, develop_ref, cwd=repo_dir, ok_codes=(0, 1))
+    if code == 1:
         problems.append(f'{commit} is not {develop_ref} or an ancestor of it')
-    elif result.returncode != 0:
-        raise SetupError(f'cannot compare {commit} with {develop_ref}: {result.stderr.strip()}')
     return problems
 
 
@@ -293,10 +279,8 @@ def preflight(args):
     if not args.checkout:
         raise SetupError('no --checkout to read workflows from')
     problems = []
-    commit = git(args.repo_dir, 'rev-parse', '--verify', 'HEAD^{commit}')
-    if commit.returncode != 0:
-        raise SetupError(f'cannot read the commit to release: {commit.stderr.strip()}')
-    for problem in ref_problems(args.repo_dir, commit.stdout.strip(), args.develop_ref, args.dispatch_ref):
+    commit = fork_common.git_text('rev-parse', '--verify', 'HEAD^{commit}', cwd=args.repo_dir)
+    for problem in ref_problems(args.repo_dir, commit, args.develop_ref, args.dispatch_ref):
         if args.dry_run == 'true':
             print(f'warning: {problem}; a publishing run would stop here')
         else:
@@ -432,9 +416,7 @@ def prepare(args):
     if tag in tags:
         raise Failure(f'tag {tag} already exists')
 
-    commit = git(project_dir, 'rev-parse', '--verify', 'HEAD^{commit}')
-    if commit.returncode != 0:
-        raise SetupError(f'cannot read the commit to release: {commit.stderr.strip()}')
+    commit = fork_common.git_text('rev-parse', '--verify', 'HEAD^{commit}', cwd=project_dir)
 
     ini_path.write_text(rewrite_version(text, index, tag), encoding='utf-8')
     print(f'Rewrote [crosspoint] version {base_version} -> {tag} in {ini_path} (this checkout only)')
@@ -447,7 +429,7 @@ def prepare(args):
         'tag': tag,
         'build_number': build_number,
         'base_version': base_version,
-        'commit': commit.stdout.strip(),
+        'commit': commit,
         'envs': envs,
         'firmware': [],
         'packages': [],
@@ -646,10 +628,7 @@ def notes(args):
     text = render_notes(plan)
     pathlib.Path(args.out).write_text(text, encoding='utf-8')
     print(text)
-    summary = os.environ.get('GITHUB_STEP_SUMMARY')
-    if summary:
-        with open(summary, 'a', encoding='utf-8') as out:
-            out.write(f'## Fork release {plan["tag"]}\n\n{text}\n')
+    fork_common.write_step_summary(f'## Fork release {plan["tag"]}\n\n{text}\n')
 
 
 def expected_assets(plan):
@@ -727,15 +706,13 @@ def main(argv=None):
         'recheck': recheck,
         'expected-assets': lambda a: print('\n'.join(expected_assets(load_plan(a.plan)))),
     }
-    try:
+
+    def step():
+        # A command passes by returning; what it returns is not an exit code.
         commands[args.command](args)
-        return 0
-    except Failure as exc:
-        print(f'error: {exc}', file=sys.stderr)
-        return 1
-    except SetupError as exc:
-        print(f'error: {exc}', file=sys.stderr)
-        return 2
+
+    try:
+        return fork_common.exit_code(step)
     except (OSError, KeyError, TypeError) as exc:
         print(f'error: could not run: {exc!r}', file=sys.stderr)
         return 2

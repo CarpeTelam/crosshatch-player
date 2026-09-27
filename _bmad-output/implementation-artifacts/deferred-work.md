@@ -39,3 +39,7 @@
     - Retro AI-5 (fork_common.py, the all-tests step): entry 2. Retro AI-3 (`fr build` against clean-on-checksum): entry 5.
     - Epic-icon-library items: pointed to from that epic's Notes.
     - The 1.6 device check above (retro AI-2): closed by the owner's decision, 2026-09-27: the host tests are enough for the 404 and network-failure rows for now; no device check is scheduled.
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-fork-script-helper-and-one-test-step-plan.md`
+  summary: No test asserts that `fork_release.py notes` writes its `## Fork release <tag>` section to the job summary.
+  evidence: `PublishTest` in `scripts/fork_release_test.py` covers `render_notes` and the unchecked-firmware error but never sets `GITHUB_STEP_SUMMARY` for `notes`; dropping the `write_step_summary` call would pass every test. Pre-existing; `fork_common_test.py` covers the helper itself.
