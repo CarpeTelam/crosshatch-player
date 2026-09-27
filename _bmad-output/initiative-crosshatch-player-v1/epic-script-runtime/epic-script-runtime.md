@@ -77,3 +77,6 @@ Handoffs: the minimal Games list is replaced by the full launcher in epic-instal
 - Decision: fixture games live in `test/game_script/fixtures/`, never `games/`, which the release workflow packs (2026-09-27).
 - Decision: the default refactor sweep is entry 15, and a closing device run is entry 16 (2026-09-27).
 - Decision: entry 17 takes release chore items two and three (the asset-name capacity and the probe's recorded values), because the owner makes a fork release once this epic merges; it follows entry 5, and the sweep now waits on it (user's decision, 2026-09-27).
+- Decision: a script's C recursion must not overflow the 16 KB `GameVM` stack (a nested `pcall` costs about 784 B, a recursive `__index` about 256 B, against Lua's 200-level limit); entry 7 adds a stack-headroom check to the hook it installs, raising a `ScriptError` below about 2 KB free, with a nested-`pcall` and a recursive-`__index` fixture; the stack stays 16 KB in internal RAM and AD-5 is unchanged (user's decision, 2026-09-27).
+- Decision: `Manifest::parse` caps `name` at 64 B, `version` at 32 B, and `icon` at 32 B of `[a-z0-9_]`; entry 4 lists them as level-1 limits in `api-level-1.txt` (user's decision, 2026-09-27).
+- Decision: a manifest with a duplicate known key is invalid, so `pack_game.py` rejects duplicates too (user's decision, 2026-09-27).
