@@ -4,6 +4,7 @@
 #include <HalMemory.h>
 
 #include <cstddef>
+#include <cstdint>
 
 class GameSaveStore;
 namespace GameScript {
@@ -21,10 +22,12 @@ class GameAssets {
   static constexpr size_t MAX_SOURCES = 32;
   static constexpr size_t MAX_SOURCE_BYTES = 256 * 1024;
 
-  // Null on success, otherwise a short reason (already logged). Once the sources
-  // are loaded, restores the saved store into `store` (empty when there is none or
-  // it was discarded).
-  const char* load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store);
+  // Why a load failed; the match shows each as a translated reason (AD-14).
+  enum class LoadResult : uint8_t { Ok, FolderMissing, NoSources, TooLarge, OutOfMemory, CannotRead };
+
+  // Ok, or why not (already logged). Once the sources are loaded, restores the
+  // saved store into `store` (empty when there is none or it was discarded).
+  LoadResult load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store);
   const GameScript::GameSources& sources() const { return view; }
   // Frees the block (GameVM::abandon); sources() is empty afterwards.
   void release() {

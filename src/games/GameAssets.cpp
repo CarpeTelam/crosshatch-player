@@ -33,7 +33,7 @@ bool moduleNameOf(const char* fileName, const size_t length,
 
 }  // namespace
 
-const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
+GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
   block.reset();
   view = GameScript::GameSources{};
 
@@ -42,7 +42,7 @@ const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScrip
   auto dir = Storage.open(path);
   if (!dir || !dir.isDirectory()) {
     LOG_ERR("GAME", "No game folder %s", path);
-    return "game folder missing";
+    return LoadResult::FolderMissing;
   }
 
   // Pass 1: count the modules and their bytes so one block holds them all.
@@ -61,20 +61,20 @@ const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScrip
   }
   if (count == 0) {
     LOG_ERR("GAME", "%s holds no Lua sources", path);
-    return "no Lua sources";
+    return LoadResult::NoSources;
   }
   if (count > MAX_SOURCES || textBytes > MAX_SOURCE_BYTES) {
     LOG_ERR("GAME", "%s: %u Lua files, %u bytes; limits %u and %u", path, static_cast<unsigned>(count),
             static_cast<unsigned>(textBytes), static_cast<unsigned>(MAX_SOURCES),
             static_cast<unsigned>(MAX_SOURCE_BYTES));
-    return "Lua sources too large";
+    return LoadResult::TooLarge;
   }
 
   const size_t spanBytes = count * sizeof(GameScript::SourceSpan);
   block = HalMemory::allocatePsram(spanBytes + textBytes);
   if (!block) {
     LOG_ERR("GAME", "OOM: %u bytes of PSRAM for Lua sources", static_cast<unsigned>(spanBytes + textBytes));
-    return "out of memory";
+    return LoadResult::OutOfMemory;
   }
   // SourceSpan is an implicit-lifetime aggregate, so the zeroed bytes are its objects.
   std::memset(block.get(), 0, spanBytes);
@@ -95,7 +95,7 @@ const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScrip
     if (size > textBytes - offset || file.read(text + offset, size) != static_cast<int>(size)) {
       LOG_ERR("GAME", "Cannot read %s/%s", path, name);
       block.reset();
-      return "cannot read Lua sources";
+      return LoadResult::CannotRead;
     }
     GameScript::SourceSpan& span = spans[loaded++];
     std::memcpy(span.name, module, sizeof(module));
@@ -110,7 +110,7 @@ const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScrip
   LOG_INF("GAME", "Loaded %u Lua files (%u bytes) from %s", static_cast<unsigned>(loaded),
           static_cast<unsigned>(offset), path);
   saves.restoreInto(store);
-  return nullptr;
+  return LoadResult::Ok;
 }
 
 #endif  // FREEINK_CAP_GAMES

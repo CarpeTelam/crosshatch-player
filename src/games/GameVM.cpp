@@ -16,6 +16,14 @@ namespace {
 
 constexpr uint32_t STOP_POLL_MS = 5;
 
+// VM task: starts a round and draws it (setup, status, and `over` if it is already over).
+GameCore::Outcome startRound(GameCore::Session& session) {
+  const GameCore::Outcome outcome = session.start();
+  if (outcome != GameCore::Outcome::Ok) return outcome;
+  LOG_INF("GAME", "Round started at ver %u", static_cast<unsigned>(session.ver()));
+  return session.draw();
+}
+
 }  // namespace
 
 std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Canvas& canvas, const char* gameId,
@@ -89,14 +97,26 @@ void GameVM::run() {
   } else {
     failure = "not enough memory";
   }
-  if (outcome == Outcome::Ok) outcome = session->start();
-  if (outcome == Outcome::Ok) outcome = session->draw();
-  bool overLogged = false;
+  if (outcome == Outcome::Ok) outcome = startRound(*session);
+  // Whether the current round is over, so each round is counted once when its
+  // status turns over (the Session has delivered `over` by then).
+  bool roundOver = false;
+  const auto countRoundEnd = [&] {
+    if (roundOver || !session->status().over) return;
+    roundOver = true;
+    LOG_INF("GAME", "Round over at ver %u; winners mask 0x%x", static_cast<unsigned>(session->ver()),
+            static_cast<unsigned>(session->status().winners));
+    endedRounds.fetch_add(1, std::memory_order_acq_rel);
+  };
+  if (outcome == Outcome::Ok) countRoundEnd();
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
-    if (!overLogged && session->status().over) {
-      overLogged = true;
-      LOG_INF("GAME", "Round over at ver %u; winners mask 0x%x", static_cast<unsigned>(session->ver()),
-              static_cast<unsigned>(session->status().winners));
+    if (restartRequested.exchange(false, std::memory_order_acq_rel)) {
+      // Play again: the last round's timer and its stale events belong to it.
+      game.timer().cancel();
+      outcome = startRound(*session);
+      roundOver = false;
+      if (outcome == Outcome::Ok) countRoundEnd();
+      continue;
     }
     GameScript::InputEvent event;
     if (!queue.pop(event)) {
@@ -108,6 +128,7 @@ void GameVM::run() {
     outcome = session->handle(event);
     if (outcome == Outcome::Ok) outcome = session->applyPending();
     if (outcome == Outcome::Ok) outcome = session->draw();
+    if (outcome == Outcome::Ok) countRoundEnd();
   }
   if (outcome == Outcome::ScriptError) {
     LOG_ERR("LUA", "Script error: %s", errorMessage());
@@ -128,6 +149,11 @@ void GameVM::run() {
     taskAlive = false;
   }
   done.store(true, std::memory_order_release);
+}
+
+void GameVM::playAgain() {
+  restartRequested.store(true, std::memory_order_release);
+  notifyTask();
 }
 
 uint32_t GameVM::runningForMs(const uint32_t nowMs) {

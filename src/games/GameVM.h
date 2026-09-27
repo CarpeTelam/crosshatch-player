@@ -62,6 +62,13 @@ class GameVM {
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.
   void pollTimer();
+  // Rounds that have ended so far: the VM counts one when the status turns over,
+  // after the Session has delivered `over` and the round's last frame is
+  // published. The match enters Over when the count moves (AD-21). Any task.
+  uint32_t roundsEnded() const { return endedRounds.load(std::memory_order_acquire); }
+  // Asks the VM for a new round (Play again): before its next event it cancels the
+  // pending timer and runs Session::start() and draw(), so ver keeps counting.
+  void playAgain();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
   // Hands the front frame, with the largest refresh request of the frames
@@ -131,6 +138,8 @@ class GameVM {
   std::mutex taskMutex;    // guards taskAlive against the task's exit
   bool taskAlive = false;  // true from start() until run() is about to end
   std::atomic<bool> quitRequested{false};
+  std::atomic<bool> restartRequested{false};
+  std::atomic<uint32_t> endedRounds{0};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};
   // Set (to a literal) when the VM fails outside Lua; errorMessage() then shows it.

@@ -69,6 +69,52 @@ TEST_F(SessionGameTest, TheTracerPlaysToGameOver) {
   EXPECT_EQ(game.session->discardedMoves(), 1u);
 }
 
+// Play again (AD-21) as GameVM runs it: Session::start() and draw() on the same
+// Session; ver keeps counting and the new round delivers `over` once more.
+TEST_F(SessionGameTest, TheTracerPlaysAgainAfterGameOver) {
+  useSource("main", readFixture("tracer/main.lua"));
+  SessionGame game(*this);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  for (int i = 1; i <= 5; ++i) ASSERT_EQ(game.tap(100, 200), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_EQ(game.session->ver(), 6u);
+
+  ASSERT_EQ(game.session->start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.session->ver(), 7u);
+  EXPECT_FALSE(game.session->status().over);
+  EXPECT_TRUE(contains(frontText().c_str(), "Taps: 0 of 5")) << frontText();
+
+  for (int i = 1; i <= 5; ++i) ASSERT_EQ(game.tap(100, 200), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.session->ver(), 12u);
+  EXPECT_TRUE(game.session->status().over);
+  // ui lives across rounds, so it has now counted one `over` per round.
+  EXPECT_TRUE(contains(frontText().c_str(), "Over events: 2")) << frontText();
+}
+
+// Each band of fixtures/limits (the simulator's and the device's fault game for
+// entries 8 to 10) ends the session with a ScriptError.
+TEST_F(SessionGameTest, EveryLimitsFixtureBandIsAScriptError) {
+  constexpr int TOP = 100;
+  constexpr int BAND_HEIGHT = 110;
+  const char* const messages[] = {
+      "apply: state is too large (over 1400 bytes)",
+      "input: move is too large (over 256 bytes)",
+      "ch.store.set: the store is too large",
+      "status.turn is 2, not a seat in 1..1",
+      "frame is full",
+      "boom",
+  };
+  for (int band = 0; band < 6; ++band) {
+    useSource("main", readFixture("limits/main.lua"));
+    SessionGame game(*this);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    const auto y = static_cast<int16_t>(TOP + band * BAND_HEIGHT + BAND_HEIGHT / 2);
+    EXPECT_EQ(game.tap(100, y), Outcome::ScriptError) << "band " << band + 1;
+    EXPECT_TRUE(contains(game.errorMessage(), messages[band])) << "band " << band + 1 << ": " << game.errorMessage();
+  }
+}
+
 TEST_F(SessionGameTest, ChangesMadeOutsideApplyAreDiscardedAndUiPersists) {
   useSource("main", gameWith(R"(
     setup = function() return { n = 0 } end,
