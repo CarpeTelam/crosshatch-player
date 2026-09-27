@@ -42,8 +42,8 @@ Bytes cat(Bytes a, const Bytes& b) {
 
 // {s = string.rep('a', n)}: 9 + n bytes for n in 128..16383.
 Bytes bigTable(const size_t n) {
-  Bytes out = {0x06, 0x00, 0x01, 0x05, 0x01, 's', 0x05, static_cast<uint8_t>(0x80 | (n & 0x7F)),
-               static_cast<uint8_t>(n >> 7)};
+  Bytes out = {
+      0x06, 0x00, 0x01, 0x05, 0x01, 's', 0x05, static_cast<uint8_t>(0x80 | (n & 0x7F)), static_cast<uint8_t>(n >> 7)};
   out.insert(out.end(), n, 'a');
   return out;
 }

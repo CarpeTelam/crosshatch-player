@@ -16,9 +16,7 @@ bool readExactly(HalFile& file, uint8_t* out, const size_t count) {
   return count == 0 || file.read(out, count) == static_cast<int>(count);
 }
 
-bool writeExactly(HalFile& file, const uint8_t* data, const size_t count) {
-  return file.write(data, count) == count;
-}
+bool writeExactly(HalFile& file, const uint8_t* data, const size_t count) { return file.write(data, count) == count; }
 
 }  // namespace
 
