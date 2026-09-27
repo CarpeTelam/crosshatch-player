@@ -3,7 +3,7 @@ title: 'x4pro flash budget gate'
 type: 'chore'
 ticket: '3'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: 'de5c18a5b3e36f3f23aeb9d16d3f0668e41d4baf'
 route: 'full'
 route_source: 'auto'

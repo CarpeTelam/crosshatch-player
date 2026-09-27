@@ -3,7 +3,7 @@ title: 'Upstream-touch ledger and its CI job'
 type: 'chore'
 ticket: '2'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: '234d1c084514a39880ed67d65f1ad0e1256e97b7'
 route: 'full'
 route_source: 'auto'

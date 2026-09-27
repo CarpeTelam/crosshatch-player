@@ -3,7 +3,7 @@ title: 'Fork release workflow and first release'
 type: 'feature'
 ticket: '7'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: '311e4bb43812e4ff7d6fe56b53f2de99e9549669'
 route: 'full'
 route_source: 'auto'

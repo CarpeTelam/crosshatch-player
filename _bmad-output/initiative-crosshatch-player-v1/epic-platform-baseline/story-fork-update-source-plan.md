@@ -3,7 +3,7 @@ title: 'Fork update source'
 type: 'feature'
 ticket: '6'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: '4e1a7c82079ebcca339c803476c4566497d06b4f'
 route: 'full'
 route_source: 'auto'

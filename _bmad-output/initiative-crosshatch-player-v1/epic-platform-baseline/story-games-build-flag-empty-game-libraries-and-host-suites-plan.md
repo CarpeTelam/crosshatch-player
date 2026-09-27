@@ -3,7 +3,7 @@ title: 'Games build flag, empty game libraries, and host suites'
 type: 'chore'
 ticket: '1'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: 'f6de4dac090044bc22e67007a43f46383fa49a69'
 route: 'full'
 route_source: 'auto'
