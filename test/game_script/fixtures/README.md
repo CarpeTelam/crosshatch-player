@@ -23,6 +23,7 @@ in small type), Back must return to Games, and the device must stay responsive.
 
 | Folder | What it shows |
 | --- | --- |
+| `solo/` | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
@@ -31,6 +32,27 @@ in small type), Back must return to Games, and the device must stay responsive.
 | `limits/` | The codec, status, and display-list limits, one band each (tap it); see below. |
 
 `surface/` and `modules/` are host-suite scripts, not games.
+
+## Closing device run
+
+Epic-script-runtime's closing run on an X4 Pro, in this order:
+
+1. Place `solo/` and every fault: `loop/`, `limits/`, and each script under `faults/` as `f-<name>/` (above). Start
+   from no `/.games-data/solo/`, so the round count starts at 0.
+2. Play `solo` to game over from Home, Games (swipe inside the box: a right swipe from the left quarter is Back, an up
+   swipe from the bottom is Home; the round also ends when the 60 s run out). Confirm each checklist box fills as you tap, hold, and swipe and after
+   the first 5 s tick; "Last swipe" names each swipe's direction; the first frame of a round is a full refresh and the
+   rest are fast; the end-of-round menu shows with "Over event received" below it and "Rounds finished 1" at the
+   bottom. Choose Play again: a fresh round (Round 2, empty checklist, 60 s) with the store kept.
+3. In that round: Back opens the pause menu, and Resume returns to the round; the Home gesture opens it too, and
+   Leave returns to Games. Open `solo` again, put the device to sleep mid-round, and wake it: it sleeps and wakes
+   without a hang (the forced exit), and Games opens `solo` again at Round 2.
+4. Restart the device and open `solo`: it shows Round 2, "Rounds finished 1", and the first round's best. Play it to
+   game over: "Rounds finished 2".
+5. Open each fault in turn: each ends in the error view with the text in the tables above, Back returns to Games,
+   and the device stays responsive.
+
+This checks Done-when 1 (steps 2 and 4), 2 (step 5), and 4 (steps 2 and 3).
 
 ## Fault bands
 
