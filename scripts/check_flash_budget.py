@@ -13,7 +13,7 @@ the same commit, so upstream growth never counts against the budget.
 The limit is in KiB (1 KiB = 1,024 bytes) because ESP32 flash and the app slot in partitions.csv are sized in
 binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 250 KiB is 256,000 bytes.
 
-Each build also saves `pio project metadata` for itself. `compare` checks from it that the "on" build defines
+Each build first saves `pio project metadata` for itself. `compare` checks from it that the "on" build defines
 FREEINK_CAP_GAMES=1 and the "off" build does not define it at all: a misspelled unflag, or the flag dropped from
 the env, would make both images the same and the check pass without measuring anything.
 
@@ -86,10 +86,16 @@ def build(state, metadata_dir):
     target.parent.mkdir(parents=True, exist_ok=True)
     # A stale file from an earlier run must never stand in for this build's metadata.
     target.unlink(missing_ok=True)
-    pio(['run', '-e', PIO_ENV], env)
-    # --json-output skips the dependency install; quiet keeps the whole metadata out of the log.
+    # Metadata first: on a fresh tree `pio project metadata` empties the env's build dir, so run after the build it
+    # deletes the image it is meant to describe. --json-output skips the dependency install; quiet keeps the whole
+    # metadata out of the log.
     pio(['project', 'metadata', '-e', PIO_ENV, '--json-output', '--json-output-path', str(target)], env, quiet=True)
     print(f'Saved {target}', flush=True)
+    pio(['run', '-e', PIO_ENV], env)
+    _, image = load_build(metadata_dir, state)
+    if not image.is_file():
+        raise SetupError(f'the games-{state} build left no image at {image}')
+    print(f'Built {image} ({image.stat().st_size:,} bytes)', flush=True)
 
 
 def load_build(metadata_dir, state):

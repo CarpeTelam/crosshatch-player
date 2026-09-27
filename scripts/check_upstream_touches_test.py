@@ -79,7 +79,7 @@ class ParseLedgerTest(unittest.TestCase):
             {'AGENTS.md', '.gitattributes', '.gitignore', '.github/PULL_REQUEST_TEMPLATE.md', 'CLAUDE.md'})
         # The check's own files must be fork-only paths, or an upstream merge could rewrite the check.
         for own in ('scripts/check_upstream_touches.py', 'scripts/check_upstream_touches_test.py',
-                    '.github/workflows/crosshatch-upstream-ledger.yml', cut.LEDGER_PATH):
+                    '.github/workflows/crosshatch-ci.yml', cut.LEDGER_PATH):
             self.assertTrue(cut.is_game_path(own, lists['Game paths']), own)
 
 

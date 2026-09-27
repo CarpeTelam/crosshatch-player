@@ -68,7 +68,7 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 256000)
 
     def test_workflow_limit_matches_the_script_default(self):
-        workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-flash-budget.yml'
+        workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml'
         values = [line.split(':', 1)[1].strip() for line in workflow.read_text().splitlines()
                   if line.strip().startswith('FLASH_BUDGET_KIB:')]
         self.assertEqual(values, [str(cfb.DEFAULT_LIMIT_KIB)])
@@ -214,9 +214,41 @@ class BuildTest(unittest.TestCase):
         stale = cfb.metadata_path(self.meta, 'off')
         self.meta.mkdir()
         stale.write_text('{}')
-        with self.assertRaisesRegex(cfb.SetupError, 'pio run -e x4pro failed'):
+        with self.assertRaisesRegex(cfb.SetupError, 'pio project metadata .* failed'):
             cfb.build('off', self.meta)
         self.assertFalse(stale.exists())
+
+    def recording_pio(self, write_image):
+        """A pio that logs each call, writes metadata naming an ELF under the temp dir, and builds its image."""
+        log = self.root / 'calls.log'
+        elf = self.root / 'build' / 'firmware.elf'
+        script = self.bin / 'pio'
+        script.write_text(
+            f'#!{sys.executable}\n'
+            'import json, pathlib, sys\n'
+            f'pathlib.Path({str(log)!r}).open("a").write(" ".join(sys.argv[1:3]) + "\\n")\n'
+            'if sys.argv[1:3] == ["project", "metadata"]:\n'
+            '    out = pathlib.Path(sys.argv[sys.argv.index("--json-output-path") + 1])\n'
+            f'    out.write_text(json.dumps({{"x4pro": {{"defines": [], "prog_path": {str(elf)!r}}}}}))\n'
+            f'elif sys.argv[1] == "run" and {write_image!r}:\n'
+            f'    pathlib.Path({str(elf.parent)!r}).mkdir(parents=True, exist_ok=True)\n'
+            f'    pathlib.Path({str(elf.with_suffix(".bin"))!r}).write_bytes(b"x" * 10)\n'
+        )
+        script.chmod(0o755)
+        os.environ['PATH'] = f'{self.bin}{os.pathsep}{self.path}'
+        return log
+
+    def test_metadata_is_saved_before_the_build(self):
+        # On a fresh tree `pio project metadata` empties the build dir, so it must never run after `pio run`.
+        log = self.recording_pio(write_image=True)
+        cfb.build('on', self.meta)
+        self.assertEqual(log.read_text().splitlines(), ['project metadata', 'run -e'])
+        self.assertTrue(cfb.metadata_path(self.meta, 'on').is_file())
+
+    def test_build_without_an_image_is_setup_error(self):
+        self.recording_pio(write_image=False)
+        with self.assertRaisesRegex(cfb.SetupError, 'left no image'):
+            cfb.build('off', self.meta)
 
     def test_missing_pio_is_setup_error(self):
         os.environ['PATH'] = str(self.bin)  # empty directory: no pio

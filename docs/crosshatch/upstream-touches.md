@@ -5,7 +5,7 @@ also has is a future merge conflict. This file is the cap on those changes (AD-3
 change to a file that exists in `upstream/develop` is allowed only if the file is a row of the **Ledger** or an
 entry of the **Allowlist** below. Adding a row needs an architecture spine update first.
 
-The `Upstream touch ledger` CI job (`.github/workflows/crosshatch-upstream-ledger.yml`) runs
+The `Upstream touch ledger` CI job (`.github/workflows/crosshatch-ci.yml`) runs
 `scripts/check_upstream_touches.py` on every pull request to `develop`. The script reads the three lists below
 from this file, so keep the section headings as they are and keep each path in backticks as the first code span
 of its row or bullet. It fails a pull request when:
