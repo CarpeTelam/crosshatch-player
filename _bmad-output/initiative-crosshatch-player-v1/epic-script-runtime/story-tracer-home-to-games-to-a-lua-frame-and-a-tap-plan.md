@@ -3,7 +3,7 @@ title: 'Tracer: Home to Games to a Lua frame and a tap'
 type: 'feature'
 ticket: '1'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '799d5add2829300d2fe7368a5b3ba63790a67808'
 route: 'full'
 route_source: 'auto'
@@ -111,7 +111,7 @@ context:
 - `python3 scripts/check_upstream_touches.py`, `./bin/clang-format-fix` -- exit 0, no diff.
 
 **Manual checks:**
-- X4 Pro device run of the same path -- pending the owner's device run.
+- X4 Pro device run of the same path -- owner's device run.
 
 **Verification record** (2026-09-27, working tree before commit):
 - Host: `ctest` 418/418 passed (GameCoreTest 25, GameScriptTest 23 after the review patches).
@@ -120,7 +120,7 @@ context:
 - Flash gate: +120,496 B games on minus off (Implementation Notes).
 - Simulator x4pro, screenshots in [story-tracer-screenshots/](story-tracer-screenshots/): `home.png` (Games row), `games-list.png`, `match-frame.png`, `match-tap.png` and `match-tap2.png` (counter 1 and 2, square at each tap), `match-tap-recheck.png` (after the review patches), `error-view.png` (scratch game erroring in `draw`), `games-empty.png`; a scratch `mismatch` folder was skipped with a log line; Back, the header back arrow on the error view, and `key sleep` during play each stopped the VM within one poll and reached their screens.
 - Simulator sticky (no `BOARD_HAS_PSRAM`): `sticky-oom.png`, "out of memory" error view, Back to Games.
-- X4 Pro device: pending the owner's device run.
+- X4 Pro device: passed: the owner ran firmware dca1ddc2 with the tracer in /.games/tracer/; Home to Games listed it, it drew its frame, and taps redrew it (2026-09-27).
 
 **Verification record, review fixes** (2026-09-27, on top of 97dcf52f):
 - Host: `ctest` 424/424 passed (GameCoreTest 26, GameScriptTest 27, including `CanvasClipTest` and the long-key manifest case).
