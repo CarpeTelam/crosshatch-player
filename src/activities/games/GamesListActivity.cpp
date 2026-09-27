@@ -7,11 +7,11 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <strings.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <strings.h>
 
 #include "GameMatchActivity.h"
 #include "MappedInputManager.h"
@@ -43,8 +43,7 @@ void GamesListActivity::onEnter() {
   rebuildRows();
 }
 
-bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestReader& reader,
-                                     GameCore::Manifest& out) {
+bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestReader& reader, GameCore::Manifest& out) {
   char path[PATH_BUFFER];
   snprintf(path, sizeof(path), "%s/%s/manifest.json", GAMES_DIR, dirName);
   auto file = Storage.open(path);
@@ -71,23 +70,31 @@ bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestRead
 }
 
 void GamesListActivity::loadGames() {
-  games.clear();
+  games.reset();
+  rows.reset();
+  gameCount = 0;
   auto dir = Storage.open(GAMES_DIR);
   if (!dir || !dir.isDirectory()) return;
-
-  // Holds the JSON token buffer; reused for every manifest.
-  auto reader = makeUniqueNoThrow<GameCore::ManifestReader>();
-  if (!reader) {
-    LOG_ERR("GAME", "OOM: %u byte manifest reader", static_cast<unsigned>(sizeof(GameCore::ManifestReader)));
-    return;
-  }
 
   size_t folders = 0;
   dir.rewindDirectory();
   for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     if (entry.isDirectory()) ++folders;
   }
-  games.reserve(std::min(folders, MAX_GAMES));
+  const size_t capacity = std::min(folders, MAX_GAMES);
+  if (capacity == 0) return;
+
+  // Holds the JSON token buffer; reused for every manifest.
+  auto reader = makeUniqueNoThrow<GameCore::ManifestReader>();
+  // One entry per folder, at most MAX_GAMES (about 180 B each), sized once here.
+  games = makeUniqueNoThrow<GameCore::Manifest[]>(capacity);
+  if (!reader || !games) {
+    LOG_ERR("GAME", "OOM: manifest reader (%u B) or %u games (%u B)",
+            static_cast<unsigned>(sizeof(GameCore::ManifestReader)), static_cast<unsigned>(capacity),
+            static_cast<unsigned>(capacity * sizeof(GameCore::Manifest)));
+    games.reset();
+    return;
+  }
 
   char dirName[DIR_NAME_BUFFER];
   dir.rewindDirectory();
@@ -96,25 +103,28 @@ void GamesListActivity::loadGames() {
     const bool isGameFolder = entry.isDirectory() && length > 0 && length < sizeof(dirName) - 1 && dirName[0] != '.';
     entry.close();
     if (!isGameFolder) continue;
-    if (games.size() >= MAX_GAMES) {
-      LOG_INF("GAME", "Listing the first %u games only", static_cast<unsigned>(MAX_GAMES));
+    if (gameCount >= capacity) {
+      LOG_INF("GAME", "Listing the first %u games only", static_cast<unsigned>(capacity));
       break;
     }
-    games.emplace_back();
-    if (!readManifest(dirName, *reader, games.back())) games.pop_back();
+    if (readManifest(dirName, *reader, games[gameCount])) ++gameCount;
   }
-  std::sort(games.begin(), games.end(), nameLess);
-  LOG_INF("GAME", "Found %u games", static_cast<unsigned>(games.size()));
+  std::sort(games.get(), games.get() + gameCount, nameLess);
+  LOG_INF("GAME", "Found %u games", static_cast<unsigned>(gameCount));
 }
 
 void GamesListActivity::rebuildRows() {
-  rows.clear();
-  rows.reserve(games.size());
-  for (size_t i = 0; i < games.size(); ++i) {
-    fui::ListItem item;
-    item.label = games[i].name;
-    item.actionValue = static_cast<int16_t>(i);
-    rows.push_back(item);
+  rows.reset();
+  if (gameCount == 0) return;
+  rows = makeUniqueNoThrow<fui::ListItem[]>(gameCount);
+  if (!rows) {
+    LOG_ERR("GAME", "OOM: %u list rows", static_cast<unsigned>(gameCount));
+    gameCount = 0;  // nothing can be shown or opened without rows
+    return;
+  }
+  for (size_t i = 0; i < gameCount; ++i) {
+    rows[i].label = games[i].name;
+    rows[i].actionValue = static_cast<int16_t>(i);
   }
 }
 
@@ -128,15 +138,15 @@ void GamesListActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
-  if (rows.empty()) {
+  if (gameCount == 0) {
     screen.centeredText(tr(STR_GAMES_EMPTY), screen.theme().bodyText);
     return;
   }
 
   // rows was built in onEnter() and is reused on every repaint.
   fui::ListProps props;
-  props.items = rows.data();
-  props.count = static_cast<uint16_t>(rows.size());
+  props.items = rows.get();
+  props.count = static_cast<uint16_t>(gameCount);
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   syncListViewport(screen, props);

@@ -2,7 +2,6 @@
 
 #include "GameMatchActivity.h"
 
-#include <DisplayList.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -89,10 +88,10 @@ void GameMatchActivity::loop() {
   int16_t x = 0;
   int16_t y = 0;
   if (snap.touchReleased && snap.touchX >= 0 && viewport.toCanvas(snap.touchX, snap.touchY, x, y)) {
-    vm->postInput(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
+    vm->postTap(x, y);
   }
 
-  const uint32_t frame = vm->frames().frameGen();
+  const uint32_t frame = vm->frameGen();
   if (frame != shownFrame) {
     shownFrame = frame;
     requestUpdate();
@@ -104,11 +103,9 @@ void GameMatchActivity::render(RenderLock&&) {
     renderError();
     return;
   }
-  if (!vm || vm->frames().frameGen() == 0) return;
-  // Lock order: RenderLock (held), then the frame mutex; the refresh runs after
-  // the mutex is released so the VM can publish during it.
-  vm->frames().readFront(
-      [this](const GameScript::DisplayList& frame) { replay.draw(renderer, viewport, frame); });
+  // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
+  // refresh runs after the mutex is released so the VM can publish during it.
+  if (!vm || !vm->drawFront(renderer, viewport, replay)) return;
   renderer.displayBuffer(replay.refreshMode());
 }
 

@@ -2,7 +2,8 @@
 
 #include <Manifest.h>
 
-#include <vector>
+#include <cstddef>
+#include <memory>
 
 #include "activities/UiListActivity.h"
 
@@ -19,7 +20,7 @@ class GamesListActivity final : public UiListActivity {
  private:
   static constexpr size_t MAX_GAMES = 64;
 
-  int listCount() const override { return static_cast<int>(games.size()); }
+  int listCount() const override { return static_cast<int>(gameCount); }
   const char* headerTitle() const override;
   void onEnter() override;
   void buildScreen(UiScreen& screen) override;
@@ -32,6 +33,8 @@ class GamesListActivity final : public UiListActivity {
   static bool readManifest(const char* dirName, GameCore::ManifestReader& reader, GameCore::Manifest& out);
   void rebuildRows();
 
-  std::vector<GameCore::Manifest> games;
-  std::vector<freeink::ui::ListItem> rows;
+  // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
+  std::unique_ptr<GameCore::Manifest[]> games;
+  std::unique_ptr<freeink::ui::ListItem[]> rows;  // row i shows games[i]
+  size_t gameCount = 0;
 };

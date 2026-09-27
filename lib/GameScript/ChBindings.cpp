@@ -19,9 +19,7 @@ constexpr Color COLOR_VALUES[] = {Color::White, Color::Black};
 constexpr const char* const SIZE_NAMES[] = {"small", "medium", "large", nullptr};
 constexpr TextSize SIZE_VALUES[] = {TextSize::Small, TextSize::Medium, TextSize::Large};
 
-int outsideDraw(lua_State* L, const char* function) {
-  return luaL_error(L, "ch.gfx.%s called outside draw", function);
-}
+int outsideDraw(lua_State* L, const char* function) { return luaL_error(L, "ch.gfx.%s called outside draw", function); }
 
 int frameFull(lua_State* L) {
   return luaL_error(L, "frame is full (at most %d drawing calls or %d bytes)", static_cast<int>(MAX_COMMANDS),

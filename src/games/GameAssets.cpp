@@ -15,7 +15,8 @@ constexpr size_t PATH_BUFFER = 96;
 
 // Writes the module name of `fileName` ("main" for "main.lua") when it matches
 // [a-z0-9_]{1,32}.lua; false otherwise.
-bool moduleNameOf(const char* fileName, const size_t length, char (&module)[GameScript::SourceSpan::MAX_NAME_BYTES + 1]) {
+bool moduleNameOf(const char* fileName, const size_t length,
+                  char (&module)[GameScript::SourceSpan::MAX_NAME_BYTES + 1]) {
   constexpr size_t EXT = 4;  // ".lua"
   if (length <= EXT || length - EXT > GameScript::SourceSpan::MAX_NAME_BYTES) return false;
   if (std::strcmp(fileName + length - EXT, ".lua") != 0) return false;

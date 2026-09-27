@@ -137,7 +137,9 @@ void LuaGame::loadEntry(lua_State* L) {
     luaL_error(L, "main.lua not found");
     return;
   }
-  // Text mode only: a precompiled chunk is refused here.
+  // main.lua loads in text mode, so a precompiled main.lua is refused. The base
+  // library's load() is still open until the sandbox strips it (entry 7), so a
+  // script can still reach binary chunks through it.
   if (luaL_loadbufferx(L, sources.textOf(*main), main->length, "@main.lua", "t") != LUA_OK) lua_error(L);
   lua_call(L, 0, 1);
   if (!lua_istable(L, -1)) luaL_error(L, "main.lua must return a table, not a %s", luaL_typename(L, -1));

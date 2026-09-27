@@ -1,6 +1,5 @@
 #pragma once
 
-#include <LuaGame.h>
 #include <Manifest.h>
 
 #include <atomic>
@@ -10,9 +9,8 @@
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 #include "games/FrameReplay.h"
+#include "games/GameVM.h"
 #include "games/GameViewport.h"
-
-class GameVM;
 
 // One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers. The canvas is drawn by FrameReplay and fed by taps
@@ -41,5 +39,5 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   std::unique_ptr<GameVM> vm;
   std::atomic<State> state{State::Starting};  // written by the loop task, read by render
   uint32_t shownFrame = 0;
-  char errorDetail[GameScript::LuaGame::ERROR_CAPACITY] = {};
+  char errorDetail[GameVM::ERROR_CAPACITY] = {};
 };

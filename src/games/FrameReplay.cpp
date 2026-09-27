@@ -2,6 +2,7 @@
 
 #include "FrameReplay.h"
 
+#include <CanvasClip.h>
 #include <DisplayList.h>
 #include <GfxRenderer.h>
 
@@ -33,14 +34,26 @@ void FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
       case GameScript::Op::Clear:
         renderer.fillRect(ox, oy, viewport.width(), viewport.height(), inked(command.color));
         break;
-      case GameScript::Op::Rect:
-        if (command.w <= 0 || command.h <= 0) break;
+      case GameScript::Op::Rect: {
+        // Clip to the canvas before drawing, so an off-canvas rect costs nothing and
+        // a huge one costs at most the canvas (the render task holds RenderLock and
+        // the frame mutex here).
+        const GameScript::CanvasRect rect{command.x, command.y, command.w, command.h};
+        const bool ink = inked(command.color);
         if (command.filled) {
-          renderer.fillRect(ox + command.x, oy + command.y, command.w, command.h, inked(command.color));
+          GameScript::CanvasRect visible;
+          if (GameScript::clipToCanvas(rect, viewport.width(), viewport.height(), visible)) {
+            renderer.fillRect(ox + visible.x, oy + visible.y, visible.w, visible.h, ink);
+          }
         } else {
-          renderer.drawRect(ox + command.x, oy + command.y, command.w, command.h, inked(command.color));
+          GameScript::CanvasRect edges[4];
+          const int count = GameScript::outlineEdges(rect, viewport.width(), viewport.height(), edges);
+          for (int i = 0; i < count; ++i) {
+            renderer.fillRect(ox + edges[i].x, oy + edges[i].y, edges[i].w, edges[i].h, ink);
+          }
         }
         break;
+      }
       case GameScript::Op::Text:
         // Every size draws in one UI font until the size-to-font map arrives.
         renderer.drawText(UI_12_FONT_ID, ox + command.x, oy + command.y, command.text, inked(command.color));

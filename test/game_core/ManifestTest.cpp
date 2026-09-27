@@ -88,6 +88,24 @@ TEST(ManifestTest, IgnoresUnknownStringsLongerThanTheParserBuffer) {
   EXPECT_NE(parse(withExtra(R"("icon": ")" + longText + R"(")")), ManifestError::None);  // a known key still fails
 }
 
+TEST(ManifestTest, IgnoresUnknownKeysLongerThanTheParserBuffer) {
+  // The JSON parser drops a key over 511 bytes, so its value arrives with no key.
+  const std::string longKey(600, 'k');
+  EXPECT_EQ(parse(withExtra("\"" + longKey + R"(": "v", "x": 1)")), ManifestError::None);
+  EXPECT_EQ(parse(withExtra("\"" + longKey + R"(": 5)")), ManifestError::None);
+  EXPECT_EQ(parse(withExtra("\"" + longKey + R"(": {"a": [1, 2]})")), ManifestError::None);
+  EXPECT_EQ(parse(withExtra("\"" + longKey + R"(": null, "hidden": true)")), ManifestError::None);
+  Manifest m;
+  ASSERT_EQ(parse(R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, ")" + longKey +
+                      R"(": 3, "max": 2}, "modes": ["solo"]})",
+                  m),
+            ManifestError::None);
+  EXPECT_EQ(m.seatsMax, 2);
+  EXPECT_EQ(parse(R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, ")" + longKey +
+                  R"(": {"q": 1}}, "modes": ["solo"]})"),
+            ManifestError::BadSeats);  // still needs max
+}
+
 TEST(ManifestTest, ReadsInChunks) {
   auto reader = std::make_unique<ManifestReader>();
   const std::string json = FULL;
@@ -106,8 +124,9 @@ TEST(ManifestTest, ReadsInChunks) {
 
 TEST(ManifestTest, RejectsBadIds) {
   for (const char* id : {"", "-abc", "Abc", "a_b", "a.b", "a b", "abcdefghijklmnopqrstuvwxyz0123456"}) {
-    const std::string json = R"({"id": ")" + std::string(id) +
-                             R"(", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"]})";
+    const std::string json =
+        R"({"id": ")" + std::string(id) +
+        R"(", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"]})";
     EXPECT_EQ(parse(json), ManifestError::BadId) << id;
   }
   const std::string ok = R"({"id": "0abcdefghijklmnopqrstuvwxyz-123", "name": "G", "version": "", "api": 1,)"
@@ -197,8 +216,8 @@ TEST(ManifestTest, RejectsMalformedJson) {
   EXPECT_EQ(parse("\"id\""), ManifestError::Syntax);
   EXPECT_EQ(parse("42"), ManifestError::Syntax);
   EXPECT_EQ(parse(ok.substr(0, ok.size() - 1)), ManifestError::Syntax);  // truncated
-  EXPECT_EQ(parse(ok + "{}"), ManifestError::Syntax);                   // a second value
-  EXPECT_EQ(parse(R"({"id" "g"})"), ManifestError::Syntax);             // key without a value
+  EXPECT_EQ(parse(ok + "{}"), ManifestError::Syntax);                    // a second value
+  EXPECT_EQ(parse(R"({"id" "g"})"), ManifestError::Syntax);              // key without a value
   EXPECT_EQ(parse(R"({"id": })"), ManifestError::Syntax);
   EXPECT_EQ(parse(R"({"extra": [1})"), ManifestError::Syntax);  // mismatched brackets
   EXPECT_EQ(parse(R"({"hidden": tru})"), ManifestError::Syntax);

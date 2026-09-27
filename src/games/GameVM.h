@@ -16,6 +16,10 @@
 #include "GameAssets.h"
 #include "GameRandom.h"
 
+class FrameReplay;
+class GameViewport;
+class GfxRenderer;
+
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
 // the frame buffers, the input queue, and the LuaGame. The task alone calls into
 // Lua; it never takes RenderLock, calls ActivityManager, or touches Storage. The
@@ -26,6 +30,8 @@ class GameVM {
   static constexpr uint32_t TASK_STACK_BYTES = 16 * 1024;
   static constexpr int TASK_PRIORITY = 1;
   static constexpr int TASK_CORE = 1;
+  // Size of errorMessage()'s buffer, for callers that copy it.
+  static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
   // Takes the loaded sources and allocates the arena and both frame buffers in
   // PSRAM. Null (logged) when memory runs out.
@@ -37,9 +43,13 @@ class GameVM {
   // Starts the task, which runs setup and the first draw. False (logged) when the
   // task cannot be created.
   bool start();
-  // Queues an input event for the task; a full queue drops its oldest event.
-  void postInput(const GameScript::InputEvent& event);
-  GameScript::FrameBuffers& frames() { return frameBuffers; }
+  // Queues a tap at canvas (x, y) for input(); a full queue drops its oldest event.
+  void postTap(int16_t x, int16_t y);
+  // Frames published so far (0 before the first draw returns). Any task.
+  uint32_t frameGen() const { return frameBuffers.frameGen(); }
+  // Draws the front frame with `replay` under the frame mutex; false (nothing
+  // drawn) before the first frame. Render task only.
+  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, const FrameReplay& replay);
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
@@ -55,6 +65,7 @@ class GameVM {
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage);
   static void taskEntry(void* param);
   void run();
+  void postInput(const GameScript::InputEvent& event);
   // Notifies the task only while it is alive: it deletes itself when it ends, and
   // a notification to a deleted task would touch freed memory.
   void notifyTask();
@@ -67,8 +78,8 @@ class GameVM {
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
   TaskHandle_t task = nullptr;
-  std::mutex taskMutex;     // guards taskAlive against the task's exit
-  bool taskAlive = false;   // true from start() until run() is about to end
+  std::mutex taskMutex;    // guards taskAlive against the task's exit
+  bool taskAlive = false;  // true from start() until run() is about to end
   std::atomic<bool> quitRequested{false};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};

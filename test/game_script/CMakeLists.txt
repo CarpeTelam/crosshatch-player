@@ -44,6 +44,7 @@ add_executable(GameScriptTest
   GameScriptTest.cpp
   LuaOnHostTest.cpp
   ArenaAllocatorTest.cpp
+  CanvasClipTest.cpp
   DisplayListTest.cpp
   LuaGameTest.cpp
   ${GAME_SCRIPT_SOURCES}

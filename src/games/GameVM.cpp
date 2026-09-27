@@ -8,6 +8,8 @@
 #include <new>
 #include <utility>
 
+#include "FrameReplay.h"
+
 namespace {
 
 constexpr uint32_t STOP_POLL_MS = 5;
@@ -86,6 +88,16 @@ void GameVM::run() {
     taskAlive = false;
   }
   done.store(true, std::memory_order_release);
+}
+
+void GameVM::postTap(const int16_t x, const int16_t y) {
+  postInput(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
+}
+
+bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, const FrameReplay& replay) {
+  if (frameBuffers.frameGen() == 0) return false;
+  frameBuffers.readFront([&](const GameScript::DisplayList& frame) { replay.draw(renderer, viewport, frame); });
+  return true;
 }
 
 void GameVM::postInput(const GameScript::InputEvent& event) {

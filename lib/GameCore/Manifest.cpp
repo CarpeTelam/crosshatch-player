@@ -148,20 +148,18 @@ bool ManifestReader::acceptEvent() {
   return true;
 }
 
+// The JSON parser drops a key longer than its token buffer without a callback, so
+// its value arrives with no key pending. Only such a key can cause that (a string
+// the parser reads where a key belongs is always reported as a key), and every
+// known key is far shorter, so the value belongs to an unknown key and is ignored.
 bool ManifestReader::takeTopLevelKey() {
-  if (!keyPending) {
-    fail(ManifestError::Syntax);
-    return false;
-  }
+  if (!keyPending) key = Key::Unknown;
   keyPending = false;
   return true;
 }
 
 bool ManifestReader::takeSeatKey() {
-  if (!seatKeyPending) {
-    fail(ManifestError::Syntax);
-    return false;
-  }
+  if (!seatKeyPending) seatKey = SeatKey::Unknown;
   seatKeyPending = false;
   return true;
 }

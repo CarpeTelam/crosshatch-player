@@ -83,7 +83,8 @@ class ManifestReader {
   void fail(ManifestError error);
   // False (and fails the parse) for an event outside the root object.
   bool acceptEvent();
-  // Consume the pending top-level or seats key for a value; false when none is pending.
+  // Consume the pending top-level or seats key for a value; with none pending (a key
+  // the JSON parser dropped for length) the value is taken as an unknown key's.
   bool takeTopLevelKey();
   bool takeSeatKey();
   // A boolean or null below the top level.

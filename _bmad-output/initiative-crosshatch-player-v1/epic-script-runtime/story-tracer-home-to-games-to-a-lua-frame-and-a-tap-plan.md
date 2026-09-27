@@ -121,3 +121,10 @@ context:
 - Simulator x4pro, screenshots in [story-tracer-screenshots/](story-tracer-screenshots/): `home.png` (Games row), `games-list.png`, `match-frame.png`, `match-tap.png` and `match-tap2.png` (counter 1 and 2, square at each tap), `match-tap-recheck.png` (after the review patches), `error-view.png` (scratch game erroring in `draw`), `games-empty.png`; a scratch `mismatch` folder was skipped with a log line; Back, the header back arrow on the error view, and `key sleep` during play each stopped the VM within one poll and reached their screens.
 - Simulator sticky (no `BOARD_HAS_PSRAM`): `sticky-oom.png`, "out of memory" error view, Back to Games.
 - X4 Pro device: pending the owner's device run.
+
+**Verification record, review fixes** (2026-09-27, on top of 97dcf52f):
+- Host: `ctest` 424/424 passed (GameCoreTest 26, GameScriptTest 27, including `CanvasClipTest` and the long-key manifest case).
+- `pio run -e x4pro` and `-e default` SUCCESS; `sim.sh build x4pro` SUCCESS.
+- `pio check` (default, as CI) and `pio check -e x4pro`: no defects.
+- `check_upstream_touches.py`: PASS.
+- Simulator x4pro: Home → Games → Tracer → tap draws the counter at 1 and the square (`story-tracer-screenshots/fix-match-tap.png`); a scratch game drawing 2,047 `rect(-32768, -32768, 32767, 32767, "black", false)` per frame rendered in 0 ms and Back stopped its VM cleanly.
