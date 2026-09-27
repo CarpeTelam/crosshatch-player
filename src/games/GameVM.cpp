@@ -74,8 +74,8 @@ void GameVM::run() {
   const auto stackFloor = reinterpret_cast<uintptr_t>(pxTaskGetStackStart(nullptr));
 #endif
   game.setStackFloor(stackFloor);
-  // The Session comes from the arena before the Lua state (LuaGame::load takes the
-  // codec scratch next), so Lua can never starve either.
+  // The Session and (in LuaGame::load) the codec scratch come from the arena's
+  // reserve, which Lua's region never touches, so Lua can never starve either.
   GameScript::ArenaAllocator& heap = arena.allocator();
   GameCore::Session* session = heap.create<GameCore::Session>(GameCore::Roster::solo(), game);
   Outcome outcome = Outcome::ScriptError;

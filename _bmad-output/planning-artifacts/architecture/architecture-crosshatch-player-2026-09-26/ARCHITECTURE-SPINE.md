@@ -124,6 +124,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - `math.random` is seeded from `IRandom` (backed by `esp_random()`) when the VM is created.
   - Bindings are C-style functions. No binding holds an RAII object across a call into Lua, and no binding opens files.
   - **Amended 2026-09-27 (owner):** `setmetatable` refuses a metatable with a `__gc` field, because finalizers run with hooks off and escape the budget and the stack check; `table.move`, `table.insert`, and `table.remove` refuse element counts past a sandbox limit; until `print` maps to `ch.log` it is a no-op, never a stdout write. A binding that takes a lock marks itself so an abandon never deletes the task while it holds one.
+  - **Amended 2026-09-27 (owner):** the 256 KB is Lua's cap, counted in the bytes Lua requests, not the arena's size. Lua gets its own PSRAM region sized as the cap plus a block-header and fragmentation margin (448 KiB), so the cap always binds first on the host and the device alike; beside it a separate reserve (16 KiB) holds the Session and codec scratch, which Lua can never touch. Both regions are slices of one PSRAM block, freed in one call.
 
 ### AD-7: Drawing is a display list; FrameReplay owns refresh [ADOPTED]
 

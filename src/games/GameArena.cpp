@@ -11,7 +11,7 @@ bool GameArena::allocate() {
     arena.reset(nullptr, 0);
     return false;
   }
-  arena.reset(block.get(), GameScript::ARENA_BYTES);
+  arena.split(block.get(), GameScript::LUA_REGION_BYTES, GameScript::SCRATCH_RESERVE_BYTES);
   return true;
 }
 

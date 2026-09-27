@@ -20,7 +20,7 @@ namespace GameScript {
 
 static_assert(Codec::SNAPSHOT_LIMIT == GameCore::SNAPSHOT_BYTES, "the codec and the Session share the state limit");
 static_assert(Codec::MOVE_LIMIT == GameCore::MOVE_BYTES, "the codec and the Session share the move limit");
-// The reserve holds the Session and the scratch, both allocated before the Lua state.
+// The reserve holds the Session and the scratch; luaAlloc never touches it.
 static_assert(ArenaAllocator::blockBytes(LuaGame::SCRATCH_BYTES) +
                       ArenaAllocator::blockBytes(sizeof(GameCore::Session)) <=
                   SCRATCH_RESERVE_BYTES,
@@ -143,7 +143,7 @@ Outcome LuaGame::cancelled() {
 Outcome LuaGame::load() {
   close();
   error[0] = '\0';
-  // First, so the Lua heap can never take it.
+  // From the reserve, which the Lua heap can never take.
   scratch = arena.allocate(SCRATCH_BYTES);
   if (!scratch) return fail("not enough memory");
   L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, random.next32());

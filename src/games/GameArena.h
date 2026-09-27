@@ -4,7 +4,8 @@
 #include <HalMemory.h>
 
 // The arena backend (AD-6): one ARENA_BYTES block of PSRAM under the in-tree
-// allocator. Freeing the block frees the whole VM heap in one call.
+// allocator, split into Lua's region and the reserve for the Session and codec
+// scratch. Freeing the block frees the whole VM heap in one call.
 class GameArena {
  public:
   // False (logged) when PSRAM is missing or full.

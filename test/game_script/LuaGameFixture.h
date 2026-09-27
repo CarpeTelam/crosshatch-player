@@ -83,7 +83,7 @@ class LuaGameTest : public ::testing::Test {
         front(GameScript::MAX_BYTES),
         back(GameScript::MAX_BYTES),
         frames(front.data(), back.data(), GameScript::MAX_BYTES) {
-    arena.reset(arenaBlock.data(), arenaBlock.size());
+    arena.split(arenaBlock.data(), GameScript::LUA_REGION_BYTES, GameScript::SCRATCH_RESERVE_BYTES);
   }
 
   void useSources(const std::vector<Module>& modules) {

@@ -1,11 +1,15 @@
+#include <Session.h>
 #include <gtest/gtest.h>
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <lua.hpp>
 #include <vector>
 
 #include "ArenaAllocator.h"
+#include "LuaGame.h"
 
 using GameScript::ArenaAllocator;
 
@@ -186,6 +190,124 @@ TEST(ArenaAllocatorEdgeTest, UnalignedAndTinyBlocks) {
   arena.reset(block.data(), 8);
   EXPECT_EQ(arena.capacity(), 0u);
   EXPECT_EQ(arena.allocate(1), nullptr);
+}
+
+TEST(ArenaAllocatorRegionTest, SplitKeepsLuaAndTheReserveApart) {
+  std::vector<uint8_t> block(24 * 1024);
+  ArenaAllocator arena;
+  arena.split(block.data(), 16 * 1024, 8 * 1024);
+  const uint8_t* reserveStart = block.data() + 16 * 1024;
+  EXPECT_EQ(arena.luaRegionCapacity(), 16u * 1024);
+  EXPECT_EQ(arena.reserveCapacity(), 8u * 1024);
+  EXPECT_EQ(arena.capacity(), 24u * 1024);
+  auto* runtime = static_cast<uint8_t*>(arena.allocate(1000));
+  ASSERT_NE(runtime, nullptr);
+  EXPECT_GE(runtime, reserveStart);
+  // Lua takes its whole region, and only its region.
+  std::vector<void*> lua;
+  while (void* p = ArenaAllocator::luaAlloc(&arena, nullptr, 5, 500)) {
+    EXPECT_LT(static_cast<uint8_t*>(p), reserveStart);
+    lua.push_back(p);
+  }
+  EXPECT_GT(lua.size(), 20u);
+  EXPECT_EQ(arena.luaRegionRefusals(), 1u);
+  EXPECT_EQ(arena.luaCapRefusals(), 0u);
+  EXPECT_NE(arena.allocate(4000), nullptr);  // the reserve still has room
+  EXPECT_EQ(arena.bytesInUse(), arena.luaRegionInUse() + arena.reserveInUse());
+  for (void* p : lua) ArenaAllocator::luaAlloc(&arena, p, 500, 0);
+  EXPECT_EQ(arena.luaRegionInUse(), 0u);
+  EXPECT_EQ(arena.luaBytes(), 0u);
+  // reset() goes back to one region that both share.
+  arena.reset(block.data(), block.size());
+  EXPECT_EQ(arena.luaRegionCapacity(), arena.reserveCapacity());
+  EXPECT_EQ(arena.luaRegionRefusals(), 0u);
+  void* p = ArenaAllocator::luaAlloc(&arena, nullptr, 5, 64);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(arena.reserveInUse(), arena.luaRegionInUse());
+  ArenaAllocator::luaAlloc(&arena, p, 64, 0);
+}
+
+// Runs `chunk` in a Lua state over `arena` with the libraries a heap bomb needs;
+// returns its status (LUA_ERRMEM when the heap ran out) and the Lua bytes held then.
+struct LuaRun {
+  int status;
+  size_t luaBytes;
+};
+LuaRun runLua(ArenaAllocator& arena, const char* chunk) {
+  lua_State* L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, 1);
+  EXPECT_NE(L, nullptr);
+  if (!L) return {LUA_ERRMEM, 0};
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1);
+  luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
+  lua_settop(L, 0);
+  int status = luaL_loadstring(L, chunk);
+  if (status == LUA_OK) status = lua_pcall(L, 0, 0, 0);
+  const LuaRun run{status, arena.luaBytes()};
+  lua_close(L);
+  return run;
+}
+
+// The heaps that cost the region the most per Lua byte: the heap fault fixture's
+// strings, closures with an upvalue each, a mixed heap, and a hash of string keys.
+constexpr const char* HEAP_BOMBS[] = {
+    "local t = {} for i = 1, 1e7 do t[i] = string.rep('x', 64) .. i end",
+    "local t = {} for i = 1, 1e7 do t[i] = function() return i end end",
+    "local t = {} for i = 1, 1e7 do t[i] = {i, 'n' .. i, function() return i end} end",
+    "local t = {} for i = 1, 1e7 do t['k' .. i] = true end",
+};
+
+// Lua's region is sized so the count cap binds first whatever the header size:
+// with 16 B headers (this host) and 8 B (the device's, modelled by 8 B alignment),
+// every bomb ends on the cap, never on the region, at the same Lua byte count.
+TEST(ArenaAllocatorRegionTest, AHeapBombEndsOnTheCapWithEitherHeaderSize) {
+  static_assert(GameScript::arenaHeaderBytes(16) == 16 && GameScript::arenaHeaderBytes(8) == 8);
+  std::vector<uint8_t> block(GameScript::ARENA_BYTES);
+  for (const char* bomb : HEAP_BOMBS) {
+    size_t usable[2] = {};
+    int index = 0;
+    for (const size_t align : {size_t{16}, size_t{8}}) {
+      ArenaAllocator arena(align);
+      arena.split(block.data(), GameScript::LUA_REGION_BYTES, GameScript::SCRATCH_RESERVE_BYTES);
+      const LuaRun run = runLua(arena, bomb);
+      EXPECT_EQ(run.status, LUA_ERRMEM) << bomb;
+      EXPECT_GT(arena.luaCapRefusals(), 0u) << align << " B alignment: " << bomb;
+      EXPECT_EQ(arena.luaRegionRefusals(), 0u) << align << " B alignment: " << bomb;
+      EXPECT_LT(arena.peakBytes(), arena.luaRegionCapacity()) << align << " B alignment: " << bomb;
+      EXPECT_EQ(arena.luaRegionInUse(), 0u);
+      usable[index++] = run.luaBytes;
+    }
+    EXPECT_EQ(usable[0], usable[1]) << bomb;
+    EXPECT_GT(usable[0], GameScript::LUA_HEAP_BYTES * 3 / 4) << bomb;
+  }
+}
+
+// The Session and codec scratch sit in the reserve, so a Lua heap that runs out of
+// its own region (here one smaller than the cap) never touches them.
+TEST(ArenaAllocatorRegionTest, TheReserveStaysIntactWhenLuaExhaustsItsRegion) {
+  constexpr size_t LUA_REGION = 64 * 1024;
+  constexpr size_t SESSION = sizeof(GameCore::Session);
+  constexpr size_t SCRATCH = GameScript::LuaGame::SCRATCH_BYTES;
+  std::vector<uint8_t> block(LUA_REGION + GameScript::SCRATCH_RESERVE_BYTES);
+  ArenaAllocator arena;
+  arena.split(block.data(), LUA_REGION, GameScript::SCRATCH_RESERVE_BYTES);
+  auto* session = static_cast<uint8_t*>(arena.allocate(SESSION));
+  auto* scratch = static_cast<uint8_t*>(arena.allocate(SCRATCH));
+  ASSERT_NE(session, nullptr);
+  ASSERT_NE(scratch, nullptr);
+  std::memset(session, 0x5A, SESSION);
+  std::memset(scratch, 0xC3, SCRATCH);
+  const size_t reserved = arena.reserveInUse();
+  EXPECT_EQ(runLua(arena, HEAP_BOMBS[0]).status, LUA_ERRMEM);
+  EXPECT_GT(arena.luaRegionRefusals(), 0u);
+  EXPECT_EQ(arena.luaCapRefusals(), 0u);
+  EXPECT_EQ(arena.luaRegionInUse(), 0u);  // lua_close returned every block
+  EXPECT_EQ(arena.reserveInUse(), reserved);
+  EXPECT_EQ(std::vector<uint8_t>(session, session + SESSION), std::vector<uint8_t>(SESSION, 0x5A));
+  EXPECT_EQ(std::vector<uint8_t>(scratch, scratch + SCRATCH), std::vector<uint8_t>(SCRATCH, 0xC3));
+  arena.release(scratch);
+  arena.release(session);
+  EXPECT_EQ(arena.reserveInUse(), 0u);
 }
 
 }  // namespace
