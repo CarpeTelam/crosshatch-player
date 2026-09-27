@@ -74,9 +74,12 @@ Coordinates are window pixels, which equal the firmware's logical pixels
 
 | Screen | Target | X,Y |
 |---|---|---|
-| Home | Browse Files / Library / File Transfer / Settings | 240,345 / 240,418 / 240,490 / 240,562 |
+| Home | Browse Files / Library / File Transfer / Games / Settings | 240,345 / 240,418 / 240,490 / 240,562 / 240,634 |
 | List screens | first row; header back arrow | 240,138; 25,63 |
 | File Transfer | Join / Calibre / Create Hotspot | 240,145 / 240,220 / 240,285 |
+
+Games lists `fs_/.games/<id>/` folders whose `manifest.json` parses and names the
+same id. To try one, copy a fixture: `cp -r test/game_script/fixtures/tracer fs_/.games/`.
 
 ## Run: scripted (deterministic, one-shot)
 

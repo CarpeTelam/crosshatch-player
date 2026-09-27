@@ -37,16 +37,28 @@ target_include_directories(lua_vendored PUBLIC ${LUA_DIR}/src)
 target_compile_definitions(lua_vendored PRIVATE ${LUA_DEFINES})
 target_compile_options(lua_vendored PRIVATE -Wall -Wextra)
 
+# Every GameScript source, so a new file there is built and linked by the host suite.
+file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cpp)
+
 add_executable(GameScriptTest
   GameScriptTest.cpp
   LuaOnHostTest.cpp
-  ${REPO_ROOT}/lib/GameScript/GameScript.cpp
+  ArenaAllocatorTest.cpp
+  DisplayListTest.cpp
+  LuaGameTest.cpp
+  ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
 )
 
 target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameScript
+  ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/GameIcons
+)
+
+# Fixture games stay under test/, never games/ (the release packs games/).
+target_compile_definitions(GameScriptTest PRIVATE
+  GAME_SCRIPT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 
 target_link_libraries(GameScriptTest PRIVATE

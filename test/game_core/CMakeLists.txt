@@ -1,13 +1,16 @@
 add_executable(GameCoreTest
   GameCoreTest.cpp
   ForkReleaseTest.cpp
+  ManifestTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameCore.cpp
+  ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
 )
 
 target_include_directories(GameCoreTest PRIVATE
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/lib/Memory
 )
 
 # Read at run time so the suite and the release workflow share one vector file.

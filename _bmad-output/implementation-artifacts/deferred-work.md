@@ -43,3 +43,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-fork-script-helper-and-one-test-step-plan.md`
   summary: No test asserts that `fork_release.py notes` writes its `## Fork release <tag>` section to the job summary.
   evidence: `PublishTest` in `scripts/fork_release_test.py` covers `render_notes` and the unchecked-firmware error but never sets `GITHUB_STEP_SUMMARY` for `notes`; dropping the `write_step_summary` call would pass every test. Pre-existing; `fork_common_test.py` covers the helper itself.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-tracer-home-to-games-to-a-lua-frame-and-a-tap-plan.md`
+  summary: GameVM, GameAssets, GamesListActivity, and GameMatchActivity have no automated test; the task lifecycle (input then draw, quit and join, notify after exit), the dir/id filter, and the error and out-of-memory paths are checked only by simulator runs.
+  evidence: src/games needs FreeRTOS and Storage, which no host suite provides; entry 2.1's plan records the simulator runs. A host harness over the simulator's FreeRTOS shim, or a scripted simulator run in CI, would pin them (candidate for the refactor sweep, entry 15).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-tracer-home-to-games-to-a-lua-frame-and-a-tap-plan.md`
+  summary: The tracer's minimal error screen shows English detail strings from GameAssets and GameMatchActivity ("out of memory", "game folder missing") and does not wrap a long Lua message.
+  evidence: GameMatchActivity::renderError draws errorDetail on one line with drawText; entry 13's AD-14 error view replaces it and should map load failures to tr() text and wrap the message.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-tracer-home-to-games-to-a-lua-frame-and-a-tap-plan.md`
+  summary: The skeleton libraryName() functions in lib/GameCore/GameCore.* and lib/GameScript/GameScript.* (and their tests) can go now that both libraries have real sources.
+  evidence: Their comments say they exist only until the library has other source files; GamesBuildAnchor.cpp would then include a real header from each library (refactor sweep, entry 15).
