@@ -43,15 +43,157 @@ Baselines form one linear chain (each plan's baseline is the previous ticket's c
 | Deferred work | 3 entries (from 1.1, 1.2, 1.6) | `_bmad-output/implementation-artifacts/deferred-work.md` |
 | Commit and diff evidence | present, from `git_evidence.py` per range; 13 commits (2 merges, both measured); 109 files in total, 63 of them vendored `lib/lua/src` | ranges above |
 | CI results | present; PR #9 and PR #10 check runs | GitHub Actions |
-| Fork release runs | run 1 (dispatch, `Build and check` success, `Tag and publish` skipped, so a dry run); run 2 **in progress** during this retro | Actions runs 36281463154, 36282530704 |
-| Releases and tags on the fork | **none** at the time of this retro | GitHub releases and tags API |
+| Fork release runs | run 1 (dispatch, `Build and check` success, `Tag and publish` skipped, so a dry run); run 2 (publish) success, 2026-09-27T00:39Z | Actions runs 36281463154, 36282530704 |
+| Releases and tags on the fork | `1.6.5-ch.1`, published by run 2 from `d578b4e3` (no release or tag existed when this retro started) | [release 1.6.5-ch.1](https://github.com/CarpeTelam/crosshatch-player/releases/tag/1.6.5-ch.1) |
+| Tag ruleset, branch protection | not readable from this session. **The owner confirmed on 2026-09-27** that the `*-ch.*` tag ruleset exists and branch protection on `develop` requires `Crosshatch Test Status` | owner, in this retro |
+| Device OTA check | **in progress.** The owner installed `1.6.5-ch.1` on an X4 Pro and is waiting on `1.6.5-ch.2` (Fork release run 3, started 00:44Z from `d578b4e3`) to check that the update is offered, installs, and is not offered again | owner, in this retro; Actions run 36283383681 |
 | Upstream release workflows | `release.yml`, `release_candidate.yml`, `release-fonts.yml` are `disabled_manually` (since 2026-09-25) | Actions workflows API |
 | Session logs | **not available** to this run. Commits name build session `session_01NpVfiShhiDk6wbQVKMqy8y`, but no transcript was read, so process lessons below rest on plans, commits, and CI only | commit trailers |
 | Previous retrospective | none: this is the first epic in the `epics` order | `tickets.py status` |
 
 ## Findings
 
-_Pending: Phase 2._
+Each finding carries its source and two dispositions: **instance** (fix now / defer / accept) and **prevention** (the upstream lesson). Sources: `story-*-plan.md` means the plans in this folder; `cut`, `cfb`, and `fr` mean `scripts/check_upstream_touches.py`, `scripts/check_flash_budget.py`, and `scripts/fork_release.py`. Line numbers are at `d578b4e3`.
+
+### Process and cross-ticket boundaries
+
+**P1. All seven tickets shipped in one PR, so no per-ticket PR verification ran.** Medium.
+- Evidence:
+  - 1.1's verify begins "On its PR, CI builds all five envs…" (`tickets.toml`, entry 1).
+  - 1.2's verify says "the workflow passes on its own PR"; 1.3's says "The job passes on its own PR".
+  - The epic Notes say "land entry 2 first so later PRs show the ledger job passing".
+  - The history is one branch: `a5681eb4`…`8e1bc5a4` merged as PR #9 (`4154fb29`), then PR #10.
+- Effect: each gate first ran in CI with every ticket's code already stacked on top. Every "on its PR" check was replaced by a local run.
+- Instance: **accept** (it is history).
+- Prevention: either phrase `verify` for local evidence, or have the build loop open and merge one PR per ticket when a ticket's verify names CI.
+
+**P2. PR #9 merged while `x4pro flash budget` was failing, with no review.** Medium.
+- Evidence:
+  - Check run 108504587384 failed at 23:09:21Z with exit 2, "missing games-on image .pio/build/x4pro/firmware.bin".
+  - PR #9 merged at 23:13:24Z, and `get_reviews` returns none.
+  - The gate was not yet a required check. Making it required was 1.3's hitl step.
+- Now: fixed by PR #10 (`f3ba9e54`), whose check runs are all green. The owner confirms `Crosshatch Test Status` is required, and it rolls up both fork gates (`20994d6a`, `.github/workflows/crosshatch-ci.yml`).
+- Instance: **accept** (resolved).
+- Prevention: a gate ticket's hitl "make it required" step must be done before the PR that carries code the gate measures merges. More generally, never merge an epic PR with a red check that the epic itself introduced.
+
+**P3. The flash gate's failure mode was ruled "unreachable" because only incremental local builds had verified it.** Medium.
+- Evidence:
+  - 1.3's triage row 16 rejected the stale-image risk: "Unreachable: metadata is written only after `pio run` succeeds" (`story-x4pro-flash-budget-gate-plan.md`, Review Triage Log).
+  - On CI's fresh tree, `pio project metadata` emptied the build dir after the build (`f3ba9e54` message).
+  - 1.3's Implementation Notes record only local runs, including an "incremental re-run".
+- The code-lens review suspects the same clean-on-checksum behaviour could touch `fr build`: several `pio run` calls into one `.pio/build`, with images checked only afterwards (`fr:464-474`, `crosshatch-release.yml:139-142`). This is **unverified**. Runs 2 and 3 uploaded both images, so it does not fire today.
+- Instance: **fix now** (small hardening, AI-3).
+- Prevention: before a CI-only gate is declared built, run it from a fresh clone (the plan's Verification should say so).
+
+**P4. 1.6 broke both simulator builds, and nothing caught it until the sweep.** Medium.
+- Evidence:
+  - `src/games/ForkReleaseProbe.cpp` is compiled under `FREEINK_CAP_GAMES`, which `simulator_x4pro` and `simulator_sticky` set. The simulator's `SecureHttpClient` lacks `setUserAgent` and the matching `GET` (`8e1bc5a4` message; `story-refactor-sweep-plan.md`, Implementation Notes).
+  - 1.6's verify listed only the five firmware envs.
+  - No workflow builds a simulator env (code-lens review, verified).
+  - The fix excludes the probe by filename (`.claude/skills/run-crosshatch-player/simulator.ini:16-17`), so the next device-only file under `src/games/` fails the same way.
+- Instance: **fix now** (AI-1). Later epics put UI under `src/activities/games/` that AGENTS.md says to check in the simulator.
+- Prevention: add a simulator build to fork CI, and list the simulator envs in any ticket that adds code under `FREEINK_CAP_GAMES`.
+
+**P5. The release validates tags against the tools commit's vectors while building firmware from `inputs.ref`.** Low; boundary between 1.6 and 1.7.
+- Evidence: `fr:50-51` and `crosshatch-release.yml:53` read `test/game_core/fork_version_vectors.json` from the `tools` checkout. The images come from the `src` checkout of `inputs.ref`.
+- Effect: a rollback release from an older commit, made after the grammar or `MAX_TAG_LEN` changed, is checked with rules its firmware does not use.
+- Instance: **defer**. Nothing has changed the grammar yet, and the fix is to read the vector file from `src` or require the two copies to be identical.
+- Prevention: a check that spans two commits should say which commit each input comes from.
+
+### Verification gaps
+
+**V1. Release env selection and the version-line rewrite are tested only against a fake config.** Low.
+- Evidence: `scripts/fork_release_test.py:139-230` uses `fake_config`, and the per-PR step in `crosshatch-ci.yml:49` has no `pio`. `test_this_repository` (`fork_release_test.py:411-420`) checks only the two known upstream release workflows.
+- Effect: an upstream merge that changes a `*-gh_release` env passes PR CI and fails at release time, unless the owner follows the manual dry-run rule (`docs/crosshatch/upstream-touches.md:41-48`).
+- Instance: **defer**. The dry-run rule covers it.
+- Prevention: none beyond the rule.
+
+**V2. The dry-run rule omits `src/network/HttpDownloader.*`.** Low.
+- Evidence: the probe relies on `HttpDownloader::fetchUrl` turning any non-200 into a failure, and it copies HttpDownloader's transport settings (`src/games/ForkReleaseProbe.cpp:25-27` against `src/network/HttpDownloader.cpp:75-83`). The rule's path list (`docs/crosshatch/upstream-touches.md:41-42`) does not name HttpDownloader.
+- Instance: **fix now** (one doc line, AI-4).
+- Prevention: none.
+
+**V3. The image check cannot prove that the version string *starts* with the tag.** Low.
+- Evidence: `fr:482-484` accepts `<tag>\0` after any byte other than `[0-9A-Za-z.]`, because the linker tail-merges the version into the user-agent string (1.7's Implementation Notes). A version such as `X-1.6.5-ch.2` would pass, and `runningBuildNumber` would read it as 0 (`lib/GameCore/ForkRelease.h:97-104`).
+- Reaching that state needs a second version source that `check_overrides` does not cover. None exists today.
+- Instance: **accept**. It is contrived, and the device check is the backstop.
+- Prevention: none.
+
+**V4. The flash gate has not yet measured Lua.** Informational.
+- Evidence: the games-on minus games-off difference was 0 B at 1.3 and 1.4 (`story-x4pro-flash-budget-gate-plan.md` and `story-vendor-lua-5-5-1-plan.md`, Implementation Notes), because nothing references the libraries and the linker drops them.
+- The engine's real cost first shows in epic-script-runtime.
+- Instance: **accept**.
+- Prevention: that epic's first ticket that references `lua_*` should record the measured difference.
+
+### Aggregate views
+
+**A1. Duplication across the three fork scripts.** Low.
+- Evidence:
+  - `SetupError` and the exit-code contract (0 pass, 1 fail, 2 could not run) are defined three times (`cut:30`, `cfb:50`, `fr:84`), each with its own handler (`cut:188-192`, `cfb:193-200`, `fr:730-741`).
+  - There are two incompatible git helpers: `cut:34-44` returns bytes and raises; `fr:161-165` returns text and does not raise.
+  - The games-flag literal appears twice (`cfb:41`, `fr:55`), as do the `pio run` loops (`cfb:69-78`, `fr:464-474`) and the step-summary writers.
+  - The asset-name buffer size is mirrored with no cross-check: `fr:62`, `ASSET_NAME_BUFFER = 48`, against the upstream `OtaUpdater.cpp:56`, `char assetName[48]`.
+- Instance: **defer, with a trigger.** epic-install-and-launcher adds `scripts/pack_game.py`, `game_codec.py`, and `gen_game_icons.py` (the ledger's Game paths), so extract a small fork-only helper module before those land (AI-5).
+- Prevention: the build skill should look for an existing fork helper before writing a new script.
+
+**A2. The toolchain setup is copied into two more workflows.** Low.
+- Evidence: the PlatformIO Core install went from 4 copies to 6 (`crosshatch-ci.yml:87-96`, `crosshatch-release.yml:97-106`). The `pioarduino==6.1.19` penv pin went from 2 copies to 4 (`crosshatch-ci.yml:114`, `crosshatch-release.yml:136`).
+- 1.3's triage row 6 rejected a composite action as new shared surface.
+- Instance: **accept**. Upstream's `ci.yml` stays untouched by policy.
+- Prevention: if the pin changes, all four copies must change. A fork-only composite action would keep the two fork copies in step (AI-5, optional).
+
+**A3. Size growth: `fork_release.py` is 745 lines, but it is one pipeline, not a grab-bag.** Informational.
+- Evidence: 39 top-level definitions in 7 sections, making up eight subcommands that pass one `plan.json` between them. The separable parts are a hand-rolled YAML `on:` parser (`fr:208-248`) and pack-games (`fr:532-613`).
+- No other non-vendored file the epic touched grew past about 500 lines.
+- Instance: **accept**.
+
+**A4. Pattern divergence: the fork scripts set their own conventions.** Low.
+- Evidence: sidecar `scripts/<name>_test.py` unittest files (no script in `scripts/` had one before), the 0/1/2 exit contract (upstream scripts use `sys.exit(1)`, e.g. `scripts/firmware_size_history.py:57`), and single quotes.
+- The new C++ tests follow the repo layout (`test/game_core/ForkReleaseTest.cpp`).
+- Instance: **accept**, and record them as the fork's script conventions so the next scripts copy one pattern (AI-5).
+
+**A5. Architecture delta: the update path has a component the spine does not name.** Low; spec reconciliation.
+- Evidence:
+  - AD-25 says `OtaUpdater.cpp` "calls it [`ForkRelease.h`] only" (spine l.353); ledger row 10 says the same (spine l.87).
+  - The as-built also calls `src/games/ForkReleaseProbe.{h,cpp}`, which depends on the SDK's `SecureHttpClient` (`OtaUpdater.cpp:21-28`, `ForkReleaseProbe.cpp:3-8`). Its rationale lives only in `story-fork-update-source-plan.md`, Design Notes.
+  - The Structural Seed (spine ~l.446) also omits `GamesBuildAnchor.cpp`, the three scripts, and the vector file.
+- Otherwise the delta is clean: `ForkRelease.h` includes only std headers, no lib depends on `src/`, there are no cycles, and every `src/games/*.cpp` is whole-file guarded.
+- Instance: **spec reconciliation**, proposed as AI-6.
+
+**A6. AD-2's "no static buffers over 64 B" against the 74-byte `constexpr` URL.** Low; spec reconciliation.
+- Evidence: `lib/GameCore/ForkRelease.h:27-28` against spine l.68. The rule presumably targets RAM, while `constexpr` data sits in flash; only generated icon data is exempted.
+- Instance: **spec reconciliation** (AI-6). Word the rule as mutable static storage, or exempt `constexpr` data.
+
+### Spec-to-implementation reconciliation
+
+| Req / Done when | As built | Evidence |
+|---|---|---|
+| R1 / DW2 | Met. 10 AD-3 rows and 5 allowlist entries; the trial merge with current `upstream/develop` (`4a6283db`) is clean | `docs/crosshatch/upstream-touches.md:30-39,56-60`; `cut --ref d578b4e3` exit 0 |
+| R2 / DW1 | Met. Unledgered-path fail, ledgered pass, and `freeink-sdk` pointer fail are each tested; the job fetches full history | `cut:147-150`; `scripts/check_upstream_touches_test.py:156,162,179`; `crosshatch-ci.yml:32-41` |
+| R3 / DW3 | Met. The flag is on exactly the 8 envs; all 5 CI envs build | `platformio.ini:280,292,304,326,406,424`; `simulator.ini:63,73`; PR #10 check runs |
+| R4 / DW4 | Met. 5.5.1 is byte-identical (1.4's `diff -r`, SHA-256 recorded); 8 files excluded; `.clang-format` and the suppress line are in place | `lib/lua/library.json:11-24`; `lib/lua/.clang-format`; `platformio.ini:29` |
+| R4 wording | **Accepted deviation.** 5.5.1 defaults `LUA_COMPAT_GLOBAL` on, so the build adds `-DLUA_COMPAT_GLOBAL=0` to make every option off, as R4 intends. Ticket 1.4's verify ("no `LUA_COMPAT_` define appears") could not be met literally | `lib/lua/src/luaconf.h:344-345`; `test/game_script/LuaOnHostTest.cpp:87`; `story-vendor-lua-5-5-1-plan.md`, Design Notes |
+| R5 / DW5 | Met. On/off builds of one commit with a 250 KiB (256,000 B) limit | `cfb:13-14`; `crosshatch-ci.yml:63-65` |
+| R5 wording | **Accepted deviation.** "250 KB" is read as KiB (6,000 B looser than decimal), because flash and partitions are sized in binary units | `story-x4pro-flash-budget-gate-plan.md`, Design Notes |
+| R6 / DW4 | Met. Both suites run in the CI `unit-tests` job, including the Lua-on-host tests | `test/CMakeLists.txt:77-78`; PR #10 `unit-tests` green |
+| R7 / DW6 | **Partly shown.** `X.Y.Z-ch.N` releases publish (`1.6.5-ch.1`); upstream release workflows are disabled; the tag ruleset is in place (owner). The pack step exists but has no `games/` to pack yet. The OTA offer, install, and no-repeat check on an X4 Pro is **in progress** | release `1.6.5-ch.1`; `fr:565-613`; owner |
+| DW7 | Met in the final state. PR #10 is green on every CI job, including both fork gates. PR #9 itself merged red (P2) | PR #10 check runs |
+| Epic Note: owner makes ledger and size jobs required | **Accepted deviation, an improvement.** `20994d6a` rolled both into one `Crosshatch Test Status` job, so new fork checks need no settings change | `20994d6a` message; `AGENTS.md` |
+
+### Deferred work carried by the tickets
+
+| Item (`_bmad-output/implementation-artifacts/deferred-work.md`) | Status |
+|---|---|
+| 1.1: `sim.sh build` ignores a stale `platformio.local.ini` | **Resolved** in the sweep, `d2d8e81a` (`sim.sh` re-runs setup when the block lacks the current `simulator.ini`) |
+| 1.2: AGENTS.md pointer to the ledger | **Resolved** in `d2d8e81a` (AGENTS.md Policy line) |
+| 1.6: device check of 404 → no update, network failure → failed, and offer then no re-offer | **Open.** The offer and no-re-offer part is the owner's ch.2 test; the 404 and network-failure rows have no test planned (AI-2) |
+
+### What the evidence confirms went well
+
+- Upstream drift stayed exactly as designed. The epic changed four upstream files (`AGENTS.md`, `platformio.ini`, `test/CMakeLists.txt`, `src/network/OtaUpdater.cpp`), all ledgered, and the ledger job passes against current upstream.
+- The per-ticket reviews caught real defects: 1.2's loopback added the committed failure-path tests the gate lacked, and 1.6 and 1.7 patched 14 findings between them.
+- One vector file ties the C++ parser and the Python release checks together (`ForkReleaseTest.cpp:130-131`, `GrammarAgreesWithParser`). The code-lens review found them in agreement.
+- The sweep did its job: it found and fixed P4 and cleared two deferred items.
 
 ## Behavior verification
 
