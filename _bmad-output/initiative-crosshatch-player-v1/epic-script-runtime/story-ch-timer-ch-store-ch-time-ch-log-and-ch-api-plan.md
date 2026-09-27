@@ -3,7 +3,7 @@ title: 'ch.timer, ch.store, ch.time, ch.log, and ch.api'
 type: 'feature'
 ticket: '10'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: 'aebea6f4d9cb77a5737eac949f39b57775aae2a9'
 route: 'full'
 route_source: 'auto'
