@@ -3,7 +3,7 @@ title: 'Asset-name capacity and the probe''s recorded values'
 type: 'chore'
 ticket: '17'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '67e077dd611ba01e46fac8d4b74ce87708c10460'
 route: 'full'
 route_source: 'auto'
