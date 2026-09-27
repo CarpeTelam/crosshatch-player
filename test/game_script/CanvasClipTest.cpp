@@ -33,7 +33,7 @@ TEST(CanvasClipTest, DropsEmptyAndOffCanvasRects) {
   EXPECT_FALSE(clipToCanvas({10, 10, 5, -1}, W, H, out));
   EXPECT_FALSE(clipToCanvas({W, 0, 10, 10}, W, H, out));
   EXPECT_FALSE(clipToCanvas({0, H, 10, 10}, W, H, out));
-  EXPECT_FALSE(clipToCanvas({-20, 0, 20, 10}, W, H, out));  // ends exactly at x = 0
+  EXPECT_FALSE(clipToCanvas({-20, 0, 20, 10}, W, H, out));                              // ends exactly at x = 0
   EXPECT_FALSE(clipToCanvas({INT16_MIN, INT16_MIN, INT16_MAX, INT16_MAX}, W, H, out));  // ends at -1
 }
 

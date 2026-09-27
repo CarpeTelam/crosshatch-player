@@ -32,10 +32,10 @@ inline bool clipToCanvas(const CanvasRect& r, const int32_t width, const int32_t
 inline int outlineEdges(const CanvasRect& r, const int32_t width, const int32_t height, CanvasRect (&out)[4]) {
   if (r.w <= 0 || r.h <= 0) return 0;
   const CanvasRect edges[4] = {
-      {r.x, r.y, r.w, 1},                // top
-      {r.x, r.y + r.h - 1, r.w, 1},      // bottom
-      {r.x, r.y, 1, r.h},                // left
-      {r.x + r.w - 1, r.y, 1, r.h},      // right
+      {r.x, r.y, r.w, 1},            // top
+      {r.x, r.y + r.h - 1, r.w, 1},  // bottom
+      {r.x, r.y, 1, r.h},            // left
+      {r.x + r.w - 1, r.y, 1, r.h},  // right
   };
   int count = 0;
   for (const CanvasRect& edge : edges) {

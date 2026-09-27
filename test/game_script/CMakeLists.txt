@@ -45,21 +45,26 @@ add_executable(GameScriptTest
   LuaOnHostTest.cpp
   ArenaAllocatorTest.cpp
   CanvasClipTest.cpp
+  CodecTest.cpp
   DisplayListTest.cpp
   LuaGameTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
+  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
 )
 
 target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameScript
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/GameIcons
+  ${REPO_ROOT}/lib/JsonParser
 )
 
 # Fixture games stay under test/, never games/ (the release packs games/).
 target_compile_definitions(GameScriptTest PRIVATE
   GAME_SCRIPT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+  # Read at run time so this suite and scripts/game_codec_test.py share one vector file.
+  CODEC_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/codec_vectors.json"
 )
 
 target_link_libraries(GameScriptTest PRIVATE

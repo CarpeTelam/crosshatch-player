@@ -58,3 +58,6 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-api-level-hostcaps-and-manifest-check-plan.md`
   summary: `lib/GameScript/CanvasClip.h` and `test/game_script/CanvasClipTest.cpp` (from dca1ddc2) are not clang-format 21 clean, so CI's whole-tree format check fails until someone runs `./bin/clang-format-fix` on them.
   evidence: `./bin/clang-format-fix` realigns the trailing comments in `outlineEdges` and one `EXPECT_FALSE` line; entry 2.4 reverted those edits because story 2.6 owns `lib/GameScript/` and `test/game_script/`.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-codec-and-golden-vectors-plan.md`
+  summary: The codec's C stack use at its depth limit (16 nested tables, encode and decode) on the 16 KB `GameVM` stack is not measured.
+  evidence: Unverified, medium if it is too deep: by reading, about 200 B a level plus `std::sort`, so about 3.2 KB at depth 16, against entry 7's rule of raising below about 2 KB free. Entry 8, which first runs the codec on the task, settles it by logging the stack high-water mark after encoding and decoding a depth-16 state.
