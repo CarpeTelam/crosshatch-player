@@ -51,6 +51,73 @@ TEST_F(LuaGameTest, ATapComesBackAsAMoveInCodecBytes) {
   EXPECT_TRUE(hasText(frontCommands(), "Taps: 0 of 5"));  // no Session, so nothing applied it
 }
 
+TEST_F(LuaGameTest, LongPressesAndSwipesReachInputWithTheirFields) {
+  // The gallery fixture prints the last touch event's kind, x, y, and dir.
+  useSource("main", readFixture("gallery/main.lua"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  InputEvent press;
+  press.kind = InputKind::LongPress;
+  press.x = 12;
+  press.y = 34;
+  ASSERT_EQ(game.input(press), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(hasText(frontCommands(), "1: long_press at 12,34"));
+  const char* const dirs[] = {"left", "right", "up", "down"};
+  const GameCore::SwipeDir kinds[] = {GameCore::SwipeDir::Left, GameCore::SwipeDir::Right, GameCore::SwipeDir::Up,
+                                      GameCore::SwipeDir::Down};
+  for (int i = 0; i < 4; ++i) {
+    InputEvent swipe;
+    swipe.kind = InputKind::Swipe;
+    swipe.x = static_cast<int16_t>(100 + i);
+    swipe.y = 200;
+    swipe.dir = kinds[i];
+    ASSERT_EQ(game.input(swipe), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    EXPECT_TRUE(
+        hasText(frontCommands(), std::to_string(i + 2) + ": swipe at " + std::to_string(100 + i) + ",200 " + dirs[i]))
+        << frontText();
+  }
+  ASSERT_EQ(log.lines.size(), 5u);
+  EXPECT_EQ(log.lines[0], "event\tlong_press\t12\t34\tnil");
+  EXPECT_EQ(log.lines[1], "event\tswipe\t100\t200\tleft");
+}
+
+TEST_F(LuaGameTest, TheGalleryDrawsEveryCommandAndFillColor) {
+  useSource("main", readFixture("gallery/main.lua"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  bool ops[5] = {};
+  bool rectFills[4] = {};
+  bool circleFills[4] = {};
+  bool aligns[3] = {};
+  bool sizes[3] = {};
+  bool whiteInk = false;
+  for (const DrawCommand& c : frontCommands()) {
+    ops[static_cast<int>(c.op)] = true;
+    if (c.op == Op::Rect && c.filled) rectFills[static_cast<int>(c.color)] = true;
+    if (c.op == Op::Circle && c.filled) circleFills[static_cast<int>(c.color)] = true;
+    if (c.op == Op::Text) {
+      aligns[static_cast<int>(c.align)] = true;
+      sizes[static_cast<int>(c.size)] = true;
+    }
+    if ((c.op == Op::Line || c.op == Op::Text || (c.op == Op::Rect && !c.filled)) && c.color == Color::White) {
+      whiteInk = true;
+    }
+  }
+  for (int i = 0; i < 5; ++i) EXPECT_TRUE(ops[i]) << i;
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_TRUE(rectFills[i]) << i;
+    EXPECT_TRUE(circleFills[i]) << i;
+  }
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_TRUE(aligns[i]) << i;
+    EXPECT_TRUE(sizes[i]) << i;
+  }
+  EXPECT_TRUE(whiteInk);
+}
+
 TEST_F(LuaGameTest, EachEntryIntoLuaBumpsTheCallSerial) {
   // GameVM's watchdog times each call on its own by watching this counter.
   useSource("main", readFixture("tracer/main.lua"));

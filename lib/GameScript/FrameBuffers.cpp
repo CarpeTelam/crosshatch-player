@@ -9,6 +9,8 @@ void FrameBuffers::publish() {
   swapping.store(true, std::memory_order_release);
   {
     std::lock_guard<std::mutex> lock(mutex);
+    const Refresh hint = lists[backIndex].refresh();
+    if (hint > pendingHint) pendingHint = hint;
     backIndex = 1 - backIndex;
     generation.fetch_add(1, std::memory_order_acq_rel);
   }

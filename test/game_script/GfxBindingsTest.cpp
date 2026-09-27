@@ -343,7 +343,7 @@ TEST_F(GfxBindingsTest, TextWidthReadsTheTablesPassedAtStart) {
   const AdvanceRange ranges[] = {{'A', 'B', 0}};
   Canvas custom{480, 800, TextMetrics::standIn()};
   AdvanceTable& large = custom.text.tables[static_cast<size_t>(TextSize::Large)];
-  large.ranges = ranges;
+  large.ranges = reinterpret_cast<const uint8_t*>(ranges);
   large.rangeCount = 1;
   large.advances = reinterpret_cast<const uint8_t*>(advances);
   large.fallback = 2 * 16;

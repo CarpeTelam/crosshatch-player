@@ -147,6 +147,72 @@ TEST(FrameBuffersTest, PublishSwapsAndCountsFrames) {
   EXPECT_EQ(frames.frameGen(), 2u);
 }
 
+TEST(DisplayListTest, EqualCommandsHashEqualAndAnyChangeHashesElsewhere) {
+  std::vector<uint8_t> a(1024), b(1024);
+  DisplayList first(a.data(), a.size());
+  DisplayList second(b.data(), b.size());
+  EXPECT_EQ(first.hash(), second.hash());  // both empty
+  const auto fill = [](DisplayList& list, const int16_t x) {
+    list.clear();
+    list.appendClear(Color::White);
+    list.appendRect(x, 20, 30, 40, Color::Dark, true);
+    list.appendText(5, 6, "hi", 2, TextSize::Large, Color::Black, Align::Center);
+  };
+  fill(first, 10);
+  fill(second, 10);
+  EXPECT_EQ(first.hash(), second.hash());
+  const uint64_t same = first.hash();
+  fill(second, 11);
+  EXPECT_NE(second.hash(), same);
+  EXPECT_NE(DisplayList().hash(), same);
+  // The refresh request is not a command: it does not change the hash.
+  fill(second, 10);
+  second.requestRefresh(Refresh::Full);
+  EXPECT_EQ(second.hash(), same);
+}
+
+TEST(FrameBuffersTest, CoalescedFramesKeepTheLargestRefreshRequest) {
+  std::vector<uint8_t> a(1024), b(1024);
+  FrameBuffers frames(a.data(), b.data(), 1024);
+  const auto publish = [&](const Refresh hint, const int16_t x) {
+    frames.back().clear();
+    frames.back().appendRect(x, 0, 1, 1, Color::Black, true);
+    frames.back().requestRefresh(hint);
+    frames.publish();
+  };
+  // Three frames before the render takes one: the "full" in the middle wins,
+  // and the frame drawn is the last.
+  publish(Refresh::Half, 1);
+  publish(Refresh::Full, 2);
+  publish(Refresh::Fast, 3);
+  Refresh taken = Refresh::Fast;
+  int16_t x = 0;
+  frames.takeFront([&](const DisplayList& front, const Refresh hint) {
+    taken = hint;
+    DrawCommand command;
+    auto reader = front.reader();
+    ASSERT_TRUE(reader.next(command));
+    x = command.x;
+  });
+  EXPECT_EQ(taken, Refresh::Full);
+  EXPECT_EQ(x, 3);
+  // Taking the front resets the request; the next frame brings only its own.
+  publish(Refresh::Fast, 4);
+  frames.takeFront([&](const DisplayList&, const Refresh hint) { taken = hint; });
+  EXPECT_EQ(taken, Refresh::Fast);
+  publish(Refresh::Half, 5);
+  frames.takeFront([&](const DisplayList&, const Refresh hint) { taken = hint; });
+  EXPECT_EQ(taken, Refresh::Half);
+  // No publish in between: a repaint of the same frame asks for nothing more.
+  frames.takeFront([&](const DisplayList&, const Refresh hint) { taken = hint; });
+  EXPECT_EQ(taken, Refresh::Fast);
+  // readFront leaves the pending request alone.
+  publish(Refresh::Full, 6);
+  frames.readFront([](const DisplayList&) {});
+  frames.takeFront([&](const DisplayList&, const Refresh hint) { taken = hint; });
+  EXPECT_EQ(taken, Refresh::Full);
+}
+
 TEST(InputQueueTest, KeepsOrderAndDropsTheOldestWhenFull) {
   InputQueue queue;
   InputEvent out;

@@ -140,10 +140,6 @@ uint32_t GameVM::runningForMs(const uint32_t nowMs) {
   return nowMs - watchedSinceMs;
 }
 
-void GameVM::postTap(const int16_t x, const int16_t y) {
-  postInput(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
-}
-
 void GameVM::pollTimer() {
   uint32_t serial = 0;
   if (!game.timer().takeDue(clock.nowMs(), serial)) return;
@@ -153,10 +149,13 @@ void GameVM::pollTimer() {
   postInput(event);
 }
 
-bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, const FrameReplay& replay) {
+bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay) {
   if (frameBuffers.frameGen() == 0) return false;
-  frameBuffers.readFront([&](const GameScript::DisplayList& frame) { replay.draw(renderer, viewport, frame); });
-  return true;
+  bool drawn = false;
+  frameBuffers.takeFront([&](const GameScript::DisplayList& frame, const GameScript::Refresh hint) {
+    drawn = replay.draw(renderer, viewport, frame, hint);
+  });
+  return drawn;
 }
 
 void GameVM::postInput(const GameScript::InputEvent& event) {

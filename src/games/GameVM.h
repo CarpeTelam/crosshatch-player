@@ -56,16 +56,19 @@ class GameVM {
   // Starts the task, which runs setup and the first draw. False (logged) when the
   // task cannot be created.
   bool start();
-  // Queues a tap at canvas (x, y) for input(); a full queue drops its oldest event.
-  void postTap(int16_t x, int16_t y);
+  // Queues a touch event (GameTouch.h) for input(); a full queue drops its oldest
+  // event, with a log line.
+  void postInput(const GameScript::InputEvent& event);
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.
   void pollTimer();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
-  // Draws the front frame with `replay` under the frame mutex; false (nothing
-  // drawn) before the first frame. Render task only.
-  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, const FrameReplay& replay);
+  // Hands the front frame, with the largest refresh request of the frames
+  // coalesced into it, to `replay` under the frame mutex. False when nothing was
+  // drawn: before the first frame, or when replay skipped a frame identical to
+  // the one on screen. Render task only.
+  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay);
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
@@ -106,7 +109,6 @@ class GameVM {
          GameScript::StoreSlot& store);
   static void taskEntry(void* param);
   void run();
-  void postInput(const GameScript::InputEvent& event);
   // Notifies the task only while it is alive: it deletes itself when it ends, and
   // a notification to a deleted task would touch freed memory.
   void notifyTask();

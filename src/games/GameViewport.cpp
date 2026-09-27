@@ -18,13 +18,4 @@ GameViewport GameViewport::forRenderer(const GfxRenderer& renderer) {
   return viewport;
 }
 
-bool GameViewport::toCanvas(const int screenX, const int screenY, int16_t& canvasX, int16_t& canvasY) const {
-  const int cx = screenX - x;
-  const int cy = screenY - y;
-  if (cx < 0 || cy < 0 || cx >= w || cy >= h) return false;
-  canvasX = static_cast<int16_t>(cx);
-  canvasY = static_cast<int16_t>(cy);
-  return true;
-}
-
 #endif  // FREEINK_CAP_GAMES

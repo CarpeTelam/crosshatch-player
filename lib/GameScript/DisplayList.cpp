@@ -37,6 +37,15 @@ const uint8_t* get16(const uint8_t* p, int16_t& v) {
 
 }  // namespace
 
+uint64_t DisplayList::hash() const {
+  uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a 64 offset basis
+  for (size_t i = 0; i < used; ++i) {
+    h ^= storage[i];
+    h *= 0x100000001b3ULL;  // FNV-1a 64 prime
+  }
+  return h;
+}
+
 DisplayList::DisplayList(uint8_t* storage, const size_t capacity)
     : storage(storage), capacityBytes(capacity < MAX_BYTES ? capacity : MAX_BYTES) {}
 

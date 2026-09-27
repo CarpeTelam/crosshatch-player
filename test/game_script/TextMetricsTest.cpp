@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #include "TextMetrics.h"
 
@@ -38,7 +39,7 @@ class TableTest : public ::testing::Test {
     for (size_t i = 0; i < 4; ++i) glyphs[i].advanceX = fp4[i];
     TextMetrics m = TextMetrics::standIn();
     AdvanceTable& table = m.tables[static_cast<size_t>(TextSize::Medium)];
-    table.ranges = ranges;
+    table.ranges = reinterpret_cast<const uint8_t*>(ranges);
     table.rangeCount = 2;
     table.advances = reinterpret_cast<const uint8_t*>(glyphs) + offsetof(Glyph, advanceX);
     table.stride = sizeof(Glyph);
@@ -86,6 +87,112 @@ TEST_F(TableTest, MalformedUtf8CountsAsReplacementCharacters) {
 TEST_F(TableTest, StopsAtTheFirstNul) {
   const char text[] = {'A', 'B', '\0', 'C', '\0'};
   EXPECT_EQ(metrics.width(text, TextSize::Medium), 10 + 8);
+}
+
+// One glyph as replay draws it: the code point handed to the font and its pen x.
+struct Placed {
+  uint32_t codepoint;
+  int64_t x;
+  bool known;
+};
+
+// Lays text out as FrameReplay::drawText does: from alignedStart, each glyph at
+// start + penX.
+std::vector<Placed> layOut(const TextMetrics& metrics, const char* text, const TextSize size, const int64_t x,
+                           const Align align) {
+  std::vector<Placed> placed;
+  const int64_t start = TextMetrics::alignedStart(x, metrics.width(text, size), align);
+  metrics.forEachGlyph(text, size, [&](const uint32_t cp, const int64_t pen, const bool known) {
+    placed.push_back(Placed{cp, start + pen, known});
+  });
+  return placed;
+}
+
+TEST_F(TableTest, ForEachGlyphGivesEachPenPositionAndReturnsTheWidth) {
+  std::vector<Placed> seen;
+  const int64_t width = metrics.forEachGlyph(
+      "AB\xC3\xA9"
+      "D",
+      TextSize::Medium,
+      [&](const uint32_t cp, const int64_t pen, const bool known) { seen.push_back(Placed{cp, pen, known}); });
+  ASSERT_EQ(seen.size(), 4u);
+  EXPECT_EQ(seen[0].codepoint, 'A');
+  EXPECT_EQ(seen[0].x, 0);
+  EXPECT_TRUE(seen[0].known);
+  EXPECT_EQ(seen[1].x, 10);
+  EXPECT_EQ(seen[2].codepoint, 0xE9u);
+  EXPECT_EQ(seen[2].x, 18);
+  // 'D' is in no range: the font has no glyph for it, and it takes the fallback.
+  EXPECT_EQ(seen[3].codepoint, 'D');
+  EXPECT_EQ(seen[3].x, 30);
+  EXPECT_FALSE(seen[3].known);
+  EXPECT_EQ(width, 35);
+  EXPECT_EQ(width, metrics.width("AB\xC3\xA9"
+                                 "D",
+                                 TextSize::Medium));
+}
+
+TEST_F(TableTest, DrawnTextIsExactlyAsWideAsTextWidthForEveryAlignment) {
+  // The rule replay keeps: the first glyph's pen is the aligned start, and the pen
+  // after the last glyph is start + ch.text_width, for any string and alignment.
+  const char* const texts[] = {"A", "ABC", "CAB\xC3\xA9", "D\x80Z",
+                               "\xF0\x9F\x98\x80"
+                               "A"};
+  for (const char* text : texts) {
+    const int64_t width = metrics.width(text, TextSize::Medium);
+    for (const Align align : {Align::Left, Align::Center, Align::Right}) {
+      const auto placed = layOut(metrics, text, TextSize::Medium, 200, align);
+      ASSERT_FALSE(placed.empty());
+      const int64_t start = placed.front().x;
+      const Placed& last = placed.back();
+      uint16_t lastAdvance = metrics.tables[1].fallback;
+      metrics.tables[1].find(last.codepoint, lastAdvance);
+      EXPECT_EQ(last.x + TextMetrics::toPixel(lastAdvance) - start, width) << text;
+      // Each glyph's pen moves by exactly its rounded table advance.
+      for (size_t i = 1; i < placed.size(); ++i) {
+        EXPECT_EQ(placed[i].x - placed[i - 1].x,
+                  TextMetrics::toPixel(metrics.tables[1].advanceOf(placed[i - 1].codepoint)));
+      }
+    }
+  }
+}
+
+TEST(TextMetricsTest, AlignmentMovesTheStartByTheWidth) {
+  EXPECT_EQ(TextMetrics::alignedStart(100, 41, Align::Left), 100);
+  EXPECT_EQ(TextMetrics::alignedStart(100, 41, Align::Center), 80);  // half of 41 is 20
+  EXPECT_EQ(TextMetrics::alignedStart(100, 41, Align::Right), 59);
+  EXPECT_EQ(TextMetrics::alignedStart(0, 0, Align::Right), 0);
+  constexpr TextMetrics metrics = TextMetrics::standIn();
+  const auto placed = layOut(metrics, "abcd", TextSize::Large, 240, Align::Center);
+  ASSERT_EQ(placed.size(), 4u);
+  EXPECT_EQ(placed[0].x, 240 - 2 * STAND_IN_ADVANCE_PX[2]);
+  EXPECT_EQ(placed[3].x + STAND_IN_ADVANCE_PX[2], 240 + 2 * STAND_IN_ADVANCE_PX[2]);
+}
+
+TEST(TextMetricsTest, RangesAreReadAtTheirStrideLikeFontIntervalsInsideLargerRecords) {
+  // Interval records with a trailing field, as a table can point into any array of
+  // records that begin with first, last, index.
+  struct Record {
+    uint32_t first;
+    uint32_t last;
+    uint32_t index;
+    uint32_t extra;
+  };
+  const Record records[] = {{'a', 'b', 1, 0xFFFFFFFF}, {'x', 'x', 0, 0xFFFFFFFF}};
+  const uint16_t advances[] = {3 * 16, 5 * 16, 6 * 16};
+  TextMetrics metrics = TextMetrics::standIn();
+  AdvanceTable& small = metrics.tables[0];
+  small.ranges = reinterpret_cast<const uint8_t*>(records);
+  small.rangeCount = 2;
+  small.rangeStride = sizeof(Record);
+  small.advances = reinterpret_cast<const uint8_t*>(advances);
+  small.fallback = 1 * 16;
+  EXPECT_EQ(metrics.width("abx", TextSize::Small), 5 + 6 + 3);
+  EXPECT_EQ(metrics.width("c", TextSize::Small), 1);
+  uint16_t advance = 0;
+  EXPECT_FALSE(small.find('c', advance));
+  EXPECT_TRUE(small.find('x', advance));
+  EXPECT_EQ(advance, 3 * 16);
 }
 
 }  // namespace

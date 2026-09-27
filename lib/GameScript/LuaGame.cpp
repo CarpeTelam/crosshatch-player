@@ -37,6 +37,23 @@ void pushDecoded(lua_State* L, const std::span<const uint8_t> bytes, const size_
   if (error != Codec::Error::None) luaL_error(L, "%s could not be decoded (%s)", what, Codec::errorName(error));
 }
 
+// The Lua name of a swipe direction (api-level-1.txt's `enum dir`); null for None.
+const char* swipeDirName(const GameCore::SwipeDir dir) {
+  switch (dir) {
+    case GameCore::SwipeDir::Left:
+      return "left";
+    case GameCore::SwipeDir::Right:
+      return "right";
+    case GameCore::SwipeDir::Up:
+      return "up";
+    case GameCore::SwipeDir::Down:
+      return "down";
+    case GameCore::SwipeDir::None:
+      break;
+  }
+  return nullptr;
+}
+
 void pushEvent(lua_State* L, const GameCore::GameEvent& event) {
   switch (event.kind) {
     case EventKind::Tap:
@@ -64,6 +81,29 @@ void pushEvent(lua_State* L, const GameCore::GameEvent& event) {
       lua_createtable(L, 0, 1);
       lua_pushliteral(L, "timer");
       lua_setfield(L, -2, "kind");
+      return;
+    case EventKind::LongPress:
+      lua_createtable(L, 0, 3);
+      lua_pushliteral(L, "long_press");
+      lua_setfield(L, -2, "kind");
+      lua_pushinteger(L, event.x);
+      lua_setfield(L, -2, "x");
+      lua_pushinteger(L, event.y);
+      lua_setfield(L, -2, "y");
+      return;
+    case EventKind::Swipe:
+      lua_createtable(L, 0, 4);
+      lua_pushliteral(L, "swipe");
+      lua_setfield(L, -2, "kind");
+      lua_pushinteger(L, event.x);
+      lua_setfield(L, -2, "x");
+      lua_pushinteger(L, event.y);
+      lua_setfield(L, -2, "y");
+      // The classifier never posts SwipeDir::None; the field is then left out.
+      if (const char* dir = swipeDirName(event.dir)) {
+        lua_pushstring(L, dir);
+        lua_setfield(L, -2, "dir");
+      }
       return;
   }
 }

@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Codec.h>
 #include <GfxRenderer.h>
+#include <HalGPIO.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -36,8 +37,9 @@ void GameMatchActivity::onEnter() {
     showError(problem);
     return;
   }
+  replay.loadFonts(renderer);
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
-                                  FrameReplay::textMetrics()};
+                                  replay.textMetrics()};
   // Empty until GameSaveStore (entry 12) restores store.bin into it.
   storeStorage = HalMemory::allocatePsram(GameScript::Codec::STORE_LIMIT);
   if (storeStorage)
@@ -130,20 +132,45 @@ void GameMatchActivity::loop() {
     return;
   }
 
-  // Canvas taps bypass the FreeInkUI interaction table (AD-20).
-  const auto snap = touchSnapshotFrom(mappedInput);
-  int16_t x = 0;
-  int16_t y = 0;
-  if (snap.touchReleased && snap.touchX >= 0 && viewport.toCanvas(snap.touchX, snap.touchY, x, y)) {
-    vm->postTap(x, y);
+  // Edge gestures never get here as game input: Back is Button::Back above,
+  // ActivityManager takes Home and the light panel first, and GameTouch drops
+  // every edge swipe that is left.
+  GameScript::InputEvent event;
+  if (GameTouch::toEvent(readGesture(), renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
+    vm->postInput(event);
   }
   vm->pollTimer();
 
   const uint32_t frame = vm->frameGen();
-  if (frame != shownFrame) {
+  if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {
     shownFrame = frame;
     requestUpdate();
   }
+}
+
+GameTouch::Gesture GameMatchActivity::readGesture() const {
+  GameTouch::Gesture gesture;
+  // Canvas taps and long presses bypass the FreeInkUI interaction table (AD-20).
+  // Consuming a long press suppresses the rest of the contact, so its lift is no tap.
+  const auto snap = touchSnapshotFrom(mappedInput, /*withLongPress=*/true);
+  if (snap.touchReleased && snap.touchX >= 0) {
+    gesture.kind = snap.longPress ? GameTouch::Kind::LongPress : GameTouch::Kind::Tap;
+    gesture.x = snap.touchX;
+    gesture.y = snap.touchY;
+    return gesture;
+  }
+  // A swipe needs its start point, which MappedInputManager::wasSwipe drops; the
+  // HAL reports the same per-frame swipe, mapped to logical pixels the same way.
+  float startX = 0.0f;
+  float startY = 0.0f;
+  float endX = 0.0f;
+  float endY = 0.0f;
+  if (gpio.wasSwipe(startX, startY, endX, endY)) {
+    gesture.kind = GameTouch::Kind::Swipe;
+    renderer.tapToLogical(startX, startY, gesture.x, gesture.y);
+    renderer.tapToLogical(endX, endY, gesture.endX, gesture.endY);
+  }
+  return gesture;
 }
 
 void GameMatchActivity::render(RenderLock&&) {
@@ -151,9 +178,16 @@ void GameMatchActivity::render(RenderLock&&) {
     renderError();
     return;
   }
+  if (!vm) return;
+  // The match asks for a render only for a frame no render has taken yet, so a
+  // render without one is a repaint after something else drew (an overlay such
+  // as the light panel closed): the screen no longer shows the frame.
+  const uint32_t frame = vm->frameGen();
+  if (frame == renderedFrame.load(std::memory_order_relaxed)) replay.forceFull();
+  renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
-  if (!vm || !vm->drawFront(renderer, viewport, replay)) return;
+  if (!vm->drawFront(renderer, viewport, replay)) return;
   renderer.displayBuffer(replay.refreshMode());
 }
 

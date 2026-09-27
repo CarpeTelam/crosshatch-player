@@ -49,9 +49,11 @@ add_executable(GameScriptTest
   CodecTest.cpp
   DisplayListTest.cpp
   GameTimerTest.cpp
+  GameTouchTest.cpp
   GfxBindingsTest.cpp
   HostBindingsTest.cpp
   LuaGameTest.cpp
+  RefreshPolicyTest.cpp
   SandboxTest.cpp
   SessionGameTest.cpp
   StoreSlotTest.cpp
@@ -71,6 +73,9 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Utf8
+  # GameTouch.h (header-only, pure) and the SDK's swipe classification it uses.
+  ${REPO_ROOT}/src/games
+  ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
 )
 
 # Fixture games stay under test/, never games/ (the release packs games/).

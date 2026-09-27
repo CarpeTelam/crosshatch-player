@@ -1,30 +1,48 @@
 #pragma once
 
+#include <DisplayList.h>
 #include <HalDisplay.h>
+#include <RefreshPolicy.h>
 #include <TextMetrics.h>
+
+#include <cstdint>
 
 class GfxRenderer;
 class GameViewport;
 
-namespace GameScript {
-class DisplayList;
-}
-
 // Turns a game frame into pixels and decides how to refresh it (AD-7: the only
 // refresh policy). Drawing happens on the render task, inside
-// FrameBuffers::readFront, so the frame cannot change underneath it.
+// FrameBuffers::takeFront, so the frame cannot change underneath it.
+//
+// Text sizes map to built-in flash fonts (small: the 10 pt UI font, medium: the
+// 12 pt UI font, large: NotoSans 18). Their advance tables are what ch.text_width
+// measures with, and text is drawn glyph by glyph at those advances (no kerning or
+// ligatures), so drawn text is exactly as wide as ch.text_width says.
 class FrameReplay {
  public:
-  // Clears the screen and draws the frame's commands inside the viewport, clipped
-  // to it.
-  // cppcheck-suppress functionStatic // gains per-match refresh state (hint, fast-refresh counter)
-  void draw(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DisplayList& frame) const;
-  // The refresh for the frame just drawn: always full until the hint, forceFull,
-  // and the fast-refresh counter arrive.
-  // cppcheck-suppress functionStatic // see draw()
-  HalDisplay::RefreshMode refreshMode() const { return HalDisplay::FULL_REFRESH; }
-  // The advance tables of the fonts text is drawn in, one per size, for
-  // ch.text_width; the match passes them to the VM at start (AD-7). The stand-in
-  // until the size-to-font map (entry 11) supplies the real tables.
-  static constexpr GameScript::TextMetrics textMetrics() { return GameScript::TextMetrics::standIn(); }
+  // Points the three sizes' advance tables at the renderer's built-in fonts (flash
+  // data, so copies of textMetrics() stay valid for as long as the firmware runs).
+  // Call before textMetrics() is handed to the VM. A missing font keeps the
+  // stand-in for its size (logged).
+  void loadFonts(const GfxRenderer& renderer);
+  const GameScript::TextMetrics& textMetrics() const { return metrics; }
+
+  // The next frame is drawn and refreshed in full, even if identical to the one
+  // shown before: the screen shows something else now. Render task.
+  void forceFull() { policy.forceFull(); }
+
+  // Draws the frame inside the viewport, clipped to it, unless it is identical to
+  // the frame on screen and nothing forces it; `hint` is the largest refresh
+  // request of the frames coalesced into it. True when drawn: then
+  // refreshMode() is the refresh to show it with. Render task.
+  bool draw(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DisplayList& frame,
+            GameScript::Refresh hint);
+  HalDisplay::RefreshMode refreshMode() const;
+
+ private:
+  void drawText(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DrawCommand& text) const;
+
+  GameScript::TextMetrics metrics = GameScript::TextMetrics::standIn();
+  GameScript::RefreshPolicy policy;
+  GameScript::Refresh mode = GameScript::Refresh::Full;
 };

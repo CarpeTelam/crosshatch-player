@@ -11,13 +11,15 @@
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 #include "games/FrameReplay.h"
+#include "games/GameTouch.h"
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
 
 // One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers, and owns ch.store's slot, which outlives the VM. The
-// canvas is drawn by FrameReplay and fed by taps mapped through GameViewport and by
-// due ch.timer timers; the UiAppHost is for the runtime's own views.
+// canvas is drawn by FrameReplay and fed by taps, long presses, and swipes mapped
+// through GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost is
+// for the runtime's own views.
 class GameMatchActivity final : public Activity, private UiAppHost {
  public:
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest);
@@ -43,6 +45,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void abandonVm();
   void showError(const char* detail);
   void renderError();
+  // This loop pass's touch gesture on the logical screen, if any.
+  GameTouch::Gesture readGesture() const;
 
   GameCore::Manifest manifest;
   GameViewport viewport;
@@ -53,6 +57,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   std::unique_ptr<GameScript::StoreSlot> store;
   std::unique_ptr<GameVM> vm;
   std::atomic<State> state{State::Starting};  // written by the loop task, read by render
-  uint32_t shownFrame = 0;
+  uint32_t shownFrame = 0;                    // loop task: the frameGen it last asked to render
+  // Written by render: the frameGen its last render saw. The loop does not ask
+  // again for a frame a render already took, so a render that sees no new frame
+  // is always a repaint someone else asked for.
+  std::atomic<uint32_t> renderedFrame{0};
   char errorDetail[GameVM::ERROR_CAPACITY] = {};
 };

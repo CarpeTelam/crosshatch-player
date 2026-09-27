@@ -80,6 +80,10 @@ Coordinates are window pixels, which equal the firmware's logical pixels
 
 Games lists `fs_/.games/<id>/` folders whose `manifest.json` parses and names the
 same id. To try one, copy a fixture: `cp -r test/game_script/fixtures/tracer fs_/.games/`.
+Games run in both `x4pro` and `sticky` (both envs set `BOARD_HAS_PSRAM`). The
+`gallery` fixture draws every command and color and prints the last touch event:
+`hold X Y 800` is a long press, `swipe` a swipe; a swipe from the left quarter
+rightwards is Back and leaves the game.
 
 ## Run: scripted (deterministic, one-shot)
 

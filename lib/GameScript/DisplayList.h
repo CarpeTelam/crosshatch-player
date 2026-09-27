@@ -53,6 +53,9 @@ class DisplayList {
   void clear();
   uint16_t count() const { return commands; }
   size_t bytes() const { return used; }
+  // A 64-bit FNV-1a hash of the packed commands (not the refresh request), so
+  // replay can tell a frame identical to the one on screen (AD-7).
+  uint64_t hash() const;
 
   // Each returns false, appending nothing, when the command would pass a limit.
   // Coordinates outside int16_t are clamped. Colors are stored as given; the
