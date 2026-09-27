@@ -46,3 +46,5 @@ Handoffs: epic-install-and-launcher converts `icon.png` and package PNGs to the 
 
 - Decision: this epic picks the v1 icon set; epic-game-api-docs only catalogs it. AD-24 and the spec's Open Questions were amended to match (user's decision, 2026-09-26).
 - Waits on epic-script-runtime because: the `ch.gfx` display list and binding registry, GameAssets, and the runtime views.
+- Handoff from epic-script-runtime (entries 4 and 14): append the icon entries to `docs/crosshatch/api-level-1.txt` (updating `API_SURFACE_CRC`) and add the icon-table check to the level-1 surface test (2026-09-27).
+- Pick up from `_bmad-output/implementation-artifacts/deferred-work.md` (spine rules ahead of the code, epic-icon-library): un-ignore `lib/GameIcons/GameIcons.generated.h` in `.gitignore`, add `lib/GameIcons/.clang-format` (`DisableFormat`), and narrow AGENTS.md's "every `pio run` regenerates `*.generated.h`" line (spine AD-2, AD-24; 2026-09-27).
