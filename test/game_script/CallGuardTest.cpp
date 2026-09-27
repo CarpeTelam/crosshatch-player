@@ -120,17 +120,37 @@ TEST_F(CallGuardTest, NestedPcallStopsOnStackHeadroom) {
   EXPECT_GE(game.callGuard().deepestAddress(), game.callGuard().stackFloor());
 }
 
-TEST_F(CallGuardTest, RecursiveIndexStopsOnStackHeadroom) {
+TEST_F(CallGuardTest, RecursiveIndexEndsInAScriptError) {
+  // A level costs about 256 B here, so LUAI_MAXCCALLS (30) stops it before the
+  // guard would; with or without a floor it is a ScriptError, never a crash.
   useFault("recursive_index");
-  {
+  for (const bool floor : {false, true}) {
     LuaGame game(arena, frames, sources, random);
+    if (floor) modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
-    EXPECT_TRUE(contains(game.errorMessage(), "C stack overflow")) << game.errorMessage();  // Lua's limit
+    EXPECT_TRUE(contains(game.errorMessage(), "C stack overflow") ||
+                contains(game.errorMessage(), "script recursion too deep"))
+        << game.errorMessage();
   }
-  LuaGame game(arena, frames, sources, random);
-  modelTaskStack(game);
-  EXPECT_EQ(game.start(), Outcome::ScriptError);
-  EXPECT_STREQ(game.errorMessage(), "script recursion too deep (C stack nearly full)");
+}
+
+TEST_F(CallGuardTest, ParserAndPatternRecursionEndInScriptErrors) {
+  // Neither runs a hook; LUAI_MAXCCALLS and MAXCCALLS (lib/lua/library.json) bound them.
+  struct Case {
+    const char* fixture;
+    const char* message;
+  };
+  const Case cases[] = {
+      {"deep_parens", "C stack overflow"},
+      {"deep_pattern", "pattern too complex"},
+  };
+  for (const auto& c : cases) {
+    useFault(c.fixture);
+    LuaGame game(arena, frames, sources, random);
+    modelTaskStack(game);
+    EXPECT_EQ(game.start(), Outcome::ScriptError) << c.fixture;
+    EXPECT_TRUE(contains(game.errorMessage(), c.message)) << c.fixture << " -> " << game.errorMessage();
+  }
 }
 
 // Measures the C stack a level of each recursion costs on this host, and how deep
@@ -153,7 +173,7 @@ TEST_F(CallGuardTest, MeasuresStackCostPerLevel) {
                              "\nreturn { setup = function() f(LEVELS) return {} end,\n"
                              "  draw = function() ch.gfx.text(0, 0, tostring(DEPTH), 'small', 'black') end }";
     uintptr_t deepest[2] = {};
-    const int levels[2] = {10, 30};
+    const int levels[2] = {5, 15};  // inside LUAI_MAXCCALLS (30)
     for (int i = 0; i < 2; ++i) {
       useSource("main", "LEVELS = " + std::to_string(levels[i]) + "\n" + body);
       LuaGame game(arena, frames, sources, random);
@@ -162,22 +182,29 @@ TEST_F(CallGuardTest, MeasuresStackCostPerLevel) {
     }
     const double perLevel = static_cast<double>(deepest[0] - deepest[1]) / (levels[1] - levels[0]);
 
-    // Unbounded (-1 never reaches 0), in a modelled task stack: the depth reached.
+    // Unbounded (-1 never reaches 0), in a modelled task stack: the depth reached,
+    // and which limit stopped it (the guard, or LUAI_MAXCCALLS as Lua's own error).
     useSource("main", "LEVELS = -1\n" + body);
     LuaGame game(arena, frames, sources, random);
     modelTaskStack(game);
-    EXPECT_EQ(game.start(), Outcome::ScriptError) << c.name;
-    EXPECT_EQ(game.callGuard().fault(), Fault::Stack) << c.name << ": " << game.errorMessage();
+    const Outcome outcome = game.start();
+    const bool byGuard = game.callGuard().fault() == Fault::Stack;
+    const std::string message = game.errorMessage();
     ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
     const int depth = std::stoi(frontText());
 
-    std::cout << "[stack] " << c.name << ": " << perLevel << " B a level on this host; the guard stopped it at depth "
-              << depth << " of Lua's 200 in a " << VM_STACK_BYTES << " B stack\n";
+    std::cout << "[stack] " << c.name << ": " << perLevel << " B a level on this host; stopped at depth " << depth
+              << " by " << (byGuard ? "the headroom guard" : "LUAI_MAXCCALLS") << " (" << message << ")\n";
     RecordProperty(std::string(c.key) + "_bytes_per_level", static_cast<int>(perLevel));
     RecordProperty(std::string(c.key) + "_depth_in_16k", depth);
     EXPECT_GT(perLevel, 64.0) << c.name;
     EXPECT_GT(depth, 4) << c.name;
-    EXPECT_LT(depth, 200) << c.name;  // the guard, not Lua's limit, stopped it
+    EXPECT_LE(depth, 30) << c.name;
+    if (std::string(c.key) == "nested_pcall") {
+      // Lua's own error would be caught by the script's pcall; only the sticky guard ends it.
+      EXPECT_EQ(outcome, Outcome::ScriptError);
+      EXPECT_TRUE(byGuard) << message;
+    }
   }
 }
 

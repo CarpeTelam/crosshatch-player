@@ -31,7 +31,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   enum class State : uint8_t { Starting, Playing, Error };
   // How long onExit waits after cancel for the VM to end before abandoning it (AD-5).
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
+  // A call into Lua still running after this long is a stuck script (AD-5).
+  static constexpr uint32_t WATCHDOG_MS = 3000;
 
+  // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
+  void stopStuckVm();
   void showError(const char* detail);
   void renderError();
 

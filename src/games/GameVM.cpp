@@ -2,6 +2,7 @@
 
 #include "GameVM.h"
 
+#include <Arduino.h>
 #include <DisplayList.h>
 #include <Logging.h>
 
@@ -72,16 +73,26 @@ void GameVM::run() {
   const auto stackFloor = reinterpret_cast<uintptr_t>(pxTaskGetStackStart(nullptr));
 #endif
   game.setStackFloor(stackFloor);
+  // Each call into Lua restarts the match's watchdog clock (runningForMs).
+  const auto startCall = [this] { callStartMs.store(millis(), std::memory_order_release); };
+  startCall();
   Outcome outcome = game.start();
-  if (outcome == Outcome::Ok) outcome = game.draw();
+  if (outcome == Outcome::Ok) {
+    startCall();
+    outcome = game.draw();
+  }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
     GameScript::InputEvent event;
     if (!queue.pop(event)) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
+    startCall();
     outcome = game.input(event);
-    if (outcome == Outcome::Ok) outcome = game.draw();
+    if (outcome == Outcome::Ok) {
+      startCall();
+      outcome = game.draw();
+    }
   }
   if (outcome == Outcome::ScriptError) {
     LOG_ERR("LUA", "Script error: %s", game.errorMessage());
@@ -89,6 +100,7 @@ void GameVM::run() {
   } else if (outcome == Outcome::Cancelled) {
     LOG_INF("GAME", "VM cancelled");
   }
+  startCall();
   game.close();
   const uintptr_t deepest = game.callGuard().deepestAddress();
   const unsigned hookHeadroom =
@@ -187,7 +199,7 @@ bool GameVM::deleteIfStuckInLua() {
   // A task running on the other core stops once that core takes the yield.
   constexpr int settleTicks = 10;
   for (int i = 0; i < settleTicks && eTaskGetState(task) == eRunning; ++i) vTaskDelay(1);
-  if (eTaskGetState(task) == eSuspended && game.inLua() && !frameBuffers.inSwap()) {
+  if (eTaskGetState(task) == eSuspended && game.inLua() && !game.inLockedBinding() && !frameBuffers.inSwap()) {
     vTaskDelete(task);
     taskAlive = false;
     return true;

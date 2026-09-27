@@ -61,9 +61,11 @@ fn ch.time.ms() -> integer
 fn ch.log(...)
 
 # Globals the runtime provides: print writes to ch.log; require loads name.lua
-# from the game's own files.
+# from the game's own files; setmetatable is Lua's, except that it refuses a
+# metatable with a __gc field (finalizers would run outside the budget).
 fn print(...)
 fn require(name) -> any
+fn setmetatable(t, mt) -> table
 
 # Lua 5.5.1 base library, without load, loadfile, and dofile
 lib _G
@@ -81,14 +83,14 @@ lib rawget
 lib rawlen
 lib rawset
 lib select
-lib setmetatable
 lib tonumber
 lib tostring
 lib type
 lib warn
 lib xpcall
 
-# Lua 5.5.1 library tables
+# Lua 5.5.1 library tables (table.move, table.insert, and table.remove refuse
+# more than table_elements_count elements)
 lib math
 lib string
 lib table
@@ -155,6 +157,7 @@ limit frame_commands_count 2048
 limit frame_bytes 32768
 limit lua_heap_bytes 262144
 limit call_instructions_count 2000000
+limit table_elements_count 65536
 limit timer_min_ms 1000
 limit timers_pending_count 1
 

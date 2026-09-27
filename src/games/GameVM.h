@@ -61,6 +61,11 @@ class GameVM {
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }
+  // How long the current call into Lua has run at nowMs (millis()); 0 when idle.
+  // The match treats a call past its watchdog limit as a stuck script (AD-5).
+  uint32_t runningForMs(uint32_t nowMs) const {
+    return busy() ? nowMs - callStartMs.load(std::memory_order_acquire) : 0;
+  }
 
   // Sets the cancel flag, which the hook turns into Cancelled at the next hook
   // event, and asks the task to quit. Returns at once.
@@ -71,7 +76,8 @@ class GameVM {
   bool stop(uint32_t timeoutMs);
 
   // For a VM whose join timed out (a script stuck inside a C library call). Once
-  // the task is suspended inside Lua with inSwap clear, it is deleted and the
+  // the task is suspended inside Lua, outside a locked binding (enterLockedSection),
+  // with inSwap clear, it is deleted and the
   // arena, frame storage, and sources are freed; the GameVM object itself is
   // leaked, since the task may hold its mutexes. If that never happens within
   // ABANDON_WAIT_MS, or in the simulator (which cannot stop a thread), all of it
@@ -88,7 +94,8 @@ class GameVM {
   // a notification to a deleted task would touch freed memory.
   void notifyTask();
   // Device only (the simulator cannot stop a thread): suspends the task, and
-  // deletes it if it is inside Lua and not swapping frames; otherwise resumes it.
+  // deletes it if it is inside Lua, outside a locked binding, and not swapping
+  // frames; otherwise resumes it.
   // True when deleted.
   bool deleteIfStuckInLua();
 
@@ -105,4 +112,5 @@ class GameVM {
   std::atomic<bool> quitRequested{false};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};
+  std::atomic<uint32_t> callStartMs{0};
 };

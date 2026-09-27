@@ -79,6 +79,14 @@ BindingContext* bindingContext(lua_State* L) {
   return context;
 }
 
+void enterLockedSection(lua_State* L) {
+  if (auto* sections = bindingContext(L)->lockedSections) sections->fetch_add(1, std::memory_order_acq_rel);
+}
+
+void leaveLockedSection(lua_State* L) {
+  if (auto* sections = bindingContext(L)->lockedSections) sections->fetch_sub(1, std::memory_order_acq_rel);
+}
+
 void openChLibrary(lua_State* L) {
   lua_createtable(L, 0, 1);  // ch
   luaL_newlib(L, GFX_FUNCTIONS);

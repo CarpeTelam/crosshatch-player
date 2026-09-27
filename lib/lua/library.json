@@ -20,7 +20,10 @@
       "-<lcorolib.c>"
     ],
     "flags": [
-      "-DLUA_COMPAT_GLOBAL=0"
+      "-DLUA_COMPAT_GLOBAL=0",
+      "-DLUAI_MAXCCALLS=30",
+      "-DMAXCCALLS=16",
+      "-Dl_randomizePivot=sizeof"
     ]
   }
 }

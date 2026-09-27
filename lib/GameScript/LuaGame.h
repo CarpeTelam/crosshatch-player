@@ -58,9 +58,12 @@ class LuaGame {
   void requestCancel() { guard.requestCancel(); }
   // The lowest address this task's stack may use; see CallGuard::setStackFloor.
   void setStackFloor(uintptr_t lowest) { guard.setStackFloor(lowest); }
-  // Any task: true while a call (or lua_close) runs inside Lua, touching only
-  // the arena, the sources, and the back display list.
+  // Any task: true while a call (or lua_close) runs inside Lua. There the task
+  // touches the arena, the sources, the back display list, and whatever the Lua
+  // libraries and ch bindings touch; a binding that takes a lock marks itself
+  // (enterLockedSection), and inLockedBinding() is then true.
   bool inLua() const { return running.load(std::memory_order_acquire); }
+  bool inLockedBinding() const { return lockedSections.load(std::memory_order_acquire) != 0; }
   const CallGuard& callGuard() const { return guard; }
 
   bool started() const { return L != nullptr; }
@@ -96,6 +99,7 @@ class LuaGame {
   BindingContext bindings;
   CallGuard guard;
   std::atomic<bool> running{false};
+  std::atomic<uint32_t> lockedSections{0};
   lua_State* L = nullptr;
   // Registry references (LUA_NOREF until set).
   int gameRef = -2;

@@ -48,9 +48,14 @@ int require(lua_State* L) {
   if (!lua_isnil(L, -1)) return 1;
   lua_pop(L, 1);
 
-  const GameSources* sources = bindingContext(L)->sources;
+  const BindingContext* context = bindingContext(L);
+  const GameSources* sources = context->sources;
   const SourceSpan* span = sources ? sources->find(name) : nullptr;
   if (!span) return luaL_error(L, "module '%s' not found", name);
+  // The parser runs no hook, so it needs its whole budget free before it starts.
+  if (context->guard && !context->guard->hasHeadroom(CallGuard::PARSE_HEADROOM_BYTES)) {
+    return luaL_error(L, "require '%s': script recursion too deep to load a module", name);
+  }
 
   lua_pushlightuserdata(L, loadingTag());
   lua_setfield(L, modules, name);
@@ -68,6 +73,14 @@ int require(lua_State* L) {
   lua_pushvalue(L, -1);
   lua_setfield(L, modules, name);
   return 1;
+}
+
+// Calls the wrapped library function (upvalue 1) with the same arguments.
+int callWrapped(lua_State* L) {
+  lua_pushvalue(L, lua_upvalueindex(1));
+  lua_insert(L, 1);
+  lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+  return lua_gettop(L);
 }
 
 // The message handler xpcall really gets; upvalue 1 is the script's handler. Lua
@@ -89,10 +102,64 @@ int guardedXpcall(lua_State* L) {
   lua_pushvalue(L, 2);
   lua_pushcclosure(L, &guardedHandler, 1);
   lua_replace(L, 2);
-  lua_pushvalue(L, lua_upvalueindex(1));
-  lua_insert(L, 1);
-  lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
-  return lua_gettop(L);
+  return callWrapped(L);
+}
+
+// print(...) writes nothing until entry 10 maps it to ch.log: the base print
+// would write to stdout, under newlib's stream lock.
+int silentPrint(lua_State*) { return 0; }
+
+// setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
+// a metatable with a __gc field. Finalizers run with hooks off, so a __gc would
+// escape the budget and the stack check; Lua marks an object for finalization
+// only when its metatable has a raw __gc field at this call, so checking here is
+// enough. Written out rather than wrapped so argument errors still name it.
+int guardedSetmetatable(lua_State* L) {
+  const int type = lua_type(L, 2);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_argexpected(L, type == LUA_TNIL || type == LUA_TTABLE, 2, "nil or table");
+  if (type == LUA_TTABLE) {
+    lua_pushliteral(L, "__gc");
+    const bool hasGc = lua_rawget(L, 2) != LUA_TNIL;
+    lua_pop(L, 1);
+    if (hasGc) return luaL_error(L, "setmetatable: __gc metamethods are not supported");
+  }
+  if (luaL_getmetafield(L, 1, "__metatable") != LUA_TNIL) return luaL_error(L, "cannot change a protected metatable");
+  lua_settop(L, 2);
+  lua_setmetatable(L, 1);
+  return 1;
+}
+
+int tooManyElements(lua_State* L, const char* function) {
+  return luaL_error(L, "table.%s: more than %d elements", function, static_cast<int>(TABLE_ELEMENTS_LIMIT));
+}
+
+// table.move(a1, f, e, t [,a2]): its copy loop runs in C, where no hook runs.
+int guardedMove(lua_State* L) {
+  const lua_Integer first = luaL_checkinteger(L, 2);
+  const lua_Integer last = luaL_checkinteger(L, 3);
+  if (last >= first && static_cast<lua_Unsigned>(last) - static_cast<lua_Unsigned>(first) >= TABLE_ELEMENTS_LIMIT) {
+    return tooManyElements(L, "move");
+  }
+  return callWrapped(L);
+}
+
+// table.insert and table.remove shift up to #t elements in C; #t comes from __len.
+int checkLength(lua_State* L, const char* function) {
+  if (lua_type(L, 1) == LUA_TTABLE && luaL_len(L, 1) > static_cast<lua_Integer>(TABLE_ELEMENTS_LIMIT)) {
+    return tooManyElements(L, function);
+  }
+  return callWrapped(L);
+}
+
+int guardedInsert(lua_State* L) { return checkLength(L, "insert"); }
+int guardedRemove(lua_State* L) { return checkLength(L, "remove"); }
+
+// Replaces field `name` of the table on top of the stack with fn closed over the original.
+void wrapField(lua_State* L, const char* name, lua_CFunction fn) {
+  lua_getfield(L, -1, name);
+  lua_pushcclosure(L, fn, 1);
+  lua_setfield(L, -2, name);
 }
 
 lua_Integer seedWord(GameCore::IRandom& random) {
@@ -120,6 +187,15 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   lua_getglobal(L, "xpcall");
   lua_pushcclosure(L, &guardedXpcall, 1);
   lua_setglobal(L, "xpcall");
+  lua_pushcfunction(L, &guardedSetmetatable);
+  lua_setglobal(L, "setmetatable");
+  lua_pushcfunction(L, &silentPrint);
+  lua_setglobal(L, "print");
+  lua_getglobal(L, LUA_TABLIBNAME);
+  wrapField(L, "move", &guardedMove);
+  wrapField(L, "insert", &guardedInsert);
+  wrapField(L, "remove", &guardedRemove);
+  lua_pop(L, 1);
 
   lua_getglobal(L, LUA_MATHLIBNAME);
   lua_getfield(L, -1, "randomseed");

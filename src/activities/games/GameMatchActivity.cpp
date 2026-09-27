@@ -2,6 +2,7 @@
 
 #include "GameMatchActivity.h"
 
+#include <Arduino.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -64,6 +65,26 @@ void GameMatchActivity::onExit() {
   vm.reset();
 }
 
+void GameMatchActivity::stopStuckVm() {
+  LOG_ERR("GAME", "%s: a call ran over %u ms; stopping the VM", manifest.id, static_cast<unsigned>(WATCHDOG_MS));
+  char detail[GameVM::ERROR_CAPACITY];
+  snprintf(detail, sizeof(detail), "stopped responding: one call ran over %u s",
+           static_cast<unsigned>(WATCHDOG_MS / 1000));
+  {
+    // render() reads vm and the frames abandon may free.
+    RenderLock lock(*this);
+    if (vm->stop(STOP_TIMEOUT_MS)) {
+      // It may have ended on its own error meanwhile; that message says more.
+      if (vm->failed()) snprintf(detail, sizeof(detail), "%s", vm->errorMessage());
+      vm.reset();
+    } else {
+      LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
+      GameVM::abandon(std::move(vm));
+    }
+  }
+  showError(detail);
+}
+
 void GameMatchActivity::showError(const char* detail) {
   snprintf(errorDetail, sizeof(errorDetail), "%s", detail);
   LOG_ERR("GAME", "%s stopped: %s", manifest.id, errorDetail);
@@ -79,6 +100,12 @@ void GameMatchActivity::loop() {
   if (state != State::Playing) return;
   if (vm->failed()) {
     showError(vm->errorMessage());
+    return;
+  }
+  // A C loop runs no Lua instructions, so neither the budget nor the cancel flag
+  // can end it; the wall clock can (AD-5).
+  if (vm->runningForMs(millis()) > WATCHDOG_MS) {
+    stopStuckVm();
     return;
   }
 

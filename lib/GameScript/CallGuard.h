@@ -33,6 +33,10 @@ class CallGuard {
   static constexpr int HOOK_INTERVAL = 1000;
   static constexpr size_t STACK_HEADROOM_BYTES = 2048;
   static constexpr size_t MESSAGE_CAPACITY = 128;
+  // require() refuses to compile a module with less stack than this left: the
+  // parser runs no hook, and LUAI_MAXCCALLS (30, lib/lua/library.json) levels of
+  // it cost up to 30 x 320 B = 9.6 KB on the ESP32-S3.
+  static constexpr size_t PARSE_HEADROOM_BYTES = 10 * 1024;
 
   CallGuard() = default;
   CallGuard(const CallGuard&) = delete;
@@ -53,10 +57,12 @@ class CallGuard {
   uintptr_t stackFloor() const { return floor; }
   // The deepest stack address seen at a hook event (UINTPTR_MAX before any).
   uintptr_t deepestAddress() const { return deepest; }
+  // True when at least `bytes` of stack are free below the caller (or no floor is set).
+  bool hasHeadroom(size_t bytes) const;
 
   Fault fault() const { return tripped; }
   // The fault's message, with the script's chunk and line for a budget fault.
-  const char* message() const { return text; }
+  const char* message() const { return shown; }
 
   static void hook(lua_State* L, lua_Debug* ar);
 
@@ -69,6 +75,8 @@ class CallGuard {
   uintptr_t floor = 0;
   uintptr_t deepest = UINTPTR_MAX;
   char text[MESSAGE_CAPACITY] = {};
+  // text, or a static literal for the stack and cancel faults.
+  const char* shown = text;
 };
 
 }  // namespace GameScript

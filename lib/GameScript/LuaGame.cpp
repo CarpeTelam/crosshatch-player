@@ -45,6 +45,7 @@ Outcome LuaGame::start() {
   if (!L) return fail("not enough memory");
   bindings.sources = &sources;
   bindings.guard = &guard;
+  bindings.lockedSections = &lockedSections;
   setBindingContext(L, &bindings);
   guard.install(L);
   const Outcome loaded = enter(Entry::Load, nullptr);

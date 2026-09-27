@@ -17,26 +17,27 @@ local function recurse()
   pcall(recurse)
 end
 
--- A backtracking pattern: string.find takes about 2^n steps inside one C call,
--- where no hook runs, while the Lua loop around it spends few instructions.
-local function backtrack(n)
-  return string.find(string.rep("a", n), string.rep("a?", n) .. string.rep("a", n))
+-- A backtracking pattern that fails: string.find tries about C(n + k, k) splits
+-- inside one C call, where no hook runs, while the Lua loop around it spends few
+-- instructions. k stays within the matcher's depth limit (MAXCCALLS, 16).
+local function backtrack(k, n)
+  return string.find(string.rep("a", n), string.rep(".-", k) .. "b")
 end
 
 local function slowCallsForever()
-  while true do backtrack(20) end
+  while true do backtrack(6, 30) end -- about 2 M steps a call
 end
 
 local function stuckInOneCall()
-  backtrack(40)
+  backtrack(12, 40) -- about 2 x 10^11 steps
 end
 
 local BANDS = {
   { label = "Loop forever", hint = "Ends on the instruction budget", run = loopForever },
   { label = "Loop inside pcall", hint = "Ends too: the budget is sticky", run = loopInsidePcall },
   { label = "Recurse through pcall", hint = "Ends on C stack headroom", run = recurse },
-  { label = "Slow C calls forever", hint = "Back cancels it between calls", run = slowCallsForever },
-  { label = "Stuck in one C call", hint = "Back abandons it after 500 ms", run = stuckInOneCall },
+  { label = "Slow C calls forever", hint = "The 3 s watchdog cancels it", run = slowCallsForever },
+  { label = "Stuck in one C call", hint = "The watchdog abandons it", run = stuckInOneCall },
 }
 local TOP = 100
 local BAND_HEIGHT = 130

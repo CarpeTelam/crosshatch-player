@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+
 struct lua_State;
 
 namespace GameScript {
@@ -18,10 +21,18 @@ struct BindingContext {
   const GameSources* sources = nullptr;
   // The hook's limits for the current call (LuaGame's).
   CallGuard* guard = nullptr;
+  // Bindings inside a locked section right now (LuaGame's); see enterLockedSection.
+  std::atomic<uint32_t>* lockedSections = nullptr;
 };
 
 void setBindingContext(lua_State* L, BindingContext* context);
 BindingContext* bindingContext(lua_State* L);
+
+// A binding that takes a lock (a mutex, a newlib call that locks) brackets the
+// locked part with these, so GameVM::abandon never deletes the task while it holds
+// the lock. Nothing between them may raise a Lua error or call into Lua.
+void enterLockedSection(lua_State* L);
+void leaveLockedSection(lua_State* L);
 
 // Creates the global `ch` table and its sub-tables. May raise a Lua error (out of
 // memory), so call it only inside a protected call.
