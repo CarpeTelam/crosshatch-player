@@ -50,7 +50,7 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 | `id` | Lowercase letters, digits, and `-`; starts with a letter or digit; at most 32 characters. A package with the same `id` replaces the old one (see "What is saved" in section 5). |
 | `name` | Shown in the launcher. |
 | `version` | Any string, for people. |
-| `api` | The API level the game needs. This document is level 1. |
+| `api` | The API level the game needs. This document is level 1, a preview until crosshatch v1 is released: it may still grow, and a game written against it may need updating. |
 | `seats` | The minimum and maximum number of players (`min`, `max`). Devices at API level 1 support at most 2. |
 | `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
 | `hidden` | Optional, default `false`. Set `true` if players must not see each other's screens (Battleship, Hangman); in pass-and-play, the runtime then adds a hand-off screen between turns (section 3). |
