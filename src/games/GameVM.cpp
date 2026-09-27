@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <DisplayList.h>
 #include <Logging.h>
+#include <Session.h>
 
 #include <new>
 #include <utility>
@@ -73,35 +74,42 @@ void GameVM::run() {
   const auto stackFloor = reinterpret_cast<uintptr_t>(pxTaskGetStackStart(nullptr));
 #endif
   game.setStackFloor(stackFloor);
-  // Each call into Lua restarts the match's watchdog clock (runningForMs).
-  const auto startCall = [this] { callStartMs.store(millis(), std::memory_order_release); };
-  startCall();
-  Outcome outcome = game.start();
-  if (outcome == Outcome::Ok) {
-    startCall();
-    outcome = game.draw();
+  // The Session comes from the arena before the Lua state (LuaGame::load takes the
+  // codec scratch next), so Lua can never starve either.
+  GameScript::ArenaAllocator& heap = arena.allocator();
+  GameCore::Session* session = heap.create<GameCore::Session>(GameCore::Roster::solo(), game);
+  Outcome outcome = Outcome::ScriptError;
+  if (session) {
+    outcome = game.load();
+  } else {
+    failure = "not enough memory";
   }
+  if (outcome == Outcome::Ok) outcome = session->start();
+  if (outcome == Outcome::Ok) outcome = session->draw();
+  bool overLogged = false;
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
+    if (!overLogged && session->status().over) {
+      overLogged = true;
+      LOG_INF("GAME", "Round over at ver %u; winners mask 0x%x", static_cast<unsigned>(session->ver()),
+              static_cast<unsigned>(session->status().winners));
+    }
     GameScript::InputEvent event;
     if (!queue.pop(event)) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
-    startCall();
-    outcome = game.input(event);
-    if (outcome == Outcome::Ok) {
-      startCall();
-      outcome = game.draw();
-    }
+    outcome = session->handle(event);
+    if (outcome == Outcome::Ok) outcome = session->applyPending();
+    if (outcome == Outcome::Ok) outcome = session->draw();
   }
   if (outcome == Outcome::ScriptError) {
-    LOG_ERR("LUA", "Script error: %s", game.errorMessage());
+    LOG_ERR("LUA", "Script error: %s", errorMessage());
     scriptFailed.store(true, std::memory_order_release);
   } else if (outcome == Outcome::Cancelled) {
     LOG_INF("GAME", "VM cancelled");
   }
-  startCall();
   game.close();
+  heap.destroy(session);
   const uintptr_t deepest = game.callGuard().deepestAddress();
   const unsigned hookHeadroom =
       deepest != UINTPTR_MAX && deepest > stackFloor ? static_cast<unsigned>(deepest - stackFloor) : 0;
@@ -113,6 +121,16 @@ void GameVM::run() {
     taskAlive = false;
   }
   done.store(true, std::memory_order_release);
+}
+
+uint32_t GameVM::runningForMs(const uint32_t nowMs) {
+  if (!busy()) return 0;
+  const uint32_t call = game.callSerial();
+  if (call != watchedCall) {
+    watchedCall = call;
+    watchedSinceMs = nowMs;
+  }
+  return nowMs - watchedSinceMs;
 }
 
 void GameVM::postTap(const int16_t x, const int16_t y) {

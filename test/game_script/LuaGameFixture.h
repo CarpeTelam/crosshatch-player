@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -14,9 +15,11 @@
 #include "CallGuard.h"
 #include "DisplayList.h"
 #include "FrameBuffers.h"
+#include "GameInput.h"
 #include "GameSources.h"
 #include "IRandom.h"
 #include "LuaGame.h"
+#include "Session.h"
 
 namespace GameScriptTestSupport {
 
@@ -36,6 +39,38 @@ inline std::string readFixture(const std::string& relative) {
   text << in.rdbuf();
   return text.str();
 }
+
+// A LuaGame driven directly, without a Session, for tests of the VM itself (sandbox,
+// guard, errors): start() loads main.lua and runs setup, keeping its state's bytes;
+// draw() and input() pass them with seat 1. A move input returns is kept, unused.
+// When setup fails the snapshot is an empty table, so a test can still draw what
+// the script left in its globals.
+class DirectGame : public GameScript::LuaGame {
+ public:
+  using LuaGame::draw;
+  using LuaGame::input;
+  using LuaGame::LuaGame;
+
+  GameScript::Outcome start() {
+    const GameScript::Outcome loaded = load();
+    if (loaded != GameScript::Outcome::Ok) return loaded;
+    std::span<const uint8_t> state;
+    const GameScript::Outcome outcome = setup(GameCore::GameContext{}, state);
+    snapshot.assign(state.begin(), state.end());
+    if (snapshot.empty()) snapshot = {0x06, 0x00, 0x00};  // {} in codec v1
+    return outcome;
+  }
+  GameScript::Outcome draw() { return LuaGame::draw(snapshot, 1); }
+  GameScript::Outcome input(const GameScript::InputEvent& event) {
+    std::span<const uint8_t> move;
+    const GameScript::Outcome outcome = LuaGame::input(snapshot, 1, event, move);
+    lastMove.assign(move.begin(), move.end());
+    return outcome;
+  }
+
+  std::vector<uint8_t> snapshot;
+  std::vector<uint8_t> lastMove;
+};
 
 // Owns everything a LuaGame borrows: a malloc'd arena block (the device uses PSRAM),
 // two frame lists, and a source table.
@@ -69,6 +104,40 @@ class LuaGameTest : public ::testing::Test {
 
   // test/game_script/fixtures/faults/<name>.lua as main.lua.
   void useFault(const std::string& name) { useSource("main", readFixture("faults/" + name + ".lua")); }
+
+  // The GameVM task's composition (GameVM::run): a solo Session in the arena, taken
+  // before the Lua state, over a LuaGame; each step is followed by a draw.
+  struct SessionGame {
+    SessionGame(LuaGameTest& test) : arena(test.arena), game(test.arena, test.frames, test.sources, test.random) {
+      session = arena.create<GameCore::Session>(GameCore::Roster::solo(), game);
+    }
+    ~SessionGame() {
+      game.close();
+      arena.destroy(session);
+    }
+    GameScript::Outcome start() {
+      if (!session) return GameScript::Outcome::ScriptError;
+      GameScript::Outcome outcome = game.load();
+      if (outcome == GameScript::Outcome::Ok) outcome = session->start();
+      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
+      return outcome;
+    }
+    // One event as GameVM handles it: input, the pending move, then a draw.
+    GameScript::Outcome step(const GameScript::InputEvent& event) {
+      GameScript::Outcome outcome = session->handle(event);
+      if (outcome == GameScript::Outcome::Ok) outcome = session->applyPending();
+      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
+      return outcome;
+    }
+    GameScript::Outcome tap(int16_t x, int16_t y) {
+      return step(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
+    }
+    const char* errorMessage() const { return game.errorMessage(); }
+
+    GameScript::ArenaAllocator& arena;
+    GameScript::LuaGame game;
+    GameCore::Session* session = nullptr;
+  };
 
   // The GameVM task has VM_STACK_BYTES; model it from the caller's frame down.
   __attribute__((noinline)) static void modelTaskStack(GameScript::LuaGame& game) {

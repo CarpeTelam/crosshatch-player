@@ -20,10 +20,11 @@ struct FreeLinks {
   ArenaAllocator::Block* prev;
 };
 
-constexpr size_t ALIGN = alignof(std::max_align_t);
+constexpr size_t ALIGN = ArenaAllocator::ALIGN;
+constexpr size_t HEADER = ArenaAllocator::HEADER;
+constexpr size_t MIN_BLOCK = ArenaAllocator::MIN_BLOCK;
 constexpr size_t roundUp(const size_t n) { return (n + ALIGN - 1) & ~(ALIGN - 1); }
-constexpr size_t HEADER = roundUp(sizeof(size_t) * 2);
-constexpr size_t MIN_BLOCK = roundUp(HEADER + sizeof(FreeLinks));
+static_assert(MIN_BLOCK >= HEADER + sizeof(FreeLinks), "a free block must hold its links");
 constexpr size_t USED = 1;
 static_assert(sizeof(ArenaAllocator::Block) <= HEADER, "the header must fit before the aligned payload");
 

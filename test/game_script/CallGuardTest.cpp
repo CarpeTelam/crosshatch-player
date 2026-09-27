@@ -9,13 +9,14 @@
 #include "LuaGameFixture.h"
 
 using namespace GameScript;
+using GameScriptTestSupport::DirectGame;
 
 namespace {
 
 class CallGuardTest : public GameScriptTestSupport::LuaGameTest {
  protected:
   // Starts the game and, if that works, runs one draw and one tap.
-  Outcome runAll(LuaGame& game) {
+  Outcome runAll(DirectGame& game) {
     Outcome outcome = game.start();
     if (outcome == Outcome::Ok) outcome = game.draw();
     if (outcome == Outcome::Ok) outcome = game.input(InputEvent{InputKind::Tap, 10, 10});
@@ -26,7 +27,7 @@ class CallGuardTest : public GameScriptTestSupport::LuaGameTest {
 TEST_F(CallGuardTest, EveryEndlessLoopEndsOnTheBudget) {
   for (const char* fixture : {"loop_load", "loop_setup", "loop_draw", "loop_input", "loop_in_pcall"}) {
     useFault(fixture);
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     EXPECT_EQ(runAll(game), Outcome::ScriptError) << fixture;
     // The message names the line the budget ran out on.
     EXPECT_TRUE(contains(game.errorMessage(), "main.lua:")) << fixture << " -> " << game.errorMessage();
@@ -41,7 +42,7 @@ TEST_F(CallGuardTest, AnXpcallHandlerCannotOutliveAGuardFault) {
   // hook, hooks are off there, so the handler would run unguarded.
   for (const char* fixture : {"loop_in_xpcall_handler", "recurse_in_xpcall_handler"}) {
     useFault(fixture);
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << fixture;
     EXPECT_EQ(game.callGuard().fault(), Fault::Budget) << fixture << " -> " << game.errorMessage();
@@ -52,7 +53,7 @@ TEST_F(CallGuardTest, AnXpcallHandlerCannotOutliveAGuardFault) {
                         "  local ok, e = xpcall(function() error('x') end, function(m) return 'handled ' .. m end)\n"
                         "  return { result = e } end,\n"
                         "  draw = function(s) ch.gfx.text(0, 0, s.result, 'small', 'black') end }"));
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontText(), "handled main.lua:2: x");
@@ -63,14 +64,14 @@ TEST_F(CallGuardTest, TheBudgetIsPerCall) {
   useSource("main",
             "return { setup = function() return {} end,\n"
             "  draw = function() local x = 0 for i = 1, 700000 do x = x + i end ch.gfx.clear('white') end }");
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   for (int i = 0; i < 3; ++i) EXPECT_EQ(game.draw(), Outcome::Ok) << i << ": " << game.errorMessage();
 }
 
 TEST_F(CallGuardTest, ALuaErrorIsAScriptError) {
   useFault("lua_error");
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_TRUE(contains(game.errorMessage(), "main.lua:2: boom")) << game.errorMessage();
   EXPECT_EQ(game.callGuard().fault(), Fault::None);
@@ -78,7 +79,7 @@ TEST_F(CallGuardTest, ALuaErrorIsAScriptError) {
 
 TEST_F(CallGuardTest, ACancelBeforeACallEndsItAsCancelled) {
   useSource("main", GameScriptTestSupport::readFixture("tracer/main.lua"));
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   game.requestCancel();
   EXPECT_EQ(game.draw(), Outcome::Cancelled);
@@ -90,7 +91,7 @@ TEST_F(CallGuardTest, ACancelBeforeACallEndsItAsCancelled) {
 TEST_F(CallGuardTest, ACancelFromAnotherTaskStopsARunningLoopEvenUnderPcall) {
   for (const char* fixture : {"loop_draw", "loop_in_pcall"}) {
     useFault(fixture);
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     // Both loop in draw, so the cancel lands while the loop runs.
     ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
     std::thread canceller([&game] {
@@ -109,10 +110,10 @@ TEST_F(CallGuardTest, NestedPcallStopsOnStackHeadroom) {
   {
     // Without a floor, Lua's own C-stack error is caught by the script's pcall
     // and the script carries on (on the host's large stack).
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     EXPECT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   }
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   modelTaskStack(game);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_STREQ(game.errorMessage(), "script recursion too deep (C stack nearly full)");
@@ -125,7 +126,7 @@ TEST_F(CallGuardTest, RecursiveIndexEndsInAScriptError) {
   // guard would; with or without a floor it is a ScriptError, never a crash.
   useFault("recursive_index");
   for (const bool floor : {false, true}) {
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     if (floor) modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::ScriptError);
     EXPECT_TRUE(contains(game.errorMessage(), "C stack overflow") ||
@@ -146,7 +147,7 @@ TEST_F(CallGuardTest, ParserAndPatternRecursionEndInScriptErrors) {
   };
   for (const auto& c : cases) {
     useFault(c.fixture);
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     modelTaskStack(game);
     EXPECT_EQ(game.start(), Outcome::ScriptError) << c.fixture;
     EXPECT_TRUE(contains(game.errorMessage(), c.message)) << c.fixture << " -> " << game.errorMessage();
@@ -176,7 +177,7 @@ TEST_F(CallGuardTest, MeasuresStackCostPerLevel) {
     const int levels[2] = {5, 15};  // inside LUAI_MAXCCALLS (30)
     for (int i = 0; i < 2; ++i) {
       useSource("main", "LEVELS = " + std::to_string(levels[i]) + "\n" + body);
-      LuaGame game(arena, frames, sources, random);
+      DirectGame game(arena, frames, sources, random);
       ASSERT_EQ(game.start(), Outcome::Ok) << c.name << ": " << game.errorMessage();
       deepest[i] = game.callGuard().deepestAddress();
     }
@@ -185,7 +186,7 @@ TEST_F(CallGuardTest, MeasuresStackCostPerLevel) {
     // Unbounded (-1 never reaches 0), in a modelled task stack: the depth reached,
     // and which limit stopped it (the guard, or LUAI_MAXCCALLS as Lua's own error).
     useSource("main", "LEVELS = -1\n" + body);
-    LuaGame game(arena, frames, sources, random);
+    DirectGame game(arena, frames, sources, random);
     modelTaskStack(game);
     const Outcome outcome = game.start();
     const bool byGuard = game.callGuard().fault() == Fault::Stack;
@@ -210,7 +211,7 @@ TEST_F(CallGuardTest, MeasuresStackCostPerLevel) {
 
 TEST_F(CallGuardTest, ASandboxedTracerRunsWellInsideTheModelledStack) {
   useSource("main", GameScriptTestSupport::readFixture("tracer/main.lua"));
-  LuaGame game(arena, frames, sources, random);
+  DirectGame game(arena, frames, sources, random);
   modelTaskStack(game);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();

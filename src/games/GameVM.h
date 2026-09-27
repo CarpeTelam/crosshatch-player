@@ -21,7 +21,8 @@ class GameViewport;
 class GfxRenderer;
 
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
-// the frame buffers, the input queue, and the LuaGame. The task alone calls into
+// the frame buffers, the input queue, the LuaGame, and, in the arena while the task
+// runs, the solo GameCore::Session that drives it. The task alone calls into
 // Lua; it never takes RenderLock, calls ActivityManager, or touches Storage. The
 // match posts input and reads frames, and destroys this object only after join()
 // returns true (or before start()); otherwise it hands it to abandon().
@@ -57,15 +58,15 @@ class GameVM {
   bool finished() const { return done.load(std::memory_order_acquire); }
   // Ended with a ScriptError; errorMessage() then holds Lua's message.
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
-  const char* errorMessage() const { return game.errorMessage(); }
+  const char* errorMessage() const { return failure ? failure : game.errorMessage(); }
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }
-  // How long the current call into Lua has run at nowMs (millis()); 0 when idle.
-  // The match treats a call past its watchdog limit as a stuck script (AD-5).
-  uint32_t runningForMs(uint32_t nowMs) const {
-    return busy() ? nowMs - callStartMs.load(std::memory_order_acquire) : 0;
-  }
+  // How long the current call into Lua has run at nowMs (millis()), timed from the
+  // first poll that saw it; 0 when idle. Each call is timed on its own, though one
+  // input may make several (input, apply, status, over). Loop task only; the match
+  // treats a call past its watchdog limit as a stuck script (AD-5).
+  uint32_t runningForMs(uint32_t nowMs);
 
   // Sets the cancel flag, which the hook turns into Cancelled at the next hook
   // event, and asks the task to quit. Returns at once.
@@ -112,5 +113,9 @@ class GameVM {
   std::atomic<bool> quitRequested{false};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};
-  std::atomic<uint32_t> callStartMs{0};
+  // Set (to a literal) when the VM fails outside Lua; errorMessage() then shows it.
+  const char* failure = nullptr;
+  // runningForMs's view of the current call (loop task only).
+  uint32_t watchedCall = 0;
+  uint32_t watchedSinceMs = 0;
 };

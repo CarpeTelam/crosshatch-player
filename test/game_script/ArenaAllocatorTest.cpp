@@ -44,6 +44,44 @@ TEST_F(ArenaAllocatorTest, AllocatesAlignedDistinctBlocksInsideTheArena) {
   EXPECT_GT(arena.bytesInUse(), 1025u);
 }
 
+TEST_F(ArenaAllocatorTest, BlockBytesBoundsWhatAnAllocationTakes) {
+  // LuaGame's static_assert sizes the scratch reserve with blockBytes.
+  for (const size_t size : {size_t{0}, size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{1000}, size_t{13720}}) {
+    arena.reset(block.data(), block.size());
+    const size_t before = arena.bytesInUse();
+    void* p = arena.allocate(size);
+    ASSERT_NE(p, nullptr) << size;
+    EXPECT_LE(arena.bytesInUse() - before, ArenaAllocator::blockBytes(size)) << size;
+    EXPECT_GE(ArenaAllocator::blockBytes(size), size + ArenaAllocator::HEADER) << size;
+  }
+  // An exact fit whose remainder is too small to split keeps the whole block.
+  const size_t size = 1000;
+  const size_t whole = ArenaAllocator::blockBytes(size) - ArenaAllocator::ALIGN;
+  arena.reset(block.data(), whole);
+  ASSERT_NE(arena.allocate(size), nullptr);
+  EXPECT_LE(arena.bytesInUse(), ArenaAllocator::blockBytes(size));
+}
+
+TEST_F(ArenaAllocatorTest, CreateConstructsInTheArenaAndDestroyFrees) {
+  struct Counted {
+    explicit Counted(int& live) : live(live) { ++live; }
+    ~Counted() { --live; }
+    int& live;
+  };
+  int live = 0;
+  Counted* object = arena.create<Counted>(live);
+  ASSERT_NE(object, nullptr);
+  EXPECT_EQ(live, 1);
+  EXPECT_GT(arena.bytesInUse(), 0u);
+  arena.destroy(object);
+  EXPECT_EQ(live, 0);
+  EXPECT_EQ(arena.bytesInUse(), 0u);
+  arena.destroy<Counted>(nullptr);  // a no-op
+  arena.reset(block.data(), 8);     // too small for any block
+  EXPECT_EQ(arena.create<Counted>(live), nullptr);
+  EXPECT_EQ(live, 0);
+}
+
 TEST_F(ArenaAllocatorTest, ExhaustsThenRecoversAfterFreeing) {
   std::vector<void*> blocks;
   while (void* p = arena.allocate(1000)) blocks.push_back(p);

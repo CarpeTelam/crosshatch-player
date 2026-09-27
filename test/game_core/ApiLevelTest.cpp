@@ -13,6 +13,7 @@
 
 #include "ApiLevel.h"
 #include "Manifest.h"
+#include "Session.h"
 
 // Checks docs/crosshatch/api-level-<n>.txt against its own grammar and against
 // ApiLevel.h: the list is what API_SURFACE_CRC names, so the two change together.
@@ -151,9 +152,8 @@ TEST(ApiLevelTest, SurfaceCrcMatchesTheLists) {
 
 TEST(ApiLevelTest, Crc32IsZlibs) { EXPECT_EQ(crc32("123456789"), 0xCBF43926u); }
 
-TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
-  const Surface surface = loadSurface();
-  ASSERT_TRUE(surface.loaded);
+// The list's limits by name.
+std::map<std::string, std::string> limitsOf(const Surface& surface) {
   std::map<std::string, std::string> limits;
   for (const std::string& line : surface.lines) {
     const std::optional<Entry> entry = parseEntry(line);
@@ -162,10 +162,26 @@ TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
       limits[entry->body.substr(0, space)] = entry->body.substr(space + 1);
     }
   }
+  return limits;
+}
+
+TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::map<std::string, std::string> limits = limitsOf(surface);
   EXPECT_EQ(limits["manifest_id_bytes"], std::to_string(GameCore::Manifest::MAX_ID_BYTES));
   EXPECT_EQ(limits["manifest_name_bytes"], std::to_string(GameCore::Manifest::MAX_NAME_BYTES));
   EXPECT_EQ(limits["manifest_version_bytes"], std::to_string(GameCore::Manifest::MAX_VERSION_BYTES));
   EXPECT_EQ(limits["manifest_icon_bytes"], std::to_string(GameCore::Manifest::MAX_ICON_BYTES));
+}
+
+TEST(ApiLevelTest, SessionLimitsMatchTheList) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::map<std::string, std::string> limits = limitsOf(surface);
+  EXPECT_EQ(limits["state_bytes"], std::to_string(GameCore::SNAPSHOT_BYTES));
+  EXPECT_EQ(limits["move_bytes"], std::to_string(GameCore::MOVE_BYTES));
+  EXPECT_EQ(limits["reject_reason_bytes"], std::to_string(GameCore::REJECT_REASON_BYTES));
 }
 
 // Story 2.5's freeze job and the release script read the defines with a regular

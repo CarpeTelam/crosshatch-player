@@ -46,6 +46,14 @@ function game.setup(ctx)
   return {}
 end
 
+function game.status(state)
+  return { turn = 1 }
+end
+
+function game.apply(state, seat, move)
+  return state
+end
+
 function game.draw(state, seat, ui)
   ch.gfx.clear("white")
   ch.gfx.text(20, 30, "Runaway scripts", "large", "black")

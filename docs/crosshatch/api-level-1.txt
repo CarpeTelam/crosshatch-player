@@ -151,6 +151,7 @@ limit manifest_version_bytes 32
 limit manifest_icon_bytes 32
 limit state_bytes 1400
 limit move_bytes 256
+limit reject_reason_bytes 64
 limit store_bytes 4096
 limit codec_depth_count 16
 limit frame_commands_count 2048

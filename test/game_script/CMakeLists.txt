@@ -50,7 +50,10 @@ add_executable(GameScriptTest
   DisplayListTest.cpp
   LuaGameTest.cpp
   SandboxTest.cpp
+  SessionGameTest.cpp
   ${GAME_SCRIPT_SOURCES}
+  ${REPO_ROOT}/lib/GameCore/Roster.cpp
+  ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
 )

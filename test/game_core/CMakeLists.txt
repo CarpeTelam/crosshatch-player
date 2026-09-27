@@ -4,8 +4,11 @@ add_executable(GameCoreTest
   ForkReleaseTest.cpp
   ManifestCheckTest.cpp
   ManifestTest.cpp
+  SessionTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameCore.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
+  ${REPO_ROOT}/lib/GameCore/Roster.cpp
+  ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
 )
 

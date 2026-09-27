@@ -1,20 +1,18 @@
 #pragma once
 
+#include <GameEvent.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
 
 namespace GameScript {
 
-// Events the loop task posts to the VM for input(). Canvas coordinates. Later
-// stories add LongPress and Swipe (touch) and Timer.
-enum class InputKind : uint8_t { Tap };
-
-struct InputEvent {
-  InputKind kind = InputKind::Tap;
-  int16_t x = 0;
-  int16_t y = 0;
-};
+// Events the loop task posts to the VM for input(), in canvas coordinates: the
+// domain's event type (GameCore/GameEvent.h). Later stories add LongPress and Swipe
+// (touch) and Timer.
+using InputKind = GameCore::EventKind;
+using InputEvent = GameCore::GameEvent;
 
 inline constexpr size_t INPUT_QUEUE_DEPTH = 8;
 
