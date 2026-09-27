@@ -3,7 +3,7 @@ title: 'Vendor Lua 5.5.1'
 type: 'chore'
 ticket: '4'
 created: '2026-09-26'
-status: 'built'
+status: done
 baseline_revision: '41acf2fa6c7de2fb1ef2042f0cceeb8ba283d6fc'
 route: 'full'
 route_source: 'auto'

@@ -1,4 +1,6 @@
-#if FREEINK_CAP_GAMES
+// Device-only: the simulator's SecureHttpClient has no setUserAgent or streaming GET, and the one caller,
+// network/OtaUpdater.cpp, is not built there.
+#if FREEINK_CAP_GAMES && !defined(SIMULATOR)
 
 #include "ForkReleaseProbe.h"
 
@@ -32,4 +34,4 @@ bool ForkReleaseProbe::latestReleaseMissing() {
   return status == HTTP_NOT_FOUND;
 }
 
-#endif  // FREEINK_CAP_GAMES
+#endif  // FREEINK_CAP_GAMES && !defined(SIMULATOR)

@@ -6,6 +6,7 @@ covers: [CAP-11]
 after: []
 assignee: ""
 risk: medium
+status: done
 ---
 
 # Game code builds everywhere and upstream merges stay clean
@@ -62,3 +63,4 @@ Build configuration, CI, the upstream-touch ledger, the vendored engine, and emp
 - Decision: the default refactor sweep is kept as entry 5 (2026-09-26).
 - Decision: AD-25 puts the fork release workflow and ledger row 10 in this epic. Entry 6 builds the update source; entry 7 builds the workflow and is hitl for the Actions and tag-ruleset settings, the first release, and the device check, because `workflow_dispatch` runs only once the file is on `develop`; the sweep waits on entry 7 (from the AD-25 review and set check, 2026-09-26).
 - Decision: if a tag ruleset cannot exempt only the workflow, repository admins are its only bypass, so no deploy key or token secret is added (2026-09-26).
+- Decision: closed as done. The closure check is the retrospective (`epic-platform-baseline-retrospective.md`, verdict accepted-with-open-items), which verified Done when 1–7 against implementation evidence, with the device OTA check confirmed by the owner. No child was dropped. The open items AI-1 to AI-10 are tracked in the retrospective, outside this epic's Done when (owner, 2026-09-27).
