@@ -4,10 +4,12 @@
 #
 # - Upstream touch ledger: keeps changes to upstream files within docs/crosshatch/upstream-touches.md so merges
 #   of crosspoint-reader's develop branch stay clean. That file has the rules and how to run the check locally.
-# - x4pro flash budget: caps the flash the game runtime adds to the X4 Pro firmware. Builds x4pro on the PR's
-#   commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image with games is more than
-#   the limit larger. Both images come from the same commit, so upstream growth never uses up the budget.
-#   scripts/check_flash_budget.py holds the logic and how to run it locally.
+# - x4pro flash budget: caps the flash and the static internal RAM the game runtime adds to the X4 Pro firmware.
+#   Builds x4pro on the PR's commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image
+#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit more than the RAM
+#   limit larger. Both builds come from the same commit, so upstream growth never uses up the budget. It also fails
+#   a game object (lib/Game*, src/games, src/activities/games) with a static initializer or a mutable static over
+#   64 B (spine AD-2). scripts/check_flash_budget.py holds the logic and how to run it locally.
 # - Simulator build: builds the desktop simulator for the X4 Pro and the Sticky, both of which turn FREEINK_CAP_GAMES
 #   on, so game code that only builds on the device fails here and not in a later session. Device-only files guard
 #   themselves with !defined(SIMULATOR); .claude/skills/run-crosshatch-player/ has the simulator and how to run it.
@@ -60,6 +62,8 @@ jobs:
       # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 250 KiB is
       # 256,000 bytes. Set it below the measured difference to see the job fail.
       FLASH_BUDGET_KIB: 250
+      # Static internal RAM limit in bytes (1 KiB), the same way.
+      RAM_BUDGET_BYTES: 1024
     steps:
       # Toolchain setup (checkout through the penv pin) copied from ci.yml's build job.
       - uses: actions/checkout@v6
@@ -107,13 +111,21 @@ jobs:
           ~/.platformio/penv/bin/pio --version
 
       - name: Build x4pro with games on
+        id: build-on
         run: python3 scripts/check_flash_budget.py build on
 
       - name: Build x4pro with games off
         run: python3 scripts/check_flash_budget.py build off
 
-      - name: Compare image sizes
-        run: python3 scripts/check_flash_budget.py compare --limit-kib "$FLASH_BUDGET_KIB"
+      - name: Compare flash and static RAM
+        run: |
+          python3 scripts/check_flash_budget.py compare --limit-kib "$FLASH_BUDGET_KIB" \
+            --ram-limit-bytes "$RAM_BUDGET_BYTES"
+
+      # Needs only the games-on build, so it also reports when the games-off build or the comparison failed.
+      - name: Check game objects
+        if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}
+        run: python3 scripts/check_flash_budget.py objects
 
   simulator-build:
     name: Simulator build
