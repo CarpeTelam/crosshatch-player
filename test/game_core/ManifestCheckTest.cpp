@@ -83,8 +83,7 @@ TEST(ManifestCheckTest, NearbyOnlyWithoutTheRadioIsUnavailable) {
 
 TEST(ManifestCheckTest, NearbyNeedsTwoHostSeats) {
   constexpr HostCaps oneSeat{3, 2, 1, true};
-  expectVerdict(game(2, 1, 2, Manifest::MODE_NEARBY).check(oneSeat), CheckStatus::Unavailable,
-                CheckReason::NoHostMode);
+  expectVerdict(game(2, 1, 2, Manifest::MODE_NEARBY).check(oneSeat), CheckStatus::Unavailable, CheckReason::NoHostMode);
 }
 
 TEST(ManifestCheckTest, OkDropsModesTheHostCannotStart) {
@@ -125,8 +124,7 @@ TEST(ManifestCheckTest, BrokenFieldsAreInvalid) {
 
 TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {
   // api too new and a solo game needing two seats: the package is broken first.
-  expectVerdict(game(9, 2, 2, Manifest::MODE_SOLO).check(HOST), CheckStatus::Invalid,
-                CheckReason::SoloNeedsOneSeat);
+  expectVerdict(game(9, 2, 2, Manifest::MODE_SOLO).check(HOST), CheckStatus::Invalid, CheckReason::SoloNeedsOneSeat);
 }
 
 TEST(ManifestCheckTest, ParsedManifestPassesCheck) {
