@@ -12,7 +12,7 @@ headless: false
 
 **Epic:** `epic-platform-baseline` (epic 1, "Game code builds everywhere and upstream merges stay clean"), folder `_bmad-output/initiative-crosshatch-player-v1/epic-platform-baseline/`. Resolved from the argument `epic 1` by matching `id = 1` in `tickets.py status`, then `find 1.1` → `epic_file`.
 
-**Tickets** (build order from `tickets.py status`; all `status = built`, `state = review`; `pending_tickets` is empty; **all seven are still at `built`**, not `done`):
+**Tickets** (build order from `tickets.py status`; all `status = built`, `state = review`; `pending_tickets` is empty; all seven were at `built` during the retro and were marked `done` after the owner accepted it):
 
 | Ref | Title | hitl | Covers | Plan baseline | Range (commits) |
 |-----|-------|------|--------|---------------|-----------------|

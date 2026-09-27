@@ -29,6 +29,7 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 3. All three stay within API level 1 and the 1,400 B snapshot, add nothing to the API, and draw boards and markers from `GameIcons`.
 4. A fork release made by the release workflow (AD-25) has the three `.cpgame` files attached, packed byte-for-byte from `games/<id>/`.
 5. Merged to `develop` with the five-env build, host suites, whole-tree format check, `pio check`, and the fork-only size and ledger jobs all green.
+6. The last ticket sets `API_LEVEL_FROZEN` in `lib/GameCore/ApiLevel.h`, closing v1; the first fork release from that commit is the freezing release (spine AD-19).
 
 ## Boundaries
 
@@ -48,3 +49,4 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 - Waits on epic-icon-library because: the icon set.
 - Waits on epic-install-and-launcher because: packing and install through the inbox.
 - Waits on epic-pass-and-play because: pass-and-play and the hand-off.
+- Decision: the API level 1 freeze moved from epic-game-api-docs to the end of this initiative, in epic-first-party-games's last ticket (owner, spine AD-19 update, 2026-09-27).

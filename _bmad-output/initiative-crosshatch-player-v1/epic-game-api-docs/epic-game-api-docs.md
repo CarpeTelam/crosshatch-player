@@ -12,7 +12,7 @@ risk: low
 
 ## Description
 
-Turns the API seed into the self-contained author docs: `docs/crosshatch/game-api.md`, a LuaLS `ch.d.lua` stub, and the icon catalog. An AI-authoring trial proves them. API level 1 freezes when this epic closes.
+Turns the API seed into the self-contained author docs: `docs/crosshatch/game-api.md`, a LuaLS `ch.d.lua` stub, and the icon catalog. An AI-authoring trial proves them. API level 1 stays a preview here; it freezes in epic-first-party-games (spine AD-19).
 
 ## Outcome
 
@@ -27,7 +27,7 @@ Completed at inception. This epic owns CAP-9.
 1. `docs/crosshatch/game-api.md`, the LuaLS `ch.d.lua` stub, and the icon catalog describe all of API level 1 and match the runtime; the seed's tic-tac-toe example runs unmodified.
 2. Given only those three files, an AI writes a new game that installs through the inbox and plays a round on a device.
 3. The docs name no path or file outside themselves, so they move to a starter repo unchanged.
-4. Merged to `develop`; API level 1 is frozen.
+4. Merged to `develop`; `ch.d.lua`, the icon catalog, and `game-api.md` agree with `docs/crosshatch/api-level-1.txt`, which the host test checks.
 
 ## Boundaries
 
@@ -45,3 +45,4 @@ Author docs in `docs/crosshatch/` only. Not the byte-formats doc (epic-script-ru
 - Waits on epic-icon-library because: the icon set to catalog.
 - Waits on epic-install-and-launcher because: install through the inbox for the AI-authoring trial.
 - Waits on epic-play-nearby because: the complete pass and nearby behaviour the docs describe (the seed's tic-tac-toe is `pass` and `nearby`).
+- Decision: the API level 1 freeze moved from epic-game-api-docs to the end of this initiative, in epic-first-party-games's last ticket (owner, spine AD-19 update, 2026-09-27).
