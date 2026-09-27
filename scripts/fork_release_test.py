@@ -6,6 +6,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fork_release as fr  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-RULES = fr.load_rules(fr.DEFAULT_VECTORS)
+VECTORS = REPO / fr.VECTORS_PATH
+RULES = fr.load_rules(VECTORS)
 URL = RULES.release_url.encode()
 UPSTREAM = b'https://api.github.com/' + RULES.upstream_fragment.encode() + b'/latest'
 
@@ -30,6 +32,11 @@ def quiet(function, *args):
 def app_image(*strings, magic=0xE9, desc=fr.APP_DESC_MAGIC):
     header = bytes([magic]) + bytes(31) + desc + bytes(60)
     return header + b''.join(b'\x00' + s + b'\x00' for s in strings)
+
+
+def api_header(level=1, frozen=False):
+    return (f'#pragma once\n#define API_LEVEL {level}\n#define API_MIN_LEVEL 1\n'
+            f'#define API_LEVEL_FROZEN {"true" if frozen else "false"}\n#define API_SURFACE_CRC 0x1A78D21F\n')
 
 
 def ini(version_lines='version = 1.6.5\n'):
@@ -57,15 +64,25 @@ def fake_config(envs=('x4pro', 'sticky'), version_flag='\\"${v}\\"', games=True)
 
 
 class TempProject:
-    """A git repo with platformio.ini and a first commit."""
+    """A git repo with platformio.ini, this repository's version vectors, ApiLevel.h, and a first commit."""
 
-    def __init__(self, ini_text=None):
+    def __init__(self, ini_text=None, header=api_header()):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = pathlib.Path(self.tmp.name)
         (self.dir / 'platformio.ini').write_text(ini() if ini_text is None else ini_text)
+        self.write(str(fr.VECTORS_PATH), VECTORS.read_text())
+        if header is not None:
+            self.write(fr.API_LEVEL_HEADER, header)
         self.git('init', '-q', '-b', 'develop')
+        self.commit('init')
+
+    def write(self, path, text):
+        (self.dir / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.dir / path).write_text(text)
+
+    def commit(self, message):
         self.git('add', '-A')
-        self.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', message)
 
     def git(self, *args):
         return subprocess.run(['git', '-C', str(self.dir), *args], check=True, capture_output=True, text=True).stdout
@@ -113,13 +130,13 @@ class RulesTest(unittest.TestCase):
             self.assertEqual(RULES.asset_name(vector['tag'], vector['board']), vector['asset'])
 
     def test_disagreeing_vector_is_a_setup_error(self):
-        data = json.loads(fr.DEFAULT_VECTORS.read_text())
+        data = json.loads(VECTORS.read_text())
         data['asset_names'][0]['asset'] = 'crosspoint-other.bin'
         with self.assertRaises(fr.SetupError):
             fr.Rules(data).check_asset_vectors()
 
     def test_tags(self):
-        data = json.loads(fr.DEFAULT_VECTORS.read_text())
+        data = json.loads(VECTORS.read_text())
         for vector in data['valid_tags']:
             self.assertTrue(RULES.is_tag(vector['tag']), vector)
         for vector in data['invalid_tags']:
@@ -189,6 +206,7 @@ class PrepareTest(unittest.TestCase):
         code, plan = self.run_prepare(self.project, ['v1.5.0'])
         self.assertEqual(code, 0)
         self.assertEqual(plan['tag'], '1.6.5-ch.1')
+        self.assertEqual(plan['api'], {'level': 1, 'min_level': 1, 'frozen': False})
         self.assertEqual(plan['commit'], self.project.git('rev-parse', 'HEAD').strip())
         self.assertEqual([e['asset'] for e in plan['envs']], ['crosspoint-1.6.5-ch.1-sticky.bin', 'crosspoint-1.6.5-ch.1-x4pro.bin'])
         self.assertIn('version = 1.6.5-ch.1\n', (self.project.dir / 'platformio.ini').read_text())
@@ -225,12 +243,39 @@ class PrepareTest(unittest.TestCase):
     def test_no_flagged_env_fails(self):
         self.assertEqual(self.run_prepare(self.project, [], fake_config(games=False))[0], 1)
 
+    def test_api_level_comes_from_the_released_checkout(self):
+        self.project.write(fr.API_LEVEL_HEADER, api_header(2, frozen=True))
+        code, plan = self.run_prepare(self.project, [])
+        self.assertEqual((code, plan['api']), (0, {'level': 2, 'min_level': 1, 'frozen': True}))
+
+    def test_commit_without_api_level_header(self):
+        (self.project.dir / fr.API_LEVEL_HEADER).unlink()
+        code, plan = self.run_prepare(self.project, [])
+        self.assertEqual((code, plan['api']), (0, None))
+
+    def test_unreadable_api_level_header_is_a_setup_error(self):
+        self.project.write(fr.API_LEVEL_HEADER, '#define API_LEVEL 1\n')
+        self.assertEqual(self.run_prepare(self.project, []), (2, None))
+
+    def test_vectors_come_from_the_released_checkout(self):
+        vectors = self.project.dir / fr.VECTORS_PATH
+        data = json.loads(vectors.read_text())
+        data['asset_names'][0]['asset'] = 'crosspoint-other.bin'
+        vectors.write_text(json.dumps(data))
+        self.assertEqual(self.run_prepare(self.project, []), (2, None))
+        vectors.unlink()
+        self.assertEqual(self.run_prepare(self.project, []), (2, None))
+
+
+def good_image(board, tag='1.6.5-ch.1'):
+    return app_image(b'CrossPoint-ESP32-' + tag.encode(), URL, b'CROSSPOINT-BOARD-V1:' + board.encode() + b';')
+
 
 class ImageTest(unittest.TestCase):
     TAG = '1.6.5-ch.1'
 
     def good(self, board='x4pro'):
-        return app_image(b'CrossPoint-ESP32-' + self.TAG.encode(), URL, b'CROSSPOINT-BOARD-V1:' + board.encode() + b';')
+        return good_image(board, self.TAG)
 
     def test_good_image(self):
         self.assertEqual(fr.image_problems(self.good(), self.TAG, 'x4pro', RULES), [])
@@ -261,23 +306,97 @@ class ImageTest(unittest.TestCase):
         self.check_one_problem(merged, 'x4pro', 'descriptor')
         self.assertTrue(fr.image_problems(b'', self.TAG, 'x4pro', RULES))
 
-    def test_check_images_copies_assets_and_fails_on_any_bad_image(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = pathlib.Path(tmp)
-            plan = {'tag': self.TAG, 'envs': [{'env': 'x4pro-gh_release', 'board': 'x4pro', 'asset': 'a-x4pro.bin'},
-                                              {'env': 'sticky-gh_release', 'board': 'sticky', 'asset': 'a-sticky.bin'}]}
-            fr.save_plan(tmp / 'plan.json', plan)
-            for env, board in (('x4pro-gh_release', 'x4pro'), ('sticky-gh_release', 'sticky')):
-                (tmp / '.pio' / 'build' / env).mkdir(parents=True)
-                (tmp / '.pio' / 'build' / env / 'firmware.bin').write_bytes(self.good(board))
-            args = ['check-images', '--plan', str(tmp / 'plan.json'), '--project-dir', str(tmp), '--dist', str(tmp / 'dist')]
-            self.assertEqual(quiet(fr.main, args), 0)
-            self.assertEqual(sorted(p.name for p in (tmp / 'dist').iterdir()), ['a-sticky.bin', 'a-x4pro.bin'])
-            self.assertEqual(len(json.loads((tmp / 'plan.json').read_text())['firmware']), 2)
-            (tmp / '.pio' / 'build' / 'sticky-gh_release' / 'firmware.bin').write_bytes(self.good('x4pro'))
-            self.assertEqual(quiet(fr.main, args), 1)
-            (tmp / '.pio' / 'build' / 'sticky-gh_release' / 'firmware.bin').unlink()
-            self.assertEqual(quiet(fr.main, args), 2)
+
+FAKE_PIO = f'''#!{sys.executable}
+import pathlib, shutil, sys
+root = pathlib.Path.cwd()
+env = sys.argv[sys.argv.index('-e') + 1]
+with open(root / 'pio-calls.log', 'a') as log:
+    log.write(env + '\\n')
+# PlatformIO removes all of .pio/build when the project checksum changed; this pio does it on every run.
+if (root / 'clean-every-run').exists():
+    shutil.rmtree(root / '.pio' / 'build', ignore_errors=True)
+source = root / 'images' / (env + '.bin')
+if source.exists():
+    (root / '.pio' / 'build' / env).mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, root / '.pio' / 'build' / env / 'firmware.bin')
+sys.exit(3 if (root / ('fail-' + env)).exists() else 0)
+'''
+
+
+class BuildTest(unittest.TestCase):
+    TAG = '1.6.5-ch.1'
+    ENVS = (('sticky-gh_release', 'sticky'), ('x4pro-gh_release', 'x4pro'))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        bin_dir = self.dir / 'bin'
+        bin_dir.mkdir()
+        (bin_dir / 'pio').write_text(FAKE_PIO)
+        (bin_dir / 'pio').chmod(0o755)
+        patcher = mock.patch.dict(os.environ, {'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in fr.BUILD_OVERRIDES:
+            os.environ.pop(name, None)
+        (self.dir / fr.VECTORS_PATH).parent.mkdir(parents=True)
+        shutil.copyfile(VECTORS, self.dir / fr.VECTORS_PATH)
+        (self.dir / 'images').mkdir()
+        envs = [{'env': env, 'board': board, 'asset': f'a-{board}.bin'} for env, board in self.ENVS]
+        fr.save_plan(self.dir / 'plan.json', {'tag': self.TAG, 'envs': envs, 'firmware': []})
+        for env, board in self.ENVS:
+            self.set_image(env, good_image(board))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def set_image(self, env, data):
+        (self.dir / 'images' / f'{env}.bin').write_bytes(data)
+
+    def build(self):
+        args = ['build', '--plan', str(self.dir / 'plan.json'), '--project-dir', str(self.dir),
+                '--dist', str(self.dir / 'dist')]
+        return quiet(fr.main, args)
+
+    def plan(self):
+        return json.loads((self.dir / 'plan.json').read_text())
+
+    def test_checks_and_copies_every_image(self):
+        self.assertEqual(self.build(), 0)
+        self.assertEqual(sorted(p.name for p in (self.dir / 'dist').iterdir()), ['a-sticky.bin', 'a-x4pro.bin'])
+        self.assertEqual([f['asset'] for f in self.plan()['firmware']], ['a-sticky.bin', 'a-x4pro.bin'])
+        self.assertEqual((self.dir / 'pio-calls.log').read_text(), 'sticky-gh_release\nx4pro-gh_release\n')
+
+    def test_a_later_run_that_cleans_the_build_dir_loses_no_image(self):
+        # Retro AI-3: the x4pro run removes the sticky image, as PlatformIO's clean-on-checksum can; the sticky image
+        # was checked and copied before that, so the release still has both.
+        (self.dir / 'clean-every-run').write_text('')
+        self.assertEqual(self.build(), 0)
+        self.assertFalse((self.dir / '.pio' / 'build' / 'sticky-gh_release' / 'firmware.bin').exists())
+        self.assertEqual(len(self.plan()['firmware']), 2)
+        self.assertEqual((self.dir / 'dist' / 'a-sticky.bin').read_bytes(), good_image('sticky'))
+
+    def test_bad_image_fails_after_building_every_env(self):
+        self.set_image('sticky-gh_release', good_image('x4pro'))
+        self.assertEqual(self.build(), 1)
+        self.assertEqual((self.dir / 'pio-calls.log').read_text(), 'sticky-gh_release\nx4pro-gh_release\n')
+        self.assertEqual(self.plan()['firmware'], [])
+
+    def test_failed_pio_run_is_a_setup_error(self):
+        (self.dir / 'fail-x4pro-gh_release').write_text('')
+        self.assertEqual(self.build(), 2)
+
+    def test_stale_image_never_stands_in_for_a_missing_one(self):
+        stale = self.dir / '.pio' / 'build' / 'x4pro-gh_release' / 'firmware.bin'
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(good_image('x4pro'))
+        (self.dir / 'images' / 'x4pro-gh_release.bin').unlink()
+        self.assertEqual(self.build(), 2)
+
+    def test_vectors_come_from_the_project(self):
+        (self.dir / fr.VECTORS_PATH).unlink()
+        self.assertEqual(self.build(), 2)
 
 
 PACKER_OK = '''
@@ -465,8 +584,65 @@ class RefTest(unittest.TestCase):
                                '--repository', 'o/r', '--checkout', str(self.project.dir)])
 
 
+class FreezeTest(unittest.TestCase):
+    """After a release from a commit with API_LEVEL_FROZEN true, publishing needs the flag true."""
+
+    def setUp(self):
+        self.project = TempProject(header=None)
+        (self.project.dir / '.github' / 'workflows').mkdir(parents=True)
+        (self.project.dir / '.github' / 'workflows' / 'ci.yml').write_text('on: pull_request\n')
+        self.project.commit('workflows')
+        self.project.git('tag', '1.6.5-ch.1')  # before ApiLevel.h existed
+
+    def tearDown(self):
+        self.project.close()
+
+    def release(self, header, tag=None):
+        self.project.write(fr.API_LEVEL_HEADER, header)
+        self.project.commit(tag or 'next')
+        if tag:
+            self.project.git('tag', tag)
+
+    def preflight(self, dry_run):
+        return quiet(fr.main, ['preflight', '--repo-dir', str(self.project.dir), '--develop-ref', 'develop',
+                               '--dispatch-ref', 'refs/heads/develop', '--dry-run', dry_run,
+                               '--workflow-ref', 'o/r/.github/workflows/me.yml@x', '--repository', 'o/r',
+                               '--checkout', str(self.project.dir)])
+
+    def test_preview_releases_pass_until_a_frozen_release(self):
+        self.release(api_header(1, frozen=False), tag='1.6.5-ch.2')
+        self.release(api_header(1, frozen=False))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_frozen_release_blocks_a_preview_release(self):
+        self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
+        self.assertEqual(self.preflight('false'), 0)  # releasing the frozen commit again is fine
+        self.release(api_header(2, frozen=False))
+        self.assertEqual(self.preflight('false'), 1)
+        self.assertEqual(self.preflight('true'), 0)  # a dry run only warns
+        self.release(api_header(2, frozen=True))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_commit_without_the_header_counts_as_a_preview(self):
+        self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
+        (self.project.dir / fr.API_LEVEL_HEADER).unlink()
+        self.project.commit('header removed')
+        self.assertEqual(self.preflight('false'), 1)
+
+    def test_only_fork_release_tags_count(self):
+        self.release(api_header(1, frozen=True), tag='v2.0.0')
+        self.release(api_header(1, frozen=False))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_unreadable_header_at_a_tag_is_a_setup_error(self):
+        self.release('#define API_LEVEL 1\n', tag='1.6.5-ch.2')
+        self.release(api_header(1, frozen=False))
+        self.assertEqual(self.preflight('true'), 2)
+
+
 class PublishTest(unittest.TestCase):
     PLAN = {'tag': '1.6.5-ch.4', 'build_number': 4, 'base_version': '1.6.5', 'commit': 'abc', 'envs': [{}],
+            'api': {'level': 1, 'min_level': 1, 'frozen': False},
             'firmware': [{'asset': 'crosspoint-1.6.5-ch.4-x4pro.bin', 'size': 1234, 'sha256': 'f' * 64}],
             'packages': []}
 
@@ -493,6 +669,26 @@ class PublishTest(unittest.TestCase):
                                           'sha256': 'e' * 64}])
         self.assertIn('| `dots.cpgame` | `0123456789abcdef` |', fr.render_notes(plan))
         self.assertEqual(fr.expected_assets(plan), ['crosspoint-1.6.5-ch.4-x4pro.bin\t1234', 'dots.cpgame\t9'])
+
+    def test_notes_name_the_api_level(self):
+        first_line = fr.render_notes(self.PLAN).splitlines()[0]
+        self.assertEqual(first_line, '1.6.5-ch.4 · Game API 1 (preview)')
+        frozen = fr.render_notes(dict(self.PLAN, api={'level': 1, 'min_level': 1, 'frozen': True}))
+        self.assertEqual(frozen.splitlines()[0], '1.6.5-ch.4 · Game API 1')
+        self.assertNotIn('preview', frozen)
+        self.assertEqual(fr.render_notes(dict(self.PLAN, api=None)).splitlines()[0], '1.6.5-ch.4 · No game API')
+
+    def test_notes_go_to_the_file_and_the_job_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            fr.save_plan(tmp / 'plan.json', self.PLAN)
+            with mock.patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}):
+                code = quiet(fr.main, ['notes', '--plan', str(tmp / 'plan.json'), '--out', str(tmp / 'notes.md')])
+            self.assertEqual(code, 0)
+            self.assertIn('Game API 1 (preview)', (tmp / 'notes.md').read_text())
+            summary = (tmp / 'summary.md').read_text()
+            self.assertTrue(summary.startswith('## Fork release 1.6.5-ch.4\n'), summary)
+            self.assertIn('1.6.5-ch.4 · Game API 1 (preview)', summary)
 
     def test_unreadable_plan_is_a_setup_error(self):
         with tempfile.TemporaryDirectory() as tmp:

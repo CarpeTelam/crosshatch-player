@@ -48,8 +48,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       DRY_RUN: ${{ inputs.dry_run }}
-      # The script and the version vectors come from this workflow's commit; the firmware from the released commit,
-      # which may be an older one.
+      # The script comes from this workflow's commit; the firmware and the data describing it (the version vectors
+      # and ApiLevel.h) from the released commit, which may be an older one.
       RELEASE_SCRIPT: tools/scripts/fork_release.py
     steps:
       - name: Check out the release tooling
@@ -75,7 +75,8 @@ jobs:
 
       # A workflow that runs on `release`, or builds a gh_release env, could overwrite the assets with images that do
       # not report their tag, and devices would then be offered the same release forever. The API gives each
-      # workflow's state; the triggers are read from the files of both commits a release could run them from.
+      # workflow's state; the triggers are read from the files of both commits a release could run them from. The
+      # full-history checkout also brings every tag, from which preflight finds a frozen game API release.
       - name: Check the ref and the other workflows
         run: |
           set -euo pipefail
@@ -136,11 +137,10 @@ jobs:
           uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
           ~/.platformio/penv/bin/pio --version
 
-      - name: Build the release envs
-        run: python3 "$RELEASE_SCRIPT" build --plan release/plan.json --project-dir src
-
-      - name: Check the images
-        run: python3 "$RELEASE_SCRIPT" check-images --plan release/plan.json --project-dir src --dist release/dist
+      # Each image is checked and copied to release/dist right after its own build, so a later env's build cannot
+      # erase it first (PlatformIO removes all of .pio/build when the project checksum changes).
+      - name: Build and check the release envs
+        run: python3 "$RELEASE_SCRIPT" build --plan release/plan.json --project-dir src --dist release/dist
 
       - name: Pack the games
         run: python3 "$RELEASE_SCRIPT" pack-games --plan release/plan.json --project-dir src --dist release/dist

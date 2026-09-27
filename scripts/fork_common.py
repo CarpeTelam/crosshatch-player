@@ -22,11 +22,18 @@ The API, kept small on purpose; add to it only what two fork scripts would other
                               append Markdown to the GitHub Actions job summary; a no-op outside Actions
   GAMES_MACRO                 'FREEINK_CAP_GAMES', the macro name as the compiler sees it
   GAMES_BUILD_FLAG            '-DFREEINK_CAP_GAMES=1', the flag as platformio.ini spells it
+  API_LEVEL_HEADER            'lib/GameCore/ApiLevel.h', the game API level's header (spine AD-19)
+  api_list_path(level)        'docs/crosshatch/api-level-<level>.txt', that level's surface list
+  ApiLevel                    (level, min_level, frozen) as read from the header
+  parse_api_level(text)       read an ApiLevel from the header's text; a missing, repeated, or malformed define is a
+                              SetupError
 
 Run `python3 scripts/fork_common_test.py` for its own tests.
 """
 
+import collections
 import os
+import re
 import subprocess
 import sys
 
@@ -36,6 +43,13 @@ COULD_NOT_RUN = 2
 
 GAMES_MACRO = 'FREEINK_CAP_GAMES'
 GAMES_BUILD_FLAG = f'-D{GAMES_MACRO}=1'
+
+API_LEVEL_HEADER = 'lib/GameCore/ApiLevel.h'
+# The header keeps each define on one line as `#define NAME VALUE` (test/game_core/ApiLevelTest.cpp pins the shape).
+API_DEFINE = re.compile(r'#define (API_[A-Z_]+) (\S+)')
+API_INTEGER = re.compile(r'[1-9][0-9]*')
+
+ApiLevel = collections.namedtuple('ApiLevel', 'level min_level frozen')
 
 
 class Failure(Exception):
@@ -73,6 +87,40 @@ def write_step_summary(text, path=None):
     if path:
         with open(path, 'a', encoding='utf-8') as summary:
             summary.write(text)
+
+
+def api_list_path(level):
+    """The surface list of one API level, relative to the repository root."""
+    return f'docs/crosshatch/api-level-{level}.txt'
+
+
+def parse_api_level(text):
+    """ApiLevel(level, min_level, frozen) from the text of ApiLevel.h.
+
+    Each of API_LEVEL, API_MIN_LEVEL (positive integers, min <= level) and API_LEVEL_FROZEN (true or false) must be
+    defined exactly once; anything else is a SetupError, so a reformatted header never reads as a different level.
+    """
+    values = {}
+    for line in text.splitlines():
+        match = API_DEFINE.fullmatch(line.strip())
+        if not match:
+            continue
+        name, value = match.groups()
+        if name in values:
+            raise SetupError(f'{API_LEVEL_HEADER} defines {name} more than once')
+        values[name] = value
+    missing = [name for name in ('API_LEVEL', 'API_MIN_LEVEL', 'API_LEVEL_FROZEN') if name not in values]
+    if missing:
+        raise SetupError(f'{API_LEVEL_HEADER} has no one-line #define for {", ".join(missing)}')
+    for name in ('API_LEVEL', 'API_MIN_LEVEL'):
+        if not API_INTEGER.fullmatch(values[name]):
+            raise SetupError(f'{API_LEVEL_HEADER}: {name} is {values[name]!r}, not a positive integer')
+    if values['API_LEVEL_FROZEN'] not in ('true', 'false'):
+        raise SetupError(f'{API_LEVEL_HEADER}: API_LEVEL_FROZEN is {values["API_LEVEL_FROZEN"]!r}, not true or false')
+    level, min_level = int(values['API_LEVEL']), int(values['API_MIN_LEVEL'])
+    if min_level > level:
+        raise SetupError(f'{API_LEVEL_HEADER}: API_MIN_LEVEL {min_level} is above API_LEVEL {level}')
+    return ApiLevel(level, min_level, values['API_LEVEL_FROZEN'] == 'true')
 
 
 def exit_code(step, summary_heading=None):

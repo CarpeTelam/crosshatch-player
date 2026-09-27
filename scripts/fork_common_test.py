@@ -162,5 +162,38 @@ class GamesFlagTest(unittest.TestCase):
         self.assertIn(fc.GAMES_BUILD_FLAG, text.split())
 
 
+HEADER = '#pragma once\n// #define API_LEVEL 9\n#define API_LEVEL 2\n#define API_MIN_LEVEL 1\n#define API_LEVEL_FROZEN true\n'
+
+
+class ApiLevelTest(unittest.TestCase):
+    def test_reads_the_three_defines(self):
+        self.assertEqual(fc.parse_api_level(HEADER), fc.ApiLevel(2, 1, True))
+        self.assertEqual(fc.parse_api_level(HEADER.replace('true', 'false')).frozen, False)
+
+    def test_reads_this_repository_header(self):
+        text = (pathlib.Path(__file__).resolve().parent.parent / fc.API_LEVEL_HEADER).read_text()
+        level = fc.parse_api_level(text)
+        self.assertGreaterEqual(level.level, level.min_level)
+        self.assertTrue((pathlib.Path(__file__).resolve().parent.parent / fc.api_list_path(level.level)).is_file())
+
+    def test_list_path(self):
+        self.assertEqual(fc.api_list_path(3), 'docs/crosshatch/api-level-3.txt')
+
+    def test_bad_headers_are_setup_errors(self):
+        cases = {
+            'missing': HEADER.replace('#define API_LEVEL_FROZEN true\n', ''),
+            'twice': HEADER + '#define API_LEVEL 3\n',
+            'not one line': HEADER.replace('#define API_LEVEL 2', '#define API_LEVEL \\\n  2'),
+            'trailing comment': HEADER.replace('#define API_LEVEL 2', '#define API_LEVEL 2 // two'),
+            'zero': HEADER.replace('API_MIN_LEVEL 1', 'API_MIN_LEVEL 0'),
+            'expression': HEADER.replace('API_LEVEL 2', 'API_LEVEL (1+1)'),
+            'flag spelling': HEADER.replace('true', '1'),
+            'min above level': HEADER.replace('API_MIN_LEVEL 1', 'API_MIN_LEVEL 3'),
+        }
+        for name, text in cases.items():
+            with self.subTest(name), self.assertRaises(fc.SetupError):
+                fc.parse_api_level(text)
+
+
 if __name__ == '__main__':
     unittest.main()

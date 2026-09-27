@@ -6,21 +6,27 @@ A fork release is tagged <upstream X.Y.Z>-ch.<N>, for example 1.6.5-ch.7. Device
 only N, so every release image must report exactly its tag, and N must never be reused. The workflow calls these
 subcommands in order; each one fails the run rather than let a release go out that devices would mishandle.
 
-  preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it (a dry run
-                  only warns); fails when another active workflow triggers on `release` or builds a gh_release env
+  preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it, and, once
+                  a -ch.N tag's commit has API_LEVEL_FROZEN true, a commit that has it true too (a dry run only warns
+                  about both); fails when another active workflow triggers on `release` or builds a gh_release env
   prepare         N = 1 + the largest number after "-ch." in any tag; checks the [crosspoint] version line, rewrites
                   it to the tag in this checkout only, and finds the release envs: every <board>-gh_release env that
-                  sets FREEINK_CAP_GAMES=1; writes the plan (tag, commit, envs, asset names)
-  build           `pio run -e <env>` for each release env
-  check-images    each firmware.bin is an application image holding its tag, the fork release URL and not
-                  upstream's, and its own board tag; copies it to crosspoint-<tag>-<board>.bin
+                  sets FREEINK_CAP_GAMES=1; reads the game API level; writes the plan (tag, commit, envs, asset names,
+                  API level)
+  build           `pio run -e <env>` for each release env, checking that env's firmware.bin right after its own run:
+                  an application image holding its tag, the fork release URL and not upstream's, and its own board
+                  tag; copies it to <dist>/crosspoint-<tag>-<board>.bin at once, because a later env's `pio run` may
+                  remove all of .pio/build (PlatformIO cleans it when the project checksum changes)
   pack-games      packs every games/<id>/ with scripts/pack_game.py; no games/<id>/ is valid
-  notes           release notes with each asset's SHA-256 and each package hash
+  notes           release notes naming the game API level, with each asset's SHA-256 and each package hash
   recheck         before publishing: no tag has taken N since the plan was made
   expected-assets the assets the release must hold, one "<name><TAB><size>" per line
 
-The tag grammar, the fork and upstream release URLs, and the asset-name vectors come from
-test/game_core/fork_version_vectors.json, the file the firmware's host tests also read.
+The script comes from the workflow's commit, but the data describing the firmware comes from the commit it releases
+(--project-dir, --repo-dir): the tag grammar, the fork and upstream release URLs, and the asset-name vectors from its
+test/game_core/fork_version_vectors.json, the file the firmware's host tests also read (--vectors overrides it), and
+the game API level from its lib/GameCore/ApiLevel.h. A commit without ApiLevel.h is released with "No game API" in
+its notes.
 
 Games: `python3 scripts/pack_game.py games/<id> <out-dir>` must exit 0, write <out-dir>/<id>.cpgame, print the
 package hash (16 lowercase hex digits) as its last line of output, and leave games/ unchanged.
@@ -31,8 +37,7 @@ Local run (the rewrite changes platformio.ini; restore it with `git checkout -- 
 reads the untracked platformio.local.ini, which CI does not have, so a local run can differ from CI's:
     printf '1.6.5-ch.3\\n' > /tmp/tags.txt
     python3 scripts/fork_release.py prepare --project-dir . --tags /tmp/tags.txt --plan /tmp/release/plan.json
-    python3 scripts/fork_release.py build --plan /tmp/release/plan.json --project-dir .
-    python3 scripts/fork_release.py check-images --plan /tmp/release/plan.json --project-dir . --dist /tmp/release/dist
+    python3 scripts/fork_release.py build --plan /tmp/release/plan.json --project-dir . --dist /tmp/release/dist
     python3 scripts/fork_release_test.py      # the script's own tests; need only Python and git
 """
 
@@ -48,10 +53,10 @@ import sys
 import tempfile
 
 import fork_common
-from fork_common import Failure, SetupError
+from fork_common import API_LEVEL_HEADER, Failure, SetupError
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent
-DEFAULT_VECTORS = TOOLS_DIR / 'test' / 'game_core' / 'fork_version_vectors.json'
+# Relative to the checkout of the commit to release.
+VECTORS_PATH = pathlib.PurePosixPath('test/game_core/fork_version_vectors.json')
 
 DEVELOP_BRANCH_REF = 'refs/heads/develop'
 RELEASE_ENV_SUFFIX = '-gh_release'
@@ -122,6 +127,30 @@ def load_rules(path):
     except (OSError, ValueError) as exc:
         raise SetupError(f'cannot read the version vector file {path} ({exc})')
     return Rules(data)
+
+
+def release_rules(args):
+    """The rules of the commit to release: --vectors, or else its checkout's vector file."""
+    return load_rules(args.vectors or pathlib.Path(args.project_dir) / VECTORS_PATH)
+
+
+def read_api_level(checkout):
+    """The ApiLevel in the checkout's ApiLevel.h, or None when it has no such file."""
+    path = pathlib.Path(checkout) / API_LEVEL_HEADER
+    try:
+        text = path.read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise SetupError(f'cannot read {path} ({exc})')
+    return fork_common.parse_api_level(text)
+
+
+def api_title(api):
+    """'Game API <n>', with ' (preview)' until the level is frozen, from a plan's 'api' value."""
+    if api is None:
+        return 'No game API'
+    return f'Game API {api["level"]}' + ('' if api['frozen'] else ' (preview)')
 
 
 def read_lines(path):
@@ -275,12 +304,47 @@ def workflow_problems(files, states, self_path):
     return problems
 
 
+def tag_api_level(repo_dir, tag):
+    """The ApiLevel at a tag's commit, or None when that commit has no ApiLevel.h."""
+    ref = f'refs/tags/{tag}'
+    if not fork_common.git_text('ls-tree', '--name-only', ref, '--', API_LEVEL_HEADER, cwd=repo_dir):
+        return None
+    text = fork_common.git('show', f'{ref}:{API_LEVEL_HEADER}', cwd=repo_dir)[1].decode('utf-8', errors='replace')
+    try:
+        return fork_common.parse_api_level(text)
+    except SetupError as exc:
+        raise SetupError(f'at tag {tag}: {exc}')
+
+
+def freeze_problems(repo_dir):
+    """After the freezing release (the first from a commit with API_LEVEL_FROZEN true), every release is frozen.
+
+    A frozen release is a -ch.N tag whose commit has API_LEVEL_FROZEN true; the tags come from the checkout, which the
+    workflow fetches with full history.
+    """
+    level = read_api_level(repo_dir)
+    if level is not None and level.frozen:
+        return []
+    tags = fork_common.git_text('tag', '--list', cwd=repo_dir).splitlines()
+    for tag in sorted(tag for tag in tags if BUILD_NUMBER_IN_TAG.search(tag)):
+        released = tag_api_level(repo_dir, tag)
+        if released is not None and released.frozen:
+            state = 'has no ApiLevel.h' if level is None else f'has API level {level.level} as a preview'
+            return [
+                f'the commit to release {state}, but {tag} released frozen API level {released.level}; after the '
+                'freeze every release needs API_LEVEL_FROZEN true'
+            ]
+    return []
+
+
 def preflight(args):
     if not args.checkout:
         raise SetupError('no --checkout to read workflows from')
     problems = []
     commit = fork_common.git_text('rev-parse', '--verify', 'HEAD^{commit}', cwd=args.repo_dir)
-    for problem in ref_problems(args.repo_dir, commit, args.develop_ref, args.dispatch_ref):
+    rule_problems = ref_problems(args.repo_dir, commit, args.develop_ref, args.dispatch_ref)
+    rule_problems += freeze_problems(args.repo_dir)
+    for problem in rule_problems:
         if args.dry_run == 'true':
             print(f'warning: {problem}; a publishing run would stop here')
         else:
@@ -392,10 +456,11 @@ def check_overrides(environ):
 
 
 def prepare(args):
-    rules = load_rules(args.vectors)
+    rules = release_rules(args)
     rules.check_asset_vectors()
     project_dir = pathlib.Path(args.project_dir)
     check_overrides(os.environ)
+    api = read_api_level(project_dir)
 
     tags = read_lines(args.tags)
     build_number = next_build_number(tags)
@@ -431,12 +496,13 @@ def prepare(args):
         'base_version': base_version,
         'commit': commit,
         'envs': envs,
+        'api': None if api is None else api._asdict(),
         'firmware': [],
         'packages': [],
     }
     save_plan(args.plan, plan)
     env_names = ' '.join(env['env'] for env in envs)
-    print(f'Release {tag} from {plan["commit"]}: {env_names}')
+    print(f'Release {tag} from {plan["commit"]}: {env_names}; {api_title(plan["api"])}')
     write_outputs({'tag': tag, 'commit': plan['commit'], 'envs': env_names})
 
 
@@ -444,9 +510,17 @@ def prepare(args):
 
 
 def build(args):
+    rules = release_rules(args)
     plan = load_plan(args.plan)
     check_overrides(os.environ)
+    dist = pathlib.Path(args.dist)
+    dist.mkdir(parents=True, exist_ok=True)
+    problems = []
+    firmware = []
     for env in plan['envs']:
+        image = pathlib.Path(args.project_dir) / '.pio' / 'build' / env['env'] / 'firmware.bin'
+        # An image left by an earlier run must never stand in for this one.
+        image.unlink(missing_ok=True)
         print(f'$ pio run -e {env["env"]}', flush=True)
         try:
             code = subprocess.run(['pio', 'run', '-e', env['env']], cwd=args.project_dir).returncode
@@ -454,6 +528,23 @@ def build(args):
             raise SetupError(f'cannot run pio: {exc}')
         if code != 0:
             raise SetupError(f'pio run -e {env["env"]} failed ({code})')
+        # Checked and copied now: the next env's `pio run` removes all of .pio/build when the project checksum has
+        # changed, for example after this build generated headers on a fresh tree (retro AI-3).
+        try:
+            data = image.read_bytes()
+        except OSError as exc:
+            raise SetupError(f'pio run -e {env["env"]} left no image at {image} ({exc})')
+        found = image_problems(data, plan['tag'], env['board'], rules)
+        problems += [f'{env["env"]} {problem}' for problem in found]
+        if not found:
+            target = dist / env['asset']
+            target.write_bytes(data)
+            firmware.append({'asset': env['asset'], 'size': len(data), 'sha256': sha256_file(target)})
+            print(f'{env["env"]}: {env["asset"]} ({len(data):,} bytes) passed', flush=True)
+    if problems:
+        raise Failure('\n'.join(problems))
+    plan['firmware'] = firmware
+    save_plan(args.plan, plan)
 
 
 def image_problems(data, tag, board, rules):
@@ -480,32 +571,6 @@ def image_problems(data, tag, board, rules):
         if named != board:
             problems.append(f'is tagged for board {named!r}, its asset says {board!r}')
     return problems
-
-
-def check_images(args):
-    rules = load_rules(args.vectors)
-    plan = load_plan(args.plan)
-    dist = pathlib.Path(args.dist)
-    dist.mkdir(parents=True, exist_ok=True)
-    problems = []
-    firmware = []
-    for env in plan['envs']:
-        image = pathlib.Path(args.project_dir) / '.pio' / 'build' / env['env'] / 'firmware.bin'
-        try:
-            data = image.read_bytes()
-        except OSError as exc:
-            raise SetupError(f'cannot read {image} ({exc}); run "build" first')
-        found = image_problems(data, plan['tag'], env['board'], rules)
-        problems += [f'{env["env"]} {problem}' for problem in found]
-        if not found:
-            target = dist / env['asset']
-            shutil.copyfile(image, target)
-            firmware.append({'asset': env['asset'], 'size': len(data), 'sha256': sha256_file(target)})
-            print(f'{env["env"]}: {env["asset"]} ({len(data):,} bytes) passed')
-    if problems:
-        raise Failure('\n'.join(problems))
-    plan['firmware'] = firmware
-    save_plan(args.plan, plan)
 
 
 # --- games --------------------------------------------------------------------------------------------------------
@@ -599,7 +664,12 @@ def pack_games(args):
 
 
 def render_notes(plan):
-    lines = [
+    api = plan['api']
+    lines = [f'{plan["tag"]} · {api_title(api)}', '']
+    if api is not None and not api['frozen']:
+        lines += [f'Game API {api["level"]} is a preview: a game written for it may need changes to run on a later '
+                  'release.', '']
+    lines += [
         f'Fork release {plan["tag"]}: build {plan["build_number"]} on CrossPoint Reader {plan["base_version"]}, '
         f'from commit {plan["commit"]}.',
         '',
@@ -624,7 +694,7 @@ def render_notes(plan):
 def notes(args):
     plan = load_plan(args.plan)
     if len(plan.get('firmware', [])) != len(plan.get('envs', [])) or not plan.get('firmware'):
-        raise SetupError('the plan has unchecked firmware; run "check-images" first')
+        raise SetupError('the plan has unchecked firmware; run "build" first')
     text = render_notes(plan)
     pathlib.Path(args.out).write_text(text, encoding='utf-8')
     print(text)
@@ -652,7 +722,7 @@ def recheck(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--vectors', default=str(DEFAULT_VECTORS), help='the version vector file')
+    parser.add_argument('--vectors', help=f'the version vector file (default: <project-dir>/{VECTORS_PATH})')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('preflight', help='check the ref and the other workflows')
@@ -670,11 +740,7 @@ def main(argv=None):
     p.add_argument('--tags', required=True, help='file with every tag name, one per line')
     p.add_argument('--plan', required=True)
 
-    p = sub.add_parser('build', help='build the release envs')
-    p.add_argument('--plan', required=True)
-    p.add_argument('--project-dir', required=True)
-
-    p = sub.add_parser('check-images', help='check each image and name it as an asset')
+    p = sub.add_parser('build', help='build the release envs, checking each image and naming it as an asset')
     p.add_argument('--plan', required=True)
     p.add_argument('--project-dir', required=True)
     p.add_argument('--dist', required=True)
@@ -700,7 +766,6 @@ def main(argv=None):
         'preflight': preflight,
         'prepare': prepare,
         'build': build,
-        'check-images': check_images,
         'pack-games': pack_games,
         'notes': notes,
         'recheck': recheck,

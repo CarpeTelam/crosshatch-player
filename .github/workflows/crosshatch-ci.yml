@@ -16,6 +16,9 @@
 # - Fork script tests: runs every scripts/*_test.py, the sidecar tests of the fork's scripts, including those of the
 #   release workflow's script, which otherwise runs only when dispatched. A regression that made a check always pass
 #   would go unnoticed on compliant PRs. docs/crosshatch/fork-scripts.md has the script conventions.
+# - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
+#   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
+#   scripts/check_api_freeze.py holds the rule and how to run it locally.
 name: Crosshatch CI
 
 on:
@@ -208,6 +211,19 @@ jobs:
           fi
           exit "$status"
 
+  api-freeze:
+    name: API freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history: the check compares the PR with its merge-base with the base branch.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check the frozen API levels
+        run: python3 scripts/check_api_freeze.py --base-ref "origin/$GITHUB_BASE_REF"
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -217,6 +233,7 @@ jobs:
       - flash-budget
       - simulator-build
       - fork-script-tests
+      - api-freeze
     if: always()
     runs-on: ubuntu-latest
     steps:
