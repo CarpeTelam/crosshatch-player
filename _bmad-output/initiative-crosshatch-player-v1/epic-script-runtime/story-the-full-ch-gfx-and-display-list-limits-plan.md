@@ -3,7 +3,7 @@ title: 'The full ch.gfx and display-list limits'
 type: 'feature'
 ticket: '9'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: 'cda0f3ccec509dacbac9ec2590ec0fc01e991936'
 route: 'full'
 route_source: 'auto'
