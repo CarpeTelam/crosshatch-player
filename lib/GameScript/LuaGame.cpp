@@ -160,10 +160,7 @@ void copyReason(lua_State* L, const std::span<char> out) {
   if (out.empty()) return;
   size_t length = 0;
   const char* text = lua_tolstring(L, -1, &length);
-  size_t kept = length < out.size() - 1 ? length : out.size() - 1;
-  if (kept < length) {
-    while (kept > 0 && (static_cast<uint8_t>(text[kept]) & 0xC0) == 0x80) --kept;
-  }
+  const size_t kept = utf8Cut(text, length, out.size() - 1);
   std::memcpy(out.data(), text, kept);
   out[kept] = '\0';
 }

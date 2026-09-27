@@ -92,8 +92,8 @@ TEST(ApiLevelTest, SessionLimitsMatchTheList) {
   EXPECT_EQ(limits["reject_reason_bytes"], std::to_string(GameCore::REJECT_REASON_BYTES));
 }
 
-// Story 2.5's freeze job and the release script read the defines with a regular
-// expression; keep them one per line in this shape.
+// scripts/check_api_freeze.py and scripts/fork_release.py read the defines with a
+// regular expression; keep them one per line in this shape.
 TEST(ApiLevelTest, DefinesStayOnSingleRegularLines) {
   const std::string header = readFile(API_LEVEL_HEADER_PATH);
   ASSERT_FALSE(header.empty()) << "cannot read " << API_LEVEL_HEADER_PATH;

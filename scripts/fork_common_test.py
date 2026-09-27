@@ -152,6 +152,34 @@ class GitTest(unittest.TestCase):
                 fc.git('--version')
 
 
+class FileAtTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.repo = pathlib.Path(cls.tmp.name) / 'repo'
+        (cls.repo / 'lib').mkdir(parents=True)
+        (cls.repo / 'lib' / 'a.h').write_bytes(b'#define A 1\n')
+        env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+        subprocess.run(['git', '-C', str(cls.repo), 'init', '-q'], check=True, env=env)
+        subprocess.run(['git', '-C', str(cls.repo), 'add', '.'], check=True, env=env)
+        subprocess.run(['git', '-C', str(cls.repo), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q',
+                        '-m', 'init'], check=True, env=env)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_reads_a_file_at_a_ref(self):
+        self.assertEqual(fc.file_at('HEAD', 'lib/a.h', cwd=self.repo), b'#define A 1\n')
+
+    def test_a_missing_file_is_none(self):
+        self.assertIsNone(fc.file_at('HEAD', 'lib/b.h', cwd=self.repo))
+
+    def test_an_unknown_ref_is_a_setup_error(self):
+        with self.assertRaises(fc.SetupError):
+            fc.file_at('no-such-ref', 'lib/a.h', cwd=self.repo)
+
+
 class GamesFlagTest(unittest.TestCase):
     def test_flag_spellings(self):
         self.assertEqual(fc.GAMES_MACRO, 'FREEINK_CAP_GAMES')

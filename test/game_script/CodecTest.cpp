@@ -194,7 +194,7 @@ return env, same
 )lua";
 
 // A state whose heap is an arena, as on the device, with the codec's scratch taken
-// from the same arena (entry 8's arrangement).
+// from the same arena (LuaGame's arrangement).
 class CodecTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -422,7 +422,7 @@ TEST_F(CodecTest, ManyNestedRecordsRoundTrip) {
 }
 
 // decode() allocates through the state, so a full arena is a Lua memory error that
-// the protected call around it catches (entry 8 decodes inside the trampoline).
+// the protected call around it catches (LuaGame decodes inside the trampoline).
 TEST_F(CodecTest, DecodeInAFullArenaRaisesAMemoryError) {
   struct Call {
     std::vector<uint8_t> bytes;

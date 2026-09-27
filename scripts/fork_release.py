@@ -312,10 +312,10 @@ def workflow_problems(files, states, self_path):
 
 def tag_api_level(repo_dir, tag):
     """The ApiLevel at a tag's commit, or None when that commit has no ApiLevel.h."""
-    ref = f'refs/tags/{tag}'
-    if not fork_common.git_text('ls-tree', '--name-only', ref, '--', API_LEVEL_HEADER, cwd=repo_dir):
+    data = fork_common.file_at(f'refs/tags/{tag}', API_LEVEL_HEADER, cwd=repo_dir)
+    if data is None:
         return None
-    text = fork_common.git('show', f'{ref}:{API_LEVEL_HEADER}', cwd=repo_dir)[1].decode('utf-8', errors='replace')
+    text = data.decode('utf-8', errors='replace')
     try:
         return fork_common.parse_api_level(text)
     except SetupError as exc:

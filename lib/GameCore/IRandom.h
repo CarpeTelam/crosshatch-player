@@ -5,7 +5,7 @@
 namespace GameCore {
 
 // Port: a source of unpredictable 32-bit values for seeds (the Lua string-hash
-// seed, and later math.random and session ids). Device and simulator providers
+// seed and math.random; later, session ids). Device and simulator providers
 // live in src/games; host tests pass a fixed fake.
 class IRandom {
  public:

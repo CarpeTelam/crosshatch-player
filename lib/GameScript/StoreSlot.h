@@ -10,8 +10,8 @@ namespace GameScript {
 // ch.store's latest-wins slot (AD-17): the codec bytes of the game's one store
 // table, over caller storage (PSRAM the match owns, so it outlives the VM). The VM
 // task posts each ch.store.set and copies it back for ch.store.get; the loop task
-// seeds it before the VM starts and takes it when dirty to write store.bin (entry
-// 12). Thread-safe; every call holds the mutex only to compare or copy.
+// seeds it before the VM starts and takes it when dirty to write store.bin
+// (GameSaveStore). Thread-safe; every call holds the mutex only to compare or copy.
 class StoreSlot {
  public:
   // `capacity` bytes at `storage`; at least Codec::STORE_LIMIT for real use.

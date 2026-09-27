@@ -207,7 +207,6 @@ void GameMatchActivity::stopVm() {
     vm.reset();
     return;
   }
-  LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
   abandonVm();
 }
 
@@ -220,6 +219,7 @@ void GameMatchActivity::flushStore() {
 }
 
 void GameMatchActivity::abandonVm() {
+  LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
   if (GameVM::abandon(std::move(vm))) return;
   // The leaked task may still call ch.store.set; the destructor leaks the slot.
   slotLeaked = true;
@@ -239,7 +239,6 @@ void GameMatchActivity::stopStuckVm() {
       if (vm->failed()) snprintf(detail, sizeof(detail), "%s", vm->errorMessage());
       vm.reset();
     } else {
-      LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
       abandonVm();
     }
   }

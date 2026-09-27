@@ -20,11 +20,11 @@
 
 // One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers, and owns ch.store's slot, which outlives the VM, and
-// the GameSaveStore that restores it and writes it to store.bin. The
-// canvas is drawn by FrameReplay and fed by taps, long presses, and swipes mapped
-// through GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost
-// draws the runtime's own views: the pause menu, the end-of-round menu, and the
-// error view (docs/crosshatch/game-canvas.md).
+// the GameSaveStore that restores it and writes it to store.bin. The canvas is
+// drawn by FrameReplay and fed by taps, long presses, and swipes mapped through
+// GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost draws the
+// runtime's own views: the pause menu, the end-of-round menu, and the error view
+// (docs/crosshatch/game-canvas.md).
 //
 // The match follows AD-21's solo states (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing until Leaving, or until a stuck VM is
@@ -81,7 +81,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void flushStore();
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
-  // Abandons the VM (GameVM::abandon); a task that may still run keeps the store slot.
+  // For a VM that did not join: abandons it (GameVM::abandon); a task that may
+  // still run keeps the store slot.
   void abandonVm();
 
   void renderCanvas();

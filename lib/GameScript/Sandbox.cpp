@@ -164,16 +164,20 @@ lua_Integer seedWord(GameCore::IRandom& random) {
   return static_cast<lua_Integer>((high << 32) | low);
 }
 
+// Pushes math.randomseed's two seed arguments, drawn from `random`.
+void pushSeed(lua_State* L, GameCore::IRandom& random) {
+  const lua_Integer first = seedWord(random);
+  const lua_Integer second = seedWord(random);
+  lua_pushinteger(L, first);
+  lua_pushinteger(L, second);
+}
+
 // math.randomseed(...): Lua's (upvalue 1), except that with no argument the seed
 // comes from IRandom (upvalue 2): Lua's own no-argument seed calls time(), which
 // takes a newlib lock an abandon could leave held. With arguments it is unchanged.
 int guardedRandomseed(lua_State* L) {
   if (lua_isnone(L, 1)) {
-    auto& random = *static_cast<GameCore::IRandom*>(lua_touserdata(L, lua_upvalueindex(2)));
-    const lua_Integer first = seedWord(random);
-    const lua_Integer second = seedWord(random);
-    lua_pushinteger(L, first);
-    lua_pushinteger(L, second);
+    pushSeed(L, *static_cast<GameCore::IRandom*>(lua_touserdata(L, lua_upvalueindex(2))));
   }
   return callWrapped(L);
 }
@@ -211,10 +215,7 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   // that is here in load(), before any game code runs, and is reseeded now.
   lua_getglobal(L, LUA_MATHLIBNAME);
   lua_getfield(L, -1, "randomseed");
-  const lua_Integer first = seedWord(random);
-  const lua_Integer second = seedWord(random);
-  lua_pushinteger(L, first);
-  lua_pushinteger(L, second);
+  pushSeed(L, random);
   lua_call(L, 2, 0);
   lua_getfield(L, -1, "randomseed");
   lua_pushlightuserdata(L, &random);

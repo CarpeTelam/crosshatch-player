@@ -7,9 +7,9 @@
 // (the simulator) evaluate the #if and build them only where FREEINK_CAP_GAMES is set.
 // Keep this file free of definitions; it exists only for its includes and the
 // compile-time checks on them.
-#include <GameCore.h>
 #include <GameIcons.h>
-#include <GameScript.h>
+#include <LuaGame.h>
+#include <Session.h>
 
 // <climits> comes before the Lua headers, and games rely on 64-bit Lua integers.
 // lua.hpp is Lua's own extern "C" wrapper for lua.h, lualib.h, and lauxlib.h.

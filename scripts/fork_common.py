@@ -18,6 +18,8 @@ The API, kept small on purpose; add to it only what two fork scripts would other
   git(*args, cwd=None, ok_codes=(0,))
                               run git, return (exit code, stdout bytes); any other exit code is a SetupError
   git_text(*args, cwd=None)   git's stdout as stripped text; any non-zero exit code is a SetupError
+  file_at(ref, path, cwd=None)
+                              the bytes of path at ref, or None when ref has no such file
   write_step_summary(text, path=None)
                               append Markdown to the GitHub Actions job summary; a no-op outside Actions
   GAMES_MACRO                 'FREEINK_CAP_GAMES', the macro name as the compiler sees it
@@ -79,6 +81,13 @@ def git(*args, cwd=None, ok_codes=(0,)):
 def git_text(*args, cwd=None):
     """git's stdout decoded and stripped; any non-zero exit code raises SetupError."""
     return git(*args, cwd=cwd)[1].decode().strip()
+
+
+def file_at(ref, path, cwd=None):
+    """The bytes of path at ref, or None when ref has no such file; an unknown ref raises SetupError."""
+    if not git_text('ls-tree', '--name-only', ref, '--', path, cwd=cwd):
+        return None
+    return git('show', f'{ref}:{path}', cwd=cwd)[1]
 
 
 def write_step_summary(text, path=None):

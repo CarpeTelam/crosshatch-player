@@ -15,27 +15,26 @@ namespace {
 
 constexpr size_t NAME_BUFFER = 48;  // longer names cannot be modules and are skipped
 constexpr size_t PATH_BUFFER = 96;
+constexpr size_t LUA_EXT_BYTES = 4;  // ".lua"
 
 // Writes the module name of `fileName` ("main" for "main.lua") when it matches
 // [a-z0-9_]{1,32}.lua; false otherwise.
 bool moduleNameOf(const char* fileName, const size_t length,
                   char (&module)[GameScript::SourceSpan::MAX_NAME_BYTES + 1]) {
-  constexpr size_t EXT = 4;  // ".lua"
-  if (length <= EXT || length - EXT > GameScript::SourceSpan::MAX_NAME_BYTES) return false;
-  if (std::strcmp(fileName + length - EXT, ".lua") != 0) return false;
-  for (size_t i = 0; i < length - EXT; ++i) {
+  if (length <= LUA_EXT_BYTES || length - LUA_EXT_BYTES > GameScript::SourceSpan::MAX_NAME_BYTES) return false;
+  if (std::strcmp(fileName + length - LUA_EXT_BYTES, ".lua") != 0) return false;
+  for (size_t i = 0; i < length - LUA_EXT_BYTES; ++i) {
     const char c = fileName[i];
     if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
     module[i] = c;
   }
-  module[length - EXT] = '\0';
+  module[length - LUA_EXT_BYTES] = '\0';
   return true;
 }
 
 // True for a name ending in ".lua" in any case, which a player means as a source.
 bool looksLikeLua(const char* fileName, const size_t length) {
-  constexpr size_t EXT = 4;
-  return length > EXT && strcasecmp(fileName + length - EXT, ".lua") == 0;
+  return length > LUA_EXT_BYTES && strcasecmp(fileName + length - LUA_EXT_BYTES, ".lua") == 0;
 }
 
 }  // namespace

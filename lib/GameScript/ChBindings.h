@@ -25,6 +25,10 @@ struct GameSources;
 // so it fits logPrintf's 256 B entry after its timestamp, level, and game id.
 inline constexpr size_t LOG_LINE_BYTES = 160;
 
+// Where `length` bytes of UTF-8 at `text` may be cut to keep at most `room` bytes
+// without splitting a code point (ch.log lines, apply's rejection reason).
+size_t utf8Cut(const char* text, size_t length, size_t room);
+
 // The strings each ch.gfx option accepts (api-level-1.txt's `enum color`, `size`,
 // `align`, and `refresh`), null-terminated for luaL_checkoption; ChBindings.cpp maps
 // them, index for index, to the DisplayList values.
@@ -43,8 +47,8 @@ struct Canvas {
 };
 
 // Everything a ch.* C function may reach, owned by LuaGame and found through the
-// state's extra space. Bindings never see LuaGame itself, so new bindings add a
-// field here (text metrics, clock, timer, store slot) instead of a dependency.
+// state's extra space. Bindings never see LuaGame itself, so a new binding adds a
+// field here instead of a dependency.
 struct BindingContext {
   // The back display list while draw runs; null otherwise, which makes ch.gfx an error.
   DisplayList* drawTarget = nullptr;

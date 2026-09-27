@@ -226,15 +226,14 @@ constexpr luaL_Reg TIMER_FUNCTIONS[] = {{"after", timerAfter}, {"cancel", timerC
 constexpr luaL_Reg STORE_FUNCTIONS[] = {{"get", storeGet}, {"set", storeSet}, {nullptr, nullptr}};
 constexpr luaL_Reg TIME_FUNCTIONS[] = {{"ms", timeMs}, {nullptr, nullptr}};
 
-// Where a line of `length` bytes of UTF-8 may be cut to keep at most `room` bytes.
+}  // namespace
+
 size_t utf8Cut(const char* text, const size_t length, const size_t room) {
   if (length <= room) return length;
   size_t kept = room;
   while (kept > 0 && (static_cast<uint8_t>(text[kept]) & 0xC0) == 0x80) --kept;
   return kept;
 }
-
-}  // namespace
 
 int chLog(lua_State* L) {
   requireHeadroom(L, "ch.log");

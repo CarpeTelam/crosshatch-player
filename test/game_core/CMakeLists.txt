@@ -1,23 +1,28 @@
 add_executable(GameCoreTest
-  GameCoreTest.cpp
   ApiLevelTest.cpp
   ForkReleaseTest.cpp
+  GameHostCapsTest.cpp
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
   SessionTest.cpp
-  ${REPO_ROOT}/lib/GameCore/GameCore.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  ${REPO_ROOT}/src/games/GameHostCaps.cpp
 )
+
+# The HostCaps provider is games-only code; only its own source gets the flag.
+set_source_files_properties(${REPO_ROOT}/src/games/GameHostCaps.cpp PROPERTIES COMPILE_DEFINITIONS FREEINK_CAP_GAMES=1)
 
 target_include_directories(GameCoreTest PRIVATE
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Memory
+  # GameHostCaps.h, the HostCaps provider.
+  ${REPO_ROOT}/src/games
 )
 
 # Read at run time so the suite and the fork scripts share one vector file, API list, and header.

@@ -50,7 +50,7 @@ constexpr const char* DRAW_RESULT =
 
 TEST_F(SandboxTest, GlobalsAreTheLevelOneBaseSetChAndRequire) {
   // The base library entries of docs/crosshatch/api-level-1.txt, the four library
-  // tables, ch, require, and print (which entry 10 maps to ch.log).
+  // tables, ch, require, and print (which is ch.log).
   useSource("main", std::string("return { setup = function()\n"
                                 "  local names = {}\n"
                                 "  for k in pairs(_G) do names[#names + 1] = k end\n"

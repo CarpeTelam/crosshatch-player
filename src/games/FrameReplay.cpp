@@ -3,6 +3,7 @@
 #include "FrameReplay.h"
 
 #include <CanvasClip.h>
+#include <ChBindings.h>
 #include <EpdFontData.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
@@ -17,7 +18,6 @@ namespace {
 
 // The built-in font each text size draws in, indexed by TextSize.
 constexpr int TEXT_FONT_IDS[] = {UI_10_FONT_ID, UI_12_FONT_ID, NOTOSANS_18_FONT_ID};
-constexpr const char* TEXT_SIZE_NAMES[] = {"small", "medium", "large"};
 
 // A table's ranges point straight at a font's intervals, read as AdvanceRange.
 static_assert(sizeof(EpdUnicodeInterval) == sizeof(GameScript::AdvanceRange), "interval layout");
@@ -69,7 +69,7 @@ void FrameReplay::loadFonts(const GfxRenderer& renderer) {
     const auto found = fonts.find(TEXT_FONT_IDS[i]);
     const EpdFontData* data = found == fonts.end() ? nullptr : found->second.getData(EpdFontFamily::REGULAR);
     if (!data || !data->glyph || !data->intervals) {
-      LOG_ERR("GAME", "No built-in font for %s text; measuring with the stand-in", TEXT_SIZE_NAMES[i]);
+      LOG_ERR("GAME", "No built-in font for %s text; measuring with the stand-in", GameScript::SIZE_NAMES[i]);
       continue;
     }
     GameScript::AdvanceTable& table = metrics.tables[i];

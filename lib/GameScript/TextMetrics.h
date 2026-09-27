@@ -97,8 +97,9 @@ struct TextMetrics {
   // 12.4 fixed point to whole pixels, rounding to nearest (EpdFontData.h's fp4::toPixel).
   static constexpr int64_t toPixel(const uint16_t fp4) { return (static_cast<int64_t>(fp4) + 8) >> 4; }
 
-  // Deterministic metrics for host tests and builds whose replay has no font
-  // tables yet: every code point advances STAND_IN_ADVANCE_PX of its size.
+  // Deterministic metrics for host tests, and what replay keeps for a size whose
+  // built-in font is missing (FrameReplay::loadFonts): every code point advances
+  // STAND_IN_ADVANCE_PX of its size.
   static constexpr TextMetrics standIn() {
     TextMetrics metrics;
     for (size_t i = 0; i < 3; ++i) metrics.tables[i].fallback = static_cast<uint16_t>(STAND_IN_ADVANCE_PX[i] << 4);

@@ -35,6 +35,7 @@ workflow's sparse checkout of `scripts` includes it too.
 | `exit_code(step, summary_heading=None)` | Calls `step()`: `None` is 0, an `int` passes through, `Failure` is 1, `SetupError` is 2, each printed as `error: <message>` on stderr. With a heading, a `SetupError` also goes to the job summary. Anything else propagates as a traceback. |
 | `git(*args, cwd=None, ok_codes=(0,))` | Runs `git` (`git -C cwd` when given) and returns `(exit code, stdout bytes)`. An exit code outside `ok_codes`, or no `git` on `PATH`, is a `SetupError` naming the command and git's stderr. |
 | `git_text(*args, cwd=None)` | git's stdout as stripped text; any non-zero exit code is a `SetupError`. |
+| `file_at(ref, path, cwd=None)` | The bytes of `path` at `ref`, or `None` when `ref` has no such file; an unknown `ref` is a `SetupError`. |
 | `write_step_summary(text, path=None)` | Appends Markdown to `path`, or else to `$GITHUB_STEP_SUMMARY`; a no-op outside Actions. |
 | `GAMES_MACRO`, `GAMES_BUILD_FLAG` | `FREEINK_CAP_GAMES` and `-DFREEINK_CAP_GAMES=1`, as `platformio.ini` spells it. |
 | `API_LEVEL_HEADER`, `api_list_path(level)` | `lib/GameCore/ApiLevel.h` and `docs/crosshatch/api-level-<level>.txt`, relative to the repository root. |

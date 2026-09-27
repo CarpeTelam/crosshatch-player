@@ -32,16 +32,8 @@ def resolve(ref, hint):
     return out.decode().strip()
 
 
-def read_file(commit, path):
-    """The bytes of path at commit, or None when the commit has no such file."""
-    listed = fork_common.git_text('ls-tree', '--name-only', commit, '--', path)
-    if not listed:
-        return None
-    return fork_common.git('show', f'{commit}:{path}')[1]
-
-
 def read_level(commit):
-    data = read_file(commit, API_LEVEL_HEADER)
+    data = fork_common.file_at(commit, API_LEVEL_HEADER)
     return None if data is None else fork_common.parse_api_level(data.decode('utf-8', errors='replace'))
 
 
@@ -83,11 +75,11 @@ def check(ref, base_ref):
     checked = []
     for n in range(1, top + 1):
         path = api_list_path(n)
-        frozen_list = read_file(merge_base, path)
+        frozen_list = fork_common.file_at(merge_base, path)
         if frozen_list is None:
             continue
         checked.append(path)
-        now = read_file(head, path)
+        now = fork_common.file_at(head, path)
         if now is None:
             problems.append(f'{path} is deleted, but level {n} is frozen')
         elif now != frozen_list:
