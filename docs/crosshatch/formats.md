@@ -115,6 +115,33 @@ the file version is the one it reads (`unknown_file_version`), and that the code
 (`unknown_codec_version`). Anything but `ok` is discarded with a log line and never decoded. The file's own fields
 and the codec payload follow at offset 6.
 
+## store.bin
+
+`/.games-data/<id>/store.bin` holds a game's `ch.store` table on this device (AD-17). `src/games/GameSaveStore` is
+its only reader and writer, on the loop task only; games have no file API.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 6 | blob header: magic `CHST` (`43 48 53 54`), file version 1, codec version 1 |
+| 6 | 3 to 4,096 | the store table's codec bytes (at most `Codec::STORE_LIMIT`; `{}` is 3 bytes) |
+
+The file has no other fields; the payload runs to the end of the file. `{taps = 3}` is saved as
+`43 48 53 54 01 01 06 00 01 05 04 74 61 70 73 03 06`.
+
+**Reading** happens once, before the game's VM starts, and fills the match's `ch.store` slot. The save is used only
+when the file is at most 4,102 bytes (checked before it is read), its header checks `ok`, and its payload passes
+`Codec::check` (the decoder's rules without a Lua state) under `STORE_LIMIT` as a table. Anything else is discarded
+with a `LOG_ERR` line naming the header status, the codec error, `too large`, or `not a table`, and the game starts
+with an empty store. A discarded file is left in place until the game's next write replaces it, so a store written
+by a newer codec survives a firmware that cannot read it and never writes.
+
+**Writing** replaces the whole file: the header and payload go to `store.bin.tmp`, which is closed, then `store.bin`
+is removed and the tmp renamed over it (SdFat's rename refuses an existing target). A failed write removes the
+partial tmp and leaves `store.bin` as it was. Once the tmp is whole, a stop before the rename leaves it in place, and
+the next read uses `store.bin.tmp` when `store.bin` is missing; a torn tmp fails the payload check. While the game
+runs, the match writes a changed store at most every 5 s (`GameSaveStore::flushIfDue`); `GameSaveStore::flush`
+writes it at once, for round end and the match's `onExit()` (AD-17).
+
 ## Golden vectors
 
 `test/game_script/codec_vectors.json` holds the limits as top-level numbers and four lists of flat records:

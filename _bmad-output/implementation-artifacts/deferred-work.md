@@ -91,3 +91,7 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-level-1-surface-test-plan.md`
   summary: The level-1 surface test (`ApiSurfaceTest`) compares every `fn`, `field`, `lib`, `enum`, `event`, `ctx`, and `limit` entry with the live host, but not `seats_max` (the `GameHostCaps` provider's `MAX_SEATS`, file-local in `src/games/GameHostCaps.cpp`) or the `manifest` keys (only their byte limits are pinned).
   evidence: Entry 14's description names functions, globals and libraries, enums, events, `ctx` fields, and limits; `seats_max 2` and `MAX_SEATS = 2` agree today by hand, and `ManifestTest` covers each key's parsing without reading the list.
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-gamesavestore-for-store-bin-plan.md`
+  summary: No host test observes `GameAssets::load` restoring `store.bin` into the slot or `GameMatchActivity::loop` calling `GameSaveStore::flushIfDue`; only the simulator run does.
+  evidence: `grep` of `test/` finds no reference to `GameAssets` or `GameMatchActivity`; dropping either call fails no host test. Same harness gap as entry 1's GameVM wiring (src/games and src/activities are not host-built); closing it needs a host build of the match or a seam for its loop.

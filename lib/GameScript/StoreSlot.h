@@ -33,6 +33,9 @@ class StoreSlot {
   // dirty, and returns their length. Otherwise, or when `out` is too small, returns
   // 0 and stays as it is.
   size_t takeIfDirty(std::span<uint8_t> out);
+  // Marks the contents dirty again after a taken copy failed to reach the SD card,
+  // so the next flush retries; the latest contents win. No-op when empty.
+  void markDirty();
   bool dirty() const;
 
  private:

@@ -11,6 +11,7 @@
 #include <Memory.h>
 
 #include <cstdio>
+#include <span>
 #include <utility>
 
 #include "MappedInputManager.h"
@@ -32,23 +33,27 @@ void GameMatchActivity::onEnter() {
   resetUi();
   viewport = GameViewport::forRenderer(renderer);
 
+  // The slot, then saves' buffer; GameAssets restores store.bin into the slot.
+  constexpr size_t slotBytes = GameScript::Codec::STORE_LIMIT;
+  storeStorage = HalMemory::allocatePsram(slotBytes + GameSaveStore::BUFFER_BYTES);
+  if (storeStorage) {
+    store = makeUniqueNoThrow<GameScript::StoreSlot>(storeStorage.get(), slotBytes);
+    saves = makeUniqueNoThrow<GameSaveStore>(
+        manifest.id, std::span<uint8_t>(storeStorage.get() + slotBytes, GameSaveStore::BUFFER_BYTES), millis());
+  }
+  if (!store || !saves) {
+    LOG_ERR("GAME", "OOM: ch.store slot");
+    showError("out of memory");
+    return;
+  }
   GameAssets assets;
-  if (const char* problem = assets.load(manifest.id)) {
+  if (const char* problem = assets.load(manifest.id, *saves, *store)) {
     showError(problem);
     return;
   }
   replay.loadFonts(renderer);
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
-  // Empty until GameSaveStore (entry 12) restores store.bin into it.
-  storeStorage = HalMemory::allocatePsram(GameScript::Codec::STORE_LIMIT);
-  if (storeStorage)
-    store = makeUniqueNoThrow<GameScript::StoreSlot>(storeStorage.get(), GameScript::Codec::STORE_LIMIT);
-  if (!store) {
-    LOG_ERR("GAME", "OOM: ch.store slot");
-    showError("out of memory");
-    return;
-  }
   auto created = GameVM::create(std::move(assets), canvas, manifest.id, *store);
   if (!created) {
     showError("out of memory");
@@ -140,6 +145,7 @@ void GameMatchActivity::loop() {
     vm->postInput(event);
   }
   vm->pollTimer();
+  saves->flushIfDue(*store, millis());
 
   const uint32_t frame = vm->frameGen();
   if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {

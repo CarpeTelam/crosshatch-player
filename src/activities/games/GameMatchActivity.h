@@ -11,12 +11,14 @@
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 #include "games/FrameReplay.h"
+#include "games/GameSaveStore.h"
 #include "games/GameTouch.h"
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
 
 // One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
-// arena, and frame buffers, and owns ch.store's slot, which outlives the VM. The
+// arena, and frame buffers, and owns ch.store's slot, which outlives the VM, and
+// the GameSaveStore that restores it and writes it to store.bin. The
 // canvas is drawn by FrameReplay and fed by taps, long presses, and swipes mapped
 // through GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost is
 // for the runtime's own views.
@@ -51,10 +53,14 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   GameCore::Manifest manifest;
   GameViewport viewport;
   FrameReplay replay;
-  // ch.store's latest-wins slot over STORE_LIMIT bytes of PSRAM (AD-17). Declared
-  // before vm, so it is destroyed after the VM that posts to it.
+  // One PSRAM block: ch.store's latest-wins slot (STORE_LIMIT bytes, AD-17), then
+  // saves' buffer. Declared before vm, so it is destroyed after the VM that posts to
+  // the slot.
   HalMemory::PsramBuffer storeStorage;
   std::unique_ptr<GameScript::StoreSlot> store;
+  // store.bin's reader and writer (loop task). Entry 13 adds the round-end and
+  // onExit() flushes (saves->flush) beside the periodic one in loop().
+  std::unique_ptr<GameSaveStore> saves;
   std::unique_ptr<GameVM> vm;
   std::atomic<State> state{State::Starting};  // written by the loop task, read by render
   uint32_t shownFrame = 0;                    // loop task: the frameGen it last asked to render

@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "GameSaveStore.h"
+
 namespace {
 
 constexpr size_t NAME_BUFFER = 48;  // longer names cannot be modules and are skipped
@@ -31,7 +33,7 @@ bool moduleNameOf(const char* fileName, const size_t length,
 
 }  // namespace
 
-const char* GameAssets::load(const char* gameId) {
+const char* GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
   block.reset();
   view = GameScript::GameSources{};
 
@@ -107,6 +109,7 @@ const char* GameAssets::load(const char* gameId) {
   view.text = text;
   LOG_INF("GAME", "Loaded %u Lua files (%u bytes) from %s", static_cast<unsigned>(loaded),
           static_cast<unsigned>(offset), path);
+  saves.restoreInto(store);
   return nullptr;
 }
 

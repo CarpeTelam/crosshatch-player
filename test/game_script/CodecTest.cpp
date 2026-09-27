@@ -337,6 +337,25 @@ TEST_F(CodecTest, DecodeErrorVectors) {
   }
 }
 
+// check() is decode() without Lua: it accepts every encode vector's bytes, knows
+// whether they are a table, and fails every decode-error vector the same way.
+TEST(CodecVectorsTest, CheckAgreesWithDecodeOnEveryVector) {
+  for (const Record& r : vectors().section("encode")) {
+    const std::vector<uint8_t> bytes = parseHex(field(r, "hex"));
+    bool isTable = false;
+    EXPECT_EQ(Codec::errorName(Codec::check(bytes.data(), bytes.size(), limitOf(r), isTable)), std::string("none"))
+        << field(r, "name");
+    EXPECT_EQ(isTable, bytes.at(0) == 0x06) << field(r, "name");
+  }
+  for (const Record& r : vectors().section("decode_errors")) {
+    const std::vector<uint8_t> bytes = parseHex(field(r, "hex"));
+    bool isTable = true;
+    EXPECT_EQ(Codec::errorName(Codec::check(bytes.data(), bytes.size(), limitOf(r), isTable)), field(r, "error"))
+        << field(r, "name");
+    EXPECT_FALSE(isTable) << field(r, "name");
+  }
+}
+
 TEST(CodecVectorsTest, HeaderVectors) {
   for (const Record& r : vectors().section("headers")) {
     const std::string name = field(r, "name");

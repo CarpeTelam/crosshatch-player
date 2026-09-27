@@ -41,6 +41,11 @@ size_t StoreSlot::takeIfDirty(const std::span<uint8_t> out) {
   return length;
 }
 
+void StoreSlot::markDirty() {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (length > 0) changed = true;
+}
+
 bool StoreSlot::dirty() const {
   std::lock_guard<std::mutex> lock(mutex);
   return changed;

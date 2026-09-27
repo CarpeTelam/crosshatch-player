@@ -67,4 +67,20 @@ TEST(StoreSlotTest, RefusesWhatDoesNotFit) {
   EXPECT_TRUE(slot.dirty());
 }
 
+TEST(StoreSlotTest, MarkDirtyRetriesTheLatestContents) {
+  std::vector<uint8_t> storage(16);
+  StoreSlot slot(storage.data(), storage.size());
+  std::vector<uint8_t> out(16);
+  slot.markDirty();
+  EXPECT_FALSE(slot.dirty()) << "an empty slot has nothing to write";
+
+  const std::vector<uint8_t> a = {6, 0, 0};
+  ASSERT_TRUE(slot.post(a));
+  ASSERT_EQ(slot.takeIfDirty(out), a.size());
+  slot.markDirty();  // the write failed
+  EXPECT_TRUE(slot.dirty());
+  EXPECT_EQ(slot.takeIfDirty(out), a.size());
+  EXPECT_FALSE(slot.dirty());
+}
+
 }  // namespace

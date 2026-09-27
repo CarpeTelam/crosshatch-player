@@ -186,6 +186,26 @@ TEST_F(HostBindingsTest, TheTimerFixtureTicksThreeTimesAndSaves) {
   EXPECT_EQ(log.lines.back(), "tick at\t9000\tms");
 }
 
+// The counter fixture reads what GameSaveStore restored (here {taps = 3}) in setup,
+// and each tap posts the next count.
+TEST_F(HostBindingsTest, TheCounterFixtureStartsFromTheRestoredStore) {
+  const std::vector<uint8_t> saved = {0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, 0x06};
+  ASSERT_TRUE(store.restore(saved));
+  useSource("main", GameScriptTestSupport::readFixture("counter/main.lua"));
+  SessionGame game(*this);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(hasText(frontCommands(), "Taps: 3")) << frontText();
+  EXPECT_TRUE(hasText(frontCommands(), "Saved taps: 3")) << frontText();
+  EXPECT_FALSE(store.dirty());
+
+  ASSERT_EQ(game.tap(10, 10), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(hasText(frontCommands(), "Saved taps: 4")) << frontText();
+  std::vector<uint8_t> out(GameScript::Codec::STORE_LIMIT);
+  const std::vector<uint8_t> four = {0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, 0x08};
+  ASSERT_EQ(store.takeIfDirty(out), four.size());
+  EXPECT_EQ(std::vector<uint8_t>(out.begin(), out.begin() + four.size()), four);
+}
+
 TEST_F(HostBindingsTest, DelaysUnderASecondAreScriptErrors) {
   for (const char* delay : {"999", "0", "-1"}) {
     EXPECT_EQ(tapWith(std::string("ch.timer.after(") + delay + ")"),

@@ -85,4 +85,11 @@ Encoded encode(lua_State* L, int index, size_t limit, void* scratch, size_t scra
 // inside a protected call.
 Error decode(lua_State* L, const uint8_t* data, size_t length, size_t limit);
 
+// Checks `length` bytes (at most `limit`) by exactly decode()'s rules, in its order,
+// and builds nothing, so it needs no Lua state and allocates nothing: None exactly
+// when decode() would accept the bytes (memory aside). `isTable` tells whether the
+// value is a table (false on error). For the loop task, which validates a saved
+// ch.store before the VM sees it (AD-10, AD-17).
+Error check(const uint8_t* data, size_t length, size_t limit, bool& isTable);
+
 }  // namespace GameScript::Codec

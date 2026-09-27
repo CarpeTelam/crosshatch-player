@@ -320,14 +320,59 @@ void Encoder::sortRecords(const size_t firstPair, const size_t recordStart) {
   std::memcpy(out + recordStart, sortArea, moved);
 }
 
+// Builds each decoded value on the Lua stack: decode().
+class LuaSink {
+ public:
+  explicit LuaSink(lua_State* L) : L(L) {}
+
+  bool reserve() { return lua_checkstack(L, 3) != 0; }
+  void nil() { lua_pushnil(L); }
+  void boolean(const bool value) { lua_pushboolean(L, value); }
+  void integer(const int64_t value) { lua_pushinteger(L, value); }
+  void number(const double value) { lua_pushnumber(L, value); }
+  void string(const Key& text) { lua_pushlstring(L, text.text, text.length); }
+  void table(const uint64_t narr) { lua_createtable(L, static_cast<int>(narr), 0); }
+  // Stores the value on top at array index i of the table below it.
+  void arrayValue(const uint64_t i) { lua_rawseti(L, -2, static_cast<lua_Integer>(i)); }
+  void key(const Key& key) {
+    if (key.isString) {
+      lua_pushlstring(L, key.text, key.length);
+    } else {
+      lua_pushinteger(L, key.integer);
+    }
+  }
+  // Stores the key and value on top into the table below them.
+  void recordValue() { lua_rawset(L, -3); }
+
+ private:
+  lua_State* L;
+};
+
+// Builds nothing, so the bytes are checked by the same rules without a Lua state: check().
+struct CheckSink {
+  static bool reserve() { return true; }
+  static void nil() {}
+  static void boolean(bool) {}
+  static void integer(int64_t) {}
+  static void number(double) {}
+  static void string(const Key&) {}
+  static void table(uint64_t) {}
+  static void arrayValue(uint64_t) {}
+  static void key(const Key&) {}
+  static void recordValue() {}
+};
+
 // Reads bytes strictly in order, so the first fault met is the one reported (the
-// same order game_codec.py follows). Pushes one value per value() that succeeds;
-// decode() drops anything left on error.
+// same order game_codec.py follows). Hands each value to the sink; with LuaSink,
+// pushes one value per value() that succeeds, and decode() drops anything left on
+// error.
+template <typename Sink>
 class Decoder {
  public:
-  Decoder(lua_State* L, const uint8_t* data, const size_t length) : L(L), at(data), end(data + length) {}
+  Decoder(Sink& sink, const uint8_t* data, const size_t length) : sink(sink), at(data), end(data + length) {}
 
-  Error value(int depth);
+  // `tag` is the decoded value's tag, so callers can refuse a nil without the sink.
+  Error value(int depth, Tag& tag);
   size_t remaining() const { return static_cast<size_t>(end - at); }
 
  private:
@@ -337,18 +382,20 @@ class Decoder {
   Error table(int depth);
   Error records(uint64_t narr, int depth);
 
-  lua_State* L;
+  Sink& sink;
   const uint8_t* at;
   const uint8_t* end;
 };
 
-Error Decoder::byte(uint8_t& out) {
+template <typename Sink>
+Error Decoder<Sink>::byte(uint8_t& out) {
   if (at == end) return Error::Truncated;
   out = *at++;
   return Error::None;
 }
 
-Error Decoder::varint(uint64_t& out) {
+template <typename Sink>
+Error Decoder<Sink>::varint(uint64_t& out) {
   uint64_t value = 0;
   for (size_t i = 0; i < MAX_VARINT_BYTES; ++i) {
     uint8_t b = 0;
@@ -365,7 +412,8 @@ Error Decoder::varint(uint64_t& out) {
 }
 
 // A string's length and bytes; the key points into the input.
-Error Decoder::string(Key& key) {
+template <typename Sink>
+Error Decoder<Sink>::string(Key& key) {
   uint64_t length = 0;
   const Error error = varint(length);
   if (error != Error::None) return error;
@@ -377,23 +425,25 @@ Error Decoder::string(Key& key) {
   return Error::None;
 }
 
-Error Decoder::value(const int depth) {
+template <typename Sink>
+Error Decoder<Sink>::value(const int depth, Tag& tag) {
   uint8_t tagByte = 0;
   if (byte(tagByte) != Error::None) return Error::Truncated;
   if (tagByte >= TAG_COUNT) return Error::BadTag;
-  switch (static_cast<Tag>(tagByte)) {
+  tag = static_cast<Tag>(tagByte);
+  switch (tag) {
     case Tag::Nil:
-      lua_pushnil(L);
+      sink.nil();
       return Error::None;
     case Tag::False:
     case Tag::True:
-      lua_pushboolean(L, static_cast<Tag>(tagByte) == Tag::True);
+      sink.boolean(tag == Tag::True);
       return Error::None;
     case Tag::Int: {
       uint64_t value = 0;
       const Error error = varint(value);
       if (error != Error::None) return error;
-      lua_pushinteger(L, unzigzag(value));
+      sink.integer(unzigzag(value));
       return Error::None;
     }
     case Tag::Float: {
@@ -404,14 +454,14 @@ Error Decoder::value(const int depth) {
       double number = 0;
       std::memcpy(&number, &bits, sizeof(number));
       if (std::isnan(number) && bits != CANONICAL_NAN) return Error::NonCanonical;
-      lua_pushnumber(L, number);
+      sink.number(number);
       return Error::None;
     }
     case Tag::String: {
       Key text;
       const Error error = string(text);
       if (error != Error::None) return error;
-      lua_pushlstring(L, text.text, text.length);
+      sink.string(text);
       return Error::None;
     }
     case Tag::Table:
@@ -420,25 +470,28 @@ Error Decoder::value(const int depth) {
   return Error::BadTag;  // not reached: every tag below TAG_COUNT is handled
 }
 
-Error Decoder::table(const int depth) {
+template <typename Sink>
+Error Decoder<Sink>::table(const int depth) {
   if (depth == MAX_DEPTH) return Error::TooDeep;
-  if (!lua_checkstack(L, 3)) return Error::NoMemory;
+  if (!sink.reserve()) return Error::NoMemory;
   uint64_t narr = 0;
   Error error = varint(narr);
   if (error != Error::None) return error;
   // Each array value takes at least a byte; checked before the table is sized.
   if (narr > remaining()) return Error::Truncated;
-  lua_createtable(L, static_cast<int>(narr), 0);
+  sink.table(narr);
   for (uint64_t i = 1; i <= narr; ++i) {
-    error = value(depth + 1);
+    Tag tag = Tag::Nil;
+    error = value(depth + 1, tag);
     if (error != Error::None) return error;
-    if (lua_isnil(L, -1)) return Error::NonCanonical;  // the run holds no nil
-    lua_rawseti(L, -2, static_cast<lua_Integer>(i));
+    if (tag == Tag::Nil) return Error::NonCanonical;  // the run holds no nil
+    sink.arrayValue(i);
   }
   return records(narr, depth);
 }
 
-Error Decoder::records(const uint64_t narr, const int depth) {
+template <typename Sink>
+Error Decoder<Sink>::records(const uint64_t narr, const int depth) {
   uint64_t nrec = 0;
   Error error = varint(nrec);
   if (error != Error::None) return error;
@@ -462,15 +515,12 @@ Error Decoder::records(const uint64_t narr, const int depth) {
       return Error::BadKey;
     }
     if (i > 0 && !keyLess(previous, key)) return Error::NonCanonical;  // unsorted or duplicate
-    if (key.isString) {
-      lua_pushlstring(L, key.text, key.length);
-    } else {
-      lua_pushinteger(L, key.integer);
-    }
-    error = value(depth + 1);
+    sink.key(key);
+    Tag tag = Tag::Nil;
+    error = value(depth + 1, tag);
     if (error != Error::None) return error;
-    if (lua_isnil(L, -1)) return Error::NonCanonical;  // a table cannot hold nil
-    lua_rawset(L, -3);
+    if (tag == Tag::Nil) return Error::NonCanonical;  // a table cannot hold nil
+    sink.recordValue();
     previous = key;
   }
   return Error::None;
@@ -538,10 +588,24 @@ Error decode(lua_State* L, const uint8_t* data, const size_t length, const size_
   if (length > limit) return Error::TooLarge;
   if (!lua_checkstack(L, 1)) return Error::NoMemory;
   const int base = lua_gettop(L);
-  Decoder decoder(L, data, length);
-  Error error = decoder.value(0);
+  LuaSink sink(L);
+  Decoder<LuaSink> decoder(sink, data, length);
+  Tag tag = Tag::Nil;
+  Error error = decoder.value(0, tag);
   if (error == Error::None && decoder.remaining() != 0) error = Error::Trailing;
   if (error != Error::None) lua_settop(L, base);
+  return error;
+}
+
+Error check(const uint8_t* data, const size_t length, const size_t limit, bool& isTable) {
+  isTable = false;
+  if (length > limit) return Error::TooLarge;
+  CheckSink sink;
+  Decoder<CheckSink> decoder(sink, data, length);
+  Tag tag = Tag::Nil;
+  Error error = decoder.value(0, tag);
+  if (error == Error::None && decoder.remaining() != 0) error = Error::Trailing;
+  if (error == Error::None) isTable = tag == Tag::Table;
   return error;
 }
 
