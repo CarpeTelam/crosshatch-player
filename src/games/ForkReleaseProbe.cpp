@@ -21,9 +21,12 @@ bool ForkReleaseProbe::latestReleaseMissing() {
     LOG_ERR("OTA", "OOM: %u byte release probe client", static_cast<unsigned>(sizeof(freeink::SecureHttpClient)));
     return false;
   }
-  // Same transport settings as HttpDownloader's release fetch. Without wolfSSL
-  // the https request fails at connect and the probe reports false, which
-  // leaves the caller's error as it was.
+  // TLS mode and user agent as HttpDownloader's release fetch; the timeout
+  // (15 s) and redirect limit (none: a 3xx is not 404, so false) are
+  // SecureHttpClient's defaults, not HttpDownloader's 60 s and 5 hops.
+  // docs/crosshatch/upstream-touches.md records the four values beside ledger
+  // row 10. Without wolfSSL the https request fails at connect and the probe
+  // reports false, which leaves the caller's error as it was.
   http->setInsecure();
   http->setReuse(false);
   http->setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);

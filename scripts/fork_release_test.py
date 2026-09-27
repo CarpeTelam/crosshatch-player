@@ -143,9 +143,42 @@ class RulesTest(unittest.TestCase):
             self.assertFalse(RULES.is_tag(vector['tag']), vector)
 
     def test_asset_name_must_fit_the_update_buffer(self):
-        # 'crosspoint-1.6.5-ch.1-' + board + '.bin' plus a NUL must fit 48 bytes.
+        # 'crosspoint-1.6.5-ch.1-' + board + '.bin' plus a NUL must fit asset_name_capacity (48) bytes.
+        self.assertEqual(RULES.asset_name_capacity, 48)
         self.assertEqual(RULES.asset_name('1.6.5-ch.1', 'b' * 21), 'crosspoint-1.6.5-ch.1-' + 'b' * 21 + '.bin')
         self.assertEqual(RULES.asset_name('1.6.5-ch.1', 'b' * 22), '')
+
+    def test_vectors_hold_an_asset_at_the_capacity_and_one_over(self):
+        tag = '1234567.1234567.12-ch.123'
+        self.assertEqual(len(tag), RULES.max_tag_length)
+        by_board = {v['board']: v['asset'] for v in RULES.asset_vectors if v['tag'] == tag}
+        self.assertEqual(len(by_board['sticky']), RULES.asset_name_capacity - 1)
+        self.assertEqual(RULES.asset_name(tag, 'sticky'), by_board['sticky'])
+        self.assertEqual(len(f'crosspoint-{tag}-sticky2.bin'), RULES.asset_name_capacity)
+        self.assertEqual(by_board['sticky2'], '')
+        self.assertEqual(RULES.asset_name(tag, 'sticky2'), '')
+
+    def test_asset_names_follow_the_vectors_capacity(self):
+        data = json.loads(VECTORS.read_text())
+        data['asset_name_capacity'] = 47
+        rules = fr.Rules(data)
+        self.assertEqual(rules.asset_name('1234567.1234567.12-ch.123', 'sticky'), '')
+        with self.assertRaises(fr.SetupError):
+            rules.check_asset_vectors()
+
+    def test_vectors_without_a_capacity_use_the_legacy_48(self):
+        data = json.loads(VECTORS.read_text())
+        del data['asset_name_capacity']
+        rules = fr.Rules(data)
+        self.assertEqual(rules.asset_name_capacity, 48)
+        rules.check_asset_vectors()
+
+    def test_bad_capacity_is_a_setup_error(self):
+        for bad in (0, -48, 48.0, '48', True, None):
+            data = json.loads(VECTORS.read_text())
+            data['asset_name_capacity'] = bad
+            with self.subTest(capacity=bad), self.assertRaises(fr.SetupError):
+                fr.Rules(data)
 
     def test_missing_field_is_a_setup_error(self):
         with self.assertRaises(fr.SetupError):
@@ -265,6 +298,19 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(self.run_prepare(self.project, []), (2, None))
         vectors.unlink()
         self.assertEqual(self.run_prepare(self.project, []), (2, None))
+
+    def test_capacity_comes_from_the_released_checkout(self):
+        vectors = self.project.dir / fr.VECTORS_PATH
+        data = json.loads(vectors.read_text())
+        data['asset_name_capacity'] = 0
+        vectors.write_text(json.dumps(data))
+        self.assertEqual(self.run_prepare(self.project, []), (2, None))
+        del data['asset_name_capacity']
+        vectors.write_text(json.dumps(data))
+        code, plan = self.run_prepare(self.project, [])
+        self.assertEqual(code, 0)
+        self.assertEqual([e['asset'] for e in plan['envs']],
+                         ['crosspoint-1.6.5-ch.1-sticky.bin', 'crosspoint-1.6.5-ch.1-x4pro.bin'])
 
 
 def good_image(board, tag='1.6.5-ch.1'):

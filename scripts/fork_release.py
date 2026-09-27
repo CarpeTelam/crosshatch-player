@@ -23,10 +23,10 @@ subcommands in order; each one fails the run rather than let a release go out th
   expected-assets the assets the release must hold, one "<name><TAB><size>" per line
 
 The script comes from the workflow's commit, but the data describing the firmware comes from the commit it releases
-(--project-dir, --repo-dir): the tag grammar, the fork and upstream release URLs, and the asset-name vectors from its
-test/game_core/fork_version_vectors.json, the file the firmware's host tests also read (--vectors overrides it), and
-the game API level from its lib/GameCore/ApiLevel.h. A commit without ApiLevel.h is released with "No game API" in
-its notes.
+(--project-dir, --repo-dir): the tag grammar, the fork and upstream release URLs, and the asset-name capacity and
+vectors from its test/game_core/fork_version_vectors.json, the file the firmware's host tests also read (--vectors
+overrides it), and the game API level from its lib/GameCore/ApiLevel.h. A commit without ApiLevel.h is released with
+"No game API" in its notes, and one whose vectors have no asset_name_capacity with the 48 bytes its firmware has.
 
 Games: `python3 scripts/pack_game.py games/<id> <out-dir>` must exit 0, write <out-dir>/<id>.cpgame, print the
 package hash (16 lowercase hex digits) as its last line of output, and leave games/ unchanged.
@@ -66,8 +66,9 @@ VERSION_DEFINE = 'CROSSPOINT_VERSION'
 BUILD_OVERRIDES = ('PLATFORMIO_BUILD_FLAGS', 'PLATFORMIO_BUILD_UNFLAGS', 'PLATFORMIO_SRC_BUILD_FLAGS')
 UPSTREAM_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+')
 BUILD_NUMBER_IN_TAG = re.compile(r'-ch\.([0-9]+)')
-# The update path formats the asset name into a 48-byte buffer, NUL included.
-ASSET_NAME_BUFFER = 48
+# Commits from before the vectors' asset_name_capacity field (the -ch.1 and -ch.2 releases) have firmware whose
+# asset-name buffer is 48 bytes, NUL included.
+LEGACY_ASSET_NAME_CAPACITY = 48
 
 # An ESP-IDF application image, as the update path writes it into an OTA slot: the image header's magic byte, and the
 # esp_app_desc_t magic word 0xABCD5432 (little-endian) right after the image and first segment headers. A merged
@@ -96,10 +97,15 @@ class Rules:
             self.release_url = str(data['release_url'])
             self.upstream_fragment = str(data['upstream_release_url_fragment'])
             self.asset_vectors = list(data['asset_names'])
+            capacity = data.get('asset_name_capacity', LEGACY_ASSET_NAME_CAPACITY)
         except (KeyError, TypeError, ValueError, re.error) as exc:
             raise SetupError(f'the version vector file is missing or has a bad field ({exc})')
         if not self.release_url or not self.upstream_fragment or not self.asset_vectors:
             raise SetupError('the version vector file has an empty field')
+        # bool is an int in Python; the firmware's constant is a positive byte count.
+        if type(capacity) is not int or capacity <= 0:
+            raise SetupError(f'the version vector file has a bad asset_name_capacity ({capacity!r})')
+        self.asset_name_capacity = capacity
 
     def is_tag(self, tag):
         return len(tag) <= self.max_tag_length and self.grammar.fullmatch(tag) is not None
@@ -109,7 +115,7 @@ class Rules:
         if not self.is_tag(tag) or not board:
             return ''
         name = f'crosspoint-{tag}-{board}.bin'
-        return name if len(name) < ASSET_NAME_BUFFER else ''
+        return name if len(name) < self.asset_name_capacity else ''
 
     def check_asset_vectors(self):
         for vector in self.asset_vectors:

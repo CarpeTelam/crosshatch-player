@@ -1,7 +1,8 @@
 {
-  "description": "Fork release versions X.Y.Z-ch.N. Read by the firmware's host tests (test/game_core) and meant for the fork release workflow's checks. A tag matches tag_grammar as a whole string (a POSIX ERE that also works in Python and ECMAScript; capture group 4 is N; in Python use re.fullmatch, since $ alone accepts a trailing newline) and is at most max_tag_length characters. A running version has N only when a prefix is a tag followed by the end, - or +; otherwise N is 0. Only N decides newer. An empty asset means no asset name exists for that input.",
+  "description": "Fork release versions X.Y.Z-ch.N. Read by the firmware's host tests (test/game_core) and meant for the fork release workflow's checks. A tag matches tag_grammar as a whole string (a POSIX ERE that also works in Python and ECMAScript; capture group 4 is N; in Python use re.fullmatch, since $ alone accepts a trailing newline) and is at most max_tag_length characters. A running version has N only when a prefix is a tag followed by the end, - or +; otherwise N is 0. Only N decides newer. An asset name is crosspoint-<tag>-<board>.bin and must fit asset_name_capacity bytes with its terminating NUL, so it is at most asset_name_capacity - 1 characters; an empty asset means no asset name exists for that input.",
   "tag_grammar": "^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)-ch[.]([1-9][0-9]{0,8})$",
   "max_tag_length": 25,
+  "asset_name_capacity": 48,
   "release_url": "https://api.github.com/repos/CarpeTelam/crosshatch-player/releases/latest",
   "upstream_release_url_fragment": "repos/crosspoint-reader/crosspoint-reader/releases",
   "valid_tags": [
@@ -102,6 +103,7 @@
     {"tag": "1.6.5-ch.7", "board": "x4pro", "asset": "crosspoint-1.6.5-ch.7-x4pro.bin"},
     {"tag": "1.6.5-ch.7", "board": "sticky", "asset": "crosspoint-1.6.5-ch.7-sticky.bin"},
     {"tag": "1234567.1234567.12-ch.123", "board": "sticky", "asset": "crosspoint-1234567.1234567.12-ch.123-sticky.bin"},
+    {"tag": "1234567.1234567.12-ch.123", "board": "sticky2", "asset": ""},
     {"tag": "v1.6.5-ch.7", "board": "x4pro", "asset": ""},
     {"tag": "1.6.5", "board": "x4pro", "asset": ""},
     {"tag": "1.6.5-ch.7", "board": "", "asset": ""}

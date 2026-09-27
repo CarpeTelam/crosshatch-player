@@ -27,8 +27,13 @@ namespace ForkRelease {
 inline constexpr char LATEST_RELEASE_URL[] =
     "https://api.github.com/repos/CarpeTelam/crosshatch-player/releases/latest";
 
-// Also keeps "crosspoint-<tag>-sticky.bin" within the 48-byte asset-name buffers
-// of the update path.
+// Bytes, NUL included, that the update path has for an asset name: upstream's
+// assetName in OtaUpdater.cpp (a guarded static_assert keeps the two equal) and
+// the asset-name buffers in ReleaseJsonParser.h. Mirrored as asset_name_capacity
+// in the vector file, which the release workflow sizes asset names by.
+inline constexpr size_t ASSET_NAME_CAPACITY = 48;
+
+// Also keeps "crosspoint-<tag>-sticky.bin" within ASSET_NAME_CAPACITY.
 inline constexpr size_t MAX_TAG_LEN = 25;
 
 namespace detail {

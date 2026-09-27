@@ -103,7 +103,8 @@ const Vectors& vectors() {
 
 uint32_t toBuildNumber(const std::string& text) { return static_cast<uint32_t>(std::stoul(text)); }
 
-std::string assetName(const std::string& tag, const std::string& board, size_t bufferSize = 64) {
+std::string assetName(const std::string& tag, const std::string& board,
+                      size_t bufferSize = ForkRelease::ASSET_NAME_CAPACITY) {
   std::vector<char> buffer(bufferSize, 'x');
   const bool ok = ForkRelease::formatAssetName(buffer.data(), buffer.size(), tag, board);
   const std::string written(buffer.data());
@@ -116,7 +117,8 @@ std::string assetName(const std::string& tag, const std::string& board, size_t b
 TEST(ForkReleaseTest, VectorFileLoads) {
   const Vectors& v = vectors();
   ASSERT_TRUE(v.loaded) << "cannot read " << FORK_VERSION_VECTORS_PATH;
-  for (const char* name : {"tag_grammar", "max_tag_length", "release_url", "upstream_release_url_fragment"}) {
+  for (const char* name :
+       {"tag_grammar", "max_tag_length", "asset_name_capacity", "release_url", "upstream_release_url_fragment"}) {
     EXPECT_FALSE(v.scalars.count(name) == 0 || v.scalars.at(name).empty()) << name;
   }
   for (const char* name : {"valid_tags", "invalid_tags", "running_versions", "newer", "asset_names"}) {
@@ -129,6 +131,7 @@ TEST(ForkReleaseTest, ConstantsMatchVectors) {
   ASSERT_TRUE(v.loaded);
   EXPECT_EQ(v.scalars.at("release_url"), ForkRelease::LATEST_RELEASE_URL);
   EXPECT_EQ(std::stoul(v.scalars.at("max_tag_length")), ForkRelease::MAX_TAG_LEN);
+  EXPECT_EQ(std::stoul(v.scalars.at("asset_name_capacity")), ForkRelease::ASSET_NAME_CAPACITY);
   EXPECT_EQ(std::string(ForkRelease::LATEST_RELEASE_URL).find(v.scalars.at("upstream_release_url_fragment")),
             std::string::npos);
 }
@@ -191,12 +194,27 @@ TEST(ForkReleaseTest, AssetNameNeedsRoomForTerminator) {
   EXPECT_FALSE(ForkRelease::formatAssetName(nullptr, 0, "1.6.5-ch.7", "x4pro"));
 }
 
-// The longest tag and board name must fit the update path's 48-byte buffers.
+// The longest tag and board name must fit the update path's asset-name buffers.
 TEST(ForkReleaseTest, LongestAssetNameFitsUpdateBuffer) {
   const std::string tag = "1.1." + std::string(ForkRelease::MAX_TAG_LEN - std::strlen("1.1.-ch.1"), '1') + "-ch.1";
   ASSERT_EQ(tag.size(), ForkRelease::MAX_TAG_LEN);
   ASSERT_NE(ForkRelease::tagBuildNumber(tag), 0u);
-  EXPECT_NE(assetName(tag, "sticky", 48), "");
+  EXPECT_NE(assetName(tag, "sticky"), "");
+}
+
+// The vectors hold a name that fills the capacity exactly and one a byte over.
+TEST(ForkReleaseTest, AssetVectorsReachTheCapacity) {
+  bool atCapacity = false;
+  bool oneOver = false;
+  for (const Record& r : vectors().section("asset_names")) {
+    const size_t length =
+        std::strlen("crosspoint-") + r.at("tag").size() + 1 + r.at("board").size() + std::strlen(".bin");
+    const bool formable = ForkRelease::tagBuildNumber(r.at("tag")) != 0 && !r.at("board").empty();
+    if (formable && length == ForkRelease::ASSET_NAME_CAPACITY - 1) atCapacity = !r.at("asset").empty();
+    if (formable && length == ForkRelease::ASSET_NAME_CAPACITY) oneOver = r.at("asset").empty();
+  }
+  EXPECT_TRUE(atCapacity) << "no vector names an asset of ASSET_NAME_CAPACITY - 1 characters";
+  EXPECT_TRUE(oneOver) << "no vector refuses an asset of ASSET_NAME_CAPACITY characters";
 }
 
 static_assert(ForkRelease::tagBuildNumber("1.6.5-ch.7") == 7, "usable in constant expressions");
