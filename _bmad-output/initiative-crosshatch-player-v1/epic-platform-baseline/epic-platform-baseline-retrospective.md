@@ -46,7 +46,7 @@ Baselines form one linear chain (each plan's baseline is the previous ticket's c
 | Fork release runs | run 1 (dispatch, `Build and check` success, `Tag and publish` skipped, so a dry run); run 2 (publish) success, 2026-09-27T00:39Z | Actions runs 36281463154, 36282530704 |
 | Releases and tags on the fork | `1.6.5-ch.1`, published by run 2 from `d578b4e3` (no release or tag existed when this retro started) | [release 1.6.5-ch.1](https://github.com/CarpeTelam/crosshatch-player/releases/tag/1.6.5-ch.1) |
 | Tag ruleset, branch protection | not readable from this session. **The owner confirmed on 2026-09-27** that the `*-ch.*` tag ruleset exists and branch protection on `develop` requires `Crosshatch Test Status` | owner, in this retro |
-| Device OTA check | **in progress.** The owner installed `1.6.5-ch.1` on an X4 Pro and is waiting on `1.6.5-ch.2` (Fork release run 3, started 00:44Z from `d578b4e3`) to check that the update is offered, installs, and is not offered again | owner, in this retro; Actions run 36283383681 |
+| Device OTA check | **passed (owner-confirmed, 2026-09-27).** An X4 Pro on `1.6.5-ch.1` was offered `1.6.5-ch.2` (published 00:56:35Z by Fork release run 3 from `d578b4e3`), installed it over the air, and was then offered nothing new | owner, in this retro; [release 1.6.5-ch.2](https://github.com/CarpeTelam/crosshatch-player/releases/tag/1.6.5-ch.2) |
 | Upstream release workflows | `release.yml`, `release_candidate.yml`, `release-fonts.yml` are `disabled_manually` (since 2026-09-25) | Actions workflows API |
 | Session logs | **not available** to this run. Commits name build session `session_01NpVfiShhiDk6wbQVKMqy8y`, but no transcript was read, so process lessons below rest on plans, commits, and CI only | commit trailers |
 | Previous retrospective | none: this is the first epic in the `epics` order | `tickets.py status` |
@@ -176,7 +176,7 @@ Each finding carries its source and two dispositions: **instance** (fix now / de
 | R5 / DW5 | Met. On/off builds of one commit with a 250 KiB (256,000 B) limit | `cfb:13-14`; `crosshatch-ci.yml:63-65` |
 | R5 wording | **Accepted deviation.** "250 KB" is read as KiB (6,000 B looser than decimal), because flash and partitions are sized in binary units | `story-x4pro-flash-budget-gate-plan.md`, Design Notes |
 | R6 / DW4 | Met. Both suites run in the CI `unit-tests` job, including the Lua-on-host tests | `test/CMakeLists.txt:77-78`; PR #10 `unit-tests` green |
-| R7 / DW6 | **Partly shown.** `X.Y.Z-ch.N` releases publish (`1.6.5-ch.1`); upstream release workflows are disabled; the tag ruleset is in place (owner). The pack step exists but has no `games/` to pack yet. The OTA offer, install, and no-repeat check on an X4 Pro is **in progress** | release `1.6.5-ch.1`; `fr:565-613`; owner |
+| R7 / DW6 | **Met.** `X.Y.Z-ch.N` releases publish (`1.6.5-ch.1`, `1.6.5-ch.2`); upstream release workflows are disabled; the tag ruleset is in place (owner). An X4 Pro on ch.1 was offered ch.2 over the air, installed it, and was not offered it again (owner-confirmed). The pack step exists but has no `games/` to pack yet | releases; `fr:565-613`; owner |
 | DW7 | Met in the final state. PR #10 is green on every CI job, including both fork gates. PR #9 itself merged red (P2) | PR #10 check runs |
 | Epic Note: owner makes ledger and size jobs required | **Accepted deviation, an improvement.** `20994d6a` rolled both into one `Crosshatch Test Status` job, so new fork checks need no settings change | `20994d6a` message; `AGENTS.md` |
 
@@ -186,7 +186,7 @@ Each finding carries its source and two dispositions: **instance** (fix now / de
 |---|---|
 | 1.1: `sim.sh build` ignores a stale `platformio.local.ini` | **Resolved** in the sweep, `d2d8e81a` (`sim.sh` re-runs setup when the block lacks the current `simulator.ini`) |
 | 1.2: AGENTS.md pointer to the ledger | **Resolved** in `d2d8e81a` (AGENTS.md Policy line) |
-| 1.6: device check of 404 → no update, network failure → failed, and offer then no re-offer | **Open.** The offer and no-re-offer part is the owner's ch.2 test; the 404 and network-failure rows have no test planned (AI-2) |
+| 1.6: device check of 404 → no update, network failure → failed, and offer then no re-offer | **Partly resolved.** The offer, install, and no-re-offer part passed on device (ch.1 → ch.2, owner). The 404 and network-failure rows are still unverified on device (AI-2) |
 
 ### What the evidence confirms went well
 
@@ -201,15 +201,43 @@ _Pending: Phase 2._
 
 ## Previous-retro follow-through
 
-_Pending: Phase 4._
+Nothing to follow through: **no previous retrospective file exists**. `epic-platform-baseline` is the first epic in the `epics` order of `tickets.py status`, so there is no earlier epic folder to look in.
 
 ## Action items
 
-_Pending: Phase 4._
+All items are **proposed**; none was applied by this retro. Items marked *remediation* go to the normal dev loop as story-shaped work. Items marked *spec reconciliation* await the owner's application to the spine or epic.
+
+| # | Kind | Action | From | Owner |
+|---|------|--------|------|-------|
+| AI-1 | remediation, fix now | Stop the simulator build from depending on a filename list. Add a `simulator_x4pro` build job to `.github/workflows/crosshatch-ci.yml`, listed in `Crosshatch Test Status`'s `needs`. Replace the per-file exclusion of `ForkReleaseProbe.cpp` with a guard that also excludes `SIMULATOR`, so the next device-only file under `src/games/` fails in CI and not in a later session | P4 | dev loop: a chore before or at the start of the next epic that adds `src/games` or `src/activities/games` code |
+| AI-2 | deferred check | Decide the remaining device rows of 1.6's deferred check. For a network failure (e.g. Wi-Fi drops mid-check), the result should be "failed", not "no update". Now that releases exist, the 404 → "no update" row can only be exercised against a repository with no releases; accept it as covered by the host tests and the probe's design, or check it with a development build | deferred-work (1.6), DW6 | owner (hitl) |
+| AI-3 | remediation, fix now | Harden `fr build` against PlatformIO's clean-on-checksum: check each image right after its own `pio run`, or give each env its own build dir, as the flash gate now does for games-off | P3 (unverified risk) | dev loop |
+| AI-4 | remediation, fix now | Add `src/network/HttpDownloader.*` to the row-10 dry-run rule in `docs/crosshatch/upstream-touches.md` | V2 | dev loop (one line) |
+| AI-5 | remediation, deferred with trigger | Before epic-install-and-launcher adds `pack_game.py`, `game_codec.py`, and `gen_game_icons.py`, extract a fork-only helper for the shared script plumbing. That covers `SetupError`, the 0/1/2 exit contract, the git helper, the games-flag literal, and the step-summary writer. Also write the fork's script conventions (sidecar `_test.py`, the exit contract) in `docs/crosshatch/` or `docs/contributing/`. Optionally, add a fork-only composite action for the PlatformIO setup that the two `crosshatch-*` workflows share | A1, A2, A4 | dev loop: first ticket of epic-install-and-launcher |
+| AI-6 | spec reconciliation | Update ARCHITECTURE-SPINE.md in four places. (a) AD-25 and ledger row 10 name `src/games/ForkReleaseProbe` and why it exists: a non-200 status is unreachable through `HttpDownloader` without an unledgered edit. (b) The Structural Seed lists `src/games/GamesBuildAnchor.cpp`, the three fork scripts, and `test/game_core/fork_version_vectors.json`. (c) AD-2's 64 B rule says "mutable static storage", or exempts `constexpr` data. (d) Record R4's `-DLUA_COMPAT_GLOBAL=0` and R5's KiB reading as the as-built interpretations | A5, A6, spec table | owner, via `bmad-architecture` update |
+| AI-7 | process lesson | Make ticket delivery match ticket wording. When a ticket's `verify` names "on its PR" or a CI result, either the build loop opens and merges a PR per ticket, or the verify is phrased as local evidence plus one epic PR. A gate ticket's "make it required" hitl step comes before merging the code the gate measures. Never merge a PR with a red check that the PR's own tickets introduced | P1, P2 | owner (process; candidate AGENTS.md pitfall or build-skill customization) |
+| AI-8 | process lesson | Before a CI-only gate or workflow is marked built, run it once from a fresh clone and state that in the plan's Verification. Incremental local trees hid P3 | P3 | build skill / plan template (owner) |
+| AI-9 | watch item | epic-script-runtime's first ticket that references `lua_*` from game code records the flash gate's games-on minus games-off difference. Until then the 250 KiB budget has not measured the engine | V4 | dev loop: epic-script-runtime |
+
+Not an action here: the seven tickets are still at `built`. Closing them (`done`) is the ticketing skill's job, confirmed by the owner. This retro changes no ticket status.
 
 ## Acceptance verdict
 
-_Pending: Phase 4._
+**Machine verdict: accepted-with-open-items**, criteria **declared** (the epic file's Done when 1–7). `pending_tickets` is empty.
+
+| Done when | Result | Evidence |
+|-----------|--------|----------|
+| 1. The ledger job fails unledgered and SDK-pointer changes and passes ledgered ones | met | `scripts/check_upstream_touches_test.py` (18 pass); `cut --ref d578b4e3` exit 0 |
+| 2. 10 AD-3 rows up front; trial merge with upstream clean in game paths | met | `docs/crosshatch/upstream-touches.md:30-39`; clean merge-tree against `4a6283db` |
+| 3. Five envs build with `lib/lua` and the three skeletons; flag only on the 8 envs | met | PR #10 builds; `platformio.ini`/`simulator.ini` grep |
+| 4. Host suites with a Lua smoke test; format and `pio check` pass with `lib/lua` excluded | met | PR #10 `unit-tests`, `clang-format`, `cppcheck`; `lib/lua/.clang-format`; `platformio.ini:29` |
+| 5. Fork-only on/off x4pro size gate, fails above 250 KB | met (KiB reading, accepted deviation) | `crosshatch-ci.yml`; `cfb`; PR #10 `x4pro flash budget` green |
+| 6. `X.Y.Z-ch.N` published; X4 Pro offered, installs, not re-offered | met | releases `1.6.5-ch.1`, `1.6.5-ch.2`; device check owner-confirmed |
+| 7. Merged to `develop` with every gate green | met in the final state | PR #10 check runs; PR #9 merged red (P2), resolved by PR #10 |
+
+No finding is blocking: each open item is a hardening, cleanup, or documentation change with a named owner. The verdict carries open items because AI-1, AI-3, and AI-4 are fix-now remediations, AI-2 is the remaining deferred device check, and AI-5, AI-6, and AI-9 are deferred or spec reconciliations. P1–P3 record that the path to the final state skipped the epic's own delivery plan (one PR instead of per-ticket PRs, and a merge over a red gate). That weighs on process (AI-7, AI-8), not on whether the final state meets the criteria.
+
+**Human decision:** _pending._
 
 ## Open questions
 
