@@ -3,7 +3,7 @@ title: 'Game contract and the one-seat Session'
 type: 'feature'
 ticket: '8'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '124ac2cd49f3d0bfcc3ec6430248d717fbcd07f2'
 route: 'full'
 route_source: 'auto'
