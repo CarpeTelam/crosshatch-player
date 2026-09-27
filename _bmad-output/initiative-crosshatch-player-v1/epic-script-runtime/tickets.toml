@@ -1,0 +1,197 @@
+# tickets.toml — epic-script-runtime's agreed stories in build order. tickets.py reads it.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: Home to Games to a Lua frame and a tap"
+description = "Makes the guarded changes of ledger rows 4 to 7 (list mode) and adds the first `STR_GAMES_*` keys; adds `GameCore::Manifest::parse` for every AD-15 key (unknown keys ignored) with its `test/game_core` suite; a minimal `GamesListActivity` on `UiListActivity` listing each `/.games/<id>/` whose `manifest.json` parses, by `name`; and a `GameMatchActivity` on `UiAppHost` whose `GameAssets` loads every `*.lua` into one PSRAM blob with a name-to-span table, runs it as a `LuaGame` on the `GameVM` task (core 1, priority 1, 16 KB) with a depth-bounded input queue that drops the oldest event with a log line, keeps its heap in the in-tree arena allocator over one 256 KB block from the `src/games` backend, enters Lua only through the `lua_pcall` trampoline to call `setup` and `draw`, and shows `ch.gfx.clear`, `rect`, and `text` through the front and back frame buffers (frame mutex, `frameGen`) and `FrameReplay` with a full refresh; a tap maps through the X4 Pro `GameViewport` to `input` and redraws. The fixture lives in `test/game_script/fixtures/`, never `games/`. It owns the `test/game_script` build of the GameScript sources that later entries extend."
+verify = "In the simulator (`sim.sh build x4pro`, `tap`, `ss`) and on an X4 Pro, Home to Games lists the hand-placed fixture, opening it shows its frame, and a tap changes it; host tests cover `Manifest::parse` and a `LuaGame` `setup` and `draw` through the trampoline; the plan records the flash gate's games-on minus games-off difference (retro AI-9)."
+covers = ["R1", "R3", "R4", "R9"]
+after = ["1.1", "1.2", "1.4"]
+hitl = true
+risk = "high"
+unknown = "How the simulator backs the `GameVM` task (`xTaskCreatePinnedToCore`) and the PSRAM block; host tests back the arena with a `malloc`'d block."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-3 rows 2 and 4 to 7, AD-5, AD-6, AD-7, AD-15, AD-22", "docs/contributing/touch-and-ui.md", ".claude/skills/run-crosshatch-player/SKILL.md", "_bmad-output/initiative-crosshatch-player-v1/epic-platform-baseline/epic-platform-baseline-retrospective.md, AI-9"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Fork script helper and one test step"
+description = "Extracts `scripts/fork_common.py` (the 0/1/2 exit contract, `SetupError`, the git helper, the flag literal, the step summary) from `check_upstream_touches.py`, `check_flash_budget.py`, and `fork_release.py`, which adopt it with unchanged behaviour; adds one `crosshatch-ci.yml` step that runs every `scripts/*_test.py` (a new job goes in `Crosshatch Test Status` `needs`); and documents the script conventions in `docs/crosshatch/`. Entries 3, 5, and 6 build their scripts on it."
+verify = "Every `scripts/*_test.py` passes locally with each script's exit codes unchanged; the workflow runs once from a fresh clone (retro AI-8)."
+covers = ["R12"]
+after = []
+hitl = false
+risk = "low"
+unknown = "Whether the existing sidecar tests pin exit codes closely enough to prove the extraction changes no behaviour."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, Consistency Conventions (Fork scripts)", "_bmad-output/initiative-crosshatch-player-v1/epic-platform-baseline/epic-platform-baseline-retrospective.md, AI-5 and AI-8"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Static RAM and static-initializer gates"
+description = "Extends `scripts/check_flash_budget.py` to also compare `.dram0.data` + `.dram0.bss` + `.noinit` from the games-on and games-off x4pro ELFs (toolchain `size -A`) against a 1 KiB limit, and adds a check in the same job that no object from `lib/Game*`, `src/games`, or `src/activities/games` has an `.init_array` entry or a mutable static over 64 B; each prints its measurement for the epic's record."
+verify = "Sidecar tests cover each limit at, under, and one over; locally, a scratch 2 KiB mutable global used from code the x4pro image reaches fails the RAM gate, and a scratch object with a static constructor and one with an unreferenced 128 B mutable static fail the object check; the job passes once from a fresh clone."
+covers = ["R11"]
+after = [2, "1.3"]
+hitl = false
+risk = "medium"
+unknown = "How to find mutable statics over 64 B from object files (`nm -S` over `.data` and `.bss`) without flagging `constexpr` data."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, Operational envelope", "_bmad-output/implementation-artifacts/deferred-work.md, spine rules ahead of the code"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "API level, HostCaps, and Manifest::check"
+description = "Adds `lib/GameCore/ApiLevel.h` (`API_LEVEL` 1, `API_MIN_LEVEL` 1, `API_LEVEL_FROZEN` false, `API_SURFACE_CRC`), `docs/crosshatch/api-level-1.txt` listing every level-1 entry this epic ships (epic-icon-library appends the icon entries), `GameCore::HostCaps` filled by one `src/games` provider (`api` and `minApi` from `ApiLevel.h`, `maxSeats` 2, `nearby` false on every build until epic-play-nearby turns it on and always false under `SIMULATOR`), and `Manifest::check` returning `Invalid`, `Unavailable`, or `Ok` per AD-15; entry 1's Games list shows only games that are `Ok` with `solo`. Entry 5 reads `ApiLevel.h`; entry 14 tests the live `ch` table against the list."
+verify = "`test/game_core` covers each `Manifest::check` outcome at the `api`, `seats`, and `modes` boundaries and recomputes `API_SURFACE_CRC` from the list; a fixture with `api = 2` is absent from the simulator's Games list."
+covers = ["R9", "R10"]
+after = [1]
+hitl = false
+risk = "medium"
+unknown = "The exact typed-entry grammar of `api-level-1.txt` beyond AD-19's entry kinds."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-11, AD-15, AD-19", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "API freeze job and the level in release notes"
+description = "Adds a fork script on entry 2's `fork_common.py` (listed in the ledger's Game paths) and a `crosshatch-ci.yml` job, in `Crosshatch Test Status` `needs`, that fail a PR which changes a frozen level's `api-level-<n>.txt` against the merge base or turns `API_LEVEL_FROZEN` from true to false; makes `fork_release.py` read entry 4's `ApiLevel.h` and `test/game_core/fork_version_vectors.json` from the commit it releases (fixing the comment at `crosshatch-release.yml:51-52`), print \"Game API <n> (preview)\" in the notes, and refuse in preflight to publish with `API_LEVEL_FROZEN` false once a frozen release exists; and makes `fr build` check each image after its own `pio run` or build each env in its own directory, so PlatformIO's clean-on-checksum cannot erase an earlier image (retro AI-3)."
+verify = "Sidecar tests cover a changed frozen list, a frozen-flag flip, a preview change that passes, and vectors read from the released commit; the job passes once from a fresh clone; a person runs a release dry run on the branch and its notes name \"Game API 1 (preview)\"."
+covers = ["R10"]
+after = [3, 4]
+hitl = true
+risk = "medium"
+unknown = "How preflight detects that a frozen release exists: a released tag whose commit has `API_LEVEL_FROZEN` true."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-19, AD-25", "_bmad-output/implementation-artifacts/deferred-work.md, spine rules ahead of the code (release and update-source chore, first item)", "_bmad-output/initiative-crosshatch-player-v1/epic-platform-baseline/epic-platform-baseline-retrospective.md, AI-3"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Codec and golden vectors"
+description = "Adds the C codec in `lib/GameScript` (Lua values to codec v1 bytes and back per AD-10: canonical, depth at most 16, integral float keys normalized, named limit constants 1,400, 256, and 4,096 B), the `{magic, fileVersion, codecVersion}` blob header helper that entry 12 uses, `scripts/game_codec.py` on entry 2's `fork_common.py` with its sidecar test, one golden vector file in `test/game_script/` that both codecs read (with at-limit and one-over cases), and the codec section of `docs/crosshatch/formats.md`."
+verify = "Both codecs pass every vector, including canonical key order, float-key normalization, NaN-key, cycle, and metatable errors, and each limit at and one over."
+covers = ["R5"]
+after = [1, 2]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-10, Consistency Conventions (Units and limits)"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Sandbox, budgets, and the heap cap"
+description = "Adds to entry 1's `lua_pcall` trampoline, the only way into the VM, the sticky 2 M count hook, the cancel flag, and the `Cancelled` and `ScriptError` outcomes; enforces the 256 KB cap in the counting `lua_Alloc`; opens only base (without `load`, `loadfile`, `dofile`), table, string, math, and utf8; loads text chunks only; resolves `require` against entry 1's source table; seeds the hash and `math.random` from `IRandom`; and adds the `GameVM` task's cancel, join, and abandon (500 ms after cancel, once `inSwap` is clear) that entry 13 calls on Leave and sleep, and `skipLoopDelay()` while a callback runs."
+verify = "`test/game_script` fixtures for a Lua error, an infinite loop (also inside `pcall`), heap exhaustion, a binary chunk, a missing `require`, and `io`, `os`, or `load` access each end in `ScriptError`, and a cancel ends in `Cancelled`; in the simulator the infinite-loop fixture leaves the device responsive."
+covers = ["R4", "R6"]
+after = [6]
+hitl = false
+risk = "high"
+unknown = "Whether abandoning the task inside a C library call leaves the arena safe to free."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-4, AD-5, AD-6, AD-14", "_bmad-output/planning-artifacts/research/spike-script-engine-2026-09-26.md"]
+
+[[entry]]
+id = 8
+type = "story"
+title = "Game contract and the one-seat Session"
+description = "Adds `GameCore::Session` for one seat (solo roster, `ver`, encoded snapshot) behind `IGameRules`, implemented by `LuaGame`: `apply` gets a fresh decode and its result is re-encoded; `draw`, `input`, and `status` get discarded copies; `status` is validated; the state and move limits apply; a rejection delivers `rejected`, game over delivers `over` once, and a move returned while one is pending is discarded; `ctx` is `{seats, mode, api}` with `api` from `ApiLevel.h`; one `ui` table per local seat persists across calls and is never synced or saved; `Session` and codec scratch come from the VM arena. Entry 1's fixture becomes move-driven."
+verify = "Host tests show a state change made in `draw` discarded, a rejection delivered as an event, a `status` naming seat 2 in solo, an oversized state, and an oversized move each ending in `ScriptError`, and `over` delivered once; the simulator plays the fixture to game over."
+covers = ["R1", "R5", "R6"]
+after = [4, 7]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-1, AD-8, AD-9, AD-11, AD-14"]
+
+[[entry]]
+id = 9
+type = "story"
+title = "The full ch.gfx and display-list limits"
+description = "Adds `ch.gfx.line`, `circle`, and `refresh`, the colors (four for fills, two otherwise), sizes, and `align`; `ch.screen` from `GameViewport`; `ch.text_width` from per-size advance tables passed in at VM start through a port that entry 11 fills; and the errors for `ch.gfx` outside `draw` and for passing 2,048 commands or 32 KB."
+verify = "Host tests decode the command stream for every call and argument form and hit each error; `ch.text_width` works in `input`."
+covers = ["R2", "R3", "R6"]
+after = [8]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-7, AD-14", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, section 5"]
+
+[[entry]]
+id = 10
+type = "story"
+title = "ch.timer, ch.store, ch.time, ch.log, and ch.api"
+description = "Adds `ch.timer.after` (below 1,000 ms raises a Lua error; one pending, a new call replaces it) and `cancel`, delivering `timer` to `input` through the `GameVM` input queue; `ch.store.get` and `set`, which encodes at once (4 KB) into the match's latest-wins PSRAM slot, dirty only when bytes differ, which entry 12 persists; `ch.time.ms` from `IClock`; `ch.log` and `print` as `LOG_INF` tagged with the game id; and `ch.api` from `ApiLevel.h` (entry 8 sets `ctx.api`)."
+verify = "Host tests cover timer replace, cancel, and the error below 1,000 ms with a fake clock, a `ch.store.set` over 4 KB ending in `ScriptError`, dirty tracking, and `ch.api == 1`; in the simulator a timer fixture redraws after its delay."
+covers = ["R1", "R2"]
+after = [9]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-17, AD-19, AD-23, Consistency Conventions (Logging)"]
+
+[[entry]]
+id = 11
+type = "story"
+title = "FrameReplay, GameViewport, and touch input"
+description = "Makes `FrameReplay` draw every command kind, with dithered `light` and `dark` fills and the three text sizes mapped to built-in fonts whose advance tables it hands to entry 9's port; adds to entry 1's always-full refresh the escalation inputs (the frame's hint with coalesced frames keeping the maximum, `forceFull`, the fast-refresh counter) and skips a frame identical to the one on screen; extends entry 1's `GameViewport` to the Sticky; and turns touch into `tap`, `long_press`, and `swipe` with its direction, never an edge gesture."
+verify = "In the simulator for x4pro and sticky, a fixture drawing every command and color renders as expected (screenshots in the plan), a long press and a swipe reach `input` in canvas coordinates, and an edge Back swipe does not."
+covers = ["R1", "R3"]
+after = [10]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-7, AD-20, Consistency Conventions (Input events)", "docs/contributing/touch-and-ui.md, Global gestures"]
+
+[[entry]]
+id = 12
+type = "story"
+title = "GameSaveStore for store.bin"
+description = "Adds `src/games/GameSaveStore`, implementing `ISnapshotStore`, as the only reader and writer of `/.games-data/<id>/store.bin`: loaded through `GameAssets` before the VM starts, written from entry 10's slot through a `.tmp` file and rename at most every 5 s, at round end, and in `onExit()` (entry 13 calls the round-end and `onExit()` flushes), using entry 6's blob header, with an unknown codec version discarded; records the `store.bin` layout in `docs/crosshatch/formats.md`. `resume.bin` is left to epic-install-and-launcher."
+verify = "In the simulator a fixture's `ch.store` counter survives leaving, reopening, and a restart; a `store.bin` with an unknown codec version is discarded with a log line."
+covers = ["R8"]
+after = [11]
+hitl = false
+risk = "low"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-10, AD-17"]
+
+[[entry]]
+id = 13
+type = "story"
+title = "Solo match lifecycle and the error view"
+description = "Completes `GameMatchActivity`'s solo states: Paused (Back and Home open the pause menu; it overrides `handleHomeGesture()`), Over (the end-of-round menu over the last frame with Play again and Leave; entering it delivers `over` and flushes `ch.store`), Error (AD-14's view with Back), Leaving (stop the VM, `goToGames()`), and the forced `onExit()` on sleep (entry 7's cancel, join, or abandon; entry 12's store flush; never take `RenderLock` again); records the canvas exception to `touch-and-ui.md` in `docs/crosshatch/`."
+verify = "In the simulator Back and Home open the pause menu and Resume, Leave, and Play again work; each fault fixture from entries 7 to 10 ends in the error view and Back returns to Games; `key sleep` during play reaches the sleep screen without deadlock."
+covers = ["R6", "R7"]
+after = [12]
+hitl = false
+risk = "high"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-5, AD-14, AD-17, AD-20, AD-21", "docs/activity-manager.md"]
+
+[[entry]]
+id = 14
+type = "story"
+title = "Level-1 surface test"
+description = "Adds a host test that builds `ch` as the device does and checks its functions, the Lua globals and libraries, enums, events, `ctx` fields, and limits against entry 4's `api-level-1.txt`, recomputing `API_SURFACE_CRC`; epic-icon-library adds the icon-table check and epic-game-api-docs the `ch.d.lua` and catalog checks."
+verify = "The test passes, and fails when a scratch change adds a `ch` function or a global not in the list."
+covers = ["R10"]
+after = [11]
+hitl = false
+risk = "low"
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-19"]
+
+[[entry]]
+id = 15
+type = "story"
+title = "Refactor sweep"
+description = "Cleans up what the build records and deferred review findings of entries 1 to 14 name, with its scope set when it starts; cleanup only."
+verify = "Its changes pass the five-env build, host suites, format check, `pio check`, and every fork gate locally."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]
+after = [5, 13, 14]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 16
+type = "story"
+title = "Solo fixture game on the X4 Pro"
+description = "Closing end-to-end run: a person places a solo fixture game that uses drawing, text, tap, long press, swipe, refresh hints, `ch.timer`, and `ch.store` on an X4 Pro, plays it from Home to Games to game over and again after a restart, runs each fault fixture to the error view, and records the epic's flash and RAM deltas in its Notes."
+verify = "The owner confirms Done when 1, 2, and 4 on the device, and the epic PR's CI is green."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"]
+after = [15]
+hitl = true
+risk = "medium"
