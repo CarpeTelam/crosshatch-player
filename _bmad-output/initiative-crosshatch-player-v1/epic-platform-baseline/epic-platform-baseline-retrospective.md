@@ -207,7 +207,26 @@ This epic changed runtime behavior in one place: the update check in game builds
 | Five-env build, format, cppcheck, unit tests, both fork gates | PR #10 CI on `20994d6a` | all green |
 | Simulator build | only the sweep's local `sim.sh build x4pro`, after `8e1bc5a4` (`story-refactor-sweep-plan.md`) | builds. **No CI coverage** (P4, AI-1) |
 
-Narrowed: this retro did not rebuild firmware locally. A background build check (firmware envs, a fresh-tree flash gate, and the simulator) was still running when the owner accepted the verdict; see the addendum below if it was appended. The 404 → no-update and network-failure rows were not exercised (AI-2).
+Narrowed: the 404 → no-update and network-failure rows were not exercised (AI-2). `x4c`, `papermono`, and `pio check` were not rebuilt locally; PR #10 CI covers them.
+
+### Addendum: local build check (completed after the owner's decision)
+
+This ran in this session on `d578b4e3` from a fresh clone state; logs are in the session scratchpad. It confirms the verdict and changes no criterion.
+
+| Check | Result |
+|-------|--------|
+| Host GoogleTest (full `ctest`) | 388/388 pass, including the 10 `ForkReleaseTest.*` and 5 `LuaOnHostTest.*` tests |
+| Done when 1 cases on throwaway branches: README edit / ledger-doc edit / `freeink-sdk` moved to its parent | exit 1 / exit 0 / exit 1, as specified |
+| `pio project config` after `sim.sh setup` | flag on exactly the 8 game envs |
+| `pio run -e x4pro`, `-e default` (C3), `-e sticky` | all SUCCESS. x4pro Flash 86.1 %; default RAM 17.7 %, Flash 85.6 %. `lua @ 5.5.1` and the three game libraries are in every dependency graph, the C3 included, with no `lua_*` symbols linked |
+| Flash gate on a fresh tree (`build on`, `build off`, `compare`) | exit 0. On 5,647,488 B, off 5,662,624 B: **difference −15,136 B** |
+| Simulator `sim.sh build x4pro`, `start`, `ss` | builds and boots to Home |
+| `./bin/clang-format-fix` (clang-format 21.1.8) | no changes |
+
+Three observations refine the findings above:
+- **V4 is sharper than recorded.** The games-on image is 15,136 B *smaller* than games-off. Only the fork's OTA path sits behind the flag, and upstream's `isUpdateNewer()` pulls in `sscanf`. The 250 KiB budget is therefore measured from −14.8 KiB today, and the engine's real cost is still unmeasured (AI-9).
+- **P3's mechanism reproduced.** A `sim.sh setup` run during an x4pro build changed PlatformIO's project checksum, and PlatformIO wiped `.pio/build` mid-compile. This supports the clean-on-checksum hazard behind `f3ba9e54` and AI-3's concern for `fr build`. Serial reruns passed.
+- **A recurring cloud-session setup gap.** The espressif32 platform's penv overrides `SSL_CERT_FILE` with its own certifi bundle, so package downloads fail TLS behind the agent proxy until the proxy CA is added to that bundle. 1.1's Implementation Notes record the same workaround. AGENTS.md does not mention it (AI-10).
 
 ## Previous-retro follow-through
 
@@ -227,7 +246,8 @@ All items are **proposed**; none was applied by this retro. Items marked *remedi
 | AI-6 | spec reconciliation | Update ARCHITECTURE-SPINE.md in four places. (a) AD-25 and ledger row 10 name `src/games/ForkReleaseProbe` and why it exists: a non-200 status is unreachable through `HttpDownloader` without an unledgered edit. (b) The Structural Seed lists `src/games/GamesBuildAnchor.cpp`, the three fork scripts, and `test/game_core/fork_version_vectors.json`. (c) AD-2's 64 B rule says "mutable static storage", or exempts `constexpr` data. (d) Record R4's `-DLUA_COMPAT_GLOBAL=0` and R5's KiB reading as the as-built interpretations | A5, A6, spec table | owner, via `bmad-architecture` update |
 | AI-7 | process lesson | Make ticket delivery match ticket wording. When a ticket's `verify` names "on its PR" or a CI result, either the build loop opens and merges a PR per ticket, or the verify is phrased as local evidence plus one epic PR. A gate ticket's "make it required" hitl step comes before merging the code the gate measures. Never merge a PR with a red check that the PR's own tickets introduced | P1, P2 | owner (process; candidate AGENTS.md pitfall or build-skill customization) |
 | AI-8 | process lesson | Before a CI-only gate or workflow is marked built, run it once from a fresh clone and state that in the plan's Verification. Incremental local trees hid P3 | P3 | build skill / plan template (owner) |
-| AI-9 | watch item | epic-script-runtime's first ticket that references `lua_*` from game code records the flash gate's games-on minus games-off difference. Until then the 250 KiB budget has not measured the engine | V4 | dev loop: epic-script-runtime |
+| AI-9 | watch item | epic-script-runtime's first ticket that references `lua_*` from game code records the flash gate's games-on minus games-off difference. Until then the 250 KiB budget has not measured the engine; today's difference is −15,136 B (addendum) | V4 | dev loop: epic-script-runtime |
+| AI-10 | process lesson | Add a Known pitfall to AGENTS.md for cloud sessions: the espressif32 penv's certifi bundle needs the agent-proxy CA (`/root/.ccr/ca-bundle.crt`) before `pio` can download packages. Also note in the simulator skill not to run `sim.sh setup` or a simulator build while a firmware build is running, since the checksum change wipes `.pio/build` | addendum; 1.1 Implementation Notes | owner, via `bmad-project-context` |
 
 Not an action here: the seven tickets are still at `built`. Closing them (`done`) is the ticketing skill's job, confirmed by the owner. This retro changes no ticket status.
 
@@ -247,7 +267,7 @@ Not an action here: the seven tickets are still at `built`. Closing them (`done`
 
 No finding is blocking: each open item is a hardening, cleanup, or documentation change with a named owner. The verdict carries open items because AI-1, AI-3, and AI-4 are fix-now remediations, AI-2 is the remaining deferred device check, and AI-5, AI-6, and AI-9 are deferred or spec reconciliations. P1–P3 record that the path to the final state skipped the epic's own delivery plan (one PR instead of per-ticket PRs, and a merge over a red gate). That weighs on process (AI-7, AI-8), not on whether the final state meets the criteria.
 
-**Human decision: accepted-with-open-items.** The owner accepted the machine verdict on 2026-09-27. The open items are AI-1 to AI-9 above.
+**Human decision: accepted-with-open-items.** The owner accepted the machine verdict on 2026-09-27. The open items are AI-1 to AI-9 above. AI-10 was added after the decision, from the addendum; it is a process lesson and does not change the verdict.
 
 ## Open questions
 
