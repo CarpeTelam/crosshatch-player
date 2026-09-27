@@ -3,7 +3,7 @@ title: 'Sandbox, budgets, and the heap cap'
 type: 'feature'
 ticket: '7'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: '6c6f32f0fa8f6b4c656f6dd406a4fe822d13594f'
 route: 'full'
 route_source: 'auto'
