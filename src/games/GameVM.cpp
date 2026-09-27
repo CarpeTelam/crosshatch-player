@@ -64,6 +64,14 @@ void GameVM::taskEntry(void* param) {
 
 void GameVM::run() {
   using GameScript::Outcome;
+  // The hook keeps STACK_HEADROOM_BYTES free above this address. The simulator's
+  // thread has a large stack, so it models the task's 16 KiB from here.
+#if defined(SIMULATOR)
+  const uintptr_t stackFloor = reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) - TASK_STACK_BYTES;
+#else
+  const auto stackFloor = reinterpret_cast<uintptr_t>(pxTaskGetStackStart(nullptr));
+#endif
+  game.setStackFloor(stackFloor);
   Outcome outcome = game.start();
   if (outcome == Outcome::Ok) outcome = game.draw();
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
@@ -75,14 +83,19 @@ void GameVM::run() {
     outcome = game.input(event);
     if (outcome == Outcome::Ok) outcome = game.draw();
   }
-  if (outcome != Outcome::Ok) {
+  if (outcome == Outcome::ScriptError) {
     LOG_ERR("LUA", "Script error: %s", game.errorMessage());
     scriptFailed.store(true, std::memory_order_release);
+  } else if (outcome == Outcome::Cancelled) {
+    LOG_INF("GAME", "VM cancelled");
   }
   game.close();
-  LOG_INF("GAME", "VM stopped; arena peak %u bytes, stack high-water %u bytes free",
+  const uintptr_t deepest = game.callGuard().deepestAddress();
+  const unsigned hookHeadroom =
+      deepest != UINTPTR_MAX && deepest > stackFloor ? static_cast<unsigned>(deepest - stackFloor) : 0;
+  LOG_INF("GAME", "VM stopped; arena peak %u bytes, stack high-water %u bytes free, least at a hook %u bytes",
           static_cast<unsigned>(arena.allocator().peakBytes()),
-          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), hookHeadroom);
   {
     std::lock_guard<std::mutex> lock(taskMutex);
     taskAlive = false;
@@ -110,15 +123,78 @@ void GameVM::notifyTask() {
   if (taskAlive) xTaskNotify(task, 1, eIncrement);
 }
 
-bool GameVM::stop(const uint32_t timeoutMs) {
-  if (!task) return true;
+void GameVM::cancel() {
   quitRequested.store(true, std::memory_order_release);
+  game.requestCancel();
   notifyTask();
+}
+
+bool GameVM::join(const uint32_t timeoutMs) {
+  if (!task) return true;
   for (uint32_t waited = 0; !finished(); waited += STOP_POLL_MS) {
     if (waited >= timeoutMs) return false;
     vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
   }
   return true;
 }
+
+bool GameVM::stop(const uint32_t timeoutMs) {
+  cancel();
+  return join(timeoutMs);
+}
+
+void GameVM::abandon(std::unique_ptr<GameVM> vm) {
+  if (!vm) return;
+  // Leaked from here on unless the task ends after all: it may hold this object's
+  // mutexes (input queue, task mutex), and deleting a task releases nothing it holds.
+  GameVM* stuck = vm.release();
+#if defined(SIMULATOR)
+  // The shim has no vTaskSuspend, and its vTaskDelete only detaches the thread,
+  // which would keep running in the arena; waiting cannot help.
+  if (stuck->finished()) {
+    delete stuck;
+    return;
+  }
+  LOG_ERR("GAME", "VM stuck; the simulator cannot stop its thread, so all of it is leaked");
+#else
+  for (uint32_t waited = 0; waited < ABANDON_WAIT_MS; waited += STOP_POLL_MS) {
+    if (stuck->finished()) {
+      delete stuck;
+      return;
+    }
+    if (stuck->deleteIfStuckInLua()) {
+      // The Lua state lives in the arena, and nothing else points into it.
+      stuck->game.abandon();
+      stuck->arena.release();
+      stuck->frameStorage.reset();
+      stuck->assets.release();
+      LOG_ERR("GAME", "Abandoned the stuck VM: freed its PSRAM, leaked %u bytes",
+              static_cast<unsigned>(sizeof(GameVM)));
+      return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
+  }
+  LOG_ERR("GAME", "VM stuck and not safely deletable; leaking all of it");
+#endif
+}
+
+#if !defined(SIMULATOR)
+bool GameVM::deleteIfStuckInLua() {
+  // Held throughout, so the task cannot reach its own vTaskDelete meanwhile.
+  std::lock_guard<std::mutex> lock(taskMutex);
+  if (!taskAlive) return false;  // ending on its own
+  vTaskSuspend(task);
+  // A task running on the other core stops once that core takes the yield.
+  constexpr int settleTicks = 10;
+  for (int i = 0; i < settleTicks && eTaskGetState(task) == eRunning; ++i) vTaskDelay(1);
+  if (eTaskGetState(task) == eSuspended && game.inLua() && !frameBuffers.inSwap()) {
+    vTaskDelete(task);
+    taskAlive = false;
+    return true;
+  }
+  vTaskResume(task);
+  return false;
+}
+#endif
 
 #endif  // FREEINK_CAP_GAMES

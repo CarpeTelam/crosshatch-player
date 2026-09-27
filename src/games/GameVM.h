@@ -23,13 +23,15 @@ class GfxRenderer;
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
 // the frame buffers, the input queue, and the LuaGame. The task alone calls into
 // Lua; it never takes RenderLock, calls ActivityManager, or touches Storage. The
-// match posts input and reads frames, and destroys this object only after stop()
-// returns true (or before start()).
+// match posts input and reads frames, and destroys this object only after join()
+// returns true (or before start()); otherwise it hands it to abandon().
 class GameVM {
  public:
-  static constexpr uint32_t TASK_STACK_BYTES = 16 * 1024;
+  static constexpr uint32_t TASK_STACK_BYTES = GameScript::VM_STACK_BYTES;
   static constexpr int TASK_PRIORITY = 1;
   static constexpr int TASK_CORE = 1;
+  // How long abandon() waits for the stuck task to be safely deletable.
+  static constexpr uint32_t ABANDON_WAIT_MS = 500;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
@@ -57,9 +59,25 @@ class GameVM {
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
   const char* errorMessage() const { return game.errorMessage(); }
 
-  // Asks the task to quit after its current callback and waits up to timeoutMs for
-  // it to end. True when it has ended (or never started).
+  // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
+  bool busy() const { return game.inLua(); }
+
+  // Sets the cancel flag, which the hook turns into Cancelled at the next hook
+  // event, and asks the task to quit. Returns at once.
+  void cancel();
+  // Waits up to timeoutMs for the task to end. True when it has (or never started).
+  bool join(uint32_t timeoutMs);
+  // cancel(), then join(timeoutMs).
   bool stop(uint32_t timeoutMs);
+
+  // For a VM whose join timed out (a script stuck inside a C library call). Once
+  // the task is suspended inside Lua with inSwap clear, it is deleted and the
+  // arena, frame storage, and sources are freed; the GameVM object itself is
+  // leaked, since the task may hold its mutexes. If that never happens within
+  // ABANDON_WAIT_MS, or in the simulator (which cannot stop a thread), all of it
+  // is leaked. Call from the loop task while the render task is not reading
+  // frames (RenderLock held, as in onExit).
+  static void abandon(std::unique_ptr<GameVM> vm);
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage);
@@ -69,6 +87,10 @@ class GameVM {
   // Notifies the task only while it is alive: it deletes itself when it ends, and
   // a notification to a deleted task would touch freed memory.
   void notifyTask();
+  // Device only (the simulator cannot stop a thread): suspends the task, and
+  // deletes it if it is inside Lua and not swapping frames; otherwise resumes it.
+  // True when deleted.
+  bool deleteIfStuckInLua();
 
   GameAssets assets;
   GameArena arena;

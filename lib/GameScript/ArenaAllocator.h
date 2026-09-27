@@ -7,6 +7,9 @@ namespace GameScript {
 
 // A game VM's heap is one block of this size (AD-6: 256 KiB in PSRAM on the device).
 inline constexpr size_t ARENA_BYTES = 256 * 1024;
+// The most a game's Lua heap may hold, counted in the bytes Lua asks for (AD-6;
+// `lua_heap_bytes` in api-level-1.txt). luaAlloc refuses growth past it.
+inline constexpr size_t LUA_HEAP_BYTES = 256 * 1024;
 
 // Small first-fit allocator with boundary tags and coalescing over one caller-owned
 // block. The block is the port: src/games hands in PSRAM, host tests a malloc'd
@@ -35,8 +38,16 @@ class ArenaAllocator {
   size_t peakBytes() const { return peak; }
   size_t capacity() const { return static_cast<size_t>(end - begin); }
 
+  // Bytes Lua holds through luaAlloc (its own sizes, no headers), and the cap on
+  // them. reset() clears the count and keeps the cap.
+  size_t luaBytes() const { return luaHeld; }
+  size_t luaLimit() const { return luaCap; }
+  void setLuaLimit(size_t bytes) { luaCap = bytes; }
+
   // lua_Alloc over an ArenaAllocator passed as `ud`: nsize 0 frees, a null ptr
-  // allocates, anything else reallocates.
+  // allocates, anything else reallocates. Growth that would take luaBytes() past
+  // luaLimit() fails (Lua then collects and retries, then raises a memory error);
+  // shrinking never fails.
   static void* luaAlloc(void* ud, void* ptr, size_t osize, size_t nsize);
 
   // Block header, defined in the .cpp; public only so its helpers can name it.
@@ -59,6 +70,8 @@ class ArenaAllocator {
   Block* freeHead = nullptr;
   size_t inUse = 0;
   size_t peak = 0;
+  size_t luaHeld = 0;
+  size_t luaCap = LUA_HEAP_BYTES;
 };
 
 }  // namespace GameScript

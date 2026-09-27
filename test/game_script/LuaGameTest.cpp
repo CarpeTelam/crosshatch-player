@@ -1,84 +1,16 @@
 #include <gtest/gtest.h>
 
-#include <cstdint>
-#include <cstring>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
-#include "ArenaAllocator.h"
-#include "DisplayList.h"
-#include "FrameBuffers.h"
 #include "GameInput.h"
-#include "GameSources.h"
-#include "IRandom.h"
-#include "LuaGame.h"
+#include "LuaGameFixture.h"
 
 using namespace GameScript;
+using GameScriptTestSupport::LuaGameTest;
+using GameScriptTestSupport::readFixture;
 
 namespace {
-
-class FixedRandom : public GameCore::IRandom {
- public:
-  uint32_t next32() override { return 0x12345678u; }
-};
-
-std::string readFixture(const std::string& relative) {
-  std::ifstream in(std::string(GAME_SCRIPT_FIXTURES_DIR) + "/" + relative, std::ios::binary);
-  std::stringstream text;
-  text << in.rdbuf();
-  return text.str();
-}
-
-// Owns everything a LuaGame borrows: a malloc'd arena block (the device uses PSRAM),
-// two frame lists, and a one-module source table.
-class LuaGameTest : public ::testing::Test {
- protected:
-  LuaGameTest()
-      : arenaBlock(ARENA_BYTES), front(MAX_BYTES), back(MAX_BYTES), frames(front.data(), back.data(), MAX_BYTES) {
-    arena.reset(arenaBlock.data(), arenaBlock.size());
-  }
-
-  void useSource(const std::string& moduleName, const std::string& text) {
-    source = text;
-    std::memset(&span, 0, sizeof(span));
-    std::strncpy(span.name, moduleName.c_str(), SourceSpan::MAX_NAME_BYTES);
-    span.offset = 0;
-    span.length = static_cast<uint32_t>(source.size());
-    sources.spans = &span;
-    sources.count = 1;
-    sources.text = source.data();
-  }
-
-  // The front frame's commands after the last publish.
-  std::vector<DrawCommand> frontCommands() {
-    std::vector<DrawCommand> commands;
-    frames.readFront([&](const DisplayList& list) {
-      auto reader = list.reader();
-      DrawCommand c;
-      while (reader.next(c)) commands.push_back(c);
-    });
-    return commands;
-  }
-
-  static bool hasText(const std::vector<DrawCommand>& commands, const std::string& text) {
-    for (const auto& c : commands) {
-      if (c.op == Op::Text && text == c.text) return true;
-    }
-    return false;
-  }
-
-  std::vector<uint8_t> arenaBlock;
-  ArenaAllocator arena;
-  std::vector<uint8_t> front;
-  std::vector<uint8_t> back;
-  FrameBuffers frames;
-  FixedRandom random;
-  std::string source;
-  SourceSpan span{};
-  GameSources sources;
-};
 
 TEST_F(LuaGameTest, TracerSetupAndDrawThroughTheTrampoline) {
   useSource("main", readFixture("tracer/main.lua"));
@@ -175,6 +107,39 @@ TEST_F(LuaGameTest, HeapExhaustionIsAScriptError) {
   LuaGame game(arena, frames, sources, random);
   EXPECT_EQ(game.start(), Outcome::ScriptError);
   EXPECT_NE(std::string(game.errorMessage()).find("not enough memory"), std::string::npos) << game.errorMessage();
+}
+
+TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
+  useFault("heap");
+  {
+    // The default cap on the full 256 KiB arena.
+    LuaGame game(arena, frames, sources, random);
+    EXPECT_EQ(game.start(), Outcome::ScriptError);
+    EXPECT_TRUE(contains(game.errorMessage(), "not enough memory")) << game.errorMessage();
+    EXPECT_LE(arena.luaBytes(), LUA_HEAP_BYTES);
+    game.close();
+    EXPECT_EQ(arena.luaBytes(), 0u);
+    EXPECT_EQ(arena.bytesInUse(), 0u);
+  }
+  // A lower cap stops it while the arena still has room: the counter is the cap.
+  arena.reset(arenaBlock.data(), arenaBlock.size());
+  arena.setLuaLimit(64 * 1024);
+  LuaGame game(arena, frames, sources, random);
+  EXPECT_EQ(game.start(), Outcome::ScriptError);
+  EXPECT_TRUE(contains(game.errorMessage(), "not enough memory")) << game.errorMessage();
+  EXPECT_LE(arena.peakBytes(), arena.capacity() / 2);
+}
+
+TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {
+  useSource("main", readFixture("tracer/main.lua"));
+  LuaGame game(arena, frames, sources, random);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  const size_t held = arena.bytesInUse();
+  game.abandon();
+  EXPECT_FALSE(game.started());
+  EXPECT_EQ(arena.bytesInUse(), held);  // nothing freed: the owner drops the arena whole
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(game.errorMessage(), "game not started");
 }
 
 }  // namespace

@@ -18,6 +18,11 @@ class GameAssets {
   // Null on success, otherwise a short reason (already logged).
   const char* load(const char* gameId);
   const GameScript::GameSources& sources() const { return view; }
+  // Frees the block (GameVM::abandon); sources() is empty afterwards.
+  void release() {
+    view = GameScript::GameSources{};
+    block.reset();
+  }
 
  private:
   HalMemory::PsramBuffer block;

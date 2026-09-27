@@ -44,10 +44,12 @@ add_executable(GameScriptTest
   GameScriptTest.cpp
   LuaOnHostTest.cpp
   ArenaAllocatorTest.cpp
+  CallGuardTest.cpp
   CanvasClipTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp
   LuaGameTest.cpp
+  SandboxTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp

@@ -1,0 +1,74 @@
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+
+struct lua_State;
+struct lua_Debug;
+
+namespace GameScript {
+
+// The GameVM task's stack (AD-5): 16 KiB of internal RAM.
+inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
+
+// Why the guard stopped a call.
+enum class Fault : uint8_t { None, Budget, Cancelled, Stack };
+
+// The limits on one call into a game, enforced from a single Lua hook (AD-6, and
+// the owner's stack decision of 2026-09-27): the instruction budget, the cancel
+// flag, and the C stack headroom. LuaGame arms it before each lua_pcall.
+//
+// The hook fires every HOOK_INTERVAL instructions and on every function call. A
+// Lua-to-Lua call does not grow the C stack, but each pcall, metamethod, or other
+// C-to-Lua call does, and each of those is a call event, so the headroom check
+// sees C recursion one level at a time.
+//
+// A fault is sticky: once raised, the hook raises it again at the next
+// instruction, so a script's own pcall catches it at most once per level, and
+// LuaGame reads fault() after the call whatever the call returned.
+class CallGuard {
+ public:
+  static constexpr uint32_t INSTRUCTION_BUDGET = 2000000;
+  static constexpr int HOOK_INTERVAL = 1000;
+  static constexpr size_t STACK_HEADROOM_BYTES = 2048;
+  static constexpr size_t MESSAGE_CAPACITY = 128;
+
+  CallGuard() = default;
+  CallGuard(const CallGuard&) = delete;
+  CallGuard& operator=(const CallGuard&) = delete;
+
+  // Installs the hook. The state's BindingContext must point at this guard.
+  void install(lua_State* L);
+  // Starts a call: nothing spent, no fault. A requested cancel stays requested.
+  void arm(lua_State* L);
+
+  // Any task. Every later hook event raises Cancelled.
+  void requestCancel() { cancel.store(true, std::memory_order_release); }
+  bool cancelRequested() const { return cancel.load(std::memory_order_acquire); }
+
+  // The lowest address the calling task's stack may use (its start on the
+  // device). 0, the default, turns the headroom check off.
+  void setStackFloor(uintptr_t lowest) { floor = lowest; }
+  uintptr_t stackFloor() const { return floor; }
+  // The deepest stack address seen at a hook event (UINTPTR_MAX before any).
+  uintptr_t deepestAddress() const { return deepest; }
+
+  Fault fault() const { return tripped; }
+  // The fault's message, with the script's chunk and line for a budget fault.
+  const char* message() const { return text; }
+
+  static void hook(lua_State* L, lua_Debug* ar);
+
+ private:
+  void trip(lua_State* L, lua_Debug* ar, Fault fault);
+
+  uint32_t spent = 0;
+  Fault tripped = Fault::None;
+  std::atomic<bool> cancel{false};
+  uintptr_t floor = 0;
+  uintptr_t deepest = UINTPTR_MAX;
+  char text[MESSAGE_CAPACITY] = {};
+};
+
+}  // namespace GameScript

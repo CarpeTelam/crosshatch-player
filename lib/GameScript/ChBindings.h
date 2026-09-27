@@ -4,7 +4,9 @@ struct lua_State;
 
 namespace GameScript {
 
+class CallGuard;
 class DisplayList;
+struct GameSources;
 
 // Everything a ch.* C function may reach, owned by LuaGame and found through the
 // state's extra space. Bindings never see LuaGame itself, so new bindings add a
@@ -12,6 +14,10 @@ class DisplayList;
 struct BindingContext {
   // The back display list while draw runs; null otherwise, which makes ch.gfx an error.
   DisplayList* drawTarget = nullptr;
+  // The game's modules, which require() resolves against.
+  const GameSources* sources = nullptr;
+  // The hook's limits for the current call (LuaGame's).
+  CallGuard* guard = nullptr;
 };
 
 void setBindingContext(lua_State* L, BindingContext* context);

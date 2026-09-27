@@ -54,12 +54,11 @@ void GameMatchActivity::onEnter() {
 
 void GameMatchActivity::onExit() {
   Activity::onExit();
-  // ActivityManager holds RenderLock here; the VM never takes it, so waiting cannot deadlock.
+  // ActivityManager holds RenderLock here; the VM never takes it, so waiting cannot
+  // deadlock, and render cannot be reading the frames abandon frees.
   if (vm && !vm->stop(STOP_TIMEOUT_MS)) {
-    // The task may still run inside the arena, so nothing it uses can be freed.
-    LOG_ERR("GAME", "VM did not stop within %u ms; leaking it", static_cast<unsigned>(STOP_TIMEOUT_MS));
-    GameVM* stuck = vm.release();
-    (void)stuck;
+    LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
+    GameVM::abandon(std::move(vm));
     return;
   }
   vm.reset();

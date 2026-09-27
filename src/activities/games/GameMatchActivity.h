@@ -24,10 +24,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // True while a callback runs, so the CPU stays at full clock for the budget (AD-5).
+  bool skipLoopDelay() override { return vm && vm->busy(); }
 
  private:
   enum class State : uint8_t { Starting, Playing, Error };
-  // How long onExit waits for the VM to finish its current callback and end.
+  // How long onExit waits after cancel for the VM to end before abandoning it (AD-5).
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
 
   void showError(const char* detail);

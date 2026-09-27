@@ -105,6 +105,39 @@ TEST_F(ArenaAllocatorTest, LuaAllocFollowsTheLuaContract) {
   EXPECT_EQ(arena.bytesInUse(), 0u);
 }
 
+TEST_F(ArenaAllocatorTest, LuaAllocCapsLuaBytesNotArenaBytes) {
+  EXPECT_EQ(arena.luaLimit(), GameScript::LUA_HEAP_BYTES);
+  arena.setLuaLimit(1000);
+  void* a = ArenaAllocator::luaAlloc(&arena, nullptr, 5, 600);
+  ASSERT_NE(a, nullptr);
+  EXPECT_EQ(arena.luaBytes(), 600u);
+  // The arena has room, but the cap does not.
+  EXPECT_EQ(ArenaAllocator::luaAlloc(&arena, nullptr, 5, 401), nullptr);
+  void* b = ArenaAllocator::luaAlloc(&arena, nullptr, 5, 400);
+  ASSERT_NE(b, nullptr);
+  EXPECT_EQ(arena.luaBytes(), 1000u);
+  // Growth past the cap fails and leaves the block; shrinking always works.
+  EXPECT_EQ(ArenaAllocator::luaAlloc(&arena, a, 600, 601), nullptr);
+  void* a2 = ArenaAllocator::luaAlloc(&arena, a, 600, 100);
+  ASSERT_NE(a2, nullptr);
+  EXPECT_EQ(arena.luaBytes(), 500u);
+  // Allocations made directly (codec scratch) are not Lua's.
+  void* scratch = arena.allocate(4000);
+  ASSERT_NE(scratch, nullptr);
+  EXPECT_EQ(arena.luaBytes(), 500u);
+  // A cap lowered below what Lua holds refuses all growth.
+  arena.setLuaLimit(200);
+  EXPECT_EQ(ArenaAllocator::luaAlloc(&arena, nullptr, 5, 1), nullptr);
+  ArenaAllocator::luaAlloc(&arena, a2, 100, 0);
+  ArenaAllocator::luaAlloc(&arena, b, 400, 0);
+  EXPECT_EQ(arena.luaBytes(), 0u);
+  arena.release(scratch);
+  // reset() clears the count and keeps the cap.
+  arena.reset(block.data(), block.size());
+  EXPECT_EQ(arena.luaBytes(), 0u);
+  EXPECT_EQ(arena.luaLimit(), 200u);
+}
+
 TEST(ArenaAllocatorEdgeTest, UnalignedAndTinyBlocks) {
   std::vector<uint8_t> block(4096);
   ArenaAllocator arena;

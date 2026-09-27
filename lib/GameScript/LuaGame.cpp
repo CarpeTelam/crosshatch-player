@@ -10,6 +10,7 @@
 #include "FrameBuffers.h"
 #include "GameInput.h"
 #include "GameSources.h"
+#include "Sandbox.h"
 
 static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 static_assert(LUA_NOREF == -2, "LuaGame.h initialises its references to LUA_NOREF");
@@ -19,11 +20,6 @@ namespace GameScript {
 namespace {
 
 constexpr lua_Integer SOLO_SEAT = 1;
-
-void openLibrary(lua_State* L, const char* name, lua_CFunction open) {
-  luaL_requiref(L, name, open, 1);
-  lua_pop(L, 1);
-}
 
 }  // namespace
 
@@ -37,12 +33,20 @@ Outcome LuaGame::fail(const char* message) {
   return Outcome::ScriptError;
 }
 
+Outcome LuaGame::cancelled() {
+  snprintf(error, sizeof(error), "%s", "cancelled");
+  return Outcome::Cancelled;
+}
+
 Outcome LuaGame::start() {
   close();
   error[0] = '\0';
   L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, random.next32());
   if (!L) return fail("not enough memory");
+  bindings.sources = &sources;
+  bindings.guard = &guard;
   setBindingContext(L, &bindings);
+  guard.install(L);
   const Outcome loaded = enter(Entry::Load, nullptr);
   if (loaded != Outcome::Ok) return loaded;
   return enter(Entry::Setup, nullptr);
@@ -66,23 +70,39 @@ Outcome LuaGame::input(const InputEvent& event) {
 
 void LuaGame::close() {
   if (!L) return;
+  running.store(true, std::memory_order_release);
   lua_close(L);
+  running.store(false, std::memory_order_release);
+  abandon();
+}
+
+void LuaGame::abandon() {
   L = nullptr;
   gameRef = stateRef = uiRef = LUA_NOREF;
   bindings = BindingContext{};
 }
 
 Outcome LuaGame::enter(const Entry entry, const InputEvent* event) {
+  if (guard.cancelRequested()) return cancelled();
   // Only pushes that cannot raise happen out here: light C functions and a light
   // userdata need no allocation, and a fresh stack has LUA_MINSTACK free slots.
   Call call{this, entry, event};
+  guard.arm(L);
   lua_settop(L, 0);
   lua_pushcfunction(L, &LuaGame::messageHandler);
   lua_pushcfunction(L, &LuaGame::trampoline);
   lua_pushlightuserdata(L, &call);
+  running.store(true, std::memory_order_release);
   const int status = lua_pcall(L, 1, 0, 1);
+  running.store(false, std::memory_order_release);
+  // A guard fault wins over the status: the script may have caught it and returned.
+  const Fault fault = guard.fault();
   Outcome outcome = Outcome::Ok;
-  if (status != LUA_OK) {
+  if (fault == Fault::Cancelled) {
+    outcome = cancelled();
+  } else if (fault != Fault::None) {
+    outcome = fail(guard.message());
+  } else if (status != LUA_OK) {
     // The handler leaves a string; a memory error skips the handler but carries
     // Lua's preallocated message. Reading a string never allocates.
     const char* message = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "unknown error";
@@ -125,11 +145,7 @@ int LuaGame::trampoline(lua_State* L) {
 }
 
 void LuaGame::loadEntry(lua_State* L) {
-  openLibrary(L, LUA_GNAME, luaopen_base);
-  openLibrary(L, LUA_TABLIBNAME, luaopen_table);
-  openLibrary(L, LUA_STRLIBNAME, luaopen_string);
-  openLibrary(L, LUA_MATHLIBNAME, luaopen_math);
-  openLibrary(L, LUA_UTF8LIBNAME, luaopen_utf8);
+  openSandbox(L, random);
   openChLibrary(L);
 
   const SourceSpan* main = sources.find("main");
@@ -137,9 +153,8 @@ void LuaGame::loadEntry(lua_State* L) {
     luaL_error(L, "main.lua not found");
     return;
   }
-  // main.lua loads in text mode, so a precompiled main.lua is refused. The base
-  // library's load() is still open until the sandbox strips it (entry 7), so a
-  // script can still reach binary chunks through it.
+  // main.lua loads in text mode, so a precompiled main.lua is refused; the
+  // sandbox has no load(), so a script cannot reach binary chunks either.
   if (luaL_loadbufferx(L, sources.textOf(*main), main->length, "@main.lua", "t") != LUA_OK) lua_error(L);
   lua_call(L, 0, 1);
   if (!lua_istable(L, -1)) luaL_error(L, "main.lua must return a table, not a %s", luaL_typename(L, -1));

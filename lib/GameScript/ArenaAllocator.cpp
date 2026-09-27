@@ -49,6 +49,7 @@ void ArenaAllocator::reset(void* base, const size_t size) {
   freeHead = nullptr;
   inUse = 0;
   peak = 0;
+  luaHeld = 0;
   if (end == begin) return;
   Block* whole = firstBlock();
   whole->prevSize = 0;
@@ -170,13 +171,19 @@ void* ArenaAllocator::reallocate(void* p, const size_t size) {
   return moved;
 }
 
-void* ArenaAllocator::luaAlloc(void* ud, void* ptr, size_t /*osize*/, const size_t nsize) {
+void* ArenaAllocator::luaAlloc(void* ud, void* ptr, const size_t osize, const size_t nsize) {
   auto* arena = static_cast<ArenaAllocator*>(ud);
+  // With a null ptr, osize is a type tag, not a size.
+  const size_t old = ptr ? osize : 0;
   if (nsize == 0) {
     arena->release(ptr);
+    arena->luaHeld -= old;
     return nullptr;
   }
-  return ptr ? arena->reallocate(ptr, nsize) : arena->allocate(nsize);
+  if (nsize > old && (arena->luaHeld >= arena->luaCap || nsize - old > arena->luaCap - arena->luaHeld)) return nullptr;
+  void* p = ptr ? arena->reallocate(ptr, nsize) : arena->allocate(nsize);
+  if (p) arena->luaHeld = arena->luaHeld - old + nsize;
+  return p;
 }
 
 }  // namespace GameScript
