@@ -8,6 +8,9 @@
 #   commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image with games is more than
 #   the limit larger. Both images come from the same commit, so upstream growth never uses up the budget.
 #   scripts/check_flash_budget.py holds the logic and how to run it locally.
+# - Simulator build: builds the desktop simulator for the X4 Pro and the Sticky, both of which turn FREEINK_CAP_GAMES
+#   on, so game code that only builds on the device fails here and not in a later session. Device-only files guard
+#   themselves with !defined(SIMULATOR); .claude/skills/run-crosshatch-player/ has the simulator and how to run it.
 name: Crosshatch CI
 
 on:
@@ -123,6 +126,53 @@ jobs:
       - name: Compare image sizes
         run: python3 scripts/check_flash_budget.py compare --limit-kib "$FLASH_BUDGET_KIB"
 
+  simulator-build:
+    name: Simulator build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Toolchain setup as in the flash budget job, up to the platform: the simulator envs use the native platform,
+      # so neither the espressif32 builder's Python packages nor the penv pin apply.
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+
+      # Its own key: the x4pro key's cache must hold the espressif32 packages, which this job never installs.
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-v3-${{ runner.os }}-simulator-${{ hashFiles('platformio.ini', '.claude/skills/run-crosshatch-player/simulator.ini') }}
+          restore-keys: pio-v3-${{ runner.os }}-simulator-
+
+      # The build prerequisites from the skill's SKILL.md; Xvfb, xdotool, and ImageMagick are only for running it.
+      - name: Install simulator build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libssl-dev
+
+      - name: Set up simulator envs
+        run: .claude/skills/run-crosshatch-player/sim.sh setup
+
+      - name: Build simulator_x4pro
+        run: .claude/skills/run-crosshatch-player/sim.sh build x4pro
+
+      - name: Build simulator_sticky
+        run: .claude/skills/run-crosshatch-player/sim.sh build sticky
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -130,6 +180,7 @@ jobs:
     needs:
       - upstream-ledger
       - flash-budget
+      - simulator-build
     if: always()
     runs-on: ubuntu-latest
     steps:
