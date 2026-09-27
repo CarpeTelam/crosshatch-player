@@ -35,5 +35,7 @@
     - ApiLevel.h, ch.api, ctx.api: entries 4, 8, 10. api-level-1.txt: entry 4; its host test: entry 14 (icon-table check handed to epic-icon-library, ch.d.lua and catalog checks to epic-game-api-docs).
     - Frozen-level CI job and fork_release.py reading the level: entry 5. HostCaps, Manifest::check, nearby under SIMULATOR: entry 4.
     - Static RAM gate and the static-initializer / 64 B check: entry 3; each epic's flash and RAM delta: entries 1 and 16.
-    - Release and update-source chore, first item (vectors read from the released commit, the crosshatch-release.yml:51-52 comment): entry 5. Items two and three (ASSET_NAME_CAPACITY; the probe values beside row 10) stay open.
+    - Release and update-source chore, first item (vectors read from the released commit, the crosshatch-release.yml:51-52 comment): entry 5. Items two and three (ASSET_NAME_CAPACITY; the probe values beside row 10): entry 17, before the first fork release after epic-script-runtime merges.
     - Retro AI-5 (fork_common.py, the all-tests step): entry 2. Retro AI-3 (`fr build` against clean-on-checksum): entry 5.
+    - Epic-icon-library items: pointed to from that epic's Notes.
+    - The 1.6 device check above (retro AI-2): closed by the owner's decision, 2026-09-27: the host tests are enough for the 404 and network-failure rows for now; no device check is scheduled.

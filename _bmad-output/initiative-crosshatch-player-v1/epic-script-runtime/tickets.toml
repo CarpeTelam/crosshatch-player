@@ -154,7 +154,7 @@ references = ["_bmad-output/planning-artifacts/architecture/architecture-crossha
 id = 13
 type = "story"
 title = "Solo match lifecycle and the error view"
-description = "Completes `GameMatchActivity`'s solo states: Paused (Back and Home open the pause menu; it overrides `handleHomeGesture()`), Over (the end-of-round menu over the last frame with Play again and Leave; entering it delivers `over` and flushes `ch.store`), Error (AD-14's view with Back), Leaving (stop the VM, `goToGames()`), and the forced `onExit()` on sleep (entry 7's cancel, join, or abandon; entry 12's store flush; never take `RenderLock` again); records the canvas exception to `touch-and-ui.md` in `docs/crosshatch/`."
+description = "Completes `GameMatchActivity`'s solo states: Paused (Back and Home open the pause menu; it overrides `handleHomeGesture()`), Over (the end-of-round menu over the last frame with Play again and Leave; entering it delivers `over` and flushes `ch.store`), Error (AD-14's view with Back), Leaving (stop the VM, `goToGames()`), and the forced `onExit()` on sleep (entry 7's cancel, join, or abandon; entry 12's store flush; never take `RenderLock` again); records the canvas exception to `touch-and-ui.md` in `docs/crosshatch/game-canvas.md`."
 verify = "In the simulator Back and Home open the pause menu and Resume, Leave, and Play again work; each fault fixture from entries 7 to 10 ends in the error view and Back returns to Games; `key sleep` during play reaches the sleep screen without deadlock."
 covers = ["R6", "R7"]
 after = [12]
@@ -175,13 +175,26 @@ risk = "low"
 references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-19"]
 
 [[entry]]
+id = 17
+type = "story"
+title = "Asset-name capacity and the probe's recorded values"
+description = "Adds `ForkRelease::ASSET_NAME_CAPACITY` (48 B, the size of `assetName` at `OtaUpdater.cpp:56` and the buffers in `ReleaseJsonParser.h`) mirrored as a field in `test/game_core/fork_version_vectors.json`, and replaces the hard-coded sizes with it (`ASSET_NAME_BUFFER` in `fork_release.py`, the 64 B helper default and the literal 48 in `ForkReleaseTest.cpp`, the `MAX_TAG_LEN` comment in `ForkRelease.h`), with vectors at the capacity and one over (a 25-character tag with a 7-character board); adds a guarded `static_assert` tying it to `assetName` (ledger row 10, and the row's Change text in `docs/crosshatch/upstream-touches.md`); records `ForkReleaseProbe`'s timeout, redirect limit, TLS mode, and user agent, read from the initialized SDK, beside row 10 as prose with a separate probe re-check list (`HttpDownloader.*`, `[base]` `build_flags`, the `freeink-sdk` pointer), never as table rows or bullets under the Ledger heading, which the ledger parser reads as paths; and fixes the probe comment at `ForkReleaseProbe.cpp:24` that says it matches `HttpDownloader`. It builds on entry 5's reading of the vectors from the released commit, and must land before the first fork release after this epic merges."
+verify = "`test/game_core` and `scripts/fork_release_test.py` pass the at-capacity and one-over vectors; `pio run -e x4pro` fails with a scratch capacity of 47 and all five envs build with 48; the ledger check passes locally and still lists exactly the 10 rows with no \"no longer exists\" warning; the four probe values appear beside row 10."
+covers = ["R13"]
+after = [5]
+hitl = false
+risk = "low"
+unknown = "Whether AD-3's row 10 text in the spine should also name the `static_assert`, which AD-25 already allows; that is a spine edit."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-25, AD-3 row 10", "_bmad-output/implementation-artifacts/deferred-work.md, spine rules ahead of the code (release and update-source chore, second and third items)", "scripts/check_upstream_touches.py, parse_ledger"]
+
+[[entry]]
 id = 15
 type = "story"
 title = "Refactor sweep"
-description = "Cleans up what the build records and deferred review findings of entries 1 to 14 name, with its scope set when it starts; cleanup only."
+description = "Cleans up what the build records and deferred review findings of entries 1 to 14 and 17 name, with its scope set when it starts; cleanup only."
 verify = "Its changes pass the five-env build, host suites, format check, `pio check`, and every fork gate locally."
-covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]
-after = [5, 13, 14]
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13"]
+after = [13, 14, 17]
 hitl = false
 risk = "low"
 
