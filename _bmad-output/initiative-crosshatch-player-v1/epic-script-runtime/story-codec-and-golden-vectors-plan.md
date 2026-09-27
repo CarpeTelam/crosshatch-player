@@ -3,7 +3,7 @@ title: 'Codec and golden vectors'
 type: 'feature'
 ticket: '6'
 created: '2026-09-27'
-status: 'built'
+status: done
 baseline_revision: 'cc87a39878ea2fa02be37bdf3513d05c824b7188'
 route: 'full'
 route_source: 'auto'
