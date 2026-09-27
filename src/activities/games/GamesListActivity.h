@@ -11,8 +11,9 @@ namespace GameCore {
 class ManifestReader;
 }
 
-// Minimal Games list (Home → Games): each /.games/<id>/ whose manifest.json parses
-// and names the same id, by name. Opening one replaces this screen with its match.
+// Minimal Games list (Home → Games): each /.games/<id>/ whose manifest.json parses,
+// names the same id, and can start solo on this host (Manifest::check), by name.
+// Opening one replaces this screen with its match.
 class GamesListActivity final : public UiListActivity {
  public:
   GamesListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
@@ -29,7 +30,7 @@ class GamesListActivity final : public UiListActivity {
 
   void loadGames();
   // Parses /.games/<dirName>/manifest.json into out; false (logged) when it is
-  // missing, invalid, or names another id.
+  // missing, invalid, names another id, or cannot start solo on this host.
   static bool readManifest(const char* dirName, GameCore::ManifestReader& reader, GameCore::Manifest& out);
   void rebuildRows();
 

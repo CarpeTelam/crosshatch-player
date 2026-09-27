@@ -110,6 +110,69 @@ ManifestError Manifest::parse(const std::string_view json, Manifest& out) {
   return reader->finish(out);
 }
 
+const char* describe(const CheckReason reason) {
+  switch (reason) {
+    case CheckReason::None:
+      return "ok";
+    case CheckReason::BadFields:
+      return "invalid fields";
+    case CheckReason::SoloNeedsOneSeat:
+      return "solo needs seats.min 1";
+    case CheckReason::NearbyNeedsTwoSeats:
+      return "nearby needs seats.max 2 or more";
+    case CheckReason::ApiTooOld:
+      return "api older than this host supports";
+    case CheckReason::ApiTooNew:
+      return "api newer than this host supports";
+    case CheckReason::TooManySeats:
+      return "needs more seats than this host has";
+    case CheckReason::NoHostMode:
+      return "no mode this host can start";
+  }
+  return "unknown reason";
+}
+
+namespace {
+
+constexpr uint8_t ALL_MODES = Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY;
+
+// A fixed field's text; all N bytes when it has no terminator, which no rule accepts.
+template <size_t N>
+std::string_view fieldText(const char (&field)[N]) {
+  const void* end = std::memchr(field, '\0', N);
+  return std::string_view(field, end ? static_cast<size_t>(static_cast<const char*>(end) - field) : N);
+}
+
+// The rules Manifest::parse enforces, for a Manifest that did not come from it.
+bool fieldsValid(const Manifest& m) {
+  const std::string_view name = fieldText(m.name);
+  const std::string_view icon = fieldText(m.icon);
+  return validId(fieldText(m.id)) && !name.empty() && name.size() <= Manifest::MAX_NAME_BYTES &&
+         fieldText(m.version).size() <= Manifest::MAX_VERSION_BYTES && (icon.empty() || validIcon(icon)) &&
+         m.api >= 1 && m.seatsMin >= 1 && m.seatsMax >= m.seatsMin && m.modes != 0 && (m.modes & ~ALL_MODES) == 0;
+}
+
+CheckResult verdict(const CheckStatus status, const CheckReason reason) { return CheckResult{status, reason, 0}; }
+
+}  // namespace
+
+CheckResult Manifest::check(const HostCaps& host) const {
+  if (!fieldsValid(*this)) return verdict(CheckStatus::Invalid, CheckReason::BadFields);
+  if (hasMode(MODE_SOLO) && seatsMin != 1) return verdict(CheckStatus::Invalid, CheckReason::SoloNeedsOneSeat);
+  if (hasMode(MODE_NEARBY) && seatsMax < 2) return verdict(CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+
+  if (api < host.minApi) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooOld);
+  if (api > host.api) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooNew);
+  if (seatsMin > host.maxSeats) return verdict(CheckStatus::Unavailable, CheckReason::TooManySeats);
+
+  // Solo and pass start whenever the rules above hold; nearby also needs the radio
+  // and a second seat on this host.
+  uint8_t startable = modes & (MODE_SOLO | MODE_PASS);
+  if (hasMode(MODE_NEARBY) && host.nearby && host.maxSeats >= 2) startable |= MODE_NEARBY;
+  if (startable == 0) return verdict(CheckStatus::Unavailable, CheckReason::NoHostMode);
+  return CheckResult{CheckStatus::Ok, CheckReason::None, startable};
+}
+
 ManifestReader::ManifestReader() : parser(callbacksFor(this)) {}
 
 void ManifestReader::begin() {

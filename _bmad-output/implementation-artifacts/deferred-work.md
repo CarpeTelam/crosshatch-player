@@ -52,3 +52,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-tracer-home-to-games-to-a-lua-frame-and-a-tap-plan.md`
   summary: The skeleton libraryName() functions in lib/GameCore/GameCore.* and lib/GameScript/GameScript.* (and their tests) can go now that both libraries have real sources.
   evidence: Their comments say they exist only until the library has other source files; GamesBuildAnchor.cpp would then include a real header from each library (refactor sweep, entry 15).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-api-level-hostcaps-and-manifest-check-plan.md`
+  summary: The Games list's `Manifest::check` filter (keep `Ok` games with solo startable) and `gameHostCaps()` have no automated test; dropping the solo test or turning `nearby` on in the simulator would pass every suite.
+  evidence: `GamesListActivity` and `src/games` need Storage and the device build, which no host suite provides; entry 2.4's plan records the simulator runs (an `api = 2` and a pass-only scratch game both skipped with their reasons). Same harness gap as entry 2.1's deferred item.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-api-level-hostcaps-and-manifest-check-plan.md`
+  summary: `lib/GameScript/CanvasClip.h` and `test/game_script/CanvasClipTest.cpp` (from dca1ddc2) are not clang-format 21 clean, so CI's whole-tree format check fails until someone runs `./bin/clang-format-fix` on them.
+  evidence: `./bin/clang-format-fix` realigns the trailing comments in `outlineEdges` and one `EXPECT_FALSE` line; entry 2.4 reverted those edits because story 2.6 owns `lib/GameScript/` and `test/game_script/`.

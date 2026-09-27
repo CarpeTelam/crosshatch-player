@@ -16,6 +16,7 @@
 #include "GameMatchActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "games/GameHostCaps.h"
 
 namespace fui = freeink::ui;
 
@@ -64,6 +65,16 @@ bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestRead
   }
   if (std::strcmp(out.id, dirName) != 0) {
     LOG_INF("GAME", "Skipping %s: manifest id is %s", dirName, out.id);
+    return false;
+  }
+  const GameCore::CheckResult check = out.check(gameHostCaps());
+  if (!check.ok()) {
+    LOG_INF("GAME", "Skipping %s: %s", dirName, GameCore::describe(check.reason));
+    return false;
+  }
+  // Solo only until the launcher's mode picker (epic-install-and-launcher).
+  if ((check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
+    LOG_INF("GAME", "Skipping %s: no solo mode on this host", dirName);
     return false;
   }
   return true;

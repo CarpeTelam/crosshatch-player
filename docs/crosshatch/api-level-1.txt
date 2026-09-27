@@ -1,0 +1,161 @@
+# Game API level 1 (preview): everything a level-1 host offers a game.
+#
+# This list owns the level (spine AD-19). A host's surface is the union of
+# api-level-<API_MIN_LEVEL>.txt to api-level-<API_LEVEL>.txt, and
+# lib/GameCore/ApiLevel.h holds API_SURFACE_CRC over those files. Level 1 is a
+# preview until API_LEVEL_FROZEN is set: it may still grow. Once a level is
+# frozen, its file never changes; additions open the next level.
+#
+# Grammar. Lines starting with '#' and blank lines are ignored. Every other line
+# is one entry, ASCII, words separated by single spaces, no trailing space:
+#
+#   <kind> <body>
+#
+#   fn <path>(<params>)[ -> <returns>]
+#       A host function. <path> is a dotted Lua name; a path without a dot is a
+#       global. <params> are names separated by ", "; a trailing '?' marks an
+#       optional one, "..." any number of values.
+#   field <path> <type>
+#       A value under ch that is not a function.
+#   enum <set> <value>
+#       One accepted string of an argument or field set.
+#   event <kind>[ <field>...]
+#       One event table passed to input(); every event also has `kind`.
+#   ctx <name> <type>
+#       One field of the ctx table passed to setup().
+#   manifest <key> <type>
+#       One manifest.json key; nested keys are dotted, a trailing '?' on the type
+#       marks an optional key.
+#   limit <name> <integer>
+#       One named limit; the unit ends the name (_bytes, _ms, _count, ...).
+#   lib <global>
+#       One global from Lua 5.5.1's standard libraries, unmodified (AD-4); a
+#       library table stands for the whole table.
+#   icon <name>
+#       One library icon name (appended by epic-icon-library).
+#   seats_max <integer>
+#       The most seats a match can have.
+#
+# The script's globals are ch, the fn entries without a dot, and the lib entries.
+#
+# API_SURFACE_CRC is the CRC-32 (zlib's) of every entry line of the level files
+# in level order, each followed by "\n", leaving out comments and blank lines;
+# test/game_core/ApiLevelTest.cpp recomputes it. Change the define with the list.
+
+# ch: host functions and values (game-api-seed section 5)
+field ch.api integer
+field ch.screen.w integer
+field ch.screen.h integer
+fn ch.gfx.clear(color)
+fn ch.gfx.rect(x, y, w, h, color, filled?)
+fn ch.gfx.line(x1, y1, x2, y2, color)
+fn ch.gfx.circle(x, y, r, color, filled?)
+fn ch.gfx.text(x, y, str, size, color, align?)
+fn ch.gfx.refresh(mode?)
+fn ch.text_width(str, size) -> integer
+fn ch.timer.after(ms)
+fn ch.timer.cancel()
+fn ch.store.get() -> table
+fn ch.store.set(t)
+fn ch.time.ms() -> integer
+fn ch.log(...)
+
+# Globals the runtime provides: print writes to ch.log; require loads name.lua
+# from the game's own files.
+fn print(...)
+fn require(name) -> any
+
+# Lua 5.5.1 base library, without load, loadfile, and dofile
+lib _G
+lib _VERSION
+lib assert
+lib collectgarbage
+lib error
+lib getmetatable
+lib ipairs
+lib next
+lib pairs
+lib pcall
+lib rawequal
+lib rawget
+lib rawlen
+lib rawset
+lib select
+lib setmetatable
+lib tonumber
+lib tostring
+lib type
+lib warn
+lib xpcall
+
+# Lua 5.5.1 library tables
+lib math
+lib string
+lib table
+lib utf8
+
+# Enums
+enum color white
+enum color light
+enum color dark
+enum color black
+enum size small
+enum size medium
+enum size large
+enum align left
+enum align center
+enum align right
+enum refresh fast
+enum refresh half
+enum refresh full
+enum mode solo
+enum mode pass
+enum mode nearby
+enum dir left
+enum dir right
+enum dir up
+enum dir down
+
+# Events delivered to input()
+event tap x y
+event long_press x y
+event swipe x y dir
+event rejected reason
+event over
+event timer
+
+# setup(ctx)
+ctx seats integer
+ctx mode string
+ctx api integer
+
+# manifest.json (AD-15). Unknown keys are ignored. A manifest that repeats a known
+# key is invalid: GameCore::Manifest::parse rejects it, and scripts/pack_game.py
+# must reject it too, because Python's JSON reader keeps the last value.
+manifest id string
+manifest name string
+manifest version string
+manifest api integer
+manifest seats.min integer
+manifest seats.max integer
+manifest modes array
+manifest hidden boolean?
+manifest icon string?
+
+# Limits
+limit manifest_id_bytes 32
+limit manifest_name_bytes 64
+limit manifest_version_bytes 32
+limit manifest_icon_bytes 32
+limit state_bytes 1400
+limit move_bytes 256
+limit store_bytes 4096
+limit codec_depth_count 16
+limit frame_commands_count 2048
+limit frame_bytes 32768
+limit lua_heap_bytes 262144
+limit call_instructions_count 2000000
+limit timer_min_ms 1000
+limit timers_pending_count 1
+
+seats_max 2
