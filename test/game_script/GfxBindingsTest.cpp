@@ -227,6 +227,7 @@ TEST_F(GfxBindingsTest, TheCommandLimitIs2048AndRefreshIsNotACommand) {
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontCommands().size(), MAX_COMMANDS);
+  game.close();  // one VM per arena, as on the device: the reserve holds one scratch
 
   useSource("main", drawing("for i = 1, 2049 do ch.gfx.clear('white') end"));
   DirectGame over(arena, frames, sources, random, canvas);
@@ -244,12 +245,14 @@ TEST_F(GfxBindingsTest, TheByteLimitIs32KiB) {
   ASSERT_EQ(exact.start(), Outcome::Ok) << exact.errorMessage();
   ASSERT_EQ(exact.draw(), Outcome::Ok) << exact.errorMessage();
   frames.readFront([](const DisplayList& list) { EXPECT_EQ(list.bytes(), MAX_BYTES); });
+  exact.close();  // one VM per arena, as on the device: the reserve holds one scratch
 
   useSource("main", drawing("ch.gfx.text(0, 0, string.rep('x', 32758), 'small', 'black')"));
   DirectGame one(arena, frames, sources, random, canvas);
   ASSERT_EQ(one.start(), Outcome::Ok) << one.errorMessage();
   EXPECT_EQ(one.draw(), Outcome::ScriptError);
   EXPECT_STREQ(one.errorMessage(), "main.lua:3: frame is full (at most 2048 drawing calls or 32768 bytes)");
+  one.close();
 
   // Many small commands reach it too.
   useSource("main", drawing("for i = 1, 400 do ch.gfx.text(0, 0, string.rep('y', 90), 'small', 'black') end"));
