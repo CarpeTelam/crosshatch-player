@@ -91,6 +91,7 @@ context:
 - The dialog props (`fui::OptionDialogProps`, 1,144 B on the host) are a render-task member drawn with `fui::optionDialog` directly, not `screen.dialog()` (which copies them into a local), so every local stays under 256 B; the panel style is set field by field for the same reason.
 - `handle()` requests no render for `Started` and `PlayAgain`: the first frame of a round asks for its own, as the tracer did before. Back in the pause menu resumes (the menu's dismiss, as in `OptionPopup`); Back and Home in Over and Home in Error are ignored (AD-21 lists no such transitions).
 - The three `faults/` files without `status` (`loop_draw`, `loop_in_pcall`, `loop_input`) end in the error view with "game.status is not a function" when run as a game, before their loop; the loop fixture's bands cover the budget in `input`.
+- Follow-up (orchestrator, for 2.16's device run): `faults/loop_draw.lua`, `loop_in_pcall.lua`, and `loop_input.lua` gained `status` and `apply` (and `loop_input` a drawn prompt), so as games they reach their loop: simulator "main.lua:7", "main.lua:10" (inside `pcall`), and "main.lua:8" (on the first tap) "instruction budget exceeded", each then Back to Games (`faults-completed-contract.png`); every other fault script already reached its named fault. `test/game_script/fixtures/README.md` lists each fixture, its SD placement as `/.games/<id>/`, and its error text; `ctest` 615/615.
 - x4pro flash 5,808,698 B (entry 12: 5,803,546 B, +5,152 B); RAM unchanged at 31.1 %.
 
 ## Plan Change Log
