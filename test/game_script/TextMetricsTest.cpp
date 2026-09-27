@@ -73,8 +73,14 @@ TEST_F(TableTest, CodePointsOutsideEveryRangeTakeTheFallback) {
 
 TEST_F(TableTest, MalformedUtf8CountsAsReplacementCharacters) {
   // A stray continuation byte, and a lead byte whose continuation is missing.
-  EXPECT_EQ(metrics.width("A\x80" "A", TextSize::Medium), 10 + 5 + 10);
-  EXPECT_EQ(metrics.width("\xC3" "A", TextSize::Medium), 5 + 10);
+  EXPECT_EQ(metrics.width("A\x80"
+                          "A",
+                          TextSize::Medium),
+            10 + 5 + 10);
+  EXPECT_EQ(metrics.width("\xC3"
+                          "A",
+                          TextSize::Medium),
+            5 + 10);
 }
 
 TEST_F(TableTest, StopsAtTheFirstNul) {
