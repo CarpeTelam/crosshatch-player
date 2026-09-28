@@ -7,14 +7,89 @@
 # Licence: MIT, phosphor/LICENSE (copied from the package). The SVGs under
 # phosphor/ are the package's assets/<weight>/ files, byte for byte.
 #
+# The SVGs under original/ are this project's own work, drawn in Phosphor's style
+# where Phosphor has no such icon, under this repository's MIT licence (LICENSE).
+#
 # The names are part of the game API level: games call ch.gfx.icon by them, and
 # docs/crosshatch/api-level-<n>.txt lists each one as `icon <name>`. Never rename
 # or remove one in a frozen level.
 #
 # One icon per line, whitespace-separated: <name> <weight> <SVG path relative to
-# assets/game-icons>. A name is [a-z][a-z0-9_]{0,31} without "__".
+# assets/game-icons>. A name is [a-z][a-z0-9_]{0,31} without "__" and not ending
+# in "_". docs/crosshatch/game-icons.md lists every icon with its reason.
 
-die_6 fill phosphor/fill/dice-six-fill.svg
-mark_o regular phosphor/regular/circle.svg
+# Marks
 mark_x regular phosphor/regular/x.svg
+mark_o regular phosphor/regular/circle.svg
+mark_dot fill phosphor/fill/dot-outline-fill.svg
+mark_hit fill phosphor/fill/fire-fill.svg
+mark_miss fill phosphor/fill/waves-fill.svg
+
+# Card suits
+suit_club fill phosphor/fill/club-fill.svg
+suit_diamond fill phosphor/fill/diamond-fill.svg
 suit_heart fill phosphor/fill/heart-fill.svg
+suit_spade fill phosphor/fill/spade-fill.svg
+
+# Dice faces
+die_1 fill phosphor/fill/dice-one-fill.svg
+die_2 fill phosphor/fill/dice-two-fill.svg
+die_3 fill phosphor/fill/dice-three-fill.svg
+die_4 fill phosphor/fill/dice-four-fill.svg
+die_5 fill phosphor/fill/dice-five-fill.svg
+die_6 fill phosphor/fill/dice-six-fill.svg
+
+# Board pieces
+piece_king fill phosphor/fill/crown-cross-fill.svg
+piece_queen fill phosphor/fill/crown-fill.svg
+piece_rook fill phosphor/fill/castle-turret-fill.svg
+piece_knight fill phosphor/fill/horse-fill.svg
+piece_bishop fill original/fill/bishop.svg
+piece_pawn fill original/fill/pawn.svg
+piece_ship fill phosphor/fill/boat-fill.svg
+
+# Player markers
+marker_circle fill phosphor/fill/circle-fill.svg
+marker_square fill phosphor/fill/square-fill.svg
+marker_triangle fill phosphor/fill/triangle-fill.svg
+marker_star fill phosphor/fill/star-fill.svg
+marker_hexagon fill phosphor/fill/hexagon-fill.svg
+player fill phosphor/fill/user-fill.svg
+players fill phosphor/fill/users-fill.svg
+
+# Controls
+arrow_left regular phosphor/regular/arrow-left.svg
+arrow_right regular phosphor/regular/arrow-right.svg
+arrow_up regular phosphor/regular/arrow-up.svg
+arrow_down regular phosphor/regular/arrow-down.svg
+undo regular phosphor/regular/arrow-u-up-left.svg
+redo regular phosphor/regular/arrow-u-up-right.svg
+restart regular phosphor/regular/arrows-clockwise.svg
+rotate regular phosphor/regular/arrow-clockwise.svg
+shuffle regular phosphor/regular/shuffle.svg
+play regular phosphor/regular/play.svg
+pause regular phosphor/regular/pause.svg
+check regular phosphor/regular/check.svg
+plus regular phosphor/regular/plus.svg
+minus regular phosphor/regular/minus.svg
+info regular phosphor/regular/info.svg
+help regular phosphor/regular/question.svg
+hint regular phosphor/regular/lightbulb.svg
+pencil regular phosphor/regular/pencil-simple.svg
+eraser regular phosphor/regular/eraser.svg
+show regular phosphor/regular/eye.svg
+hide regular phosphor/regular/eye-closed.svg
+home regular phosphor/regular/house.svg
+settings regular phosphor/regular/gear-six.svg
+leave regular phosphor/regular/sign-out.svg
+trash regular phosphor/regular/trash.svg
+timer regular phosphor/regular/timer.svg
+hourglass regular phosphor/regular/hourglass.svg
+game_controller regular phosphor/regular/game-controller.svg
+
+# Status
+warning regular phosphor/regular/warning.svg
+flag_checkered regular phosphor/regular/flag-checkered.svg
+trophy regular phosphor/regular/trophy.svg
+smiley regular phosphor/regular/smiley.svg
+smiley_sad regular phosphor/regular/smiley-sad.svg

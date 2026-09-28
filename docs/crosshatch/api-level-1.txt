@@ -220,11 +220,76 @@ manifest modes array
 manifest hidden boolean?
 manifest icon string?
 
-# Icons (epic-icon-library)
-icon die_6
+# Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
+# Marks
+icon mark_dot
+icon mark_hit
+icon mark_miss
 icon mark_o
 icon mark_x
+# Card suits
+icon suit_club
+icon suit_diamond
 icon suit_heart
+icon suit_spade
+# Dice faces
+icon die_1
+icon die_2
+icon die_3
+icon die_4
+icon die_5
+icon die_6
+# Board pieces
+icon piece_bishop
+icon piece_king
+icon piece_knight
+icon piece_pawn
+icon piece_queen
+icon piece_rook
+icon piece_ship
+# Player markers
+icon marker_circle
+icon marker_hexagon
+icon marker_square
+icon marker_star
+icon marker_triangle
+icon player
+icon players
+# Controls
+icon arrow_down
+icon arrow_left
+icon arrow_right
+icon arrow_up
+icon check
+icon eraser
+icon game_controller
+icon help
+icon hide
+icon hint
+icon home
+icon hourglass
+icon info
+icon leave
+icon minus
+icon pause
+icon pencil
+icon play
+icon plus
+icon redo
+icon restart
+icon rotate
+icon settings
+icon show
+icon shuffle
+icon timer
+icon trash
+icon undo
+# Status
+icon flag_checkered
+icon smiley
+icon smiley_sad
+icon trophy
+icon warning
 
 # Limits
 limit manifest_id_bytes 32

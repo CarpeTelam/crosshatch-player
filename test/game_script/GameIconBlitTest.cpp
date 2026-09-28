@@ -234,4 +234,15 @@ TEST(GameIconBlitTest, TheMarkOIsARingWithAnEmptyCentre) {
   EXPECT_TRUE(inkAt(source.bitmap, 64, 32, 56));
 }
 
+// The generated icon data fits its 48 KiB flash budget (docs/crosshatch/game-icons.md, Size), counted in the
+// device's layout: both bitmaps per icon, one ICONS entry of three 4-byte pointers on the ESP32 (12 B, whatever
+// sizeof(Icon) is on the host), and each NUL-terminated name.
+TEST(GameIconBlitTest, TheIconDataFitsIn48KiB) {
+  constexpr size_t DEVICE_ICON_ENTRY_BYTES = 3 * 4;
+  size_t bytes = GameIcons::ICON_COUNT * (GameIcons::SMALL_BYTES + GameIcons::MEDIUM_BYTES) +
+                 GameIcons::ICON_COUNT * DEVICE_ICON_ENTRY_BYTES;
+  for (const GameIcons::Icon& icon : GameIcons::ICONS) bytes += std::strlen(icon.name) + 1;
+  EXPECT_LE(bytes, 49152u);
+}
+
 }  // namespace

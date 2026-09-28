@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ConverterBmpLayout.h"
@@ -122,31 +123,64 @@ TEST_F(LuaGameTest, TheGalleryDrawsEveryCommandAndFillColor) {
   EXPECT_TRUE(whiteInk);
 }
 
-// The icons fixture: the first draw is the black page, a tap turns to the white
-// page; each draws every library icon at each size in that page's color.
+// The icons fixture pages through the library: the black pages (black icons on
+// white) come first, then the same pages in white (white icons on black), and
+// the tap after the last white page turns back to the first black one. The pages
+// of each ink together draw every library icon at each size, and each page draws
+// its text and icons in its ink only.
 TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
   useSource("main", readFixture("icons/main.lua"));
   DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
-  const Color pages[] = {Color::Black, Color::White};
-  for (const Color ink : pages) {
-    if (ink == Color::White) {
+  using Page = std::vector<std::pair<uint16_t, int>>;  // (icon, size) in draw order
+  std::vector<Page> pages[2];                          // by ink: 0 black, 1 white
+  bool wrapped = false;
+  // Bounded well past the pages the library needs, so a fixture that never wraps fails instead of looping.
+  const size_t maxPages = 4 * GameIcons::ICON_COUNT;
+  for (size_t page = 0; page < maxPages && !wrapped; ++page) {
+    if (page > 0) {
       ASSERT_EQ(game.input(InputEvent{InputKind::Tap, 10, 10}), Outcome::Ok) << game.errorMessage();
     }
     ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
-    std::vector<std::vector<bool>> seen(GameIcons::ICON_COUNT, std::vector<bool>(3, false));
-    for (const DrawCommand& c : frontCommands()) {
-      if (c.op == Op::Clear) {
-        EXPECT_NE(c.color, ink);
+    const auto commands = frontCommands();
+    ASSERT_FALSE(commands.empty()) << "page " << page;
+    ASSERT_EQ(commands[0].op, Op::Clear) << "page " << page;
+    ASSERT_TRUE(commands[0].color == Color::White || commands[0].color == Color::Black) << "page " << page;
+    const Color ink = commands[0].color == Color::White ? Color::Black : Color::White;
+    size_t clears = 0;
+    Page icons;
+    for (const DrawCommand& c : commands) {
+      if (c.op == Op::Clear) ++clears;
+      if (c.op == Op::Text) {
+        EXPECT_EQ(c.color, ink) << "page " << page;
       }
       if (c.op != Op::Icon) continue;
-      EXPECT_EQ(c.color, ink);
+      EXPECT_EQ(c.color, ink) << "page " << page;
       ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
-      seen[c.icon][static_cast<size_t>(c.size)] = true;
+      icons.emplace_back(c.icon, static_cast<int>(c.size));
+    }
+    EXPECT_EQ(clears, 1u) << "page " << page;
+    EXPECT_FALSE(icons.empty()) << "page " << page;
+    if (page == 0) {
+      ASSERT_EQ(ink, Color::Black) << "the first page is a black page";
+    }
+    if (ink == Color::Black && !pages[1].empty()) {
+      wrapped = true;
+      EXPECT_EQ(icons, pages[0].front()) << "the tap after the last white page turns to the first black page";
+      continue;
+    }
+    pages[ink == Color::White ? 1 : 0].push_back(icons);
+  }
+  EXPECT_TRUE(wrapped) << "the pages never came back to the first black page";
+  EXPECT_EQ(pages[1], pages[0]) << "the white pages repeat the black pages, in order";
+  for (size_t ink = 0; ink < 2; ++ink) {
+    std::vector<std::vector<bool>> seen(GameIcons::ICON_COUNT, std::vector<bool>(3, false));
+    for (const Page& page : pages[ink]) {
+      for (const auto& [icon, size] : page) seen[icon][static_cast<size_t>(size)] = true;
     }
     for (size_t i = 0; i < GameIcons::ICON_COUNT; ++i) {
       for (size_t size = 0; size < 3; ++size) {
-        EXPECT_TRUE(seen[i][size]) << GameIcons::ICONS[i].name << " size " << size << " page " << static_cast<int>(ink);
+        EXPECT_TRUE(seen[i][size]) << GameIcons::ICONS[i].name << " size " << size << (ink == 0 ? " black" : " white");
       }
     }
   }
