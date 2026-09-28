@@ -569,3 +569,23 @@ Still open; each would change an action item:
 3. **AI-9's split of the 28,288 B**, and whether icon compression is done pre-emptively in epic-install-and-launcher or only when a measured need crosses a trigger.
 4. **O1's source.** The repo has no trace of 3.10's or the cross-story reviewer's early hand-back. If the orchestrating session's transcript (`session_01DhiSSwkAq51abArzAsjThg`) can be shared, O1 can cite it; otherwise it rests on the owner's account plus this retro's own recurrence.
 5. **S3.** Should the category be renamed back to "board pieces" (spine, seed), or should the spine adopt "game pieces" and add "status"?
+
+## Addendum: follow-up applied (2026-09-28)
+
+The owner asked for every proposed edit to be applied, and for the should-have and higher items to be built before the next epic is planned. The follow-up ran under this retro's own process changes.
+
+- **Edits applied:**
+  - 8bd18e86: the 13 AGENTS.md and `orchestrated-epics.md` edits; S1–S6 in the spine, game-api-seed, the epic file, `game-icons.md`, and the packet README; AI-2, AI-9, AI-12, and AI-13 in the downstream Notes.
+  - 9d53b6db: O1's mechanism. Subagents start in the foreground, and a report with a subagent still running is an interim hand-back.
+  - 0048e35b: AD-14 amended for the owner's R3 answer.
+- **Base measurement.** The new "Toolchain and base measurement" step ran at 8bd18e86:
+  - all five envs build;
+  - x4pro games on minus off is +227,712 B flash and +776 B static internal RAM (`.iram0.text` +684, `.iram0.text_end` +84, `.dram0.bss` +8), from `check_flash_budget.py` `build on`, `build off`, `compare --limit-kib 250 --ram-limit-bytes 1024`, and `objects` (38 objects, no problems);
+  - that is the figure recorded at f27dcefd; the code is unchanged.
+  - The toolchain step showed that the proxy error can read `CERTIFICATE_VERIFY_FAILED` and that the penv exists only after a first install. AGENTS.md now says both.
+- **Lanes:**
+  - e3r-1: R1 and R9 (d), `wt-gfx`.
+  - e3r-2: R9 (a), R4, R3 (widened, per the owner), R5, R8 (a), A2, `wt-match`.
+  - e3r-3: R9 (b), (c), (e), R8 (c), (f), `wt-tools`.
+  - Each lane's plan is `_bmad-output/implementation-artifacts/plan-e3r-*.md`.
+- **e3r-3** landed as 6973ec8e (merged fa0d8e72). All four lenses ran as subagents and returned: 13 triage rows, 6 patched, 7 rejected. Its changed gates ran from an archive tree.
