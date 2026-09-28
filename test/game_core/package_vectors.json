@@ -1,0 +1,63 @@
+{
+  "limits": {
+    "package_bytes": {
+      "limit": 262144,
+      "at": 262144,
+      "over": 262145
+    },
+    "member_bytes": {
+      "limit": 131072,
+      "at": 131072,
+      "over": 131073
+    },
+    "members": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images_bytes": {
+      "limit": 131072,
+      "at": {
+        "images": [[2048, 511], [32, 33]],
+        "bytes": 131072
+      },
+      "over": {
+        "images": [[2048, 511], [32, 9], [32, 9]],
+        "bytes": 131074
+      }
+    },
+    "image_width": {
+      "limit": 2048,
+      "at": 2048,
+      "over": 2049
+    },
+    "image_height": {
+      "limit": 3072,
+      "at": 3072,
+      "over": 3073
+    }
+  },
+  "image_formula": {
+    "header_bytes": 62,
+    "row_pixels_per_word": 32,
+    "word_bytes": 4,
+    "icon_excluded": "icon.png"
+  },
+  "hash_vector": {
+    "id": "package-vector",
+    "members": {
+      "manifest.json": "{\n  \"id\": \"package-vector\",\n  \"name\": \"Package Vector\",\n  \"version\": \"1.0.0\",\n  \"api\": 1,\n  \"seats\": { \"min\": 1, \"max\": 1 },\n  \"modes\": [\"solo\"]\n}\n",
+      "main.lua": "-- The golden package vector: main.lua is long and repetitive, so the packer deflates it.\nlocal util = require(\"util\")\n-- line 0: the same text again and again so that deflate shrinks it\n-- line 1: the same text again and again so that deflate shrinks it\n-- line 2: the same text again and again so that deflate shrinks it\n-- line 3: the same text again and again so that deflate shrinks it\n-- line 0: the same text again and again so that deflate shrinks it\n-- line 1: the same text again and again so that deflate shrinks it\n-- line 2: the same text again and again so that deflate shrinks it\n-- line 3: the same text again and again so that deflate shrinks it\n-- line 0: the same text again and again so that deflate shrinks it\n-- line 1: the same text again and again so that deflate shrinks it\n-- line 2: the same text again and again so that deflate shrinks it\n-- line 3: the same text again and again so that deflate shrinks it\nreturn util\n",
+      "util.lua": "return {}\n"
+    },
+    "sha256": "1ac5ece47021dedf1fe6400327a5723f80aa617fe553d95505a0ab66f83319d3",
+    "package_hash": "1ac5ece47021dedf",
+    "package": "package_vector.cpgame",
+    "package_bytes": 589
+  }
+}

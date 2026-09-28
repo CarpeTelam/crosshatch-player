@@ -106,6 +106,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `test/game_core`
 - `test/game_script`
 - `scripts/pack_game.py`
+- `scripts/pack_game_test.py`
 - `scripts/game_codec.py`
 - `scripts/game_codec_test.py`
 - `scripts/gen_game_icons.py`
