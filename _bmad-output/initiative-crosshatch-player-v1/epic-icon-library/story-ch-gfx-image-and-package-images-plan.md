@@ -3,7 +3,7 @@ title: 'ch.gfx.image and package images'
 type: 'feature'
 ticket: '2'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: 'bc6adc548587ec84c1530e72f1fb6908dc13895c'
 route: 'full'
 route_source: 'auto'
