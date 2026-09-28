@@ -59,7 +59,7 @@ dice-five fill phosphor/fill/dice-five-fill.svg
 dice-six regular phosphor/regular/dice-six.svg
 dice-six fill phosphor/fill/dice-six-fill.svg
 
-# Board pieces
+# Game pieces
 boat regular phosphor/regular/boat.svg
 boat fill phosphor/fill/boat-fill.svg
 

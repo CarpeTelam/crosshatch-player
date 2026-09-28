@@ -203,6 +203,14 @@ TEST(ManifestTest, RejectsBadTextFields) {
             ManifestError::BadIcon);
 }
 
+// '_' stays valid in an icon name after the library moved to Phosphor's hyphenated
+// names, so a manifest that parsed before still parses (validIcon in Manifest.cpp).
+TEST(ManifestTest, AcceptsUnderscoreInIcon) {
+  Manifest m;
+  ASSERT_EQ(parse(withExtra(R"("icon": "old_name")"), m), ManifestError::None);
+  EXPECT_STREQ(m.icon, "old_name");
+}
+
 TEST(ManifestTest, RejectsDuplicateKnownKeys) {
   EXPECT_EQ(parse(withExtra(R"("id": "h")")), ManifestError::DuplicateKey);
   EXPECT_EQ(parse(withExtra(R"("hidden": true, "hidden": false)")), ManifestError::DuplicateKey);

@@ -43,12 +43,19 @@ bool looksLikeLua(const char* fileName, const size_t length) {
 
 // Reads the header at the start of `file` and adds the image to `budget`
 // (GameCore::ImageBudget::add), leaving the file at its pixel rows when Ok. Its own
-// frame holds the header, so load()'s stays small.
+// frame holds the header, so load()'s stays small. `readFailed` is set, and the
+// budget left alone, when the read fails or comes back short of a header the file
+// is long enough to hold: an SD error, not a damaged image. A file under the
+// header's 62 bytes is still a Truncated image.
 [[gnu::noinline]] GameCore::ImageCheck addImage(HalFile& file, GameCore::ImageBudget& budget,
-                                                GameCore::ImageHeader& out) {
+                                                GameCore::ImageHeader& out, bool& readFailed) {
   uint8_t header[GameCore::IMAGE_HEADER_BYTES];
+  const size_t fileBytes = file.fileSize();
   const int read = file.read(header, sizeof(header));
-  return budget.add(header, read > 0 ? static_cast<size_t>(read) : 0, file.fileSize(), out);
+  const size_t wanted = fileBytes < sizeof(header) ? fileBytes : sizeof(header);
+  readFailed = read < 0 || static_cast<size_t>(read) < wanted;
+  if (readFailed) return GameCore::ImageCheck::Truncated;
+  return budget.add(header, static_cast<size_t>(read), fileBytes, out);
 }
 
 }  // namespace
@@ -93,7 +100,12 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
       textBytes += file.fileSize();
     } else if (fits && GameCore::imageNameOf(name, length, stem)) {
       // An image: checked now, within the budget the images before it left.
-      const GameCore::ImageCheck check = addImage(file, budget, header);
+      bool readFailed = false;
+      const GameCore::ImageCheck check = addImage(file, budget, header, readFailed);
+      if (readFailed) {
+        LOG_ERR("GAME", "Cannot read %s/%s", path, name);
+        return LoadResult::CannotRead;
+      }
       if (check == GameCore::ImageCheck::OverBudget) {
         LOG_ERR("GAME", "%s/%s is not a usable image: %s (images take at most %u bytes in all)", path, name,
                 GameCore::imageCheckName(check), static_cast<unsigned>(GameCore::IMAGES_BYTES));
@@ -177,7 +189,8 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
     } else if (GameCore::imageNameOf(name, length, stem)) {
       if (imagesLoaded == imageCount) continue;
       const size_t pixelOffset = reread.pixelBytes;
-      const bool same = addImage(file, reread, header) == GameCore::ImageCheck::Ok &&
+      bool readFailed = false;  // any check but Ok is CannotRead here, so it needs no branch of its own
+      const bool same = addImage(file, reread, header, readFailed) == GameCore::ImageCheck::Ok &&
                         reread.fileBytes <= budget.fileBytes && reread.pixelBytes <= pixelBytes;
       if (!same || file.read(pixels + pixelOffset, header.pixelBytes()) != static_cast<int>(header.pixelBytes())) {
         LOG_ERR("GAME", "Cannot read %s/%s, or it changed since it was checked", path, name);

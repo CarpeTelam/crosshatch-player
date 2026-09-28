@@ -254,3 +254,4 @@ Nine findings were patched (1-9), three deferred (10, 11, 19), and eight rejecte
   - `story-image-screenshots/bad-image-load-failure.png`: "The game could not start" with "An image is damaged or too large".
   - `story-image-screenshots/unknown-image-error.png`: the error view with `main.lua:10: ch.gfx.image: unknown image "no_such_image"`, which is the README's text.
 - **`./bin/clang-format-fix`**, run twice: it reformatted only this story's new files, and the second run changed nothing.
+- Cross-story review fixes (`xreview`, out of session, findings 3 and 4): an image header read that fails or comes back short of `min(file size, 62)` bytes is now `CannotRead`, not `BadImage`; a file under 62 bytes is still `Truncated`; `game-canvas.md` lists "An image is damaged or too large"; evidence: `x4pro`, `default` and `sim.sh build x4pro` build, not host-tested (no host test builds `GameAssets.cpp`) (`cross-story-review.md`).

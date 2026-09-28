@@ -176,3 +176,4 @@ intent-alignment). Verdicts: high 0, medium 1, low 15, false 3, maybe-false 0. R
 - Fresh tree: `git clone` of the worktree checked out at 41036419 (no submodule, as CI's `Fork script tests` checkout),
   then the `Run every scripts/*_test.py` step's loop: 8 files, each "Ran n tests" (n > 0), exit 0; and the `Layer
   check` step's `python3 scripts/check_layers.py`: exit 0. The amended commit differs from 41036419 only by this line.
+- Cross-story review fix (`xreview`, out of session, finding 1): `GameVM::failure()` returns `None` until `failed()` has acquired `done`, so it no longer reads `sessionOutOfMemory` and `game.hostFailure()` while the VM task may write them; evidence: `VmFailureTest` 6 cases and host tests 707/707 pass, `x4pro` and `default` build (`cross-story-review.md`).

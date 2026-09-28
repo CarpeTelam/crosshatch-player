@@ -93,7 +93,8 @@ and holds the room rule; `GameViewIconsTest` checks every name against the libra
 
 The error view's reasons for a failed start are `tr()` keys: not enough memory (also when the Session does not fit in
 the arena), the game's folder is missing, no Lua files, a Lua file name that is not valid (the only `.lua` files have
-names no module can have), Lua files too large, and cannot read the files (an SD error, or a file gone between the
+names no module can have), Lua files too large, an image is damaged or too large (a package image whose header is
+not a 1-bit BMP the canvas can draw, or too large), and cannot read the files (an SD error, or a file gone between the
 loader's two passes). Running out of memory inside `LuaGame::load` (its scratch or the Lua state) shows "The game
 stopped with an error" with the `tr()` "Not enough memory" text, and a call into the game before its load (defensive;
 the VM never makes one) shows the same headline with "The game did not load". A stuck call shows "It stopped responding: one step ran over 3

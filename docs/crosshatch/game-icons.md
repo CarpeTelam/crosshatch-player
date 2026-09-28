@@ -79,7 +79,7 @@ game pieces are Battleship's `boat` alone; a chess game draws its own pieces wit
 | | `dice-four` | Die face 4 |
 | | `dice-five` | Die face 5 |
 | | `dice-six` | Die face 6 |
-| Board pieces | `boat` | Battleship's ship |
+| Game pieces | `boat` | Battleship's ship |
 | Player markers | `square` | A distinct token for a seat or counter; shapes, not shades, since the screen is 1-bit |
 | | `triangle` | A distinct seat or counter token |
 | | `star` | A distinct seat or counter token |
@@ -202,7 +202,10 @@ the same way with entry 7's script copied in, is +151,088 B of flash and +776 B 
 adds +76,320 B of flash in all (+45,248 B up to entry 7, +31,072 B in entry 9) and no static internal RAM. The RAM
 gate counts IRAM since entry 7 (it shares internal SRAM on the S3): +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the
 FreeRTOS task functions only games link, which ESP-IDF places in IRAM: `vTaskSuspend` 240 B, `vTaskResume` 216 B,
-`eTaskGetState` 154 B, `uxTaskGetStackHighWaterMark` 35 B, `pxTaskGetStackStart` 14 B, by `objdump -t`), and +84 B
-of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate, all of it already present at the base
-(epic-script-runtime's gate counted only `.dram0.*` and `.noinit`, so it recorded +8 B). The icon data is
-`inline constexpr`, so it sits in flash (`.flash.rodata`) and adds no static internal RAM.
+`eTaskGetState` 154 B, `uxTaskGetStackHighWaterMark` 35 B, `pxTaskGetStackStart` 14 B: 659 B by `objdump -t`, plus
+5 B of alignment padding between functions and 20 B more of the literal pool at the section's start, which their 200 B
+of `.literal.*` sections grow once the linker merges the literals already there; `objdump -t` and `-h` on the games-on
+and games-off ELFs of the cross-story fix commit's tree), and +84 B of `.iram0.text_end` alignment padding: +776 B,
+248 B under the 1,024 B gate, all of it already present at the base (epic-script-runtime's gate counted only
+`.dram0.*` and `.noinit`, so it recorded +8 B). The icon data is `inline constexpr`, so it sits in flash
+(`.flash.rodata`) and adds no static internal RAM.

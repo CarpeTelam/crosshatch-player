@@ -256,7 +256,7 @@ icon dice-one
 icon dice-six
 icon dice-three
 icon dice-two
-# Board pieces
+# Game pieces
 icon boat
 # Player markers
 icon hexagon

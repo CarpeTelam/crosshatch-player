@@ -305,3 +305,4 @@ side by side; the walkthrough's pawn example becomes `star`.
   - `{x4pro,sticky}-cover-grid-home.png`: the cover-grid Home with the `game-controller` Games tab before Settings.
   - `sticky-icons-black-01.png`, `sticky-icons-white-01.png`, `sticky-sheet.png`: the fixture's first page in both
     inks and the views on sticky (sticky shot only page 1 of each ink; its canvas matches x4pro's).
+- Cross-story review fixes (`xreview`, out of session, findings 2 and 5): the category is "Game pieces" in `names.txt`, `api-level-1.txt`'s comment, `game-icons.md`'s table and the `icons` fixture; `ManifestTest.AcceptsUnderscoreInIcon` pins that `"icon": "old_name"` parses; evidence: two generator runs `cmp`-identical to the committed header, host tests 707/707 pass (`cross-story-review.md`).

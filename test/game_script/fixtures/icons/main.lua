@@ -16,7 +16,7 @@ local NAMES = {
   { "Marks", { "x", "circle", "dot-outline", "fire", "waves" } },
   { "Card suits", { "club", "diamond", "heart", "spade" } },
   { "Dice faces", { "dice-one", "dice-two", "dice-three", "dice-four", "dice-five", "dice-six" } },
-  { "Board pieces", { "boat" } },
+  { "Game pieces", { "boat" } },
   { "Player markers", { "square", "triangle", "star", "hexagon", "user", "users" } },
   { "Controls", {
     "arrow-left", "arrow-right", "arrow-up", "arrow-down", "arrow-u-up-left", "arrow-u-up-right",

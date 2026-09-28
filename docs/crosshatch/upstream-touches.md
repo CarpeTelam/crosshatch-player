@@ -19,7 +19,9 @@ of its row or bullet. It fails a pull request when:
 
 The job enforces paths only. The Change and Guarded columns describe what each row may change, and review holds a
 pull request to them, with one part checked by the `Layer check` job: every include of game code in an upstream
-file sits in the `#if FREEINK_CAP_GAMES` branch of an `#if`, `#ifdef`, or `#elif` (not in its `#else`).
+file sits in the `FREEINK_CAP_GAMES` branch of an `#if`, `#ifdef`, `#elif`, or `#elifdef` (not in its `#else`), whose
+condition is `FREEINK_CAP_GAMES`, `defined(FREEINK_CAP_GAMES)`, or `FREEINK_CAP_GAMES == 1`, alone or joined to others by
+`&&` with no `||`; `scripts/check_layers.py`'s docstring has the full rule.
 
 ## Ledger
 

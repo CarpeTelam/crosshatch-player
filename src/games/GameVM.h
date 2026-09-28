@@ -94,7 +94,13 @@ class GameVM {
   // never has to name GameScript; VmFailure.h says what each value means.
   using Failure = GameScript::VmFailure;
   using HostFailureTexts = GameScript::HostFailureTexts;
-  Failure failure() const { return GameScript::vmFailure(failed(), sessionOutOfMemory, game.hostFailure()); }
+  // Returns before reading sessionOutOfMemory or game.hostFailure(): the VM task
+  // writes both, and failed() acquires `done`, so they are safe to read only once
+  // it is true. vmHealthy() calls this on every pass while the task still runs.
+  Failure failure() const {
+    if (!failed()) return Failure::None;
+    return GameScript::vmFailure(true, sessionOutOfMemory, game.hostFailure());
+  }
   // Failed before any game code ran: the error view's headline says it could not start.
   bool failedToStart() const { return GameScript::failedToStart(failure()); }
   // The error view's detail: `texts` (tr() text) for a host failure, errorMessage()

@@ -195,3 +195,4 @@ Per-name arrays (`GAME_CONTROLLER_32` later) are what entry 6 passes to `rendere
   - `story-icon-tracer-screenshots/icons-white.png`: after one tap, the same in white on black.
   - `story-icon-tracer-screenshots/unknown-icon-error.png`: the error view with `main.lua:10: ch.gfx.icon: unknown icon "no_such_icon"`, the README's text.
 - `./bin/clang-format-fix` twice: the second run changed nothing; it re-laid-out only `GFX_FUNCTIONS` in `ChBindings.cpp` (a file this story edits).
+- Cross-story review fix (`xreview`, out of session, finding 8): `GameIconDraw.h`'s comment names ledger row 9's exception, the cover-grid Home including `GameIcons.generated.h` directly; evidence: comment only, `check_layers.py` passes (`cross-story-review.md`).
