@@ -554,7 +554,7 @@ No finding blocks acceptance. Every Done-when criterion holds in the final state
 - **Process changes:** AI-3, AI-4, AI-5, AI-6, AI-8, and AI-2.
 - **Deferred hardening:** AI-11.
 
-**Human decision: pending.** The owner may confirm or override. Until then, this file records the machine verdict, which is itself not a rejection, since the criteria are met.
+**Human decision: accepted-with-open-items** (owner, 2026-09-28). Every should-have-and-above item landed in PR #18 (the Addendum lists them). The open items are carried: AI-1, AI-9, AI-12, and AI-13 to epic-install-and-launcher's inception, AI-11's remaining items to its refactor sweep, and AI-2 and AI-10 to the level-1 freeze.
 
 ## Open questions
 

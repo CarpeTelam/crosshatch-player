@@ -6,6 +6,7 @@ covers: [CAP-8]
 after: []
 assignee: ""
 risk: low
+status: done
 ---
 
 # Games and runtime screens share one icon library
@@ -121,3 +122,4 @@ Handoffs: epic-install-and-launcher converts `icon.png` and package PNGs to the 
 - Measurement (2026-09-28, orchestrator): at the epic's base `1eacdc77`, with entry 7's `check_flash_budget.py` (IRAM counted) copied in, x4pro games on minus off is +151,088 B flash and +776 B static RAM (`.dram0.bss` +8, `.iram0.text` +684, `.iram0.text_end` +84). So epic-script-runtime already used the 776 B; this epic adds +0 B static RAM and, like for like, +45,248 B flash (entry 7's +196,336 B minus +151,088 B), not the +45,888 B quoted against epic 2's recorded +150,448 B.
 - Assumption for entry 8 (3.9, closed by the owner's delegated sign-off below): regular C++ identifiers stay `NAME_32` / `NAME_64` and fill ones add `_FILL_`, following Phosphor's `-fill` file stems, so `CoverGridHomeUi.cpp` is unchanged; `names.txt` keeps three columns with one line per name and weight; `api-level-1.txt` gains `enum weight regular|fill`; a manifest `icon` value also accepts `-`; `drawGameIcon` takes `fill = false` and the runtime views stay regular; the `icons` fixture shows three names a page with both weights side by side (3.9 builder's recommendation; orchestrator, 2026-09-28).
 - Measurement (3.9, 9197d046): the icon data is 71,975 B of the 96 KiB (98,304 B) cap by `nm -S`; x4pro games on minus off is +227,408 B flash (+31,072 B over entry 7), leaving 28,592 B of the 250 KiB gate, and +776 B static RAM, unchanged; `check_flash_budget.py` build on, build off and compare from an empty `.pio`.
+- Closed (2026-09-28): the owner confirmed the epic complete after the closure check against R1–R11 and Done when 1–5 found every item met, and accepted the retrospective with open items. PR #17 and the follow-up PR #18 are merged (46bbfa72). On PR #18's final tree, x4pro games on minus off is +228,496 B flash and +776 B static RAM (all four `check_flash_budget.py` steps; retrospective Addendum). That leaves 27,504 B and 248 B, which supersede the 3.9 figure above. This epic's own delta is +77,408 B flash (+228,496 B − epic 2's +151,088 B, both from the same gate) and +0 B static RAM.
