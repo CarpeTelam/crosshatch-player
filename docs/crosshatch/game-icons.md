@@ -26,12 +26,13 @@ hand; the `Icons up to date` fork CI job regenerates it and fails on any byte di
 whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
 name in only one weight or in one weight twice.
 
-`assets/game-icons/SHA256SUMS` pins each SVG's content: one `<sha256>  <path>` line, in `sha256sum`'s format and
-sorted bytewise by path, for exactly the SVGs `names.txt` names. The generator checks every SVG against it before
-rendering and exits 1 naming an SVG whose bytes differ, an SVG the file does not list, or a line that is malformed,
-repeated, or names a path `names.txt` does not name (a missing `SHA256SUMS` is exit 2). An edited SVG therefore fails
-`Icons up to date` instead of regenerating cleanly. `(cd assets/game-icons && sha256sum -c SHA256SUMS)` checks the
-same sums without the generator. After a deliberate change of source, rewrite the file with
+`assets/game-icons/SHA256SUMS` pins each SVG's content: one `<sha256>  <path>` line, in `sha256sum`'s format and sorted
+bytewise by path, for exactly the SVGs `names.txt` names. The generator checks every SVG against it before rendering and
+exits 3 (`PIN_MISMATCH`) naming an SVG whose bytes differ, an SVG the file does not list, or a line that names a path
+`names.txt` does not name; a malformed or repeated line is exit 1, and a missing `SHA256SUMS` exit 2. An edited SVG
+therefore fails `Icons up to date` instead of regenerating cleanly, and only exit 3 gets the job's advice to restore the
+SVG or re-pin; any other failure is annotated with its exit code. `(cd assets/game-icons && sha256sum -c SHA256SUMS)`
+checks the same sums without the generator. After a deliberate change of source, rewrite the file with
 `python3 scripts/gen_game_icons.py --write-sums`, which writes no header.
 
 Regenerate on Linux, as CI does. The fill uses no libm call, but arc flattening uses `math.sin`, `cos`, and `atan2`,

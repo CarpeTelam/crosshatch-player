@@ -157,6 +157,8 @@ void GameMatchActivity::handle(const MatchEvent event) {
   // The next view registers its own options; the old table must not route.
   closeRouting();
   selected.store(0);
+  // Before shown: a render already queued must not see Playing with the old count.
+  if (event == MatchEvent::PlayAgain) roundsStartedAwaited.store(vm->roundsStarted() + 1);
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
@@ -164,11 +166,13 @@ void GameMatchActivity::handle(const MatchEvent event) {
         // Frames the last round drew after it ended are never shown, one from a
         // step still running when Play again came included: the loop asks for no
         // render until the new round's first frame is published.
+        // roundsStartedAwaited was stored above, before shown.
         shownFrame = vm->frameGen();
-        roundsStartedAwaited = vm->roundsStarted() + 1;
         vm->playAgain();
       }
-      // A new round's first frame asks for its own render; a resumed one is redrawn.
+      // A new round's first frame asks for its own render; a resumed one is redrawn,
+      // unless it resumes into the Play-again gap, where renderCanvas keeps the view
+      // on screen until the new round's first frame.
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
       break;
     case MatchState::Over:
@@ -296,7 +300,7 @@ void GameMatchActivity::loopPlaying() {
   // After Play again, until the new round's first frame is published, the screen
   // still shows the end-of-round menu or the last round's frame: a tap there is not
   // aimed at the new round, so it is read (which consumes the contact) and dropped.
-  const bool awaitingRound = vm->roundsStarted() < roundsStartedAwaited;
+  const bool awaitingRound = vm->roundsStarted() < roundsStartedAwaited.load();
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
@@ -404,6 +408,14 @@ void GameMatchActivity::render(RenderLock&&) {
 
 void GameMatchActivity::renderCanvas() {
   if (!vm) return;
+  // In the Play-again gap every frame is the last round's, and the loop drops every
+  // tap: the view (or an overlay's pixels) stays on screen, and the new round's
+  // first frame, which is no repaint, is drawn on a cleared screen. Nothing else
+  // here runs, so the skip changes no replay state.
+  if (vm->roundsStarted() < roundsStartedAwaited.load()) {
+    viewOnScreen = true;
+    return;
+  }
   if (viewOnScreen) {
     // A view covered the canvas; a game that never clears would keep its pixels.
     renderer.clearScreen();

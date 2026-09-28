@@ -4,6 +4,7 @@
 
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <strings.h>
 
 #include <cstdio>
@@ -41,21 +42,31 @@ bool looksLikeLua(const char* fileName, const size_t length) {
   return length > LUA_EXT_BYTES && strcasecmp(fileName + length - LUA_EXT_BYTES, ".lua") == 0;
 }
 
-// Reads the header at the start of `file` and adds the image to `budget`
-// (GameCore::ImageBudget::add), leaving the file at its pixel rows when Ok. Its own
-// frame holds the header, so load()'s stays small. `readFailed` is set, and the
-// budget left alone, when the read fails or comes back short of a header the file
-// is long enough to hold: an SD error, not a damaged image. A file under the
-// header's 62 bytes is still a Truncated image.
-[[gnu::noinline]] GameCore::ImageCheck addImage(HalFile& file, GameCore::ImageBudget& budget,
-                                                GameCore::ImageHeader& out, bool& readFailed) {
-  uint8_t header[GameCore::IMAGE_HEADER_BYTES];
+// The buffers one load() needs, in one heap block rather than on the loop task's
+// stack: the folder's path, a file's name and stem, and an image's header bytes and
+// parsed header. load() allocates it; its passes and addImage() share it.
+struct LoadScratch {
+  char path[GamePaths::PATH_BYTES];
+  char name[NAME_BUFFER];
+  Stem stem;
+  uint8_t headerBytes[GameCore::IMAGE_HEADER_BYTES];
+  GameCore::ImageHeader header;
+};
+
+// Reads the header at the start of `file` into `scratch.headerBytes` and adds the
+// image to `budget` (GameCore::ImageBudget::add), filling `scratch.header` and
+// leaving the file at its pixel rows when Ok. `readFailed` is set, and the budget
+// left alone, when the read fails or comes back short of a header the file is long
+// enough to hold: an SD error, not a damaged image. A file under the header's 62
+// bytes is still a Truncated image.
+[[gnu::noinline]] GameCore::ImageCheck addImage(HalFile& file, GameCore::ImageBudget& budget, LoadScratch& scratch,
+                                                bool& readFailed) {
   const size_t fileBytes = file.fileSize();
-  const int read = file.read(header, sizeof(header));
-  const size_t wanted = fileBytes < sizeof(header) ? fileBytes : sizeof(header);
+  const int read = file.read(scratch.headerBytes, sizeof(scratch.headerBytes));
+  const size_t wanted = fileBytes < sizeof(scratch.headerBytes) ? fileBytes : sizeof(scratch.headerBytes);
   readFailed = read < 0 || static_cast<size_t>(read) < wanted;
   if (readFailed) return GameCore::ImageCheck::Truncated;
-  return budget.add(header, static_cast<size_t>(read), fileBytes, out);
+  return budget.add(scratch.headerBytes, static_cast<size_t>(read), fileBytes, scratch.header);
 }
 
 // Pass 1's line for a file whose name getName could not read at all (it returned 0).
@@ -80,19 +91,18 @@ struct FolderScan {
   bool badImage = false;
 };
 
-// Pass 1: counts the modules and images and their bytes so one block holds them
-// all, checking each image's header against the budget left on the way. Ok, or
-// CannotRead (logged) when an image's header cannot be read. It holds the name
-// buffers in its own frame so that no function here breaks the 256 B locals rule
-// (AGENTS.md); load()'s frame stays live beneath it, and beneath readFolder(), so
-// the deepest chain is load() plus a pass.
-[[gnu::noinline]] GameAssets::LoadResult scanFolder(HalFile& dir, const char* path, FolderScan& scan) {
-  char name[NAME_BUFFER];
-  Stem stem;
-  GameCore::ImageHeader header;
+// Pass 1: counts the modules and images and their bytes in `scratch.path` so one
+// block holds them all, checking each image's header against the budget left on
+// the way. Ok, or CannotRead (logged) when an image's header cannot be read. The
+// passes are separate functions so that none breaks the 256 B locals rule
+// (AGENTS.md); their buffers live in `scratch`, on the heap, so the deepest chain,
+// load() plus a pass plus addImage(), stays small too.
+[[gnu::noinline]] GameAssets::LoadResult scanFolder(HalFile& dir, LoadScratch& scratch, FolderScan& scan) {
+  const char* const path = scratch.path;
+  char* const name = scratch.name;
   dir.rewindDirectory();
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
-    const size_t length = file.getName(name, sizeof(name));
+    const size_t length = file.getName(name, sizeof(scratch.name));
     if (file.isDirectory()) continue;
     if (length == 0) {
       // SdFat's getName returns 0 when the name does not fit `name` (or cannot be read).
@@ -101,15 +111,15 @@ struct FolderScan {
     }
     // A name that fills `name` may be cut (the simulator's getName cuts it), so it is
     // never classified as a module or an image.
-    const bool fits = length < sizeof(name) - 1;
-    if (fits && moduleNameOf(name, length, stem)) {
+    const bool fits = length < sizeof(scratch.name) - 1;
+    if (fits && moduleNameOf(name, length, scratch.stem)) {
       // A module: counted, and read in pass 2.
       ++scan.count;
       scan.textBytes += file.fileSize();
-    } else if (fits && GameCore::imageNameOf(name, length, stem)) {
+    } else if (fits && GameCore::imageNameOf(name, length, scratch.stem)) {
       // An image: checked now, within the budget the images before it left.
       bool readFailed = false;
-      const GameCore::ImageCheck check = addImage(file, scan.budget, header, readFailed);
+      const GameCore::ImageCheck check = addImage(file, scan.budget, scratch, readFailed);
       if (readFailed) {
         LOG_ERR("GAME", "Cannot read %s/%s", path, name);
         return GameAssets::LoadResult::CannotRead;
@@ -160,11 +170,11 @@ struct FolderRead {
 // sized: its budget as well as its bytes. Ok, or CannotRead (logged) when a read
 // fails, an image changed, or the folder lost a file; the caller then releases the
 // block.
-[[gnu::noinline]] GameAssets::LoadResult readFolder(HalFile& dir, const char* path, const FolderScan& scan,
+[[gnu::noinline]] GameAssets::LoadResult readFolder(HalFile& dir, LoadScratch& scratch, const FolderScan& scan,
                                                     const BlockLayout& block, FolderRead& read) {
-  char name[NAME_BUFFER];
-  Stem stem;
-  GameCore::ImageHeader header;
+  const char* const path = scratch.path;
+  char* const name = scratch.name;
+  const GameCore::ImageHeader& header = scratch.header;
   const size_t imageCount = scan.budget.count;
   size_t loaded = 0;
   size_t offset = 0;
@@ -173,10 +183,10 @@ struct FolderRead {
   dir.rewindDirectory();
   for (auto file = dir.openNextFile(); file && (loaded < scan.count || imagesLoaded < imageCount);
        file = dir.openNextFile()) {
-    const size_t length = file.getName(name, sizeof(name));
+    const size_t length = file.getName(name, sizeof(scratch.name));
     // Pass 1 logged every name skipped here.
-    if (file.isDirectory() || length == 0 || length >= sizeof(name) - 1) continue;
-    if (moduleNameOf(name, length, stem)) {
+    if (file.isDirectory() || length == 0 || length >= sizeof(scratch.name) - 1) continue;
+    if (moduleNameOf(name, length, scratch.stem)) {
       if (loaded == scan.count) continue;
       const size_t size = file.fileSize();
       if (size > scan.textBytes - offset || file.read(block.text + offset, size) != static_cast<int>(size)) {
@@ -184,15 +194,15 @@ struct FolderRead {
         return GameAssets::LoadResult::CannotRead;
       }
       GameScript::SourceSpan& span = block.spans[loaded++];
-      std::memcpy(span.name, stem, sizeof(stem));
+      std::memcpy(span.name, scratch.stem, sizeof(scratch.stem));
       span.offset = static_cast<uint32_t>(offset);
       span.length = static_cast<uint32_t>(size);
       offset += size;
-    } else if (GameCore::imageNameOf(name, length, stem)) {
+    } else if (GameCore::imageNameOf(name, length, scratch.stem)) {
       if (imagesLoaded == imageCount) continue;
       const size_t pixelOffset = reread.pixelBytes;
       bool readFailed = false;  // any check but Ok is CannotRead here, so it needs no branch of its own
-      const bool same = addImage(file, reread, header, readFailed) == GameCore::ImageCheck::Ok &&
+      const bool same = addImage(file, reread, scratch, readFailed) == GameCore::ImageCheck::Ok &&
                         reread.fileBytes <= scan.budget.fileBytes && reread.pixelBytes <= scan.budget.pixelBytes;
       if (!same ||
           file.read(block.pixels + pixelOffset, header.pixelBytes()) != static_cast<int>(header.pixelBytes())) {
@@ -200,7 +210,7 @@ struct FolderRead {
         return GameAssets::LoadResult::CannotRead;
       }
       GameCore::ImageSpan& image = block.imageSpans[imagesLoaded++];
-      std::memcpy(image.name, stem, sizeof(stem));
+      std::memcpy(image.name, scratch.stem, sizeof(scratch.stem));
       image.width = header.width;
       image.height = header.height;
       image.rowBytes = header.rowBytes;
@@ -225,8 +235,14 @@ struct FolderRead {
 GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
   release();
 
-  char path[GamePaths::PATH_BYTES];
-  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, gameId);
+  // After release(), so a failed allocation leaves no block behind.
+  const auto scratch = makeUniqueNoThrow<LoadScratch>();
+  if (!scratch) {
+    LOG_ERR("GAME", "OOM: %u bytes to load %s", static_cast<unsigned>(sizeof(LoadScratch)), gameId);
+    return LoadResult::OutOfMemory;
+  }
+  const char* const path = scratch->path;
+  snprintf(scratch->path, sizeof(scratch->path), "%s/%s", GamePaths::GAMES_DIR, gameId);
   if (!Storage.exists(path)) {
     LOG_ERR("GAME", "No game folder %s", path);
     return LoadResult::FolderMissing;
@@ -242,7 +258,7 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
   }
 
   FolderScan scan;
-  const LoadResult scanned = scanFolder(dir, path, scan);
+  const LoadResult scanned = scanFolder(dir, *scratch, scan);
   if (scanned != LoadResult::Ok) return scanned;
   if (scan.count == 0) {
     LOG_ERR("GAME", "%s holds no loadable Lua sources", path);
@@ -278,7 +294,7 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
   layout.text = reinterpret_cast<char*>(layout.pixels + scan.budget.pixelBytes);
 
   FolderRead read;
-  const LoadResult readResult = readFolder(dir, path, scan, layout, read);
+  const LoadResult readResult = readFolder(dir, *scratch, scan, layout, read);
   if (readResult != LoadResult::Ok) {
     release();
     return readResult;

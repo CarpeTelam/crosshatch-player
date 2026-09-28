@@ -1,9 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <set>
+#include <sstream>
 #include <string>
 
+#include "GameHostCaps.h"
 #include "Manifest.h"
 
 using GameCore::Manifest;
@@ -229,6 +234,43 @@ TEST(ManifestTest, RejectsMalformedJson) {
   EXPECT_EQ(parse(R"({"id": })"), ManifestError::Syntax);
   EXPECT_EQ(parse(R"({"extra": [1})"), ManifestError::Syntax);  // mismatched brackets
   EXPECT_EQ(parse(R"({"hidden": tru})"), ManifestError::Syntax);
+}
+
+// Every fixture game's manifest.json passes what GamesListActivity::readManifest
+// requires to list it: it parses, its id is the folder's name, it passes
+// Manifest::check against this host, and it offers solo. Exactly the folders that
+// are not games of their own (faults, modules, surface) have none, so a game
+// fixture that loses its manifest fails here.
+TEST(ManifestTest, EveryFixtureManifestIsListed) {
+  std::set<std::string> listed;
+  std::set<std::string> withoutManifest;
+  for (const auto& entry : std::filesystem::directory_iterator(GAME_SCRIPT_FIXTURES_DIR)) {
+    if (!entry.is_directory()) continue;
+    const std::string folder = entry.path().filename().string();
+    const std::filesystem::path manifestPath = entry.path() / "manifest.json";
+    if (!std::filesystem::exists(manifestPath)) {
+      withoutManifest.insert(folder);
+      continue;
+    }
+    std::ifstream file(manifestPath, std::ios::binary);
+    ASSERT_TRUE(file) << manifestPath;
+    std::ostringstream json;
+    json << file.rdbuf();
+    Manifest m;
+    const ManifestError error = parse(json.str(), m);
+    if (error != ManifestError::None) {
+      ADD_FAILURE() << folder << ": " << GameCore::describe(error);
+      continue;  // m is unspecified after a failed parse
+    }
+    EXPECT_EQ(std::string(m.id), folder);
+    const GameCore::CheckResult check = m.check(gameHostCaps());
+    EXPECT_TRUE(check.ok()) << folder << ": " << GameCore::describe(check.reason);
+    EXPECT_NE(check.modes & Manifest::MODE_SOLO, 0) << folder << " offers no solo mode on this host";
+    listed.insert(folder);
+  }
+  EXPECT_EQ(withoutManifest, (std::set<std::string>{"faults", "modules", "surface"}));
+  EXPECT_TRUE(listed.count("slow-restart")) << "slow-restart's manifest was not found";
+  EXPECT_TRUE(listed.count("tracer")) << "tracer's manifest was not found";
 }
 
 }  // namespace

@@ -9,7 +9,8 @@ sim.sh works in the root of the git repository that holds it, so each case copie
 throwaway git repository with fs_/books/ already seeded, writes that repository's platformio.local.ini (never this
 repository's), and asserts both commands' exit codes and the file's bytes afterwards. setup accepts a file with no
 markers or with exactly one begin marker followed by one end marker; any other shape is refused byte-unchanged,
-since its block replace would drop the user's lines. Skipped when bash, awk, or git is missing.
+since its block replace would drop the user's lines. A missing bash, awk, or git fails every case, naming the tool,
+rather than skipping it: a skip would still print CI's "Ran <n> tests" line and pass.
 """
 
 import os
@@ -38,11 +39,15 @@ MALFORMED = {
     'begin then two ends': BEGIN + OLD + END + USER_AFTER + END,
 }
 
+TOOLS = ('bash', 'awk', 'git')
 
-@unittest.skipUnless(all(shutil.which(tool) for tool in ('bash', 'awk', 'git')), 'needs bash, awk, and git')
+
 class SimShTest(unittest.TestCase):
 
     def setUp(self):
+        missing = [tool for tool in TOOLS if not shutil.which(tool)]
+        if missing:
+            self.fail(f'not on PATH: {", ".join(missing)} (these tests need bash, awk, and git)')
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix='sim-sh-test-'))
         subprocess.run(['git', 'init', '-q', str(self.tmp)], check=True)
         skill = self.tmp / SKILL_REL

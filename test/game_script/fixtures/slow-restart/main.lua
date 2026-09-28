@@ -2,7 +2,9 @@
 -- round after the first spins in setup for SPIN_MS on ch.time.ms(), so a tap made
 -- while the end-of-round menu is still on screen falls in the gap before the new
 -- round's first frame. That tap must not reach the new round: it starts at
--- "Round 2, taps: 0 of 3" with no square drawn.
+-- "Round 2, taps: 0 of 3" with no square drawn. Second check: Play again, then Back
+-- and Resume within the gap: the pause menu stays on screen (inert) until round
+-- 2's first frame, never the round-1 board.
 -- Copy this folder to /.games/slow-restart/ on the SD card (fs_/.games/slow-restart/
 -- in the simulator).
 local game = {}

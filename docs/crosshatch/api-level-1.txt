@@ -331,15 +331,17 @@ limit codec_depth_count 16
 limit frame_commands_count 2048
 limit frame_bytes 32768
 # The canvas pixels one frame's ch.gfx.icon and ch.gfx.image calls may cover,
-# summed over the calls. Each counts the part of its square (an icon's drawn size)
-# or rectangle (an image's own size) inside the canvas, at its coordinates as
-# recorded (saturated as above), counting only pixels inside this host's canvas
-# (ch.screen.w x ch.screen.h), so a call wholly off the canvas counts nothing,
-# and overlapping calls count each time. About 2.8 canvases on the X4 Pro and
-# the Sticky (474 x 788 is 373,512): the host replays a frame by walking each
-# covered pixel, so this bounds that work. The call that would pass it stops the game with "ch.gfx.<icon or
-# image>: the frame's icons and images cover over 1048576 pixels", pcall or not,
-# and that frame is not shown. Each frame starts again from 0.
+# summed over the calls. Each counts the part of its square (an icon's drawn
+# size) or rectangle (an image's own size) inside the canvas, at its coordinates
+# as recorded (saturated as above), counting only pixels inside this host's
+# canvas (ch.screen.w x ch.screen.h), so a call wholly off the canvas counts
+# nothing, and overlapping calls count each time. About 2.8 canvases on the X4
+# Pro and the Sticky (474 x 788 is 373,512): the host replays a frame by walking
+# each covered pixel, so this bounds that icon and image replay only; filled
+# rects and circles are not charged. The call that would pass it stops the game
+# with "ch.gfx.<icon or image>: the frame's icons and images cover over 1048576
+# pixels", pcall or not, and that frame is not shown. Each frame starts again
+# from 0.
 limit frame_icon_image_pixels 1048576
 # ch.gfx.icon's drawn sizes, small, medium, and large, in pixels a side: large is
 # the medium bitmap with each pixel drawn as a 2 x 2 block.
