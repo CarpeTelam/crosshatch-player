@@ -92,6 +92,11 @@ The owner asked this retro to test six observations. O1 to O6 answer them in ord
   - The brief's Final report asks for "whether the review lenses ran as subagents", not whether each one *returned*.
   - Orchestrator step 3 checks that the Triage Log says the lenses ran as subagents. A log can say that while one lens's rows are missing.
   - 3.9 and 3.5 also ran their implementation as a subagent (3.9 plan :176; 3.5 plan :84). So a hand-back can also leave code half-applied, not only a review short.
+- **Mechanism, found while applying this retro's AI-3** (the follow-up's own session):
+  - The e3r-1 and e3r-2 build agents each handed back "NOT FINISHED" while an implementation subagent they had started in the background was still running.
+  - The e3r-2 agent wrote that "the harness requires a handback now", and the harness's notice said the agent "may resume on its own when that work completes".
+  - So an agent with only background work left ends its turn, and the harness takes an interim report. A "wait before reporting" rule cannot prevent that; starting the subagent in the foreground can.
+  - AI-3's edits were amended to say this.
 - Instance: **accept** (the orchestrator resumed both at the time, per the owner).
 - Prevention: AI-3, one Build-agent brief rule and one orchestrator check (exact edits under Proposed edits).
 

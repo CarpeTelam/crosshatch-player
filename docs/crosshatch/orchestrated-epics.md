@@ -61,11 +61,13 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
     screenshot as soon as the tracer shows it. Keep building the lanes that do not depend on the answer. In
     epic-icon-library the naming convention came back at entry 8, and entry 9 rebuilt the set: 158 files, retro O4.
 4. **Merge only a finished tree.** Never merge into, or rebase, a worktree whose agent is still working; wait for its
-   report. A report that says a lens, implementation, or other subagent has not returned is not finished: resume the
-   same agent (`SendMessage`), wait for its final report, and only then read its Review Triage Log or merge. In
-   epic-icon-library a reviewer reported 8 minutes before its adversarial lens returned (retro O1). `deferred-work.md`
-   merges with `merge=union` (`.gitattributes`), so appends from two lanes combine without a conflict (O10); when two
-   branches edited the same existing entry, union keeps both versions, so read the result.
+   report. A report that says a lens, implementation, or other subagent has not returned is an interim hand-back, not a
+   finished report: an agent whose subagent runs in the background ends its turn with nothing left to do, and the
+   harness then asks it for a report. It resumes by itself when that subagent returns (the notification says it may
+   resume on its own); resume it with `SendMessage` only if it does not, and only then read its Review Triage Log or
+   merge. In epic-icon-library, and in both lanes of its retrospective's follow-up, agents handed back this way (retro
+   O1). `deferred-work.md` merges with `merge=union` (`.gitattributes`), so appends from two lanes combine without a
+   conflict (O10); when two branches edited the same existing entry, union keeps both versions, so read the result.
 5. **Record out-of-session fixes.** A fix that lands outside its story's session, such as one that changes an earlier
    story's code, records its verification in the plan of the story it changes (O5).
 6. **Re-run the host suites on the combined tree before every push** (under the lock), plus
@@ -147,8 +149,11 @@ them:
   say in the plan's Review Triage Log that the lenses ran as subagents. Only if you have no `Agent` tool, do not HALT:
   run each lens yourself, one at a time, reading each lens prompt fresh and judging only the diff, say so in the log
   and at the top of your report, and triage the independent review the orchestrator then sends you into the same log.
-  Wait for every lens subagent, and any implementation subagent, to return before you triage or report. If one has not
-  returned, wait for it instead of reporting without it. The Review Triage Log names the lenses that returned.
+  Start implementation and lens subagents in the foreground (`run_in_background: false`; lenses in one message so they
+  still run in parallel) whenever you have nothing else to do meanwhile: a background subagent lets your turn end, and
+  the harness then takes an unfinished report from you. Wait for every lens subagent, and any implementation subagent,
+  to return before you triage or report. If one has not returned, wait for it instead of reporting without it. The
+  Review Triage Log names the lenses that returned.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
