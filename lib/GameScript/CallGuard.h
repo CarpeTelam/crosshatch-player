@@ -14,8 +14,10 @@ inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
 
 // Why the guard stopped a call. Binding: a binding hit a fault the game contract
 // says stops the game (a store over AD-10's limit, a full frame, ch.gfx outside
-// draw), which ends the call as surely as a state over its limit.
-enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Binding };
+// draw, a table call over its element limit, too little stack for a binding),
+// which ends the call as surely as a state over its limit. Memory: the heap cap
+// ended a call a script's pcall or xpcall had caught (raiseMemory).
+enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Binding, Memory };
 
 // The limits on one call into a game, enforced from a single Lua hook (AD-6, and
 // the owner's stack decision of 2026-09-27): the instruction budget, the cancel
@@ -77,6 +79,11 @@ class CallGuard {
   // script's chunk and line, and raises it; like every fault it is sticky, so the
   // script's own pcall cannot keep the call going. Does not return.
   int raise(lua_State* L, const char* message);
+  // From the sandbox's pcall, xpcall, and require, when a call they protect ended
+  // in a memory error (the heap cap, AD-6): records a Memory fault, unless one is
+  // already recorded, and raises the error object on top of the stack again.
+  // Allocation-free, since the heap is full. Sticky like every fault. Does not return.
+  int raiseMemory(lua_State* L);
 
  private:
   void trip(lua_State* L, lua_Debug* ar, Fault fault);

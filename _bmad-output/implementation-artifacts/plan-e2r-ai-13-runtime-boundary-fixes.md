@@ -80,6 +80,8 @@ context:
 - Mutation check: with the three source fixes reverted, the six new fix tests fail (`AFullQueueDropsTheOldestTouchNeverTheTimer`, both new `GfxBindingsTest` cases, `ATimerEventSurvivesATapBurstThatFillsTheQueue`, `TwoFailuresInARowKeepTheOnlyCopy`, `AFailedPromotionWritesNothingAndKeepsTheTmp`); `AQueueOfTimersDropsTheOldestTimer` pins behaviour that the old code shared.
 - The spine's line "a full input queue drops the oldest event with a log line" (`ARCHITECTURE-SPINE.md:108`) now reads loosely: the queue drops the oldest non-Timer event. The spine is not edited here.
 
+- Review fixes (pass 2): memory errors, table limits, and both headroom checks are guard faults now too, so every fault the contract says stops the game is sticky under `pcall`. `api-level-1.txt` gained a comment saying so (comments are outside `API_SURFACE_CRC`).
+
 ## Plan Change Log
 
 ## Review Triage Log
@@ -97,6 +99,17 @@ Pass 1 (lenses run in turn by the build agent: blind-hunter, edge-case-hunter, v
 | 7 | edge-case | `guard` could be null in `drawTarget`/`frameFull` | false | `LuaGame::load` sets `bindings.guard` before `openChLibrary` runs any script, and `ch.store.set` already relies on it |
 | 8 | verification-gap | `GameVM::pollTimer`/`postInput` and `GameMatchActivity`'s flush are not host-built, so the tests reach the fixes through `InputQueue`, the `HostBindingsTest` copy of `pollTimer`, and `GameSaveStore` | defer (pre-existing) | already in `deferred-work.md` (the GameVM/match harness gap, R9 via AI-11); not re-added |
 | 9 | intent-alignment | The intent's four readings (guard raise; evict non-Timer or disarm on pop; promote or second name; Session-path oracle) are each implemented by their first option; the fault table mirrors the README rather than parsing it, which the brief allows | no finding | descriptive only |
+
+Pass 2: the orchestrator's independent review of 67cd7b70 (it confirmed that the three fixes hold against xpcall, metamethods, gsub and sort callbacks, `__close`, and `pcall(require)`). Counts: high 0, medium 1, low 5, false 0, maybe-false 0.
+
+| # | Source | Finding | Verdict | Route / evidence |
+|---|--------|---------|---------|------------------|
+| 10 | orchestrator | The fault test checks a hand-copied table and never reads `fixtures/README.md`, so the README can go stale (O4 one level up) | medium | patch: `SessionGameTest` now parses the README's `loop/`, `limits/`, and fault-script tables (`readmeTable`, `backticked`) and asserts their exact texts; `EveryLimitsFixtureBandIsAScriptError` became `EveryLimitsFixtureBandEndsWithTheReadmesText`. Editing any of three README texts made all three tests fail (checked, then reverted) |
+| 11 | orchestrator | If the promotion rename keeps failing, no newer save is written (baseline kept the newest bytes in the tmp) | low | accepted as designed, per the orchestrator; `formats.md`'s Writing paragraph now states the trade-off |
+| 12 | orchestrator | The fault test cannot tell loop bands 1 and 2 apart and never checks which step failed | low | patch: each band is tapped on its README label where the fixture drew it; each script's failing step (load, setup, first draw, tap) is checked against the README's "Where it fails" column |
+| 13 | orchestrator | The heap cap, the table element limit (`tooManyElements`), and binding headroom (`requireHeadroom`) are still catchable with `pcall` | low | patch: the sandbox's `pcall` and `xpcall` are now lbaselib's line for line through `finishProtected`, which turns a `LUA_ERRMEM` into a sticky `Fault::Memory` (`CallGuard::raiseMemory`, allocation-free: static text, re-raises the error object already on the stack); `require` keeps a memory error one. `tooManyElements`, `requireHeadroom`, and require's parse headroom raise through the guard. Tests: `LuaGameTest.TheHeapCapStopsTheGameEvenUnderPcall` (pcall, xpcall, `pcall(require)`), `SandboxTest.TableLimitsStopTheGameEvenUnderPcall`, `SandboxTest.RequireNeedsParserHeadroom` (a swallowing variant), `HostBindingsTest.LogAndStoreNeedStackHeadroom` (now a ScriptError). An allocator-side flag was rejected: Lua retries a refused allocation after an emergency GC, and several callers (string-table growth, stack growth) tolerate a refusal, so a refusal is not yet an error. `SessionGameTest.TheSessionAndScratchAreTakenFromTheArenaBeforeLua` filled the heap under `pcall`; it now fills to 244 KiB with `collectgarbage('count')`, and its peak bound is the cap minus 16 KiB |
+| 14 | orchestrator | `GameVM.cpp:177` still logs "dropped the oldest event" | low | patch: "dropped the oldest non-timer event"; the spine is left to the orchestrator |
+| 15 | orchestrator | The R2 test drives the test's copy of `pollTimer`, not `GameVM` | low | accepted, per the orchestrator: the known R9 harness gap (AI-11) |
 
 ## Design Notes
 
@@ -117,3 +130,7 @@ Promotion over a second tmp name: loadStore already treats "store.bin missing, t
 - `pio run -e x4pro` -- SUCCESS (3:53); `pio run -e default` -- SUCCESS (7:25).
 - `sim.sh build x4pro` -- `simulator_x4pro` SUCCESS (1:44).
 - `python3 scripts/check_upstream_touches.py` -- PASS (every touched path is fork-only).
+
+**Evidence after the pass-2 review fixes (2026-09-28):**
+- Host tests: 637/637 passed. Editing three README texts (a script, a loop band, and a limits band) failed all three README-driven tests; the README was then restored.
+- `pio run -e x4pro` -- SUCCESS; `pio run -e default` -- SUCCESS.

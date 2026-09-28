@@ -209,6 +209,47 @@ TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
   EXPECT_LE(arena.peakBytes(), arena.capacity() / 2);
 }
 
+// The memory limit stops the game (game-api-seed.md section 6): pcall, xpcall,
+// and a require under pcall catch the memory error at most once, and the call
+// still ends in a ScriptError with Lua's own text and no frame published.
+TEST_F(LuaGameTest, TheHeapCapStopsTheGameEvenUnderPcall) {
+  const std::string bomb = "local t = {} for i = 1, 1e7 do t[i] = i end";
+  const std::vector<Module> cases[] = {
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() pcall(function() " +
+            bomb + " end) ch.gfx.clear('white') end }"}},
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() xpcall(function() " +
+            bomb + " end, function(m) return m end) ch.gfx.clear('white') end }"}},
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() pcall(require, 'bomb') ch.gfx.clear('white') end }"},
+       {"bomb", bomb + "\nreturn t"}},
+  };
+  for (const auto& modules : cases) {
+    useSources(modules);
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    const uint32_t before = frames.frameGen();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << modules[0].second;
+    EXPECT_STREQ(game.errorMessage(), "not enough memory") << modules[0].second;
+    EXPECT_EQ(game.callGuard().fault(), Fault::Memory) << modules[0].second;
+    EXPECT_EQ(frames.frameGen(), before) << modules[0].second;
+  }
+  // Other errors under pcall and xpcall are still the script's to handle.
+  useSource("main",
+            "return { setup = function() return {} end,\n"
+            "  draw = function() local ok, e = pcall(error, 'x', 0)\n"
+            "    local ok2, e2 = xpcall(error, function(m) return 'h ' .. m end, 'y', 0)\n"
+            "    ch.gfx.text(0, 0, tostring(ok) .. e .. tostring(ok2) .. e2, 'small', 'black') end }");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "falsexfalseh y");
+}
+
 TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {
   useSource("main", readFixture("tracer/main.lua"));
   DirectGame game(arena, frames, sources, ports, canvas);

@@ -174,7 +174,7 @@ bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport
 }
 
 void GameVM::postInput(const GameScript::InputEvent& event) {
-  if (queue.push(event)) LOG_INF("GAME", "Input queue full; dropped the oldest event");
+  if (queue.push(event)) LOG_INF("GAME", "Input queue full; dropped the oldest non-timer event");
   notifyTask();
 }
 

@@ -104,6 +104,28 @@ TEST_F(SandboxTest, TableLoopsPastTheLimitAreRefused) {
   EXPECT_EQ(startAndDraw(), "0 9,2,3,7");
 }
 
+TEST_F(SandboxTest, TableLimitsStopTheGameEvenUnderPcall) {
+  struct Case {
+    const char* call;
+    const char* message;
+  };
+  const Case cases[] = {
+      {"pcall(table.move, {}, 1, 70000, 1)", "table.move: more than 65536 elements"},
+      {"pcall(table.insert, setmetatable({}, { __len = function() return 70000 end }), 1)",
+       "table.insert: more than 65536 elements"},
+      {"pcall(function() table.remove(setmetatable({}, { __len = function() return 70000 end })) end)",
+       "table.remove: more than 65536 elements"},
+  };
+  for (const auto& c : cases) {
+    useSource("main", std::string("return { setup = function() ") + c.call + " return { result = 'survived' } end," +
+                          DRAW_RESULT);
+    DirectGame game(arena, frames, sources, ports, canvas);
+    EXPECT_EQ(game.start(), Outcome::ScriptError) << c.call;
+    EXPECT_TRUE(contains(game.errorMessage(), c.message)) << c.call << " -> " << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << c.call;
+  }
+}
+
 TEST_F(SandboxTest, SetmetatableRefusesGcFinalizers) {
   for (const char* fixture : {"gc_recursive", "gc_loop"}) {
     useFault(fixture);
@@ -148,20 +170,26 @@ TEST_F(SandboxTest, RequireNeedsParserHeadroom) {
     EXPECT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   }
   // ...but not from deep in a recursion, where the parser could overrun the stack.
-  useSources({{"main",
-               "local function f(n)\n"
-               "  if n == 0 then return require('util') end\n"
-               "  local ok, v = pcall(f, n - 1)\n"
-               "  if not ok then error(v, 0) end\n"
-               "  return v\n"
-               "end\n"
-               "f(12)\n"
-               "return {}"},
-              {"util", readFixture("modules/util.lua")}});
-  DirectGame game(arena, frames, sources, ports, canvas);
-  modelTaskStack(game);
-  EXPECT_EQ(game.start(), Outcome::ScriptError);
-  EXPECT_TRUE(contains(game.errorMessage(), "script recursion too deep to load a module")) << game.errorMessage();
+  // The refusal is a guard fault, so a script that swallows it with pcall still stops.
+  for (const char* onError : {"error(v, 0)", "return 'caught'"}) {
+    useSources({{"main", std::string("local function f(n)\n"
+                                     "  if n == 0 then return require('util') end\n"
+                                     "  local ok, v = pcall(f, n - 1)\n"
+                                     "  if not ok then ") +
+                             onError +
+                             " end\n"
+                             "  return v\n"
+                             "end\n"
+                             "f(12)\n"
+                             "return {}"},
+                {"util", readFixture("modules/util.lua")}});
+    DirectGame game(arena, frames, sources, ports, canvas);
+    modelTaskStack(game);
+    EXPECT_EQ(game.start(), Outcome::ScriptError) << onError;
+    EXPECT_TRUE(contains(game.errorMessage(), "script recursion too deep to load a module"))
+        << onError << " -> " << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << onError;
+  }
 }
 
 TEST_F(SandboxTest, LockedSectionsAreCountedForAbandon) {

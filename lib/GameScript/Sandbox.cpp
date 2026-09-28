@@ -4,6 +4,7 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <initializer_list>
 #include <lua.hpp>
 
@@ -30,10 +31,28 @@ void openLibrary(lua_State* L, const char* name, lua_CFunction open) {
   lua_pop(L, 1);
 }
 
-// Leaves the error on top, forgets the half-loaded module, and raises again.
-int forgetAndRaise(lua_State* L, const int modules, const char* name) {
+// Raises `message` through the guard, as a fault the game contract says stops the
+// game, so a script's own pcall cannot survive it (CallGuard::raise).
+int raiseFault(lua_State* L, const char* message) {
+  CallGuard* guard = bindingContext(L)->guard;
+  if (!guard) return luaL_error(L, "%s", message);
+  return guard->raise(L, message);
+}
+
+// Raises the memory error on top of the stack again, as a guard fault: the heap cap
+// stops the game (AD-6), even under the script's pcall or xpcall.
+int raiseMemoryError(lua_State* L) {
+  CallGuard* guard = bindingContext(L)->guard;
+  if (!guard) return lua_error(L);
+  return guard->raiseMemory(L);
+}
+
+// Leaves the error on top, forgets the half-loaded module, and raises again; a
+// memory error stays one.
+int forgetAndRaise(lua_State* L, const int modules, const char* name, const int status) {
   lua_pushnil(L);
   lua_setfield(L, modules, name);
+  if (status == LUA_ERRMEM) return raiseMemoryError(L);
   return lua_error(L);
 }
 
@@ -54,18 +73,20 @@ int require(lua_State* L) {
   if (!span) return luaL_error(L, "module '%s' not found", name);
   // The parser runs no hook, so it needs its whole budget free before it starts.
   if (context->guard && !context->guard->hasHeadroom(CallGuard::PARSE_HEADROOM_BYTES)) {
-    return luaL_error(L, "require '%s': script recursion too deep to load a module", name);
+    char message[CallGuard::MESSAGE_CAPACITY];
+    snprintf(message, sizeof(message), "require '%s': script recursion too deep to load a module", name);
+    return raiseFault(L, message);
   }
 
   lua_pushlightuserdata(L, loadingTag());
   lua_setfield(L, modules, name);
   const char* chunkName = lua_pushfstring(L, "@%s.lua", name);
   // Text mode: a precompiled module is refused like a precompiled main.lua.
-  if (luaL_loadbufferx(L, sources->textOf(*span), span->length, chunkName, "t") != LUA_OK) {
-    return forgetAndRaise(L, modules, name);
-  }
+  int status = luaL_loadbufferx(L, sources->textOf(*span), span->length, chunkName, "t");
+  if (status != LUA_OK) return forgetAndRaise(L, modules, name, status);
   lua_pushvalue(L, 1);
-  if (lua_pcall(L, 1, 1, 0) != LUA_OK) return forgetAndRaise(L, modules, name);
+  status = lua_pcall(L, 1, 1, 0);
+  if (status != LUA_OK) return forgetAndRaise(L, modules, name, status);
   if (lua_isnil(L, -1)) {
     lua_pop(L, 1);
     lua_pushboolean(L, 1);
@@ -96,13 +117,40 @@ int guardedHandler(lua_State* L) {
   return 1;
 }
 
-// xpcall(f, handler, ...): the base xpcall (upvalue 1) with the handler wrapped.
+// lbaselib's finishpcall, except that a memory error is not the script's to catch.
+int finishProtected(lua_State* L, const int status, const int extra) {
+  if (status == LUA_ERRMEM) return raiseMemoryError(L);
+  if (status != LUA_OK) {
+    lua_pushboolean(L, 0);
+    lua_pushvalue(L, -2);
+    return 2;
+  }
+  return lua_gettop(L) - extra;
+}
+
+// pcall(f, ...): lbaselib's, line for line, through finishProtected. Scripts have
+// no coroutines, so the plain lua_pcall (no continuation) never meets a yield.
+int guardedPcall(lua_State* L) {
+  luaL_checkany(L, 1);
+  lua_pushboolean(L, 1);
+  lua_insert(L, 1);
+  const int status = lua_pcall(L, lua_gettop(L) - 2, LUA_MULTRET, 0);
+  return finishProtected(L, status, 0);
+}
+
+// xpcall(f, handler, ...): lbaselib's, line for line, with the handler wrapped
+// (guardedHandler) and through finishProtected.
 int guardedXpcall(lua_State* L) {
+  const int n = lua_gettop(L);
   luaL_checktype(L, 2, LUA_TFUNCTION);
   lua_pushvalue(L, 2);
   lua_pushcclosure(L, &guardedHandler, 1);
   lua_replace(L, 2);
-  return callWrapped(L);
+  lua_pushboolean(L, 1);
+  lua_pushvalue(L, 1);
+  lua_rotate(L, 3, 2);
+  const int status = lua_pcall(L, n - 2, LUA_MULTRET, 2);
+  return finishProtected(L, status, 2);
 }
 
 // setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
@@ -127,7 +175,10 @@ int guardedSetmetatable(lua_State* L) {
 }
 
 int tooManyElements(lua_State* L, const char* function) {
-  return luaL_error(L, "table.%s: more than %d elements", function, static_cast<int>(TABLE_ELEMENTS_LIMIT));
+  char message[64];
+  snprintf(message, sizeof(message), "table.%s: more than %d elements", function,
+           static_cast<int>(TABLE_ELEMENTS_LIMIT));
+  return raiseFault(L, message);
 }
 
 // table.move(a1, f, e, t [,a2]): its copy loop runs in C, where no hook runs.
@@ -198,8 +249,9 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   }
   lua_pushcfunction(L, &require);
   lua_setglobal(L, "require");
-  lua_getglobal(L, "xpcall");
-  lua_pushcclosure(L, &guardedXpcall, 1);
+  lua_pushcfunction(L, &guardedPcall);
+  lua_setglobal(L, "pcall");
+  lua_pushcfunction(L, &guardedXpcall);
   lua_setglobal(L, "xpcall");
   lua_pushcfunction(L, &guardedSetmetatable);
   lua_setglobal(L, "setmetatable");

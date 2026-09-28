@@ -145,13 +145,12 @@ int textWidth(lua_State* L) {
   return 1;
 }
 
-// Raises unless the stack has room for a binding that runs deep C code (the codec,
-// the logger); see CallGuard::BINDING_HEADROOM_BYTES.
-void requireHeadroom(lua_State* L, const char* function) {
-  const CallGuard* guard = bindingContext(L)->guard;
-  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) {
-    luaL_error(L, "%s: script recursion too deep to call it", function);
-  }
+// Raises `message` unless the stack has room for a binding that runs deep C code
+// (the codec, the logger); see CallGuard::BINDING_HEADROOM_BYTES. Through the guard,
+// so a script's pcall cannot catch it; a literal, since the stack is short here.
+void requireHeadroom(lua_State* L, const char* message) {
+  CallGuard* guard = bindingContext(L)->guard;
+  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) guard->raise(L, message);
 }
 
 // ch.timer.after(ms): replaces the pending timer (AD-23).
@@ -187,7 +186,7 @@ int timeMs(lua_State* L) {
 // to the slot, which marks itself dirty only when the bytes changed.
 int storeSet(lua_State* L) {
   luaL_checktype(L, 1, LUA_TTABLE);
-  requireHeadroom(L, "ch.store.set");
+  requireHeadroom(L, "ch.store.set: script recursion too deep to call it");
   const BindingContext& context = *bindingContext(L);
   const Codec::Encoded encoded = Codec::encode(L, 1, Codec::STORE_LIMIT, context.scratch, context.scratchBytes);
   if (encoded.error != Codec::Error::None) {
@@ -211,7 +210,7 @@ int storeSet(lua_State* L) {
 // copied into the scratch under its lock and decoded outside it, since decoding
 // allocates and may raise.
 int storeGet(lua_State* L) {
-  requireHeadroom(L, "ch.store.get");
+  requireHeadroom(L, "ch.store.get: script recursion too deep to call it");
   const BindingContext& context = *bindingContext(L);
   auto* scratch = static_cast<uint8_t*>(context.scratch);
   enterLockedSection(L);
@@ -245,7 +244,7 @@ size_t utf8Cut(const char* text, const size_t length, const size_t room) {
 }
 
 int chLog(lua_State* L) {
-  requireHeadroom(L, "ch.log");
+  requireHeadroom(L, "ch.log: script recursion too deep to call it");
   char line[LOG_LINE_BYTES + 1];
   size_t used = 0;
   const int count = lua_gettop(L);

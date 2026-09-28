@@ -15,6 +15,8 @@ namespace {
 constexpr int HOOK_MASK = LUA_MASKCOUNT | LUA_MASKCALL;
 constexpr const char* STACK_MESSAGE = "script recursion too deep (C stack nearly full)";
 constexpr const char* CANCELLED_MESSAGE = "cancelled";
+// Lua's own text for a memory error, so a caught one reads like an uncaught one.
+constexpr const char* MEMORY_MESSAGE = "not enough memory";
 
 uintptr_t stackPointer() { return reinterpret_cast<uintptr_t>(__builtin_frame_address(0)); }
 
@@ -50,6 +52,7 @@ void CallGuard::trip(lua_State* L, lua_Debug* ar, const Fault fault) {
       shown = text;
       break;
     case Fault::Binding:  // raise() formats its own message
+    case Fault::Memory:   // raiseMemory() sets its own message
     case Fault::None:
       break;
   }
@@ -87,6 +90,15 @@ int CallGuard::raise(lua_State* L, const char* message) {
   shown = text;
   lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
   lua_pushstring(L, shown);
+  return lua_error(L);
+}
+
+int CallGuard::raiseMemory(lua_State* L) {
+  if (tripped == Fault::None) {
+    tripped = Fault::Memory;
+    shown = MEMORY_MESSAGE;
+  }
+  lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
   return lua_error(L);
 }
 
