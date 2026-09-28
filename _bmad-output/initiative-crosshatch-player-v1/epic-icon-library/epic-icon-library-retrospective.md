@@ -609,7 +609,7 @@ The owner asked for every proposed edit to be applied, and for the should-have a
   - 2 are recorded as freeze decisions in epic-first-party-games's Notes; 2 accepted; 2 deferred under `## e3r-x`.
 - **Process observed in the follow-up itself:**
   - Agents again handed back with subagents running: e3r-1 three times, e3r-2 twice, and the cross-story reviewer once.
-  - `run_background: false` did not keep a nested agent's lenses in the foreground.
+  - `run_in_background: false` did not keep a nested agent's lenses in the foreground.
   - `orchestrated-epics.md` now treats such a report as interim (9d53b6db, 4d136782).
 - **Final checks on the combined tree:**
   - Host tests 719/719, all 9 `scripts/*_test.py` suites (each `Ran` > 0).
