@@ -135,6 +135,15 @@ TEST_F(SandboxTest, SetmetatableRefusesGcFinalizers) {
     EXPECT_TRUE(contains(game.errorMessage(), "setmetatable: __gc metamethods are not supported"))
         << fixture << " -> " << game.errorMessage();
   }
+  // __close too (a raising __close could outlive the heap cap), even as false.
+  for (const char* value : {"function() end", "false"}) {
+    useSource("main", std::string("return { setup = function() setmetatable({}, { __close = ") + value +
+                          " }) return {} end," + DRAW_RESULT);
+    DirectGame game(arena, frames, sources, ports, canvas);
+    EXPECT_EQ(game.start(), Outcome::ScriptError) << value;
+    EXPECT_TRUE(contains(game.errorMessage(), "main.lua:1: setmetatable: __close metamethods are not supported"))
+        << value << " -> " << game.errorMessage();
+  }
   // Everything else setmetatable does is unchanged.
   useSource("main", std::string("return { setup = function()\n"
                                 "  local t = setmetatable({}, { __index = function() return 5 end })\n"

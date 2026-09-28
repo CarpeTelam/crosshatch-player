@@ -48,7 +48,10 @@ int raiseMemoryError(lua_State* L) {
 }
 
 // Leaves the error on top, forgets the half-loaded module, and raises again; a
-// memory error stays one.
+// memory error stays one. A plain lua_error would re-raise it as a memory error
+// too, but raiseMemoryError records the guard's fault first: a to-be-closed
+// value between here and the script's pcall may run a __close that raises while
+// the error unwinds, which would otherwise turn it into an ordinary error.
 int forgetAndRaise(lua_State* L, const int modules, const char* name, const int status) {
   lua_pushnil(L);
   lua_setfield(L, modules, name);
@@ -154,19 +157,26 @@ int guardedXpcall(lua_State* L) {
 }
 
 // setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
-// a metatable with a __gc field. Finalizers run with hooks off, so a __gc would
-// escape the budget and the stack check; Lua marks an object for finalization
-// only when its metatable has a raw __gc field at this call, so checking here is
-// enough. Written out rather than wrapped so argument errors still name it.
+// a metatable with a raw __gc or __close field. Finalizers run with hooks off, so
+// a __gc would escape the budget and the stack check; Lua marks an object for
+// finalization only when its metatable has a raw __gc field at this call, so
+// checking here is enough for it. A __close that raises while a memory error
+// unwinds turns it into an ordinary error (luaD_closeprotected), which the
+// script's pcall could then catch; Lua looks __close up again when it closes,
+// so this refusal does not cover a __close added to the metatable later (see
+// require's forgetAndRaise). Written out rather than wrapped so argument errors
+// still name it.
 int guardedSetmetatable(lua_State* L) {
   const int type = lua_type(L, 2);
   luaL_checktype(L, 1, LUA_TTABLE);
   luaL_argexpected(L, type == LUA_TNIL || type == LUA_TTABLE, 2, "nil or table");
   if (type == LUA_TTABLE) {
-    lua_pushliteral(L, "__gc");
-    const bool hasGc = lua_rawget(L, 2) != LUA_TNIL;
-    lua_pop(L, 1);
-    if (hasGc) return luaL_error(L, "setmetatable: __gc metamethods are not supported");
+    for (const char* field : {"__gc", "__close"}) {
+      lua_pushstring(L, field);
+      const bool present = lua_rawget(L, 2) != LUA_TNIL;
+      lua_pop(L, 1);
+      if (present) return luaL_error(L, "setmetatable: %s metamethods are not supported", field);
+    }
   }
   if (luaL_getmetafield(L, 1, "__metatable") != LUA_TNIL) return luaL_error(L, "cannot change a protected metatable");
   lua_settop(L, 2);
@@ -241,6 +251,14 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   openLibrary(L, LUA_STRLIBNAME, luaopen_string);
   openLibrary(L, LUA_MATHLIBNAME, luaopen_math);
   openLibrary(L, LUA_UTF8LIBNAME, luaopen_utf8);
+
+  // Seals the string metatable, which every game shares: getmetatable('') returns
+  // false, so a script cannot add a __close (or change any metamethod) to strings.
+  lua_pushliteral(L, "");
+  lua_getmetatable(L, -1);
+  lua_pushboolean(L, 0);
+  lua_setfield(L, -2, "__metatable");
+  lua_pop(L, 2);
 
   // Scripts load code only through require, from their own sources in text mode.
   for (const char* name : {"load", "loadfile", "dofile"}) {

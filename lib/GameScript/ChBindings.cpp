@@ -145,12 +145,13 @@ int textWidth(lua_State* L) {
   return 1;
 }
 
-// Raises `message` unless the stack has room for a binding that runs deep C code
+// Raises `literal` unless the stack has room for a binding that runs deep C code
 // (the codec, the logger); see CallGuard::BINDING_HEADROOM_BYTES. Through the guard,
-// so a script's pcall cannot catch it; a literal, since the stack is short here.
-void requireHeadroom(lua_State* L, const char* message) {
+// so a script's pcall cannot catch it; raiseStatic, with no lua_getinfo or
+// formatting, since under 4 KiB of stack is left here.
+void requireHeadroom(lua_State* L, const char* literal) {
   CallGuard* guard = bindingContext(L)->guard;
-  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) guard->raise(L, message);
+  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) guard->raiseStatic(L, literal);
 }
 
 // ch.timer.after(ms): replaces the pending timer (AD-23).

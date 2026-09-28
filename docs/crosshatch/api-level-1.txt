@@ -62,7 +62,9 @@ fn ch.log(...)
 
 # Globals the runtime provides: print writes to ch.log; require loads name.lua
 # from the game's own files; setmetatable is Lua's, except that it refuses a
-# metatable with a __gc field (finalizers would run outside the budget).
+# metatable with a __gc field (finalizers would run outside the budget) or a
+# __close field (a __close raising while the heap cap unwinds would turn it into
+# an error pcall catches).
 fn print(...)
 fn require(name) -> any
 fn setmetatable(t, mt) -> table
@@ -71,6 +73,9 @@ fn setmetatable(t, mt) -> table
 # cannot keep a game running past a fault that stops it (the instruction budget,
 # the heap cap, C stack headroom, a value or table over its limit, a full frame,
 # ch.gfx outside draw): they may return false once, and the call still ends.
+# error("not enough memory", 0) raises Lua's own memory error, so it stops the
+# game too. The string metatable is sealed: getmetatable("") returns false, and
+# string methods and arithmetic on numeric strings work as in Lua.
 lib _G
 lib _VERSION
 lib assert

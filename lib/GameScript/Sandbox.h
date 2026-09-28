@@ -20,9 +20,11 @@ inline constexpr size_t TABLE_ELEMENTS_LIMIT = 65536;
 // from the game's own sources (BindingContext::sources) in text mode, once, and
 // returns its value (true for nil). math.random is seeded from `random`, and so is
 // a no-argument math.randomseed() (which `random` must outlive). No io, os, debug,
-// coroutine, or package. setmetatable refuses __gc, print is ch.log (chLog), xpcall
-// skips its handler for a CallGuard fault, and table.move/insert/remove refuse more
-// than TABLE_ELEMENTS_LIMIT elements. May raise a Lua error (out of memory), so call
+// coroutine, or package. setmetatable refuses __gc and __close, the string
+// metatable is sealed (getmetatable('') is false), print is ch.log (chLog), pcall
+// and xpcall cannot catch a memory error (a CallGuard fault), xpcall skips its
+// handler for a CallGuard fault, and table.move/insert/remove refuse more than
+// TABLE_ELEMENTS_LIMIT elements. May raise a Lua error (out of memory), so call
 // it only inside a protected call.
 void openSandbox(lua_State* L, GameCore::IRandom& random);
 

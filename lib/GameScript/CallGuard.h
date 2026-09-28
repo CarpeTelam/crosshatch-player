@@ -79,6 +79,11 @@ class CallGuard {
   // script's chunk and line, and raises it; like every fault it is sticky, so the
   // script's own pcall cannot keep the call going. Does not return.
   int raise(lua_State* L, const char* message);
+  // raise() without the chunk and line: records a Binding fault whose message is
+  // `literal` itself (kept until the next arm(), so a string literal; raise()
+  // passes the guard's own text), with no lua_getinfo or formatting, for a binding
+  // that runs short of stack. Does not return.
+  int raiseStatic(lua_State* L, const char* literal);
   // From the sandbox's pcall, xpcall, and require, when a call they protect ended
   // in a memory error (the heap cap, AD-6): records a Memory fault, unless one is
   // already recorded, and raises the error object on top of the stack again.
@@ -94,7 +99,7 @@ class CallGuard {
   uintptr_t floor = 0;
   uintptr_t deepest = UINTPTR_MAX;
   char text[MESSAGE_CAPACITY] = {};
-  // text, or a static literal for the stack and cancel faults.
+  // text, or a static literal for the stack, cancel, and memory faults and raiseStatic.
   const char* shown = text;
 };
 

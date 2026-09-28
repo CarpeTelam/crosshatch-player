@@ -308,8 +308,18 @@ TEST_F(HostBindingsTest, LogAndStoreNeedStackHeadroom) {
   // Each level nests a pcall (about 800 B of C stack), so the depth where these
   // bindings refuse (under 4 KiB free) comes before the guard's 2 KiB floor. The
   // refusal is a guard fault: the script's pcall cannot catch it, so the tap ends
-  // in a ScriptError instead of drawing the message.
-  for (const char* call : {"print(d)", "ch.store.get()", "ch.store.set({})"}) {
+  // in a ScriptError instead of drawing the message. Its text is a literal, with
+  // no chunk and line: nothing is formatted on the short stack.
+  struct Case {
+    const char* call;
+    const char* message;
+  };
+  const Case cases[] = {
+      {"print(d)", "ch.log: script recursion too deep to call it"},
+      {"ch.store.get()", "ch.store.get: script recursion too deep to call it"},
+      {"ch.store.set({})", "ch.store.set: script recursion too deep to call it"},
+  };
+  for (const auto& [call, message] : cases) {
     const std::string body = std::string(
                                  "local function dive(d)\n"
                                  "  local ok, e = pcall(function() ") +
@@ -319,9 +329,7 @@ TEST_F(HostBindingsTest, LogAndStoreNeedStackHeadroom) {
                              "  return select(2, pcall(dive, d + 1))\n"
                              "end\n"
                              "ui.text = dive(1)";
-    const std::string drawn = tapWith(body);
-    EXPECT_EQ(drawn.rfind("error: ", 0), 0u) << call << " -> " << drawn;
-    EXPECT_TRUE(drawn.find("script recursion too deep to call it") != std::string::npos) << call << " -> " << drawn;
+    EXPECT_EQ(tapWith(body), std::string("error: ") + message) << call;
   }
 }
 

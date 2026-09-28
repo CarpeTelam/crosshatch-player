@@ -80,14 +80,18 @@ void CallGuard::hook(lua_State* L, lua_Debug* ar) {
 }
 
 int CallGuard::raise(lua_State* L, const char* message) {
-  tripped = Fault::Binding;
   lua_Debug caller;
   if (lua_getstack(L, 1, &caller) && lua_getinfo(L, "Sl", &caller) && caller.currentline > 0) {
     snprintf(text, sizeof(text), "%s:%d: %s", caller.short_src, caller.currentline, message);
   } else {
     snprintf(text, sizeof(text), "%s", message);
   }
-  shown = text;
+  return raiseStatic(L, text);
+}
+
+int CallGuard::raiseStatic(lua_State* L, const char* literal) {
+  tripped = Fault::Binding;
+  shown = literal;
   lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
   lua_pushstring(L, shown);
   return lua_error(L);

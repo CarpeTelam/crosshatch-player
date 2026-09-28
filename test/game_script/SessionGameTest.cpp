@@ -8,6 +8,8 @@
 #include <functional>
 #include <iostream>
 #include <lua.hpp>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,7 +40,8 @@ class SessionGameTest : public LuaGameTest {
            "return g";
   }
 
-  void expectBandsMatchTheReadme(const char* fixture, const std::string& heading, size_t watchdogBands);
+  void expectBandsMatchTheReadme(const char* fixture, const std::string& heading,
+                                 const std::set<std::string>& watchdogBands);
 };
 
 TEST_F(SessionGameTest, TheTracerPlaysToGameOver) {
@@ -141,7 +144,6 @@ std::string backticked(const std::string& cell) {
 
 constexpr const char* STACK_MESSAGE = "script recursion too deep (C stack nearly full)";
 constexpr const char* LUA_STACK_MESSAGE = "C stack overflow";
-constexpr const char* WATCHDOG_MESSAGE = "It stopped responding";
 
 // The README's text for a fault, or for a stack-depth fault (its text is one of the
 // two stack messages) either stack message, as its closing note allows.
@@ -168,23 +170,39 @@ Step stepNamed(const std::string& where) {
   return Step::None;
 }
 
-// Each band of a band fixture (limits/ or loop/) that the host can run ends in a
-// ScriptError on the tap, with the README's text. The tap lands on the band's
-// label, where the fixture drew it, so it reaches the band the README names.
+// The labels of a band fixture's BANDS table (its `label = "..."` fields), in order.
+std::vector<std::string> bandLabels(const std::string& source) {
+  static const std::regex LABEL("label = \"([^\"]*)\"");
+  std::vector<std::string> labels;
+  for (auto it = std::sregex_iterator(source.begin(), source.end(), LABEL); it != std::sregex_iterator(); ++it) {
+    labels.push_back((*it)[1].str());
+  }
+  return labels;
+}
+
+// Each band of a band fixture (limits/ or loop/) has a README row and each row a
+// band, and each band the host can run ends in a ScriptError on the tap, with the
+// README's text. The tap lands on the band's label, where the fixture drew it, so
+// it reaches the band the README names. `watchdogBands` names the bands that end
+// on the 3 s watchdog, which lives in GameMatchActivity (not built on the host):
+// they are skipped by name, so no text change can make the host run a stuck call.
 void SessionGameTest::expectBandsMatchTheReadme(const char* fixture, const std::string& heading,
-                                                const size_t watchdogBands) {
+                                                const std::set<std::string>& watchdogBands) {
+  const std::string source = readFixture(std::string(fixture) + "/main.lua");
   const auto rows = readmeTable(heading);
-  size_t skipped = 0;
+  std::vector<std::string> readmeLabels;
+  for (const auto& row : rows) readmeLabels.push_back(row.empty() ? "" : row[0]);
+  EXPECT_EQ(readmeLabels, bandLabels(source)) << heading << ": the README's rows and " << fixture << "'s bands";
+  for (const std::string& name : watchdogBands) {
+    EXPECT_NE(std::find(readmeLabels.begin(), readmeLabels.end(), name), readmeLabels.end())
+        << name << " is not a band of " << fixture;
+  }
   for (const auto& row : rows) {
     ASSERT_GE(row.size(), 2u) << heading;
     const std::string label = row[0];
     const std::string text = backticked(row[1]);
-    if (text.rfind(WATCHDOG_MESSAGE, 0) == 0) {
-      // The 3 s watchdog lives in GameMatchActivity, which the host does not build.
-      ++skipped;
-      continue;
-    }
-    useSource("main", readFixture(std::string(fixture) + "/main.lua"));
+    if (watchdogBands.count(label)) continue;
+    useSource("main", source);
     SessionGame game(*this);
     modelTaskStack(game.game);
     ASSERT_EQ(game.start(), Outcome::Ok) << label << ": " << game.errorMessage();
@@ -197,17 +215,15 @@ void SessionGameTest::expectBandsMatchTheReadme(const char* fixture, const std::
     EXPECT_EQ(game.tap(static_cast<int16_t>(at->x), static_cast<int16_t>(at->y)), Outcome::ScriptError) << label;
     expectReadmeText(game.errorMessage(), text, label);
   }
-  EXPECT_EQ(skipped, watchdogBands) << heading;
-  EXPECT_GT(rows.size(), skipped) << heading;
+  EXPECT_GT(rows.size(), watchdogBands.size()) << heading;
 }
 
 TEST_F(SessionGameTest, EveryLimitsFixtureBandEndsWithTheReadmesText) {
-  expectBandsMatchTheReadme("limits", "`limits/` (", 0);
+  expectBandsMatchTheReadme("limits", "`limits/` (", {});
 }
 
 TEST_F(SessionGameTest, EveryLoopFixtureBandEndsWithTheReadmesText) {
-  // Bands 4 and 5 (Slow C calls forever, Stuck in one C call) end on the watchdog.
-  expectBandsMatchTheReadme("loop", "`loop/` (", 2);
+  expectBandsMatchTheReadme("loop", "`loop/` (", {"Slow C calls forever", "Stuck in one C call"});
 }
 
 // Each script under faults/ stops at the README's step with its text, through the
@@ -408,6 +424,7 @@ TEST_F(SessionGameTest, ValuesTheContractRefusesAreScriptErrors) {
   EXPECT_EQ(game.session->discardedMoves(), 0u);
 }
 
+// Stops short of the cap; ArenaAllocatorRegionTest.TheReserveStaysIntactWhenLuaExhaustsItsRegion covers it at the cap.
 TEST_F(SessionGameTest, TheSessionAndScratchAreTakenFromTheArenaBeforeLua) {
   useSource("main", gameWith(R"(
     setup = function()

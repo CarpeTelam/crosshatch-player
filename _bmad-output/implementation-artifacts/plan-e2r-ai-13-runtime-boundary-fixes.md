@@ -111,6 +111,8 @@ Pass 2: the orchestrator's independent review of 67cd7b70 (it confirmed that the
 | 14 | orchestrator | `GameVM.cpp:177` still logs "dropped the oldest event" | low | patch: "dropped the oldest non-timer event"; the spine is left to the orchestrator |
 | 15 | orchestrator | The R2 test drives the test's copy of `pollTimer`, not `GameVM` | low | accepted, per the orchestrator: the known R9 harness gap (AI-11) |
 
+The review of da88f053 continues in [plan-e2r-ai-13b-sticky-fault-follow-ups.md](plan-e2r-ai-13b-sticky-fault-follow-ups.md) (rows 16 on).
+
 ## Design Notes
 
 Queue eviction over "disarm on pop": the timer stays single-owner (`takeDue` stays as is) and the change is local to `InputQueue`. More than one Timer can be queued only when older ones are stale (a later arm bumped the serial), so when every entry is a Timer the oldest is the one to drop. The spine's line "a full input queue drops the oldest event with a log line" (ARCHITECTURE-SPINE.md:108) becomes "oldest non-timer event"; the spine is not edited here (report it).

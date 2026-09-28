@@ -1,0 +1,135 @@
+---
+title: 'Sticky-fault follow-ups: __close, the string metatable, and the README oracle (AI-13b)'
+type: 'bugfix'
+ticket: ''
+created: '2026-09-28'
+status: 'built'
+baseline_revision: '93b1590f3f8f4d8b1b47982c2ef0a3312f5efd23'
+route: 'full'
+route_source: 'auto'
+review: 'thorough'
+review_source: 'auto'
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
+review_loop_iteration: 0
+context:
+  - '{project-root}/_bmad-output/implementation-artifacts/plan-e2r-ai-13-runtime-boundary-fixes.md'
+---
+
+<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
+
+## Intent
+
+**Problem:** The independent review of da88f053 (triage continued from [plan-e2r-ai-13-runtime-boundary-fixes.md](plan-e2r-ai-13-runtime-boundary-fixes.md)) found that the heap cap can still be survived under `pcall`: a to-be-closed value whose `__close` raises while the memory error unwinds turns `LUA_ERRMEM` into `LUA_ERRRUN` (`luaD_closeprotected`), and scripts can make a closable value through `setmetatable` or the shared string metatable. It also found six low items: `error("not enough memory", 0)` is uncatchable, require's ERRMEM branch looks redundant, `requireHeadroom` formats on a short stack, the band tests do not tie fixture bands to README rows and skip watchdog bands by text, a heap test lost its cap check silently, and the contract does not state these rules.
+
+**Approach (orchestrator decisions):** `setmetatable` refuses a metatable with a raw `__close` field (same style as `__gc`); the sandbox seals the string metatable (its `__metatable` field, so `getmetatable('')` returns a non-table); `requireHeadroom` raises a static literal with no formatting; the band tests parse each fixture's band labels and skip watchdog bands by name; docs state the rules (api-level-1.txt, game-api-seed.md section 6, spine AD-6). Accept item 2 (document it) and item 6 (comment). Remove require's ERRMEM branch unless a test shows it matters.
+
+## Boundaries & Constraints
+
+**Always:** Fork-only files. Existing error texts unchanged except the headroom refusals, which lose their `chunk:line:` prefix (no README row carries it). Tests for each fix, including pcall and xpcall cases for both repros and the `__close` refusal. `API_SURFACE_CRC` changes only if an entry line changes.
+
+**Never:** No change to Lua's sources or `lib/lua/library.json`. Do not touch `src/activities/games` or `src/games` (a parallel agent owns them). Do not model the watchdog bands on the host.
+
+## I/O & Edge-Case Matrix
+
+| Scenario | Input / State | Expected Output / Behavior | Error Handling |
+|----------|--------------|---------------------------|----------------|
+| `__close` metatable | `pcall(setmetatable, {}, {__close = f})`, and the same under `xpcall` | false, "setmetatable: __close metamethods are not supported" | plain Lua error, like `__gc` |
+| String metatable | `getmetatable('')` | `false`; `('ab'):upper()` and `'1' + 1` still work | `getmetatable('').__close = f` is an index error |
+| Closable string | `local c <close> = 'x'` | "variable 'c' got a non-closable value" | plain Lua error |
+| Heap cap via require inside a tbc scope | the closable value's metatable gained `__close` after `setmetatable`, then `pcall(require, 'bomb')` | ScriptError "not enough memory", Fault::Memory | require's raiseMemory records the fault before the close runs |
+| Headroom refusal | ch.log / ch.store under 4 KiB of stack | ScriptError "ch.log: script recursion too deep to call it" | guard fault, no formatting |
+| README drift | a fixture band without a README row, or a row without a band | the band test fails | |
+
+</frozen-after-approval>
+
+## Code Map
+
+- `lib/GameScript/Sandbox.cpp:156-175` `guardedSetmetatable` -- loop the raw-field refusal over `__gc` and `__close`. `openSandbox` :238 -- after `luaopen_string`, set the string metatable's `__metatable` to `false`. :50-57 `forgetAndRaise` -- keep its ERRMEM branch (Design Notes). Header comment `Sandbox.h:18-26`.
+- `lib/GameScript/CallGuard.{h,cpp}` -- add `raiseStatic(L, literal)`: Binding fault, `shown = literal`, no `lua_getstack`/`lua_getinfo`/`snprintf`; `raise()` formats into `text` and ends in it.
+- `lib/GameScript/ChBindings.cpp:151-154` `requireHeadroom` -- use `raiseStatic`.
+- `test/game_script/fixtures/surface/main.lua:57-61` and `ApiSurfaceTest.cpp:181-185` -- the fixture reports `S <type of getmetatable('')>` and method/arithmetic probes; the test checks the raw keys of the string metatable from C++ (`openSandbox` on a `luaL_newstate`): lstrlib's set plus `__metatable`.
+- `test/game_script/LuaGameTest.cpp:212` next to `TheHeapCapStopsTheGameEvenUnderPcall` -- new tests.
+- `test/game_script/SandboxTest.cpp:127` `SetmetatableRefusesGcFinalizers` -- add `__close`.
+- `test/game_script/SessionGameTest.cpp:204-250` `expectBandsMatchTheReadme` -- parse `label = "..."` from the fixture's `main.lua`, compare with the README's labels as sets, skip names in an explicit list; :383 add the comment pointing at `ArenaAllocatorRegionTest.TheReserveStaysIntactWhenLuaExhaustsItsRegion` (`ArenaAllocatorTest.cpp:287`).
+- `docs/crosshatch/api-level-1.txt:62-73` -- comments on setmetatable, the string metatable, and `error("not enough memory")`.
+- `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md` section 6 Errors; `ARCHITECTURE-SPINE.md:133` (AD-6 lists `__gc`) -- amendments dated 2026-09-28.
+
+## Tasks & Acceptance
+
+**Execution:**
+- [ ] `lib/GameScript/CallGuard.{h,cpp}`, `ChBindings.cpp` -- `raiseStatic`; `requireHeadroom` uses it.
+- [ ] `lib/GameScript/Sandbox.{h,cpp}` -- `__close` refusal; string metatable seal; comments.
+- [ ] `test/game_script/LuaGameTest.cpp` -- both repros under pcall and xpcall end at the refusal / seal with the game still running (draw Ok, text shows the error); `<close>` on a string is refused; the require-in-tbc heap case stops with Fault::Memory.
+- [ ] `test/game_script/SandboxTest.cpp` -- `__close` refusal text, directly and under pcall.
+- [ ] `test/game_script/HostBindingsTest.cpp` -- `LogAndStoreNeedStackHeadroom` asserts the message has no `main.lua:` prefix and the fault is Binding.
+- [ ] `test/game_script/fixtures/surface/main.lua`, `ApiSurfaceTest.cpp` -- the seal.
+- [ ] `test/game_script/SessionGameTest.cpp` -- band cross-check, named watchdog skips, comment.
+- [ ] docs -- api-level-1.txt comments, game-api-seed.md section 6, spine AD-6 amendment.
+
+**Acceptance Criteria:**
+- Given a script, when it tries to give a table or a string a `__close` metamethod through `setmetatable` or the string metatable, then it gets a Lua error and no closable value.
+- Given a fixture band without a README row (or the reverse), when the host suite runs, then `SessionGameTest` fails.
+- Given the whole host suite, when run, then all tests pass; `pio run -e x4pro` and `-e default` succeed.
+
+## Implementation Notes
+
+- No subagent tool in this session: implemented directly, and each review lens run in turn by the build agent.
+- `CallGuard::raiseStatic` records a Binding fault whose message is the literal itself; `raise()` formats into the guard's `text` and ends in `raiseStatic(L, text)`. `requireHeadroom` calls it, so the three headroom refusals read `ch.log: script recursion too deep to call it` (no `main.lua:N:` prefix; no README row carries these texts).
+- `guardedSetmetatable` refuses a raw `__gc` or `__close` field (any non-nil value, `false` included); the message is `setmetatable: __close metamethods are not supported`. `openSandbox` sets the string metatable's `__metatable` to `false` right after the libraries open.
+- The surface fixture can no longer list the string metatable's keys, so it reports `getmetatable("")` and a method and arithmetic probe; `ApiSurfaceTest.LibraryMembersMatchTheList` reads the metatable raw from a `luaL_newstate` + `openSandbox` state and expects lstrlib's nine keys plus `__metatable`.
+- require's ERRMEM branch stays (item 3): `LuaGameTest.TheHeapCapInARequireSurvivesARaisingClose` fails without it. The test adds `__close` to a metatable after `setmetatable`, which the refusal cannot see.
+- Residual (reported to the orchestrator, not fixed here): the same post-hoc `__close` survives a heap bomb raised in Lua code, not in require. A scratch probe (`local mt = {} local t = setmetatable({}, mt) mt.__close = function() error('recovered', 0) end local c <close> = t local s = string.rep('x', 1 << 20)` under `pcall`) drew `false recovered` with the draw Ok and no fault. No fork-code-only change closes it; the options are in the final report.
+- Item 2: `TheHeapCapStopsTheGameEvenUnderPcall` gained a `pcall(error, 'not enough memory', 0)` case, which ends in Fault::Memory as api-level-1.txt now says.
+- `API_SURFACE_CRC` is unchanged: only comments of api-level-1.txt changed.
+- Mutation check (each alone, then restored): dropping require's ERRMEM branch fails `TheHeapCapInARequireSurvivesARaisingClose`; dropping `__close` from the refusal fails `AScriptCannotMakeAClosableValue` and `SetmetatableRefusesGcFinalizers`; dropping the seal fails `AScriptCannotMakeAClosableValue` and `LibraryMembersMatchTheList`; deleting the README's "Invalid status" row fails `EveryLimitsFixtureBandEndsWithTheReadmesText`; renaming the "Stuck in one C call" row fails `EveryLoopFixtureBandEndsWithTheReadmesText` without running the stuck call.
+
+## Plan Change Log
+
+## Review Triage Log
+
+Continues [plan-e2r-ai-13-runtime-boundary-fixes.md](plan-e2r-ai-13-runtime-boundary-fixes.md)'s log (rows 1-15).
+
+Pass 0: the orchestrator's independent review of da88f053, triaged with the orchestrator's decisions. Counts: high 0, medium 1, low 6, false 0, maybe-false 0.
+
+| # | Source | Finding | Verdict | Route / evidence |
+|---|--------|---------|---------|------------------|
+| 16 | orchestrator | A raising `__close` turns the heap cap's `LUA_ERRMEM` into `LUA_ERRRUN` under pcall/xpcall (via `setmetatable` or the string metatable) | medium | patch: `setmetatable` refuses `__close`, the string metatable is sealed (`LuaGameTest.AScriptCannotMakeAClosableValue`, `SandboxTest.SetmetatableRefusesGcFinalizers`, `ApiSurfaceTest.LibraryMembersMatchTheList`). Residual (a `__close` added after `setmetatable`, bomb in Lua code) confirmed by probe: defer, sent back to the orchestrator |
+| 17 | orchestrator | `error("not enough memory", 0)` is uncatchable | low | accepted: api-level-1.txt says so; `TheHeapCapStopsTheGameEvenUnderPcall` pins it |
+| 18 | orchestrator | require's `LUA_ERRMEM` branch is redundant and untested | low | rejected: it records the fault before a post-hoc `__close` can replace the error; `TheHeapCapInARequireSurvivesARaisingClose` fails without it; comment added |
+| 19 | orchestrator | `requireHeadroom` formats on a short stack | low | patch: `CallGuard::raiseStatic`; `LogAndStoreNeedStackHeadroom` asserts the exact literal |
+| 20 | orchestrator | Band tests do not tie fixture bands to README rows; watchdog bands skipped by text | low | patch: `bandLabels` parses `label = "..."`; rows and bands must match in order; watchdog bands skipped by name. Mutation: a deleted row and a renamed watchdog row each fail |
+| 21 | orchestrator | `TheSessionAndScratchAreTakenFromTheArenaBeforeLua` no longer reaches the cap | low | accepted: comment points at `ArenaAllocatorRegionTest.TheReserveStaysIntactWhenLuaExhaustsItsRegion` |
+| 22 | orchestrator | The contract omits pcall's limits, the table limit, `__close`, the seal | low | patch: game-api-seed.md section 6 and spine AD-6, marked Amended 2026-09-28 |
+
+Pass 1 (lenses run in turn by the build agent: blind-hunter, edge-case-hunter, verification-gap, intent-alignment). Counts: high 0, medium 1, low 3, false 2, maybe-false 0.
+
+| # | Lens | Finding | Verdict | Route / evidence |
+|---|------|---------|---------|------------------|
+| 23 | edge-case (claim) | The AC "a script ... gets no closable value" is false for a `__close` added to the metatable after `setmetatable` | medium | defer: the path predates this change (da88f053 had it, wider); `deferred-work.md` `## e2r-ai-13b`, and the final report's blocking question |
+| 24 | blind | `ApiSurfaceTest` leaks its `lua_State` when `ASSERT_TRUE(lua_getmetatable…)` fails | low | patch: the loop runs under `if`, and `lua_close` always runs; an empty set fails the `EXPECT_EQ` |
+| 25 | blind | `raiseStatic`'s comment says "a string literal" but `raise()` passes the guard's `text` | low | patch: comment names both |
+| 26 | blind | `lua_tostring` on a non-string key would break `lua_next` in the raw metatable walk | false | lstrlib's metatable and the seal use string keys only (`lstrlib.c` `stringmetamethods`, `"__index"`, `"__metatable"`) |
+| 27 | edge-case | `lua_getmetatable` in `openSandbox`'s seal could push nothing | false | `luaopen_string`, opened two lines above, always sets the string metatable (`lstrlib.c:1880-1885`) |
+| 28 | edge-case (claim) | The task "asserts the fault is Binding" in `LogAndStoreNeedStackHeadroom` is not met (`tapWith` hides the game) | low | rejected: the ScriptError under a pcall that swallows errors shows the refusal is a guard fault |
+| 29 | verification-gap | No gaps: the refactored `raise()` keeps its prefixed texts (existing `STREQ` frame-full and README tests), and each new behaviour has a mutation-checked test | no finding | |
+| 30 | intent-alignment | Readings: (a) close the heap-cap-under-pcall hole, (b) apply the orchestrator's named mechanisms. The diff implements (b); (a) holds for the reported repros and the require path, not for a post-hoc `__close` with a bomb in Lua code (row 23) | no finding | descriptive only |
+
+## Design Notes
+
+Why require keeps its ERRMEM branch: `setmetatable` checks `__close` only when the metatable is set, but Lua looks `__close` up at the `<close>` declaration and again at close time. A script can set a metatable, then add `__close` to it, and close over it. A plain `lua_error` in require would re-raise ERRMEM, but the `__close` could still replace it while unwinding to the outer pcall; `raiseMemory` records the fault first, so the hook re-raises inside the `__close`. A test pins it. The general post-hoc case (a memory error raised in Lua code, not in require) is not closed by the orchestrator's fix; it goes back as a question (no Lua build change in this plan).
+
+Seal value `false`: `getmetatable('')` then reads as "no metatable" to a truthiness test, and indexing it fails loudly.
+
+## Verification
+
+**Commands:**
+- `flock <lock> sh -c 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test'` then `ctest --test-dir build/test --output-on-failure -j` -- all pass
+- `flock <lock> pio run -e x4pro`, `flock <lock> pio run -e default` -- SUCCESS
+- `./bin/clang-format-fix` twice -- nothing new in `git status`
+
+**Evidence (2026-09-28, all builds under the shared lock):**
+- Host tests: `cmake --build build/test` then `ctest --test-dir build/test -j8` -- 639/639 passed (637 before, plus `AScriptCannotMakeAClosableValue` and `TheHeapCapInARequireSurvivesARaisingClose`), after the review patches and the formatter.
+- Mutation check: see Implementation Notes (five mutations, each failing its tests; restored, 178/178 in `GameScriptTest`).
+- `pio run -e x4pro` -- SUCCESS (3:54 fresh, 1:25 after the review patches); `pio run -e default` -- SUCCESS (2:55 fresh, 0:35 after).
+- `API_SURFACE_CRC` unchanged: `ApiLevelTest` and `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` pass with only comment lines changed.
+- Every touched path is fork-only (`lib/GameScript`, `test/game_script`, `docs/crosshatch`, `_bmad-output`), so the upstream-touch check does not apply.
