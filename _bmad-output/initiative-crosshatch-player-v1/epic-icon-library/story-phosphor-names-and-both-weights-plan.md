@@ -3,7 +3,7 @@ title: 'Phosphor names and both weights'
 type: 'feature'
 ticket: '9'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: '87dae8eabb1812a0e7c0a29c8e6365e536abf41f'
 route: 'full'
 route_source: 'auto'
