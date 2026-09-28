@@ -5,12 +5,14 @@ Tests for check_layers.py. Standard library only:
     python3 scripts/check_layers_test.py [-v]
 
 Each case writes a small fixture tree (the game folders and a few upstream headers) to a temp directory, runs the
-script on it, and asserts the exit code, so a regression that makes the check always pass is caught. The pre-fix
+script on it, and asserts the exit code, so a regression that makes the check always pass is caught. SpineTest parses
+the spine's layer table (SPINE_PATH, a tracked file) and compares it with TABLE and UPSTREAM_EDGES. The pre-fix
 GameMatchActivity case uses the include lines and names e8420aaa added (retro O3).
 """
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -342,6 +344,11 @@ class TableTest(unittest.TestCase):
     def test_every_component_has_a_row(self):
         self.assertEqual(set(check_layers.COMPONENTS), set(check_layers.LAYERS))
 
+    def test_beyond_table_only_adds_to_table_rows(self):
+        self.assertLessEqual(set(check_layers.BEYOND_TABLE), set(check_layers.TABLE))
+        for comp, edges in check_layers.TABLE.items():
+            self.assertFalse(edges & check_layers.BEYOND_TABLE.get(comp, set()), comp)
+
     def test_every_upstream_edge_is_a_ledger_row(self):
         ledger = (HERE.parent / check_upstream_touches.LEDGER_PATH).read_text()
         rows = set(check_upstream_touches.parse_ledger(ledger)['Ledger'])
@@ -349,6 +356,159 @@ class TableTest(unittest.TestCase):
             self.assertIn(path, rows)
             self.assertTrue(targets <= set(check_layers.COMPONENTS), path)
             self.assertFalse(targets & check_layers.GAME_SCRIPT_OR_LUA, path)
+
+
+TABLE_HEADER = '| Layer | Lives in | May depend on |'
+ENGINE_ROW = 'Engine (vendored)'
+HOOKS_ROW = 'Upstream hooks (AD-3 ledger rows)'
+PARENTHETICAL = re.compile(r'\s*\([^()]*\)')
+TERM_SEPARATOR = re.compile(r'\s*[,;]\s*| and | / | or ')
+REPO_PATH = re.compile(r'(?:lib|src)/[A-Za-z0-9_./-]+')
+
+
+def spine_terms(row, text, problems):
+    """The components the terms of one table cell name (backticks and parentheticals dropped, SPINE_TERMS applied);
+    an unknown term is appended to problems."""
+    reached = set()
+    for term in TERM_SEPARATOR.split(PARENTHETICAL.sub('', text.replace('`', '')).strip()):
+        if term in check_layers.SPINE_TERMS:
+            if check_layers.SPINE_TERMS[term] is not None:
+                reached.add(check_layers.SPINE_TERMS[term])
+        elif REPO_PATH.fullmatch(term):
+            reached.add(term.rstrip('/'))
+        else:
+            problems.append(f'{row}: unknown spine term "{term}"; add it to SPINE_TERMS in scripts/check_layers.py')
+    return reached
+
+
+def parse_hooks(lives_in, depends, problems):
+    """{upstream path: components} from the Upstream hooks row's two cells."""
+    paths = {}
+    for part in lives_in.replace('`', '').split(','):
+        match = re.fullmatch(r'\s*(\S+) \(row (\d+)\)\s*', part)
+        if not match:
+            problems.append(f'{HOOKS_ROW}: cannot read "{part.strip()}" as "<path> (row <n>)"')
+            continue
+        paths[match.group(2)] = match.group(1)
+    edges = {}
+    never_read = False
+    for segment in PARENTHETICAL.sub('', depends.replace('`', '')).split(';'):
+        segment = segment.strip()
+        row = re.fullmatch(r'row (\d+): (.*)', segment)
+        if row and row.group(1) in paths:
+            edges[paths[row.group(1)]] = spine_terms(HOOKS_ROW, row.group(2), problems)
+        elif segment.startswith('never '):
+            never_read = True
+            never = spine_terms(HOOKS_ROW, segment[len('never '):].split('. ')[0], problems)
+            if never != check_layers.GAME_SCRIPT_OR_LUA:
+                problems.append(f'{HOOKS_ROW}: the spine never allows {", ".join(sorted(never))}; '
+                                f'GAME_SCRIPT_OR_LUA is {", ".join(sorted(check_layers.GAME_SCRIPT_OR_LUA))}')
+        else:
+            problems.append(f'{HOOKS_ROW}: cannot read "{segment}" as "row <n>: <terms>" of a row it lists')
+    if not never_read:
+        problems.append(f'{HOOKS_ROW}: no "never" clause; the spine must keep GameScript and lib/lua from upstream')
+    return edges
+
+
+def compare(row, spine, script, name):
+    """Problems for each edge one side has and the other lacks."""
+    problems = [f'{row}: the spine allows {edge}; {name} does not' for edge in sorted(spine - script)]
+    problems += [f'{row}: {name} allows {edge}; the spine does not' for edge in sorted(script - spine)]
+    return problems
+
+
+def spine_problems(text):
+    """How the spine's layer table (text: ARCHITECTURE-SPINE.md) differs from TABLE and UPSTREAM_EDGES."""
+    lines = text.splitlines()
+    if TABLE_HEADER not in lines:
+        return [f'no line "{TABLE_HEADER}" in the spine']
+    problems = []
+    layers = {}
+    hooks = None
+    start = lines.index(TABLE_HEADER) + 2  # past the header and its separator
+    for line in lines[start:]:
+        if not line.startswith('|'):
+            break
+        cells = [cell.strip() for cell in line.strip().strip('|').split('|')]
+        if len(cells) != 3:
+            problems.append(f'not a three-cell row: {line}')
+            continue
+        row, lives_in, depends = cells
+        if row == ENGINE_ROW:
+            continue
+        if row == HOOKS_ROW:
+            hooks = parse_hooks(lives_in, depends, problems)
+            continue
+        comp = lives_in.replace('`', '').rstrip('/')
+        layers[comp] = spine_terms(row, depends, problems)
+        if comp in check_layers.TABLE:
+            problems += compare(f'{row} ({comp})', layers[comp], check_layers.TABLE[comp], 'TABLE')
+    table = set(check_layers.TABLE)
+    problems += [f'the spine has a row for {comp}; TABLE does not' for comp in sorted(set(layers) - table)]
+    problems += [f'TABLE has a row for {comp}; the spine does not' for comp in sorted(table - set(layers))]
+    if hooks is None:
+        return problems + [f'no "{HOOKS_ROW}" row in the spine']
+    for path in sorted(set(hooks) | set(check_layers.UPSTREAM_EDGES)):
+        problems += compare(f'{HOOKS_ROW} ({path})', hooks.get(path, set()),
+                            check_layers.UPSTREAM_EDGES.get(path, set()), 'UPSTREAM_EDGES')
+    return problems
+
+
+class SpineTest(unittest.TestCase):
+    """TABLE and UPSTREAM_EDGES say what the spine's layer table says, term for term."""
+
+    def setUp(self):
+        self.spine = (HERE.parent / check_layers.SPINE_PATH).read_text()
+
+    def doctored(self, old, new):
+        self.assertIn(old, self.spine)
+        return spine_problems(self.spine.replace(old, new, 1))
+
+    def assert_problem(self, problems, *parts):
+        self.assertTrue(any(all(part in problem for part in parts) for problem in problems),
+                        f'no problem naming {parts} in {problems}')
+
+    def test_table_matches_the_spine(self):
+        self.assertEqual(spine_problems(self.spine), [])
+
+    def test_tightened_row_fails(self):
+        problems = self.doctored('`lib/Memory`, `lib/JsonParser` |', '`lib/Memory` |')
+        self.assert_problem(problems, 'Domain', 'lib/JsonParser', 'TABLE allows')
+
+    def test_loosened_row_fails(self):
+        problems = self.doctored('`UiListActivity` / `UiAppHost` |', '`UiListActivity` / `UiAppHost`, `GameScript` |')
+        self.assert_problem(problems, 'Screens', 'lib/GameScript', 'the spine allows')
+
+    def test_unknown_term_fails(self):
+        problems = self.doctored('HAL, `Storage`', 'HAL, Bluetooth, `Storage`')
+        self.assert_problem(problems, 'Device adapters', 'unknown spine term "Bluetooth"')
+
+    def test_unknown_hooks_term_fails(self):
+        problems = self.doctored('row 9: `lib/GameIcons`', 'row 9: `lib/GameIcons`, Bluetooth')
+        self.assert_problem(problems, 'Upstream hooks', 'unknown spine term "Bluetooth"')
+
+    def test_tightened_hook_fails(self):
+        problems = self.doctored('`GameCore` (`ForkRelease.h`), ', '')
+        self.assert_problem(problems, 'src/network/OtaUpdater.cpp', 'lib/GameCore', 'UPSTREAM_EDGES allows')
+
+    def test_loosened_hook_fails(self):
+        problems = self.doctored('row 5: `src/activities/games/`', 'row 5: `src/activities/games/`, `GameCore`')
+        self.assert_problem(problems, 'src/activities/ActivityManager.cpp', 'lib/GameCore', 'the spine allows')
+
+    def test_hooks_never_list_must_be_game_script_and_lua(self):
+        problems = self.doctored('never `GameScript` or `lib/lua`', 'never `lib/lua`')
+        self.assert_problem(problems, 'never allows lib/lua')
+
+    def test_hooks_without_a_never_clause_fails(self):
+        problems = self.doctored('; never `GameScript` or `lib/lua`.', '.')
+        self.assert_problem(problems, 'Upstream hooks', 'no "never" clause')
+
+    def test_missing_row_fails(self):
+        row = next(line for line in self.spine.splitlines() if line.startswith('| Icon data |'))
+        self.assert_problem(self.doctored(row + '\n', ''), 'TABLE has a row for lib/GameIcons')
+
+    def test_missing_table_fails(self):
+        self.assert_problem(self.doctored(TABLE_HEADER, '| Layer |'), 'no line')
 
 
 if __name__ == '__main__':

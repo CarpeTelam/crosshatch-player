@@ -53,17 +53,10 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
 // The error view's detail for a failed VM: tr() text for the host's own failures,
 // Lua's message for the script's (AD-14).
 const char* vmFailureText(const GameVM& vm) {
-  switch (vm.failure()) {
-    case GameVM::Failure::NoSession:
-    case GameVM::Failure::OutOfMemory:
-      return tr(STR_GAMES_OUT_OF_MEMORY);
-    case GameVM::Failure::NotLoaded:
-      return tr(STR_GAMES_NOT_LOADED);
-    case GameVM::Failure::Script:
-    case GameVM::Failure::None:
-      break;
-  }
-  return vm.errorMessage();
+  GameVM::HostFailureTexts texts;
+  texts.outOfMemory = tr(STR_GAMES_OUT_OF_MEMORY);
+  texts.notLoaded = tr(STR_GAMES_NOT_LOADED);
+  return vm.failureDetail(texts);
 }
 
 // A menu choice's label.
@@ -255,11 +248,9 @@ void GameMatchActivity::stopStuckVm() {
 }
 
 bool GameMatchActivity::vmHealthy() {
-  const GameVM::Failure failure = vm->failure();
-  if (failure != GameVM::Failure::None) {
+  if (vm->failure() != GameVM::Failure::None) {
     // Only a Session that never fit failed before any game code ran (AD-14).
-    fail(failure == GameVM::Failure::NoSession ? StrId::STR_GAMES_START_FAILED : StrId::STR_GAMES_ERROR,
-         vmFailureText(*vm));
+    fail(vm->failedToStart() ? StrId::STR_GAMES_START_FAILED : StrId::STR_GAMES_ERROR, vmFailureText(*vm));
     return false;
   }
   // A C loop runs no Lua instructions, so neither the budget nor the cancel flag

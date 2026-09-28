@@ -4,7 +4,14 @@ Check that the game code's #include edges follow the spine's layer table (retro 
 
 The layer table in _bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/
 ARCHITECTURE-SPINE.md (Design Paradigm, and the diagram under Invariants & Rules) says what each game component may
-depend on. LAYERS below holds it as data. Every #include in lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
+depend on. TABLE below holds that table in its own terms (SPINE_TERMS says what each term names), BEYOND_TABLE the
+edges the check allows beyond it, each with its reason, and LAYERS the two together. check_layers_test.py's SpineTest
+parses the spine's table (its layer rows and its Upstream hooks row) and fails when the components a row reaches differ
+from TABLE's or UPSTREAM_EDGES's row, or when the row uses a term SPINE_TERMS does not know. It compares components,
+not terms: dropping one of two terms that name the same component (HAL / Storage, ESP-NOW / mbedTLS, UiListActivity /
+UiAppHost) changes nothing it can see. It does not compare the table's parenthetical file scopes, ONLY_FROM,
+FILE_EDGES, the Engine row, the diagram, or BEYOND_TABLE; those are reviewed by hand, each with its reason here.
+Every #include in lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
 and src/activities/games is resolved to what it reaches:
   - a quoted include to the including file's folder, then to src/;
   - any include to a header under lib/<name>/ or lib/<name>/src/ (the component lib/<name>);
@@ -39,7 +46,8 @@ missing, an unreadable file).
 Usage: python3 scripts/check_layers.py [--root <repository root>]   # default: this script's repository
        python3 scripts/check_layers_test.py                        # the script's own tests; standard library only
 
-When the spine's table changes, change LAYERS (and FILE_EDGES / ONLY_FROM / UPSTREAM_EDGES) in the same commit.
+When the spine's table changes, change TABLE (and SPINE_TERMS, FILE_EDGES, ONLY_FROM, UPSTREAM_EDGES) in the same
+commit; check_layers_test.py fails until they agree.
 """
 
 import argparse
@@ -69,41 +77,76 @@ COMPONENTS = (SCREENS, ADAPTERS, 'lib/GameCore', 'lib/GameIcons', 'lib/GameScrip
 UNSCANNED = ('lib/lua',)
 GAME_SCRIPT_OR_LUA = {'lib/GameScript', 'lib/lua'}
 
-# Edges the rows below add to the spine's table, each a convention rather than a design decision:
+# The spine's layer table, where it lives in the repository (tracked, so CI's checkout has it).
+SPINE_PATH = ('_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/'
+              'ARCHITECTURE-SPINE.md')
+
+# What each term of the spine's table names, as the check spells it. A repository path in the table (`lib/Utf8`,
+# `src/fontIds.h`, `src/games/`) names itself and is not listed. check_layers_test.py parses the table through this map
+# and fails on a term it does not know.
+SPINE_TERMS = {
+    'C++ standard library': STD,
+    'nothing': None,  # the Icon data row: no edge at all
+    'GameCore': 'lib/GameCore',
+    'GameScript': 'lib/GameScript',
+    'GameIcons': 'lib/GameIcons',
+    'HAL': 'lib/hal',
+    'Storage': 'lib/hal',
+    'ZipFile': 'lib/ZipFile',
+    'PngToBmpConverter': 'lib/PngToBmpConverter',
+    'ESP-NOW': RADIO_CRYPTO,
+    'mbedTLS': RADIO_CRYPTO,
+    'the SDK\'s FreeInkUICore.h': 'sdk:FreeInkUICore.h',
+    'SecureHttpClient in ForkReleaseProbe only': 'sdk:SecureHttpClient.h',  # and ONLY_FROM below
+    'GfxRenderer': 'lib/GfxRenderer',
+    'UiListActivity': UPSTREAM_SRC,
+    'UiAppHost': UPSTREAM_SRC,
+}
+
+# The spine's layer table (ARCHITECTURE-SPINE.md, Design Paradigm), in its own terms through SPINE_TERMS: one row per
+# game component, what each may include besides its own headers. check_layers_test.py compares it with the spine.
+TABLE = {
+    # Domain: C++ standard library, lib/Memory, lib/JsonParser.
+    'lib/GameCore': {STD, 'lib/Memory', 'lib/JsonParser'},
+    # Icon data: nothing (generated data only).
+    'lib/GameIcons': set(),
+    # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
+    'lib/GameScript': {'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
+    # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
+    # and mbedTLS (radio and crypto); lib/Utf8; lib/EpdFont and src/fontIds.h (FrameReplay); the SDK's FreeInkUICore.h
+    # (GameTouch.h); SecureHttpClient (ForkReleaseProbe only, ONLY_FROM).
+    ADAPTERS: {
+        'lib/GameCore', 'lib/GameScript', 'lib/GameIcons', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter',
+        RADIO_CRYPTO, 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h', 'sdk:SecureHttpClient.h',
+    },
+    # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost (upstream's screen infrastructure, src/
+    # outside the game folders). Never lib/GameScript or lib/lua: those only through src/games.
+    SCREENS: {ADAPTERS, 'lib/GameCore', 'lib/GfxRenderer', UPSTREAM_SRC},
+}
+
+# Edges BEYOND_TABLE adds to the spine's table, each a convention rather than a design decision:
 #   - lib/Logging and lib/Memory for src/games and Screens: AGENTS.md makes device code log with LOG_* and allocate
 #     with makeUniqueNoThrow;
 #   - lib/I18n for Screens: AGENTS.md puts user-facing text through tr();
-#   - the standard library for GameIcons: its generated data uses the fixed-width integer types;
 #   - lua.hpp for src/games/GamesBuildAnchor.cpp only (FILE_EDGES): AD-2's build anchor.
 CONVENTIONS = {'lib/Logging', 'lib/Memory'}
 
-# The spine's layer table (ARCHITECTURE-SPINE.md, Design Paradigm) and its diagram, one row per game component: what
-# each may include besides its own headers.
-LAYERS = {
-    # Domain: C++ standard library, lib/Memory, lib/JsonParser.
-    'lib/GameCore': {STD, 'lib/Memory', 'lib/JsonParser'},
-    # Icon data: nothing (generated data only); standard integer types.
+# What each component may include beyond TABLE's row, with the reason for each.
+BEYOND_TABLE = {
+    # The standard integer types of its generated data.
     'lib/GameIcons': {STD},
-    # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
-    'lib/GameScript': {STD, 'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
-    # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
-    # and mbedTLS (the platform, radio and crypto included); lib/Utf8; lib/EpdFont and src/fontIds.h (FrameReplay); the
-    # SDK's FreeInkUICore.h (GameTouch.h); SecureHttpClient (ForkReleaseProbe only, ONLY_FROM). GfxRenderer from the
-    # diagram's upstream node.
-    ADAPTERS: {
-        STD, PLATFORM, RADIO_CRYPTO, 'lib/GameCore', 'lib/GameScript', 'lib/GameIcons', 'lib/hal', 'lib/ZipFile',
-        'lib/PngToBmpConverter', 'lib/GfxRenderer', 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h',
-        'sdk:SecureHttpClient.h', *CONVENTIONS,
-    },
-    # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost and the rest of upstream's screen
-    # infrastructure (src/ outside the game folders, lib/I18n), the diagram's upstream node (HAL, Storage, ZipFile,
-    # PngToBmpConverter), and the platform without the radio and crypto the table gives only to src/games. Never
-    # lib/GameScript or lib/lua: those only through src/games.
-    SCREENS: {
-        STD, PLATFORM, ADAPTERS, 'lib/GameCore', 'lib/GfxRenderer', UPSTREAM_SRC, 'lib/I18n', 'lib/hal',
-        'lib/ZipFile', 'lib/PngToBmpConverter', *CONVENTIONS,
-    },
+    # The C++ standard library, which the Domain row names and the adapter needs as much.
+    'lib/GameScript': {STD},
+    # The standard library; the platform (Arduino, ESP-IDF, FreeRTOS) that ESP-NOW and mbedTLS run on; GfxRenderer from
+    # the diagram's upstream node; the conventions.
+    ADAPTERS: {STD, PLATFORM, 'lib/GfxRenderer', *CONVENTIONS},
+    # The standard library; the platform without the radio and crypto the table gives only to src/games; lib/I18n for
+    # tr(); the diagram's upstream node (HAL, Storage, ZipFile, PngToBmpConverter); the conventions.
+    SCREENS: {STD, PLATFORM, 'lib/I18n', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter', *CONVENTIONS},
 }
+
+# What each game component may include besides its own headers: the spine's row and the additions above.
+LAYERS = {comp: TABLE[comp] | BEYOND_TABLE.get(comp, set()) for comp in TABLE}
 
 # Edges the table allows only from the files it names (the spine says "SecureHttpClient in ForkReleaseProbe only").
 ONLY_FROM = {
@@ -444,7 +487,8 @@ def check(root):
             print(problem)
         fork_common.write_step_summary(f'## {SUMMARY_HEADING}\n\n' + ''.join(f'- `{p}`\n' for p in problems))
         raise Failure(f'{len(problems)} problem(s) against the spine\'s layer table; fix the code, or change the '
-                      'spine and LAYERS in scripts/check_layers.py together')
+                      'spine and TABLE (or BEYOND_TABLE) in scripts/check_layers.py together; '
+                      'scripts/check_layers_test.py compares TABLE with the spine')
     print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and other source files '
           f'include game code only as their ledger rows allow, inside #if {fork_common.GAMES_MACRO}; passed.')
 

@@ -36,15 +36,19 @@ uv tool install pioarduino==6.1.19
 
 ```bash
 $S setup          # writes the sim envs into platformio.local.ini, seeds fs_/books/
+$S check          # exit 0 if that block is current, else say why and exit 1
 $S build x4pro    # or: sticky | x4.  ~80 s cold, ~12 s incremental or with a warm .cache/
 ```
 
 `setup` copies `simulator.ini` (from this skill directory) into the gitignored
 `platformio.local.ini`, which `platformio.ini` already loads through
-`extra_configs`. No tracked file changes. `build` runs it first when
-`platformio.local.ini` lacks the current `simulator.ini` (never set up, or
-`simulator.ini` edited since); it replaces its own marked block and leaves the
-rest alone.
+`extra_configs`. No tracked file changes. `check` exits 1 when
+`platformio.local.ini` lacks the current `simulator.ini` (never set up, a block
+without its end marker, or `simulator.ini` edited since), and `build` runs
+`setup` first when `check` fails; `setup` replaces its own marked block and
+leaves the rest alone. A block without its end marker is the one case `build`
+does not repair: `setup` stops there rather than drop the settings after it, so
+restore the end marker by hand.
 The envs are `simulator_x4pro`, `simulator_sticky`, and `simulator` (X4).
 
 ## Run: live session (agent path)
