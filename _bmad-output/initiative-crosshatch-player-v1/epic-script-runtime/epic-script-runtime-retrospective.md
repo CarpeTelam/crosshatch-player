@@ -540,3 +540,31 @@ Answered by the owner on 2026-09-28:
 - **F3:** turn on "require branches to be up to date" for `develop`. That is a repository setting the owner applies; the surface-test half of AI-8 stays deferred to the freeze.
 - **AI-2:** a scripted simulator run in CI first.
 - **Deferred item (b):** closed as refuted by the code, with the watchdog-pause side effect recorded in `deferred-work.md` (R10).
+
+## Addendum: follow-up applied (2026-09-28)
+
+The owner-approved fix-now items landed on this retro's branch before epic 3 was planned. They were built as parallel `/bmad-build` lanes in worktrees, and every lane got an independent context-free review (AI-1 applied). Each lane's plan and Review Triage Log is `_bmad-output/implementation-artifacts/plan-e2r-*.md`.
+
+| Item | Commits | Notes |
+|---|---|---|
+| AI-12, AI-1 | 762947e4, 88d19c20 | `AGENTS.md`, `docs/crosshatch/orchestrated-epics.md`, `_bmad/custom/bmad-build.toml`, `merge=union` for `deferred-work.md`; deferred item (b) closed with the R10 note |
+| AI-10 | 4cace128, 56e99944, 93b1590f | spine and epic reconciled; `tickets.toml` left as history |
+| AI-9, AI-7, F4 | b05a21ca, 7324aaaa | COMDAT and template escapes closed; superseded-run pass; release allowed with a later open preview |
+| AI-13, AI-6 | fdd82fda, da88f053, 48ceb33e, 79e305e3, c6ef1419 | gfx, heap-cap, table-limit, and headroom faults sticky under `pcall`; the `LUAI_THROW` hook (owner option a); `__close` refused and the string metatable sealed; timer events kept; the only store copy kept; fixtures checked against the README |
+| AI-5 | 7a94a979, 8ce75fb8 | `src/games/MatchStore`; the `Layer check` CI job |
+
+**Verified on the combined tree** (c6ef1419):
+- the five firmware envs build;
+- `pio check` passes on default and x4pro;
+- the simulator x4pro build succeeds;
+- host tests pass, 641/641;
+- all seven `scripts/*_test.py` suites pass;
+- `check_layers.py` and `check_upstream_touches.py` pass;
+- `clang-format-fix` leaves no diff.
+
+**New deferred items**, under `## e2r-*` headings in `deferred-work.md`:
+- free inline functions as game names in the objects scan;
+- nothing compares `check_layers.py`'s table with the spine's;
+- an owner question on `API_MIN_LEVEL` under AD-19.
+
+Still deferred with their triggers: AI-2, AI-3 (owner), AI-4, AI-8, AI-11.
