@@ -19,13 +19,14 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   `tickets.py next` shows what is ready.
 - **One worktree per lane**, branched from the epic branch. Each needs `git submodule update --init --recursive`.
 - **One build lock.** Create `{lock}`, a lock file in your scratchpad `{scratch}` (which also holds each story's
-  `{scratch}/<ref>/` scratch files and fresh trees), and give it to every build agent. Every
-  `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the
-  orchestrator's own included, runs as `flock {lock} <command>`; two builds at once can wipe a build directory
-  mid-build or race on the shared `~/.platformio/packages`.
+  `{scratch}/<ref>/` scratch files and fresh trees), and give it to every build agent. Every `pio run`, `pio check`,
+  `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the orchestrator's own
+  included, runs as `flock {lock} sh -c '<commands>'` (a bare `flock {lock} a && b` locks only `a`); two builds at
+  once can wipe a build directory mid-build or race on the shared `~/.platformio/packages`.
 - **The upstream remote.** Worktrees share one git config, so add `upstream` once, fetch `develop`
-  (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and unshallow the clone
-  (`git fetch --unshallow`) before any agent runs `scripts/check_upstream_touches.py`.
+  (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
+  `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
+  complete clone) before any agent runs `scripts/check_upstream_touches.py`.
 
 ### Each story
 
@@ -95,7 +96,9 @@ an independent review of your commit. Follow AGENTS.md exactly; re-read it in yo
 You work in your own git worktree (your current directory); never touch the main checkout or another agent's worktree.
 Invoke the `bmad-build` skill with `{ref}` and follow its workflow; the plan goes where `tickets.py find {ref}` says,
 or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/plan-<slug>.md`, with the slug led by
-`{ref}`. The orchestrator pre-answers the workflow's human gates, so do not stop at them:
+`{ref}`. If bmad-build hands the plan to an implementation subagent, that subagent only implements the plan; it never
+invokes bmad-build or follows this brief. The orchestrator pre-answers the workflow's human gates, so do not stop at
+them:
 
 - Multi-goal check: **Keep all goals**; the story is an agreed scope.
 - Token count gate: **Keep full plan**, unless it is far over because of padding; then tighten, never split.
@@ -104,20 +107,23 @@ or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/pla
   the epic file and its Notes, earlier plans in `{epic-folder}`, retrospectives, and git history. Only a choice none of
   those settles and that would change the design goes back to the orchestrator: stop and put it, with options and your
   recommendation, at the top of your final report.
+- Any other HALT (a dirty tree or a branch mismatch at the version-control check, an intent_gap loopback, the review
+  loop limit): stop and put it at the top of your final report as a blocking question.
 - Review step: if you cannot spawn subagents, do not HALT; run each lens yourself, one at a time, reading each lens
   prompt fresh and judging only the diff, then triage into the plan's Review Triage Log. The orchestrator also runs an
   independent review and sends you its findings; triage those into the same log.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
-- No model names in commits, code, or docs.
+- No model names in code or docs; the session's attribution lines are the only exception.
 
 ### Environment
 
 - Run `git submodule update --init --recursive` in your worktree before any firmware, simulator, or host-test build.
 - **One build at a time across all agents.** Wrap every `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`,
-  `sim.sh build`, and host-test CMake configure and build in the shared lock: `flock {lock} <command>`. Hold it for the
-  whole command. Firmware builds take minutes: use a long timeout, or run in the background and wait.
+  `sim.sh build`, and host-test CMake configure and build in the shared lock: `flock {lock} sh -c '<commands>'`, so
+  the lock covers the whole chain (a bare `flock {lock} a && b` locks only `a`). Firmware builds take minutes: use a
+  long timeout, or run in the background and wait.
 - Host tests build in your worktree's `build/test`, with the commands in AGENTS.md.
 - Scratch files, logs, and fresh trees go under `{scratch}/{ref}/`; delete fresh trees when you are done (disk is
   limited).
@@ -128,11 +134,17 @@ or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/pla
   evidence in the plan's Verification.
 - A story that adds or changes a CI gate or workflow runs that gate once from a fresh tree of your committed work
   before it counts as built: `git clone <worktree> {scratch}/{ref}/fresh` and check out your commit there, or, when
-  cloning is blocked and the gate reads no git history, `git archive <commit> | tar -x -C {scratch}/{ref}/fresh` plus
-  each submodule's archive at the commit's gitlink
-  (`git -C freeink-sdk archive --prefix=freeink-sdk/ $(git rev-parse <commit>:freeink-sdk) | tar -x -C {scratch}/{ref}/fresh`).
-  Run the workflow step's commands
-  there, and say in the plan which kind of tree it was. A new fork job goes in `Crosshatch Test Status`'s `needs` in
+  cloning is blocked and the gate reads no git history, an archive tree. Run `git submodule update --init --recursive`
+  first, so each submodule checkout sits at your commit's gitlink, then:
+
+  ```sh
+  mkdir -p {scratch}/{ref}/fresh
+  git archive <commit> | tar -x -C {scratch}/{ref}/fresh
+  git submodule foreach --recursive 'git archive --prefix="$displaypath/" HEAD | tar -x -C {scratch}/{ref}/fresh'
+  ```
+
+  The recursion matters: `freeink-sdk` has nested submodules. Run the workflow step's commands there, and say in the
+  plan which kind of tree it was. A new fork job goes in `Crosshatch Test Status`'s `needs` in
   `.github/workflows/crosshatch-ci.yml`; never edit `ci.yml`.
 - Game fixtures live in `test/game_script/fixtures/`, never `games/`.
 - Upstream files change only as `docs/crosshatch/upstream-touches.md` allows; run
@@ -140,11 +152,13 @@ or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/pla
 - New fork scripts follow `docs/crosshatch/fork-scripts.md` (sidecar test, exit contract, `fork_common.py`, listed in
   the ledger's Game paths).
 - Deferred items: append to `_bmad-output/implementation-artifacts/deferred-work.md` only under a heading `## {ref}` at
-  the end of the file.
+  the end of the file, each entry in the file's existing format (`- source_plan:`, `summary:`, `evidence:`). The file
+  merges with `merge=union`; a distinct first line per story keeps two lanes' appends from interleaving line by line.
 - A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured".
 - Formatting: run `./bin/clang-format-fix` (no arguments) as the very last step before the commit, after every edit
   (review fixes and plan edits included), then run it a second time and confirm `git status` shows nothing new. Keep
-  any formatting-only change it makes outside your paths in your commit (never revert it) and name it in your report.
+  any formatting-only change it makes to fork files outside your paths in your commit (never revert it) and name it
+  in your report; if it changes an upstream file the ledger does not list, stop and report it as a blocking question.
 - For C/C++ changes build `x4pro` and `default` (C3) at least; for `src/games` or screens also `sim.sh build x4pro`.
   The orchestrator builds all five envs before the PR.
 

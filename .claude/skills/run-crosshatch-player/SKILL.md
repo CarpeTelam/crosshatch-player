@@ -26,11 +26,10 @@ git submodule update --init --recursive
 ```
 
 PlatformIO: the proxy returns 403 for GitHub archive `.zip` URLs, so install
-pioarduino core from a clone:
+pioarduino core from PyPI:
 
 ```bash
-git clone -q --depth 1 --branch v6.1.19 https://github.com/pioarduino/platformio-core.git /tmp/pio-core
-uv pip install --system /tmp/pio-core
+uv tool install pioarduino==6.1.19
 ```
 
 ## Setup and build
@@ -159,7 +158,7 @@ cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build
 
 | Symptom | Fix |
 |---|---|
-| `uv pip install https://github.com/.../v6.1.19.zip`: 403 Forbidden | Install from the `git clone` (see Prerequisites). |
+| `uv pip install https://github.com/.../v6.1.19.zip`: 403 Forbidden | Install from PyPI (see Prerequisites). |
 | `gif.inl: 'memcpy_P' was not declared` | Remove `AnimatedGIF` from `lib_deps`, then `$S setup`. |
 | `sim: .pio/build/…/program missing` | Run `$S build <device>` first. |
 | `sim: no simulator window on :77` | The sim exited or never started. Check `$S log`, then `$S start` again. |
