@@ -47,3 +47,4 @@ Handoffs: epic-pass-and-play extends the mode picker with the seat choice and re
 - Risk high: the installer deletes and renames files on the SD card; a person confirms on a device that saves survive reinstall and remove.
 - Waits on epic-script-runtime because: `Manifest::parse`, GameSaveStore, `GameMatchActivity`, and the minimal Games list this replaces.
 - Waits on epic-icon-library because: the icon library for launcher rows and the `.bmp` layout images are read from.
+- Handoff from epic-icon-library (entries 1 and 2, 2026-09-28): launcher rows draw library icons through the `src/games` `drawGameIcon` helper (Screens have no `lib/GameIcons` edge), read `icon.bmp` through its `.bmp` reader, and reuse its 128 KB converted-image constant in the installer and `pack_game.py`; `GameCore` cannot include `lib/GameIcons`, so checking a manifest `icon` name against the library belongs outside `GameCore`.

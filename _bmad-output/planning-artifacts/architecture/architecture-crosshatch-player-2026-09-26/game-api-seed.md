@@ -160,7 +160,7 @@ E-ink tips: every screen update is slow (about 0.7 seconds for a fast refresh) a
 
 The device has a built-in icon library, and using it gives your game the same look as the rest of crosshatch. Prefer a library icon over drawing your own: `ch.gfx.icon("suit_heart", x, y, "medium", "black")`.
 
-The set covers marks, card suits, dice faces, board pieces, player markers, and common controls. Names are lowercase with `_`, such as `mark_x`, `suit_spade`, `die_6`, `piece_king`, `arrow_left`. *(The full list is draft; the reference will include a catalog with pictures.)* A name that doesn't exist stops the game with an error. Icons never change meaning within an API level, and new levels only add names.
+The set covers marks, card suits, dice faces, board pieces, player markers, and common controls. Names are lowercase with `_`, such as `mark_x`, `suit_spade`, `die_6`, `piece_king`, `arrow_left`. *(The full list is draft; the reference will include a catalog with pictures.)* A name that doesn't exist stops the game with an error. Icons never change meaning within a frozen API level, and new levels only add names; while level 1 is a preview, names may still change. *(Amended 2026-09-28.)*
 
 When you need something the library doesn't have, ship it as a package image and draw it with `ch.gfx.image`.
 
