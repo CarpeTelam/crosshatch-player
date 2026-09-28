@@ -79,6 +79,15 @@ TEST_F(SessionGameTest, TheTracerPlaysToGameOver) {
   EXPECT_EQ(game.session->discardedMoves(), 1u);
 }
 
+// The slow-restart fixture (the Play-again gap's simulator check) loads and draws
+// its first round; only later rounds spin in setup.
+TEST_F(SessionGameTest, TheSlowRestartReachesItsFirstFrame) {
+  useSource("main", readFixture("slow-restart/main.lua"));
+  SessionGame game(*this);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(contains(frontText().c_str(), "Round 1, taps: 0 of 3")) << frontText();
+}
+
 // Play again (AD-21) as GameVM runs it, through SoloRounds: Session::start() and
 // draw() on the same Session; ver keeps counting and the new round delivers `over`
 // once more.

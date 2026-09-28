@@ -16,7 +16,10 @@ these rules apply only to fork scripts.
   directory; never depend on this repository's history or submodule.
 - **Exit contract.** 0: passed. 1: a rule is broken. 2: the check could not run (a missing file or ref, a failed
   tool, a shallow clone). CI fails on both 1 and 2; the difference tells the reader whether to fix the change or the
-  setup. The module docstring says what each code means for that script and how to run it locally.
+  setup. A script may add a code above 2 for a broken rule whose fix differs from the rest, so CI can give that fix
+  alone: `gen_game_icons.py` exits 3 (`PIN_MISMATCH`) when the SVGs and `SHA256SUMS` disagree, and only then does the
+  `Icons up to date` job advise re-pinning. The module docstring says what each code means for that script and how to
+  run it locally.
 - **Shared plumbing from `scripts/fork_common.py`.** Never define another `SetupError`, git runner, exit-code
   handler, step-summary writer, or copy of the games-flag literal.
 - Style: single quotes; the whole-tree clang-format check does not cover Python.

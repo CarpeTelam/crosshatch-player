@@ -797,9 +797,9 @@ TEST_F(GfxBindingsTest, EachFrameStartsItsPixelBudgetAtZero) {
   }
 }
 
-// The budget bounds the replay: a frame at the budget makes at most
-// MAX_BLIT_PIXELS fills, and a checkerboard, a run a pixel, exactly that many
-// (was up to 2,048 x 384,000).
+// The budget bounds icon and image replay (filled rects and circles are not
+// charged): a frame at the budget makes at most MAX_BLIT_PIXELS fills, and a
+// checkerboard, a run a pixel, exactly that many (was up to 2,048 x 384,000).
 TEST_F(GfxBindingsTest, AFrameAtTheBudgetReplaysInAtMostThatManyFills) {
   useChecker();
   const char* const bodies[] = {

@@ -378,7 +378,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 2, err)
         self.assertIn('cannot write', err)
 
-    def test_an_edited_svg_exits_1_naming_it(self):
+    def test_an_edited_svg_exits_3_naming_it(self):
         # epic-icon-library retrospective R8 (c): an SVG edited after its sum was taken fails, although it still
         # renders.
         self.assertEqual(self.run_main()[0], 0)
@@ -386,34 +386,35 @@ class MainTest(unittest.TestCase):
         svg_path = self.assets / 'phosphor' / 'fill' / 'x-fill.svg'
         svg_path.write_bytes(svg_path.read_bytes() + b'\n')
         code, err = self.run_main(names=None)
-        self.assertEqual(code, 1, err)
+        self.assertEqual(code, 3, err)  # ggi.PIN_MISMATCH, which CI's Icons up to date step matches
         self.assertIn(f'{svg_path}: its SHA-256', err)
         self.assertIn('SHA256SUMS:2 (', err)
         self.assertFalse(self.out.exists())
 
-    def test_sums_list_drift_exits_1(self):
+    def test_sums_list_drift_exits_3_and_malformed_sums_exit_1(self):
         sums = sums_text(self.assets, map_paths(GOOD_MAP))
         lines = sums.splitlines(keepends=True)
         shutil.copy(PHOSPHOR / 'regular' / 'heart.svg', self.assets / 'phosphor' / 'regular' / 'heart.svg')
         digest = hashlib.sha256(b'').hexdigest()
         cases = {
-            # (SHA256SUMS text, a fragment the message must hold)
-            'an SVG unlisted': (''.join(lines[:-1]), 'phosphor/regular/x.svg (x regular) is not listed'),
-            'a path not named': (sums + sums_text(self.assets, ['phosphor/regular/heart.svg']),
+            # (SHA256SUMS text, the exit code, a fragment the message must hold); a pin mismatch is 3, the rest 1
+            'an SVG unlisted': (''.join(lines[:-1]), 3, 'phosphor/regular/x.svg (x regular) is not listed'),
+            'a path not named': (sums + sums_text(self.assets, ['phosphor/regular/heart.svg']), 3,
                                  'SHA256SUMS:5: phosphor/regular/heart.svg is not an SVG names.txt names'),
-            'a path twice': (sums + lines[0], f'SHA256SUMS:5: {lines[0][66:].strip()} is already listed on line 1'),
-            'one space': (sums.replace('  ', ' ', 1), 'SHA256SUMS:1: expected'),
-            'upper-case hex': (lines[0].upper() + ''.join(lines[1:]), 'SHA256SUMS:1: expected'),
-            'short digest': (lines[0][1:] + ''.join(lines[1:]), 'SHA256SUMS:1: expected'),
-            'no path': (sums + f'{digest}  \n', 'SHA256SUMS:5: expected'),
-            'a blank line': (sums + '\n', 'SHA256SUMS:5: expected'),
-            'a comment': ('# sums\n' + sums, 'SHA256SUMS:1: expected'),
+            'a path twice': (sums + lines[0], 1,
+                             f'SHA256SUMS:5: {lines[0][66:].strip()} is already listed on line 1'),
+            'one space': (sums.replace('  ', ' ', 1), 1, 'SHA256SUMS:1: expected'),
+            'upper-case hex': (lines[0].upper() + ''.join(lines[1:]), 1, 'SHA256SUMS:1: expected'),
+            'short digest': (lines[0][1:] + ''.join(lines[1:]), 1, 'SHA256SUMS:1: expected'),
+            'no path': (sums + f'{digest}  \n', 1, 'SHA256SUMS:5: expected'),
+            'a blank line': (sums + '\n', 1, 'SHA256SUMS:5: expected'),
+            'a comment': ('# sums\n' + sums, 1, 'SHA256SUMS:1: expected'),
         }
-        for label, (text, fragment) in cases.items():
+        for label, (text, want, fragment) in cases.items():
             with self.subTest(label):
                 (self.assets / ggi.SUMS_NAME).write_text(text)
                 code, err = self.run_main(sums=False)
-                self.assertEqual(code, 1, err)
+                self.assertEqual(code, want, err)
                 self.assertIn(fragment, err)
         (self.assets / ggi.SUMS_NAME).write_bytes(b'\xff\n')
         code, err = self.run_main(sums=False)
@@ -449,7 +450,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.main_only('--out', str(self.out))[0], 0)
         svg_path = self.assets / 'phosphor' / 'regular' / 'x.svg'
         svg_path.write_bytes(svg_path.read_bytes() + b'\n')
-        self.assertEqual(self.main_only('--out', str(self.out))[0], 1)
+        self.assertEqual(self.main_only('--out', str(self.out))[0], 3)
         self.assertEqual(self.main_only('--write-sums')[0], 0)
         self.assertEqual(self.main_only('--out', str(self.out))[0], 0)
 

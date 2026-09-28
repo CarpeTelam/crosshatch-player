@@ -39,12 +39,14 @@ bit 0 = ink, stored rotated 90 degrees counter-clockwise, so stored (row, col) i
 
 Exit 0: the header (or, with --write-sums, SHA256SUMS) was written. Exit 1: a rule is broken: a malformed or
 non-UTF-8 map, a bad name, weight, or path (anything but Phosphor's own file for the name and weight), a name given
-twice in one weight or missing a weight, an SVG whose SHA-256 differs from SHA256SUMS, a SHA256SUMS line that is
-malformed, lists a path twice, or lists a path names.txt does not name, an SVG names.txt names that SHA256SUMS does
-not list, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
+twice in one weight or missing a weight, a SHA256SUMS that is not UTF-8 or has a line that is malformed or lists a
+path twice, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
 message names the file, line, or name.
 Exit 2: the script could not run: no names.txt, no SHA256SUMS (without --write-sums), a map line naming an SVG that
 does not exist, or an unreadable or unwritable file.
+Exit 3 (PIN_MISMATCH): the SVGs and SHA256SUMS disagree: an SVG whose SHA-256 differs from its line, an SVG names.txt
+names that SHA256SUMS does not list, or a SHA256SUMS line for a path names.txt does not name. Restore the SVG, or,
+after a deliberate change of source, run --write-sums; only this code calls for re-pinning.
 """
 
 import argparse
@@ -58,6 +60,14 @@ import xml.etree.ElementTree as ET
 
 import fork_common
 from fork_common import Failure, SetupError
+
+
+class PinMismatch(Failure):
+    """The SVGs and SHA256SUMS disagree (exit PIN_MISMATCH): the one failure that re-pinning may fix."""
+
+
+# The exit code for a PinMismatch (see the docstring's exit list).
+PIN_MISMATCH = 3
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_ASSETS = REPO / 'assets' / 'game-icons'
@@ -556,23 +566,24 @@ def read_sums(assets, named):
         if rel in sums:
             raise Failure(f'{where}: {rel} is already listed on line {sums[rel][1]}')
         if rel not in named:
-            raise Failure(f'{where}: {rel} is not an SVG {MAP_NAME} names; list exactly the SVGs it names '
-                          '(--write-sums rewrites the file)')
+            raise PinMismatch(f'{where}: {rel} is not an SVG {MAP_NAME} names; list exactly the SVGs it names '
+                              '(--write-sums rewrites the file)')
         sums[rel] = (digest, number)
     return sums
 
 
 def check_sum(assets, sums, entry, data):
-    """Failure unless SHA256SUMS lists the entry's SVG with the SHA-256 of `data`, its bytes."""
+    """PinMismatch unless SHA256SUMS lists the entry's SVG with the SHA-256 of `data`, its bytes."""
     sums_path = assets / SUMS_NAME
     if entry.path not in sums:
-        raise Failure(f'{sums_path}: {entry.path} ({entry.name} {entry.weight}) is not listed; after checking the SVG '
-                      'is Phosphor\'s own, run --write-sums')
+        raise PinMismatch(f'{sums_path}: {entry.path} ({entry.name} {entry.weight}) is not listed; after checking '
+                          'the SVG is Phosphor\'s own, run --write-sums')
     expected, number = sums[entry.path]
     actual = hashlib.sha256(data).hexdigest()
     if actual != expected:
-        raise Failure(f'{assets / entry.path}: its SHA-256 {actual} differs from {sums_path}:{number} ({expected}); '
-                      'restore Phosphor\'s file, or, for a deliberate change of source, run --write-sums')
+        raise PinMismatch(f'{assets / entry.path}: its SHA-256 {actual} differs from {sums_path}:{number} '
+                          f'({expected}); restore Phosphor\'s file, or, for a deliberate change of source, run '
+                          '--write-sums')
 
 
 def generate(assets, out):
@@ -621,7 +632,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.write_sums:
         return fork_common.exit_code(lambda: write_sums(args.assets))
-    return fork_common.exit_code(lambda: generate(args.assets, args.out))
+
+    def step():
+        try:
+            generate(args.assets, args.out)
+        except PinMismatch as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            return PIN_MISMATCH
+        return None
+
+    return fork_common.exit_code(step)
 
 
 if __name__ == '__main__':

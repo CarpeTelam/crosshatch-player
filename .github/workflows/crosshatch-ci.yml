@@ -28,10 +28,10 @@
 #   the table as data and how to run it locally.
 # - Icons up to date: runs scripts/gen_game_icons.py, unchanged, to a scratch file and fails when the result differs
 #   by any byte from the committed lib/GameIcons/GameIcons.generated.h (never edited by hand; spine AD-2, AD-24), or
-#   when the generator itself fails, as it does for an SVG whose SHA-256 differs from assets/game-icons/SHA256SUMS;
-#   each failure is annotated.
+#   when the generator itself fails; each failure is annotated. Only its exit 3, the SVGs and
+#   assets/game-icons/SHA256SUMS disagreeing, gets re-pin advice; any other exit is annotated with its code.
 #   Fix a failure with python3 scripts/gen_game_icons.py on Linux and commit the header (after a deliberate change of
-#   source, --write-sums first); the script's docstring has the rest.
+#   source, --write-sums first); the script's docstring has the exit codes and the rest.
 name: Crosshatch CI
 
 on:
@@ -279,8 +279,13 @@ jobs:
       - name: Regenerate the icon header and compare it with the committed one
         run: |
           fresh="$RUNNER_TEMP/GameIcons.generated.h"
-          if ! python3 scripts/gen_game_icons.py --out "$fresh"; then
-            echo "::error::scripts/gen_game_icons.py failed (its message is above); restore an SVG whose SHA-256 differs from assets/game-icons/SHA256SUMS from Phosphor 2.1.1, or, after a deliberate change of source, rewrite SHA256SUMS with python3 scripts/gen_game_icons.py --write-sums"
+          # Exit 3 (PIN_MISMATCH) alone means the SVGs and SHA256SUMS disagree, so only it gets re-pin advice.
+          if python3 scripts/gen_game_icons.py --out "$fresh"; then code=0; else code=$?; fi
+          if [ "$code" -eq 3 ]; then
+            echo "::error::scripts/gen_game_icons.py found the SVGs and assets/game-icons/SHA256SUMS disagreeing (exit 3; its message above names the file); restore an edited SVG from Phosphor 2.1.1, or, after a deliberate change of source (an icon added, removed, or updated), rewrite SHA256SUMS with python3 scripts/gen_game_icons.py --write-sums"
+            exit 1
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::scripts/gen_game_icons.py failed with exit $code (its message is above)"
             exit 1
           fi
           if ! difference=$(cmp lib/GameIcons/GameIcons.generated.h "$fresh" 2>&1); then

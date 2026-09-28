@@ -29,6 +29,8 @@ target_include_directories(GameCoreTest PRIVATE
 
 # Read at run time so the suite and the fork scripts share one vector file, API list, and header.
 target_compile_definitions(GameCoreTest PRIVATE
+  # ManifestTest parses every fixture game's manifest.json (fixtures stay under test/, never games/).
+  GAME_SCRIPT_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures"
   FORK_VERSION_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fork_version_vectors.json"
   API_LEVEL_LIST_DIR="${REPO_ROOT}/docs/crosshatch"
   API_LEVEL_HEADER_PATH="${REPO_ROOT}/lib/GameCore/ApiLevel.h"

@@ -12,7 +12,8 @@ inline constexpr uint16_t MAX_COMMANDS = 2048;
 inline constexpr size_t MAX_BYTES = 32 * 1024;
 // And at most MAX_BLIT_PIXELS canvas pixels covered by icon and image commands
 // (api-level-1.txt's frame_icon_image_pixels): their replay walks each visible
-// pixel and fills each one-colour run, so this bounds a frame's replay work.
+// pixel and fills each one-colour run, so this bounds a frame's icon and image
+// replay only; filled rects and circles are not charged.
 inline constexpr uint32_t MAX_BLIT_PIXELS = 1024 * 1024;
 
 enum class Color : uint8_t { White, Light, Dark, Black };
