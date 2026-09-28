@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <span>
 
+#include "GamePaths.h"
+
 namespace GameScript {
 class StoreSlot;
 }
@@ -50,12 +52,10 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // otherwise why it does not.
   const char* readValid(const char* path, std::span<uint8_t> out, size_t& length) const;
 
-  static constexpr size_t PATH_BYTES = 64;  // "/.games-data/" + id + "/store.bin.tmp"
-
   char id[GameCore::Manifest::MAX_ID_BYTES + 1] = {};
-  char dirPath[PATH_BYTES] = {};
-  char storePath[PATH_BYTES] = {};
-  char tmpPath[PATH_BYTES] = {};
+  char dirPath[GamePaths::DATA_PATH_BYTES] = {};
+  char storePath[GamePaths::DATA_PATH_BYTES] = {};
+  char tmpPath[GamePaths::DATA_PATH_BYTES] = {};
   std::span<uint8_t> buffer;
   uint32_t lastWriteMs;
 };

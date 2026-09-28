@@ -249,7 +249,9 @@ void GameMatchActivity::stopStuckVm() {
 
 bool GameMatchActivity::vmHealthy() {
   if (vm->failure() != GameVM::Failure::None) {
-    // Only a Session that never fit failed before any game code ran (AD-14).
+    // Every host failure (the Session or LuaGame::load not fitting, or a call before
+    // the load) comes before any game code ran: the game could not start (AD-14, as
+    // amended 2026-09-28). Only the script's own error says it stopped.
     fail(vm->failedToStart() ? StrId::STR_GAMES_START_FAILED : StrId::STR_GAMES_ERROR, vmFailureText(*vm));
     return false;
   }
@@ -291,19 +293,25 @@ void GameMatchActivity::loopPlaying() {
     return;
   }
 
+  // After Play again, until the new round's first frame is published, the screen
+  // still shows the end-of-round menu or the last round's frame: a tap there is not
+  // aimed at the new round, so it is read (which consumes the contact) and dropped.
+  const bool awaitingRound = vm->roundsStarted() < roundsStartedAwaited;
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
+  const GameTouch::Gesture gesture = readGesture();
   GameCore::GameEvent event;
-  if (GameTouch::toEvent(readGesture(), renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
+  if (!awaitingRound &&
+      GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
     vm->postInput(event);
   }
   vm->pollTimer();
   store.flushIfDue(millis());
 
-  // After Play again, any frame before the new round's first is the last round's;
-  // once the count moves, coalescing shows the newest frame.
-  if (vm->roundsStarted() < roundsStartedAwaited) return;
+  // Any frame before the new round's first is the last round's; once the count
+  // moves, coalescing shows the newest frame.
+  if (awaitingRound) return;
   const uint32_t frame = vm->frameGen();
   if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {
     shownFrame = frame;

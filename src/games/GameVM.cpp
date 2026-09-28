@@ -123,7 +123,7 @@ void GameVM::run() {
     if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, false);
   }
   if (outcome == Outcome::ScriptError) {
-    LOG_ERR("LUA", "Script error: %s", errorMessage());
+    LOG_ERR("LUA", "Script error: %s", failureText());
     scriptFailed.store(true, std::memory_order_release);
   } else if (outcome == Outcome::Cancelled) {
     LOG_INF("GAME", "VM cancelled");

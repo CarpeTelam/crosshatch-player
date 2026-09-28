@@ -213,3 +213,11 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e3r-1-bound-gfx-replay.md`
   summary: The budget fault is not yet in the planning contract texts (game-api-seed section 6 Errors, spine AD-7's frame limits), and a game has no way to ask an image's size or the pixels left, so it cannot size its drawing to the budget ahead of time.
   evidence: Review finding (blind hunter), e3r-1. `api-level-1.txt` is the contract and has the entry; the seed and spine are the owner's (bmad-architecture). `ch.gfx.image_size` is already one of retro AI-2's freeze decisions; this budget adds a reason to decide it.
+## e3r-2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-2-match-and-vm-hardening.md`
+  summary: e3r-2's Play-again gesture gate opens when the new round's first frame is published, not when the e-ink shows it, so a tap during that refresh (or a contact that began in the gap and lifts after it) still reaches the new round; the same unguarded gap exists before the first round's first frame, while the Games list is still on screen.
+  evidence: Review (edge-case hunter, intent alignment, blind hunter), e3r-2. `GameMatchActivity::loopPlaying` gates on `GameVM::roundsStarted() < roundsStartedAwaited`; `roundsStartedAwaited` is 0 before any Play again, and `renderCanvas` stores `renderedFrame` before `displayBuffer`. Closing it needs a "frame displayed" signal from the render task, and a start-of-match await; retro AI-2's harness would test both.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-2-match-and-vm-hardening.md`
+  summary: No automated test covers e3r-2's gesture drop in `loopPlaying` or the split `GameAssets::load` (`scanFolder`/`readFolder`: load results, `release()` on a pass-2 failure, the long-name log lines); both are checked only in the simulator.
+  evidence: Review (verification gap, blind hunter), e3r-2. `test/` compiles neither `GameMatchActivity.cpp` nor `GameAssets.cpp`, and the save-store stubs cannot iterate a folder. Dropping `!awaitingRound &&` or the `release()` after `readFolder` passes all 708 host tests. Needs retro AI-2's screen harness and a directory-iterating fake storage with a PSRAM stub.
