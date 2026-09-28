@@ -18,6 +18,11 @@ Nothing in it is edited. Everything else in this directory belongs to the fork.
   host build follows the manifest; that PlatformIO applies it shows in each firmware build log (26 `lib/lua` units)
   and compile database (`-DLUA_COMPAT_GLOBAL=0` on those units). Leaving a library out of the build is only the
   first layer: the host that creates a state still chooses which libraries to open and which base functions to keep.
+- `port/luai_throw.h` -- force-included into every Lua unit by `library.json`'s `-I port` and
+  `-include luai_throw.h` (and by `test/game_script`, which mirrors both). It defines `LUAI_TRY` and `LUAI_THROW` as
+  `ldo.c` would here (ISO C `setjmp`/`longjmp`), except that `LUAI_THROW` first calls the weak
+  `luaport_memoryerror(L)` for a memory error; `lib/GameScript/CallGuard.cpp` defines it to record the heap cap as a
+  sticky fault (spine AD-4, AD-6).
 - `.clang-format` -- `DisableFormat: true` keeps the whole-tree format check from rewriting `src/`.
 - `README.md` -- this note.
 

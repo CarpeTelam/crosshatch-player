@@ -7,6 +7,10 @@
 struct lua_State;
 struct lua_Debug;
 
+// Lua's throw hook, declared weak in lib/lua/port/luai_throw.h and defined in
+// CallGuard.cpp: records a memory error in the state's guard (recordMemory).
+extern "C" void luaport_memoryerror(lua_State* L);
+
 namespace GameScript {
 
 // The GameVM task's stack (AD-5): 16 KiB of internal RAM.
@@ -15,8 +19,8 @@ inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
 // Why the guard stopped a call. Binding: a binding hit a fault the game contract
 // says stops the game (a store over AD-10's limit, a full frame, ch.gfx outside
 // draw, a table call over its element limit, too little stack for a binding),
-// which ends the call as surely as a state over its limit. Memory: the heap cap
-// ended a call a script's pcall or xpcall had caught (raiseMemory).
+// which ends the call as surely as a state over its limit. Memory: Lua threw a
+// memory error (the heap cap) during the call (recordMemory).
 enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Binding, Memory };
 
 // The limits on one call into a game, enforced from a single Lua hook (AD-6, and
@@ -84,11 +88,13 @@ class CallGuard {
   // passes the guard's own text), with no lua_getinfo or formatting, for a binding
   // that runs short of stack. Does not return.
   int raiseStatic(lua_State* L, const char* literal);
-  // From the sandbox's pcall, xpcall, and require, when a call they protect ended
-  // in a memory error (the heap cap, AD-6): records a Memory fault, unless one is
-  // already recorded, and raises the error object on top of the stack again.
-  // Allocation-free, since the heap is full. Sticky like every fault. Does not return.
-  int raiseMemory(lua_State* L);
+  // From Lua's throw hook (luaport_memoryerror, lib/lua/port/luai_throw.h), as Lua
+  // throws a memory error (the heap cap, AD-6): records a Memory fault, unless one
+  // is already recorded, and makes the hook raise it again at the next instruction,
+  // so neither a script's pcall nor a __close that raises while the error unwinds
+  // can outlive it. Returns to Lua, which then throws. Allocation-free, since the
+  // heap is full.
+  void recordMemory(lua_State* L);
 
  private:
   void trip(lua_State* L, lua_Debug* ar, Fault fault);

@@ -39,23 +39,12 @@ int raiseFault(lua_State* L, const char* message) {
   return guard->raise(L, message);
 }
 
-// Raises the memory error on top of the stack again, as a guard fault: the heap cap
-// stops the game (AD-6), even under the script's pcall or xpcall.
-int raiseMemoryError(lua_State* L) {
-  CallGuard* guard = bindingContext(L)->guard;
-  if (!guard) return lua_error(L);
-  return guard->raiseMemory(L);
-}
-
 // Leaves the error on top, forgets the half-loaded module, and raises again; a
-// memory error stays one. A plain lua_error would re-raise it as a memory error
-// too, but raiseMemoryError records the guard's fault first: a to-be-closed
-// value between here and the script's pcall may run a __close that raises while
-// the error unwinds, which would otherwise turn it into an ordinary error.
-int forgetAndRaise(lua_State* L, const int modules, const char* name, const int status) {
+// memory error stays one (lua_error re-raises Lua's memory message as one, and
+// the guard recorded it when Lua first threw it).
+int forgetAndRaise(lua_State* L, const int modules, const char* name) {
   lua_pushnil(L);
   lua_setfield(L, modules, name);
-  if (status == LUA_ERRMEM) return raiseMemoryError(L);
   return lua_error(L);
 }
 
@@ -85,11 +74,11 @@ int require(lua_State* L) {
   lua_setfield(L, modules, name);
   const char* chunkName = lua_pushfstring(L, "@%s.lua", name);
   // Text mode: a precompiled module is refused like a precompiled main.lua.
-  int status = luaL_loadbufferx(L, sources->textOf(*span), span->length, chunkName, "t");
-  if (status != LUA_OK) return forgetAndRaise(L, modules, name, status);
+  if (luaL_loadbufferx(L, sources->textOf(*span), span->length, chunkName, "t") != LUA_OK) {
+    return forgetAndRaise(L, modules, name);
+  }
   lua_pushvalue(L, 1);
-  status = lua_pcall(L, 1, 1, 0);
-  if (status != LUA_OK) return forgetAndRaise(L, modules, name, status);
+  if (lua_pcall(L, 1, 1, 0) != LUA_OK) return forgetAndRaise(L, modules, name);
   if (lua_isnil(L, -1)) {
     lua_pop(L, 1);
     lua_pushboolean(L, 1);
@@ -120,40 +109,16 @@ int guardedHandler(lua_State* L) {
   return 1;
 }
 
-// lbaselib's finishpcall, except that a memory error is not the script's to catch.
-int finishProtected(lua_State* L, const int status, const int extra) {
-  if (status == LUA_ERRMEM) return raiseMemoryError(L);
-  if (status != LUA_OK) {
-    lua_pushboolean(L, 0);
-    lua_pushvalue(L, -2);
-    return 2;
-  }
-  return lua_gettop(L) - extra;
-}
-
-// pcall(f, ...): lbaselib's, line for line, through finishProtected. Scripts have
-// no coroutines, so the plain lua_pcall (no continuation) never meets a yield.
-int guardedPcall(lua_State* L) {
-  luaL_checkany(L, 1);
-  lua_pushboolean(L, 1);
-  lua_insert(L, 1);
-  const int status = lua_pcall(L, lua_gettop(L) - 2, LUA_MULTRET, 0);
-  return finishProtected(L, status, 0);
-}
-
-// xpcall(f, handler, ...): lbaselib's, line for line, with the handler wrapped
-// (guardedHandler) and through finishProtected.
+// xpcall(f, handler, ...): the base xpcall (upvalue 1) with the handler wrapped.
+// pcall and xpcall are otherwise Lua's: a memory error they catch is already a
+// guard fault (recorded where Lua threw it), which the hook raises again at the
+// script's next instruction.
 int guardedXpcall(lua_State* L) {
-  const int n = lua_gettop(L);
   luaL_checktype(L, 2, LUA_TFUNCTION);
   lua_pushvalue(L, 2);
   lua_pushcclosure(L, &guardedHandler, 1);
   lua_replace(L, 2);
-  lua_pushboolean(L, 1);
-  lua_pushvalue(L, 1);
-  lua_rotate(L, 3, 2);
-  const int status = lua_pcall(L, n - 2, LUA_MULTRET, 2);
-  return finishProtected(L, status, 2);
+  return callWrapped(L);
 }
 
 // setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
@@ -161,11 +126,11 @@ int guardedXpcall(lua_State* L) {
 // a __gc would escape the budget and the stack check; Lua marks an object for
 // finalization only when its metatable has a raw __gc field at this call, so
 // checking here is enough for it. A __close that raises while a memory error
-// unwinds turns it into an ordinary error (luaD_closeprotected), which the
-// script's pcall could then catch; Lua looks __close up again when it closes,
-// so this refusal does not cover a __close added to the metatable later (see
-// require's forgetAndRaise). Written out rather than wrapped so argument errors
-// still name it.
+// unwinds turns it into an ordinary error (luaD_closeprotected); the guard
+// records the memory error where Lua throws it (luaport_memoryerror), so the
+// heap cap holds even for a __close added to the metatable later, and this
+// refusal is a first line that keeps the plain cases out. Written out rather
+// than wrapped so argument errors still name it.
 int guardedSetmetatable(lua_State* L) {
   const int type = lua_type(L, 2);
   luaL_checktype(L, 1, LUA_TTABLE);
@@ -267,9 +232,8 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   }
   lua_pushcfunction(L, &require);
   lua_setglobal(L, "require");
-  lua_pushcfunction(L, &guardedPcall);
-  lua_setglobal(L, "pcall");
-  lua_pushcfunction(L, &guardedXpcall);
+  lua_getglobal(L, "xpcall");
+  lua_pushcclosure(L, &guardedXpcall, 1);
   lua_setglobal(L, "xpcall");
   lua_pushcfunction(L, &guardedSetmetatable);
   lua_setglobal(L, "setmetatable");

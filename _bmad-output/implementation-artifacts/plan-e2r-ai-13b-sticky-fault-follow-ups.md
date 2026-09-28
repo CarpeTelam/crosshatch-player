@@ -83,7 +83,15 @@ context:
 - `API_SURFACE_CRC` is unchanged: only comments of api-level-1.txt changed.
 - Mutation check (each alone, then restored): dropping require's ERRMEM branch fails `TheHeapCapInARequireSurvivesARaisingClose`; dropping `__close` from the refusal fails `AScriptCannotMakeAClosableValue` and `SetmetatableRefusesGcFinalizers`; dropping the seal fails `AScriptCannotMakeAClosableValue` and `LibraryMembersMatchTheList`; deleting the README's "Invalid status" row fails `EveryLimitsFixtureBandEndsWithTheReadmesText`; renaming the "Stuck in one C call" row fails `EveryLoopFixtureBandEndsWithTheReadmesText` without running the stuck call.
 
+- Follow-up (owner decision 2026-09-28, option (a); see the Plan Change Log): `lib/lua/port/luai_throw.h`, force-included into the Lua units (`library.json`: `-I port`, `-include luai_throw.h`; `test/game_script/CMakeLists.txt` mirrors both entry kinds), defines `LUAI_TRY` as `ldo.c`'s ISO C form and `LUAI_THROW` as its `longjmp` form preceded, for `LUA_ERRMEM` only, by a call to the weak `luaport_memoryerror(L)`. Neither the firmware nor the host defines `LUA_USE_POSIX`, so `ldo.c` would have picked plain `setjmp`/`longjmp` on every target. A relative `-include port/...` did not work in PlatformIO (it passes the path unresolved and gcc runs from the project root); `-I port` is resolved against the library by PlatformIO, and `-include` then finds the header on the include chain.
+- Weak reference, not a weak default definition: the header only declares the hook, so no Lua unit defines it and no env can fail to link. `CallGuard.cpp` defines it (`extern "C"`, declared in `CallGuard.h`); in the x4pro firmware `nm` shows `T luaport_memoryerror` and `w luaport_memoryerror` in `ldo.c.o`; the host suite fails without it (below). The hook returns unless `lua_gethook(L)` is `CallGuard::hook`: `lua_newstate` sets the hook to NULL before it can throw and before the extra space is set, and `install` comes after `setBindingContext`, so plain states (`luaL_newstate` in tests, `lua_newstate` in `ArenaAllocatorTest`) and a state being built are skipped. Then `CallGuard::recordMemory` (was `raiseMemory`, now it returns) records `Fault::Memory` and sets the hook count to 1; allocation-free.
+- Simplified: the sandbox's `pcall` is Lua's again, `xpcall` is the base one with only its handler wrapped (as before da88f053), `finishProtected` and `raiseMemoryError` are gone, and require's `forgetAndRaise` is a plain `lua_error`. A memory error a pcall catches is already a fault, and the hook raises it at the script's next instruction, or `LuaGame` reads it after the call.
+- Tests: `TheHeapCapInARequireSurvivesARaisingClose` became `ACloseAddedLaterCannotOutliveTheHeapCap`, 30 runs: five closable setups (a raising `__close`; `__close = error`; `__close = print` then `nil` before the bomb; `rawset` post hoc; `setmetatable(_G, {})` then `getmetatable(_G).__close`) x three placements (bomb in the protected function, in a required module, in a module `m` with its own `<close>` under `pcall(require, 'm')`) x pcall/xpcall. With the hook body emptied, all 30 fail (120 failed expectations) and so does `TheHeapCapStopsTheGameEvenUnderPcall`; the same two fail with the `-include` entry dropped. `ARefusalLuaRecoversFromIsNotAFault`: with the collector stopped, 1,000 1 KB strings make the cap refuse (`luaCapRefusals` rises), Lua's emergency collection recovers, the draw is Ok and the fault None.
+- Review of 7e0899e6, item 4: `expectBandsMatchTheReadme` now ASSERTs the label match and each watchdog name before any tap; renaming "Stuck in one C call" in both the fixture and the README fails in 0 ms instead of tapping the stuck call.
+
 ## Plan Change Log
+
+- 2026-09-28, owner decision on row 23 (option (a)): the Boundaries' "No change to Lua's sources or `lib/lua/library.json`" and Design Notes' "no Lua build change in this plan" are superseded for the throw hook: `library.json` gains `-I port` and `-include luai_throw.h`, and `lib/lua/port/luai_throw.h` is new; `src/` stays byte for byte. require's ERRMEM branch (row 18) and `finishProtected` become redundant and are removed. KEEP: the `__close` refusal, the string-metatable seal, `raiseStatic`, the README band cross-check, and every test of 7e0899e6 (the require-in-tbc test is widened, not dropped).
 
 ## Review Triage Log
 
@@ -105,7 +113,7 @@ Pass 1 (lenses run in turn by the build agent: blind-hunter, edge-case-hunter, v
 
 | # | Lens | Finding | Verdict | Route / evidence |
 |---|------|---------|---------|------------------|
-| 23 | edge-case (claim) | The AC "a script ... gets no closable value" is false for a `__close` added to the metatable after `setmetatable` | medium | defer: the path predates this change (da88f053 had it, wider); `deferred-work.md` `## e2r-ai-13b`, and the final report's blocking question |
+| 23 | edge-case (claim) | The AC "a script ... gets no closable value" is false for a `__close` added to the metatable after `setmetatable` | medium | defer: the path predates this change (da88f053 had it, wider); `deferred-work.md` `## e2r-ai-13b`, and the final report's blocking question. Closed in the follow-up by the owner's option (a), the throw hook (row 31) |
 | 24 | blind | `ApiSurfaceTest` leaks its `lua_State` when `ASSERT_TRUE(lua_getmetatable…)` fails | low | patch: the loop runs under `if`, and `lua_close` always runs; an empty set fails the `EXPECT_EQ` |
 | 25 | blind | `raiseStatic`'s comment says "a string literal" but `raise()` passes the guard's `text` | low | patch: comment names both |
 | 26 | blind | `lua_tostring` on a non-string key would break `lua_next` in the raw metatable walk | false | lstrlib's metatable and the seal use string keys only (`lstrlib.c` `stringmetamethods`, `"__index"`, `"__metatable"`) |
@@ -114,7 +122,20 @@ Pass 1 (lenses run in turn by the build agent: blind-hunter, edge-case-hunter, v
 | 29 | verification-gap | No gaps: the refactored `raise()` keeps its prefixed texts (existing `STREQ` frame-full and README tests), and each new behaviour has a mutation-checked test | no finding | |
 | 30 | intent-alignment | Readings: (a) close the heap-cap-under-pcall hole, (b) apply the orchestrator's named mechanisms. The diff implements (b); (a) holds for the reported repros and the require path, not for a post-hoc `__close` with a bomb in Lua code (row 23) | no finding | descriptive only |
 
+Pass 2: the orchestrator's independent review of 7e0899e6 (it verified the seal and the `__close` refusal against bypasses, string methods, the other stopping faults, and `raiseStatic`), triaged with the orchestrator's calls, together with the owner's option (a). Counts: high 0, medium 1, low 5, false 0, maybe-false 0.
+
+| # | Source | Finding | Verdict | Route / evidence |
+|---|--------|---------|---------|------------------|
+| 31 | orchestrator | The added-later `__close` gap also reaches inside `require`: a module with its own `<close>` and a heap bomb, under `pcall(require, 'm')`, draws Ok with no fault (the module's own `lua_pcall` closes before require sees ERRMEM) | medium | patch: the throw hook (row 23 closed); the exact repro is the "module m" placement of `ACloseAddedLaterCannotOutliveTheHeapCap`, which fails without the hook |
+| 32 | orchestrator | The gap needs no raising `__close`: `__close = print` then `nil` before the bomb; `rawset` post hoc; `setmetatable(_G, {})` then `getmetatable(_G).__close` | low | patch: each is a closable setup of the same test, under pcall and xpcall and in all three placements |
+| 33 | orchestrator | game-api-seed §6, spine AD-6, and api-level-1.txt promise pcall cannot catch stopping faults | low | patch: true with the hook; api-level-1.txt's setmetatable comment and AD-6 now say where the memory fault is recorded, with no gap wording; "unknown icon or image name" left to epic-icon-library, per the orchestrator |
+| 34 | orchestrator | Renaming the watchdog band consistently in `loop/main.lua` and the README passes the label check and taps into the stuck call | low | patch: fatal `ASSERT`s before any tap (Implementation Notes) |
+| 35 | orchestrator | `raiseStatic` texts carry no line number, which game-api-seed §6 says the device shows | low | patch: §6 says faults found with the C stack nearly full show none |
+| 36 | orchestrator | Lua's own "C stack overflow" (`LUAI_MAXCCALLS`) is an ordinary catchable error, while the `c_stack_levels_count` comment says the call fails | low | patch (comment only, runtime unchanged): the comment says pcall can catch it and that the runtime's headroom check is the one that stops the game |
+
 ## Design Notes
+
+(Superseded by the owner's option (a): the next paragraph describes 7e0899e6; since the throw hook, require no longer needs its branch.)
 
 Why require keeps its ERRMEM branch: `setmetatable` checks `__close` only when the metatable is set, but Lua looks `__close` up at the `<close>` declaration and again at close time. A script can set a metatable, then add `__close` to it, and close over it. A plain `lua_error` in require would re-raise ERRMEM, but the `__close` could still replace it while unwinding to the outer pcall; `raiseMemory` records the fault first, so the hook re-raises inside the `__close`. A test pins it. The general post-hoc case (a memory error raised in Lua code, not in require) is not closed by the orchestrator's fix; it goes back as a question (no Lua build change in this plan).
 
@@ -133,3 +154,9 @@ Seal value `false`: `getmetatable('')` then reads as "no metatable" to a truthin
 - `pio run -e x4pro` -- SUCCESS (3:54 fresh, 1:25 after the review patches); `pio run -e default` -- SUCCESS (2:55 fresh, 0:35 after).
 - `API_SURFACE_CRC` unchanged: `ApiLevelTest` and `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` pass with only comment lines changed.
 - Every touched path is fork-only (`lib/GameScript`, `test/game_script`, `docs/crosshatch`, `_bmad-output`), so the upstream-touch check does not apply.
+
+**Evidence for the follow-up (option (a) and the review of 7e0899e6; 2026-09-28, under the lock):**
+- Host tests: reconfigure, build, `ctest -j8` -- 640/640 passed. `ninja -t commands` shows `-I.../lib/lua/port -include luai_throw.h` on `ldo.c`; `nm` on `GameScriptTest` shows `T luaport_memoryerror`.
+- Mutations (each alone, restored after): the `-include` entry dropped, or the hook body emptied, fails `TheHeapCapStopsTheGameEvenUnderPcall` and all 30 runs of `ACloseAddedLaterCannotOutliveTheHeapCap`; the watchdog band renamed in both fixture and README fails `EveryLoopFixtureBandEndsWithTheReadmesText` in 0 ms. Restored: 179/179 in `GameScriptTest`.
+- `pio run -e x4pro`, `-e default`, `-e sticky` -- SUCCESS each. `pio run -e x4pro -v` shows `-Ilib/lua/port` and `-include luai_throw.h` on the Lua units; `xtensa-esp32s3-elf-nm` shows `T luaport_memoryerror` in the x4pro and sticky ELFs and `w luaport_memoryerror` in `ldo.c.o`.
+- Every touched path is fork-only (`lib/lua` outside `src/`, `lib/GameScript`, `test/game_script`, `docs/crosshatch`, `_bmad-output`).

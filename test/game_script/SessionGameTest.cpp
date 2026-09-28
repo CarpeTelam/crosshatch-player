@@ -192,9 +192,10 @@ void SessionGameTest::expectBandsMatchTheReadme(const char* fixture, const std::
   const auto rows = readmeTable(heading);
   std::vector<std::string> readmeLabels;
   for (const auto& row : rows) readmeLabels.push_back(row.empty() ? "" : row[0]);
-  EXPECT_EQ(readmeLabels, bandLabels(source)) << heading << ": the README's rows and " << fixture << "'s bands";
+  // Fatal, before any tap: a watchdog band under another name would run its stuck call.
+  ASSERT_EQ(readmeLabels, bandLabels(source)) << heading << ": the README's rows and " << fixture << "'s bands";
   for (const std::string& name : watchdogBands) {
-    EXPECT_NE(std::find(readmeLabels.begin(), readmeLabels.end(), name), readmeLabels.end())
+    ASSERT_NE(std::find(readmeLabels.begin(), readmeLabels.end(), name), readmeLabels.end())
         << name << " is not a band of " << fixture;
   }
   for (const auto& row : rows) {
