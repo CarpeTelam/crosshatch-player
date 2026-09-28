@@ -57,7 +57,7 @@ inline std::optional<Entry> parseEntry(const std::string& line) {
       {"manifest", std::regex(R"(^([a-z_]+(?:\.[a-z_]+)?) [a-z]+\??$)")},
       {"limit", std::regex(R"(^([a-z_]+) (?:0|[1-9][0-9]*)$)")},
       {"lib", std::regex("^(" + NAME + R"((?:\.)" + NAME + ")?)$")},
-      {"icon", std::regex(R"(^([a-z0-9_]{1,32})$)")},
+      {"icon", std::regex(R"(^([a-z][a-z0-9-]{0,31})$)")},
       {"seats_max", std::regex(R"(^()[1-9][0-9]*$)")},
   };
   std::smatch parts;

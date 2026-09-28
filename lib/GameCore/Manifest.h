@@ -61,7 +61,7 @@ struct Manifest {
   static constexpr size_t MAX_ID_BYTES = 32;       // ^[a-z0-9][a-z0-9-]{0,31}$
   static constexpr size_t MAX_NAME_BYTES = 64;     // bytes of UTF-8, at least 1
   static constexpr size_t MAX_VERSION_BYTES = 32;  // bytes, any text
-  static constexpr size_t MAX_ICON_BYTES = 32;     // [a-z0-9_]{1,32}, a library icon name
+  static constexpr size_t MAX_ICON_BYTES = 32;     // [a-z0-9_-]{1,32}, a library icon name
 
   enum Mode : uint8_t { MODE_SOLO = 1 << 0, MODE_PASS = 1 << 1, MODE_NEARBY = 1 << 2 };
 

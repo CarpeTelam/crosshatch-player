@@ -193,3 +193,8 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-deferred-cleanup-before-epic-install-and-launcher-plan.md`
   summary: `sim.sh check` (and `build` running setup when it fails) has no automated test; CI's Simulator build job runs `setup` right before `build`, so its failing branches never run there, and a regression that made it always pass would go unnoticed.
   evidence: Review finding (verification gap), 3.10. Shown by hand in the plan's Verification (exit 1 on a doctored block, 0 after setup). `sim.sh` lives in `.claude/skills/run-crosshatch-player/`, outside `scripts/`, so no sidecar `*_test.py` covers it; a small test that runs `sim.sh check` against a temp repository's `platformio.local.ini` would.
+## 3.9
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-phosphor-names-and-both-weights-plan.md`
+  summary: The icon weight's replay step has no automated test: `FrameReplay`'s `case Op::Icon` passing `command.weight == IconWeight::Fill` to `drawGameIconAt`, and `drawGameIconAt` turning `fill` into `GameIcons::Weight`; tests pin the weight up to the `DrawCommand` and from `sourceFor` on, not between.
+  evidence: Review finding (verification gap), 3.9. `test/` builds neither `FrameReplay.cpp` nor `GameIconDraw.cpp` (the 3.1 `Op::Icon` replay gap, already deferred to retro AI-2's harness); dropping or inverting the flag passes every host test. The `icons` fixture screenshots (`story-names-weights-screenshots/x4pro-icons/`) show fill and regular drawn apart through the replay today.

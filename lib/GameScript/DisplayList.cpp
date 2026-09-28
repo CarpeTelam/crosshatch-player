@@ -11,7 +11,7 @@ namespace GameScript {
 //   Text   op u8, color u8, size u8, align u8, x y i16, length u16, bytes, NUL
 //   Line   op u8, color u8, x1 y1 x2 y2 i16
 //   Circle op u8, color u8, filled u8, x y r i16
-//   Icon   op u8, color u8, size u8, x y i16, icon u16
+//   Icon   op u8, color u8, size u8, weight u8, x y i16, icon u16
 //   Image  op u8, color u8, x y i16, image u16
 namespace {
 
@@ -20,7 +20,7 @@ constexpr size_t RECT_BYTES = 3 + 4 * sizeof(int16_t);
 constexpr size_t TEXT_HEADER_BYTES = 4 + 2 * sizeof(int16_t) + sizeof(uint16_t);
 constexpr size_t LINE_BYTES = 2 + 4 * sizeof(int16_t);
 constexpr size_t CIRCLE_BYTES = 3 + 3 * sizeof(int16_t);
-constexpr size_t ICON_BYTES = 3 + 2 * sizeof(int16_t) + sizeof(uint16_t);
+constexpr size_t ICON_BYTES = 4 + 2 * sizeof(int16_t) + sizeof(uint16_t);
 constexpr size_t IMAGE_BYTES = 2 + 2 * sizeof(int16_t) + sizeof(uint16_t);
 
 int16_t clamp16(const int64_t v) {
@@ -135,12 +135,13 @@ bool DisplayList::appendCircle(const int64_t x, const int64_t y, const int64_t r
 }
 
 bool DisplayList::appendIcon(const int64_t x, const int64_t y, const uint16_t icon, const TextSize size,
-                             const Color color) {
+                             const Color color, const IconWeight weight) {
   uint8_t* p = reserve(ICON_BYTES);
   if (!p) return false;
   *p++ = static_cast<uint8_t>(Op::Icon);
   *p++ = static_cast<uint8_t>(color);
   *p++ = static_cast<uint8_t>(size);
+  *p++ = static_cast<uint8_t>(weight);
   p = put16(p, clamp16(x));
   p = put16(p, clamp16(y));
   std::memcpy(p, &icon, sizeof(icon));
@@ -203,6 +204,7 @@ bool DisplayList::Reader::next(DrawCommand& out) {
       return true;
     case Op::Icon:
       out.size = static_cast<TextSize>(*p++);
+      out.weight = static_cast<IconWeight>(*p++);
       p = get16(p, out.x);
       p = get16(p, out.y);
       std::memcpy(&out.icon, p, sizeof(out.icon));

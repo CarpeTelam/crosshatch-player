@@ -10,13 +10,15 @@ class GfxRenderer;
 // drawn: the background is left as it was.
 
 // Draws the icon named `name` with its top-left at (x, y) on the logical screen,
-// `pixels` wide and high (32, 64, or 128), in black or white, clipped to the
-// screen. False, logged, for an unknown name or a size other than those.
-bool drawGameIcon(const GfxRenderer& renderer, const char* name, int x, int y, int pixels, bool black);
+// `pixels` wide and high (32, 64, or 128), in black or white, in its regular
+// weight or (`fill`) its fill weight, clipped to the screen. False, logged, for an
+// unknown name or a size other than those.
+bool drawGameIcon(const GfxRenderer& renderer, const char* name, int x, int y, int pixels, bool black,
+                  bool fill = false);
 
-// Draws icon `index` of GameIcons::ICONS at `pixels` with its top-left at (x, y)
-// on a width x height canvas whose top-left is (originX, originY) on the screen,
-// clipped to that canvas. False, logged, drawing nothing, for an index or size the
-// library lacks.
+// Draws icon `index` of GameIcons::ICONS at `pixels`, in its regular or (`fill`)
+// fill weight, with its top-left at (x, y) on a width x height canvas whose top-left
+// is (originX, originY) on the screen, clipped to that canvas. False, logged,
+// drawing nothing, for an index or size the library lacks.
 bool drawGameIconAt(const GfxRenderer& renderer, size_t index, int pixels, int originX, int originY, int width,
-                    int height, int x, int y, bool black);
+                    int height, int x, int y, bool black, bool fill);

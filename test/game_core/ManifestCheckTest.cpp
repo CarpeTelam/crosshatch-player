@@ -130,7 +130,7 @@ TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {
 TEST(ManifestCheckTest, ParsedManifestPassesCheck) {
   Manifest m;
   ASSERT_EQ(Manifest::parse(R"({"id": "tracer", "name": "Tracer", "version": "0.1", "api": 1,
-                                "seats": {"min": 1, "max": 1}, "modes": ["solo"], "icon": "mark_x"})",
+                                "seats": {"min": 1, "max": 1}, "modes": ["solo"], "icon": "x"})",
                             m),
             GameCore::ManifestError::None);
   EXPECT_TRUE(m.check(HostCaps{1, 1, 2, false}).ok());

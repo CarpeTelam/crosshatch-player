@@ -32,7 +32,8 @@
 #       One global from Lua 5.5.1's standard libraries (AD-4), or one member of
 #       a library table; every member a game can reach is listed after its table.
 #   icon <name>
-#       One library icon name (appended by epic-icon-library).
+#       One library icon name (appended by epic-icon-library): Phosphor's own,
+#       [a-z][a-z0-9-]{0,31}, each drawn in every `enum weight` value.
 #   seats_max <integer>
 #       The most seats a match can have.
 #
@@ -65,7 +66,7 @@ fn ch.gfx.rect(x, y, w, h, color, filled?)
 fn ch.gfx.line(x1, y1, x2, y2, color)
 fn ch.gfx.circle(x, y, r, color, filled?)
 fn ch.gfx.text(x, y, str, size, color, align?)
-fn ch.gfx.icon(name, x, y, size, color)
+fn ch.gfx.icon(name, x, y, size, color, weight?)
 fn ch.gfx.image(name, x, y, color)
 fn ch.gfx.refresh(mode?)
 fn ch.text_width(str, size) -> integer
@@ -200,6 +201,8 @@ enum align right
 enum refresh fast
 enum refresh half
 enum refresh full
+enum weight regular
+enum weight fill
 enum mode solo
 enum mode pass
 enum mode nearby
@@ -236,72 +239,65 @@ manifest icon string?
 
 # Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
 # Marks
-icon mark_dot
-icon mark_hit
-icon mark_miss
-icon mark_o
-icon mark_x
+icon circle
+icon dot-outline
+icon fire
+icon waves
+icon x
 # Card suits
-icon suit_club
-icon suit_diamond
-icon suit_heart
-icon suit_spade
+icon club
+icon diamond
+icon heart
+icon spade
 # Dice faces
-icon die_1
-icon die_2
-icon die_3
-icon die_4
-icon die_5
-icon die_6
+icon dice-five
+icon dice-four
+icon dice-one
+icon dice-six
+icon dice-three
+icon dice-two
 # Board pieces
-icon piece_bishop
-icon piece_king
-icon piece_knight
-icon piece_pawn
-icon piece_queen
-icon piece_rook
-icon piece_ship
+icon boat
 # Player markers
-icon marker_circle
-icon marker_hexagon
-icon marker_square
-icon marker_star
-icon marker_triangle
-icon player
-icon players
+icon hexagon
+icon square
+icon star
+icon triangle
+icon user
+icon users
 # Controls
-icon arrow_down
-icon arrow_left
-icon arrow_right
-icon arrow_up
+icon arrow-clockwise
+icon arrow-down
+icon arrow-left
+icon arrow-right
+icon arrow-u-up-left
+icon arrow-u-up-right
+icon arrow-up
+icon arrows-clockwise
 icon check
 icon eraser
-icon game_controller
-icon help
-icon hide
-icon hint
-icon home
+icon eye
+icon eye-closed
+icon game-controller
+icon gear-six
 icon hourglass
+icon house
 icon info
-icon leave
+icon lightbulb
 icon minus
 icon pause
-icon pencil
+icon pencil-simple
 icon play
 icon plus
-icon redo
-icon restart
-icon rotate
-icon settings
-icon show
+icon question
 icon shuffle
+icon sign-out
 icon timer
 icon trash
-icon undo
 # Status
-icon flag_checkered
+icon flag-checkered
 icon smiley
-icon smiley_sad
+icon smiley-sad
 icon trophy
 icon warning
 

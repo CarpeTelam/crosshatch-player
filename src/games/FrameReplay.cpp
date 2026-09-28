@@ -23,6 +23,13 @@ namespace {
 // Icons draw at DRAWN_PIXELS[size], indexed by TextSize like the fonts below.
 static_assert(std::size(GameIconBlit::DRAWN_PIXELS) == static_cast<size_t>(GameScript::TextSize::Large) + 1,
               "one drawn icon size per TextSize");
+// An icon command's weight is the library's, in the same order.
+static_assert(static_cast<size_t>(GameScript::IconWeight::Regular) == static_cast<size_t>(GameIcons::Weight::Regular),
+              "IconWeight follows GameIcons::Weight");
+static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) == static_cast<size_t>(GameIcons::Weight::Fill),
+              "IconWeight follows GameIcons::Weight");
+static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) + 1 == GameIcons::WEIGHT_COUNT,
+              "one IconWeight per library weight");
 
 // The built-in font each text size draws in, indexed by TextSize.
 constexpr int TEXT_FONT_IDS[] = {UI_10_FONT_ID, UI_12_FONT_ID, NOTOSANS_18_FONT_ID};
@@ -153,7 +160,8 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
         break;
       case GameScript::Op::Icon:
         drawGameIconAt(renderer, command.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(command.size)], ox, oy,
-                       width, height, command.x, command.y, command.color == GameScript::Color::Black);
+                       width, height, command.x, command.y, command.color == GameScript::Color::Black,
+                       command.weight == GameScript::IconWeight::Fill);
         break;
       case GameScript::Op::Image: {
         if (command.image >= images.count) {

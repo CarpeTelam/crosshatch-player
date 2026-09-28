@@ -186,7 +186,10 @@ class ParseTest(unittest.TestCase):
 
 
 PHOSPHOR = ggi.REPO / 'assets' / 'game-icons' / 'phosphor'
-GOOD_MAP = 'x regular phosphor/regular/x.svg\nheart fill phosphor/fill/heart-fill.svg\n'
+# Two names in both weights; dice-six carries a hyphen, and x is listed first but sorts last.
+GOOD_MAP = ('x regular phosphor/regular/x.svg\nx fill phosphor/fill/x-fill.svg\n'
+            'dice-six regular phosphor/regular/dice-six.svg\ndice-six fill phosphor/fill/dice-six-fill.svg\n')
+X_BOTH = 'x regular phosphor/regular/x.svg\nx fill phosphor/fill/x-fill.svg\n'
 
 
 class MainTest(unittest.TestCase):
@@ -196,8 +199,9 @@ class MainTest(unittest.TestCase):
         self.assets = self.tmp / 'assets'
         (self.assets / 'phosphor' / 'regular').mkdir(parents=True)
         (self.assets / 'phosphor' / 'fill').mkdir(parents=True)
-        shutil.copy(PHOSPHOR / 'regular' / 'x.svg', self.assets / 'phosphor' / 'regular' / 'x.svg')
-        shutil.copy(PHOSPHOR / 'fill' / 'heart-fill.svg', self.assets / 'phosphor' / 'fill' / 'heart-fill.svg')
+        for name in ('x', 'dice-six'):
+            shutil.copy(PHOSPHOR / 'regular' / f'{name}.svg', self.assets / 'phosphor' / 'regular' / f'{name}.svg')
+            shutil.copy(PHOSPHOR / 'fill' / f'{name}-fill.svg', self.assets / 'phosphor' / 'fill' / f'{name}-fill.svg')
         self.out = self.tmp / 'out.h'
 
     def tearDown(self):
@@ -218,22 +222,38 @@ class MainTest(unittest.TestCase):
         code, err = self.run_main('# comment\n\n' + GOOD_MAP)
         self.assertEqual(code, 0, err)
         text = self.out.read_text()
-        self.assertIn('inline constexpr uint8_t HEART_32[SMALL_BYTES] = {', text)
-        self.assertIn('inline constexpr uint8_t X_64[MEDIUM_BYTES] = {', text)
-        self.assertIn('// heart: Phosphor 2.1.1 fill, phosphor/fill/heart-fill.svg', text)
+        self.assertIn('enum class Weight : uint8_t { Regular, Fill };', text)
+        self.assertIn('inline constexpr size_t WEIGHT_COUNT = 2;', text)
+        self.assertIn('  const uint8_t* small[WEIGHT_COUNT];\n  const uint8_t* medium[WEIGHT_COUNT];\n', text)
+        for array in ('DICE_SIX_32[SMALL_BYTES]', 'DICE_SIX_64[MEDIUM_BYTES]', 'DICE_SIX_FILL_32[SMALL_BYTES]',
+                      'DICE_SIX_FILL_64[MEDIUM_BYTES]', 'X_32[SMALL_BYTES]', 'X_FILL_64[MEDIUM_BYTES]'):
+            self.assertIn(f'inline constexpr uint8_t {array} = {{', text)
+        self.assertIn('// dice-six: Phosphor 2.1.1 regular, phosphor/regular/dice-six.svg', text)
+        self.assertIn('// dice-six: Phosphor 2.1.1 fill, phosphor/fill/dice-six-fill.svg', text)
         self.assertIn('// x: Phosphor 2.1.1 regular, phosphor/regular/x.svg', text)
+        self.assertIn('// x: Phosphor 2.1.1 fill, phosphor/fill/x-fill.svg', text)
         self.assertIn('\n' + ggi.LICENCE_NOTICE + '\n', text)
-        self.assertLess(text.index('{"heart", HEART_32, HEART_64}'), text.index('{"x", X_32, X_64}'))
+        dice = '{"dice-six", {DICE_SIX_32, DICE_SIX_FILL_32}, {DICE_SIX_64, DICE_SIX_FILL_64}},'
+        x = '{"x", {X_32, X_FILL_32}, {X_64, X_FILL_64}},'
+        self.assertLess(text.index(dice), text.index(x))
+        # Each name's regular bitmaps come before its fill ones, and the weights differ.
+        self.assertLess(text.index('X_32[SMALL_BYTES]'), text.index('X_FILL_32[SMALL_BYTES]'))
+        self.assertNotEqual(self.array(text, 'X_32'), self.array(text, 'X_FILL_32'))
         self.assertNotIn('static', text)
+        self.assertNotIn('original', text)
 
-    def test_an_original_icon_is_labelled_as_one(self):
-        (self.assets / 'original').mkdir()
-        shutil.copy(PHOSPHOR / 'regular' / 'x.svg', self.assets / 'original' / 'cross.svg')
-        code, err = self.run_main(GOOD_MAP + 'cross regular original/cross.svg\n')
-        self.assertEqual(code, 0, err)
-        text = self.out.read_text()
-        self.assertIn("// cross: original, in Phosphor's regular style, original/cross.svg", text)
-        self.assertIn('// x: Phosphor 2.1.1 regular, phosphor/regular/x.svg', text)
+    def array(self, text, name):
+        start = text.index(f'uint8_t {name}[')
+        return text[start:text.index('};', start)].split('{', 1)[1]
+
+    def test_the_committed_map_names_phosphor_icons_only_in_both_weights(self):
+        entries = ggi.read_map(ggi.DEFAULT_ASSETS)
+        self.assertEqual(len(entries), 55)
+        for weights in entries:
+            self.assertEqual(tuple(weights), ggi.WEIGHTS)
+            for weight, entry in weights.items():
+                self.assertEqual(entry.path, ggi.phosphor_path(entry.name, weight))
+        self.assertFalse((ggi.DEFAULT_ASSETS / 'original').exists())
 
     def test_two_runs_are_byte_identical(self):
         second = self.tmp / 'second.h'
@@ -242,29 +262,49 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.out.read_bytes(), second.read_bytes())
 
     def test_broken_rules_exit_1(self):
+        def both(name):
+            return f'{name} regular phosphor/regular/{name}.svg\n{name} fill phosphor/fill/{name}-fill.svg\n'
+
         cases = {
-            'bad map line': 'x regular\n',
-            'extra field': 'x regular phosphor/regular/x.svg extra\n',
-            'bad name': 'X regular phosphor/regular/x.svg\n',
-            'digit first': '6x regular phosphor/regular/x.svg\n',
-            'double underscore': 'a__b regular phosphor/regular/x.svg\n',
-            'trailing underscore': 'die_ regular phosphor/regular/x.svg\n',
-            'long name': 'a' * 33 + ' regular phosphor/regular/x.svg\n',
-            'bad weight': 'x heavy phosphor/regular/x.svg\n',
-            'escaping path': 'x regular ../x.svg\n',
-            'absolute path': 'x regular /phosphor/regular/x.svg\n',
-            'backslash path': 'x regular phosphor\\regular\\x.svg\n',
-            'unknown source folder': 'x regular other/x.svg\n',
-            'no source folder': 'x regular x.svg\n',
-            'not an svg path': 'x regular phosphor/regular/x.png\n',
-            'duplicate': 'x regular phosphor/regular/x.svg\nx fill phosphor/fill/heart-fill.svg\n',
-            'no icons': '# only a comment\n',
+            # (map, a fragment the message must hold)
+            'bad map line': ('x regular\n' + X_BOTH, 'names.txt:1'),
+            'extra field': ('x regular phosphor/regular/x.svg extra\n', 'names.txt:1'),
+            'upper case name': (both('X'), 'bad name'),
+            'digit first': (both('6x'), 'bad name'),
+            'underscore': (both('x_y'), 'bad name'),
+            'double hyphen': (both('x--y'), 'bad name'),
+            'trailing hyphen': (both('x-'), 'bad name'),
+            'leading hyphen': (both('-x'), 'bad name'),
+            'ends in -fill': (both('x-fill'), 'bad name'),
+            'long name': (both('a' * 33), 'bad name'),
+            'weight bold': ('x bold phosphor/bold/x-bold.svg\n' + X_BOTH, 'unknown weight'),
+            'weight heavy': ('x heavy phosphor/regular/x.svg\n', 'unknown weight'),
+            'not the name\'s path': ('cross regular phosphor/regular/x.svg\n'
+                                     'cross fill phosphor/fill/x-fill.svg\n', "not Phosphor's regular cross"),
+            'another name\'s fill': ('x regular phosphor/regular/x.svg\nx fill phosphor/fill/heart-fill.svg\n',
+                                     "not Phosphor's fill x"),
+            'the other weight\'s folder': ('x regular phosphor/fill/x-fill.svg\nx fill phosphor/fill/x-fill.svg\n',
+                                          "not Phosphor's regular x"),
+            'fill without -fill': ('x regular phosphor/regular/x.svg\nx fill phosphor/fill/x.svg\n',
+                                   "not Phosphor's fill x"),
+            'original path': ('x regular original/x.svg\nx fill phosphor/fill/x-fill.svg\n', "not Phosphor's"),
+            'escaping path': ('x regular ../x.svg\n', "not Phosphor's"),
+            'absolute path': ('x regular /phosphor/regular/x.svg\n', "not Phosphor's"),
+            'backslash path': ('x regular phosphor\\regular\\x.svg\n', "not Phosphor's"),
+            'not an svg path': ('x regular phosphor/regular/x.png\n', "not Phosphor's"),
+            'regular only': ('x regular phosphor/regular/x.svg\n', 'x has no fill line'),
+            'fill only': ('x fill phosphor/fill/x-fill.svg\n', 'x has no regular line'),
+            'fill twice': (X_BOTH + 'x fill phosphor/fill/x-fill.svg\n',
+                           'names.txt:3: x fill is already named on line 2'),
+            'regular twice': ('x regular phosphor/regular/x.svg\n' + X_BOTH, 'x regular is already named on line 1'),
+            'no icons': ('# only a comment\n', 'names no icons'),
         }
-        for label, names in cases.items():
+        for label, (names, fragment) in cases.items():
             with self.subTest(label):
                 code, err = self.run_main(names)
                 self.assertEqual(code, 1, err)
                 self.assertIn('names', err)
+                self.assertIn(fragment, err)
         self.assertFalse(self.out.exists())
 
     def test_a_map_that_is_not_utf8_exits_1(self):
@@ -285,8 +325,9 @@ class MainTest(unittest.TestCase):
         }
         for label, text in cases.items():
             with self.subTest(label):
-                self.write_svg('phosphor/bad.svg', text)
-                code, err = self.run_main('bad regular phosphor/bad.svg\n')
+                self.write_svg('phosphor/regular/bad.svg', text)
+                shutil.copy(PHOSPHOR / 'fill' / 'x-fill.svg', self.assets / 'phosphor' / 'fill' / 'bad-fill.svg')
+                code, err = self.run_main('bad regular phosphor/regular/bad.svg\nbad fill phosphor/fill/bad-fill.svg\n')
                 self.assertEqual(code, 1, err)
                 self.assertIn('bad.svg', err)
         self.assertIn('renders empty', err)
@@ -295,9 +336,10 @@ class MainTest(unittest.TestCase):
         code, err = self.run_main(names=None)
         self.assertEqual(code, 2, err)
         self.assertIn('names.txt', err)
-        code, err = self.run_main('x regular phosphor/regular/missing.svg\n')
+        (self.assets / 'phosphor' / 'fill' / 'x-fill.svg').unlink()
+        code, err = self.run_main(X_BOTH)
         self.assertEqual(code, 2, err)
-        self.assertIn('missing.svg', err)
+        self.assertIn('x-fill.svg', err)
         self.assertFalse(self.out.exists())
 
     def test_an_unwritable_out_exits_2(self):

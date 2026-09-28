@@ -23,17 +23,19 @@ struct Source {
   int scale = 1;
 };
 
-// The bitmap that draws icon `index` of GameIcons::ICONS at `drawnPixels`; false
-// (out untouched) for an index past the library or a size not in DRAWN_PIXELS.
-inline bool sourceFor(const size_t index, const int drawnPixels, Source& out) {
-  if (index >= GameIcons::ICON_COUNT) return false;
+// The bitmap that draws icon `index` of GameIcons::ICONS in `weight` at
+// `drawnPixels`; false (out untouched) for an index past the library, a weight
+// past WEIGHT_COUNT, or a size not in DRAWN_PIXELS.
+inline bool sourceFor(const size_t index, const int drawnPixels, const GameIcons::Weight weight, Source& out) {
+  const auto w = static_cast<size_t>(weight);
+  if (index >= GameIcons::ICON_COUNT || w >= GameIcons::WEIGHT_COUNT) return false;
   const GameIcons::Icon& icon = GameIcons::ICONS[index];
   if (drawnPixels == DRAWN_PIXELS[0]) {
-    out = Source{icon.small, GameIcons::SMALL_PIXELS, 1};
+    out = Source{icon.small[w], GameIcons::SMALL_PIXELS, 1};
   } else if (drawnPixels == DRAWN_PIXELS[1]) {
-    out = Source{icon.medium, GameIcons::MEDIUM_PIXELS, 1};
+    out = Source{icon.medium[w], GameIcons::MEDIUM_PIXELS, 1};
   } else if (drawnPixels == DRAWN_PIXELS[2]) {
-    out = Source{icon.medium, GameIcons::MEDIUM_PIXELS, 2};
+    out = Source{icon.medium[w], GameIcons::MEDIUM_PIXELS, 2};
   } else {
     return false;
   }

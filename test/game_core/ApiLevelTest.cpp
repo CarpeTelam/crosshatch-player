@@ -42,7 +42,7 @@ TEST(ApiLevelTest, GrammarRejectsMalformedEntries) {
   for (const char* bad :
        {"fn ch.gfx.rect", "fn ch.gfx.rect(x,y)", "fn ch.gfx.rect(x, y) ", "fn  ch.log(...)", "field ch.api",
         "field api integer", "enum color", "limit state_bytes 01", "limit state_bytes", "manifest seats.min",
-        "seats_max 0", "icon Mark", "global x", "lib string\r", "ctx mode", "lib string.", "lib a.b.c"}) {
+        "seats_max 0", "icon Mark", "icon a_b", "global x", "lib string\r", "ctx mode", "lib string.", "lib a.b.c"}) {
     EXPECT_FALSE(parseEntry(bad).has_value()) << bad;
   }
   EXPECT_TRUE(parseEntry("fn ch.gfx.text(x, y, str, size, color, align?)").has_value());

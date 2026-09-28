@@ -81,12 +81,12 @@ TEST(GameViewIconsTest, EveryViewAndMenuRowNamesALibraryIcon) {
 
 TEST(GameViewIconsTest, TheNamesAreTheAgreedOnes) {
   EXPECT_STREQ(GameViewIcons::forView(MatchState::Paused), "pause");
-  EXPECT_STREQ(GameViewIcons::forView(MatchState::Over), "flag_checkered");
+  EXPECT_STREQ(GameViewIcons::forView(MatchState::Over), "flag-checkered");
   EXPECT_STREQ(GameViewIcons::forView(MatchState::Error), "warning");
   EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Resume), "play");
-  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Leave), "leave");
-  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::PlayAgain), "restart");
-  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Back), "leave");
+  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Leave), "sign-out");
+  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::PlayAgain), "arrows-clockwise");
+  EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Back), "sign-out");
 }
 
 TEST(GameViewIconsTest, StatesWithNoViewAndNonMenuEventsHaveNoIcon) {

@@ -42,12 +42,13 @@ void encodeErrorMessage(char* out, size_t capacity, const char* function, const 
                         size_t limit);
 
 // The strings each ch.gfx option accepts (api-level-1.txt's `enum color`, `size`,
-// `align`, and `refresh`), null-terminated for luaL_checkoption; ChBindings.cpp maps
+// `align`, `refresh`, and `weight`), null-terminated for luaL_checkoption; ChBindings.cpp maps
 // them, index for index, to the DisplayList values.
 inline constexpr const char* const COLOR_NAMES[] = {"white", "light", "dark", "black", nullptr};
 inline constexpr const char* const SIZE_NAMES[] = {"small", "medium", "large", nullptr};
 inline constexpr const char* const ALIGN_NAMES[] = {"left", "center", "right", nullptr};
 inline constexpr const char* const REFRESH_NAMES[] = {"fast", "half", "full", nullptr};
+inline constexpr const char* const WEIGHT_NAMES[] = {"regular", "fill", nullptr};
 
 // The host's screen as a game sees it, fixed at VM start (AD-7): the canvas size
 // (GameViewport's), exposed as ch.screen, and the text metrics behind

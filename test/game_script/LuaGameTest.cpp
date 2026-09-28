@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -126,14 +127,14 @@ TEST_F(LuaGameTest, TheGalleryDrawsEveryCommandAndFillColor) {
 // The icons fixture pages through the library: the black pages (black icons on
 // white) come first, then the same pages in white (white icons on black), and
 // the tap after the last white page turns back to the first black one. The pages
-// of each ink together draw every library icon at each size, and each page draws
-// its text and icons in its ink only.
-TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
+// of each ink together draw every library icon at each size in both weights, and
+// each page draws its text and icons in its ink only.
+TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothWeightsAndColors) {
   useSource("main", readFixture("icons/main.lua"));
   DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
-  using Page = std::vector<std::pair<uint16_t, int>>;  // (icon, size) in draw order
-  std::vector<Page> pages[2];                          // by ink: 0 black, 1 white
+  using Page = std::vector<std::tuple<uint16_t, int, int>>;  // (icon, size, weight) in draw order
+  std::vector<Page> pages[2];                                // by ink: 0 black, 1 white
   bool wrapped = false;
   // Bounded well past the pages the library needs, so a fixture that never wraps fails instead of looping.
   const size_t maxPages = 4 * GameIcons::ICON_COUNT;
@@ -157,7 +158,7 @@ TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
       if (c.op != Op::Icon) continue;
       EXPECT_EQ(c.color, ink) << "page " << page;
       ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
-      icons.emplace_back(c.icon, static_cast<int>(c.size));
+      icons.emplace_back(c.icon, static_cast<int>(c.size), static_cast<int>(c.weight));
     }
     EXPECT_EQ(clears, 1u) << "page " << page;
     EXPECT_FALSE(icons.empty()) << "page " << page;
@@ -174,13 +175,21 @@ TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
   EXPECT_TRUE(wrapped) << "the pages never came back to the first black page";
   EXPECT_EQ(pages[1], pages[0]) << "the white pages repeat the black pages, in order";
   for (size_t ink = 0; ink < 2; ++ink) {
-    std::vector<std::vector<bool>> seen(GameIcons::ICON_COUNT, std::vector<bool>(3, false));
+    // seen[icon][size][weight]
+    std::vector<std::vector<std::vector<bool>>> seen(
+        GameIcons::ICON_COUNT, std::vector<std::vector<bool>>(3, std::vector<bool>(GameIcons::WEIGHT_COUNT, false)));
     for (const Page& page : pages[ink]) {
-      for (const auto& [icon, size] : page) seen[icon][static_cast<size_t>(size)] = true;
+      for (const auto& [icon, size, weight] : page) {
+        ASSERT_LT(static_cast<size_t>(weight), GameIcons::WEIGHT_COUNT);
+        seen[icon][static_cast<size_t>(size)][static_cast<size_t>(weight)] = true;
+      }
     }
     for (size_t i = 0; i < GameIcons::ICON_COUNT; ++i) {
       for (size_t size = 0; size < 3; ++size) {
-        EXPECT_TRUE(seen[i][size]) << GameIcons::ICONS[i].name << " size " << size << (ink == 0 ? " black" : " white");
+        for (size_t weight = 0; weight < GameIcons::WEIGHT_COUNT; ++weight) {
+          EXPECT_TRUE(seen[i][size][weight]) << GameIcons::ICONS[i].name << " size " << size << " weight " << weight
+                                             << (ink == 0 ? " black" : " white");
+        }
       }
     }
   }

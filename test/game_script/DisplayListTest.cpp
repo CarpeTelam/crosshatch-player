@@ -91,12 +91,14 @@ TEST(DisplayListTest, RoundTripsLinesCirclesAndAlignedText) {
 TEST(DisplayListTest, RoundTripsIcons) {
   std::vector<uint8_t> storage(MAX_BYTES);
   DisplayList list(storage.data(), storage.size());
-  ASSERT_TRUE(list.appendIcon(-7, 70000, 3, TextSize::Large, Color::White));
+  ASSERT_TRUE(list.appendIcon(-7, 70000, 3, TextSize::Large, Color::White, IconWeight::Fill));
   EXPECT_EQ(list.count(), 1);
-  EXPECT_EQ(list.bytes(), 9u);  // op, color, size, x, y, icon
-  ASSERT_TRUE(list.appendIcon(12, 34, 0xFFFF, TextSize::Small, Color::Black));
+  EXPECT_EQ(list.bytes(), 10u);  // op, color, size, weight, x, y, icon
+  ASSERT_TRUE(list.appendIcon(12, 34, 0xFFFF, TextSize::Small, Color::Black, IconWeight::Regular));
   EXPECT_EQ(list.count(), 2);
-  EXPECT_EQ(list.bytes(), 18u);
+  EXPECT_EQ(list.bytes(), 20u);
+  ASSERT_TRUE(list.appendIcon(1, 2, 5, TextSize::Medium, Color::Black, IconWeight::Regular));
+  EXPECT_EQ(list.bytes(), 30u);
 
   auto reader = list.reader();
   DrawCommand c;
@@ -107,6 +109,7 @@ TEST(DisplayListTest, RoundTripsIcons) {
   EXPECT_EQ(c.x, -7);
   EXPECT_EQ(c.y, INT16_MAX);  // clamped
   EXPECT_EQ(c.icon, 3);
+  EXPECT_EQ(c.weight, IconWeight::Fill);
   ASSERT_TRUE(reader.next(c));
   EXPECT_EQ(c.op, Op::Icon);
   EXPECT_EQ(c.color, Color::Black);
@@ -114,6 +117,12 @@ TEST(DisplayListTest, RoundTripsIcons) {
   EXPECT_EQ(c.x, 12);
   EXPECT_EQ(c.y, 34);
   EXPECT_EQ(c.icon, 0xFFFF);
+  EXPECT_EQ(c.weight, IconWeight::Regular);
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Icon);
+  EXPECT_EQ(c.size, TextSize::Medium);
+  EXPECT_EQ(c.icon, 5);
+  EXPECT_EQ(c.weight, IconWeight::Regular);
   EXPECT_FALSE(reader.next(c));
 }
 
@@ -199,6 +208,33 @@ TEST(DisplayListTest, AnImagePastTheByteLimitIsRefused) {
   EXPECT_TRUE(list.appendImage(0, 0, 0, Color::White));
   EXPECT_EQ(list.bytes(), MAX_BYTES);
   EXPECT_EQ(list.count(), 2);
+}
+
+TEST(DisplayListTest, AnIconPastTheByteLimitIsRefused) {
+  // One text command takes 10 header bytes, its text, and a NUL.
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  const std::string text(MAX_BYTES - 9 - 11, 'x');  // leaves 9 bytes, one short of an icon's 10
+  ASSERT_TRUE(list.appendText(0, 0, text.data(), text.size(), TextSize::Small, Color::Black));
+  ASSERT_EQ(list.bytes(), MAX_BYTES - 9);
+  EXPECT_FALSE(list.appendIcon(0, 0, 0, TextSize::Small, Color::Black, IconWeight::Fill));
+  EXPECT_EQ(list.bytes(), MAX_BYTES - 9);
+  EXPECT_EQ(list.count(), 1);
+
+  // With exactly 10 bytes left it fits and fills the list.
+  list.clear();
+  const std::string fits(MAX_BYTES - 10 - 11, 'x');
+  ASSERT_TRUE(list.appendText(0, 0, fits.data(), fits.size(), TextSize::Small, Color::Black));
+  EXPECT_TRUE(list.appendIcon(0, 0, 0, TextSize::Small, Color::Black, IconWeight::Fill));
+  EXPECT_EQ(list.bytes(), MAX_BYTES);
+  EXPECT_EQ(list.count(), 2);
+  auto reader = list.reader();
+  DrawCommand c;
+  ASSERT_TRUE(reader.next(c));
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Icon);
+  EXPECT_EQ(c.weight, IconWeight::Fill);
+  EXPECT_FALSE(reader.next(c));
 }
 
 TEST(FrameBuffersTest, PublishSwapsAndCountsFrames) {

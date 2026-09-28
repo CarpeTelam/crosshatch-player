@@ -328,6 +328,7 @@ TEST_F(ApiSurfaceTest, GfxOptionsMatchTheList) {
       {"size", SIZE_NAMES, "ch.gfx.text(0, 0, 'a', v, 'black')"},
       {"align", ALIGN_NAMES, "ch.gfx.text(0, 0, 'a', 'small', 'black', v)"},
       {"refresh", REFRESH_NAMES, "ch.gfx.refresh(v)"},
+      {"weight", WEIGHT_NAMES, "ch.gfx.icon('x', 0, 0, 'small', 'black', v)"},
   };
   constexpr const char* UNLISTED = "grey";
   std::string probes;
@@ -368,25 +369,36 @@ TEST_F(ApiSurfaceTest, IconsMatchTheList) {
   expectSameNames(library, icons, "icon");
   ASSERT_FALSE(icons.empty());
 
-  // Each listed name draws through ch.gfx.icon at every size, as its own index.
+  // Each listed name draws through ch.gfx.icon at every listed size in every
+  // listed weight, as its own index.
+  const Names sizes = listedEnum("size");
+  const Names weights = listedEnum("weight");
+  ASSERT_EQ(weights, (Names{"regular", "fill"}));
   std::string calls;
+  Names every;  // "<size> <weight>"
+  for (const std::string& size : sizes) {
+    for (const std::string& weight : weights) every.insert(size + " " + weight);
+  }
   for (const std::string& name : icons) {
-    for (const char* const* size = SIZE_NAMES; *size; ++size) {
-      calls += "ch.gfx.icon('" + name + "', 0, 0, '" + *size + "', 'black')\n";
+    for (const std::string& size : sizes) {
+      for (const std::string& weight : weights) {
+        calls += "ch.gfx.icon('" + name + "', 0, 0, '" + size + "', 'black', '" + weight + "')\n";
+      }
     }
   }
   useSource("main", "return { setup = function() return {} end, draw = function()\n" + calls + "end }\n");
   DirectGame game(arena, frames, sources, ports, canvas);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
-  std::map<std::string, Names> drawn;  // name -> sizes
+  std::map<std::string, Names> drawn;  // name -> "<size> <weight>"
   for (const DrawCommand& c : frontCommands()) {
     ASSERT_EQ(c.op, Op::Icon);
     ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
-    drawn[GameIcons::ICONS[c.icon].name].insert(SIZE_NAMES[static_cast<size_t>(c.size)]);
+    drawn[GameIcons::ICONS[c.icon].name].insert(std::string(SIZE_NAMES[static_cast<size_t>(c.size)]) + " " +
+                                                WEIGHT_NAMES[static_cast<size_t>(c.weight)]);
   }
   for (const std::string& name : icons) {
-    EXPECT_EQ(drawn[name], listedEnum("size")) << "icon " << name;
+    EXPECT_EQ(drawn[name], every) << "icon " << name;
   }
 }
 
