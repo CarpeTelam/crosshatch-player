@@ -1,0 +1,9 @@
+# Team overrides for bmad-build (merged over .claude/skills/bmad-build/customize.toml; lists append).
+# Only a pointer: the orchestrated-build rules live in docs/crosshatch/orchestrated-epics.md, and interactive
+# builds keep every human gate.
+
+[workflow]
+
+persistent_facts = [
+  "When the prompt says this build runs for an orchestrator, follow docs/crosshatch/orchestrated-epics.md § Build-agent brief; its answers replace this workflow's human gates. Otherwise ignore that file and keep every gate.",
+]
