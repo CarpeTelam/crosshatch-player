@@ -124,8 +124,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   uint32_t roundsSeen = 0;
   uint32_t shownFrame = 0;  // loop task: the frameGen it last asked to render
   // Loop task: Play again's GameVM::roundsStarted() plus one. Until the count
-  // reaches it, the loop asks for no render: every frame published meanwhile is
-  // the last round's (0 before any Play again, so never waits then).
+  // reaches it, the loop asks for no render, since every frame published meanwhile
+  // is the last round's, and drops every gesture, since none was aimed at the new
+  // round (0 before any Play again, so never waits then).
   uint32_t roundsStartedAwaited = 0;
   // Written by render: the frameGen its last render saw. The loop does not ask
   // again for a frame a render already took, so a render that sees no new frame

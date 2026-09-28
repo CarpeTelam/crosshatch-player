@@ -198,3 +198,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-phosphor-names-and-both-weights-plan.md`
   summary: The icon weight's replay step has no automated test: `FrameReplay`'s `case Op::Icon` passing `command.weight == IconWeight::Fill` to `drawGameIconAt`, and `drawGameIconAt` turning `fill` into `GameIcons::Weight`; tests pin the weight up to the `DrawCommand` and from `sourceFor` on, not between.
   evidence: Review finding (verification gap), 3.9. `test/` builds neither `FrameReplay.cpp` nor `GameIconDraw.cpp` (the 3.1 `Op::Icon` replay gap, already deferred to retro AI-2's harness); dropping or inverting the flag passes every host test. The `icons` fixture screenshots (`story-names-weights-screenshots/x4pro-icons/`) show fill and regular drawn apart through the replay today.
+
+## e3r-2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-2-match-and-vm-hardening.md`
+  summary: e3r-2's Play-again gesture gate opens when the new round's first frame is published, not when the e-ink shows it, so a tap during that refresh (or a contact that began in the gap and lifts after it) still reaches the new round; the same unguarded gap exists before the first round's first frame, while the Games list is still on screen.
+  evidence: Review (edge-case hunter, intent alignment, blind hunter), e3r-2. `GameMatchActivity::loopPlaying` gates on `GameVM::roundsStarted() < roundsStartedAwaited`; `roundsStartedAwaited` is 0 before any Play again, and `renderCanvas` stores `renderedFrame` before `displayBuffer`. Closing it needs a "frame displayed" signal from the render task, and a start-of-match await; retro AI-2's harness would test both.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-2-match-and-vm-hardening.md`
+  summary: No automated test covers e3r-2's gesture drop in `loopPlaying` or the split `GameAssets::load` (`scanFolder`/`readFolder`: load results, `release()` on a pass-2 failure, the long-name log lines); both are checked only in the simulator.
+  evidence: Review (verification gap, blind hunter), e3r-2. `test/` compiles neither `GameMatchActivity.cpp` nor `GameAssets.cpp`, and the save-store stubs cannot iterate a folder. Dropping `!awaitingRound &&` or the `release()` after `readFolder` passes all 708 host tests. Needs retro AI-2's screen harness and a directory-iterating fake storage with a PSRAM stub.

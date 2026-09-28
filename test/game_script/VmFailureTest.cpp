@@ -58,9 +58,17 @@ TEST(VmFailureTest, DetailIsTheScriptMessageOtherwise) {
   EXPECT_STREQ(failureDetail(VmFailure::None, texts(), SCRIPT_MESSAGE), SCRIPT_MESSAGE);
 }
 
-TEST(VmFailureTest, OnlyANoSessionFailedToStart) {
-  EXPECT_TRUE(failedToStart(VmFailure::NoSession));
-  for (const VmFailure failure : {VmFailure::None, VmFailure::Script, VmFailure::OutOfMemory, VmFailure::NotLoaded}) {
+// AD-14, as amended by the owner 2026-09-28: every host failure comes before any
+// game code runs, so the headline says the game could not start; only the script's
+// own error says it stopped. Every VmFailure value is covered by one of the two.
+TEST(VmFailureTest, EveryHostFailureFailedToStart) {
+  for (const VmFailure failure : {VmFailure::NoSession, VmFailure::OutOfMemory, VmFailure::NotLoaded}) {
+    EXPECT_TRUE(failedToStart(failure)) << static_cast<int>(failure);
+  }
+}
+
+TEST(VmFailureTest, AScriptFailureOrNoFailureDidNotFailToStart) {
+  for (const VmFailure failure : {VmFailure::Script, VmFailure::None}) {
     EXPECT_FALSE(failedToStart(failure)) << static_cast<int>(failure);
   }
 }

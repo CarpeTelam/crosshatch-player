@@ -42,7 +42,7 @@ the only place that changes state and runs what entering a state requires. Any e
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; the end-of-round menu (Play again, Leave) opens over the last frame. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. |
 | Paused, Over | Leave | Leaving | See Leaving. |
-| Over | Play again | Playing | The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. |
+| Over | Play again | Playing | The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published are read and dropped (`GameMatchActivity::loopPlaying`); a tap during the e-ink refresh that then shows the frame still reaches the new round. |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
 | Error | Back | Leaving | See Leaving. |
 | any but Leaving | forced exit (sleep, any Replace) | Leaving | See the forced exit. |
@@ -95,7 +95,9 @@ The error view's reasons for a failed start are `tr()` keys: not enough memory (
 the arena), the game's folder is missing, no Lua files, a Lua file name that is not valid (the only `.lua` files have
 names no module can have), Lua files too large, an image is damaged or too large (a package image whose header is
 not a 1-bit BMP the canvas can draw, or too large), and cannot read the files (an SD error, or a file gone between the
-loader's two passes). Running out of memory inside `LuaGame::load` (its scratch or the Lua state) shows "The game
-stopped with an error" with the `tr()` "Not enough memory" text, and a call into the game before its load (defensive;
-the VM never makes one) shows the same headline with "The game did not load". A stuck call shows "It stopped responding: one step ran over 3
-seconds", unless the VM ended on its own error meanwhile, whose message says more.
+loader's two passes). The same headline covers every failure of the host's own inside the VM task, since each comes
+before any game code runs (AD-14, as amended by the owner 2026-09-28; `GameScript::failedToStart`): running out of
+memory inside `LuaGame::load` (its scratch or the Lua state) shows the `tr()` "Not enough memory" text, and a call into
+the game before its load (defensive; the VM never makes one) shows "The game did not load". "The game stopped with an
+error" is left for the script's own error, with Lua's message, and for a stuck call, which shows "It stopped responding:
+one step ran over 3 seconds", unless the VM ended on its own error meanwhile, whose message says more.
