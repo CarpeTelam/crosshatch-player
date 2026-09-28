@@ -589,3 +589,8 @@ The owner asked for every proposed edit to be applied, and for the should-have a
   - e3r-3: R9 (b), (c), (e), R8 (c), (f), `wt-tools`.
   - Each lane's plan is `_bmad-output/implementation-artifacts/plan-e3r-*.md`.
 - **e3r-3** landed as 6973ec8e (merged fa0d8e72). All four lenses ran as subagents and returned: 13 triage rows, 6 patched, 7 rejected. Its changed gates ran from an archive tree.
+- **e3r-1** landed as 131fe505 (merged 0c600666). All four lenses returned: 11 low findings; 7 patch groups, 5 rejected, 4 deferred under `## e3r-1`.
+  - R1: `limit frame_icon_image_pixels 1048576` (owner-confirmable), charged when each `ch.gfx.icon` or `ch.gfx.image` command is added and raised through the guard. A worst-case frame at the budget makes at most 1,048,576 fills (3.33 ms on the host; not a device time).
+  - R9 (d): `icon_{small,medium,large}_side_pixels`, `draw ch.gfx.icon ink`, `draw ch.gfx.image opaque`, and `name image`; `API_SURFACE_CRC 0x52E8D03D`.
+  - Flash: +608 B (x4pro games-on `firmware.bin`, 5,903,088 → 5,903,696 B, both from archive trees).
+  - On the combined tree after the merge: host tests 716/716, all 9 `scripts/*_test.py` suites pass.
