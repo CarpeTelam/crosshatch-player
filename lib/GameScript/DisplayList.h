@@ -17,7 +17,7 @@ enum class TextSize : uint8_t { Small, Medium, Large };
 enum class Align : uint8_t { Left, Center, Right };
 // A frame's refresh request (ch.gfx.refresh), ordered so the larger one wins.
 enum class Refresh : uint8_t { Fast, Half, Full };
-enum class Op : uint8_t { Clear, Rect, Text, Line, Circle, Icon };
+enum class Op : uint8_t { Clear, Rect, Text, Line, Circle, Icon, Image };
 
 // A decoded command. Coordinates are canvas pixels; text points into the list and
 // is NUL-terminated.
@@ -27,6 +27,7 @@ enum class Op : uint8_t { Clear, Rect, Text, Line, Circle, Icon };
 //   Line    x, y to x2, y2, color
 //   Circle  centre x, y, radius r, color, filled
 //   Icon    top-left x, y, icon (an index into GameIcons::ICONS), size, color
+//   Image   top-left x, y, image (an index into the game's GameCore::GameImages), color
 struct DrawCommand {
   Op op = Op::Clear;
   Color color = Color::White;
@@ -43,6 +44,7 @@ struct DrawCommand {
   const char* text = nullptr;
   uint16_t textLength = 0;
   uint16_t icon = 0;
+  uint16_t image = 0;
 };
 
 class DisplayList {
@@ -71,6 +73,9 @@ class DisplayList {
   // `icon` is an index into GameIcons::ICONS, which the bindings check; the list
   // is transient and read by the same firmware, so it never stores the name.
   bool appendIcon(int64_t x, int64_t y, uint16_t icon, TextSize size, Color color);
+  // `image` is an index into the game's GameCore::GameImages, which the bindings
+  // check against the table the replay draws from.
+  bool appendImage(int64_t x, int64_t y, uint16_t image, Color color);
 
   // The frame's refresh request: the largest one made since clear(). Not a
   // command, so it counts toward neither limit.

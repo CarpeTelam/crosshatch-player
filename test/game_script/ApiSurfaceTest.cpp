@@ -17,6 +17,7 @@
 #include "Codec.h"
 #include "DisplayList.h"
 #include "GameIcons.h"
+#include "GameImages.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
 #include "Manifest.h"
@@ -411,6 +412,8 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"table_elements_count", TABLE_ELEMENTS_LIMIT},
       {"timer_min_ms", TIMER_MIN_MS},
       {"timers_pending_count", pendingTimers},
+      {"images_bytes", GameCore::IMAGES_BYTES},
+      {"images_count", GameCore::MAX_IMAGES},
       // lib/lua/library.json's defines, as the Lua build (device and host) compiles them.
       {"c_stack_levels_count", LUA_BUILD_LUAI_MAXCCALLS},
       {"pattern_depth_count", LUA_BUILD_MAXCCALLS},

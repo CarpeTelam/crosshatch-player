@@ -58,8 +58,8 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
       log(gameId),
-      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store},
-           canvas) {}
+      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store}, canvas,
+           assets.images()) {}
 
 bool GameVM::start() {
   {
@@ -171,7 +171,7 @@ bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport
   if (frameBuffers.frameGen() == 0) return false;
   bool drawn = false;
   frameBuffers.takeFront([&](const GameScript::DisplayList& frame, const GameScript::Refresh hint) {
-    drawn = replay.draw(renderer, viewport, frame, hint);
+    drawn = replay.draw(renderer, viewport, frame, hint, assets.images());
   });
   return drawn;
 }

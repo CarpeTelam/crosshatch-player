@@ -40,6 +40,8 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
       return StrId::STR_GAMES_OUT_OF_MEMORY;
     case GameAssets::LoadResult::CannotRead:
       return StrId::STR_GAMES_CANNOT_READ;
+    case GameAssets::LoadResult::BadImage:
+      return StrId::STR_GAMES_BAD_IMAGE;
     case GameAssets::LoadResult::Ok:
       break;  // not a failure; never shown
   }

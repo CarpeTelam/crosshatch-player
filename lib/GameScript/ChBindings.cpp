@@ -2,6 +2,7 @@
 
 #include <ApiLevel.h>
 #include <GameIcons.h>
+#include <GameImages.h>
 #include <IClock.h>
 #include <IGameLog.h>
 
@@ -20,6 +21,7 @@
 static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 static_assert(LUA_EXTRASPACE >= sizeof(void*), "the binding context pointer lives in the state's extra space");
 static_assert(GameIcons::ICON_COUNT <= UINT16_MAX, "a display list stores an icon's index in 16 bits");
+static_assert(GameCore::MAX_IMAGES <= UINT16_MAX, "a display list stores an image's index in 16 bits");
 
 namespace GameScript {
 
@@ -36,7 +38,7 @@ static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value pe
 static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
 static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
 
-// The three gfx faults (ch.gfx outside draw, a full frame, an unknown icon name)
+// The gfx faults (ch.gfx outside draw, a full frame, an unknown icon or image name)
 // stop the game (the contract's Errors), so they go through the guard: a script's
 // own pcall cannot catch them and publish a cut frame.
 
@@ -133,22 +135,23 @@ int gfxText(lua_State* L) {
   return 0;
 }
 
-// An unknown icon name stops the game through the guard, as a full frame does, so
-// a script's pcall cannot carry on drawing without it. The message shows at most
-// ICON_NAME_SHOWN_BYTES of the name (cut at a UTF-8 boundary), with each control
-// byte and '"' as '?', so it stays one readable line.
-constexpr size_t ICON_NAME_SHOWN_BYTES = 32;
+// An unknown icon or image name stops the game through the guard, as a full frame
+// does, so a script's pcall cannot carry on drawing without it. The message shows
+// at most NAME_SHOWN_BYTES of the name (cut at a UTF-8 boundary), with each control
+// byte and '"' as '?', so it stays one readable line: "ch.gfx.<kind>: unknown
+// <kind> \"<name>\"" (the function is named for what it draws).
+constexpr size_t NAME_SHOWN_BYTES = 32;
 
-int unknownIcon(lua_State* L, const char* name, const size_t length) {
-  char shown[ICON_NAME_SHOWN_BYTES + 1];
-  const size_t kept = utf8Cut(name, length, ICON_NAME_SHOWN_BYTES);
+int unknownName(lua_State* L, const char* kind, const char* name, const size_t length) {
+  char shown[NAME_SHOWN_BYTES + 1];
+  const size_t kept = utf8Cut(name, length, NAME_SHOWN_BYTES);
   for (size_t i = 0; i < kept; ++i) {
     const auto byte = static_cast<uint8_t>(name[i]);
     shown[i] = (byte < 0x20 || byte == 0x7F || byte == '"') ? '?' : name[i];
   }
   shown[kept] = '\0';
-  char message[64];
-  snprintf(message, sizeof(message), "ch.gfx.icon: unknown icon \"%s\"", shown);
+  char message[72];
+  snprintf(message, sizeof(message), "ch.gfx.%s: unknown %s \"%s\"", kind, kind, shown);
   return bindingContext(L)->guard->raise(L, message);
 }
 
@@ -163,8 +166,24 @@ int gfxIcon(lua_State* L) {
   const TextSize size = checkSize(L, 4);
   const Color color = checkInkColor(L, 5);
   const int icon = GameIcons::find(name, length);
-  if (icon < 0) return unknownIcon(L, name, length);
+  if (icon < 0) return unknownName(L, "icon", name, length);
   if (!list.appendIcon(x, y, static_cast<uint16_t>(icon), size, color)) return frameFull(L);
+  return 0;
+}
+
+// ch.gfx.image(name, x, y, color): one of the game's own images with its top-left
+// at x, y, at its own size and opaque; white swaps its black and white.
+int gfxImage(lua_State* L) {
+  DisplayList& list = drawTarget(L, "image");
+  size_t length = 0;
+  const char* name = luaL_checklstring(L, 1, &length);
+  const lua_Integer x = luaL_checkinteger(L, 2);
+  const lua_Integer y = luaL_checkinteger(L, 3);
+  const Color color = checkInkColor(L, 4);
+  const GameCore::GameImages* images = bindingContext(L)->images;
+  const int image = images ? images->find(name, length) : -1;
+  if (image < 0) return unknownName(L, "image", name, length);
+  if (!list.appendImage(x, y, static_cast<uint16_t>(image), color)) return frameFull(L);
   return 0;
 }
 
@@ -266,9 +285,9 @@ int storeGet(lua_State* L) {
   return 1;
 }
 
-constexpr luaL_Reg GFX_FUNCTIONS[] = {{"clear", gfxClear},     {"rect", gfxRect}, {"line", gfxLine},
-                                      {"circle", gfxCircle},   {"text", gfxText}, {"icon", gfxIcon},
-                                      {"refresh", gfxRefresh}, {nullptr, nullptr}};
+constexpr luaL_Reg GFX_FUNCTIONS[] = {{"clear", gfxClear},   {"rect", gfxRect},       {"line", gfxLine},
+                                      {"circle", gfxCircle}, {"text", gfxText},       {"icon", gfxIcon},
+                                      {"image", gfxImage},   {"refresh", gfxRefresh}, {nullptr, nullptr}};
 constexpr luaL_Reg TIMER_FUNCTIONS[] = {{"after", timerAfter}, {"cancel", timerCancel}, {nullptr, nullptr}};
 constexpr luaL_Reg STORE_FUNCTIONS[] = {{"get", storeGet}, {"set", storeSet}, {nullptr, nullptr}};
 constexpr luaL_Reg TIME_FUNCTIONS[] = {{"ms", timeMs}, {nullptr, nullptr}};

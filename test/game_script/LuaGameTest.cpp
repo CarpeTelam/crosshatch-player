@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
+#include "ConverterBmpLayout.h"
 #include "GameIcons.h"
+#include "GameImages.h"
 #include "GameInput.h"
 #include "LuaGameFixture.h"
 
@@ -147,6 +150,80 @@ TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
       }
     }
   }
+}
+
+// The committed fixture images are the converter's output: each header is
+// writeBmpHeader1bit's for its size, byte for byte, and each file checks Ok.
+TEST_F(LuaGameTest, TheFixtureImagesAreInTheConvertersLayout) {
+  struct Case {
+    const char* file;
+    int width;
+    int height;
+  };
+  const Case cases[] = {{"images/badge.bmp", 100, 60}, {"images/dot.bmp", 37, 37}, {"images/icon.bmp", 64, 64}};
+  for (const Case& c : cases) {
+    const std::string bytes = readFixture(c.file);
+    const std::vector<uint8_t> expected = ConverterBmpLayout::converterHeader1bit(c.width, c.height);
+    ASSERT_GE(bytes.size(), expected.size()) << c.file;
+    EXPECT_EQ(std::vector<uint8_t>(bytes.begin(), bytes.begin() + static_cast<long>(expected.size())), expected)
+        << c.file;
+    GameCore::ImageHeader header;
+    const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+    ASSERT_EQ(GameCore::checkImageHeader(data, bytes.size(), bytes.size(), GameCore::IMAGES_BYTES, header),
+              GameCore::ImageCheck::Ok)
+        << c.file;
+    EXPECT_EQ(header.width, static_cast<uint32_t>(c.width));
+    EXPECT_EQ(header.height, static_cast<uint32_t>(c.height));
+  }
+  // badge: a black 3 px border around a crosshatch whose white shows between the lines.
+  useImages("images");
+  ASSERT_EQ(images.count, 2u);  // icon.bmp is skipped
+  EXPECT_STREQ(images.spans[0].name, "badge");
+  EXPECT_STREQ(images.spans[1].name, "dot");
+  const GameCore::ImageSpan& badge = images.spans[0];
+  const uint8_t* rows = images.pixelsOf(badge);
+  const auto black = [&](const uint32_t x, const uint32_t y) {
+    return ((rows[y * badge.rowBytes + x / 8] >> (7 - x % 8)) & 1) == 0;
+  };
+  EXPECT_TRUE(black(0, 0));
+  EXPECT_TRUE(black(99, 59));
+  EXPECT_TRUE(black(10, 10));   // on a diagonal
+  EXPECT_FALSE(black(11, 10));  // between the lines
+
+  // bad-image's broken.bmp is a converter header claiming 8 bits per pixel.
+  const std::string broken = readFixture("bad-image/broken.bmp");
+  GameCore::ImageHeader header;
+  EXPECT_EQ(GameCore::checkImageHeader(reinterpret_cast<const uint8_t*>(broken.data()), broken.size(), broken.size(),
+                                       GameCore::IMAGES_BYTES, header),
+            GameCore::ImageCheck::WrongDepth);
+  std::vector<uint8_t> asOneBit(broken.begin(), broken.end());
+  asOneBit[28] = 1;
+  EXPECT_EQ(std::vector<uint8_t>(asOneBit.begin(), asOneBit.begin() + 62),
+            ConverterBmpLayout::converterHeader1bit(16, 16));
+}
+
+// The images fixture draws every image in black and in white, each over a light
+// band, and one badge over the right edge.
+TEST_F(LuaGameTest, TheImagesFixtureDrawsEveryImageInBothColors) {
+  useImages("images");
+  useSource("main", readFixture("images/main.lua"));
+  DirectGame game(arena, frames, sources, ports, canvas, images);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  std::set<std::pair<uint16_t, Color>> drawn;
+  bool clipped = false;
+  for (const DrawCommand& c : frontCommands()) {
+    if (c.op != Op::Image) continue;
+    ASSERT_LT(c.image, images.count);
+    drawn.insert({c.image, c.color});
+    const GameCore::ImageSpan& span = images.spans[c.image];
+    if (c.x + static_cast<int>(span.width) > canvas.width) clipped = true;
+  }
+  for (uint16_t i = 0; i < images.count; ++i) {
+    EXPECT_TRUE(drawn.count({i, Color::Black})) << images.spans[i].name << " black";
+    EXPECT_TRUE(drawn.count({i, Color::White})) << images.spans[i].name << " white";
+  }
+  EXPECT_TRUE(clipped);
 }
 
 TEST_F(LuaGameTest, EachEntryIntoLuaBumpsTheCallSerial) {

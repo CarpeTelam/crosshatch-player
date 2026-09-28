@@ -80,6 +80,7 @@ add_executable(GameScriptTest
   CodecTest.cpp
   DisplayListTest.cpp
   GameIconBlitTest.cpp
+  GameImageBlitTest.cpp
   GameTimerTest.cpp
   GameTouchTest.cpp
   GfxBindingsTest.cpp
@@ -92,6 +93,7 @@ add_executable(GameScriptTest
   StoreSlotTest.cpp
   TextMetricsTest.cpp
   ${GAME_SCRIPT_SOURCES}
+  ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
@@ -105,10 +107,10 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Utf8
-  # GameTouch.h and GameIconBlit.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
+  # GameTouch.h, GameIconBlit.h, and GameImageBlit.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
   ${REPO_ROOT}/src/games
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
-  # ApiLevelList.h, the API list reader ApiLevelTest shares.
+  # ApiLevelList.h, the API list reader ApiLevelTest shares, and ConverterBmpLayout.h, the image tests' converter mirror.
   ${REPO_ROOT}/test/game_core
 )
 

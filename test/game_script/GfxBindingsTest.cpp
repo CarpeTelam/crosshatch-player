@@ -70,6 +70,8 @@ std::string describe(const DrawCommand& c) {
     case Op::Icon:
       return std::string("icon ") + (c.icon < GameIcons::ICON_COUNT ? GameIcons::ICONS[c.icon].name : "?") + " " +
              n(c.x) + " " + n(c.y) + " " + sizeName(c.size) + " " + colorName(c.color);
+    case Op::Image:
+      return "image " + n(c.image) + " " + n(c.x) + " " + n(c.y) + " " + colorName(c.color);
   }
   return "?";
 }
@@ -188,6 +190,7 @@ TEST_F(GfxBindingsTest, EveryGfxCallOutsideDrawIsAScriptError) {
       {"circle", "ch.gfx.circle(0, 0, 1, 'black')"},
       {"text", "ch.gfx.text(0, 0, 'x', 'small', 'black')"},
       {"icon", "ch.gfx.icon('die_6', 0, 0, 'small', 'black')"},
+      {"image", "ch.gfx.image('badge', 0, 0, 'black')"},
       {"refresh", "ch.gfx.refresh('full')"},
   };
   for (const auto& call : calls) {
@@ -353,6 +356,15 @@ TEST_F(GfxBindingsTest, BadArgumentsAreScriptErrors) {
       {"ch.gfx.icon('die_6', 0, 0, 'small', 'light')", "bad argument #5 to 'icon' (\"light\" and \"dark\" are only"},
       {"ch.gfx.icon('die_6', 0, 0, 'small', 'dark')", "bad argument #5 to 'icon' (\"light\" and \"dark\" are only"},
       {"ch.gfx.icon('die_6', 0, 0, 'small')", "bad argument #5 to 'icon' (string expected, got no value)"},
+      {"ch.gfx.image({}, 0, 0, 'black')", "bad argument #1 to 'image' (string expected, got table)"},
+      {"ch.gfx.image(nil, 0, 0, 'black')", "bad argument #1 to 'image' (string expected, got nil)"},
+      {"ch.gfx.image('badge', 0.5, 0, 'black')", "bad argument #2 to 'image' (number has no integer"},
+      {"ch.gfx.image('badge', 0, '1.5', 'black')", "bad argument #3 to 'image' (number has no integer"},
+      {"ch.gfx.image('badge', 0, nil, 'black')", "bad argument #3 to 'image' (number expected, got nil)"},
+      {"ch.gfx.image('badge', 0, 0, 'light')", "bad argument #4 to 'image' (\"light\" and \"dark\" are only"},
+      {"ch.gfx.image('badge', 0, 0, 'dark')", "bad argument #4 to 'image' (\"light\" and \"dark\" are only"},
+      {"ch.gfx.image('badge', 0, 0, 'grey')", "bad argument #4 to 'image' (invalid option 'grey')"},
+      {"ch.gfx.image('badge', 0, 0)", "bad argument #4 to 'image' (string expected, got no value)"},
   };
   for (const auto& c : cases) {
     useSource("main", drawing(c[0]));
@@ -441,6 +453,110 @@ TEST_F(GfxBindingsTest, AnIconIsOneCommandWithinTheFrameLimits) {
   useSource("main", drawing("for i = 1, 2048 do ch.gfx.clear('white') end\n"
                             "ch.gfx.icon('mark_o', 0, 0, 'large', 'black')"));
   DirectGame over(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(over.start(), Outcome::Ok) << over.errorMessage();
+  EXPECT_EQ(over.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(over.errorMessage(), "main.lua:4: frame is full (at most 2048 drawing calls or 32768 bytes)");
+  EXPECT_EQ(frames.frameGen(), 1u);
+}
+
+TEST_F(GfxBindingsTest, ImageCallsDecodeToTheirTableIndex) {
+  useImages("images");  // badge, dot; icon.bmp is not an image
+  ASSERT_EQ(images.count, 2u);
+  useSource("main", drawing(R"(
+    ch.gfx.image("badge", 1, 2, "black"); ch.gfx.image("dot", 3, 4, "white")
+    ch.gfx.image("dot", -70000, 70000, "black"); ch.gfx.image("badge", 6.0, -7, "white")
+  )"));
+  DirectGame game(arena, frames, sources, ports, canvas, images);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  const std::vector<std::string> expected = {
+      "image 0 1 2 black",
+      "image 1 3 4 white",
+      "image 1 -32768 32767 black",
+      "image 0 6 -7 white",
+  };
+  EXPECT_EQ(described(), expected);
+}
+
+// An unknown image name stops the game like an unknown icon: through the guard,
+// so a script's pcall catches it at most once, and the frame is not published.
+TEST_F(GfxBindingsTest, AnUnknownImageStopsTheGameEvenUnderPcall) {
+  const char* const bodies[] = {
+      "ch.gfx.image('no_such_image', 0, 0, 'black')",
+      "pcall(function() ch.gfx.image('no_such_image', 0, 0, 'white') end)\n"
+      "ch.gfx.text(0, 0, 'still drawing', 'small', 'black')",
+      // A prefix, and a name the table has with more after it.
+      "ch.gfx.image('bad', 0, 0, 'black')",
+      "ch.gfx.image('badge.bmp', 0, 0, 'black')",
+      // icon.bmp is never an image.
+      "ch.gfx.image('icon', 0, 0, 'black')",
+  };
+  const char* const shown[] = {"no_such_image", "no_such_image", "bad", "badge.bmp", "icon"};
+  for (const bool withImages : {true, false}) {
+    if (withImages) {
+      useImages("images");
+    } else {
+      images = GameCore::GameImages{};
+    }
+    for (size_t i = 0; i < std::size(bodies); ++i) {
+      useSource("main", drawing(std::string("ch.gfx.clear('white')\n") + bodies[i]));
+      DirectGame game(arena, frames, sources, ports, canvas, images);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      EXPECT_EQ(game.draw(), Outcome::ScriptError) << bodies[i];
+      EXPECT_EQ(std::string(game.errorMessage()),
+                std::string("main.lua:4: ch.gfx.image: unknown image \"") + shown[i] + "\"")
+          << bodies[i];
+      EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << bodies[i];
+      EXPECT_EQ(frames.frameGen(), 0u) << bodies[i];  // the frame was not published
+    }
+  }
+  // No images at all, the LuaGame default: every name is unknown.
+  useSource("main", drawing("pcall(ch.gfx.image, 'badge', 0, 0, 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_TRUE(contains(game.errorMessage(), "ch.gfx.image: unknown image \"badge\"")) << game.errorMessage();
+  EXPECT_EQ(game.callGuard().fault(), Fault::Binding);
+  EXPECT_EQ(frames.frameGen(), 0u);
+}
+
+TEST_F(GfxBindingsTest, AnUnknownImagesNameIsShownShortAndPrintable) {
+  struct Case {
+    const char* name;  // Lua expression
+    std::string shown;
+  };
+  const Case cases[] = {
+      {"string.rep('a', 40)", std::string(32, 'a')},
+      {"'x\\ny\"z\\0w\\127v\\tu'", "x?y?z?w?v?u"},
+      {"''", ""},
+      {"7", "7"},
+  };
+  useImages("images");
+  for (const auto& c : cases) {
+    useSource("main", drawing(std::string("ch.gfx.image(") + c.name + ", 0, 0, 'black')"));
+    DirectGame game(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << c.name;
+    EXPECT_EQ(std::string(game.errorMessage()), "main.lua:3: ch.gfx.image: unknown image \"" + c.shown + "\"")
+        << c.name;
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << c.name;
+  }
+}
+
+TEST_F(GfxBindingsTest, AnImageIsOneCommandWithinTheFrameLimits) {
+  useImages("images");
+  useSource("main", drawing("for i = 1, 2047 do ch.gfx.clear('white') end\n"
+                            "ch.gfx.image('badge', 0, 0, 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas, images);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontCommands().size(), MAX_COMMANDS);
+  EXPECT_EQ(frontCommands().back().op, Op::Image);
+  game.close();  // one VM per arena, as on the device: the reserve holds one scratch
+
+  useSource("main", drawing("for i = 1, 2048 do ch.gfx.clear('white') end\n"
+                            "ch.gfx.image('badge', 0, 0, 'black')"));
+  DirectGame over(arena, frames, sources, ports, canvas, images);
   ASSERT_EQ(over.start(), Outcome::Ok) << over.errorMessage();
   EXPECT_EQ(over.draw(), Outcome::ScriptError);
   EXPECT_STREQ(over.errorMessage(), "main.lua:4: frame is full (at most 2048 drawing calls or 32768 bytes)");

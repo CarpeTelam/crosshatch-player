@@ -117,6 +117,34 @@ TEST(DisplayListTest, RoundTripsIcons) {
   EXPECT_FALSE(reader.next(c));
 }
 
+TEST(DisplayListTest, RoundTripsImages) {
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  ASSERT_TRUE(list.appendImage(-70000, 5, 31, Color::White));
+  EXPECT_EQ(list.count(), 1);
+  EXPECT_EQ(list.bytes(), 8u);  // op, color, x, y, image
+  ASSERT_TRUE(list.appendImage(12, 34, 0xFFFF, Color::Black));
+  EXPECT_EQ(list.count(), 2);
+  EXPECT_EQ(list.bytes(), 16u);
+
+  auto reader = list.reader();
+  DrawCommand c;
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Image);
+  EXPECT_EQ(c.color, Color::White);
+  EXPECT_EQ(c.x, INT16_MIN);  // clamped
+  EXPECT_EQ(c.y, 5);
+  EXPECT_EQ(c.image, 31);
+  EXPECT_EQ(c.icon, 0);  // an image carries no icon
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Image);
+  EXPECT_EQ(c.color, Color::Black);
+  EXPECT_EQ(c.x, 12);
+  EXPECT_EQ(c.y, 34);
+  EXPECT_EQ(c.image, 0xFFFF);
+  EXPECT_FALSE(reader.next(c));
+}
+
 TEST(DisplayListTest, TheRefreshRequestKeepsTheLargestAndIsNotACommand) {
   std::vector<uint8_t> storage(1024);
   DisplayList list(storage.data(), storage.size());
@@ -151,6 +179,26 @@ TEST(DisplayListTest, RefusesPastTheByteLimit) {
   EXPECT_FALSE(list.appendText(0, 0, big.data(), big.size(), TextSize::Small, Color::Black));
   EXPECT_EQ(list.bytes(), before);
   EXPECT_LE(list.bytes(), MAX_BYTES);
+}
+
+TEST(DisplayListTest, AnImagePastTheByteLimitIsRefused) {
+  // One text command takes 10 header bytes, its text, and a NUL.
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  const std::string text(MAX_BYTES - 7 - 11, 'x');  // leaves 7 bytes, one short of an image's 8
+  ASSERT_TRUE(list.appendText(0, 0, text.data(), text.size(), TextSize::Small, Color::Black));
+  ASSERT_EQ(list.bytes(), MAX_BYTES - 7);
+  EXPECT_FALSE(list.appendImage(0, 0, 0, Color::Black));
+  EXPECT_EQ(list.bytes(), MAX_BYTES - 7);
+  EXPECT_EQ(list.count(), 1);
+
+  // With exactly 8 bytes left it fits and fills the list.
+  list.clear();
+  const std::string fits(MAX_BYTES - 8 - 11, 'x');
+  ASSERT_TRUE(list.appendText(0, 0, fits.data(), fits.size(), TextSize::Small, Color::Black));
+  EXPECT_TRUE(list.appendImage(0, 0, 0, Color::White));
+  EXPECT_EQ(list.bytes(), MAX_BYTES);
+  EXPECT_EQ(list.count(), 2);
 }
 
 TEST(FrameBuffersTest, PublishSwapsAndCountsFrames) {

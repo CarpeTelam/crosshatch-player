@@ -1,5 +1,6 @@
 #pragma once
 
+#include <GameImages.h>
 #include <IGameRules.h>
 
 #include <atomic>
@@ -62,9 +63,10 @@ class LuaGame : public GameCore::IGameRules {
   // encode's output is copied out before Lua runs again); sized for the largest limit.
   static constexpr size_t SCRATCH_BYTES = Codec::scratchBytes(Codec::STORE_LIMIT);
 
-  // `canvas` (copied) is what ch.screen and ch.text_width report.
+  // `canvas` (copied) is what ch.screen and ch.text_width report; `images` (kept
+  // by reference, like `sources`) is what ch.gfx.image draws.
   LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
-          const Canvas& canvas);
+          const Canvas& canvas, const GameCore::GameImages& images = GameCore::NO_IMAGES);
   ~LuaGame() override;
   LuaGame(const LuaGame&) = delete;
   LuaGame& operator=(const LuaGame&) = delete;
@@ -154,6 +156,7 @@ class LuaGame : public GameCore::IGameRules {
   ArenaAllocator& arena;
   FrameBuffers& frames;
   const GameSources& sources;
+  const GameCore::GameImages& images;
   const HostPorts ports;
   const Canvas canvas;
   GameTimer pendingTimer;

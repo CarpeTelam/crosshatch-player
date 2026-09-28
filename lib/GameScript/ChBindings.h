@@ -11,6 +11,7 @@ struct lua_State;
 namespace GameCore {
 class IClock;
 class IGameLog;
+struct GameImages;
 }  // namespace GameCore
 
 namespace GameScript {
@@ -56,6 +57,8 @@ struct BindingContext {
   const Canvas* canvas = nullptr;
   // The game's modules, which require() resolves against.
   const GameSources* sources = nullptr;
+  // The game's own images, which ch.gfx.image draws by name.
+  const GameCore::GameImages* images = nullptr;
   // The hook's limits for the current call (LuaGame's).
   CallGuard* guard = nullptr;
   // Bindings inside a locked section right now (LuaGame's); see enterLockedSection.
