@@ -47,3 +47,4 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
 - Risk high: a person confirms the two-device round on hardware.
 - Waits on epic-install-and-launcher because: the mode picker and `Manifest` checks for the lobby.
 - Waits on epic-pass-and-play because: the N-seat `Session` and `Roster` and the Over / Play again flow.
+- Budget (epic-install-and-launcher inception, owner, 2026-09-28): this epic's share of the flash and static-RAM headroom left on PR #18's final tree (27,504 B and 248 B) is 9,504 B flash and 160 B static RAM; epic-install-and-launcher has 12,000 B and 32 B, and an unallocated reserve of 2,000 B and 24 B remains. The icon-compression story runs as soon as a measurement leaves less flash headroom than the unstarted epics' shares plus the reserve. Measure this epic's delta against a base measured before its first story (`docs/crosshatch/orchestrated-epics.md`).

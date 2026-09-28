@@ -3,7 +3,7 @@ title: 'crosshatch game API, level 1 (seed)'
 status: draft
 api: 1
 created: '2026-09-26'
-updated: '2026-09-26'
+updated: '2026-09-28'
 spine: 'ARCHITECTURE-SPINE.md'
 note: 'Seed for docs/crosshatch/game-api.md (with a LuaLS ch.d.lua stub); where this and the spine disagree, the spine wins. Drop this front matter when the doc moves to the starter repo.'
 ---
@@ -28,7 +28,7 @@ A game is one `.cpgame` file: a zip archive with these files at its root and not
 | `icon.png` | no | The launcher icon; must be non-interlaced. It is converted to 64×64 black and white. To use a library icon instead, set `icon` in the manifest. |
 | `<name>.png` | no | Your own images for `ch.gfx.image`, named with lowercase letters, digits, and `_`. Non-interlaced; converted to black and white at install. |
 
-Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; the device refuses precompiled bytecode.
+Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; the device refuses precompiled bytecode. Images must be `.png`: a package with a `.bmp`, or any other file not in the table above, is refused. *(Amended 2026-09-28.)*
 
 `manifest.json` (this is the manifest for the section 7 example):
 
@@ -54,7 +54,8 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 | `seats` | The minimum and maximum number of players (`min`, `max`). Devices at API level 1 support at most 2. |
 | `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
 | `hidden` | Optional, default `false`. Set `true` if players must not see each other's screens (Battleship, Hangman); in pass-and-play, the runtime then adds a hand-off screen between turns (section 3). |
-| `icon` | Optional. The name of a library icon (section 5) to use as the game's icon when the package has no `icon.png`. |
+| `icon` | Optional. The name of a library icon (section 5) to use as the game's icon when the package has no `icon.png`: lowercase letters and digits, starting with a letter, with single `-` between words (`dice-six`), at most 32 characters. A name the library doesn't have makes the package invalid. *(Amended 2026-09-28.)* |
+| `icon_weight` | Optional, default `"regular"`. The weight `icon` is drawn in: `"regular"` (outlines) or `"fill"` (solid), as for `ch.gfx.icon`. *(Amended 2026-09-28.)* |
 
 Unknown keys are ignored.
 
@@ -195,7 +196,7 @@ Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on
 - **Speed.** The device runs about 2 million Lua instructions per second. Each call into your game can use up to about 2 million instructions (roughly one second); more stops the game. Keep searches small: limit depth, prune, or use lookup tables. Long string pattern matches count too.
 - **Memory.** Each game has 256 KB of Lua memory.
 - **Other limits.** Package sizes are in section 1, value sizes in section 4, and the drawing-call cap in section 5.
-- **Errors.** These stop the game: any Lua error, the speed or memory limit, a value over its size limit, calling `ch.gfx` outside `draw`, more than 2,048 drawing calls in a frame, and an unknown icon or image name. The device shows a short message, the game name, and the Lua error with its line number. In Play Nearby, the runtime tells the other device that the match ended. *(Amended 2026-09-28.)* Also stopping: more than 65,536 elements in one `table.move`, `table.insert`, or `table.remove`. `pcall` and `xpcall` cannot catch these faults (other than a plain Lua error): they may return `false` once, and the call still ends. `setmetatable` refuses a metatable with a `__gc` or `__close` field, and the string metatable is sealed (`getmetatable("")` returns `false`). Faults found with the C stack nearly full (recursion too deep, or too deep to call `ch.log` or `ch.store`) show no line number.
+- **Errors.** These stop the game: any Lua error, the speed or memory limit, a value over its size limit, calling `ch.gfx` outside `draw`, more than 2,048 drawing calls in a frame, icons and images in one frame covering more than 1,048,576 screen pixels (about 2.8 screens; each call counts its part on the screen, and overlaps count again), and an unknown icon or image name. The device shows a short message, the game name, and the Lua error with its line number. In Play Nearby, the runtime tells the other device that the match ended. *(Amended 2026-09-28.)* Also stopping: more than 65,536 elements in one `table.move`, `table.insert`, or `table.remove`. `pcall` and `xpcall` cannot catch these faults (other than a plain Lua error): they may return `false` once, and the call still ends. `setmetatable` refuses a metatable with a `__gc` or `__close` field, and the string metatable is sealed (`getmetatable("")` returns `false`). Faults found with the C stack nearly full (recursion too deep, or too deep to call `ch.log` or `ch.store`) show no line number.
 
 ## 7. A complete example
 

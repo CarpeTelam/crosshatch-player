@@ -45,3 +45,5 @@ Handoffs: epic-play-nearby consumes the N-seat `Session` and `Roster` and the Ov
 
 - Waits on epic-script-runtime because: `Session` and the match lifecycle.
 - Waits on epic-install-and-launcher because: the mode picker and resume.
+- Budget (epic-install-and-launcher inception, owner, 2026-09-28): this epic's share of the flash and static-RAM headroom left on PR #18's final tree (27,504 B and 248 B) is 4,000 B flash and 32 B static RAM; epic-install-and-launcher has 12,000 B and 32 B, and an unallocated reserve of 2,000 B and 24 B remains. The icon-compression story runs as soon as a measurement leaves less flash headroom than the unstarted epics' shares plus the reserve. Measure this epic's delta against a base measured before its first story (`docs/crosshatch/orchestrated-epics.md`).
+- Handoff from epic-install-and-launcher (inception, owner, 2026-09-28): `GameCore::HostCaps.pass` is false until this epic sets it true; the mode picker (`GameModeActivity`) then offers `pass`, and this epic adds the seat choice and passes the chosen mode into `GameMatchActivity`, which the launcher and picker start with no mode today.
