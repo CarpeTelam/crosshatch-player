@@ -3,7 +3,7 @@ title: 'The v1 icon set'
 type: 'feature'
 ticket: '4'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: '068a9ad06cfd46c5af1db81ee576a9542da93c21'
 route: 'full'
 route_source: 'auto'
