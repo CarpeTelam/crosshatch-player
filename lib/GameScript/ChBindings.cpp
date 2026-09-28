@@ -33,10 +33,12 @@ constexpr Color COLOR_VALUES[] = {Color::White, Color::Light, Color::Dark, Color
 constexpr TextSize SIZE_VALUES[] = {TextSize::Small, TextSize::Medium, TextSize::Large};
 constexpr Align ALIGN_VALUES[] = {Align::Left, Align::Center, Align::Right};
 constexpr Refresh REFRESH_VALUES[] = {Refresh::Fast, Refresh::Half, Refresh::Full};
+constexpr IconWeight WEIGHT_VALUES[] = {IconWeight::Regular, IconWeight::Fill};
 static_assert(std::size(COLOR_NAMES) == std::size(COLOR_VALUES) + 1, "one value per color name");
 static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value per size name");
 static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
 static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
+static_assert(std::size(WEIGHT_NAMES) == std::size(WEIGHT_VALUES) + 1, "one value per weight name");
 
 // The gfx faults (ch.gfx outside draw, a full frame, an unknown icon or image name)
 // stop the game (the contract's Errors), so they go through the guard: a script's
@@ -155,8 +157,9 @@ int unknownName(lua_State* L, const char* kind, const char* name, const size_t l
   return bindingContext(L)->guard->raise(L, message);
 }
 
-// ch.gfx.icon(name, x, y, size, color): a library icon with its top-left at x, y;
-// only its ink pixels are drawn.
+// ch.gfx.icon(name, x, y, size, color, weight?): a library icon in its regular
+// (the default) or fill weight with its top-left at x, y; only its ink pixels are
+// drawn.
 int gfxIcon(lua_State* L) {
   DisplayList& list = drawTarget(L, "icon");
   size_t length = 0;
@@ -165,9 +168,10 @@ int gfxIcon(lua_State* L) {
   const lua_Integer y = luaL_checkinteger(L, 3);
   const TextSize size = checkSize(L, 4);
   const Color color = checkInkColor(L, 5);
+  const IconWeight weight = WEIGHT_VALUES[luaL_checkoption(L, 6, "regular", WEIGHT_NAMES)];
   const int icon = GameIcons::find(name, length);
   if (icon < 0) return unknownName(L, "icon", name, length);
-  if (!list.appendIcon(x, y, static_cast<uint16_t>(icon), size, color)) return frameFull(L);
+  if (!list.appendIcon(x, y, static_cast<uint16_t>(icon), size, color, weight)) return frameFull(L);
   return 0;
 }
 

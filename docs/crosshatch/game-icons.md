@@ -1,154 +1,203 @@
 # Game icons
 
-The game icon library: the icons a game draws with `ch.gfx.icon(name, x, y, size, color)` and a screen with
-`drawGameIcon` (`src/games/GameIconDraw.h`). Each icon is a 1-bit bitmap at 32 px (`small`) and 64 px (`medium`);
-`large` (128 px) draws the 64 px bitmap doubled. The names are part of the game API level: `api-level-1.txt` lists
-each one as `icon <name>`, and `ApiSurfaceTest.IconsMatchTheList` checks that list against the library both ways.
+The game icon library: the icons a game draws with `ch.gfx.icon(name, x, y, size, color, weight?)` and a screen with
+`drawGameIcon` (`src/games/GameIconDraw.h`). Every icon is a Phosphor icon under Phosphor's own name, in two weights,
+each a 1-bit bitmap at 32 px (`small`) and 64 px (`medium`); `large` (128 px) draws the 64 px bitmap doubled. The
+names are part of the game API level: `api-level-1.txt` lists each one as `icon <name>`, and
+`ApiSurfaceTest.IconsMatchTheList` checks that list against the library both ways and draws every name at every size
+in both weights.
 
 ## Where the icons come from
 
-- **Phosphor 2.1.1.** Every icon but two is a Phosphor Icons SVG from the npm package `@phosphor-icons/core`, version
-  2.1.1 (`https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz`, sha256
-  `313332be6190b724da24107addd781799b48bf76b13963f24501112ffe1baadd`), copied byte for byte from the package's
-  `assets/fill/` and `assets/regular/` into `assets/game-icons/phosphor/fill/` and `phosphor/regular/`. Phosphor Icons
-  is Copyright (c) 2023 Phosphor Icons, under the MIT licence; `assets/game-icons/phosphor/LICENSE` is the package's
-  licence file, and the generated header repeats the copyright line.
-- **Originals.** Phosphor has no chess bishop or pawn, so `piece_bishop` and `piece_pawn` are this project's own
-  drawings in Phosphor's fill style, in `assets/game-icons/original/fill/`, under this repository's MIT licence
-  (`LICENSE`). Each is one `<svg viewBox="0 0 256 256" fill="currentColor">` of `<path d>` elements, like
-  Phosphor's, standing on the rook's (`castle-turret`) base bar; every contour winds clockwise except the bishop's
-  mitre slit, which winds the other way so the nonzero fill cuts it.
+Every icon is a [Phosphor Icons](https://phosphoricons.com) SVG, and the library holds nothing else: no original
+drawings and no icons from another set. The SVGs come from the npm package `@phosphor-icons/core`, version 2.1.1
+(`https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz`, sha256
+`313332be6190b724da24107addd781799b48bf76b13963f24501112ffe1baadd`), copied byte for byte from the package's
+`assets/regular/` and `assets/fill/` into `assets/game-icons/phosphor/regular/` and `phosphor/fill/`. Phosphor Icons is
+Copyright (c) 2023 Phosphor Icons, under the MIT licence; `assets/game-icons/phosphor/LICENSE` is the package's
+licence file, and the generated header repeats the copyright line.
 
-`assets/game-icons/names.txt` maps each name to its SVG and weight. `python3 scripts/gen_game_icons.py` renders them
-into `lib/GameIcons/GameIcons.generated.h`, which is never edited by hand; the `Icons up to date` fork CI job
-regenerates it and fails on any byte difference.
+`assets/game-icons/names.txt` lists each name twice, once per weight, with Phosphor's own file for it:
+`<name> regular phosphor/regular/<name>.svg` and `<name> fill phosphor/fill/<name>-fill.svg`.
+`python3 scripts/gen_game_icons.py` renders them into `lib/GameIcons/GameIcons.generated.h`, which is never edited by
+hand; the `Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
+whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
+name in only one weight or in one weight twice.
 
 ## Weights
 
-- **Fill** for game tokens: the suits, dice, pieces, player markers, and the `mark_dot`, `mark_hit`, and `mark_miss`
-  marks. Solid shapes read best at 32 px on a 1-bit screen.
-- **Regular** (2 px lines at 32 px) for `mark_x` and `mark_o` (the owner's decision, for Ultimate tic-tac-toe), and
-  for controls and status icons, which sit beside the device's line-style UI icons.
+Every name ships in both of Phosphor's weights:
+
+- **Regular** (`"regular"`, the default): 2 px outlines at 32 px, matching the device's line-style UI icons. The
+  runtime's own screens (the match views and the Home Games tab) draw this weight.
+- **Fill** (`"fill"`): solid shapes, which read best at 32 px on a 1-bit screen, for game tokens such as suits,
+  dice, and player markers.
+
+A game picks the weight per call with `ch.gfx.icon`'s sixth argument: absent or `nil` is `"regular"`, and any value
+other than the two names is an ordinary Lua argument error, as a bad size is (`bad argument #6 to 'icon' (invalid
+option 'bold')`), which `pcall` catches. The weight rides in the display list's icon command, so a replayed frame draws
+the same bitmap. A screen draws the fill weight with `drawGameIcon(..., black, true)`.
 
 ## Naming rules
 
-- Lowercase `snake_case`, `[a-z][a-z0-9_]{0,31}`, no `__`, no final `_`; the generator refuses any other name, since
-  each becomes a C++ identifier (`MARK_X_32`, `MARK_X_64`).
-- Game tokens take their category's prefix: `mark_`, `suit_`, `die_`, `piece_`, `marker_`. A control or status icon
-  is named for its action where the picture could mean several things (`hint`, `show`, `hide`, `restart`, `rotate`,
-  `leave`, `undo`, `redo`), and otherwise for the picture (`pencil`, `trash`, `timer`, `trophy`, `warning`).
-- One name per glyph: no alias for an icon already in the set (a `close` would be `mark_x` again).
+- A name is Phosphor's own: the SVG file stem, hyphens included, without `-fill` (`dice-six`, `game-controller`,
+  `arrow-u-up-left`). The library's names are only the 55 in the table below (the `icon` lines of `api-level-1.txt`),
+  not every icon on `https://phosphoricons.com`, which is where to preview a listed icon's drawing. The generator
+  enforces `[a-z][a-z0-9-]{0,31}`, no `--`, no final `-`, and no name ending in `-fill`.
+- In C++ the header's identifiers are the name in upper case with `-` as `_`, and the fill weight adds `_FILL`:
+  `dice-six` is `DICE_SIX_32` and `DICE_SIX_64` (regular) and `DICE_SIX_FILL_32` and `DICE_SIX_FILL_64` (fill). A name
+  holds no `_` and never ends in `-fill`, so no two names share an identifier. `ICONS[i].small[weight]` and
+  `.medium[weight]` index the bitmaps by `GameIcons::Weight` (`Regular` 0, `Fill` 1).
+- One name per glyph: no alias for an icon already in the set.
 - Level 1 is a preview until `API_LEVEL_FROZEN`: names may still change. Once a level is frozen, no name in it is
   renamed or removed; a new icon joins the next level.
 
-## The v1 set (62 icons)
+## The v1 set (55 icons, 110 bitmaps a size)
 
 The epic's six categories are marks, card suits, dice faces, board pieces, player markers, and common controls; the
-table lists the common controls in two groups, Controls and Status. The pieces are solid (fill) only: a game tells a
-second side apart by the ink on a contrasting square, and outlined pieces are not in v1.
+table lists the common controls in two groups, Controls and Status. Each name is listed once, under the category it
+was chosen for (`circle` is a mark, and in fill also a round player marker). The owner dropped the chess pieces
+(entry 8), so the board pieces are Battleship's `boat` alone.
 
-| Category | Name | Source (weight) | Reason |
-| --- | --- | --- | --- |
-| Marks | `mark_x`, `mark_o` | `x`, `circle` (regular) | Noughts and crosses, Ultimate tic-tac-toe (owner's decision, tracer) |
-| | `mark_dot` | `dot-outline` (fill) | A small solid dot: last move, a legal-move hint, a board point (Phosphor's fill `dot` is a ring) |
-| | `mark_hit`, `mark_miss` | `fire`, `waves` (fill) | Battleship's hit (flame) and miss (a water tile); a drop was too like the flame at 32 px |
-| Card suits | `suit_club`, `suit_diamond`, `suit_heart`, `suit_spade` | `club`, `diamond`, `heart`, `spade` (fill) | The four suits |
-| Dice faces | `die_1` … `die_6` | `dice-one` … `dice-six` (fill) | Every face, for dice games and random choices |
-| Board pieces | `piece_king` | `crown-cross` (fill) | The chess king's cross-topped crown |
-| | `piece_queen` | `crown` (fill) | A ball-tipped coronet, like the Staunton queen's |
-| | `piece_rook`, `piece_knight` | `castle-turret`, `horse` (fill) | The rook's turret and the knight's horse head |
-| | `piece_bishop`, `piece_pawn` | original (fill style) | Phosphor has neither; silhouettes on the rook's base bar |
-| | `piece_ship` | `boat` (fill) | Battleship's ship |
-| Player markers | `marker_circle`, `marker_square`, `marker_triangle`, `marker_star`, `marker_hexagon` | same names (fill) | Distinct solid tokens for seats and counters; shapes, not shades, since the screen is 1-bit |
-| | `player`, `players` | `user`, `users` (fill) | One seat (whose turn); the pass-the-device and nearby prompts |
-| Controls | `arrow_left`, `arrow_right`, `arrow_up`, `arrow_down` | `arrow-*` (regular) | Paging and direction |
-| | `undo`, `redo` | `arrow-u-up-left`, `arrow-u-up-right` (regular) | Take back and replay a move |
-| | `restart` | `arrows-clockwise` (regular) | Play again, new round |
-| | `rotate` | `arrow-clockwise` (regular) | Battleship's rotate control |
-| | `shuffle` | `shuffle` (regular) | Random placement, shuffle a deck |
-| | `play`, `pause` | same names (regular) | Resume and pause |
-| | `check`, `plus`, `minus` | same names (regular) | Confirm; add and remove, steppers |
-| | `info`, `help`, `hint` | `info`, `question`, `lightbulb` (regular) | Rules, help, a hint |
-| | `pencil`, `eraser` | `pencil-simple`, `eraser` (regular) | Sudoku's pencil marks and clearing a cell |
-| | `show`, `hide` | `eye`, `eye-closed` (regular) | Hidden information: show a hand or board, look away before a pass |
-| | `home`, `settings`, `leave`, `trash` | `house`, `gear-six`, `sign-out`, `trash` (regular) | Launcher and menu actions; `leave` matches the runtime's Leave |
-| | `timer`, `hourglass` | same names (regular) | `ch.timer` countdowns; waiting for the other player |
-| | `game_controller` | `game-controller` (regular) | The Home Games tile; line style like the Home tiles' icons |
-| Status | `warning`, `flag_checkered` | `warning`, `flag-checkered` (regular) | The error view and the game-over view (a finish, neutral for a win or a loss) |
-| | `trophy`, `smiley`, `smiley_sad` | same names (regular) | A win; a result face either way |
+| Category | Name | Why it is in the set |
+| --- | --- | --- |
+| Marks | `x` | Noughts and crosses and Ultimate tic-tac-toe's cross (the tracer draws it) |
+| | `circle` | The nought (regular, a ring); in fill, a round solid player marker |
+| | `dot-outline` | A small dot: last move, a legal-move hint, a board point (a small ring in regular, a solid dot in fill) |
+| | `fire` | Battleship's hit |
+| | `waves` | Battleship's miss, a water tile; a drop was too like the flame at 32 px |
+| Card suits | `club` | The clubs suit |
+| | `diamond` | The diamonds suit |
+| | `heart` | The hearts suit |
+| | `spade` | The spades suit |
+| Dice faces | `dice-one` | Die face 1, for dice games and random choices |
+| | `dice-two` | Die face 2 |
+| | `dice-three` | Die face 3 |
+| | `dice-four` | Die face 4 |
+| | `dice-five` | Die face 5 |
+| | `dice-six` | Die face 6 |
+| Board pieces | `boat` | Battleship's ship |
+| Player markers | `square` | A distinct token for a seat or counter; shapes, not shades, since the screen is 1-bit |
+| | `triangle` | A distinct seat or counter token |
+| | `star` | A distinct seat or counter token |
+| | `hexagon` | A distinct seat or counter token |
+| | `user` | One seat: whose turn it is |
+| | `users` | Both players: the pass-the-device and nearby prompts |
+| Controls | `arrow-left` | Paging and direction |
+| | `arrow-right` | Paging and direction |
+| | `arrow-up` | Paging and direction |
+| | `arrow-down` | Paging and direction |
+| | `arrow-u-up-left` | Undo: take back a move |
+| | `arrow-u-up-right` | Redo: replay a move |
+| | `arrows-clockwise` | Play again, a new round (the end-of-round view's Play again row) |
+| | `arrow-clockwise` | Rotate, as in Battleship's ship placement |
+| | `shuffle` | Random placement, shuffling a deck |
+| | `play` | Resume (the pause view's Resume row) |
+| | `pause` | Pause (the pause view) |
+| | `check` | Confirm |
+| | `plus` | Add; a stepper's up |
+| | `minus` | Remove; a stepper's down |
+| | `info` | The rules |
+| | `question` | Help |
+| | `lightbulb` | A hint |
+| | `pencil-simple` | Sudoku's pencil marks |
+| | `eraser` | Clearing a cell |
+| | `eye` | Hidden information: show a hand or a board |
+| | `eye-closed` | Hidden information: look away before a pass |
+| | `house` | Home, the launcher |
+| | `gear-six` | Settings |
+| | `sign-out` | Leave the match (the views' Leave and Back rows) |
+| | `trash` | Delete, discard |
+| | `timer` | `ch.timer` countdowns |
+| | `hourglass` | Waiting for the other player |
+| | `game-controller` | The Home Games tab; line style like the Home tabs' icons |
+| Status | `warning` | The error view |
+| | `flag-checkered` | The game-over view: a finish, neutral for a win or a loss |
+| | `trophy` | A win |
+| | `smiley` | A good result |
+| | `smiley-sad` | A bad result |
 
-The `icons` fixture (`test/game_script/fixtures/icons/`) pages through the set in this order, every icon at 32, 64,
-and 128 px in black and in white.
+The `icons` fixture (`test/game_script/fixtures/icons/`) pages through the set in this order, three names a page, every
+icon at 32, 64, and 128 px in regular and in fill, in black and in white (21 pages an ink).
 
 ### Names the runtime screens use
 
-Two screens draw library icons besides the games:
+Two screens draw library icons besides the games, both in the regular weight:
 
 - The match's views (`GameMatchActivity`) draw by name through `drawGameIcon`: `pause` for the pause view, `warning`
-  for the error view, and `flag_checkered` for the game-over view, each in the dialog's content band; `play` (Resume),
-  `leave` (Leave, and the error view's Back, which leaves the match), and `restart` (Play again) at their option rows'
-  left, when the label leaves room ([game-canvas.md](game-canvas.md)). `src/games/GameViewIcons.h` holds the names,
-  and `GameViewIconsTest` checks each against the library.
+  for the error view, and `flag-checkered` for the game-over view, each in the dialog's content band; `play` (Resume),
+  `sign-out` (Leave, and the error view's Back, which leaves the match), and `arrows-clockwise` (Play again) at their
+  option rows' left, when the label leaves room ([game-canvas.md](game-canvas.md)). `src/games/GameViewIcons.h` holds
+  the names, and `GameViewIconsTest` checks each against the library.
 - The cover-grid Home's Games tab (`src/components/CoverGridHomeUi.cpp`, ledger row 9 of
-  [upstream-touches.md](upstream-touches.md)) draws `game_controller` directly, as the generated symbol
-  `GameIcons::GAME_CONTROLLER_32` passed to `renderer.drawIcon`, beside upstream's own tab icons.
+  [upstream-touches.md](upstream-touches.md)) draws `game-controller` directly, as the generated symbol
+  `GameIcons::GAME_CONTROLLER_32` (regular) passed to `renderer.drawIcon`, beside upstream's own tab icons.
 
 ### Left out
 
-Considered and not in v1: `handshake` (a draw; illegible at 32 px in both weights), `stop`, `lock`, `cards`, and a
-`close` that would duplicate `mark_x`. None was cut for size.
+Considered and not in v1: the chess pieces (Phosphor's `crown-cross`, `crown`, `castle-turret`, and `horse`, and the
+original bishop and pawn; dropped by the owner in entry 8, the originals also because the library is Phosphor only),
+`handshake` (a draw; illegible at 32 px in both weights), `stop`, `lock`, `cards`, and a close icon that would
+duplicate `x`. None was cut for size.
 
 ## Adding or changing an icon
 
-1. Copy the SVG (a Phosphor 2.1.1 file byte for byte, or an original under `original/<weight>/`) and add or change
-   its line in `assets/game-icons/names.txt`.
-2. Run `python3 scripts/gen_game_icons.py` and commit the regenerated header.
-3. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
+1. Pick the icon on `https://phosphoricons.com`, where every Phosphor icon can be previewed; its name there becomes its
+   library name once the steps below add it (until then a game that draws it stops with an unknown-icon error).
+2. Copy `assets/regular/<name>.svg` and `assets/fill/<name>-fill.svg` from the pinned 2.1.1 package, byte for byte,
+   into `assets/game-icons/phosphor/regular/` and `phosphor/fill/`, and add the name's two lines (regular, then fill)
+   under its category in `assets/game-icons/names.txt`.
+3. Run `python3 scripts/gen_game_icons.py` and commit the regenerated header.
+4. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
    `lib/GameCore/ApiLevel.h` to the value `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` prints.
-4. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
-5. Update this file's table and its Size figures.
+5. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
+6. Update this file's table and its Size figures.
 
-Renaming or dropping an icon a screen uses breaks it: `game_controller` fails the x4pro and sticky builds (and the
+Renaming or dropping an icon a screen uses breaks it: `game-controller` fails the x4pro and sticky builds (and the
 simulator's), since the cover-grid Home names `GameIcons::GAME_CONTROLLER_32`; one of the match's view icons fails
 `GameViewIconsTest`. Change the screen in the same commit.
 
 ## Size
 
-The generated data must stay within 48 KiB (49,152 B) of flash; `GameIconBlitTest.TheIconDataFitsIn48KiB` checks it.
-Each icon costs 128 B (32 px) + 512 B (64 px) of bitmap, a 12 B `ICONS` entry, and its name string.
+The generated data must stay within 96 KiB (98,304 B) of flash; `GameIconBlitTest.TheIconDataFitsIn96KiB` checks it.
+Each name costs four bitmaps, 2 x (128 B at 32 px + 512 B at 64 px) = 1,280 B, a 20 B `ICONS` entry (the name
+pointer and two bitmap pointers per size on the ESP32), and its name string.
 
 Measured on the x4pro ELF (`.pio/build/x4pro/firmware.elf`, games on) with `xtensa-esp32s3-elf-nm -S -C`, summing the
 `GameIcons::` symbols:
 
 | Data | Bytes |
 | --- | ---: |
-| 124 bitmaps (`*_32`, `*_64`), 62 x (128 + 512) | 39,680 |
-| `ICONS`, 62 x 12 | 744 |
-| Name strings, the sum of `len(name) + 1` (computed: they are not separate symbols) | 540 |
-| Total | 40,964 |
-| Limit (48 KiB) | 49,152 |
+| 220 bitmaps (`*_32`, `*_64`, `*_FILL_32`, `*_FILL_64`), 55 x 2 x (128 + 512) | 70,400 |
+| `ICONS`, 55 x 20 | 1,100 |
+| Name strings, the sum of `len(name) + 1` (computed: they are not separate symbols) | 475 |
+| Total | 71,975 |
+| Limit (96 KiB) | 98,304 |
 
-8,188 B to spare. Re-measured after `mark_dot` and `mark_miss` changed source: the same, since every bitmap has a
-fixed size. The tracer's four icons measured 2,608 B the same way (without their strings).
+26,329 B to spare. Before this story (62 names, one weight each) the same sum was 40,964 B of a 48 KiB limit. The
+tracer's four icons measured 2,608 B the same way (without their strings).
 
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
 
-| x4pro | At `068a9ad0` (four icons) | With this set (62 icons) | End of the epic (`965c55d7`) |
-| --- | ---: | ---: | ---: |
-| `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 |
-| `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 |
-| Flash difference (limit 256,000) | +158,224 | +196,480 | +196,336 |
-| Static internal RAM difference, `.dram0.*` + `.noinit` | +8 | +8 | +8 |
-| Static internal RAM difference, the gate's sum with `.iram0.*` (limit 1,024) | unmeasured | unmeasured | +776 |
+| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | End of the icon epic (`965c55d7`) | Phosphor names, both weights (entry 9) |
+| --- | ---: | ---: | ---: | ---: |
+| `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 | 5,902,784 |
+| `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 | 5,675,376 |
+| Flash difference (limit 256,000) | +158,224 | +196,480 | +196,336 | +227,408 |
+| Static internal RAM difference, `.dram0.*` + `.noinit` | +8 | +8 | +8 | +8 |
+| Static internal RAM difference, the gate's sum with `.iram0.*` (limit 1,024) | unmeasured | unmeasured | +776 | +776 |
 
-The set adds 38,256 B to the games-on image and no static internal RAM: the data is `inline constexpr`, so it sits
-in flash (`.flash.rodata`).
+Entry 9 (Phosphor names, both weights; measured with the flash budget job's four commands on this story's
+working tree, from an empty `.pio`, not an archive tree) adds +31,072 B to the games-on image against entry 7: +31,011 B of
+icon data (71,975 B against 40,964 B) and 61 B of code for the weight argument, with no static internal RAM change.
+The runtime is now 28,592 B under the 250 KiB gate.
 
-At the end of the epic (the refactor sweep, entry 7, measured from a fresh archive tree of `965c55d7` with the flash
-budget job's four commands) the runtime adds +196,336 B of flash, 59,664 B under the 250 KiB gate; epic 2 closed at
-+150,448 B, so this epic added +45,888 B (the base `1eacdc77` itself was not re-measured). Since entry 7 the RAM gate
-also counts IRAM, which shares internal SRAM on the S3: +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the FreeRTOS
-task functions only games link, which ESP-IDF places in IRAM: `vTaskSuspend` 240 B, `vTaskResume` 216 B,
+At the end of the icon epic (the refactor sweep, entry 7, measured from a fresh archive tree of `965c55d7` with the
+flash budget job's four commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate; epic 2
+closed at +150,448 B, so that epic added +45,888 B (the base `1eacdc77` itself was not re-measured). Since entry 7 the
+RAM gate also counts IRAM, which shares internal SRAM on the S3: +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the
+FreeRTOS task functions only games link, which ESP-IDF places in IRAM: `vTaskSuspend` 240 B, `vTaskResume` 216 B,
 `eTaskGetState` 154 B, `uxTaskGetStackHighWaterMark` 35 B, `pxTaskGetStackStart` 14 B, by `objdump -t`), and +84 B
-of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate.
+of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate. The icon data is `inline constexpr`, so
+it sits in flash (`.flash.rodata`) and adds no static internal RAM.

@@ -184,3 +184,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-refactor-sweep-plan.md`
   summary: The error view's host-failure wording has no automated test: `GameVM::failure()`'s order (NoSession before LuaGame's kind), `vmFailureText`'s `tr()` mapping, and `vmHealthy`'s headline (only NoSession is "could not start"); `LuaGameTest` pins only `LuaGame::hostFailure()`.
   evidence: Review finding (verification gap, blind hunter), 3.7. Same host-build gap as the entry above; making `vmFailureText` fall back to `errorMessage()` for OutOfMemory brings English back to the view and passes every test. Retro AI-2's harness, or a pure mapping moved into `lib/GameScript`, would pin it.
+
+## 3.9
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-phosphor-names-and-both-weights-plan.md`
+  summary: The icon weight's replay step has no automated test: `FrameReplay`'s `case Op::Icon` passing `command.weight == IconWeight::Fill` to `drawGameIconAt`, and `drawGameIconAt` turning `fill` into `GameIcons::Weight`; tests pin the weight up to the `DrawCommand` and from `sourceFor` on, not between.
+  evidence: Review finding (verification gap), 3.9. `test/` builds neither `FrameReplay.cpp` nor `GameIconDraw.cpp` (the 3.1 `Op::Icon` replay gap, already deferred to retro AI-2's harness); dropping or inverting the flag passes every host test. The `icons` fixture screenshots (`story-names-weights-screenshots/x4pro-icons/`) show fill and regular drawn apart through the replay today.

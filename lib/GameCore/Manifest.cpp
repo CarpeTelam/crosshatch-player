@@ -34,10 +34,15 @@ bool validId(const std::string_view text) {
   return true;
 }
 
+// A manifest's icon: lower case, digits, '_', and '-'. '-' is accepted because the
+// library's names are Phosphor's own, hyphenated (game-controller); '_' stays
+// accepted so no manifest that parsed before fails now. Whether the name is in the
+// library is not checked here: drawGameIcon refuses an unknown name when a screen
+// draws it.
 bool validIcon(const std::string_view text) {
   if (text.empty() || text.size() > Manifest::MAX_ICON_BYTES) return false;
   for (const char c : text) {
-    if (!isLowerDigit(c) && c != '_') return false;
+    if (!isLowerDigit(c) && c != '_' && c != '-') return false;
   }
   return true;
 }

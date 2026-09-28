@@ -19,7 +19,7 @@ constexpr const char* forView(const GameCore::MatchState state) {
     case GameCore::MatchState::Paused:
       return "pause";
     case GameCore::MatchState::Over:
-      return "flag_checkered";
+      return "flag-checkered";
     case GameCore::MatchState::Error:
       return "warning";
     case GameCore::MatchState::Starting:
@@ -39,9 +39,9 @@ constexpr const char* forOption(const GameCore::MatchEvent event) {
       return "play";
     case GameCore::MatchEvent::Leave:
     case GameCore::MatchEvent::Back:
-      return "leave";
+      return "sign-out";
     case GameCore::MatchEvent::PlayAgain:
-      return "restart";
+      return "arrows-clockwise";
     case GameCore::MatchEvent::Started:
     case GameCore::MatchEvent::Home:
     case GameCore::MatchEvent::RoundOver:

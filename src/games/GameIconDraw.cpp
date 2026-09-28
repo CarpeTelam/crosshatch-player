@@ -12,20 +12,22 @@
 #include "GameIconBlit.h"
 
 bool drawGameIcon(const GfxRenderer& renderer, const char* name, const int x, const int y, const int pixels,
-                  const bool black) {
+                  const bool black, const bool fill) {
   const int index = GameIcons::find(name, std::strlen(name));
   if (index < 0) {
     LOG_ERR("GAME", "No game icon named \"%s\"", name);
     return false;
   }
   return drawGameIconAt(renderer, static_cast<size_t>(index), pixels, 0, 0, renderer.getScreenWidth(),
-                        renderer.getScreenHeight(), x, y, black);
+                        renderer.getScreenHeight(), x, y, black, fill);
 }
 
 bool drawGameIconAt(const GfxRenderer& renderer, const size_t index, const int pixels, const int originX,
-                    const int originY, const int width, const int height, const int x, const int y, const bool black) {
+                    const int originY, const int width, const int height, const int x, const int y, const bool black,
+                    const bool fill) {
+  const GameIcons::Weight weight = fill ? GameIcons::Weight::Fill : GameIcons::Weight::Regular;
   GameIconBlit::Source source;
-  if (!GameIconBlit::sourceFor(index, pixels, source)) {
+  if (!GameIconBlit::sourceFor(index, pixels, weight, source)) {
     LOG_ERR("GAME", "No game icon %u at %d px (icons come in 32, 64, and 128 px)", static_cast<unsigned>(index),
             pixels);
     return false;

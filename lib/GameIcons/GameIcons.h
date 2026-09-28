@@ -1,18 +1,16 @@
 #pragma once
 
-// GameIcons: the curated game icon set. The names and 1-bit bitmaps come from
-// assets/game-icons/ through scripts/gen_game_icons.py, which writes the committed
-// GameIcons.generated.h (never edit it by hand; rerun the script). Depends on the
-// standard library only.
+// GameIcons: the curated game icon set. The names and 1-bit bitmaps come from assets/game-icons/ through
+// scripts/gen_game_icons.py, which writes the committed GameIcons.generated.h (never edit it by hand; rerun the
+// script). Depends on the standard library only.
 //
-// Games draw an icon by name with ch.gfx.icon, screens with drawGameIcon
-// (src/games/GameIconDraw.h); both find it here by name and keep its index into
-// ICONS. One upstream file uses a bitmap directly: Home's cover-grid Games tab
-// (src/components/CoverGridHomeUi.cpp, ledger row 9) includes
-// GameIcons.generated.h and draws GAME_CONTROLLER_32 with GfxRenderer::drawIcon,
-// so renaming or dropping game_controller fails that file's build. This folder's
-// .clang-format turns formatting off for the generated data, so this file is
-// kept in the repository's style by hand.
+// Games draw an icon by name with ch.gfx.icon, screens with drawGameIcon (src/games/GameIconDraw.h); both find it
+// here by name and keep its index into ICONS. The names are Phosphor's own (hyphens included), and each ICONS entry
+// holds a bitmap per Weight (regular, fill) at each size: Icon::small[weight] and Icon::medium[weight]. One upstream
+// file uses a bitmap directly: Home's cover-grid Games tab (src/components/CoverGridHomeUi.cpp, ledger row 9)
+// includes GameIcons.generated.h and draws GAME_CONTROLLER_32 (game-controller, regular) with
+// GfxRenderer::drawIcon, so renaming or dropping game-controller fails that file's build. This folder's
+// .clang-format turns formatting off for the generated data, so this file is kept in the repository's style by hand.
 
 #include <cstddef>
 #include <cstdint>

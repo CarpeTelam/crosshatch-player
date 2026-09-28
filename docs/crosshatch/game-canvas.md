@@ -80,16 +80,16 @@ write in `onExit()` (AD-17).
 ## The views
 
 Each view is one framed option dialog: the game's name as a small caption, a `tr()` headline, and large touch targets.
-The views draw from the shared icon library (`lib/GameIcons`) by name, as the games do: the view's 64 px icon is
+The views draw from the shared icon library (`lib/GameIcons`) by name, as the games do, in the regular weight: the view's 64 px icon is
 centred in the dialog's content band, between the text and the rows, and each row's 32 px icon sits at the row's left,
 in the ink of the row's label, drawn when the label leaves room for it. `src/games/GameViewIcons.h` names the icons
 and holds the room rule; `GameViewIconsTest` checks every name against the library.
 
 | View | Icon | Headline | Body | Options | Buttons |
 | --- | --- | --- | --- | --- | --- |
-| Pause menu | `pause`; rows `play`, `leave` | Paused | -- | Resume, Leave | Back resumes; Up and Down move; Confirm chooses |
-| End-of-round menu | `flag_checkered`; rows `restart`, `leave` | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
-| Error view | `warning`; row `leave` | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
+| Pause menu | `pause`; rows `play`, `sign-out` | Paused | -- | Resume, Leave | Back resumes; Up and Down move; Confirm chooses |
+| End-of-round menu | `flag-checkered`; rows `arrows-clockwise`, `sign-out` | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
+| Error view | `warning`; row `sign-out` | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
 
 The error view's reasons for a failed start are `tr()` keys: not enough memory (also when the Session does not fit in
 the arena), the game's folder is missing, no Lua files, a Lua file name that is not valid (the only `.lua` files have

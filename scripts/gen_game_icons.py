@@ -8,25 +8,29 @@ assets/game-icons/names.txt names. Standard library only; the output is the same
         PATH  the header to write (default: <repo>/lib/GameIcons/GameIcons.generated.h)
     python3 scripts/gen_game_icons_test.py   # the script's own tests
 
-names.txt: `#` comment lines and blank lines, then one icon per line, whitespace-separated:
-`<name> <weight> <SVG path relative to DIR>`. A name is [a-z][a-z0-9_]{0,31} without "__" and not ending in "_" (it
-becomes a C++ identifier); the weight is one of Phosphor's. The path's top folder says where the icon comes from:
-phosphor/ (Phosphor 2.1.1, as released) or original/ (drawn for this project in Phosphor's style).
+names.txt: `#` comment lines and blank lines, then one line per icon and weight, whitespace-separated:
+`<name> <weight> <SVG path relative to DIR>`. The library holds Phosphor 2.1.1 icons only, by Phosphor's own names:
+a name is Phosphor's SVG file stem without "-fill", so [a-z][a-z0-9-]{0,31} without "--", not ending in "-", and not
+ending in "-fill". The weight is regular or fill, and the path is Phosphor's own file for that name and weight:
+phosphor/regular/<name>.svg or phosphor/fill/<name>-fill.svg. Every name has exactly one line in each weight. In the
+header a name's identifiers are its upper case with "-" as "_", plus "_FILL" for the fill weight (dice-six:
+DICE_SIX_32, DICE_SIX_FILL_64); names hold no "_", so no two names share an identifier.
 
 Each SVG must be what Phosphor ships: one <svg viewBox="0 0 N N"> (fill absent or currentColor) whose children are
 <path d="..."> elements only. Paths take the commands M L H V C S Q T A Z in both cases. Curves are flattened
 (cubics and quadratics to 32 segments, arcs to one segment per pi/32 of sweep), scaled to the bitmap, every vertex
 rounded to 1/4096 px, and filled by the nonzero winding rule with 16 sample lines per pixel row; a pixel is ink when
-its coverage is at least THRESHOLD. Each icon is drawn at 32 px (small) and 64 px (medium). The fill uses no libm
-call; arcs use math.sin, cos, and atan2, whose last-bit differences between platforms the rounding makes very
-unlikely to move a pixel.
+its coverage is at least THRESHOLD. Each icon is drawn in each weight at 32 px (small) and 64 px (medium). The fill
+uses no libm call; arcs use math.sin, cos, and atan2, whose last-bit differences between platforms the rounding makes
+very unlikely to move a pixel.
 
 The bitmaps use GfxRenderer::drawIcon's layout: square, 1 bit per pixel, MSB first, rows padded to whole bytes,
 bit 0 = ink, stored rotated 90 degrees counter-clockwise, so stored (row, col) is drawn at (pixels - 1 - row, col).
 
 Exit 0: the header was written. Exit 1: a rule is broken: a malformed or non-UTF-8 map, a bad name, weight, or
-path, a repeated name, SVG content outside the subset above (a non-finite number included), or an icon that renders
-empty; the message names the file or line.
+path (anything but Phosphor's own file for the name and weight), a name given twice in one weight or missing a
+weight, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
+message names the file, line, or name.
 Exit 2: the script could not run: no names.txt, a map line naming an SVG that does not exist, or an unreadable or
 unwritable file.
 """
@@ -47,15 +51,13 @@ DEFAULT_ASSETS = REPO / 'assets' / 'game-icons'
 DEFAULT_OUT = REPO / 'lib' / 'GameIcons' / 'GameIcons.generated.h'
 MAP_NAME = 'names.txt'
 
-# Where each icon comes from, by its map path's top folder, as the header's comments name it ({weight} filled in).
-SOURCES = {
-    'phosphor': 'Phosphor 2.1.1 {weight}',
-    'original': 'original, in Phosphor\'s {weight} style',
-}
+# Where every icon comes from, as the header's comments name it ({weight} filled in).
+SOURCE = 'Phosphor 2.1.1 {weight}'
 LICENCE_NOTICE = ('// Phosphor Icons: Copyright (c) 2023 Phosphor Icons, MIT licence; see '
                   'assets/game-icons/phosphor/LICENSE.')
-WEIGHTS = ('thin', 'light', 'regular', 'bold', 'fill', 'duotone')
-NAME = re.compile(r'[a-z][a-z0-9_]{0,31}')
+# The weights every name ships in, in the header's index order (Weight::Regular is 0, Weight::Fill is 1).
+WEIGHTS = ('regular', 'fill')
+NAME = re.compile(r'[a-z][a-z0-9-]{0,31}')
 
 SMALL_PIXELS = 32
 MEDIUM_PIXELS = 64
@@ -79,8 +81,19 @@ NUMBER_START = '+-.0123456789'
 Entry = collections.namedtuple('Entry', 'name weight path line source')
 
 
+def phosphor_path(name, weight):
+    """Phosphor's own SVG for a name in a weight, relative to the assets folder."""
+    return f'phosphor/{weight}/{name}.svg' if weight == 'regular' else f'phosphor/{weight}/{name}-{weight}.svg'
+
+
+def identifier(name, weight, pixels):
+    """The header's array name for a name's bitmap in a weight at a size: dice-six fill 64 is DICE_SIX_FILL_64."""
+    suffix = '' if weight == 'regular' else f'_{weight.upper()}'
+    return f'{name.upper().replace("-", "_")}{suffix}_{pixels}'
+
+
 def read_map(assets):
-    """The map's entries, sorted by name bytewise."""
+    """The map's names, sorted bytewise, each as {weight: Entry} holding every weight in WEIGHTS."""
     map_path = assets / MAP_NAME
     try:
         text = map_path.read_bytes().decode('utf-8')
@@ -88,7 +101,7 @@ def read_map(assets):
         raise SetupError(f'cannot read {map_path}: {exc}')
     except UnicodeDecodeError as exc:
         raise Failure(f'{map_path} is not UTF-8: {exc}')
-    entries = {}
+    entries = {weight: {} for weight in WEIGHTS}
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith('#'):
@@ -98,21 +111,25 @@ def read_map(assets):
         if len(fields) != 3:
             raise Failure(f'{where}: expected "<name> <weight> <path>", got {raw!r}')
         name, weight, rel = fields
-        if not NAME.fullmatch(name) or '__' in name or name.endswith('_'):
-            raise Failure(f'{where}: bad name {name!r} (want [a-z][a-z0-9_]{{0,31}} without "__" or a final "_")')
+        if not NAME.fullmatch(name) or '--' in name or name.endswith('-') or name.endswith('-fill'):
+            raise Failure(f'{where}: bad name {name!r} (want Phosphor\'s name: [a-z][a-z0-9-]{{0,31}} without "--", '
+                          'not ending in "-" or "-fill")')
         if weight not in WEIGHTS:
             raise Failure(f'{where}: unknown weight {weight!r} (want one of {", ".join(WEIGHTS)})')
-        parts = pathlib.PurePosixPath(rel).parts
-        if rel.startswith('/') or '..' in parts or '\\' in rel or not rel.endswith('.svg'):
-            raise Failure(f'{where}: the path {rel!r} must be a relative .svg path inside {assets}')
-        if len(parts) < 2 or parts[0] not in SOURCES:
-            raise Failure(f'{where}: the path {rel!r} must be under {" or ".join(f"{top}/" for top in SOURCES)}')
-        if name in entries:
-            raise Failure(f'{where}: {name} is already named on line {entries[name].line}')
-        entries[name] = Entry(name, weight, rel, number, SOURCES[parts[0]].format(weight=weight))
-    if not entries:
+        want = phosphor_path(name, weight)
+        if rel != want:
+            raise Failure(f'{where}: the path {rel!r} is not Phosphor\'s {weight} {name} (want {want})')
+        if name in entries[weight]:
+            raise Failure(f'{where}: {name} {weight} is already named on line {entries[weight][name].line}')
+        entries[weight][name] = Entry(name, weight, rel, number, SOURCE.format(weight=weight))
+    names = set().union(*entries.values())
+    if not names:
         raise Failure(f'{map_path} names no icons')
-    return sorted(entries.values(), key=lambda entry: entry.name.encode())
+    for name in sorted(names, key=str.encode):
+        for weight in WEIGHTS:
+            if name not in entries[weight]:
+                raise Failure(f'{map_path}: {name} has no {weight} line (every name ships in {" and ".join(WEIGHTS)})')
+    return [{weight: entries[weight][name] for weight in WEIGHTS} for name in sorted(names, key=str.encode)]
 
 
 def local_name(tag):
@@ -434,7 +451,7 @@ def array_lines(name, size_bytes, data):
 
 
 def header_text(icons):
-    """The header for [(Entry, {pixels: bytes})], sorted by name."""
+    """The header for [{weight: (Entry, {pixels: bytes})}], sorted by name, every weight of WEIGHTS in each."""
     small_bytes = SMALL_PIXELS * ((SMALL_PIXELS + 7) // 8)
     medium_bytes = MEDIUM_PIXELS * ((MEDIUM_PIXELS + 7) // 8)
     lines = [
@@ -442,7 +459,9 @@ def header_text(icons):
         '//',
         '// Each bitmap is square, 1 bit per pixel, MSB first, rows padded to whole bytes, bit 0 = ink, and stored',
         '// rotated 90 degrees counter-clockwise: stored (row, col) is drawn at (pixels - 1 - row, col), as',
-        '// GfxRenderer::drawIcon draws it. ICONS is sorted by name, bytewise.',
+        '// GfxRenderer::drawIcon draws it. ICONS is sorted by name, bytewise; each name has a bitmap per weight and',
+        '// size. Names are Phosphor\'s own; identifiers are the name in upper case with "-" as "_", plus _FILL for',
+        '// the fill weight.',
         LICENCE_NOTICE,
         '#pragma once',
         '',
@@ -456,23 +475,32 @@ def header_text(icons):
         f'inline constexpr size_t SMALL_BYTES = {small_bytes};',
         f'inline constexpr size_t MEDIUM_BYTES = {medium_bytes};',
         '',
+        f'enum class Weight : uint8_t {{ {", ".join(weight.capitalize() for weight in WEIGHTS)} }};  '
+        '// indexes Icon::small and Icon::medium',
+        f'inline constexpr size_t WEIGHT_COUNT = {len(WEIGHTS)};',
+        '',
         'struct Icon {',
         '  const char* name;',
-        '  const uint8_t* small;',
-        '  const uint8_t* medium;',
+        '  const uint8_t* small[WEIGHT_COUNT];',
+        '  const uint8_t* medium[WEIGHT_COUNT];',
         '};',
     ]
-    for entry, bitmaps in icons:
-        upper = entry.name.upper()
-        lines.append('')
-        lines.append(f'// {entry.name}: {entry.source}, {entry.path}')
-        lines.extend(array_lines(f'{upper}_{SMALL_PIXELS}', 'SMALL_BYTES', bitmaps[SMALL_PIXELS]))
-        lines.extend(array_lines(f'{upper}_{MEDIUM_PIXELS}', 'MEDIUM_BYTES', bitmaps[MEDIUM_PIXELS]))
+    for weights in icons:
+        for weight in WEIGHTS:
+            entry, bitmaps = weights[weight]
+            lines.append('')
+            lines.append(f'// {entry.name}: {entry.source}, {entry.path}')
+            lines.extend(array_lines(identifier(entry.name, weight, SMALL_PIXELS), 'SMALL_BYTES',
+                                     bitmaps[SMALL_PIXELS]))
+            lines.extend(array_lines(identifier(entry.name, weight, MEDIUM_PIXELS), 'MEDIUM_BYTES',
+                                     bitmaps[MEDIUM_PIXELS]))
     lines.append('')
     lines.append('inline constexpr Icon ICONS[] = {')
-    for entry, _ in icons:
-        upper = entry.name.upper()
-        lines.append(f'    {{"{entry.name}", {upper}_{SMALL_PIXELS}, {upper}_{MEDIUM_PIXELS}}},')
+    for weights in icons:
+        name = weights[WEIGHTS[0]][0].name
+        small = ', '.join(identifier(name, weight, SMALL_PIXELS) for weight in WEIGHTS)
+        medium = ', '.join(identifier(name, weight, MEDIUM_PIXELS) for weight in WEIGHTS)
+        lines.append(f'    {{"{name}", {{{small}}}, {{{medium}}}}},')
     lines.append('};')
     lines.append('inline constexpr size_t ICON_COUNT = sizeof(ICONS) / sizeof(ICONS[0]);')
     lines.append('')
@@ -482,21 +510,25 @@ def header_text(icons):
 
 def generate(assets, out):
     icons = []
-    for entry in read_map(assets):
-        path = assets / entry.path
-        if not path.is_file():
-            raise SetupError(f'{assets / MAP_NAME}:{entry.line}: {entry.name}\'s SVG {path} does not exist')
-        try:
-            text = path.read_bytes()
-        except OSError as exc:
-            raise SetupError(f'cannot read {path}: {exc}')
-        icons.append((entry, render(text, str(path))))
+    for weights in read_map(assets):
+        rendered = {}
+        for weight, entry in weights.items():
+            path = assets / entry.path
+            if not path.is_file():
+                raise SetupError(f'{assets / MAP_NAME}:{entry.line}: {entry.name} {weight}\'s SVG {path} '
+                                 'does not exist')
+            try:
+                text = path.read_bytes()
+            except OSError as exc:
+                raise SetupError(f'cannot read {path}: {exc}')
+            rendered[weight] = (entry, render(text, str(path)))
+        icons.append(rendered)
     try:
         with open(out, 'w', encoding='utf-8', newline='\n') as header:
             header.write(header_text(icons))
     except OSError as exc:
         raise SetupError(f'cannot write {out}: {exc}')
-    print(f'wrote {out} ({len(icons)} icons)')
+    print(f'wrote {out} ({len(icons)} icons, {len(WEIGHTS)} weights each)')
 
 
 def main(argv=None):

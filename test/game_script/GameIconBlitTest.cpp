@@ -22,8 +22,11 @@ namespace {
 using InkRun = std::array<int32_t, 3>;  // y, x, w
 using Pixel = std::pair<int, int>;      // x, y
 
-static_assert(GameIcons::find("mark_x", 6) >= 0, "find works at compile time");
-static_assert(GameIcons::find("mark", 4) == -1, "a prefix is not a name");
+static_assert(GameIcons::find("dice-six", 8) >= 0, "find works at compile time");
+static_assert(GameIcons::find("dice", 4) == -1, "a prefix is not a name");
+
+constexpr GameIcons::Weight WEIGHTS[] = {GameIcons::Weight::Regular, GameIcons::Weight::Fill};
+static_assert(std::size(WEIGHTS) == GameIcons::WEIGHT_COUNT, "every weight is tested");
 
 // A blank `pixels`-square bitmap in drawIcon's layout (every bit 1: no ink).
 std::vector<uint8_t> blank(const int pixels) {
@@ -87,27 +90,38 @@ TEST(GameIconBlitTest, FindHitsEveryNameAndMissesEverythingElse) {
     const char* name = GameIcons::ICONS[i].name;
     EXPECT_EQ(GameIcons::find(name, std::strlen(name)), static_cast<int>(i)) << name;
   }
+  const std::string hits[] = {"x", "circle", "dice-six", "arrow-u-up-left", "arrows-clockwise", "game-controller"};
+  for (const std::string& name : hits) {
+    EXPECT_GE(GameIcons::find(name.data(), name.size()), 0) << name;
+  }
   const std::string misses[] = {
-      "no_such_icon",
+      "no-such-icon",
       "",
-      "die",
-      "die_",
-      "die_66",
-      "mark_xx",
-      "suit_heart_",
+      "dice",
+      "dice-",
+      "dice_six",
+      "dice-sixx",
+      "dice-six-fill",
+      "x-",
+      "xx",
+      "mark_x",
+      "mark_o",
+      "die_6",
+      "game_controller",
+      "piece_pawn",
       "a",
       "zzz",
-      "DIE_6",
-      std::string("die_6\0", 6),
-      std::string("mark\0x", 6),
-      std::string("\0die_6", 6),
+      "DICE-SIX",
+      std::string("x\0", 2),
+      std::string("dice-six\0", 9),
+      std::string("\0dice-six", 9),
   };
   for (const std::string& name : misses) {
     EXPECT_EQ(GameIcons::find(name.data(), name.size()), -1) << name;
   }
   // No NUL needed: the length bounds the name.
-  const char longer[] = {'m', 'a', 'r', 'k', '_', 'o', 'X'};
-  EXPECT_EQ(GameIcons::find(longer, 6), GameIcons::find("mark_o", 6));
+  const char longer[] = {'c', 'i', 'r', 'c', 'l', 'e', 'X'};
+  EXPECT_EQ(GameIcons::find(longer, 6), GameIcons::find("circle", 6));
   EXPECT_EQ(GameIcons::find(longer, 7), -1);
 }
 
@@ -126,34 +140,45 @@ TEST(GameIconBlitTest, InkAtMatchesDrawIconsMapping) {
       EXPECT_EQ(inkAtPixels(bitmap.data(), pixels), expected) << row << "," << col;
     }
   }
-  // And every bitmap of the library.
+  // And every bitmap of the library, in each weight; the two weights differ.
   for (const GameIcons::Icon& icon : GameIcons::ICONS) {
-    EXPECT_EQ(inkAtPixels(icon.small, 32), drawIconPixels(icon.small, 32)) << icon.name;
-    EXPECT_EQ(inkAtPixels(icon.medium, 64), drawIconPixels(icon.medium, 64)) << icon.name;
+    for (size_t w = 0; w < GameIcons::WEIGHT_COUNT; ++w) {
+      EXPECT_EQ(inkAtPixels(icon.small[w], 32), drawIconPixels(icon.small[w], 32)) << icon.name << " " << w;
+      EXPECT_EQ(inkAtPixels(icon.medium[w], 64), drawIconPixels(icon.medium[w], 64)) << icon.name << " " << w;
+      EXPECT_FALSE(inkAtPixels(icon.small[w], 32).empty()) << icon.name << " " << w;
+    }
+    EXPECT_NE(inkAtPixels(icon.medium[0], 64), inkAtPixels(icon.medium[1], 64)) << icon.name;
   }
 }
 
 TEST(GameIconBlitTest, SourceForPicksTheBitmapAndScale) {
   for (size_t i = 0; i < GameIcons::ICON_COUNT; ++i) {
-    Source source;
-    ASSERT_TRUE(sourceFor(i, 32, source));
-    EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].small);
-    EXPECT_EQ(source.pixels, 32);
-    EXPECT_EQ(source.scale, 1);
-    ASSERT_TRUE(sourceFor(i, 64, source));
-    EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium);
-    EXPECT_EQ(source.pixels, 64);
-    EXPECT_EQ(source.scale, 1);
-    ASSERT_TRUE(sourceFor(i, 128, source));
-    EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium);
-    EXPECT_EQ(source.pixels, 64);
-    EXPECT_EQ(source.scale, 2);
+    for (const GameIcons::Weight weight : WEIGHTS) {
+      const auto w = static_cast<size_t>(weight);
+      Source source;
+      ASSERT_TRUE(sourceFor(i, 32, weight, source));
+      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].small[w]);
+      EXPECT_EQ(source.pixels, 32);
+      EXPECT_EQ(source.scale, 1);
+      ASSERT_TRUE(sourceFor(i, 64, weight, source));
+      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium[w]);
+      EXPECT_EQ(source.pixels, 64);
+      EXPECT_EQ(source.scale, 1);
+      ASSERT_TRUE(sourceFor(i, 128, weight, source));
+      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium[w]);
+      EXPECT_EQ(source.pixels, 64);
+      EXPECT_EQ(source.scale, 2);
+    }
+    EXPECT_NE(GameIcons::ICONS[i].small[0], GameIcons::ICONS[i].small[1]);
   }
   Source untouched;
-  EXPECT_FALSE(sourceFor(GameIcons::ICON_COUNT, 32, untouched));
-  EXPECT_FALSE(sourceFor(0, 48, untouched));
-  EXPECT_FALSE(sourceFor(0, 0, untouched));
-  EXPECT_FALSE(sourceFor(0, 256, untouched));
+  const auto pastWeights = static_cast<GameIcons::Weight>(GameIcons::WEIGHT_COUNT);
+  EXPECT_FALSE(sourceFor(GameIcons::ICON_COUNT, 32, GameIcons::Weight::Regular, untouched));
+  EXPECT_FALSE(sourceFor(0, 48, GameIcons::Weight::Regular, untouched));
+  EXPECT_FALSE(sourceFor(0, 0, GameIcons::Weight::Fill, untouched));
+  EXPECT_FALSE(sourceFor(0, 256, GameIcons::Weight::Fill, untouched));
+  EXPECT_FALSE(sourceFor(0, 32, pastWeights, untouched));
+  EXPECT_FALSE(sourceFor(0, 64, static_cast<GameIcons::Weight>(0xFF), untouched));
   EXPECT_EQ(untouched.bitmap, nullptr);
   EXPECT_EQ((std::vector<int>(std::begin(GameIconBlit::DRAWN_PIXELS), std::end(GameIconBlit::DRAWN_PIXELS))),
             (std::vector<int>{32, 64, 128}));
@@ -214,11 +239,11 @@ TEST(GameIconBlitTest, RunsAreClippedToTheCanvas) {
   EXPECT_EQ(covered(runsOf(large, 70, 40, 100, 60)), square(70, 40, 100, 60));
 }
 
-TEST(GameIconBlitTest, TheMarkOIsARingWithAnEmptyCentre) {
-  const int index = GameIcons::find("mark_o", 6);
+TEST(GameIconBlitTest, TheRegularCircleIsARingWithAnEmptyCentre) {
+  const int index = GameIcons::find("circle", 6);
   ASSERT_GE(index, 0);
   Source source;
-  ASSERT_TRUE(sourceFor(static_cast<size_t>(index), 64, source));
+  ASSERT_TRUE(sourceFor(static_cast<size_t>(index), 64, GameIcons::Weight::Regular, source));
   EXPECT_FALSE(inkAt(source.bitmap, 64, 32, 32));
   EXPECT_FALSE(inkAt(source.bitmap, 64, 0, 0));
   // The middle row crosses the ring twice: two runs, far apart.
@@ -234,15 +259,38 @@ TEST(GameIconBlitTest, TheMarkOIsARingWithAnEmptyCentre) {
   EXPECT_TRUE(inkAt(source.bitmap, 64, 32, 56));
 }
 
-// The generated icon data fits its 48 KiB flash budget (docs/crosshatch/game-icons.md, Size), counted in the
-// device's layout: both bitmaps per icon, one ICONS entry of three 4-byte pointers on the ESP32 (12 B, whatever
-// sizeof(Icon) is on the host), and each NUL-terminated name.
-TEST(GameIconBlitTest, TheIconDataFitsIn48KiB) {
-  constexpr size_t DEVICE_ICON_ENTRY_BYTES = 3 * 4;
-  size_t bytes = GameIcons::ICON_COUNT * (GameIcons::SMALL_BYTES + GameIcons::MEDIUM_BYTES) +
+TEST(GameIconBlitTest, TheFillCircleIsInkedAtTheCentre) {
+  const int index = GameIcons::find("circle", 6);
+  ASSERT_GE(index, 0);
+  for (const int pixels : {32, 64}) {
+    Source source;
+    ASSERT_TRUE(sourceFor(static_cast<size_t>(index), pixels, GameIcons::Weight::Fill, source));
+    EXPECT_TRUE(inkAt(source.bitmap, pixels, pixels / 2, pixels / 2)) << pixels;
+    EXPECT_FALSE(inkAt(source.bitmap, pixels, 0, 0)) << pixels;
+  }
+  // The middle row is one run across the disc.
+  Source source;
+  ASSERT_TRUE(sourceFor(static_cast<size_t>(index), 64, GameIcons::Weight::Fill, source));
+  std::vector<InkRun> middle;
+  for (const InkRun& run : runsOf(source, 0, 0, 64, 64)) {
+    if (run[0] == 32) middle.push_back(run);
+  }
+  ASSERT_EQ(middle.size(), 1u);
+  EXPECT_LT(middle[0][1], 16);
+  EXPECT_GT(middle[0][1] + middle[0][2], 48);
+}
+
+// The generated icon data fits its 96 KiB flash budget (docs/crosshatch/game-icons.md, Size), counted in the
+// device's layout: four bitmaps per name (small and medium in each weight), one ICONS entry of five 4-byte pointers
+// on the ESP32 (20 B: the name and two per size, whatever sizeof(Icon) is on the host), and each NUL-terminated name.
+TEST(GameIconBlitTest, TheIconDataFitsIn96KiB) {
+  static_assert(GameIcons::WEIGHT_COUNT == 2, "four bitmaps a name");
+  constexpr size_t DEVICE_ICON_ENTRY_BYTES = (1 + 2 * GameIcons::WEIGHT_COUNT) * 4;
+  static_assert(DEVICE_ICON_ENTRY_BYTES == 20, "the device's ICONS entry");
+  size_t bytes = GameIcons::ICON_COUNT * GameIcons::WEIGHT_COUNT * (GameIcons::SMALL_BYTES + GameIcons::MEDIUM_BYTES) +
                  GameIcons::ICON_COUNT * DEVICE_ICON_ENTRY_BYTES;
   for (const GameIcons::Icon& icon : GameIcons::ICONS) bytes += std::strlen(icon.name) + 1;
-  EXPECT_LE(bytes, 49152u);
+  EXPECT_LE(bytes, 98304u);
 }
 
 }  // namespace
