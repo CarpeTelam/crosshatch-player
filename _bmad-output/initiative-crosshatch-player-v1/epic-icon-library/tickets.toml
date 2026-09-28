@@ -10,7 +10,7 @@ covers = ["R1", "R2", "R4", "R6", "R7"]
 after = ["2.9", "2.11"]
 hitl = false
 risk = "medium"
-unknown = "Whether the rasterizer's 1-bit threshold at 32 px keeps dice pips, suit points, and the regular weight's 2 px lines legible; the owner judges it from the screenshot."
+unknown = "Whether the rasterizer's 1-bit threshold at 32 px keeps dice pips, suit points, and the regular weight's 2 px lines legible; the builder picks the threshold that keeps every pip and line visible in the screenshot and records it, and the owner reviews it in entry 8."
 references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-7, AD-19, AD-24, layer table", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, sections 5 and 6", "_bmad-output/implementation-artifacts/deferred-work.md, spine rules ahead of the code (epic-icon-library)", "docs/crosshatch/fork-scripts.md", "freeink-sdk/libs/assets/Icons/tools/gen_icons.py, for the bitmap layout only", "test/game_script/fixtures/README.md", ".claude/skills/run-crosshatch-player/SKILL.md"]
 
 [[entry]]
@@ -23,7 +23,7 @@ covers = ["R5", "R6", "R7"]
 after = [1, "2.1"]
 hitl = false
 risk = "medium"
-unknown = "Whether the fixture `.bmp` files come from running `PngToBmpConverter` in a host test or are committed bytes a test checks against the converter's layout."
+unknown = "Whether `PngToBmpConverter` builds on the host; if it does, a host test produces the fixture `.bmp` files from committed PNGs, and otherwise they are committed bytes a test checks against the converter's layout; the builder records which."
 references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-15, AD-16, AD-24, Consistency Conventions", "lib/PngToBmpConverter/PngToBmpConverter.cpp, writeBmpHeader1bit"]
 
 [[entry]]
@@ -42,13 +42,13 @@ unknown = "None known."
 id = 4
 type = "story"
 title = "The v1 icon set"
-description = "Drafts the v1 list by category (marks, card suits, dice faces, board pieces, player markers, common controls) from game-api-seed section 5 and `first-party-games.md`, including `game_controller` for entry 6 and the icons entry 5's pause, error, and game-over views use, which the owner approves; vendors every chosen Phosphor fill or regular SVG and draws originals in the matching weight's style where Phosphor has none (no pawn, bishop, or queen; `crown`, `horse`, and `castle-turret` exist); regenerates the header with the unchanged generator; writes the attribution and name list in `docs/crosshatch/`; appends every `icon` line with `API_SURFACE_CRC`; and extends the `icons` fixture to draw every library icon; it follows entry 2 because both edit `api-level-1.txt` and `ApiLevel.h`."
+description = "Drafts the v1 list by category (marks, card suits, dice faces, board pieces, player markers, common controls) from game-api-seed section 5 and `first-party-games.md`, including `game_controller` for entry 6 and the icons entry 5's pause, error, and game-over views use, recording the reason for each name; builds it without waiting for approval, since entry 8 is the owner's review of the set; vendors every chosen Phosphor fill or regular SVG and draws originals in the matching weight's style where Phosphor has none (no pawn, bishop, or queen; `crown`, `horse`, and `castle-turret` exist); regenerates the header with the unchanged generator; writes the attribution and name list in `docs/crosshatch/`; appends every `icon` line with `API_SURFACE_CRC`; and extends the `icons` fixture to draw every library icon; it follows entry 2 because both edit `api-level-1.txt` and `ApiLevel.h`."
 verify = "Host tests pass, `IconsMatchTheList` included; a simulator screenshot of the extended `icons` fixture shows every library icon at small, medium, and large; the plan records the icons' flash and static RAM deltas, measured as x4pro games on minus games off at the entry's base commit and at its commit, with the method, beside epic 2's +150,448 B."
 covers = ["R1", "R3", "R7", "R10"]
 after = [2]
-hitl = true
+hitl = false
 risk = "low"
-unknown = "How many original drawings the set needs and whether they read at 32 px in 1-bit."
+unknown = "How many original drawings the set needs and whether they read at 32 px in 1-bit; the owner reviews them in entry 8."
 references = ["_bmad-output/specs/spec-crosshatch-player/first-party-games.md", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-24, Operational envelope", "scripts/check_flash_budget.py"]
 
 [[entry]]
@@ -87,5 +87,17 @@ covers = ["R10", "R11"]
 after = [1, 2, 3, 4, 5, 6]
 hitl = false
 risk = "medium"
-unknown = "Whether all of AI-11 fits one session; retro R10 may need `FrontlightPanelActivity.cpp`, which is outside the ledger, and is then documented."
+unknown = "Whether all of AI-11 fits one session; if the plan outgrows one, the orchestrator splits off a hardening story before entry 8 without asking; retro R10 may need `FrontlightPanelActivity.cpp`, which is outside the ledger, and is then documented."
 references = ["_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/epic-script-runtime-retrospective.md, AI-11 and findings F5 to F9, A3 to A5, R3 to R10"]
+
+[[entry]]
+id = 8
+type = "story"
+title = "Owner review of the icon set and screens"
+description = "The owner reviews the v1 icon list and names, the original drawings, legibility at 32 px in black and white, the runtime views, and the Home tile from the plans' simulator screenshots, and answers every assumption the epic's builds recorded for this review; the entry then makes the changes the owner asks for while level 1 is a preview (a rename, redraw, addition, or removal), regenerating the header, updating the `icon` lines and `API_SURFACE_CRC`, and any view or tile that uses a changed name, and re-records the flash and static RAM deltas when the set changed."
+verify = "The plan records the owner's approval and each answer; when anything changed, host tests, the `Icons up to date` job's commands, the `x4pro` and `sticky` builds, `check_layers.py`, and new simulator screenshots of the `icons` fixture, the views, and the Home tile pass or show the change."
+covers = ["R3", "R8", "R9", "R10"]
+after = [7]
+hitl = true
+risk = "low"
+unknown = "What the owner changes; a change outside the icon set, its API lines, and the screens that draw it is a new story, not this one."
