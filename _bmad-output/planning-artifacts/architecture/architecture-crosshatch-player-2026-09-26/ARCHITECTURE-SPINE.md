@@ -7,7 +7,7 @@ paradigm: 'Hexagonal host (pure GameCore domain with ports) + reducer-style scri
 scope: 'v1 game runtime for simple turn-based games on x4pro and sticky: Lua script runtime, icon library, seat-based multiplayer (solo, pass-and-play, Play Nearby over ESP-NOW), .cpgame packages, SD-inbox install, Home launcher'
 status: final
 created: '2026-09-26'
-updated: '2026-09-27'
+updated: '2026-09-28'
 binds: [script-runtime, multiplayer-layer, package-install-launcher, first-party-games, api-docs]
 sources:
   - '_bmad-output/planning-artifacts/briefs/brief-crosshatch-player-2026-09-26/brief.md'
@@ -31,10 +31,12 @@ companions:
 | --- | --- | --- |
 | Domain | `lib/GameCore/` | C++ standard library, `lib/Memory`, `lib/JsonParser` |
 | Icon data | `lib/GameIcons/` | nothing (generated data only) |
-| Script adapter | `lib/GameScript/` | `GameCore`, `GameIcons` (names), `lib/lua` |
+| Script adapter | `lib/GameScript/` | `GameCore`, `GameIcons` (names), `lib/lua`, `lib/Utf8` (`TextMetrics`) |
 | Engine (vendored) | `lib/lua/` | C standard library |
-| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
+| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
 | Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
+
+**Amended 2026-09-28 (owner):** the `lib/Utf8` edge (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`) and the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`) are as built and reviewed (epic-script-runtime retro A1). Screens still reach `GameScript` only through `src/games`.
 
 ## Invariants & Rules
 
@@ -107,8 +109,8 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - The `GameVM` task never takes `RenderLock`, never calls `ActivityManager`, and never touches `Storage`. Before the VM starts, the match activity (on the loop task) loads everything the game needs into PSRAM and hands it over through a `GameScript` port: all `*.lua` sources as one blob with a name-to-span table, converted images (AD-24), the `ch.store` blob, and any resume snapshot.
   - The `GameVM` task exchanges work through depth-bounded queues that carry handles to PSRAM buffers, not frame copies; a full input queue drops the oldest event with a log line.
   - While a callback runs, the match's `skipLoopDelay()` returns true, which keeps the CPU at full clock for the budget.
-  - Stopping is cooperative: the match sets an atomic cancel flag that the count hook turns into a Lua error, and posts `Quit`. The VM task unwinds, closes the state, and signals a join semaphore. If the join has not happened 500 ms after cancel (a script stuck inside a C library call), the match **abandons** the VM once an atomic `inSwap` flag is clear: it deletes the task and frees the arena without calling `lua_close`.
-  - A cancel yields the outcome `Cancelled`, which is distinct from `ScriptError` and never triggers AD-14.
+  - **Amended 2026-09-28 (owner):** stopping is cooperative: the match sets an atomic cancel flag that the count hook turns into a Lua error, sets an atomic quit flag, and notifies the task (a FreeRTOS task notification, which wakes it from its wait for input). The VM task unwinds, closes the state, and sets an atomic `finished` flag; the match joins by polling it every 5 ms. If the join has not happened 500 ms after cancel (a script stuck inside a C library call), the match **abandons** the VM without calling `lua_close`, for up to 500 ms more (`GameVM::abandon`): each poll suspends the task and deletes it only when it is inside Lua, outside a locked binding, and `inSwap` is clear, then frees the arena, frame buffers, and sources and leaks only the `GameVM` object; otherwise it resumes the task. If no poll can delete it (and always in the simulator, which cannot stop a thread), everything is leaked, and the match keeps the `ch.store` slot alive for the leaked task, still flushing it on Leave and in `onExit()`.
+  - A cancel yields the outcome `Cancelled`, which is distinct from `ScriptError`; a user or forced exit's cancel shows nothing, while the watchdog's cancel (below) shows AD-14's error view.
   - **Amended 2026-09-27 (owner):** a callback still running 3 s after it started (wall clock) is a stuck script, whatever its instruction count: the match cancels it, abandons it 500 ms later if it has not joined, and shows AD-14's error view. This covers C loops that run no Lua instructions (`table.move` over a huge range, pattern backtracking).
 
 ### AD-6: Sandbox and budgets [ADOPTED from the spike, amended]
@@ -116,7 +118,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Binds:** script-runtime
 - **Prevents:** a game crashing the device, starving internal RAM, or running forever.
 - **Rule:**
-  - Each VM's heap is one 256 KB PSRAM arena managed by a small in-tree allocator behind a counting `lua_Alloc`. `src/games` supplies the arena backend as a port. Abandoning a VM (AD-5) frees the arena in one call.
+  - **Amended 2026-09-28 (owner):** each VM's heap is one 464 KiB PSRAM block (`ARENA_BYTES` in `lib/GameScript/ArenaAllocator.h`) managed by a small in-tree allocator: a 448 KiB Lua region behind a counting `lua_Alloc` that caps Lua at 256 KiB of requested bytes (`LUA_HEAP_BYTES`, `limit lua_heap_bytes 262144`), and a 16 KiB reserve for the Session and codec scratch (see the 2026-09-27 amendment below). `src/games` supplies the block as a port. Abandoning a VM (AD-5) frees the block in one call.
   - Every entry into the VM, including script load and setup, goes through a `lua_pcall` trampoline.
   - A sticky count hook enforces 2 M instructions per callback. A script's own `pcall` cannot swallow the budget error.
   - Libraries: base (without `load`, `loadfile`, `dofile`; `print` maps to `ch.log`), table, string, math, utf8. `require` resolves only against the source table from AD-5.
@@ -134,7 +136,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - `ch.gfx.*` appends commands to a back frame buffer in PSRAM (at most 2,048 commands / 32 KB; overflow is a script error). Calling `ch.gfx` outside `draw` is a script error.
   - When `draw` returns, the VM task swaps front and back buffers under a frame mutex (setting `inSwap` for the duration) and bumps an atomic `frameGen`. The match's `loop()` polls `frameGen` and calls `requestUpdate()`. The render task takes the frame mutex only inside `render()`. Lock order is always `RenderLock`, then the frame mutex.
   - The runtime calls `draw` after every new snapshot, after every `input` call, and after hand-off or resume. There is no frame loop; `ch.timer` (AD-23) is the only time-driven trigger. A frame identical to the one on screen is not refreshed.
-  - `FrameReplay` is the only escalation policy. Its inputs are the frame's hint (`fast`, `half`, `full`), a `forceFull` flag set by the match activity, and its own fast-refresh counter. Coalesced frames keep the maximum hint (`full` > `half` > `fast`). v1 refreshes whole frames.
+  - **Amended 2026-09-28 (owner):** `FrameReplay` applies the only escalation policy, `GameScript::RefreshPolicy` (`lib/GameScript/RefreshPolicy.h`, pure and host-tested). Its inputs are the frame's hint (`fast`, `half`, `full`), a `forceFull` flag set by the match activity, and its own fast-refresh counter. Coalesced frames keep the maximum hint (`full` > `half` > `fast`). v1 refreshes whole frames.
   - Color: fills take `white`, `light`, `dark`, `black` (`light` and `dark` render as dithered fills); lines, text, icons, and images take `white` or `black`.
   - Text sizes `small`, `medium`, `large` map to built-in flash fonts only. The match passes per-size advance tables into `GameScript` at VM start, so `ch.text_width` is pure and callable in any callback. Script code never names panel sizes or firmware font IDs.
   - One `GameViewport` in `src/games` defines the script canvas (rotation, offset, the size exposed as `ch.screen`, excluded bezel insets). `FrameReplay` (logical to panel) and the input builder (panel to logical) both use it. The script owns the whole canvas; the runtime draws over it only with its own views (AD-20).
@@ -155,6 +157,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 
   - `ui` is a table per local seat (one per seat in `pass`, one in `solo` and `nearby`), plus a separate shared table for seat 0 at game over in `pass`. The script may mutate it freely; it is never synced or saved.
   - Events delivered to `input`: `tap`, `long_press`, `swipe` (touch); `rejected` (a move was refused, in every mode; the runtime never draws the reason itself); `over` (once per local seat per round, for per-device records such as wins); `timer` (AD-23). There are no drag events.
+  - **Amended 2026-09-28 (owner):** the `rejected` event's reason is cut to 64 B at a UTF-8 boundary in every mode (`limit reject_reason_bytes 64`, `GameCore::REJECT_REASON_BYTES`), the size `REJECT` carries (AD-13); a longer reason is not an error.
   - While a move is awaiting its `STATE` or `REJECT`, the runtime still calls `input` but discards any move it returns.
   - Computer opponents, if a game has one, run inside `apply`.
   - The script decides turn order through `status`; the runtime enforces it (AD-11). This is a deliberate change from the brief's "runtime owns turn order".
@@ -227,7 +230,8 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 
 - **Binds:** script-runtime, multiplayer-layer
 - **Prevents:** half-recovered VMs and inconsistent error handling across callbacks.
-- **Rule:** a `ScriptError` is any Lua error, budget breach, memory cap breach, codec limit breach, frame buffer overflow, unknown icon or image name, or invalid `status`. It ends the session: the VM is stopped (AD-5), a peer is sent `ABORT(script_error)`, the error is logged with `LOG_ERR`, and the match shows its error view: a short `tr()` message, the game name, the Lua message in small type, and a single Back control. There is no automatic retry. A `Cancelled` outcome shows nothing.
+- **Rule:** a `ScriptError` is any Lua error, budget breach, memory cap breach, codec limit breach, frame buffer overflow, unknown icon or image name, or invalid `status`. It ends the session: the VM is stopped (AD-5), a peer is sent `ABORT(script_error)`, the error is logged with `LOG_ERR`, and the match shows its error view: a short `tr()` message, the game name, the Lua message in small type, and a single Back control. There is no automatic retry. A `Cancelled` outcome shows nothing, except the 3 s watchdog's (AD-5).
+  - **Amended 2026-09-28 (owner):** the error view also shows two failures that are not `ScriptError`s. A stuck script, cancelled by the 3 s watchdog, shows "The game stopped with an error" with a `tr()` "stopped responding" line in place of the Lua message (or the Lua message, if the script failed on its own meanwhile). A load or start failure (the game's folder or sources missing, misnamed, unreadable, or too large, or memory or the task running out) shows "The game could not start" with a `tr()` reason in place of the Lua message; no game code has run.
 
 ### AD-15: Package format and the one manifest parser [ADOPTED]
 
@@ -281,7 +285,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Rule:** all host functions live under one reserved global table, `ch` (`ch.api`, `ch.screen`, `ch.gfx`, `ch.text_width`, `ch.timer`, `ch.store`, `ch.time`, `ch.log`). The API is versioned by an integer `api` level; the icon set (AD-24) is part of it.
   - **The surface list owns the level.** `docs/crosshatch/api-level-<n>.txt` lists what level n adds, one typed entry per line: `fn` (with signature), `enum` value, `event`, `ctx` field, `manifest` key, `limit`, `lib`, `icon`, `seats_max`. A host's surface is the union of the lists from `API_MIN_LEVEL` to `API_LEVEL`. A host test checks the live `ch` table, the Lua globals and libraries, enums, limits, and the icon table against that union, and checks `ch.d.lua` and the icon catalog against it; `game-api.md` describes it. `API_SURFACE_CRC` in `ApiLevel.h` is the CRC-32 of those lists, and the test recomputes it.
   - **Levels are cumulative.** A host runs every game with `API_MIN_LEVEL` ≤ `api` ≤ `API_LEVEL` unchanged. Levels only add. A breaking change (for example `LUA_32BITS`) needs a spine update that states the plan for older games: run them unchanged, or raise `API_MIN_LEVEL` so they show as unavailable.
-  - **Freeze.** `lib/GameCore/ApiLevel.h` holds `API_LEVEL`, `API_MIN_LEVEL` (1), `API_LEVEL_FROZEN`, and `API_SURFACE_CRC`. `API_LEVEL_FROZEN` describes `API_LEVEL` only; every level below it is frozen. Level 1 is a preview: it may still grow, and a game written against it may break between builds. The last ticket of epic-first-party-games sets `API_LEVEL_FROZEN`, which closes v1; it never reverts, and the first fork release from a commit with it set is the freezing release. From then on a frozen level never changes, and any addition opens the next level as a preview. A `crosshatch-ci` job fails a PR that changes a frozen level's list against the merge base or turns `API_LEVEL_FROZEN` from true to false. After v1, the release preflight refuses to publish with `API_LEVEL_FROZEN` false.
+  - **Freeze.** `lib/GameCore/ApiLevel.h` holds `API_LEVEL`, `API_MIN_LEVEL` (1), `API_LEVEL_FROZEN`, and `API_SURFACE_CRC`. `API_LEVEL_FROZEN` describes `API_LEVEL` only; every level below it is frozen. Level 1 is a preview: it may still grow, and a game written against it may break between builds. The last ticket of epic-first-party-games sets `API_LEVEL_FROZEN`, which closes v1; it never reverts, and the first fork release from a commit with it set is the freezing release. From then on a frozen level never changes, and any addition opens the next level as a preview. A `crosshatch-ci` job fails a PR that changes a frozen level's list against the merge base or turns `API_LEVEL_FROZEN` from true to false. **Amended 2026-09-28 (owner):** after v1, a release needs only the levels below an open preview to be frozen: it may ship frozen level N while level N+1 is a preview, and the release preflight refuses to publish only when that does not hold.
   - **Readers.** `ch.api` reports `API_LEVEL`. `Manifest::check` sees it through `HostCaps` (AD-15). The release reads `ApiLevel.h` from the commit it releases: its notes name the level ("1.6.5-ch.9 · Game API 1 (preview)"), and `pack-games` refuses a game whose `api` is outside `API_MIN_LEVEL..API_LEVEL`, using `scripts/pack_game.py`, the only Python reader of `manifest.json`. The firmware version (`-ch.N`, AD-25) carries no compatibility meaning. epic-script-runtime creates `ApiLevel.h`, level 1's list and its test, the CI job, and the release script's reading of the level.
   - **Mixed levels in one match.** In Play Nearby two previews must share a surface (AD-13). `ctx.api` is the lowest host level in the roster; `setup` and `apply` branch only on `ctx.api`, while `draw` and `input` may use the local `ch.api`.
 
@@ -299,6 +303,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Binds:** script-runtime, multiplayer-layer, package-install-launcher
 - **Prevents:** each screen author inventing what Back, Home, sleep, game over, and rematch do.
 - **Rule:** the match follows this state machine. From every non-terminal state, an `ABORT` or 10 s of peer silence goes to `PeerGone`, a `ScriptError` goes to `Error`, and sleep takes the forced exit (AD-20). Every other transition not shown is invalid.
+  - **Amended 2026-09-28 (owner):** a match starts in `Starting` until its VM has started (then the initial state below) or the game failed to load or start (then `Error`, AD-14). In `Paused`, Back closes the pause menu like Resume. The solo machine is `GameCore::MatchLifecycle` (`lib/GameCore/MatchLifecycle.h`).
 
   ```mermaid
   stateDiagram-v2
@@ -313,7 +318,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
     Playing --> Paused: Back or Home
     Result --> Paused: Back or Home
     HandOff --> Paused: Back or Home
-    Paused --> Playing: Resume
+    Paused --> Playing: Resume or Back
     Paused --> Leaving: Leave
     Playing --> Over: shipped status over
     Over --> HandOff: Play again, pass + hidden
@@ -416,11 +421,11 @@ flowchart LR
     SS["GameSaveStore"]
   end
   subgraph VMTask["GameVM task (core 1, prio 1, 16 KB)"]
-    VM["LuaGame (lua_State, codec, bindings)"]
+    VM["LuaGame (lua_State, codec, bindings);<br/>SoloRounds (the solo round loop)"]
     SE["GameCore::Session (roster, snapshot, ver)"]
   end
   subgraph RenderTask["ActivityManagerRender task"]
-    RP["FrameReplay → GfxRenderer (under RenderLock)"]
+    RP["FrameReplay (RefreshPolicy) → GfxRenderer (under RenderLock)"]
   end
   RX --> NS
   NS -- "MOVE / STATE / REJECT (queue of PSRAM handles)" --> SE
@@ -452,28 +457,36 @@ sequenceDiagram
   H->>H: draw(state, 1, ui)
 ```
 
-Source tree:
+Source tree (**amended 2026-09-28 (owner):** the names epic-script-runtime built; the rest is still the plan):
 
 ```text
 lib/
   lua/                    # Lua 5.5.1, unmodified; fork-owned library.json (srcFilter) and .clang-format (DisableFormat)
-  GameCore/               # Roster, Session, Protocol, ReliableLink, Manifest, ports; ApiLevel.h (AD-19);
-                          # ForkRelease.h (AD-25, pure, header-only)
+  GameCore/               # Roster, Session, Protocol, ReliableLink, Manifest, ports (IGameRules, ILink, IClock,
+                          # IRandom, ISnapshotStore, IGameLog); GameEvent.h (input events), HostCaps.h, MatchLifecycle (AD-21);
+                          # ApiLevel.h (AD-19); ForkRelease.h (AD-25, pure, header-only)
   GameIcons/              # GameIcons.generated.h (names + 32/64 px 1-bit bitmaps)
-  GameScript/             # VM host, arena allocator glue, budget hook, sandbox, ch.* bindings, codec, frame buffers, LuaGame
+  GameScript/             # LuaGame (the VM host), ArenaAllocator, CallGuard (budget and stack hook), Sandbox, ChBindings (ch.*),
+                          # Codec, BlobHeader, DisplayList, FrameBuffers, CanvasClip, TextMetrics, RefreshPolicy (AD-7),
+                          # GameInput, GameSources, GameTimer, StoreSlot, SoloRounds (the solo round loop)
 src/
-  games/                  # GameLink task, EspNowLink, NearbySession, GamePackageInstaller, GameRegistry, GameSaveStore,
-                          # GameAssets (source/image/store loader), FrameReplay, GameViewport, PSRAM arena backend, Sha256 helper,
+  games/                  # GameVM (the task, AD-5), GameArena (PSRAM arena backend), GameAssets (source/image/store loader),
+                          # FrameReplay, GameViewport, GameTouch.h (touch to input events), GameSaveStore, GameHostCaps,
+                          # GameClock, GameRandom, GameLog (port providers); GameLink task, EspNowLink, NearbySession,
+                          # GamePackageInstaller, GameRegistry, Sha256 helper,
                           # GamesBuildAnchor.cpp (AD-2: makes every env compile the game libraries and lua via lua.hpp),
                           # ForkReleaseProbe (AD-25: reads the releases/latest status after a failed fetch; device-only)
-  activities/games/       # GamesLauncherActivity, GameModeActivity, GameLobbyActivity, GameMatchActivity
+  activities/games/       # GamesListActivity (the minimal Games list; epic-install-and-launcher replaces it with the
+                          # launcher), GameModeActivity, GameLobbyActivity, GameMatchActivity
 assets/game-icons/        # vendored Phosphor fill SVGs, name map, original additions, license
 games/<id>/               # first-party game sources (manifest.json, main.lua, *.png)
 scripts/pack_game.py      # games/<id>/ → <id>.cpgame, validates, prints package hash
 scripts/game_codec.py     # reference codec for golden vectors and tooling
 scripts/gen_game_icons.py # assets/game-icons/*.svg → lib/GameIcons/GameIcons.generated.h
 scripts/check_upstream_touches.py  # AD-3 ledger check and trial merge; exit 0 pass, 1 fail, 2 could not run
-scripts/check_flash_budget.py      # games-on/off x4pro build pair and the 250 KiB compare
+scripts/check_flash_budget.py      # games-on/off x4pro build pair, the 250 KiB and 1 KiB static-RAM compares, game objects
+scripts/check_api_freeze.py        # AD-19 frozen-level check against the merge base
+scripts/fork_common.py             # the fork scripts' shared exit contract, repository calls, and step summaries
 scripts/fork_release.py            # AD-25 release steps: preflight, prepare, build, check-images, pack-games, notes,
                                    # expected-assets, recheck (never reuses N)
                                    # (each fork script has a sidecar <name>_test.py; crosshatch-ci.yml runs them on every PR)
@@ -481,8 +494,8 @@ test/game_core/           # host suites incl. FakeLink, protocol, manifest, hash
                           # fork_version_vectors.json: the AD-25 tag grammar and cases, read by the C++ suite and fork_release.py
 test/game_script/         # host suites incl. Lua on host, codec golden vectors, sandbox cases
 docs/crosshatch/          # upstream-touches.md, formats.md, game-api.md + ch.d.lua, icon catalog, api-level-<n>.txt (AD-19)
-.github/workflows/        # fork-only, new files: crosshatch-ci.yml (ledger, flash budget, fork script tests, rolled up
-                          # under the required Crosshatch Test Status job); crosshatch-release.yml (AD-25)
+.github/workflows/        # fork-only, new files: crosshatch-ci.yml (ledger, flash budget, simulator build, fork script
+                          # tests, API freeze, rolled up under the required Crosshatch Test Status job); crosshatch-release.yml (AD-25)
 .claude/skills/run-crosshatch-player/simulator.ini   # fork-owned; simulator envs set FREEINK_CAP_GAMES
 ```
 
@@ -501,7 +514,7 @@ Operational envelope:
 | --- | --- |
 | Firmware delivery | The fork release workflow (AD-25) publishes `X.Y.Z-ch.N` firmware for the game envs; fork devices update over the air from the fork's releases, or by SD. Moving from upstream firmware to the fork, and back, is by SD from a release asset. |
 | Game delivery | `.cpgame` files. First-party games are attached to each fork release by the fork release workflow (AD-25) and installed through the inbox like any other game. |
-| CI | The existing PR workflow builds all five envs and runs the host suites, including `test/game_core` and `test/game_script`; fork-only jobs in `crosshatch-ci.yml` check the upstream-touch ledger and the flash budget and run the fork script tests; branch protection requires `Test Status` and `Crosshatch Test Status`. |
+| CI | The existing PR workflow builds all five envs and runs the host suites, including `test/game_core` and `test/game_script`; **amended 2026-09-28 (owner):** the fork-only jobs in `crosshatch-ci.yml` are `Upstream touch ledger`, `x4pro flash budget` (flash, static internal RAM, and the game-objects check), `Simulator build` (`simulator_x4pro` and `simulator_sticky`), `Fork script tests`, and `API freeze`, rolled up under `Crosshatch Test Status`; branch protection requires `Test Status` and `Crosshatch Test Status`. |
 | Flash budget | The whole runtime (Lua, GameCore, GameScript, GameIcons, screens) adds at most 250 KB to the x4pro image (baseline 86.3% of the app slot; Lua alone measured +121 KiB (124,232 B); icons about 40 KB for 64 icons at two sizes). A fork-only CI job measures it as the x4pro image with `FREEINK_CAP_GAMES` on minus the same commit with it off, so upstream growth never counts against it. The 250 KB limit is 250 KiB (256,000 B), since flash and the app slot are sized in binary units; the gate compares `firmware.bin` sizes. The delta includes guarded `#else` branches in ledgered upstream files (at the end of epic 1 it was −15,136 B, since games builds drop upstream's version compare); each epic records its delta. |
 | Internal RAM | The `GameVM` (16 KB) and `GameLink` (4 KB) stacks and the Wi-Fi/ESP-NOW driver are the internal-RAM costs; everything else is in PSRAM. A `nearby` lobby refuses to open below 100 KB free internal heap. |
 | Observability | Serial log (`GAME`, `LUA`, `LINK`) and the match error view; no telemetry. |
