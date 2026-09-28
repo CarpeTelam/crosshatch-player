@@ -24,6 +24,18 @@ hand; the `Icons up to date` fork CI job regenerates it and fails on any byte di
 whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
 name in only one weight or in one weight twice.
 
+`assets/game-icons/SHA256SUMS` pins each SVG's content: one `<sha256>  <path>` line, in `sha256sum`'s format and
+sorted bytewise by path, for exactly the SVGs `names.txt` names. The generator checks every SVG against it before
+rendering and exits 1 naming an SVG whose bytes differ, an SVG the file does not list, or a line that is malformed,
+repeated, or names a path `names.txt` does not name (a missing `SHA256SUMS` is exit 2). An edited SVG therefore fails
+`Icons up to date` instead of regenerating cleanly. `(cd assets/game-icons && sha256sum -c SHA256SUMS)` checks the
+same sums without the generator. After a deliberate change of source, rewrite the file with
+`python3 scripts/gen_game_icons.py --write-sums`, which writes no header.
+
+Regenerate on Linux, as CI does. The fill uses no libm call, but arc flattening uses `math.sin`, `cos`, and `atan2`,
+whose last bits can differ between platforms' libm; the header was checked byte-identical only on Linux, for Python
+3.10 to 3.13. A run on macOS or Windows may differ from CI's bytes, and then `Icons up to date` fails.
+
 ## Weights
 
 Every name ships in both of Phosphor's weights:
@@ -150,11 +162,13 @@ duplicate `x`. None was cut for size.
 2. Copy `assets/regular/<name>.svg` and `assets/fill/<name>-fill.svg` from the pinned 2.1.1 package, byte for byte,
    into `assets/game-icons/phosphor/regular/` and `phosphor/fill/`, and add the name's two lines (regular, then fill)
    under its category in `assets/game-icons/names.txt`.
-3. Run `python3 scripts/gen_game_icons.py` and commit the regenerated header.
-4. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
+3. Run `python3 scripts/gen_game_icons.py --write-sums` and check that `SHA256SUMS` changed only by the new SVGs'
+   lines (`git diff`); a changed line for an existing SVG means that file is no longer the package's.
+4. On Linux, run `python3 scripts/gen_game_icons.py` and commit the regenerated header with `SHA256SUMS`.
+5. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
    `lib/GameCore/ApiLevel.h` to the value `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` prints.
-5. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
-6. Update this file's table and its Size figures.
+6. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
+7. Update this file's table and its Size figures.
 
 Renaming or dropping an icon a screen uses breaks it: `game-controller` fails the x4pro and sticky builds (and the
 simulator's), since the cover-grid Home names `GameIcons::GAME_CONTROLLER_32`; one of the match's view icons fails

@@ -123,6 +123,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_api_freeze_test.py`
 - `scripts/check_layers.py` -- the layer check job's check of the spine's layer table (retro AI-5).
 - `scripts/check_layers_test.py`
+- `scripts/sim_sh_test.py` -- tests the simulator skill's `sim.sh` (epic-icon-library retrospective, AI-11).
 
 ## Running the check locally
 

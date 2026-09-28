@@ -235,6 +235,19 @@ class CheckLayersTest(unittest.TestCase):
                                      '#endif\n', 3),
             'an #elifndef of the flag': ('#if X\n#elifndef FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n'
                                          '#endif\n', 3),
+            # epic-icon-library retrospective R9 (b): the condition is read whole after joining the continued line, so
+            # its || counts.
+            'an || on a continued line': ('#if FREEINK_CAP_GAMES && \\\n    X || 1\n#include <GameIcons.generated.h>\n'
+                                          '#endif\n', 3),
+            # After splicing, the #if is part of the #define's replacement text, not a directive.
+            'an #if continuing a #define': ('#define A \\\n#if FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n'
+                                            '#endif\n', 3),
+            # Splicing comes before comments are blanked, as in C: the #if continues the line comment.
+            'an #if continuing a // comment': ('// x \\\n#if FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n'
+                                               '#endif\n', 3),
+            # The condition may go on after a block comment that spans lines, so the guard does not count.
+            'a block comment spanning lines': ('#if FREEINK_CAP_GAMES /*\n*/ || 1\n#include <GameIcons.generated.h>\n'
+                                               '#endif\n', 3),
         }
         for name, (text, line) in cases.items():
             with self.subTest(name):
@@ -242,6 +255,27 @@ class CheckLayersTest(unittest.TestCase):
                                   f'src/components/CoverGridHomeUi.cpp:{line}: upstream code includes '
                                   '<GameIcons.generated.h> (lib/GameIcons) outside an #if FREEINK_CAP_GAMES branch',
                                   '1 problem(s)')
+
+    def test_continued_guard_passes(self):
+        cases = {
+            # A guard continued onto a second line is read whole.
+            'a continued guard': ('#if FREEINK_CAP_GAMES && \\\n    defined(X)\n#include <GameIcons.generated.h>\n'
+                                  'static const int kIcons[] = {1, \\\n    2};\n#endif\n'),
+            # Every physical line of a logical line inside a games branch is guarded.
+            'an include continuing a #define': ('#if FREEINK_CAP_GAMES\n#define A \\\n'
+                                               '#include <GameIcons.generated.h>\n#endif\n'),
+            # A backslash before a line comment, not at the line's end, splices nothing: the #if stays a directive.
+            'a backslash before a comment': ('#ifdef A\n#else \\ // x\n#if FREEINK_CAP_GAMES\n'
+                                             '#include <GameIcons.generated.h>\n#endif\n#endif\n'),
+        }
+        for name, text in cases.items():
+            with self.subTest(name):
+                code, out = self.run_check(self.tree({'src/components/CoverGridHomeUi.cpp': text}))
+                self.assertEqual(code, 0, out)
+
+    def test_logical_lines_keep_physical_numbers(self):
+        text = 'a \\\nb\\  \nc\nd\ne \\'
+        self.assertEqual(list(check_layers.logical_lines(text)), [(1, 3, 'a bc'), (4, 4, 'd'), (5, 5, 'e ')])
 
     def test_games_branch_reads_each_guard_spelling(self):
         accepted = [('if', 'FREEINK_CAP_GAMES'), ('if', 'FREEINK_CAP_GAMES == 1'), ('ifdef', 'FREEINK_CAP_GAMES'),

@@ -60,9 +60,12 @@ that script.
 The `Fork script tests` job in `.github/workflows/crosshatch-ci.yml` runs every `scripts/*_test.py` on every pull
 request, each file in its own process, and reports each failing file. It also fails a file whose output has no
 `Ran <n> tests` line with n above 0, so a test file that forgets `unittest.main()`, and so exits 0 having run
-nothing, cannot pass. A new sidecar test is picked up with no workflow change. A script that is itself a CI gate gets
-its own job there, listed in `Crosshatch Test Status`'s `needs`, and is run once from a fresh clone before its ticket
-counts as built.
+nothing, cannot pass. A new sidecar test is picked up with no workflow change; `scripts/sim_sh_test.py`, which tests
+the simulator skill's `sim.sh setup` and `check` on scratch git repositories, runs there too. A script that is itself
+a CI gate gets its own job there, listed in `Crosshatch Test Status`'s `needs`, and is run once from a fresh clone
+before its ticket counts as built. `gen_game_icons.py` is one: the `Icons up to date` job runs it, and it checks the
+vendored SVGs against `assets/game-icons/SHA256SUMS` before rendering, so an edited SVG fails that job
+(`docs/crosshatch/game-icons.md`).
 
 Run the same tests locally from the repository root:
 
