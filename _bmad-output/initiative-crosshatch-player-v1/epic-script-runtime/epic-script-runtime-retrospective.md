@@ -503,6 +503,8 @@ All items are **proposed**; this retro applied none of them. *Remediation* goes 
 - **Deferred:** AI-2, AI-4, AI-8, and AI-11 keep their triggers. AI-3 stays the owner's device check.
 - **AI-5:** restore the rule (Screens reach GameScript only through `src/games`) and add the include check; the spine keeps its Screens row.
 - **AI-2:** a scripted simulator run in CI first, a host harness later. AI-3 stays needed for abandon and the stack budget.
+- **AI-10, `tickets.toml`:** entries stay untouched as the record of what each build was given (orchestrator call during the follow-up); only the spine and the epic file are reconciled.
+- **AI-13, the `__close` gap:** the follow-up review found that a `__close` metamethod raising while a memory error unwinds could still let a script survive the heap cap under `pcall`. `setmetatable` now refuses `__close` and the string metatable is sealed. A `__close` added to a metatable after `setmetatable` remained open. The owner chose option (a) (2026-09-28): record the memory fault where Lua throws, through a `LUAI_THROW` hook supplied by a fork header and build flag. The Lua sources stay unmodified; this is an AD-4 amendment.
 
 ## Acceptance verdict
 
