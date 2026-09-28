@@ -33,16 +33,17 @@ companions:
 | Icon data | `lib/GameIcons/` | nothing (generated data only) |
 | Script adapter | `lib/GameScript/` | `GameCore`, `GameIcons` (names), `lib/lua`, `lib/Utf8` (`TextMetrics`) |
 | Engine (vendored) | `lib/lua/` | C standard library |
-| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
+| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/Utf8`; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); the SDK's `FreeInkUICore.h` (`GameTouch.h`'s touch types, AD-20); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
 | Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
 
-**Amended 2026-09-28 (owner):** the `lib/Utf8` edge (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`) and the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`) are as built and reviewed (epic-script-runtime retro A1). Screens still reach `GameScript` only through `src/games`.
+**Amended 2026-09-28 (owner):** the `lib/Utf8` edges (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`, and `src/games/FrameReplay.cpp`), the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`), and the SDK `FreeInkUICore.h` edge (`src/games/GameTouch.h`) are as built and reviewed (epic-script-runtime retro A1); the diagram below shows them. The rule for Screens is unchanged: they reach `GameScript` only through `src/games` (retro AI-5 restores the code to it).
 
 ## Invariants & Rules
 
 ```mermaid
 flowchart TD
-  ACT["src/activities/games<br/>(launcher, mode picker, lobby, GameMatchActivity)"] --> ADP["src/games<br/>(GameLink task, EspNowLink, NearbySession, installer, registry,<br/>GameSaveStore, FrameReplay, GameViewport, arena, GameAssets)"]
+  %% Amended 2026-09-28 (owner): the Games list, and the Utf8, EpdFont/fontIds.h, and FreeInkUICore.h edges (retro A1).
+  ACT["src/activities/games<br/>(Games list / launcher, mode picker, lobby, GameMatchActivity)"] --> ADP["src/games<br/>(GameLink task, EspNowLink, NearbySession, installer, registry,<br/>GameSaveStore, FrameReplay, GameViewport, arena, GameAssets)"]
   ACT --> CORE["lib/GameCore<br/>(Roster, Session, Protocol, ReliableLink, Manifest, ports)"]
   ADP --> SCR["lib/GameScript<br/>(VM host, sandbox, ch.* bindings, codec, frame buffers, LuaGame)"]
   ADP --> CORE
@@ -56,6 +57,10 @@ flowchart TD
   OTA["upstream: network/OtaUpdater.cpp<br/>(ledger row 10, guarded)"] --> CORE
   OTA --> ADP
   ADP --> HTTP["SDK: SecureHttpClient<br/>(ForkReleaseProbe only)"]
+  SCR --> UTF["upstream: lib/Utf8"]
+  ADP --> UTF
+  ADP --> FNT["upstream: lib/EpdFont, src/fontIds.h<br/>(FrameReplay)"]
+  ADP --> FUI["SDK: FreeInkUICore.h<br/>(GameTouch.h)"]
 ```
 
 Arrows are the only allowed dependencies among fork code. Upstream code reaches game code only through the ledgered, guarded rows of AD-3; the diagram shows row 10, which exists today. `GameCore` includes no Arduino, ESP-IDF, Lua, HAL, or `src/` header. `GameScript` includes no `GfxRenderer`, HAL, or Arduino header; platform services (arena, sources, text metrics, randomness) reach it through injected ports.
@@ -109,8 +114,8 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   - The `GameVM` task never takes `RenderLock`, never calls `ActivityManager`, and never touches `Storage`. Before the VM starts, the match activity (on the loop task) loads everything the game needs into PSRAM and hands it over through a `GameScript` port: all `*.lua` sources as one blob with a name-to-span table, converted images (AD-24), the `ch.store` blob, and any resume snapshot.
   - The `GameVM` task exchanges work through depth-bounded queues that carry handles to PSRAM buffers, not frame copies; a full input queue drops the oldest event with a log line.
   - While a callback runs, the match's `skipLoopDelay()` returns true, which keeps the CPU at full clock for the budget.
-  - **Amended 2026-09-28 (owner):** stopping is cooperative: the match sets an atomic cancel flag that the count hook turns into a Lua error, sets an atomic quit flag, and notifies the task (a FreeRTOS task notification, which wakes it from its wait for input). The VM task unwinds, closes the state, and sets an atomic `finished` flag; the match joins by polling it every 5 ms. If the join has not happened 500 ms after cancel (a script stuck inside a C library call), the match **abandons** the VM without calling `lua_close`, for up to 500 ms more (`GameVM::abandon`): each poll suspends the task and deletes it only when it is inside Lua, outside a locked binding, and `inSwap` is clear, then frees the arena, frame buffers, and sources and leaks only the `GameVM` object; otherwise it resumes the task. If no poll can delete it (and always in the simulator, which cannot stop a thread), everything is leaked, and the match keeps the `ch.store` slot alive for the leaked task, still flushing it on Leave and in `onExit()`.
-  - A cancel yields the outcome `Cancelled`, which is distinct from `ScriptError`; a user or forced exit's cancel shows nothing, while the watchdog's cancel (below) shows AD-14's error view.
+  - **Amended 2026-09-28 (owner):** stopping is cooperative: the match sets an atomic cancel flag that the count hook turns into a Lua error, sets an atomic quit flag, and notifies the task (a FreeRTOS task notification, which wakes it from its wait for input). The VM task unwinds, closes the state, and sets an atomic `finished` flag; the match joins by polling it every 5 ms. If the join has not happened 500 ms after cancel (a script stuck inside a C library call), the match **abandons** the VM without calling `lua_close` (`GameVM::abandon`), polling about 100 times at 5 ms (`ABANDON_WAIT_MS` 500; the bound is not wall-clock, since a poll can also wait up to 10 ticks for the task to suspend; retro AI-4): each poll first deletes the `GameVM` normally if the task has finished; otherwise it suspends the task and deletes it only when it is inside Lua, outside a locked binding, and `inSwap` is clear, then frees the arena, frame buffers, and sources and leaks only the `GameVM` object; otherwise it resumes the task. If no poll can delete it (and always in the simulator, which cannot stop a thread), everything is leaked, and the match keeps the `ch.store` slot alive for the leaked task, still flushing it on Leave and in `onExit()`.
+  - **Amended 2026-09-28 (owner):** a cancel yields the outcome `Cancelled`, which is distinct from `ScriptError`; a user or forced exit's cancel shows nothing, while the watchdog's cancel (below) shows AD-14's error view.
   - **Amended 2026-09-27 (owner):** a callback still running 3 s after it started (wall clock) is a stuck script, whatever its instruction count: the match cancels it, abandons it 500 ms later if it has not joined, and shows AD-14's error view. This covers C loops that run no Lua instructions (`table.move` over a huge range, pattern backtracking).
 
 ### AD-6: Sandbox and budgets [ADOPTED from the spike, amended]
@@ -230,8 +235,8 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 
 - **Binds:** script-runtime, multiplayer-layer
 - **Prevents:** half-recovered VMs and inconsistent error handling across callbacks.
-- **Rule:** a `ScriptError` is any Lua error, budget breach, memory cap breach, codec limit breach, frame buffer overflow, unknown icon or image name, or invalid `status`. It ends the session: the VM is stopped (AD-5), a peer is sent `ABORT(script_error)`, the error is logged with `LOG_ERR`, and the match shows its error view: a short `tr()` message, the game name, the Lua message in small type, and a single Back control. There is no automatic retry. A `Cancelled` outcome shows nothing, except the 3 s watchdog's (AD-5).
-  - **Amended 2026-09-28 (owner):** the error view also shows two failures that are not `ScriptError`s. A stuck script, cancelled by the 3 s watchdog, shows "The game stopped with an error" with a `tr()` "stopped responding" line in place of the Lua message (or the Lua message, if the script failed on its own meanwhile). A load or start failure (the game's folder or sources missing, misnamed, unreadable, or too large, or memory or the task running out) shows "The game could not start" with a `tr()` reason in place of the Lua message; no game code has run.
+- **Rule:** a `ScriptError` is any Lua error, budget breach, memory cap breach, codec limit breach, frame buffer overflow, unknown icon or image name, or invalid `status`. It ends the session: the VM is stopped (AD-5), a peer is sent `ABORT(script_error)`, the error is logged with `LOG_ERR`, and the match shows its error view: a short `tr()` message, the game name, the Lua message in small type, and a single Back control. There is no automatic retry. A `Cancelled` outcome shows nothing, **amended 2026-09-28 (owner):** except the 3 s watchdog's (AD-5).
+  - **Amended 2026-09-28 (owner):** the error view also shows two failures that are not `ScriptError`s. A stuck script, cancelled by the 3 s watchdog, shows "The game stopped with an error" with a `tr()` "stopped responding" line in place of the Lua message (or the Lua message, if the script failed on its own meanwhile). A failure before the VM starts (the game's folder or sources missing, misnamed, unreadable, or too large, or memory for the store slot, the sources, the arena and frame buffers, or the task running out), or the arena's reserve having no room for the Session, shows "The game could not start" with a `tr()` reason in place of the Lua message; no game code has run. Running out of memory inside `LuaGame::load` (its scratch or the Lua state) is a `ScriptError` and shows "The game stopped with an error" with "not enough memory".
 
 ### AD-15: Package format and the one manifest parser [ADOPTED]
 
@@ -285,7 +290,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Rule:** all host functions live under one reserved global table, `ch` (`ch.api`, `ch.screen`, `ch.gfx`, `ch.text_width`, `ch.timer`, `ch.store`, `ch.time`, `ch.log`). The API is versioned by an integer `api` level; the icon set (AD-24) is part of it.
   - **The surface list owns the level.** `docs/crosshatch/api-level-<n>.txt` lists what level n adds, one typed entry per line: `fn` (with signature), `enum` value, `event`, `ctx` field, `manifest` key, `limit`, `lib`, `icon`, `seats_max`. A host's surface is the union of the lists from `API_MIN_LEVEL` to `API_LEVEL`. A host test checks the live `ch` table, the Lua globals and libraries, enums, limits, and the icon table against that union, and checks `ch.d.lua` and the icon catalog against it; `game-api.md` describes it. `API_SURFACE_CRC` in `ApiLevel.h` is the CRC-32 of those lists, and the test recomputes it.
   - **Levels are cumulative.** A host runs every game with `API_MIN_LEVEL` ≤ `api` ≤ `API_LEVEL` unchanged. Levels only add. A breaking change (for example `LUA_32BITS`) needs a spine update that states the plan for older games: run them unchanged, or raise `API_MIN_LEVEL` so they show as unavailable.
-  - **Freeze.** `lib/GameCore/ApiLevel.h` holds `API_LEVEL`, `API_MIN_LEVEL` (1), `API_LEVEL_FROZEN`, and `API_SURFACE_CRC`. `API_LEVEL_FROZEN` describes `API_LEVEL` only; every level below it is frozen. Level 1 is a preview: it may still grow, and a game written against it may break between builds. The last ticket of epic-first-party-games sets `API_LEVEL_FROZEN`, which closes v1; it never reverts, and the first fork release from a commit with it set is the freezing release. From then on a frozen level never changes, and any addition opens the next level as a preview. A `crosshatch-ci` job fails a PR that changes a frozen level's list against the merge base or turns `API_LEVEL_FROZEN` from true to false. **Amended 2026-09-28 (owner):** after v1, a release needs only the levels below an open preview to be frozen: it may ship frozen level N while level N+1 is a preview, and the release preflight refuses to publish only when that does not hold.
+  - **Freeze.** `lib/GameCore/ApiLevel.h` holds `API_LEVEL`, `API_MIN_LEVEL` (1), `API_LEVEL_FROZEN`, and `API_SURFACE_CRC`. `API_LEVEL_FROZEN` describes `API_LEVEL` only; every level below it is frozen. Level 1 is a preview: it may still grow, and a game written against it may break between builds. The last ticket of epic-first-party-games sets `API_LEVEL_FROZEN`, which closes v1; it never reverts, and the first fork release from a commit with it set is the freezing release. From then on a frozen level never changes, and any addition opens the next level as a preview. A `crosshatch-ci` job fails a PR that changes a frozen level's list against the merge base or turns `API_LEVEL_FROZEN` from true to false. **Amended 2026-09-28 (owner, retro F4):** after v1, a release needs only the levels below an open preview to be frozen. A fork release is refused only when a level that an earlier fork release shipped as frozen is no longer frozen here (`API_LEVEL` below it, or equal to it with `API_LEVEL_FROZEN` false). A release whose `API_LEVEL` is an open preview above every level released as frozen is allowed. (Pending the matching `fork_release.py` preflight change in the same PR.)
   - **Readers.** `ch.api` reports `API_LEVEL`. `Manifest::check` sees it through `HostCaps` (AD-15). The release reads `ApiLevel.h` from the commit it releases: its notes name the level ("1.6.5-ch.9 · Game API 1 (preview)"), and `pack-games` refuses a game whose `api` is outside `API_MIN_LEVEL..API_LEVEL`, using `scripts/pack_game.py`, the only Python reader of `manifest.json`. The firmware version (`-ch.N`, AD-25) carries no compatibility meaning. epic-script-runtime creates `ApiLevel.h`, level 1's list and its test, the CI job, and the release script's reading of the level.
   - **Mixed levels in one match.** In Play Nearby two previews must share a surface (AD-13). `ctx.api` is the lowest host level in the roster; `setup` and `apply` branch only on `ctx.api`, while `draw` and `input` may use the local `ch.api`.
 
@@ -303,7 +308,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 - **Binds:** script-runtime, multiplayer-layer, package-install-launcher
 - **Prevents:** each screen author inventing what Back, Home, sleep, game over, and rematch do.
 - **Rule:** the match follows this state machine. From every non-terminal state, an `ABORT` or 10 s of peer silence goes to `PeerGone`, a `ScriptError` goes to `Error`, and sleep takes the forced exit (AD-20). Every other transition not shown is invalid.
-  - **Amended 2026-09-28 (owner):** a match starts in `Starting` until its VM has started (then the initial state below) or the game failed to load or start (then `Error`, AD-14). In `Paused`, Back closes the pause menu like Resume. The solo machine is `GameCore::MatchLifecycle` (`lib/GameCore/MatchLifecycle.h`).
+  - **Amended 2026-09-28 (owner):** a match starts in `Starting` until its VM task has started (then the initial state below) or a failure before that, in the match's `onEnter()`, sends it to `Error` (AD-14). A failure inside the VM task (the Session not fitting, `LuaGame::load`, `setup`) comes after that, so the match goes from `Playing` to `Error`. In `Paused`, Back closes the pause menu like Resume. The solo machine is `GameCore::MatchLifecycle` (`lib/GameCore/MatchLifecycle.h`).
 
   ```mermaid
   stateDiagram-v2
@@ -421,6 +426,7 @@ flowchart LR
     SS["GameSaveStore"]
   end
   subgraph VMTask["GameVM task (core 1, prio 1, 16 KB)"]
+    %% Amended 2026-09-28 (owner): SoloRounds and RefreshPolicy named (retro A2).
     VM["LuaGame (lua_State, codec, bindings);<br/>SoloRounds (the solo round loop)"]
     SE["GameCore::Session (roster, snapshot, ver)"]
   end
@@ -476,8 +482,8 @@ src/
                           # GamePackageInstaller, GameRegistry, Sha256 helper,
                           # GamesBuildAnchor.cpp (AD-2: makes every env compile the game libraries and lua via lua.hpp),
                           # ForkReleaseProbe (AD-25: reads the releases/latest status after a failed fetch; device-only)
-  activities/games/       # GamesListActivity (the minimal Games list; epic-install-and-launcher replaces it with the
-                          # launcher), GameModeActivity, GameLobbyActivity, GameMatchActivity
+  activities/games/       # GamesListActivity (the minimal Games list; epic-install-and-launcher replaces it with
+                          # GamesLauncherActivity), GameModeActivity, GameLobbyActivity, GameMatchActivity
 assets/game-icons/        # vendored Phosphor fill SVGs, name map, original additions, license
 games/<id>/               # first-party game sources (manifest.json, main.lua, *.png)
 scripts/pack_game.py      # games/<id>/ → <id>.cpgame, validates, prints package hash
