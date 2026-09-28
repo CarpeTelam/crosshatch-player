@@ -80,6 +80,13 @@ bool GameSaveStore::saveStore(const std::span<const uint8_t> encoded) {
     LOG_ERR("GAME", "%s: cannot create %s", id, dirPath);
     return false;
   }
+  // A tmp without store.bin is the only copy (an earlier write stopped or failed
+  // before its rename), and opening the tmp for writing would truncate it, so it
+  // becomes store.bin first. loadStore reads the same bytes either way.
+  if (!Storage.exists(storePath) && Storage.exists(tmpPath) && !Storage.rename(tmpPath, storePath)) {
+    LOG_ERR("GAME", "%s: cannot rename %s to %s", id, tmpPath, storePath);
+    return false;
+  }
   uint8_t header[BLOB_HEADER_BYTES];
   writeBlobHeader(header, STORE_MAGIC, STORE_FILE_VERSION);
   HalFile file;

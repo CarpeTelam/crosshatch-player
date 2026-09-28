@@ -15,6 +15,8 @@ namespace {
 constexpr int HOOK_MASK = LUA_MASKCOUNT | LUA_MASKCALL;
 constexpr const char* STACK_MESSAGE = "script recursion too deep (C stack nearly full)";
 constexpr const char* CANCELLED_MESSAGE = "cancelled";
+// Lua's own text for a memory error, so a caught one reads like an uncaught one.
+constexpr const char* MEMORY_MESSAGE = "not enough memory";
 
 uintptr_t stackPointer() { return reinterpret_cast<uintptr_t>(__builtin_frame_address(0)); }
 
@@ -49,7 +51,8 @@ void CallGuard::trip(lua_State* L, lua_Debug* ar, const Fault fault) {
       }
       shown = text;
       break;
-    case Fault::Codec:  // raise() formats its own message
+    case Fault::Binding:  // raise() formats its own message
+    case Fault::Memory:   // recordMemory() sets its own message
     case Fault::None:
       break;
   }
@@ -77,19 +80,42 @@ void CallGuard::hook(lua_State* L, lua_Debug* ar) {
 }
 
 int CallGuard::raise(lua_State* L, const char* message) {
-  tripped = Fault::Codec;
   lua_Debug caller;
   if (lua_getstack(L, 1, &caller) && lua_getinfo(L, "Sl", &caller) && caller.currentline > 0) {
     snprintf(text, sizeof(text), "%s:%d: %s", caller.short_src, caller.currentline, message);
   } else {
     snprintf(text, sizeof(text), "%s", message);
   }
-  shown = text;
+  return raiseStatic(L, text);
+}
+
+int CallGuard::raiseStatic(lua_State* L, const char* literal) {
+  tripped = Fault::Binding;
+  shown = literal;
   lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
   lua_pushstring(L, shown);
   return lua_error(L);
 }
 
+void CallGuard::recordMemory(lua_State* L) {
+  if (tripped == Fault::None) {
+    tripped = Fault::Memory;
+    shown = MEMORY_MESSAGE;
+  }
+  lua_sethook(L, &CallGuard::hook, HOOK_MASK, 1);
+}
+
 bool CallGuard::hasHeadroom(const size_t bytes) const { return floor == 0 || stackPointer() >= floor + bytes; }
 
 }  // namespace GameScript
+
+// Lua's throw hook (lib/lua/port/luai_throw.h, weak there): Lua calls it as it
+// throws a memory error, before any __close can replace the error. A state is
+// guarded only once CallGuard::install has set its hook, which comes after the
+// state's BindingContext; before that (inside lua_newstate, whose extra space is
+// not yet set) and in states with no guard, it does nothing.
+extern "C" void luaport_memoryerror(lua_State* L) {
+  if (lua_gethook(L) != &GameScript::CallGuard::hook) return;
+  const GameScript::BindingContext* context = GameScript::bindingContext(L);
+  if (context && context->guard) context->guard->recordMemory(L);
+}

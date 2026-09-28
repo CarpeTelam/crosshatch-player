@@ -62,12 +62,21 @@ fn ch.log(...)
 
 # Globals the runtime provides: print writes to ch.log; require loads name.lua
 # from the game's own files; setmetatable is Lua's, except that it refuses a
-# metatable with a __gc field (finalizers would run outside the budget).
+# metatable with a __gc field (finalizers would run outside the budget) or a
+# __close field. A __close added to a metatable later still runs, but cannot turn
+# the heap cap into an error pcall catches: the runtime records it where Lua
+# raises it.
 fn print(...)
 fn require(name) -> any
 fn setmetatable(t, mt) -> table
 
-# Lua 5.5.1 base library, without load, loadfile, and dofile
+# Lua 5.5.1 base library, without load, loadfile, and dofile. pcall and xpcall
+# cannot keep a game running past a fault that stops it (the instruction budget,
+# the heap cap, C stack headroom, a value or table over its limit, a full frame,
+# ch.gfx outside draw): they may return false once, and the call still ends.
+# error("not enough memory", 0) raises Lua's own memory error, so it stops the
+# game too. The string metatable is sealed: getmetatable("") returns false, and
+# string methods and arithmetic on numeric strings work as in Lua.
 lib _G
 lib _VERSION
 lib assert
@@ -229,7 +238,11 @@ limit timers_pending_count 1
 # (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
 # the parser's nesting of expressions and blocks (right-associative .. or ^
 # chains, nested parentheses, tables, functions, and blocks, about 28 deep)
-# share it; past it the call or the load fails with "C stack overflow".
+# share it (a pcall takes one level, an xpcall two: the runtime's wrapper and
+# Lua's own, so about 28 nested pcalls or 14 nested xpcalls fit); past it the
+# call or the load fails with "C stack overflow", an ordinary Lua error that
+# pcall can catch. The runtime's own C stack headroom check ("script recursion
+# too deep") is the one that stops the game.
 limit c_stack_levels_count 30
 # Lua's pattern-matcher depth (MAXCCALLS in lib/lua/library.json): a match nests
 # one level, plus one for each capture's start and end and each item with ?, *,

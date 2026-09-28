@@ -45,11 +45,12 @@ class GameVM {
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
   // Takes the loaded sources and allocates the arena and both frame buffers in
-  // PSRAM; `canvas` is what the game sees as ch.screen and ch.text_width, `gameId`
-  // tags its log lines, and `store` (which must outlive the task) backs ch.store.
-  // Null (logged) when memory runs out.
-  static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameScript::Canvas& canvas, const char* gameId,
-                                        GameScript::StoreSlot& store);
+  // PSRAM. The game sees `viewport`'s canvas size as ch.screen and measures
+  // ch.text_width with `replay`'s text metrics (after FrameReplay::loadFonts);
+  // `gameId` tags its log lines, and `store` (which must outlive the task, see
+  // MatchStore) backs ch.store. Null (logged) when memory runs out.
+  static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
+                                        const char* gameId, GameScript::StoreSlot& store);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -58,7 +59,8 @@ class GameVM {
   // task cannot be created.
   bool start();
   // Queues an event for input(): a touch event (GameTouch.h), or pollTimer's Timer
-  // event. A full queue drops its oldest event, with a log line.
+  // event. A full queue drops its oldest event that is not a Timer (InputQueue),
+  // with a log line.
   void postInput(const GameScript::InputEvent& event);
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.

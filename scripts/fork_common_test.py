@@ -207,6 +207,12 @@ class ApiLevelTest(unittest.TestCase):
     def test_list_path(self):
         self.assertEqual(fc.api_list_path(3), 'docs/crosshatch/api-level-3.txt')
 
+    def test_frozen_top(self):
+        self.assertEqual(fc.frozen_top(None), 0)
+        self.assertEqual(fc.frozen_top(fc.ApiLevel(1, 1, False)), 0)
+        self.assertEqual(fc.frozen_top(fc.ApiLevel(1, 1, True)), 1)
+        self.assertEqual(fc.frozen_top(fc.ApiLevel(3, 1, False)), 2)
+
     def test_bad_headers_are_setup_errors(self):
         cases = {
             'missing': HEADER.replace('#define API_LEVEL_FROZEN true\n', ''),

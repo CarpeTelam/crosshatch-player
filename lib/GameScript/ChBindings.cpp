@@ -34,16 +34,25 @@ static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value pe
 static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
 static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
 
+// Both gfx faults stop the game (the contract's Errors), so they go through the
+// guard: a script's own pcall cannot catch them and publish a cut frame.
+
 // The frame being drawn; raises unless draw is running.
 DisplayList& drawTarget(lua_State* L, const char* function) {
-  DisplayList* list = bindingContext(L)->drawTarget;
-  if (!list) luaL_error(L, "ch.gfx.%s called outside draw", function);
-  return *list;
+  const BindingContext& context = *bindingContext(L);
+  if (!context.drawTarget) {
+    char message[48];
+    snprintf(message, sizeof(message), "ch.gfx.%s called outside draw", function);
+    context.guard->raise(L, message);
+  }
+  return *context.drawTarget;
 }
 
 int frameFull(lua_State* L) {
-  return luaL_error(L, "frame is full (at most %d drawing calls or %d bytes)", static_cast<int>(MAX_COMMANDS),
-                    static_cast<int>(MAX_BYTES));
+  char message[72];
+  snprintf(message, sizeof(message), "frame is full (at most %d drawing calls or %d bytes)",
+           static_cast<int>(MAX_COMMANDS), static_cast<int>(MAX_BYTES));
+  return bindingContext(L)->guard->raise(L, message);
 }
 
 Color checkFillColor(lua_State* L, const int arg) {
@@ -136,13 +145,13 @@ int textWidth(lua_State* L) {
   return 1;
 }
 
-// Raises unless the stack has room for a binding that runs deep C code (the codec,
-// the logger); see CallGuard::BINDING_HEADROOM_BYTES.
-void requireHeadroom(lua_State* L, const char* function) {
-  const CallGuard* guard = bindingContext(L)->guard;
-  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) {
-    luaL_error(L, "%s: script recursion too deep to call it", function);
-  }
+// Raises `literal` unless the stack has room for a binding that runs deep C code
+// (the codec, the logger); see CallGuard::BINDING_HEADROOM_BYTES. Through the guard,
+// so a script's pcall cannot catch it; raiseStatic, with no lua_getinfo or
+// formatting, since under 4 KiB of stack is left here.
+void requireHeadroom(lua_State* L, const char* literal) {
+  CallGuard* guard = bindingContext(L)->guard;
+  if (guard && !guard->hasHeadroom(CallGuard::BINDING_HEADROOM_BYTES)) guard->raiseStatic(L, literal);
 }
 
 // ch.timer.after(ms): replaces the pending timer (AD-23).
@@ -178,7 +187,7 @@ int timeMs(lua_State* L) {
 // to the slot, which marks itself dirty only when the bytes changed.
 int storeSet(lua_State* L) {
   luaL_checktype(L, 1, LUA_TTABLE);
-  requireHeadroom(L, "ch.store.set");
+  requireHeadroom(L, "ch.store.set: script recursion too deep to call it");
   const BindingContext& context = *bindingContext(L);
   const Codec::Encoded encoded = Codec::encode(L, 1, Codec::STORE_LIMIT, context.scratch, context.scratchBytes);
   if (encoded.error != Codec::Error::None) {
@@ -202,7 +211,7 @@ int storeSet(lua_State* L) {
 // copied into the scratch under its lock and decoded outside it, since decoding
 // allocates and may raise.
 int storeGet(lua_State* L) {
-  requireHeadroom(L, "ch.store.get");
+  requireHeadroom(L, "ch.store.get: script recursion too deep to call it");
   const BindingContext& context = *bindingContext(L);
   auto* scratch = static_cast<uint8_t*>(context.scratch);
   enterLockedSection(L);
@@ -236,7 +245,7 @@ size_t utf8Cut(const char* text, const size_t length, const size_t room) {
 }
 
 int chLog(lua_State* L) {
-  requireHeadroom(L, "ch.log");
+  requireHeadroom(L, "ch.log: script recursion too deep to call it");
   char line[LOG_LINE_BYTES + 1];
   size_t used = 0;
   const int count = lua_gettop(L);

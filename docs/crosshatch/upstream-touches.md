@@ -79,7 +79,7 @@ No reserve row remains.
 Upstream files the fork had already changed before the ledger existed.
 
 - `AGENTS.md` -- the fork's own agent instructions; `.gitattributes` keeps our copy on merge.
-- `.gitattributes` -- added by the fork for the `merge=ours` rule on `AGENTS.md`; listed in case upstream adds one.
+- `.gitattributes` -- added by the fork for the `merge=ours` rule on `AGENTS.md` and the `merge=union` rule on `deferred-work.md`; listed in case upstream adds one.
 - `.gitignore` -- fork-local ignores.
 - `.github/PULL_REQUEST_TEMPLATE.md` -- the fork's PR title rules.
 - `CLAUDE.md` -- removed by the fork; an upstream change to it is resolved with `git rm CLAUDE.md`.
@@ -114,6 +114,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `.github/workflows/crosshatch-*.yml` -- every fork-only workflow is named with this prefix.
 - `scripts/check_api_freeze.py` -- the API freeze job's check (spine AD-19).
 - `scripts/check_api_freeze_test.py`
+- `scripts/check_layers.py` -- the layer check job's check of the spine's layer table (retro AI-5).
+- `scripts/check_layers_test.py`
 
 ## Running the check locally
 

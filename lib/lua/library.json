@@ -23,7 +23,9 @@
       "-DLUA_COMPAT_GLOBAL=0",
       "-DLUAI_MAXCCALLS=30",
       "-DMAXCCALLS=16",
-      "-Dl_randomizePivot=sizeof"
+      "-Dl_randomizePivot=sizeof",
+      "-I port",
+      "-include luai_throw.h"
     ]
   }
 }

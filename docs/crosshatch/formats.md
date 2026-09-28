@@ -138,7 +138,11 @@ by a newer codec survives a firmware that cannot read it and never writes.
 **Writing** replaces the whole file: the header and payload go to `store.bin.tmp`, which is closed, then `store.bin`
 is removed and the tmp renamed over it (SdFat's rename refuses an existing target). A failed write removes the
 partial tmp and leaves `store.bin` as it was. Once the tmp is whole, a stop before the rename leaves it in place, and
-the next read uses `store.bin.tmp` when `store.bin` is missing; a torn tmp fails the payload check. While the game
+the next read uses `store.bin.tmp` when `store.bin` is missing; a torn tmp fails the payload check. A write that
+finds `store.bin` missing and the tmp present first renames the tmp to `store.bin` (and fails without writing if
+that rename fails), so a failed write never truncates or removes the only copy. The trade-off: while that rename
+keeps failing, no newer store is written; the older copy stays, and the slot stays dirty, so every flush retries.
+While the game
 runs, the match writes a changed store at most every 5 s (`GameSaveStore::flushIfDue`); `GameSaveStore::flush`
 writes it at once, for round end and the match's `onExit()` (AD-17).
 

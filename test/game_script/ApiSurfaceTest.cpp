@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <iomanip>
+#include <lua.hpp>
 #include <map>
 #include <set>
 #include <sstream>
@@ -180,11 +181,29 @@ TEST_F(ApiSurfaceTest, LibraryMembersMatchTheList) {
     EXPECT_TRUE(libs.count(name.substr(0, dot))) << name << " is listed without its table";
   }
   expectSameNames(live, listedMembers, "library member");
-  // The string metatable is lstrlib's own (stringmetamethods): string methods, and
-  // arithmetic on numeric strings. Nothing else reaches a game through it.
-  const Names stringMeta = {"__index string", "__add function", "__sub function",  "__mul function", "__mod function",
-                            "__pow function", "__div function", "__idiv function", "__unm function"};
-  EXPECT_EQ(tagged(log.lines, "S"), stringMeta);
+  // The string metatable is sealed: a game sees false, and strings still work.
+  EXPECT_EQ(tagged(log.lines, "S"), (Names{"getmetatable boolean false", "method AB arith 2"}));
+
+  // Behind the seal it is lstrlib's own (stringmetamethods): string methods, and
+  // arithmetic on numeric strings, plus the seal. Read raw, since a game cannot.
+  lua_State* L = luaL_newstate();
+  openSandbox(L, random);
+  lua_pushliteral(L, "");
+  Names stringMeta;
+  if (lua_getmetatable(L, -1)) {
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {  // every key of lstrlib's metatable is a string
+      lua_getglobal(L, "string");
+      const char* type = lua_rawequal(L, -1, -2) ? "string" : luaL_typename(L, -2);
+      stringMeta.insert(std::string(lua_tostring(L, -3)) + " " + type);
+      lua_pop(L, 2);
+    }
+  }
+  lua_close(L);
+  const Names expected = {"__index string", "__add function",     "__sub function", "__mul function",
+                          "__mod function", "__pow function",     "__div function", "__idiv function",
+                          "__unm function", "__metatable boolean"};
+  EXPECT_EQ(stringMeta, expected);
 }
 
 // Whether a value is a named enumerator. Each switch lists every enumerator, and

@@ -4,6 +4,7 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <initializer_list>
 #include <lua.hpp>
 
@@ -30,7 +31,17 @@ void openLibrary(lua_State* L, const char* name, lua_CFunction open) {
   lua_pop(L, 1);
 }
 
-// Leaves the error on top, forgets the half-loaded module, and raises again.
+// Raises `message` through the guard, as a fault the game contract says stops the
+// game, so a script's own pcall cannot survive it (CallGuard::raise).
+int raiseFault(lua_State* L, const char* message) {
+  CallGuard* guard = bindingContext(L)->guard;
+  if (!guard) return luaL_error(L, "%s", message);
+  return guard->raise(L, message);
+}
+
+// Leaves the error on top, forgets the half-loaded module, and raises again; a
+// memory error stays one (lua_error re-raises Lua's memory message as one, and
+// the guard recorded it when Lua first threw it).
 int forgetAndRaise(lua_State* L, const int modules, const char* name) {
   lua_pushnil(L);
   lua_setfield(L, modules, name);
@@ -54,7 +65,9 @@ int require(lua_State* L) {
   if (!span) return luaL_error(L, "module '%s' not found", name);
   // The parser runs no hook, so it needs its whole budget free before it starts.
   if (context->guard && !context->guard->hasHeadroom(CallGuard::PARSE_HEADROOM_BYTES)) {
-    return luaL_error(L, "require '%s': script recursion too deep to load a module", name);
+    char message[CallGuard::MESSAGE_CAPACITY];
+    snprintf(message, sizeof(message), "require '%s': script recursion too deep to load a module", name);
+    return raiseFault(L, message);
   }
 
   lua_pushlightuserdata(L, loadingTag());
@@ -97,6 +110,9 @@ int guardedHandler(lua_State* L) {
 }
 
 // xpcall(f, handler, ...): the base xpcall (upvalue 1) with the handler wrapped.
+// pcall and xpcall are otherwise Lua's: a memory error they catch is already a
+// guard fault (recorded where Lua threw it), which the hook raises again at the
+// script's next instruction.
 int guardedXpcall(lua_State* L) {
   luaL_checktype(L, 2, LUA_TFUNCTION);
   lua_pushvalue(L, 2);
@@ -106,19 +122,26 @@ int guardedXpcall(lua_State* L) {
 }
 
 // setmetatable(t, mt): lbaselib's setmetatable, line for line, plus a refusal of
-// a metatable with a __gc field. Finalizers run with hooks off, so a __gc would
-// escape the budget and the stack check; Lua marks an object for finalization
-// only when its metatable has a raw __gc field at this call, so checking here is
-// enough. Written out rather than wrapped so argument errors still name it.
+// a metatable with a raw __gc or __close field. Finalizers run with hooks off, so
+// a __gc would escape the budget and the stack check; Lua marks an object for
+// finalization only when its metatable has a raw __gc field at this call, so
+// checking here is enough for it. A __close that raises while a memory error
+// unwinds turns it into an ordinary error (luaD_closeprotected); the guard
+// records the memory error where Lua throws it (luaport_memoryerror), so the
+// heap cap holds even for a __close added to the metatable later, and this
+// refusal is a first line that keeps the plain cases out. Written out rather
+// than wrapped so argument errors still name it.
 int guardedSetmetatable(lua_State* L) {
   const int type = lua_type(L, 2);
   luaL_checktype(L, 1, LUA_TTABLE);
   luaL_argexpected(L, type == LUA_TNIL || type == LUA_TTABLE, 2, "nil or table");
   if (type == LUA_TTABLE) {
-    lua_pushliteral(L, "__gc");
-    const bool hasGc = lua_rawget(L, 2) != LUA_TNIL;
-    lua_pop(L, 1);
-    if (hasGc) return luaL_error(L, "setmetatable: __gc metamethods are not supported");
+    for (const char* field : {"__gc", "__close"}) {
+      lua_pushstring(L, field);
+      const bool present = lua_rawget(L, 2) != LUA_TNIL;
+      lua_pop(L, 1);
+      if (present) return luaL_error(L, "setmetatable: %s metamethods are not supported", field);
+    }
   }
   if (luaL_getmetafield(L, 1, "__metatable") != LUA_TNIL) return luaL_error(L, "cannot change a protected metatable");
   lua_settop(L, 2);
@@ -127,7 +150,10 @@ int guardedSetmetatable(lua_State* L) {
 }
 
 int tooManyElements(lua_State* L, const char* function) {
-  return luaL_error(L, "table.%s: more than %d elements", function, static_cast<int>(TABLE_ELEMENTS_LIMIT));
+  char message[64];
+  snprintf(message, sizeof(message), "table.%s: more than %d elements", function,
+           static_cast<int>(TABLE_ELEMENTS_LIMIT));
+  return raiseFault(L, message);
 }
 
 // table.move(a1, f, e, t [,a2]): its copy loop runs in C, where no hook runs.
@@ -190,6 +216,14 @@ void openSandbox(lua_State* L, GameCore::IRandom& random) {
   openLibrary(L, LUA_STRLIBNAME, luaopen_string);
   openLibrary(L, LUA_MATHLIBNAME, luaopen_math);
   openLibrary(L, LUA_UTF8LIBNAME, luaopen_utf8);
+
+  // Seals the string metatable, which every game shares: getmetatable('') returns
+  // false, so a script cannot add a __close (or change any metamethod) to strings.
+  lua_pushliteral(L, "");
+  lua_getmetatable(L, -1);
+  lua_pushboolean(L, 0);
+  lua_setfield(L, -2, "__metatable");
+  lua_pop(L, 2);
 
   // Scripts load code only through require, from their own sources in text mode.
   for (const char* name : {"load", "loadfile", "dofile"}) {

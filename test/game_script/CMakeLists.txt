@@ -1,6 +1,7 @@
 # Lua is built as C from the same source list as the firmware: every .c file in lib/lua/src
-# minus the -<file> entries of lib/lua/library.json's srcFilter, with the -D flags from that
-# manifest. Any other filter or flag entry stops configuration, so a manifest change the host
+# minus the -<file> entries of lib/lua/library.json's srcFilter, with the -D flags, the
+# "-I <dir>" include directories (relative to lib/lua, as PlatformIO resolves them), and the
+# "-include <file>" force-includes (found on those directories) from that manifest. Any other filter or flag entry stops configuration, so a manifest change the host
 # build cannot mirror is noticed here instead of silently building something different.
 set(LUA_DIR ${REPO_ROOT}/lib/lua)
 set(LUA_MANIFEST_PATH ${LUA_DIR}/library.json)
@@ -9,6 +10,8 @@ file(READ ${LUA_MANIFEST_PATH} LUA_MANIFEST)
 file(GLOB LUA_SOURCES CONFIGURE_DEPENDS ${LUA_DIR}/src/*.c)
 
 set(LUA_DEFINES)
+set(LUA_OPTIONS)
+set(LUA_INCLUDES)
 set(LUA_EXCLUDED_COUNT 0)
 string(REGEX MATCHALL "\"[-+][^\"]*\"" LUA_ENTRIES "${LUA_MANIFEST}")
 foreach(entry IN LISTS LUA_ENTRIES)
@@ -23,6 +26,13 @@ foreach(entry IN LISTS LUA_ENTRIES)
     math(EXPR LUA_EXCLUDED_COUNT "${LUA_EXCLUDED_COUNT} + 1")
   elseif(entry MATCHES "^\"-D(.+)\"$")
     list(APPEND LUA_DEFINES ${CMAKE_MATCH_1})
+  elseif(entry MATCHES "^\"-I ([A-Za-z0-9_/]+)\"$")
+    if(NOT IS_DIRECTORY ${LUA_DIR}/${CMAKE_MATCH_1})
+      message(FATAL_ERROR "${LUA_MANIFEST_PATH} adds include directory ${CMAKE_MATCH_1}, which is not in ${LUA_DIR}")
+    endif()
+    list(APPEND LUA_INCLUDES ${LUA_DIR}/${CMAKE_MATCH_1})
+  elseif(entry MATCHES "^\"-include ([A-Za-z0-9_.]+)\"$")
+    list(APPEND LUA_OPTIONS "SHELL:-include ${CMAKE_MATCH_1}")
   else()
     message(FATAL_ERROR "${LUA_MANIFEST_PATH}: ${entry} has no host equivalent here; mirror it in this file")
   endif()
@@ -47,8 +57,16 @@ endif()
 add_library(lua_vendored STATIC ${LUA_SOURCES})
 set_target_properties(lua_vendored PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(lua_vendored PUBLIC ${LUA_DIR}/src)
+target_include_directories(lua_vendored PRIVATE ${LUA_INCLUDES})
 target_compile_definitions(lua_vendored PRIVATE ${LUA_DEFINES})
-target_compile_options(lua_vendored PRIVATE -Wall -Wextra)
+target_compile_options(lua_vendored PRIVATE -Wall -Wextra ${LUA_OPTIONS})
+# ldo.c refers to the weak luaport_memoryerror (lib/lua/port/luai_throw.h), which only
+# CallGuard.cpp defines. ELF linkers leave an undefined weak symbol null; Darwin's ld64
+# refuses it, so a target that links Lua without CallGuard.cpp (GameSaveStoreTest) needs
+# it marked as allowed to stay undefined.
+if(APPLE)
+  target_link_options(lua_vendored INTERFACE "LINKER:-U,_luaport_memoryerror")
+endif()
 
 # Every GameScript source, so a new file there is built and linked by the host suite.
 file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cpp)

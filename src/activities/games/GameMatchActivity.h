@@ -1,10 +1,8 @@
 #pragma once
 
-#include <HalMemory.h>
 #include <I18n.h>
 #include <Manifest.h>
 #include <MatchLifecycle.h>
-#include <StoreSlot.h>
 
 #include <atomic>
 #include <cstdint>
@@ -13,14 +11,16 @@
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 #include "games/FrameReplay.h"
-#include "games/GameSaveStore.h"
 #include "games/GameTouch.h"
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
+#include "games/MatchStore.h"
 
 // One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
-// arena, and frame buffers, and owns ch.store's slot, which outlives the VM, and
-// the GameSaveStore that restores it and writes it to store.bin. The canvas is
+// arena, and frame buffers, and owns ch.store (MatchStore): its slot, which
+// outlives the VM, and the GameSaveStore that restores it and writes it to
+// store.bin. It reaches lib/GameScript only through src/games (the spine's layer
+// table; scripts/check_layers.py). The canvas is
 // drawn by FrameReplay and fed by taps, long presses, and swipes mapped through
 // GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost draws the
 // runtime's own views: the pause menu, the end-of-round menu, and the error view
@@ -97,14 +97,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   GameCore::Manifest manifest;
   GameViewport viewport;
   FrameReplay replay;
-  // One PSRAM block: ch.store's latest-wins slot (STORE_LIMIT bytes, AD-17), then
-  // saves' buffer. Declared before vm, so it is destroyed after the VM that posts to
+  // ch.store's slot and store.bin's reader and writer in one PSRAM block (AD-17):
+  // periodic flushes in loop(), and flushStore() at round end, on Leave, and in
+  // onExit(). Declared before vm, so it is destroyed after the VM that posts to
   // the slot.
-  HalMemory::PsramBuffer storeStorage;
-  std::unique_ptr<GameScript::StoreSlot> store;
-  // store.bin's reader and writer (loop task): periodic flushes in loop(), and
-  // flushStore() at round end, on Leave, and in onExit().
-  std::unique_ptr<GameSaveStore> saves;
+  MatchStore store;
   std::unique_ptr<GameVM> vm;
   // An abandon left the VM task alive: the slot is still flushed on Leave and in
   // onExit, and the destructor leaks it (and saves' buffer) with the task.

@@ -29,6 +29,8 @@ The API, kept small on purpose; add to it only what two fork scripts would other
   ApiLevel                    (level, min_level, frozen) as read from the header
   parse_api_level(text)       read an ApiLevel from the header's text; a missing, repeated, or malformed define is a
                               SetupError
+  frozen_top(level)           the highest frozen level of an ApiLevel (or None, no header): API_LEVEL when
+                              API_LEVEL_FROZEN is true, else API_LEVEL - 1; 0 when nothing is frozen
 
 Run `python3 scripts/fork_common_test.py` for its own tests.
 """
@@ -130,6 +132,16 @@ def parse_api_level(text):
     if min_level > level:
         raise SetupError(f'{API_LEVEL_HEADER}: API_MIN_LEVEL {min_level} is above API_LEVEL {level}')
     return ApiLevel(level, min_level, values['API_LEVEL_FROZEN'] == 'true')
+
+
+def frozen_top(level):
+    """The highest frozen level of an ApiLevel, or of None (no ApiLevel.h): 0 when nothing is frozen.
+
+    API_LEVEL_FROZEN describes API_LEVEL only and every level below it is frozen (spine AD-19).
+    """
+    if level is None:
+        return 0
+    return level.level if level.frozen else level.level - 1
 
 
 def exit_code(step, summary_heading=None):

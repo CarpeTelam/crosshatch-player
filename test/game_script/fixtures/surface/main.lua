@@ -6,7 +6,8 @@
 --   M <table>.<member> <type>  every member of a global table other than _G and ch
 --   C <path> <type>            every non-table value under ch, walked recursively
 --   MT <path>                  a global table or a table under ch with a metatable
---   S <key> <value>            each key of the string metatable
+--   S <fact>                   what getmetatable("") returns, and a method and
+--                              arithmetic on strings (the metatable is sealed)
 --   X <field> <type>           each field of setup's ctx; then "mode <ctx.mode>"
 --   E <kind>[ <field>...]      each event input() gets, its other fields sorted;
 --                              then "D <dir>" when it has a dir
@@ -54,11 +55,10 @@ local function walk(path, t)
 end
 walk("ch", ch)
 
-local stringMeta = getmetatable("")
-for _, key in ipairs(sortedKeys(stringMeta)) do
-  local value = stringMeta[key]
-  print("S " .. key .. " " .. (value == string and "string" or typeOf(value)))
-end
+-- The string metatable is sealed, so a game sees only what getmetatable returns
+-- and that string methods and string arithmetic still work.
+print("S getmetatable " .. typeOf(getmetatable("")) .. " " .. tostring(getmetatable("")))
+print("S method " .. ("ab"):upper() .. " arith " .. tostring("1" + 1))
 
 return {
   setup = function(ctx)

@@ -209,6 +209,194 @@ TEST_F(LuaGameTest, TheHeapCapStopsAHeapBombInTheFullArena) {
   EXPECT_LE(arena.peakBytes(), arena.capacity() / 2);
 }
 
+// The memory limit stops the game (game-api-seed.md section 6): pcall, xpcall,
+// and a require under pcall catch the memory error at most once, and the call
+// still ends in a ScriptError with Lua's own text and no frame published.
+TEST_F(LuaGameTest, TheHeapCapStopsTheGameEvenUnderPcall) {
+  const std::string bomb = "local t = {} for i = 1, 1e7 do t[i] = i end";
+  const std::vector<Module> cases[] = {
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() pcall(function() " +
+            bomb + " end) ch.gfx.clear('white') end }"}},
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() xpcall(function() " +
+            bomb + " end, function(m) return m end) ch.gfx.clear('white') end }"}},
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() pcall(require, 'bomb') ch.gfx.clear('white') end }"},
+       {"bomb", bomb + "\nreturn t"}},
+      // Lua's own memory error text raised at level 0 is a memory error too (accepted).
+      {{"main",
+        "return { setup = function() return {} end,\n"
+        "  draw = function() pcall(error, 'not enough memory', 0) ch.gfx.clear('white') end }"}},
+  };
+  for (const auto& modules : cases) {
+    useSources(modules);
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    const uint32_t before = frames.frameGen();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << modules[0].second;
+    EXPECT_STREQ(game.errorMessage(), "not enough memory") << modules[0].second;
+    EXPECT_EQ(game.callGuard().fault(), Fault::Memory) << modules[0].second;
+    EXPECT_EQ(frames.frameGen(), before) << modules[0].second;
+  }
+  // Other errors under pcall and xpcall are still the script's to handle.
+  useSource("main",
+            "return { setup = function() return {} end,\n"
+            "  draw = function() local ok, e = pcall(error, 'x', 0)\n"
+            "    local ok2, e2 = xpcall(error, function(m) return 'h ' .. m end, 'y', 0)\n"
+            "    ch.gfx.text(0, 0, tostring(ok) .. e .. tostring(ok2) .. e2, 'small', 'black') end }");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "falsexfalseh y");
+}
+
+// setmetatable refuses __close, and the string metatable is sealed, so the plain
+// ways to make a closable value fail. Each attempt, under pcall and xpcall, is a
+// plain error the script catches, before the heap bomb. (A __close added later is
+// ACloseAddedLaterCannotOutliveTheHeapCap.)
+TEST_F(LuaGameTest, AScriptCannotMakeAClosableValue) {
+  struct Case {
+    const char* body;
+    const char* message;
+  };
+  const Case cases[] = {
+      {"local c <close> = setmetatable({}, { __close = function() error('recovered', 0) end })",
+       "setmetatable: __close metamethods are not supported"},
+      {"getmetatable('').__close = function() error('recovered', 0) end local c <close> = 'x'",
+       "attempt to index a boolean value"},
+      {"local c <close> = 'x'", "variable 'c' got a non-closable value"},
+      {"for _ in next, {}, nil, setmetatable({}, { __close = print }) do end",
+       "setmetatable: __close metamethods are not supported"},
+  };
+  for (const char* wrap : {"pcall(f)", "xpcall(f, function(m) return m end)"}) {
+    for (const auto& c : cases) {
+      useSource("main", std::string("return { setup = function() return {} end,\n"
+                                    "  draw = function()\n"
+                                    "    local f = function() ") +
+                            c.body +
+                            " local s = string.rep('x', 1 << 20) end\n"
+                            "    local ok, e = " +
+                            wrap +
+                            "\n"
+                            "    ch.gfx.text(0, 0, tostring(ok) .. ' ' .. tostring(e), 'small', 'black') end }");
+      DirectGame game(arena, frames, sources, ports, canvas);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      ASSERT_EQ(game.draw(), Outcome::Ok) << wrap << " " << c.body << ": " << game.errorMessage();
+      EXPECT_EQ(frontText().rfind("false ", 0), 0u) << wrap << " " << c.body << " -> " << frontText();
+      EXPECT_TRUE(contains(frontText().c_str(), c.message)) << wrap << " " << c.body << " -> " << frontText();
+      EXPECT_EQ(game.callGuard().fault(), Fault::None) << wrap << " " << c.body;
+    }
+  }
+}
+
+// Lua looks __close up again when it closes, so a __close added to a metatable
+// after setmetatable still runs, and whatever the close does while a memory error
+// unwinds (raises, or finds no __close left to call) replaces the error
+// (luaD_closeprotected). The guard records the memory error where Lua throws it
+// (lib/lua/port/luai_throw.h), so the call still ends: with the bomb in the
+// protected function, in a module it requires, or in a module with its own
+// to-be-closed value.
+TEST_F(LuaGameTest, ACloseAddedLaterCannotOutliveTheHeapCap) {
+  struct Closable {
+    const char* before;  // makes `v` closable
+    const char* after;   // runs after `local c <close> = v`
+  };
+  const Closable closables[] = {
+      {"local mt = {} local v = setmetatable({}, mt) mt.__close = function() error('recovered', 0) end", ""},
+      {"local mt = {} local v = setmetatable({}, mt) mt.__close = error", ""},
+      {"local mt = {} local v = setmetatable({}, mt) mt.__close = print", "mt.__close = nil"},
+      {"local mt = {} local v = setmetatable({}, mt) rawset(mt, '__close', function() error('r', 0) end)", ""},
+      {"setmetatable(_G, {}) getmetatable(_G).__close = function() error('r', 0) end local v = _G", ""},
+  };
+  const std::string inlineBomb = "local s = string.rep('x', 1 << 20)";
+  const std::vector<std::string> inFunction = {"pcall(f)", "xpcall(f, function(m) return m end)"};
+  const std::vector<std::string> inModule = {"pcall(require, 'm')", "xpcall(require, function(m) return m end, 'm')"};
+  for (const auto& closable : closables) {
+    const std::string body = std::string(closable.before) + "\nlocal c <close> = v\n" + closable.after + "\n";
+    struct Placement {
+      std::string function;  // the body of main's f
+      std::string module;    // module m
+      const std::vector<std::string>& calls;
+    };
+    const Placement placements[] = {
+        {body + inlineBomb, "return true", inFunction},
+        {body + "require('bomb')", "return true", inFunction},
+        {"", body + inlineBomb + "\nreturn true", inModule},
+    };
+    for (const auto& placement : placements) {
+      for (const std::string& call : placement.calls) {
+        useSources({{"main",
+                     "return { setup = function() return {} end,\n"
+                     "  draw = function()\n"
+                     "    local f = function()\n" +
+                         placement.function +
+                         "\n    end\n"
+                         "    local ok, e = " +
+                         call +
+                         "\n"
+                         "    ch.gfx.text(0, 0, tostring(ok) .. ' ' .. tostring(e), 'small', 'black') end }"},
+                    {"bomb", "local t = {} for i = 1, 1e7 do t[i] = i end\nreturn t"},
+                    {"m", placement.module}});
+        const std::string what = std::string(closable.before) + " | " + closable.after + " | " +
+                                 (placement.function.empty() ? "in module m" : placement.function) + " | " + call;
+        DirectGame game(arena, frames, sources, ports, canvas);
+        ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+        const uint32_t before = frames.frameGen();
+        EXPECT_EQ(game.draw(), Outcome::ScriptError) << what << " -> " << frontText();
+        EXPECT_STREQ(game.errorMessage(), "not enough memory") << what;
+        EXPECT_EQ(game.callGuard().fault(), Fault::Memory) << what;
+        EXPECT_EQ(frames.frameGen(), before) << what;
+      }
+    }
+  }
+}
+
+// On Lua's own allocation path (luaM), a refused allocation is retried after an
+// emergency collection; only a memory error Lua then throws is the heap cap. A
+// script whose garbage reaches the cap many times over, with the collector
+// stopped, runs on with no fault. Its garbage is tables grown by assignment (no
+// library string buffer, which the next test covers), so the path is the same
+// whatever the word size.
+TEST_F(LuaGameTest, ARefusalLuaRecoversFromIsNotAFault) {
+  useSource("main",
+            "return { setup = function() return {} end,\n"
+            "  draw = function()\n"
+            "    collectgarbage('stop')\n"
+            "    for i = 1, 1000 do local t = {} for j = 1, 64 do t[j] = j end end\n"
+            "    collectgarbage('restart')\n"
+            "    ch.gfx.text(0, 0, 'ran', 'small', 'black') end }");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  const size_t refusalsBefore = arena.luaCapRefusals();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_GT(arena.luaCapRefusals(), refusalsBefore);  // the cap did refuse, and Lua recovered
+  EXPECT_EQ(game.callGuard().fault(), Fault::None);
+  EXPECT_EQ(frontText(), "ran");
+}
+
+// A library string buffer past LUAL_BUFFERSIZE (lauxlib's resizebox) calls the
+// allocator directly and raises at the first refusal, with no emergency
+// collection (as in stock Lua): near the cap, with plenty of garbage a collection
+// would free, a 4 KiB string.rep still ends the game.
+TEST_F(LuaGameTest, ALibraryStringBufferRefusedAtTheCapStopsTheGame) {
+  useSource("main",
+            "return { setup = function() return {} end,\n"
+            "  draw = function()\n"
+            "    collectgarbage('stop')\n"
+            "    while collectgarbage('count') < 254 do local t = {} for j = 1, 8 do t[j] = j end end\n"
+            "    local ok = pcall(string.rep, 'x', 4096)\n"
+            "    ch.gfx.text(0, 0, tostring(ok), 'small', 'black') end }");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(game.errorMessage(), "not enough memory");
+  EXPECT_EQ(game.callGuard().fault(), Fault::Memory);
+}
+
 TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {
   useSource("main", readFixture("tracer/main.lua"));
   DirectGame game(arena, frames, sources, ports, canvas);

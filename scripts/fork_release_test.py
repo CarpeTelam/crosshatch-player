@@ -631,7 +631,7 @@ class RefTest(unittest.TestCase):
 
 
 class FreezeTest(unittest.TestCase):
-    """After a release from a commit with API_LEVEL_FROZEN true, publishing needs the flag true."""
+    """Publishing keeps frozen every API level an earlier release froze; only a later level may ship as a preview."""
 
     def setUp(self):
         self.project = TempProject(header=None)
@@ -660,14 +660,48 @@ class FreezeTest(unittest.TestCase):
         self.release(api_header(1, frozen=False))
         self.assertEqual(self.preflight('false'), 0)
 
-    def test_frozen_release_blocks_a_preview_release(self):
+    def test_frozen_release_blocks_reopening_its_level(self):
         self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
         self.assertEqual(self.preflight('false'), 0)  # releasing the frozen commit again is fine
-        self.release(api_header(2, frozen=False))
+        self.release(api_header(1, frozen=False))
         self.assertEqual(self.preflight('false'), 1)
         self.assertEqual(self.preflight('true'), 0)  # a dry run only warns
+        self.assertEqual(fr.freeze_problems(self.project.dir), [
+            'the commit to release has API level 1 as a preview, but 1.6.5-ch.2 released frozen API level 1; a release '
+            'keeps frozen every level an earlier release froze, and only a level above them may be a preview'])
+
+    def test_preview_above_the_frozen_levels_passes(self):
+        self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
+        self.release(api_header(2, frozen=False), tag='1.6.5-ch.3')  # level 1 frozen, level 2 an open preview
+        self.assertEqual(self.preflight('false'), 0)
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.4')
+        self.release(api_header(3, frozen=False))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_a_later_preview_release_still_needs_the_levels_below_it(self):
+        self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
+        self.release(api_header(3, frozen=False), tag='1.6.5-ch.3')  # levels 1 and 2 frozen
+        self.release(api_header(2, frozen=False))
+        self.assertEqual(self.preflight('false'), 1)
+        self.assertIn('has API level 2 as a preview, frozen only to level 1, but 1.6.5-ch.3 released frozen API '
+                      'level 2', fr.freeze_problems(self.project.dir)[0])
         self.release(api_header(2, frozen=True))
         self.assertEqual(self.preflight('false'), 0)
+
+    def test_refusal_names_the_first_release_that_froze_the_level(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.9')
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.10')  # sorts before -ch.9 as a string
+        self.release(api_header(2, frozen=False))
+        self.assertIn('but 1.6.5-ch.9 released frozen API level 2', fr.freeze_problems(self.project.dir)[0])
+
+    def test_api_level_lowered_below_a_released_frozen_level_fails(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.2')
+        self.release(api_header(1, frozen=True))
+        self.assertEqual(self.preflight('false'), 1)
+        self.assertIn('has frozen API level 1, but 1.6.5-ch.2 released frozen API level 2',
+                      fr.freeze_problems(self.project.dir)[0])
+        self.release(api_header(1, frozen=False))  # lowered and a preview
+        self.assertEqual(self.preflight('false'), 1)
 
     def test_commit_without_the_header_counts_as_a_preview(self):
         self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')
@@ -723,6 +757,21 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(frozen.splitlines()[0], '1.6.5-ch.4 · Game API 1')
         self.assertNotIn('preview', frozen)
         self.assertEqual(fr.render_notes(dict(self.PLAN, api=None)).splitlines()[0], '1.6.5-ch.4 · No game API')
+
+    def test_notes_name_the_frozen_levels_below_a_preview(self):
+        preview_1 = fr.render_notes(self.PLAN).splitlines()[2]
+        self.assertEqual(preview_1, 'Game API 1 is a preview: a game written for it may need changes to run on a '
+                                    'later release.')
+        preview_2 = fr.render_notes(dict(self.PLAN, api={'level': 2, 'min_level': 1, 'frozen': False}))
+        self.assertEqual(preview_2.splitlines()[0], '1.6.5-ch.4 · Game API 2 (preview)')
+        self.assertEqual(preview_2.splitlines()[2], 'Game API 2 is a preview: a game written for it may need changes '
+                                                    'to run on a later release. Game API 1 is frozen: it no longer '
+                                                    'changes.')
+        preview_4 = fr.render_notes(dict(self.PLAN, api={'level': 4, 'min_level': 2, 'frozen': False}))
+        self.assertIn('Game API 2 to 3 are frozen: they no longer change.', preview_4)
+        frozen_2 = fr.render_notes(dict(self.PLAN, api={'level': 2, 'min_level': 1, 'frozen': True}))
+        self.assertNotIn('frozen', frozen_2)
+        self.assertNotIn('preview', frozen_2)
 
     def test_notes_go_to_the_file_and_the_job_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -238,6 +238,51 @@ TEST_F(GameSaveStoreTest, AFailedRenameKeepsTheWholeTmpForTheNextLoad) {
   EXPECT_EQ(slotBytes(), TAPS4);
 }
 
+// The retro's R5: a failed rename leaves the tmp as the only copy, and the next
+// write must not truncate it before its own write has succeeded.
+TEST_F(GameSaveStoreTest, TwoFailuresInARowKeepTheOnlyCopy) {
+  for (bool* failure : {&fakesd::failOpenWrite, &fakesd::failWrite, &fakesd::failClose}) {
+    SetUp();
+    fakesd::files[STORE] = cat(header(), TAPS3);
+    open();
+    ASSERT_TRUE(slot->post(TAPS4));
+    fakesd::failRename = true;
+    EXPECT_FALSE(saves->flush(*slot, 2000));  // store.bin removed, the tmp holds TAPS4
+    ASSERT_EQ(fakesd::files.count(STORE), 0u);
+
+    const Bytes taps5 = {0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, 0x0A};
+    ASSERT_TRUE(slot->post(taps5));
+    fakesd::ops.clear();
+    *failure = true;
+    EXPECT_FALSE(saves->flush(*slot, 2001));
+    EXPECT_TRUE(slot->dirty());
+    EXPECT_EQ(fakesd::ops.front(), std::string("rename ") + TMP + " " + STORE) << "promoted before the write";
+    EXPECT_EQ(fakesd::files[STORE], cat(header(), TAPS4)) << "the first flush's save stays";
+
+    open();  // as after a restart
+    EXPECT_EQ(slotBytes(), TAPS4);
+  }
+}
+
+TEST_F(GameSaveStoreTest, AFailedPromotionWritesNothingAndKeepsTheTmp) {
+  fakesd::files[TMP] = cat(header(), TAPS3);
+  open();
+  ASSERT_TRUE(slot->post(TAPS4));
+  fakesd::ops.clear();
+  fakesd::failRename = true;
+  EXPECT_FALSE(saves->flush(*slot, 2000));
+  EXPECT_TRUE(slot->dirty());
+  const std::vector<std::string> expected = {std::string("rename ") + TMP + " " + STORE};
+  EXPECT_EQ(fakesd::ops, expected);
+  EXPECT_EQ(fakesd::files[TMP], cat(header(), TAPS3));
+  EXPECT_TRUE(fakelog::any(std::string("cannot rename ") + TMP + " to " + STORE));
+
+  // The retry promotes it, then writes the latest contents.
+  ASSERT_TRUE(saves->flush(*slot, 2001));
+  EXPECT_EQ(fakesd::files[STORE], cat(header(), TAPS4));
+  EXPECT_EQ(fakesd::files.count(TMP), 0u);
+}
+
 TEST_F(GameSaveStoreTest, AFailedRemoveKeepsThePreviousSave) {
   fakesd::files[STORE] = cat(header(), TAPS3);
   open();

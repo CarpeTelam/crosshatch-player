@@ -6,9 +6,11 @@ A fork release is tagged <upstream X.Y.Z>-ch.<N>, for example 1.6.5-ch.7. Device
 only N, so every release image must report exactly its tag, and N must never be reused. The workflow calls these
 subcommands in order; each one fails the run rather than let a release go out that devices would mishandle.
 
-  preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it, and, once
-                  a -ch.N tag's commit has API_LEVEL_FROZEN true, a commit that has it true too (a dry run only warns
-                  about both); fails when another active workflow triggers on `release` or builds a gh_release env
+  preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it, and a commit
+                  that keeps frozen every game API level a -ch.N tag's commit froze: its API_LEVEL is above each such
+                  level (an open preview may be), or equal to the highest with API_LEVEL_FROZEN true (a dry run only
+                  warns about both); fails when another active workflow triggers on `release` or builds a gh_release
+                  env
   prepare         N = 1 + the largest number after "-ch." in any tag; checks the [crosspoint] version line, rewrites
                   it to the tag in this checkout only, and finds the release envs: every <board>-gh_release env that
                   sets FREEINK_CAP_GAMES=1; reads the game API level; writes the plan (tag, commit, envs, asset names,
@@ -18,7 +20,8 @@ subcommands in order; each one fails the run rather than let a release go out th
                   tag; copies it to <dist>/crosspoint-<tag>-<board>.bin at once, because a later env's `pio run` may
                   remove all of .pio/build (PlatformIO cleans it when the project checksum changes)
   pack-games      packs every games/<id>/ with scripts/pack_game.py; no games/<id>/ is valid
-  notes           release notes naming the game API level, with each asset's SHA-256 and each package hash
+  notes           release notes naming the game API level, and the frozen levels below it when it is a preview, with
+                  each asset's SHA-256 and each package hash
   recheck         before publishing: no tag has taken N since the plan was made
   expected-assets the assets the release must hold, one "<name><TAB><size>" per line
 
@@ -323,24 +326,36 @@ def tag_api_level(repo_dir, tag):
 
 
 def freeze_problems(repo_dir):
-    """After the freezing release (the first from a commit with API_LEVEL_FROZEN true), every release is frozen.
+    """Refuse a release only when a level an earlier release shipped as frozen is no longer frozen here (AD-19).
 
-    A frozen release is a -ch.N tag whose commit has API_LEVEL_FROZEN true; the tags come from the checkout, which the
-    workflow fetches with full history.
+    A level is frozen at a commit when it is below API_LEVEL, or is API_LEVEL with API_LEVEL_FROZEN true. So the
+    release is refused when its API_LEVEL is below a level a -ch.N tag's commit had frozen, or equal to it with
+    API_LEVEL_FROZEN false; an API_LEVEL that is an open preview above every level released as frozen is allowed. That
+    is: fork_common.frozen_top of the commit must be at least that of every -ch.N tag's commit. The tags come from the
+    checkout, which the workflow fetches with full history.
     """
     level = read_api_level(repo_dir)
-    if level is not None and level.frozen:
-        return []
+    top = fork_common.frozen_top(level)
     tags = fork_common.git_text('tag', '--list', cwd=repo_dir).splitlines()
-    for tag in sorted(tag for tag in tags if BUILD_NUMBER_IN_TAG.search(tag)):
-        released = tag_api_level(repo_dir, tag)
-        if released is not None and released.frozen:
-            state = 'has no ApiLevel.h' if level is None else f'has API level {level.level} as a preview'
-            return [
-                f'the commit to release {state}, but {tag} released frozen API level {released.level}; after the '
-                'freeze every release needs API_LEVEL_FROZEN true'
-            ]
-    return []
+    released_top, released_tag = 0, None
+    # In release order, so a refusal names the first release that froze the level.
+    releases = sorted((int(BUILD_NUMBER_IN_TAG.search(tag)[1]), tag) for tag in tags if BUILD_NUMBER_IN_TAG.search(tag))
+    for _, tag in releases:
+        tag_top = fork_common.frozen_top(tag_api_level(repo_dir, tag))
+        if tag_top > released_top:
+            released_top, released_tag = tag_top, tag
+    if top >= released_top:
+        return []
+    if level is None:
+        state = 'has no ApiLevel.h'
+    elif level.frozen:
+        state = f'has frozen API level {level.level}'
+    else:
+        state = f'has API level {level.level} as a preview' + (f', frozen only to level {top}' if top else '')
+    return [
+        f'the commit to release {state}, but {released_tag} released frozen API level {released_top}; a release '
+        'keeps frozen every level an earlier release froze, and only a level above them may be a preview'
+    ]
 
 
 def preflight(args):
@@ -669,12 +684,22 @@ def pack_games(args):
 # --- notes and publishing -----------------------------------------------------------------------------------------
 
 
+def frozen_below_preview(api):
+    """' Game API <n> is frozen ...' for the levels this host runs below its preview level, or '' when none."""
+    first, last = api['min_level'], api['level'] - 1
+    if last < first:
+        return ''
+    if first == last:
+        return f' Game API {last} is frozen: it no longer changes.'
+    return f' Game API {first} to {last} are frozen: they no longer change.'
+
+
 def render_notes(plan):
     api = plan['api']
     lines = [f'{plan["tag"]} · {api_title(api)}', '']
     if api is not None and not api['frozen']:
         lines += [f'Game API {api["level"]} is a preview: a game written for it may need changes to run on a later '
-                  'release.', '']
+                  'release.' + frozen_below_preview(api), '']
     lines += [
         f'Fork release {plan["tag"]}: build {plan["build_number"]} on CrossPoint Reader {plan["base_version"]}, '
         f'from commit {plan["commit"]}.',

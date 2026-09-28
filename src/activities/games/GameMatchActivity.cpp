@@ -3,15 +3,12 @@
 #include "GameMatchActivity.h"
 
 #include <Arduino.h>
-#include <Codec.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <Memory.h>
 
 #include <cstdio>
-#include <span>
 #include <utility>
 
 #include "MappedInputManager.h"
@@ -80,8 +77,7 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
 GameMatchActivity::~GameMatchActivity() {
   if (!slotLeaked) return;
   // A leaked VM task may still call ch.store.set; its slot must outlive it.
-  static_cast<void>(store.release());
-  static_cast<void>(storeStorage.release());
+  store.leak();
 }
 
 void GameMatchActivity::onEnter() {
@@ -90,29 +86,20 @@ void GameMatchActivity::onEnter() {
   app.setScreen(&GameMatchActivity::viewScreen, this);
   viewport = GameViewport::forRenderer(renderer);
 
-  // The slot, then saves' buffer; GameAssets restores store.bin into the slot.
-  constexpr size_t slotBytes = GameScript::Codec::STORE_LIMIT;
-  storeStorage = HalMemory::allocatePsram(slotBytes + GameSaveStore::BUFFER_BYTES);
-  if (storeStorage) {
-    store = makeUniqueNoThrow<GameScript::StoreSlot>(storeStorage.get(), slotBytes);
-    saves = makeUniqueNoThrow<GameSaveStore>(
-        manifest.id, std::span<uint8_t>(storeStorage.get() + slotBytes, GameSaveStore::BUFFER_BYTES), millis());
-  }
-  if (!store || !saves) {
+  if (!store.allocate(manifest.id, millis())) {
     LOG_ERR("GAME", "OOM: ch.store slot");
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
     return;
   }
   GameAssets assets;
-  const GameAssets::LoadResult loaded = assets.load(manifest.id, *saves, *store);
+  // GameAssets restores store.bin into the slot.
+  const GameAssets::LoadResult loaded = assets.load(manifest.id, store.saves(), store.slot());
   if (loaded != GameAssets::LoadResult::Ok) {
     fail(StrId::STR_GAMES_START_FAILED, I18N.get(loadFailureReason(loaded)));
     return;
   }
   replay.loadFonts(renderer);
-  const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
-                                  replay.textMetrics()};
-  auto created = GameVM::create(std::move(assets), canvas, manifest.id, *store);
+  auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot());
   // Both failures are logged with their cause; each is memory (PSRAM, or the task's stack).
   if (!created || !created->start()) {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
@@ -211,11 +198,11 @@ void GameMatchActivity::stopVm() {
 }
 
 void GameMatchActivity::flushStore() {
-  if (!store || !saves) return;  // the match never got that far
+  if (!store.ready()) return;  // the match never got that far
   // Safe with a leaked task too: the slot's mutex is held only for a copy inside
   // a locked binding, which an abandon never deletes nor leaves suspended, so the
   // flush waits at most one copy, and it saves every set until the leak.
-  saves->flush(*store, millis());
+  store.flush(millis());
 }
 
 void GameMatchActivity::abandonVm() {
@@ -295,12 +282,12 @@ void GameMatchActivity::loopPlaying() {
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
-  GameScript::InputEvent event;
+  GameCore::GameEvent event;
   if (GameTouch::toEvent(readGesture(), renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
     vm->postInput(event);
   }
   vm->pollTimer();
-  saves->flushIfDue(*store, millis());
+  store.flushIfDue(millis());
 
   const uint32_t frame = vm->frameGen();
   if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {
@@ -315,7 +302,7 @@ void GameMatchActivity::loopView() {
   // call that was running when the view opened; neither posts input or timers.
   if (state != MatchState::Error) {
     if (!vmHealthy()) return;
-    saves->flushIfDue(*store, millis());
+    store.flushIfDue(millis());
   }
   // Back resumes from the pause menu, leaves from the error view, and does
   // nothing in the end-of-round menu (MatchLifecycle).

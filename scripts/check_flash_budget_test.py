@@ -98,6 +98,50 @@ Symbol table '.symtab' contains 14 entries:
     44: 00000000   128 OBJECT  GLOBAL DEFAULT   31 g_buf
 """
 
+# Real `xtensa-esp32s3-elf-readelf -W -S -s` output of a scratch object built with the x4pro C++ flags that matter
+# here (-Os -ffunction-sections -fdata-sections -fno-rtti -fno-exceptions), shortened as above. Its source: in
+# namespace GameCore, `int step(int)`, `inline Big& instance() { static Big big; ... }` (Big has a constructor and
+# 4,096 B), `template <typename T> struct Pool { static char storage[1024]; }`, and
+# `template <typename T> char* scratch() { static char buf[256]; ... }`; at global scope an upstream-style
+# `template <typename T> struct Store { static char* getInstance() { static char data[216]; ... } }`; and
+# `char* use()` calling instance(), Pool<int>::storage, Store<int>::getInstance(), and scratch<int>().
+REAL_COMDAT_READELF_OUTPUT = """\
+There are 11 section headers, starting at offset 0x7c0:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .group            GROUP           00000000 000034 000008 04     27  26  4
+  [ 4] .group            GROUP           00000000 00004c 000010 04     27  24  4
+  [11] .text._ZN8GameCore4stepEi PROGBITS        00000000 000084 000007 00  AX  0   0  4
+  [12] .text._Z3usev     PROGBITS        00000000 00008c 000043 00  AX  0   0  4
+  [14] .bss._ZN8GameCore4PoolIiE7storageE NOBITS          00000000 0000cf 000400 00 WAG  0   0  1
+  [15] .bss._ZZN8GameCore7scratchIiEEPcvE3buf NOBITS          00000000 0000cf 000100 00 WAG  0   0  1
+  [16] .bss._ZZN5StoreIiE11getInstanceEvE4data NOBITS          00000000 0000cf 0000d8 00 WAG  0   0  1
+  [17] .bss._ZGVZN8GameCore8instanceEvE3big NOBITS          00000000 0000d0 000008 00 WAG  0   0  8
+  [18] .bss._ZZN8GameCore8instanceEvE3big NOBITS          00000000 0000d0 001000 00 WAG  0   0  1
+  [25] .xt.prop._ZGVZN8GameCore8instanceEvE3big PROGBITS        00000000 0001a0 00000c 00   G  0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+
+Symbol table '.symtab' contains 11 entries:
+   Num:    Value  Size Type    Bind   Vis      Ndx Name
+     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     7: 00000000     0 SECTION LOCAL  DEFAULT   14 .bss._ZN8GameCore4PoolIiE7storageE
+    23: 00000000     7 FUNC    GLOBAL DEFAULT   11 _ZN8GameCore4stepEi
+    24: 00000000     8 OBJECT  WEAK   DEFAULT   17 _ZGVZN8GameCore8instanceEvE3big
+    25: 00000000  4096 OBJECT  WEAK   DEFAULT   18 _ZZN8GameCore8instanceEvE3big
+    26: 00000000  1024 OBJECT  WEAK   DEFAULT   14 _ZN8GameCore4PoolIiE7storageE
+    27: 00000000   216 OBJECT  WEAK   DEFAULT   16 _ZZN5StoreIiE11getInstanceEvE4data
+    28: 00000000   256 OBJECT  WEAK   DEFAULT   15 _ZZN8GameCore7scratchIiEEPcvE3buf
+    29: 00000000    67 FUNC    GLOBAL DEFAULT   12 _Z3usev
+    30: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND __cxa_guard_acquire
+    31: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND _ZN3BigC1Ev
+"""
+
 
 def write_fake_tools(bin_dir):
     """A stand-in toolchain: `xt-size` and `xt-readelf` print the file they are given, which the tests fill with
@@ -119,7 +163,7 @@ def size_output(sections):
 
 def readelf_output(sections=(), symbols=()):
     """readelf -W -S -s text in the tool's layout. sections: (name, type, flags, size); symbols: (name, type, size,
-    section name or UND/COM/ABS)."""
+    section name or UND/COM/ABS[, binding, GLOBAL when left out])."""
     lines = [
         f'There are {len(sections) + 1} section headers, starting at offset 0x2d8:',
         '',
@@ -133,10 +177,11 @@ def readelf_output(sections=(), symbols=()):
         lines.append(f'  [{number:2}] {name:<17} {kind:<15} 00000000 000034 {size:06x} 00 {flags:>3}  0   0  4')
     lines += ['', f"Symbol table '.symtab' contains {len(symbols) + 1} entries:", '   Num:    Value  Size Type    Bind   Vis      Ndx Name',
               '     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND ']
-    for number, (name, kind, size, where) in enumerate(symbols, 1):
+    for number, (name, kind, size, where, *bind) in enumerate(symbols, 1):
         ndx = where if where in ('UND', 'COM', 'ABS') else str(index[where])
         size_text = f'{size:5}' if size < 100_000 else f'0x{size:x}'
-        lines.append(f'{number:6}: 00000000 {size_text} {kind:<7} GLOBAL DEFAULT {ndx:>4} {name}')
+        binding = bind[0] if bind else 'GLOBAL'
+        lines.append(f'{number:6}: 00000000 {size_text} {kind:<7} {binding:<6} DEFAULT {ndx:>4} {name}')
     return '\n'.join(lines) + '\n'
 
 
@@ -407,8 +452,9 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(sections[29].flags, 'A')
         self.assertEqual(sections[36].flags, '')
         self.assertEqual(len(symbols), 14)
-        self.assertIn(cfb.Symbol('g_ci', 'OBJECT', 160, '28'), symbols)
-        self.assertIn(cfb.Symbol('', 'NOTYPE', 0, 'UND'), symbols)
+        self.assertIn(cfb.Symbol('g_ci', 'OBJECT', 160, '28', 'GLOBAL'), symbols)
+        self.assertIn(cfb.Symbol('g_inline', 'OBJECT', 100, '27', 'WEAK'), symbols)
+        self.assertIn(cfb.Symbol('', 'NOTYPE', 0, 'UND', 'LOCAL'), symbols)
 
     def test_readelf_output_problems(self):
         problems, largest = cfb.object_problems(*cfb.parse_readelf(REAL_READELF_OUTPUT)[:2])
@@ -422,6 +468,118 @@ class ParseTest(unittest.TestCase):
         self.assertNotIn('k_table', text)
         self.assertNotIn('g_inline', text)
         self.assertEqual(len(problems), 5)
+
+    def test_real_comdat_escapes(self):
+        """A game's inline function static, class-template static member, and function-template static are COMDAT;
+        each counts because the object defines another GameCore symbol, and the upstream-style Store<int> does not."""
+        sections, symbols, counts = cfb.parse_readelf(REAL_COMDAT_READELF_OUTPUT)
+        self.assertEqual(counts, (len(sections), len(symbols)))
+        self.assertEqual(cfb.game_names([(sections, symbols)]), {'GameCore', 'use'})
+        problems, largest = cfb.object_problems(sections, symbols, {'GameCore', 'use'})
+        self.assertEqual(largest, (4096, '_ZZN8GameCore8instanceEvE3big'))
+        self.assertEqual(problems, [
+            'static initializer: guard variable _ZGVZN8GameCore8instanceEvE3big of a dynamically initialized static',
+            'mutable static _ZZN8GameCore8instanceEvE3big is 4,096 B in .bss._ZZN8GameCore8instanceEvE3big '
+            '(limit 64 B)',
+            'mutable static _ZN8GameCore4PoolIiE7storageE is 1,024 B in .bss._ZN8GameCore4PoolIiE7storageE '
+            '(limit 64 B)',
+            'mutable static _ZZN8GameCore7scratchIiEEPcvE3buf is 256 B in .bss._ZZN8GameCore7scratchIiEEPcvE3buf '
+            '(limit 64 B)',
+        ])
+        # Without GameCore among the game names only the guard is left: a guard fails in any section.
+        problems, largest = cfb.object_problems(sections, symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('guard variable _ZGVZN8GameCore8instanceEvE3big', problems[0])
+        self.assertIsNone(largest)
+
+    def test_outer_name(self):
+        cases = {
+            '_ZZN8GameCore8instanceEvE3big': 'GameCore',  # GameCore::instance()::big
+            '_ZGVZN8GameCore8instanceEvE3big': 'GameCore',  # its guard variable
+            '_ZN8GameCore4PoolIiE7storageE': 'GameCore',  # GameCore::Pool<int>::storage
+            '_ZZN8GameCore7scratchIiEEPcvE3buf': 'GameCore',  # GameCore::scratch<int>()::buf
+            '_ZZNK10GameScript7LuaGame4drawEvE4temp': 'GameScript',  # a const member function's local static
+            '_ZZZN8GameCore3runEvENKUlvE_clEvE1x': 'GameCore',  # a lambda's local static inside GameCore::run()
+            '_ZTVN10GameScript7LuaGameE': 'GameScript',  # vtable
+            '_ZGRN8GameCore5spareE_': 'GameCore',  # the temporary a GameCore::spare reference extends
+            '_ZTV9GameClock': 'GameClock',
+            '_ZN9GameArena6bufferE': 'GameArena',  # a class's static member
+            '_ZZ16topLevelInstancevE3big': 'topLevelInstance',  # a free function's local static
+            '_ZL5s_buf': 's_buf',
+            '_Z12gameHostCapsv': 'gameHostCaps',
+            '_ZZN5StoreIiE11getInstanceEvE4data': 'Store',
+            'g_inline': 'g_inline',  # a C-style name is not mangled
+            '_ZNSt8__detail9__variant12__gen_vtableE': None,  # std::
+            '_ZN12Game': None,  # truncated
+            '_ZTHN': None,
+        }
+        for name, outer in cases.items():
+            with self.subTest(name):
+                self.assertEqual(cfb.outer_name(name), outer)
+
+    def test_source_names(self):
+        cases = {
+            '_ZZN16PersistableStoreI9GameStoreE11getInstanceEvE8instance': {'PersistableStore', 'GameStore'},
+            '_ZN6HolderIN9GameArena4SlabEE5valueE': {'Holder', 'GameArena', 'Slab', 'value'},
+            '_ZZNKSt4hashIN8GameCore1XEEclERKS1_E3tbl': {'hash', 'GameCore', 'X', 'tbl'},
+            '_ZZ7processIN8GameCore5StateEEvvE7scratch': {'process', 'GameCore', 'State', 'scratch'},
+            '_ZN7freeink2ui12optionDialogILj24EEEvv': {'freeink', 'ui', 'optionDialog'},
+            'g_inline': {'g_inline'},
+        }
+        for name, expected in cases.items():
+            with self.subTest(name):
+                self.assertLessEqual(expected, cfb.source_names(name))
+        self.assertNotIn('GameCore', cfb.source_names('_ZN7freeink2ui12optionDialogILj24EEEvv'))
+
+    def test_declared_game_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            header = root / 'src' / 'games' / 'GameTouch.h'
+            header.parent.mkdir(parents=True)
+            header.write_text(
+                '#pragma once\n'
+                '#include "x.h"  // namespace Fake {\n'
+                'class GfxRenderer;\n'
+                'namespace fui = freeink::ui;\n'
+                '/* namespace InComment {\n'
+                '   } */\n'
+                'namespace GameTouch {\n'
+                'namespace detail {\n'
+                'inline const char* k = "{";\n'
+                '}  // namespace detail\n'
+                'struct Gesture {\n'
+                '  struct Inner {};\n'
+                '};\n'
+                '}  // namespace GameTouch\n'
+                'template <typename T>\n'
+                'struct Pool\n'
+                '{\n'
+                '};\n'
+                'class Viewer final : public Base {\n'
+                '};\n'
+                'namespace GameScript::Codec {\n'
+                '}\n'
+            )
+            (root / 'lib' / 'GameCore').mkdir(parents=True)
+            (root / 'lib' / 'GameCore' / 'Session.h').write_text('namespace GameCore {\nclass Session {};\n}\n')
+            (root / 'lib' / 'Other').mkdir(parents=True)
+            (root / 'lib' / 'Other' / 'Other.h').write_text('namespace Upstream {\n}\n')
+            (root / 'src' / 'games' / 'GameArena.cpp').write_text('namespace NotAHeader {\n}\n')
+            self.assertEqual(cfb.declared_game_names(root),
+                             {'GameTouch', 'Pool', 'Viewer', 'GameScript', 'GameCore'})
+
+    def test_game_names_are_global_non_comdat_definitions(self):
+        sections = [('.text.a', 'PROGBITS', 'AX', 8), ('.text.c', 'PROGBITS', 'AXG', 8), ('.bss.b', 'NOBITS', 'WA', 4)]
+        symbols = [
+            ('_ZN8GameCore4stepEi', 'FUNC', 8, '.text.a'),
+            ('_ZN9GameArena5countE', 'OBJECT', 4, '.bss.b'),
+            ('_ZN7freeink2ui6dialogEv$isra$0', 'FUNC', 8, '.text.a', 'LOCAL'),  # the compiler's clone of SDK code
+            ('C$0$0', 'OBJECT', 4, '.bss.b', 'LOCAL'),
+            ('_ZN6Upstream3getEv', 'FUNC', 8, '.text.c', 'WEAK'),  # an upstream inline function
+            ('_ZN5Other4callEv', 'NOTYPE', 0, 'UND'),
+        ]
+        parsed = cfb.parse_readelf(readelf_output(sections, symbols))[:2]
+        self.assertEqual(cfb.game_names([parsed]), {'GameCore', 'GameArena'})
 
     def test_hex_symbol_size(self):
         _, symbols, _ = cfb.parse_readelf(readelf_output([('.bss.big', 'NOBITS', 'WA', 200_000)],
@@ -514,13 +672,80 @@ class ObjectsTest(unittest.TestCase):
                   [('table', 'OBJECT', 200_000, '.rodata.table'), ('code', 'FUNC', 500, '.rodata.table')])
         self.assertEqual(self.run_objects(), 0)
 
-    def test_comdat_statics_are_not_the_objects_own(self):
-        # An upstream header's inline singleton, with its guard, lands in every object that uses it.
+    def test_upstream_comdat_statics_are_not_the_objects_own(self):
+        # An upstream header's inline function static lands in every object that uses it.
         self.game('src/games/A.cpp', 'src/games/A.cpp.o',
-                  [('.bss._ZZ3getvE8instance', 'NOBITS', 'WAG', 216), ('.bss._ZGVZ3getvE8instance', 'NOBITS', 'WAG', 8)],
-                  [('_ZZ3getvE8instance', 'OBJECT', 216, '.bss._ZZ3getvE8instance'),
-                   ('_ZGVZ3getvE8instance', 'OBJECT', 8, '.bss._ZGVZ3getvE8instance')])
+                  [('.text.a', 'PROGBITS', 'AX', 8), ('.bss._ZZ3getvE8instance', 'NOBITS', 'WAG', 216)],
+                  [('_ZN8GameCore4stepEi', 'FUNC', 8, '.text.a'),
+                   ('_ZZ3getvE8instance', 'OBJECT', 216, '.bss._ZZ3getvE8instance', 'WEAK')])
         self.assertEqual(self.run_objects(), 0)
+
+    def comdat_escape(self, symbol, size, guard=None):
+        """A game library object that defines GameCore::step(), and a game object holding a GameCore COMDAT static
+        (and its guard variable): the static's own object need not define anything in GameCore."""
+        self.game('lib/GameCore/Session.cpp', 'lib0a1/GameCore/Session.cpp.o', [('.text.a', 'PROGBITS', 'AX', 8)],
+                  [('_ZN8GameCore4stepEi', 'FUNC', 8, '.text.a')])
+        sections = [(f'.bss.{symbol}', 'NOBITS', 'WAG', size)]
+        symbols = [(symbol, 'OBJECT', size, f'.bss.{symbol}', 'WEAK')]
+        if guard:
+            sections.append((f'.bss.{guard}', 'NOBITS', 'WAG', 8))
+            symbols.append((guard, 'OBJECT', 8, f'.bss.{guard}', 'WEAK'))
+        self.game('src/games/A.cpp', 'src/games/A.cpp.o', sections, symbols)
+        return self.run_objects()
+
+    def test_inline_function_static_in_a_game_namespace_fails(self):
+        # GameCore::instance()::big, a Meyers singleton in a header inline function, and its guard.
+        code = self.comdat_escape('_ZZN8GameCore8instanceEvE3big', 4096, '_ZGVZN8GameCore8instanceEvE3big')
+        self.assertEqual(code, 1)
+        summary = self.summary.read_text()
+        self.assertIn('guard variable _ZGVZN8GameCore8instanceEvE3big', summary)
+        self.assertIn('mutable static _ZZN8GameCore8instanceEvE3big is 4,096 B', summary)
+
+    def test_class_template_static_member_in_a_game_namespace_fails(self):
+        self.assertEqual(self.comdat_escape('_ZN8GameCore4PoolIiE7storageE', 1024), 1)  # GameCore::Pool<int>::storage
+        self.assertIn('mutable static _ZN8GameCore4PoolIiE7storageE is 1,024 B', self.summary.read_text())
+
+    def test_function_template_static_in_a_game_namespace_fails(self):
+        # GameCore::scratch<int>()::buf, in a function template instantiated in a game .cpp.
+        self.assertEqual(self.comdat_escape('_ZZN8GameCore7scratchIiEEPcvE3buf', 256), 1)
+        self.assertIn('mutable static _ZZN8GameCore7scratchIiEEPcvE3buf is 256 B', self.summary.read_text())
+
+    def test_small_comdat_static_in_a_game_namespace_counts_as_largest(self):
+        self.assertEqual(self.comdat_escape('_ZN8GameCore4PoolIiE5countE', 64), 0)
+        self.assertIn('Largest mutable static: 64 B (`_ZN8GameCore4PoolIiE5countE`', self.summary.read_text())
+
+    def test_upstream_template_instantiated_with_a_game_type_fails(self):
+        # A constant-initialized static has no guard: only its size can catch it.
+        cases = (
+            '_ZZN16PersistableStoreI9GameArenaE11getInstanceEvE8instance',  # PersistableStore<GameArena> singleton
+            '_ZN6HolderIN8GameCore4SlabEE5valueE',  # Holder<GameCore::Slab>::value
+            '_ZZNKSt4hashIN8GameCore1XEEclERKS1_E3tbl',  # std::hash<GameCore::X>::operator()'s static
+            '_ZZ7processIN8GameCore5StateEEvvE7scratch',  # process<GameCore::State>()::scratch
+        )
+        for symbol in cases:
+            with self.subTest(symbol):
+                self.game('src/games/GameArena.cpp', 'src/games/GameArena.cpp.o', [('.text.a', 'PROGBITS', 'AX', 8)],
+                          [('_ZN9GameArena5resetEv', 'FUNC', 8, '.text.a')])
+                self.assertEqual(self.comdat_escape(symbol, 512), 1)
+                self.assertIn(f'mutable static {symbol} is 512 B', self.summary.read_text())
+
+    def test_header_only_game_namespace_counts(self):
+        # GameTouch has no .cpp, so no game object defines a GameTouch symbol; its header declares the namespace.
+        header = self.project / 'src' / 'games' / 'GameTouch.h'
+        header.parent.mkdir(parents=True, exist_ok=True)
+        header.write_text('#pragma once\nnamespace GameTouch {\n'
+                          'inline char* buffer() { static char b[512]; return b; }\n}\n')
+        self.game('src/games/A.cpp', 'src/games/A.cpp.o', [('.bss._ZZN9GameTouch6bufferEvE1b', 'NOBITS', 'WAG', 512)],
+                  [('_ZZN9GameTouch6bufferEvE1b', 'OBJECT', 512, '.bss._ZZN9GameTouch6bufferEvE1b', 'WEAK')])
+        self.assertEqual(self.run_objects(), 1)
+        self.assertIn('mutable static _ZZN9GameTouch6bufferEvE1b is 512 B', self.summary.read_text())
+
+    def test_comdat_guard_variable_fails_outside_game_names_too(self):
+        # A guard means a game object runs a dynamic initializer, whoever declared the static.
+        self.game('src/games/A.cpp', 'src/games/A.cpp.o', [('.bss._ZGVZ3getvE8instance', 'NOBITS', 'WAG', 8)],
+                  [('_ZGVZ3getvE8instance', 'OBJECT', 8, '.bss._ZGVZ3getvE8instance', 'WEAK')])
+        self.assertEqual(self.run_objects(), 1)
+        self.assertIn('guard variable _ZGVZ3getvE8instance', self.summary.read_text())
 
     def test_static_initializer_sections(self):
         for name, kind in (('.ctors', 'PROGBITS'), ('.init_array', 'INIT_ARRAY'), ('.ctors.00100', 'PROGBITS'),

@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-26 against a376afc. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-26 against a376afc; hand-edited 2026-09-28 for the epic-script-runtime retro's AI-12. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## crosshatch-player
 
@@ -8,7 +8,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 ## Policy
 
 - Keep the diff against upstream `develop` minimal so upstream merges stay clean: put fork-only code in new files or behind `FREEINK_DEVICE_*` / `FREEINK_CAP_*` guards; never reformat, rename, or reorganize upstream code you are not otherwise changing.
-- Change a file that upstream also has only if `docs/crosshatch/upstream-touches.md` lists it; the `Upstream touch ledger` PR job enforces this, and `python3 scripts/check_upstream_touches.py` runs the same check locally.
+- Change a file that upstream also has only if `docs/crosshatch/upstream-touches.md` lists it; the `Upstream touch ledger` PR job enforces this, and `python3 scripts/check_upstream_touches.py` runs the same check locally; it needs an `upstream` remote (URL below) with `develop` fetched and an unshallowed clone (`git fetch --unshallow` when `git rev-parse --is-shallow-repository` prints `true`).
 - Never move the `freeink-sdk` submodule pointer or edit `.skills/` for fork-only work; propose those changes upstream.
 - Shared code must still build and run on the ESP32-C3 (~380 KB RAM, no PSRAM); apply the memory and stack rules below in S3-only code too.
 - Push feature branches to `origin` (this fork) and open PRs into its `develop`. Title every PR as a Conventional Commit (`type: subject`, types `feat` `fix` `docs` `style` `refactor` `perf` `test` `build` `ci` `chore` `revert`); the `Title Check` job (`amannn/action-semantic-pull-request`) fails any other title.
@@ -22,20 +22,23 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Activity lifecycle and navigation: `docs/activity-manager.md`.
 - Cache file formats and version history: `docs/file-formats.md`.
 - Before allocating memory, touching storage/input/display/i18n, writing branching or state logic, adding a feature/setting/dependency, or refactoring, read the matching `.skills/<name>/SKILL.md` (`heap-discipline`, `hal-and-abstractions`, `control-flow-clarity`, `scope-discipline`, `refactor-for-review`).
+- Game fixtures (test games and fault scripts) live in `test/game_script/fixtures/`, never `games/`, which the release packs.
+- Orchestrated epics (one agent running parallel build agents): `docs/crosshatch/orchestrated-epics.md`; a build agent whose prompt says it runs for an orchestrator follows its Build-agent brief.
 
 ## Running and verifying
 
-- Run `git submodule update --init --recursive` before any firmware build; `freeink-sdk/` is empty in fresh and cloud clones, and every SDK lib dep symlinks into it.
+- Run `git submodule update --init --recursive` before any firmware build; `freeink-sdk/` is empty in fresh and cloud clones and in every new git worktree, and every SDK lib dep symlinks into it.
 - See a UI change running without hardware: the desktop simulator skill `.claude/skills/run-crosshatch-player/` (`sim.sh setup`, `build x4pro`, `start`, `tap`, `ss`) builds the firmware natively and screenshots it headless.
 - Iterate with `pio run -e x4pro` and `pio run -e sticky`; bare `pio run` builds only the C3 `default` env. Before a PR also build `default`, `x4c`, and `papermono`: CI builds all five, and a fix for one board has broken another's build (049c2b5, 4598fa2).
-- Use pioarduino PlatformIO Core 6.1.19, not `pip install platformio`, and pin `pioarduino==6.1.19` inside `~/.platformio/penv`; without it the custom-sdkconfig envs fail with "No module named 'SCons.Tool.FortranCommon'" (see `.github/workflows/ci.yml`).
-- Behind the agent proxy, `pio` package downloads fail TLS with "UnknownIssuer" because the espressif32 platform points `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` at the penv's own certifi bundle; append the proxy CA (`/root/.ccr/ca-bundle.crt` in cloud sessions) to the `cacert.pem` that `~/.platformio/penv/bin/python -c "import certifi; print(certifi.where())"` prints (`~/.platformio/penv/lib/python3.11/site-packages/certifi/cacert.pem` here).
+- Use pioarduino PlatformIO Core 6.1.19 from PyPI (`uv tool install pioarduino==6.1.19`; the agent proxy returns 403 for GitHub archive URLs), not `pip install platformio`, and pin `pioarduino==6.1.19` inside `~/.platformio/penv`; without it the custom-sdkconfig envs fail with "No module named 'SCons.Tool.FortranCommon'" (`.github/workflows/ci.yml` has the pin and the reason; CI's own install from a GitHub archive does not work behind the proxy).
+- Behind the agent proxy, `pio` package downloads fail TLS with "UnknownIssuer" because the espressif32 platform points `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` at the penv's own certifi bundle; append the proxy CA (`/root/.ccr/ca-bundle.crt` in cloud sessions) to the `cacert.pem` that `~/.platformio/penv/bin/python -c "import certifi; print(certifi.where())"` prints (`~/.platformio/penv/lib/python3.11/site-packages/certifi/cacert.pem` here), and also to the certifi bundle of the environment that runs `pio` itself (`~/.local/share/uv/tools/pioarduino/lib/python3.11/site-packages/certifi/cacert.pem` for a `uv tool` install).
 - Unit tests are host GoogleTest, not `pio test`: `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j`. Delete `build/test` before switching to `pio run -t unit-tests`, which uses a different CMake generator.
 - Static analysis matching CI: `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`.
-- Format with `./bin/clang-format-fix` and no arguments before committing, matching CI's whole-tree check; `-g` skips staged and new files. It exits 1 below clang-format 21; never run `clang-format` directly, since the wrapper excludes generated and vendored sources.
+- Format with `./bin/clang-format-fix` and no arguments as the last step before committing, after every edit, matching CI's whole-tree check; then run it again and confirm `git status` shows nothing new. Keep any formatting-only change it makes to fork files outside your paths, never revert it, and name it (4779ab69, aebea6f4, 6165a741); if it changes an upstream file the ledger does not list, stop and report it. `-g` skips staged and new files. It exits 1 below clang-format 21; never run `clang-format` directly, since the wrapper excludes generated and vendored sources.
 - CI runs only on pull requests here (the `ci.yml` push trigger is `master`, which this fork does not use); open a PR to get a CI result.
 - Add a fork-only CI check as a job in `.github/workflows/crosshatch-ci.yml` and list it in the `Crosshatch Test Status` job's `needs`; never edit upstream's `ci.yml`. Branch protection requires only `Test Status` and `Crosshatch Test Status`.
-- A ticket that adds or changes a CI-only gate or workflow runs it once from a fresh clone, not an incremental tree, before it counts as built, and its plan's Verification says so; the flash budget gate passed incrementally and failed on CI's fresh tree (f3ba9e54).
+- A ticket that adds or changes a CI-only gate or workflow runs it once from a fresh clone, not an incremental tree, before it counts as built, and its plan's Verification says so; the flash budget gate passed incrementally and failed on CI's fresh tree (f3ba9e54). When `git clone` is unavailable, a `git archive <commit>` tree plus every submodule's archive, nested ones included (recipe in `docs/crosshatch/orchestrated-epics.md`), counts, for a gate that reads no git history.
+- Delete a finished worktree or scratch clone once its work is merged: each takes 1.5–1.8 GB, and a full disk half-installs shared `~/.platformio/packages`.
 - Never run `git clean -fdX`; it deletes the gitignored `platformio.local.ini`. For a stale-scaffold "multiple definition of 'app_main'" error, use the `rm -rf` in `platformio.ini`.
 
 ## Conventions that differ from defaults
@@ -52,6 +55,6 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 
 - Never take `RenderLock` in an activity destructor; `ActivityManager` already holds the non-recursive render mutex while destroying activities, so it deadlocks (12cc816).
 - Refactors of shared helpers have silently dropped earlier targeted fixes: NFC filename normalization (#3600, fixed in #3630) and Hangul line breaking (#2288, fixed in #3700). Before rewriting a function, read its history with `git log -L`; cloud clones are shallow, so run `git fetch --unshallow` first.
-- Never run `sim.sh setup` or a simulator build while a firmware `pio run` is in progress; the changed `platformio.local.ini` changes PlatformIO's project checksum, and it wipes `.pio/build` mid-build. `pio project metadata` on a fresh tree likewise empties the env's build dir, which failed the flash budget job on PR #9 (f3ba9e54).
+- Never run two builds at once against one checkout or one `~/.platformio`, and never `sim.sh setup` or a simulator build while a firmware `pio run` is in progress; the changed `platformio.local.ini` changes PlatformIO's project checksum, and it wipes `.pio/build` mid-build. When several agents share a machine, wrap every `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build in one shared `flock <lock-file> sh -c '<commands>'` (`flock <lock-file> a && b` locks only `a`). `pio project metadata` on a fresh tree likewise empties the env's build dir, which failed the flash budget job on PR #9 (f3ba9e54).
 
 <!-- /bmad:context -->

@@ -19,6 +19,10 @@
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
+# - Layer check: fails an #include edge of the game code (lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
+#   src/activities/games) that the spine's layer table does not allow, any other source file that includes
+#   lib/GameScript or lib/lua, and a Screens file that names GameScript (retro AI-5). scripts/check_layers.py holds
+#   the table as data and how to run it locally.
 name: Crosshatch CI
 
 on:
@@ -224,6 +228,21 @@ jobs:
       - name: Check the frozen API levels
         run: python3 scripts/check_api_freeze.py --base-ref "origin/$GITHUB_BASE_REF"
 
+  layer-check:
+    name: Layer check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Reads only the working tree: neither history nor the submodule (SDK headers are classified by name).
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Check the game code's include edges
+        run: python3 scripts/check_layers.py
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -234,12 +253,31 @@ jobs:
       - simulator-build
       - fork-script-tests
       - api-freeze
+      - layer-check
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
       - name: Fail because needed jobs failed
-        # Fail if any job failed or was cancelled (skipped jobs are ok)
+        # Fail if any job failed or was cancelled (skipped jobs are ok). A push cancels the run of the commit it
+        # supersedes (cancel-in-progress), so a cancelled job passes with a notice when this run's commit is no longer
+        # the PR's head; on the head a cancelled job still fails.
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: exit 1
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            exit 1
+          fi
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)
+          if [ -n "$head" ] && [ -n "$RUN_SHA" ] && [ "$head" != "$RUN_SHA" ]; then
+            echo "::notice::$RUN_SHA is no longer the PR's head ($head); its cancelled jobs do not fail this check."
+            exit 0
+          fi
+          exit 1
       - name: Success
         run: exit 0

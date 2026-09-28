@@ -7,14 +7,21 @@
 struct lua_State;
 struct lua_Debug;
 
+// Lua's throw hook, declared weak in lib/lua/port/luai_throw.h and defined in
+// CallGuard.cpp: records a memory error in the state's guard (recordMemory).
+extern "C" void luaport_memoryerror(lua_State* L);
+
 namespace GameScript {
 
 // The GameVM task's stack (AD-5): 16 KiB of internal RAM.
 inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
 
-// Why the guard stopped a call. Codec: a binding refused a value under AD-10's
-// limits (ch.store.set), which ends the call as surely as a state over its limit.
-enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Codec };
+// Why the guard stopped a call. Binding: a binding hit a fault the game contract
+// says stops the game (a store over AD-10's limit, a full frame, ch.gfx outside
+// draw, a table call over its element limit, too little stack for a binding),
+// which ends the call as surely as a state over its limit. Memory: Lua threw a
+// memory error (the heap cap) during the call (recordMemory).
+enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Binding, Memory };
 
 // The limits on one call into a game, enforced from a single Lua hook (AD-6, and
 // the owner's stack decision of 2026-09-27): the instruction budget, the cancel
@@ -72,10 +79,22 @@ class CallGuard {
 
   static void hook(lua_State* L, lua_Debug* ar);
 
-  // From a binding: records a Codec fault with `message`, prefixed with the calling
+  // From a binding: records a Binding fault with `message`, prefixed with the calling
   // script's chunk and line, and raises it; like every fault it is sticky, so the
   // script's own pcall cannot keep the call going. Does not return.
   int raise(lua_State* L, const char* message);
+  // raise() without the chunk and line: records a Binding fault whose message is
+  // `literal` itself (kept until the next arm(), so a string literal; raise()
+  // passes the guard's own text), with no lua_getinfo or formatting, for a binding
+  // that runs short of stack. Does not return.
+  int raiseStatic(lua_State* L, const char* literal);
+  // From Lua's throw hook (luaport_memoryerror, lib/lua/port/luai_throw.h), as Lua
+  // throws a memory error (the heap cap, AD-6): records a Memory fault, unless one
+  // is already recorded, and makes the hook raise it again at the next instruction,
+  // so neither a script's pcall nor a __close that raises while the error unwinds
+  // can outlive it. Returns to Lua, which then throws. Allocation-free, since the
+  // heap is full.
+  void recordMemory(lua_State* L);
 
  private:
   void trip(lua_State* L, lua_Debug* ar, Fault fault);
@@ -86,7 +105,7 @@ class CallGuard {
   uintptr_t floor = 0;
   uintptr_t deepest = UINTPTR_MAX;
   char text[MESSAGE_CAPACITY] = {};
-  // text, or a static literal for the stack and cancel faults.
+  // text, or a static literal for the stack, cancel, and memory faults and raiseStatic.
   const char* shown = text;
 };
 
