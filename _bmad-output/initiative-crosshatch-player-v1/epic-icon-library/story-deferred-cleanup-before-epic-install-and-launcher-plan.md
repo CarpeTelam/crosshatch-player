@@ -3,7 +3,7 @@ title: 'Deferred cleanup before epic-install-and-launcher'
 type: 'chore'
 ticket: '10'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: 'ba4cf74b1b355896ee80f406990cbdfb76d967e3'
 route: 'full'
 route_source: 'auto'
