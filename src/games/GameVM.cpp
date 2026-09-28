@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "FrameReplay.h"
+#include "GameViewport.h"
 
 namespace {
 
@@ -29,8 +30,10 @@ void logRound(const GameCore::Session& session, const GameScript::SoloRounds& ro
 
 }  // namespace
 
-std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameScript::Canvas& canvas, const char* gameId,
-                                       GameScript::StoreSlot& store) {
+std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
+                                       const char* gameId, GameScript::StoreSlot& store) {
+  const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
+                                  replay.textMetrics()};
   constexpr size_t frameBytes = 2 * GameScript::MAX_BYTES;
   auto frameStorage = HalMemory::allocatePsram(frameBytes);
   if (!frameStorage) {

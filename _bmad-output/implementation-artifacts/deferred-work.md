@@ -115,3 +115,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e2r-ai-9-comdat-scan-ci-status-release-preview.md`
   summary: Owner question for AD-19: the release preflight passes a commit that raises `API_MIN_LEVEL` above a level an earlier release shipped frozen, so games of that frozen level stop running on the new release although the level stays frozen.
   evidence: `freeze_problems` in `scripts/fork_release.py` compares only `frozen_top` (API_LEVEL and API_LEVEL_FROZEN), as the orchestrator's rule text says; AD-19 allows raising `API_MIN_LEVEL` through a spine update. Decide whether the preflight should also refuse it, or accept it as the spine update's job.
+
+## e2r-ai-5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e2r-ai-5-screens-layering-and-layer-check.md`
+  summary: `scripts/check_layers.py`'s `LAYERS` mirrors the spine's layer table by hand; nothing compares them, so a spine change that tightens a row is not enforced until someone edits `LAYERS` (AI-10's spine reconciliation should update both, and name `MatchStore` in the Structural Seed).
+  evidence: The script's docstring asks for both in one commit; a loosened spine row without a `LAYERS` change fails the Layer check job loudly, a tightened one passes silently. Closing it needs the table in a form both read (a data block in the spine) or a test that parses the spine's table.

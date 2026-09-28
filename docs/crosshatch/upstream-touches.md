@@ -114,6 +114,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `.github/workflows/crosshatch-*.yml` -- every fork-only workflow is named with this prefix.
 - `scripts/check_api_freeze.py` -- the API freeze job's check (spine AD-19).
 - `scripts/check_api_freeze_test.py`
+- `scripts/check_layers.py` -- the layer check job's check of the spine's layer table (retro AI-5).
+- `scripts/check_layers_test.py`
 
 ## Running the check locally
 
