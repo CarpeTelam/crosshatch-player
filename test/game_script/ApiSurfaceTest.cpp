@@ -2,9 +2,11 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <iomanip>
 #include <lua.hpp>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -17,7 +19,9 @@
 #include "ChBindings.h"
 #include "Codec.h"
 #include "DisplayList.h"
+#include "GameIconBlit.h"
 #include "GameIcons.h"
+#include "GameImageBlit.h"
 #include "GameImages.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
@@ -31,10 +35,12 @@ static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 // device's sandbox and ch table, reports what a game can reach (fixtures/surface),
 // and each entry kind is compared with the union of docs/crosshatch/api-level-<n>.txt
 // in both directions, so a function, global, library member, enum value, event,
-// ctx field, limit, or icon added on either side alone fails here. ApiLevelTest
-// checks the list's grammar and manifest entries; IconsMatchTheList checks the icon
-// names against the library's table; ch.d.lua and the catalog are checked by the
-// epics that add them.
+// ctx field, limit, icon, draw rule, or name rule added on either side alone fails
+// here. ApiLevelTest checks the list's grammar and manifest entries;
+// IconsMatchTheList checks the icon names against the library's table;
+// DrawRulesMatchTheBlits the draw entries against the replay's blits;
+// ImageNameMatchesTheLoader the name entry against the image loader; ch.d.lua and
+// the catalog are checked by the epics that add them.
 
 // A new EventKind, SwipeDir, or Mode enumerator must break the build until named() lists it.
 #pragma GCC diagnostic error "-Wswitch"
@@ -370,7 +376,8 @@ TEST_F(ApiSurfaceTest, IconsMatchTheList) {
   ASSERT_FALSE(icons.empty());
 
   // Each listed name draws through ch.gfx.icon at every listed size in every
-  // listed weight, as its own index.
+  // listed weight, as its own index. At x = -200 every icon is wholly off the
+  // canvas, so its hundreds of calls cost none of frame_icon_image_pixels.
   const Names sizes = listedEnum("size");
   const Names weights = listedEnum("weight");
   ASSERT_EQ(weights, (Names{"regular", "fill"}));
@@ -382,7 +389,7 @@ TEST_F(ApiSurfaceTest, IconsMatchTheList) {
   for (const std::string& name : icons) {
     for (const std::string& size : sizes) {
       for (const std::string& weight : weights) {
-        calls += "ch.gfx.icon('" + name + "', 0, 0, '" + size + "', 'black', '" + weight + "')\n";
+        calls += "ch.gfx.icon('" + name + "', -200, 0, '" + size + "', 'black', '" + weight + "')\n";
       }
     }
   }
@@ -422,6 +429,10 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"codec_depth_count", Codec::MAX_DEPTH},
       {"frame_commands_count", MAX_COMMANDS},
       {"frame_bytes", MAX_BYTES},
+      {"frame_icon_image_pixels", MAX_BLIT_PIXELS},
+      {"icon_small_side_pixels", GameIconBlit::DRAWN_PIXELS[0]},
+      {"icon_medium_side_pixels", GameIconBlit::DRAWN_PIXELS[1]},
+      {"icon_large_side_pixels", GameIconBlit::DRAWN_PIXELS[2]},
       {"lua_heap_bytes", LUA_HEAP_BYTES},
       {"call_instructions_count", CallGuard::INSTRUCTION_BUDGET},
       {"table_elements_count", TABLE_ELEMENTS_LIMIT},
@@ -448,6 +459,104 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
   // The codec, the Session, and the bindings enforce the same state and move limits.
   EXPECT_EQ(Codec::SNAPSHOT_LIMIT, GameCore::SNAPSHOT_BYTES);
   EXPECT_EQ(Codec::MOVE_LIMIT, GameCore::MOVE_BYTES);
+}
+
+// The draw entries say how each drawing function reaches the canvas; the replay
+// draws through the blits, so each rule is checked on them: an icon fills only
+// its ink pixels, an image every pixel of its rectangle, in both inks.
+TEST_F(ApiSurfaceTest, DrawRulesMatchTheBlits) {
+  std::map<std::string, std::string> rules;  // fn -> ink or opaque
+  for (const Entry& entry : entries) {
+    if (entry.kind == "draw") rules[entry.name] = entry.body.substr(entry.name.size() + 1);
+  }
+  const std::map<std::string, std::string> expected = {{"ch.gfx.icon", "ink"}, {"ch.gfx.image", "opaque"}};
+  EXPECT_EQ(rules, expected);
+  const Names fns = listed("fn", true);
+  for (const auto& [fn, rule] : rules) EXPECT_TRUE(fns.count(fn)) << "draw " << fn << " names no listed fn";
+
+  // Ink: circle's regular runs cover exactly its ink pixels, which leave some of
+  // the square out, at every drawn size.
+  const int circle = GameIcons::find("circle", 6);
+  ASSERT_GE(circle, 0);
+  for (const int side : GameIconBlit::DRAWN_PIXELS) {
+    GameIconBlit::Source source;
+    ASSERT_TRUE(GameIconBlit::sourceFor(static_cast<size_t>(circle), side, GameIcons::Weight::Regular, source));
+    long long covered = 0;
+    long long outsideInk = 0;
+    GameIconBlit::inkRuns(source, 0, 0, side, side, [&](const int32_t y, const int32_t x, const int32_t w) {
+      covered += w;
+      for (int32_t dx = x; dx < x + w; ++dx) {
+        if (!GameIconBlit::inkAt(source.bitmap, source.pixels, dx / source.scale, y / source.scale)) ++outsideInk;
+      }
+    });
+    long long ink = 0;
+    for (int y = 0; y < side; ++y) {
+      for (int x = 0; x < side; ++x) {
+        if (GameIconBlit::inkAt(source.bitmap, source.pixels, x / source.scale, y / source.scale)) ++ink;
+      }
+    }
+    EXPECT_EQ(outsideInk, 0) << side;
+    EXPECT_EQ(covered, ink) << side;
+    EXPECT_GT(covered, 0) << side;
+    EXPECT_LT(covered, static_cast<long long>(side) * side) << side;
+  }
+
+  // Opaque: a fixture image's runs cover its whole rectangle, in black and white,
+  // whichever ink it is drawn in.
+  useImages("images");
+  ASSERT_GT(images.count, 0u);
+  const GameCore::ImageSpan& image = images.spans[0];
+  for (const bool drawBlack : {true, false}) {
+    long long covered = 0;
+    Names inks;
+    GameImageBlit::runs(image, images.pixelsOf(image), 0, 0, canvas.width, canvas.height, drawBlack,
+                        [&](int32_t, int32_t, const int32_t w, const bool black) {
+                          covered += w;
+                          inks.insert(black ? "black" : "white");
+                        });
+    EXPECT_EQ(covered, static_cast<long long>(image.width) * image.height) << image.name;
+    EXPECT_EQ(inks, (Names{"black", "white"})) << image.name;
+  }
+}
+
+// The name entry's pattern is the image loader's rule: every name made of one
+// byte, and of lengths 0, 1, IMAGE_NAME_BYTES, and one past it, and "icon"
+// (icon.bmp is the launcher's), matches the pattern exactly when imageNameOf takes
+// "<name>.bmp".
+TEST_F(ApiSurfaceTest, ImageNameMatchesTheLoader) {
+  std::map<std::string, std::string> patterns;  // what -> pattern
+  for (const Entry& entry : entries) {
+    if (entry.kind == "name") patterns[entry.name] = entry.body.substr(entry.name.size() + 1);
+  }
+  ASSERT_EQ(patterns.size(), 1u);
+  ASSERT_TRUE(patterns.count("image"));
+  const std::regex pattern(patterns["image"]);
+
+  std::vector<std::string> names = {"", "icon"};
+  for (int byte = 0; byte <= 0xFF; ++byte) {
+    const char c = static_cast<char>(byte);
+    for (const size_t length : {size_t{1}, GameCore::IMAGE_NAME_BYTES, GameCore::IMAGE_NAME_BYTES + 1}) {
+      names.push_back(std::string(length, c));
+      names.push_back(std::string(length - 1, 'a') + c);
+    }
+  }
+  Names exceptions;
+  for (const std::string& name : names) {
+    const std::string file = name + ".bmp";
+    char loaded[GameCore::IMAGE_NAME_BYTES + 1];
+    const bool loader = GameCore::imageNameOf(file.data(), file.size(), loaded);
+    const bool matches = std::regex_match(name, pattern);
+    if (loader) EXPECT_EQ(std::string(loaded), name);
+    if (loader == matches) continue;
+    std::string shown;
+    for (const unsigned char c : name) {
+      char hex[5];
+      snprintf(hex, sizeof(hex), "\\x%02X", c);
+      shown += (c >= 0x21 && c <= 0x7E) ? std::string(1, static_cast<char>(c)) : std::string(hex);
+    }
+    exceptions.insert(shown + (matches ? " listed only" : " loaded only"));
+  }
+  EXPECT_EQ(exceptions, Names{});
 }
 
 }  // namespace

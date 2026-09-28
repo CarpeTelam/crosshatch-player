@@ -198,3 +198,18 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-phosphor-names-and-both-weights-plan.md`
   summary: The icon weight's replay step has no automated test: `FrameReplay`'s `case Op::Icon` passing `command.weight == IconWeight::Fill` to `drawGameIconAt`, and `drawGameIconAt` turning `fill` into `GameIcons::Weight`; tests pin the weight up to the `DrawCommand` and from `sourceFor` on, not between.
   evidence: Review finding (verification gap), 3.9. `test/` builds neither `FrameReplay.cpp` nor `GameIconDraw.cpp` (the 3.1 `Op::Icon` replay gap, already deferred to retro AI-2's harness); dropping or inverting the flag passes every host test. The `icons` fixture screenshots (`story-names-weights-screenshots/x4pro-icons/`) show fill and regular drawn apart through the replay today.
+
+## e3r-1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-1-bound-gfx-replay.md`
+  summary: A frame at the new icon and image budget (1,048,576 covered pixels, up to that many 1-px `fillRect` calls under `RenderLock`) has not been timed on an X4 Pro; retro AI-10 asks for that run alongside the dithered-image device run.
+  evidence: Review finding (blind hunter), e3r-1. Host time only: 3.33 ms best of 5 for 1,048,320 checkerboard pixels through `GameImageBlit::runs` with a 1-bit stand-in fill (scratch benchmark, Xeon 2.8 GHz, -O2; not `GfxRenderer`, not the device). The device run belongs to the owner (epic-install-and-launcher Notes, AI-12's multiplier line).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-1-bound-gfx-replay.md`
+  summary: The budget's replay bound is tested on a copy of `FrameReplay`'s icon and image dispatch (`GfxBindingsTest`'s `frontBlitFills`), not on `FrameReplay::draw`; a replay that stopped routing through `GameIconBlit::inkRuns` / `GameImageBlit::runs`, or filled per pixel, would pass every host test.
+  evidence: Review finding (blind hunter, intent alignment), e3r-1. `test/` builds neither `FrameReplay.cpp` nor `GameIconDraw.cpp` (the 3.1/3.9 replay gap); retro AI-1's `src/games` harness (epic-install-and-launcher) would pin it.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-1-bound-gfx-replay.md`
+  summary: Other ops have no per-frame replay bound either: 2,048 filled `rect`, `clear`, or `circle` commands each fill up to a whole canvas (about 765 M pixels a frame through `fillRectDither`), and outlines and lines are cheap; R1 named only images and icons.
+  evidence: Found while planning e3r-1 (`FrameReplay.cpp` clips each shape to the canvas but counts nothing across commands). Unmeasured. A fill is one `fillRectDither` call per rect or circle row, not one per pixel, so its cost per pixel is lower than an image's; whether it matters needs the same device timing as the first entry. The fix, if needed, is a like budget for filled area, a new level-1 limit before the freeze.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e3r-1-bound-gfx-replay.md`
+  summary: The budget fault is not yet in the planning contract texts (game-api-seed section 6 Errors, spine AD-7's frame limits), and a game has no way to ask an image's size or the pixels left, so it cannot size its drawing to the budget ahead of time.
+  evidence: Review finding (blind hunter), e3r-1. `api-level-1.txt` is the contract and has the entry; the seed and spine are the owner's (bmad-architecture). `ch.gfx.image_size` is already one of retro AI-2's freeze decisions; this budget adds a reason to decide it.

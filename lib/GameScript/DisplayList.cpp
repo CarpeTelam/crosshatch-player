@@ -1,5 +1,6 @@
 #include "DisplayList.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -56,7 +57,21 @@ DisplayList::DisplayList(uint8_t* storage, const size_t capacity)
 void DisplayList::clear() {
   used = 0;
   commands = 0;
+  blitted = 0;
   hint = Refresh::Fast;
+}
+
+bool DisplayList::chargeBlit(const int64_t x, const int64_t y, const uint32_t w, const uint32_t h,
+                             const int32_t canvasW, const int32_t canvasH) {
+  const int64_t left = clamp16(x);
+  const int64_t top = clamp16(y);
+  const int64_t visibleW = std::min<int64_t>(left + w, canvasW) - std::max<int64_t>(left, 0);
+  const int64_t visibleH = std::min<int64_t>(top + h, canvasH) - std::max<int64_t>(top, 0);
+  if (visibleW <= 0 || visibleH <= 0) return true;
+  const int64_t pixels = visibleW * visibleH;
+  if (pixels > static_cast<int64_t>(MAX_BLIT_PIXELS - blitted)) return false;
+  blitted += static_cast<uint32_t>(pixels);
+  return true;
 }
 
 uint8_t* DisplayList::reserve(const size_t n) {

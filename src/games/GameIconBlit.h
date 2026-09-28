@@ -11,9 +11,9 @@
 // for screens alike.
 namespace GameIconBlit {
 
-// The drawn sizes in pixels, indexed like ch.gfx's size names (small, medium,
-// large). Large is the medium bitmap with each pixel drawn as a 2 x 2 block.
-inline constexpr int DRAWN_PIXELS[] = {GameIcons::SMALL_PIXELS, GameIcons::MEDIUM_PIXELS, 2 * GameIcons::MEDIUM_PIXELS};
+// The drawn sizes in pixels (GameIcons.h's, which the bindings charge against the
+// frame's pixel budget too).
+using GameIcons::DRAWN_PIXELS;
 
 // One icon's bitmap at one drawn size: `pixels` square in GfxRenderer::drawIcon's
 // layout, each bitmap pixel drawn as a `scale` x `scale` block.
@@ -66,6 +66,7 @@ void inkRuns(const Source& source, const int32_t left, const int32_t top, const 
   const int64_t firstY = top < 0 ? -static_cast<int64_t>(top) : 0;
   const int64_t endX = static_cast<int64_t>(width) - left < side ? static_cast<int64_t>(width) - left : side;
   const int64_t endY = static_cast<int64_t>(height) - top < side ? static_cast<int64_t>(height) - top : side;
+  if (endX <= firstX || endY <= firstY) return;
   for (int64_t dy = firstY; dy < endY; ++dy) {
     const int bitmapY = static_cast<int>(dy / source.scale);
     int64_t runStart = -1;

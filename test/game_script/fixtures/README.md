@@ -92,6 +92,7 @@ Each ends in the error view as soon as the game opens, except `loop_input`, whic
 | `gc_loop.lua` | setup | `main.lua:5: setmetatable: __gc metamethods are not supported` |
 | `gc_recursive.lua` | setup | `main.lua:6: setmetatable: __gc metamethods are not supported` |
 | `heap.lua` | setup | `not enough memory` |
+| `icon_image_pixels.lua` | the first draw, inside `pcall` | `main.lua:11: ch.gfx.icon: the frame's icons and images cover over 1048576 pixels` |
 | `io.lua` | setup | `main.lua:2: attempt to index a nil value (global 'io')` |
 | `load.lua` | setup | `main.lua:2: attempt to call a nil value (global 'load')` |
 | `loop_draw.lua` | the first draw | `main.lua:7: instruction budget exceeded` |
