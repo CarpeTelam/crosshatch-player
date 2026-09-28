@@ -517,6 +517,57 @@ class ParseTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(cfb.outer_name(name), outer)
 
+    def test_source_names(self):
+        cases = {
+            '_ZZN16PersistableStoreI9GameStoreE11getInstanceEvE8instance': {'PersistableStore', 'GameStore'},
+            '_ZN6HolderIN9GameArena4SlabEE5valueE': {'Holder', 'GameArena', 'Slab', 'value'},
+            '_ZZNKSt4hashIN8GameCore1XEEclERKS1_E3tbl': {'hash', 'GameCore', 'X', 'tbl'},
+            '_ZZ7processIN8GameCore5StateEEvvE7scratch': {'process', 'GameCore', 'State', 'scratch'},
+            '_ZN7freeink2ui12optionDialogILj24EEEvv': {'freeink', 'ui', 'optionDialog'},
+            'g_inline': {'g_inline'},
+        }
+        for name, expected in cases.items():
+            with self.subTest(name):
+                self.assertLessEqual(expected, cfb.source_names(name))
+        self.assertNotIn('GameCore', cfb.source_names('_ZN7freeink2ui12optionDialogILj24EEEvv'))
+
+    def test_declared_game_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            header = root / 'src' / 'games' / 'GameTouch.h'
+            header.parent.mkdir(parents=True)
+            header.write_text(
+                '#pragma once\n'
+                '#include "x.h"  // namespace Fake {\n'
+                'class GfxRenderer;\n'
+                'namespace fui = freeink::ui;\n'
+                '/* namespace InComment {\n'
+                '   } */\n'
+                'namespace GameTouch {\n'
+                'namespace detail {\n'
+                'inline const char* k = "{";\n'
+                '}  // namespace detail\n'
+                'struct Gesture {\n'
+                '  struct Inner {};\n'
+                '};\n'
+                '}  // namespace GameTouch\n'
+                'template <typename T>\n'
+                'struct Pool\n'
+                '{\n'
+                '};\n'
+                'class Viewer final : public Base {\n'
+                '};\n'
+                'namespace GameScript::Codec {\n'
+                '}\n'
+            )
+            (root / 'lib' / 'GameCore').mkdir(parents=True)
+            (root / 'lib' / 'GameCore' / 'Session.h').write_text('namespace GameCore {\nclass Session {};\n}\n')
+            (root / 'lib' / 'Other').mkdir(parents=True)
+            (root / 'lib' / 'Other' / 'Other.h').write_text('namespace Upstream {\n}\n')
+            (root / 'src' / 'games' / 'GameArena.cpp').write_text('namespace NotAHeader {\n}\n')
+            self.assertEqual(cfb.declared_game_names(root),
+                             {'GameTouch', 'Pool', 'Viewer', 'GameScript', 'GameCore'})
+
     def test_game_names_are_global_non_comdat_definitions(self):
         sections = [('.text.a', 'PROGBITS', 'AX', 8), ('.text.c', 'PROGBITS', 'AXG', 8), ('.bss.b', 'NOBITS', 'WA', 4)]
         symbols = [
@@ -662,6 +713,32 @@ class ObjectsTest(unittest.TestCase):
     def test_small_comdat_static_in_a_game_namespace_counts_as_largest(self):
         self.assertEqual(self.comdat_escape('_ZN8GameCore4PoolIiE5countE', 64), 0)
         self.assertIn('Largest mutable static: 64 B (`_ZN8GameCore4PoolIiE5countE`', self.summary.read_text())
+
+    def test_upstream_template_instantiated_with_a_game_type_fails(self):
+        # A constant-initialized static has no guard: only its size can catch it.
+        cases = (
+            '_ZZN16PersistableStoreI9GameArenaE11getInstanceEvE8instance',  # PersistableStore<GameArena> singleton
+            '_ZN6HolderIN8GameCore4SlabEE5valueE',  # Holder<GameCore::Slab>::value
+            '_ZZNKSt4hashIN8GameCore1XEEclERKS1_E3tbl',  # std::hash<GameCore::X>::operator()'s static
+            '_ZZ7processIN8GameCore5StateEEvvE7scratch',  # process<GameCore::State>()::scratch
+        )
+        for symbol in cases:
+            with self.subTest(symbol):
+                self.game('src/games/GameArena.cpp', 'src/games/GameArena.cpp.o', [('.text.a', 'PROGBITS', 'AX', 8)],
+                          [('_ZN9GameArena5resetEv', 'FUNC', 8, '.text.a')])
+                self.assertEqual(self.comdat_escape(symbol, 512), 1)
+                self.assertIn(f'mutable static {symbol} is 512 B', self.summary.read_text())
+
+    def test_header_only_game_namespace_counts(self):
+        # GameTouch has no .cpp, so no game object defines a GameTouch symbol; its header declares the namespace.
+        header = self.project / 'src' / 'games' / 'GameTouch.h'
+        header.parent.mkdir(parents=True, exist_ok=True)
+        header.write_text('#pragma once\nnamespace GameTouch {\n'
+                          'inline char* buffer() { static char b[512]; return b; }\n}\n')
+        self.game('src/games/A.cpp', 'src/games/A.cpp.o', [('.bss._ZZN9GameTouch6bufferEvE1b', 'NOBITS', 'WAG', 512)],
+                  [('_ZZN9GameTouch6bufferEvE1b', 'OBJECT', 512, '.bss._ZZN9GameTouch6bufferEvE1b', 'WEAK')])
+        self.assertEqual(self.run_objects(), 1)
+        self.assertIn('mutable static _ZZN9GameTouch6bufferEvE1b is 512 B', self.summary.read_text())
 
     def test_comdat_guard_variable_fails_outside_game_names_too(self):
         # A guard means a game object runs a dynamic initializer, whoever declared the static.

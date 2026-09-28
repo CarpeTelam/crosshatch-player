@@ -22,11 +22,16 @@ binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 250 KiB is 25
 A mutable static is an object symbol in a writable section (or a common symbol): constexpr data lands in .rodata
 and is never counted, while constinit, DRAM_ATTR, .noinit, and PSRAM .ext_ram.bss buffers are. A larger buffer
 belongs to the component that owns its lifetime and is allocated with it. A guard variable fails wherever it is,
-COMDAT groups included. Other symbols in COMDAT groups (header inline functions' statics, inline variables, and
-template statics, emitted into every object that uses them) count only when their outermost namespace, class, or
-function is one the game objects define outside COMDAT groups as global symbols, such as GameCore or GameArena; the
-rest are upstream's and the libraries'. A game name that no game object defines out of line, a header-only
-namespace or a free inline function at global scope, is not recognized, so its mutable statics are left to review.
+COMDAT groups included: a game object that calls an upstream inline function with a dynamically initialized local
+static fails too, deliberately (AD-2 forbids dynamic initialization at any scope in game code). Other symbols in
+COMDAT groups (header inline functions' statics, inline variables, and template statics, emitted into every object
+that uses them) count when any source name in the mangled name, template arguments included, is a game name; the
+rest are upstream's and the libraries'. The game names are the outermost names of the global symbols game objects
+define outside COMDAT groups (GameCore, GameArena, and free functions such as gameHostCaps), and the namespaces and
+classes game headers declare at file scope (the header-only GameTouch and ForkRelease). A game name that is also an
+upstream or library name, such as a free function sharing a common name, makes that code's COMDAT statics count as
+well: a visible failure, never an escape. A free inline function at global scope in a game header, with no out-of-line
+definition, is still not recognized.
 
 Each build first saves `pio project metadata` for itself. `compare` checks from it that the "on" build defines
 FREEINK_CAP_GAMES=1 and the "off" build does not define it at all: a misspelled unflag, or the flag dropped from
@@ -296,6 +301,15 @@ DEFINING_TYPES = MUTABLE_TYPES + ('FUNC',)
 # name's qualifiers. A name that goes on with anything else (St for std::, a substitution) has no outermost source
 # name here.
 MANGLED_OUTER = re.compile(r'_Z(?:G[VR]|T[HWVTIS])?[ZNLrVKRO]*(\d+)')
+# A <source-name> length anywhere in a mangled name. Every digit run is read as one, so an integer template argument
+# (Lj24E) yields a stray candidate too; a stray candidate matters only if it spells a game name exactly.
+SOURCE_NAME_LENGTH = re.compile(r'(?<!\d)(\d+)')
+HEADER_SUFFIXES = ('.h', '.hpp')
+# File-scope declarations in a game header, on a line with comments and literals removed: a named namespace opened
+# there (namespace A or A::B), and a class or struct defined there (a forward declaration ends in ';' and is not one).
+HEADER_NAMESPACE = re.compile(r'\s*namespace\s+(\w+)(?:::\w+)*\s*\{')
+HEADER_CLASS = re.compile(r'\s*(?:template\s*<.*>\s*)?(?:class|struct)\s+(\w+)(?:\s+final)?\s*(?:[:{].*)?$')
+LITERALS_AND_COMMENTS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//.*|/\*.*?\*/')
 Section = collections.namedtuple('Section', 'name type flags size')
 Symbol = collections.namedtuple('Symbol', 'name type size ndx bind')
 
@@ -341,6 +355,50 @@ def outer_name(symbol_name):
     return name if len(name) == int(match[1]) else None
 
 
+def source_names(symbol_name):
+    """Every source name in a mangled name, template arguments included (an unmangled name is its only one):
+    _ZZN16PersistableStoreI9GameStoreE11getInstanceEvE8instance gives PersistableStore, GameStore, getInstance, and
+    instance."""
+    if not symbol_name.startswith('_Z'):
+        return {symbol_name}
+    names = set()
+    for match in SOURCE_NAME_LENGTH.finditer(symbol_name, 2):
+        name = symbol_name[match.end() : match.end() + int(match[1])]
+        if len(name) == int(match[1]):
+            names.add(name)
+    return names
+
+
+def declared_game_names(project_dir=PROJECT_DIR):
+    """The namespaces and classes the game headers (lib/Game*, src/games, src/activities/games) declare at file
+    scope, so header-only game code counts too. A line is read after removing comments and string literals; braces
+    track the scope, and preprocessor lines are skipped."""
+    project_dir = pathlib.Path(project_dir)
+    roots = [project_dir / d for d in GAME_SOURCE_DIRS] + sorted(project_dir.glob(GAME_LIB_GLOB))
+    names = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for header in sorted(p for p in root.rglob('*') if p.suffix in HEADER_SUFFIXES and p.is_file()):
+            try:
+                text = header.read_text(encoding='utf-8', errors='replace')
+            except OSError as exc:
+                raise SetupError(f'cannot read {header} ({exc})')
+            # Block comments spanning lines go first; the rest are removed line by line.
+            text = re.sub(r'/\*.*?\*/', lambda m: '\n' * m[0].count('\n'), text, flags=re.S)
+            depth = 0
+            for line in text.splitlines():
+                if line.lstrip().startswith('#'):
+                    continue
+                line = LITERALS_AND_COMMENTS.sub('""', line)
+                if depth == 0:
+                    declared = HEADER_NAMESPACE.match(line) or HEADER_CLASS.match(line)
+                    if declared:
+                        names.add(declared[1])
+                depth = max(0, depth + line.count('{') - line.count('}'))
+    return names
+
+
 def defined_symbol_section(sections, symbol):
     """The section a symbol is defined in (a common symbol gets a writable stand-in), or None when undefined, absolute,
     or in a section readelf did not list."""
@@ -371,11 +429,12 @@ def game_names(parsed_objects):
 def object_problems(sections, symbols, game_scopes=frozenset()):
     """Return (problems, largest mutable static as (size, name) or None) for one object's parsed readelf output.
 
-    A guard variable fails wherever it is. Other symbols in a COMDAT group (flag G) count only when their outermost
-    name (outer_name) is in game_scopes: the others are header inline functions' statics and inline variables of
-    upstream or library code, emitted into every object that uses them, such as upstream's
-    PersistableStore<T>::getInstance() instance. A game's own inline function statics, class-template static members,
-    and function-template statics are COMDAT too, and count.
+    A guard variable fails wherever it is. Other symbols in a COMDAT group (flag G) count only when one of their
+    source names (source_names, template arguments included) is in game_scopes: the others are header inline
+    functions' statics and inline variables of upstream or library code, emitted into every object that uses them.
+    A game's own inline function statics, class-template static members, and function-template statics are COMDAT
+    too, and count, as do an upstream template's statics instantiated with a game type, such as
+    PersistableStore<GameStore>::getInstance()'s instance.
     """
     problems = []
     for section in sections.values():
@@ -389,7 +448,7 @@ def object_problems(sections, symbols, game_scopes=frozenset()):
             continue
         if symbol.name.startswith(GUARD_PREFIX):
             problems.append(f'static initializer: guard variable {symbol.name} of a dynamically initialized static')
-        if 'G' in section.flags and outer_name(symbol.name) not in game_scopes:
+        if 'G' in section.flags and not source_names(symbol.name) & game_scopes:
             continue
         if symbol.type not in MUTABLE_TYPES or 'W' not in section.flags:
             continue  # code, or read-only data such as constexpr
@@ -455,7 +514,7 @@ def check_objects(metadata_dir, summary_path=None, project_dir=PROJECT_DIR):
     readelf = toolchain_tool(build_record, 'on', 'readelf')
     objects = game_objects(build_dir, project_dir)
     parsed = [inspect_object(readelf, path) for path in objects]
-    scopes = game_names(parsed)
+    scopes = game_names(parsed) | declared_game_names(project_dir)
     problems = []
     largest = None
     for path, (sections, symbols) in zip(objects, parsed):

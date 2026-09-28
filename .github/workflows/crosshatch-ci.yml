@@ -254,7 +254,7 @@ jobs:
             exit 1
           fi
           head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)
-          if [ -n "$head" ] && [ "$head" != "$RUN_SHA" ]; then
+          if [ -n "$head" ] && [ -n "$RUN_SHA" ] && [ "$head" != "$RUN_SHA" ]; then
             echo "::notice::$RUN_SHA is no longer the PR's head ($head); its cancelled jobs do not fail this check."
             exit 0
           fi

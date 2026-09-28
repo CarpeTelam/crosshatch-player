@@ -688,6 +688,12 @@ class FreezeTest(unittest.TestCase):
         self.release(api_header(2, frozen=True))
         self.assertEqual(self.preflight('false'), 0)
 
+    def test_refusal_names_the_first_release_that_froze_the_level(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.9')
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.10')  # sorts before -ch.9 as a string
+        self.release(api_header(2, frozen=False))
+        self.assertIn('but 1.6.5-ch.9 released frozen API level 2', fr.freeze_problems(self.project.dir)[0])
+
     def test_api_level_lowered_below_a_released_frozen_level_fails(self):
         self.release(api_header(2, frozen=True), tag='1.6.5-ch.2')
         self.release(api_header(1, frozen=True))

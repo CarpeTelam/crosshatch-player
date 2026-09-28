@@ -7,9 +7,10 @@ only N, so every release image must report exactly its tag, and N must never be 
 subcommands in order; each one fails the run rather than let a release go out that devices would mishandle.
 
   preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it, and a commit
-                  that keeps frozen every game API level a -ch.N tag's commit froze: its API_LEVEL_FROZEN is true, or
-                  its API_LEVEL is an open preview above those levels (a dry run only warns about both); fails when
-                  another active workflow triggers on `release` or builds a gh_release env
+                  that keeps frozen every game API level a -ch.N tag's commit froze: its API_LEVEL is above each such
+                  level (an open preview may be), or equal to the highest with API_LEVEL_FROZEN true (a dry run only
+                  warns about both); fails when another active workflow triggers on `release` or builds a gh_release
+                  env
   prepare         N = 1 + the largest number after "-ch." in any tag; checks the [crosspoint] version line, rewrites
                   it to the tag in this checkout only, and finds the release envs: every <board>-gh_release env that
                   sets FREEINK_CAP_GAMES=1; reads the game API level; writes the plan (tag, commit, envs, asset names,
@@ -337,7 +338,9 @@ def freeze_problems(repo_dir):
     top = fork_common.frozen_top(level)
     tags = fork_common.git_text('tag', '--list', cwd=repo_dir).splitlines()
     released_top, released_tag = 0, None
-    for tag in sorted(tag for tag in tags if BUILD_NUMBER_IN_TAG.search(tag)):
+    # In release order, so a refusal names the first release that froze the level.
+    releases = sorted((int(BUILD_NUMBER_IN_TAG.search(tag)[1]), tag) for tag in tags if BUILD_NUMBER_IN_TAG.search(tag))
+    for _, tag in releases:
         tag_top = fork_common.frozen_top(tag_api_level(repo_dir, tag))
         if tag_top > released_top:
             released_top, released_tag = tag_top, tag
