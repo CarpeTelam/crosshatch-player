@@ -3,7 +3,7 @@ title: 'Tracer: a Phosphor icon from SVG to the game canvas'
 type: 'feature'
 ticket: '1'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: '1eacdc7739605047280dfd25d1956789ddfce204'
 route: 'full'
 route_source: 'auto'
