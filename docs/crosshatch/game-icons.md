@@ -49,15 +49,18 @@ the same bitmap. A screen draws the fill weight with `drawGameIcon(..., black, t
   holds no `_` and never ends in `-fill`, so no two names share an identifier. `ICONS[i].small[weight]` and
   `.medium[weight]` index the bitmaps by `GameIcons::Weight` (`Regular` 0, `Fill` 1).
 - One name per glyph: no alias for an icon already in the set.
+- A game's own images (`ch.gfx.image`) follow a different rule: the file name without `.bmp`, 1 to 32 characters from
+  `[a-z0-9_]`, with no `-`. A chess game that ships `crown-cross.bmp` has it skipped with a log line; name it
+  `crown_cross.bmp` (`api-level-1.txt` says so beside the image limits).
 - Level 1 is a preview until `API_LEVEL_FROZEN`: names may still change. Once a level is frozen, no name in it is
   renamed or removed; a new icon joins the next level.
 
 ## The v1 set (55 icons, 110 bitmaps a size)
 
-The epic's six categories are marks, card suits, dice faces, board pieces, player markers, and common controls; the
-table lists the common controls in two groups, Controls and Status. Each name is listed once, under the category it
-was chosen for (`circle` is a mark, and in fill also a round player marker). The owner dropped the chess pieces
-(entry 8), so the board pieces are Battleship's `boat` alone.
+The set's categories are marks, card suits, dice faces, player markers, game pieces, common controls, and status
+icons (the epic's R3, as amended by the owner in entry 8). Each name is listed once, under the category it was chosen
+for (`circle` is a mark, and in fill also a round player marker). The owner dropped the chess pieces (entry 8), so the
+game pieces are Battleship's `boat` alone; a chess game draws its own pieces with `ch.gfx.image`.
 
 | Category | Name | Why it is in the set |
 | --- | --- | --- |
@@ -180,7 +183,7 @@ tracer's four icons measured 2,608 B the same way (without their strings).
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
 
-| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | End of the icon epic (`965c55d7`) | Phosphor names, both weights (entry 9) |
+| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`965c55d7`) | Phosphor names, both weights (entry 9) |
 | --- | ---: | ---: | ---: | ---: |
 | `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 | 5,902,784 |
 | `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 | 5,675,376 |
@@ -193,11 +196,13 @@ working tree, from an empty `.pio`, not an archive tree) adds +31,072 B to the g
 icon data (71,975 B against 40,964 B) and 61 B of code for the weight argument, with no static internal RAM change.
 The runtime is now 28,592 B under the 250 KiB gate.
 
-At the end of the icon epic (the refactor sweep, entry 7, measured from a fresh archive tree of `965c55d7` with the
-flash budget job's four commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate; epic 2
-closed at +150,448 B, so that epic added +45,888 B (the base `1eacdc77` itself was not re-measured). Since entry 7 the
-RAM gate also counts IRAM, which shares internal SRAM on the S3: +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the
+After the refactor sweep (entry 7, measured from a fresh archive tree of `965c55d7` with the flash budget job's four
+commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate. The epic's base `1eacdc77`, measured
+the same way with entry 7's script copied in, is +151,088 B of flash and +776 B of static internal RAM. So this epic
+adds +76,320 B of flash in all (+45,248 B up to entry 7, +31,072 B in entry 9) and no static internal RAM. The RAM
+gate counts IRAM since entry 7 (it shares internal SRAM on the S3): +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the
 FreeRTOS task functions only games link, which ESP-IDF places in IRAM: `vTaskSuspend` 240 B, `vTaskResume` 216 B,
 `eTaskGetState` 154 B, `uxTaskGetStackHighWaterMark` 35 B, `pxTaskGetStackStart` 14 B, by `objdump -t`), and +84 B
-of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate. The icon data is `inline constexpr`, so
-it sits in flash (`.flash.rodata`) and adds no static internal RAM.
+of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate, all of it already present at the base
+(epic-script-runtime's gate counted only `.dram0.*` and `.noinit`, so it recorded +8 B). The icon data is
+`inline constexpr`, so it sits in flash (`.flash.rodata`) and adds no static internal RAM.

@@ -321,6 +321,8 @@ limit timers_pending_count 1
 # A game's own images (ch.gfx.image): the .bmp files in its folder, their bytes
 # with headers included and icon.bmp excluded, and how many there are. A w x h
 # image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
+# An image's name is its file name without ".bmp": 1 to 32 characters from [a-z0-9_]. Unlike icon names, it takes no
+# "-"; a file named otherwise is skipped with a log line, and drawing it stops the game as an unknown image.
 limit images_bytes 131072
 limit images_count 32
 # Lua's C-level limit (LUAI_MAXCCALLS in lib/lua/library.json): nested C calls
