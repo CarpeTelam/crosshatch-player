@@ -494,7 +494,15 @@ All items are **proposed**; this retro applied none of them. *Remediation* goes 
    - Add one `persistent_facts` entry: "When the prompt says this build runs for an orchestrator, follow `docs/crosshatch/orchestrated-epics.md` § Build-agent brief; its answers replace this workflow's human gates."
    - The gate answers must not go into the customization directly. It applies to every bmad-build run, and pre-approving checkpoint 1 there would remove the human gates from interactive builds too.
 
-**Owner decisions:** none yet. This retro records the machine verdict and proposed items only.
+**Owner decisions (2026-09-28):** the owner accepted every recommendation below.
+- **Order:** the fix-now items land in one follow-up PR before epic 3 (epic-icon-library) is planned, starting with the process items:
+  1. AI-12 and AI-1;
+  2. AI-13, AI-9, and AI-7;
+  3. AI-5 and AI-6;
+  4. AI-10.
+- **Deferred:** AI-2, AI-4, AI-8, and AI-11 keep their triggers. AI-3 stays the owner's device check.
+- **AI-5:** restore the rule (Screens reach GameScript only through `src/games`) and add the include check; the spine keeps its Screens row.
+- **AI-2:** a scripted simulator run in CI first, a host harness later. AI-3 stays needed for abandon and the stack budget.
 
 ## Acceptance verdict
 
@@ -519,13 +527,14 @@ No finding is blocking. Every Done-when criterion holds in the final state and i
 - **Process changes:** AI-1 and AI-12.
 - **Deferred hardening:** AI-4, AI-8, and AI-11.
 
-**Human decision:** pending.
+**Human decision: accepted-with-open-items** (owner, 2026-09-28). R1 and R2 are not blocking; AI-13 fixes them before API level 1 freezes, in the follow-up PR described above.
 
 ## Open questions
 
-- **R1/R2 as blocking?** This retro treats them as fix-now, not blocking, because level 1 is a preview. If the owner treats contract breaks as blocking, the verdict becomes rejected until AI-13 lands.
-- **AI-5:** restore the Screens layering by routing the store through `GameVM`, or amend the spine to let screens use `lib/GameScript`?
-- **F4 / AI-10:** may a fork release ship while a later API level is an open preview?
-- **F3 / AI-8:** is "require branches to be up to date" on for `develop`? If so, F3 cannot happen, and AI-8 needs only the surface-test half.
-- **AI-2:** host harness over the FreeRTOS shim, or a scripted simulator run in CI? The second is cheaper and would also cover the view layer, but it tests the simulator's threading, not the device's.
-- **Deferred item (b):** now refuted by the code. Close it, and record the side effect that the watchdog pauses while the light panel is open?
+Answered by the owner on 2026-09-28:
+- **R1/R2:** not blocking; fixed first, as AI-13.
+- **AI-5:** restore the layering and add the include check; no spine change.
+- **F4:** yes. A release needs only the levels below an open preview to be frozen. The spine (AI-10) and `fork_release.py` change to match.
+- **F3:** turn on "require branches to be up to date" for `develop`. That is a repository setting the owner applies; the surface-test half of AI-8 stays deferred to the freeze.
+- **AI-2:** a scripted simulator run in CI first.
+- **Deferred item (b):** closed as refuted by the code, with the watchdog-pause side effect recorded in `deferred-work.md` (R10).
