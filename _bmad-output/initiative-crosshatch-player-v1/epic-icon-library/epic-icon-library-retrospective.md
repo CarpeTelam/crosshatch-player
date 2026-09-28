@@ -594,3 +594,26 @@ The owner asked for every proposed edit to be applied, and for the should-have a
   - R9 (d): `icon_{small,medium,large}_side_pixels`, `draw ch.gfx.icon ink`, `draw ch.gfx.image opaque`, and `name image`; `API_SURFACE_CRC 0x52E8D03D`.
   - Flash: +608 B (x4pro games-on `firmware.bin`, 5,903,088 → 5,903,696 B, both from archive trees).
   - On the combined tree after the merge: host tests 716/716, all 9 `scripts/*_test.py` suites pass.
+- **e3r-2** landed as d4f889f0 (merged 11402d1e). All four lenses returned: 11 low findings, 6 patch groups.
+  - It fixes R9 (a), the Play-again gap drop, checked in the simulator with the new `slow-restart` fixture; R4; R3, widened per the owner, with AD-14 amended in 0048e35b; R5; and A2.
+  - R8 (a): `GameAssets::load` measured 368 B with `-fstack-usage` and was split.
+- **Cross-story review** of e3r-1 to e3r-3 (`_bmad-output/implementation-artifacts/cross-story-review-e3r.md`): 13 findings, all low or low–medium.
+  - 7 fixed in **e3r-x** (bd176acd). Its four lenses returned.
+    - The Resume render in the Play-again gap no longer shows the last round's board, which closes `## 3.7`'s R3 residual.
+    - One heap-held scratch for the loader brings the deepest stack chain to 304 B, from 576 B after the split and 480 B before it.
+    - A host test covers every fixture's manifest.
+    - The budget's comments are reworded.
+    - `Icons up to date` exits 3 for a checksum mismatch.
+    - `assets/game-icons/** -text` is set.
+    - `sim_sh_test.py` fails when every test is skipped.
+  - 2 are recorded as freeze decisions in epic-first-party-games's Notes; 2 accepted; 2 deferred under `## e3r-x`.
+- **Process observed in the follow-up itself:**
+  - Agents again handed back with subagents running: e3r-1 three times, e3r-2 twice, and the cross-story reviewer once.
+  - `run_background: false` did not keep a nested agent's lenses in the foreground.
+  - `orchestrated-epics.md` now treats such a report as interim (9d53b6db, 4d136782).
+- **Final checks on the combined tree:**
+  - Host tests 719/719, all 9 `scripts/*_test.py` suites (each `Ran` > 0).
+  - `default`, `x4pro`, and `sticky` build. `x4c` and `papermono` built on 11402d1e, and e3r-x changes no code they compile.
+  - `pio check` passes on `default` and `x4pro`; `sim.sh build x4pro`, `check_layers.py`, and `check_upstream_touches.py` pass.
+  - `clang-format-fix` (21.1.8) run twice leaves the tree clean.
+  - x4pro games on minus off is **+228,496 B flash** (+784 B over the 8bd18e86 base; 27,504 B under the gate) and **+776 B static RAM** (+0 B; 248 B left), all four `check_flash_budget.py` steps.
