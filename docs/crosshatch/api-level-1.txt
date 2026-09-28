@@ -238,9 +238,11 @@ limit timers_pending_count 1
 # (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
 # the parser's nesting of expressions and blocks (right-associative .. or ^
 # chains, nested parentheses, tables, functions, and blocks, about 28 deep)
-# share it; past it the call or the load fails with "C stack overflow", an
-# ordinary Lua error that pcall can catch. The runtime's own C stack headroom
-# check ("script recursion too deep") is the one that stops the game.
+# share it (a pcall takes one level, an xpcall two: the runtime's wrapper and
+# Lua's own, so about 28 nested pcalls or 14 nested xpcalls fit); past it the
+# call or the load fails with "C stack overflow", an ordinary Lua error that
+# pcall can catch. The runtime's own C stack headroom check ("script recursion
+# too deep") is the one that stops the game.
 limit c_stack_levels_count 30
 # Lua's pattern-matcher depth (MAXCCALLS in lib/lua/library.json): a match nests
 # one level, plus one for each capture's start and end and each item with ?, *,

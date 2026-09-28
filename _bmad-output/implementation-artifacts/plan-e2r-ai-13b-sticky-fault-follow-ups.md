@@ -133,6 +133,14 @@ Pass 2: the orchestrator's independent review of 7e0899e6 (it verified the seal 
 | 35 | orchestrator | `raiseStatic` texts carry no line number, which game-api-seed §6 says the device shows | low | patch: §6 says faults found with the C stack nearly full show none |
 | 36 | orchestrator | Lua's own "C stack overflow" (`LUAI_MAXCCALLS`) is an ordinary catchable error, while the `c_stack_levels_count` comment says the call fails | low | patch (comment only, runtime unchanged): the comment says pcall can catch it and that the runtime's headroom check is the one that stops the game |
 
+Pass 3: the orchestrator's independent review of d7cc03e8 (it found the mechanism sound: the macros match stock ISO `setjmp`/`longjmp`, the weak call is null-guarded, the device `ldo.o` calls the hook in the linked ELF, the host build carries the `-include`, the hook is safe at every throw site). Docs and tests only; no runtime change. Counts: high 0, medium 1, low 2, false 0, maybe-false 0.
+
+| # | Source | Finding | Verdict | Route / evidence |
+|---|--------|---------|---------|------------------|
+| 37 | orchestrator | "Lua throws a memory error only after its emergency collection" is false for lauxlib's buffers: `resizebox` calls the allocator directly, so a `string.rep`/`table.concat`/`gsub`/`format` result past `LUAL_BUFFERSIZE` (512 B on the device, 1024 B on the host) refused at the cap is a sticky fault with no collection (as in stock Lua); `ARefusalLuaRecoversFromIsNotAFault` used 1,000-byte `string.rep`, box path on the device only | medium | patch: `luai_throw.h` and spine AD-6 say which path collects first and that a game near its cap can end on a large string operation; the recovery test now grows tables by assignment (luaM only, any word size); new `ALibraryStringBufferRefusedAtTheCapStopsTheGame` pins the box path (near the cap with the collector stopped, `pcall(string.rep, 'x', 4096)` ends in Fault::Memory) |
+| 38 | orchestrator | Each xpcall level costs two of the 30 C levels (the wrapper's `lua_call` and base xpcall's `lua_pcallk`) | low | patch: `api-level-1.txt`'s `c_stack_levels_count` comment says about 28 nested pcalls or 14 nested xpcalls fit |
+| 39 | orchestrator | Darwin's ld64 rejects the undefined weak `luaport_memoryerror` where Lua links without `CallGuard.cpp` (`GameSaveStoreTest`) | low | patch: `LINKER:-U,_luaport_memoryerror` on `lua_vendored` for `APPLE`, with a comment (not run here: Linux host) |
+
 ## Design Notes
 
 (Superseded by the owner's option (a): the next paragraph describes 7e0899e6; since the throw hook, require no longer needs its branch.)
@@ -160,3 +168,5 @@ Seal value `false`: `getmetatable('')` then reads as "no metatable" to a truthin
 - Mutations (each alone, restored after): the `-include` entry dropped, or the hook body emptied, fails `TheHeapCapStopsTheGameEvenUnderPcall` and all 30 runs of `ACloseAddedLaterCannotOutliveTheHeapCap`; the watchdog band renamed in both fixture and README fails `EveryLoopFixtureBandEndsWithTheReadmesText` in 0 ms. Restored: 179/179 in `GameScriptTest`.
 - `pio run -e x4pro`, `-e default`, `-e sticky` -- SUCCESS each. `pio run -e x4pro -v` shows `-Ilib/lua/port` and `-include luai_throw.h` on the Lua units; `xtensa-esp32s3-elf-nm` shows `T luaport_memoryerror` in the x4pro and sticky ELFs and `w luaport_memoryerror` in `ldo.c.o`.
 - Every touched path is fork-only (`lib/lua` outside `src/`, `lib/GameScript`, `test/game_script`, `docs/crosshatch`, `_bmad-output`).
+
+**Evidence for the review of d7cc03e8 (2026-09-28, under the lock):** reconfigure, build, `ctest -j8` -- 641/641 passed (`ARefusalLuaRecoversFromIsNotAFault` and the new `ALibraryStringBufferRefusedAtTheCapStopsTheGame` included); formatter twice, nothing new. The Apple link option is untested here (Linux host).

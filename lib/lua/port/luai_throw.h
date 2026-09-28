@@ -10,9 +10,14 @@
 **
 ** luaport_memoryerror runs at the throw, so it sees every memory error before
 ** anything can replace it while the stack unwinds (a __close that raises, in
-** luaD_closeprotected). Lua throws one only after its emergency collection
-** failed to make room, so a refused allocation Lua recovers from never reaches
-** it. The symbol is weak: lib/GameScript defines it (CallGuard.cpp), and a
+** luaD_closeprotected). An allocation through Lua's own allocator (luaM) that
+** the cap refuses is retried after an emergency collection, and throws only if
+** that fails too, so a refusal it recovers from never reaches the hook. The
+** library string buffers (lauxlib's resizebox: string.rep, table.concat,
+** gsub, format, upper and lower past LUAL_BUFFERSIZE) call the allocator
+** directly and throw at the first refusal, with no collection, so a game near
+** its cap can end on a large string operation (as in stock Lua). The symbol is
+** weak: lib/GameScript defines it (CallGuard.cpp), and a
 ** build that links Lua without it simply skips the call.
 **
 ** Only macros and a declaration: this is read before lprefix.h, so it must not

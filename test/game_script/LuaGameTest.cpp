@@ -355,15 +355,18 @@ TEST_F(LuaGameTest, ACloseAddedLaterCannotOutliveTheHeapCap) {
   }
 }
 
-// Lua recovers from a refused allocation by collecting and trying again; only a
-// memory error it throws is the heap cap. A script whose garbage reaches the cap
-// many times over, with the collector stopped, runs on with no fault.
+// On Lua's own allocation path (luaM), a refused allocation is retried after an
+// emergency collection; only a memory error Lua then throws is the heap cap. A
+// script whose garbage reaches the cap many times over, with the collector
+// stopped, runs on with no fault. Its garbage is tables grown by assignment (no
+// library string buffer, which the next test covers), so the path is the same
+// whatever the word size.
 TEST_F(LuaGameTest, ARefusalLuaRecoversFromIsNotAFault) {
   useSource("main",
             "return { setup = function() return {} end,\n"
             "  draw = function()\n"
             "    collectgarbage('stop')\n"
-            "    for i = 1, 1000 do local s = string.rep('x', 1000) .. i end\n"
+            "    for i = 1, 1000 do local t = {} for j = 1, 64 do t[j] = j end end\n"
             "    collectgarbage('restart')\n"
             "    ch.gfx.text(0, 0, 'ran', 'small', 'black') end }");
   DirectGame game(arena, frames, sources, ports, canvas);
@@ -373,6 +376,25 @@ TEST_F(LuaGameTest, ARefusalLuaRecoversFromIsNotAFault) {
   EXPECT_GT(arena.luaCapRefusals(), refusalsBefore);  // the cap did refuse, and Lua recovered
   EXPECT_EQ(game.callGuard().fault(), Fault::None);
   EXPECT_EQ(frontText(), "ran");
+}
+
+// A library string buffer past LUAL_BUFFERSIZE (lauxlib's resizebox) calls the
+// allocator directly and raises at the first refusal, with no emergency
+// collection (as in stock Lua): near the cap, with plenty of garbage a collection
+// would free, a 4 KiB string.rep still ends the game.
+TEST_F(LuaGameTest, ALibraryStringBufferRefusedAtTheCapStopsTheGame) {
+  useSource("main",
+            "return { setup = function() return {} end,\n"
+            "  draw = function()\n"
+            "    collectgarbage('stop')\n"
+            "    while collectgarbage('count') < 254 do local t = {} for j = 1, 8 do t[j] = j end end\n"
+            "    local ok = pcall(string.rep, 'x', 4096)\n"
+            "    ch.gfx.text(0, 0, tostring(ok), 'small', 'black') end }");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(game.errorMessage(), "not enough memory");
+  EXPECT_EQ(game.callGuard().fault(), Fault::Memory);
 }
 
 TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {

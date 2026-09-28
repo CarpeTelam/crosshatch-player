@@ -60,6 +60,13 @@ target_include_directories(lua_vendored PUBLIC ${LUA_DIR}/src)
 target_include_directories(lua_vendored PRIVATE ${LUA_INCLUDES})
 target_compile_definitions(lua_vendored PRIVATE ${LUA_DEFINES})
 target_compile_options(lua_vendored PRIVATE -Wall -Wextra ${LUA_OPTIONS})
+# ldo.c refers to the weak luaport_memoryerror (lib/lua/port/luai_throw.h), which only
+# CallGuard.cpp defines. ELF linkers leave an undefined weak symbol null; Darwin's ld64
+# refuses it, so a target that links Lua without CallGuard.cpp (GameSaveStoreTest) needs
+# it marked as allowed to stay undefined.
+if(APPLE)
+  target_link_options(lua_vendored INTERFACE "LINKER:-U,_luaport_memoryerror")
+endif()
 
 # Every GameScript source, so a new file there is built and linked by the host suite.
 file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cpp)
