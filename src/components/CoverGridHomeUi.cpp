@@ -18,6 +18,10 @@
 #include "icons/transfer.h"
 #include "util/BookProgress.h"
 
+#if FREEINK_CAP_GAMES
+#include <GameIcons.generated.h>
+#endif
+
 namespace fui = freeink::ui;
 namespace {
 constexpr fui::ActionId SELECT = 1;
@@ -266,9 +270,21 @@ void CoverGridHomeUi::drawGrid(UiScreen& screen) {
 }
 
 void CoverGridHomeUi::drawTabs(UiScreen& screen, fui::Rect rect) {
+#if FREEINK_CAP_GAMES
+  // Games sits where list mode puts its row, after Transfer and before Settings, so HomeActivity's one index
+  // mapping serves both modes.
+  static constexpr const uint8_t* ICONS[] = {
+      FolderIcon, LibraryIcon, BlocksIcon, TransferIcon, GameIcons::GAME_CONTROLLER_32, Settings2Icon};
+  static_assert(std::size(ICONS) == std::tuple_size_v<decltype(tabItems)>);
+#else
   static constexpr const uint8_t* ICONS[] = {FolderIcon, LibraryIcon, BlocksIcon, TransferIcon, Settings2Icon};
+#endif
   int count = 0;
+#if FREEINK_CAP_GAMES
+  for (int i = 0; i < static_cast<int>(std::size(ICONS)); ++i) {
+#else
   for (int i = 0; i < 5; ++i) {
+#endif
     if (i == 2 && !hasOpds) continue;
     auto& tab = tabItems[count];
     tab.value = books->size() + count;

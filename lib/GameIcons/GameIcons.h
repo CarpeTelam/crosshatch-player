@@ -7,8 +7,12 @@
 //
 // Games draw an icon by name with ch.gfx.icon, screens with drawGameIcon
 // (src/games/GameIconDraw.h); both find it here by name and keep its index into
-// ICONS. This folder's .clang-format turns formatting off for the generated data,
-// so this file is kept in the repository's style by hand.
+// ICONS. One upstream file uses a bitmap directly: Home's cover-grid Games tab
+// (src/components/CoverGridHomeUi.cpp, ledger row 9) includes
+// GameIcons.generated.h and draws GAME_CONTROLLER_32 with GfxRenderer::drawIcon,
+// so renaming or dropping game_controller fails that file's build. This folder's
+// .clang-format turns formatting off for the generated data, so this file is
+// kept in the repository's style by hand.
 
 #include <cstddef>
 #include <cstdint>

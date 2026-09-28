@@ -149,3 +149,15 @@
     - `FrameReplay`'s `Op::Image` viewport offset;
     - the match's `BadImage` → `STR_GAMES_BAD_IMAGE` mapping.
   evidence: `test/` compiles neither `GameAssets.cpp`, `FrameReplay.cpp`, nor `GameMatchActivity.cpp`, since they need Storage and `GfxRenderer`. Dropping `image.offset = pixelOffset` passes every host test. The budget, the count cap, the verdicts, and the ink rule are pure and tested (`ImageBudget`, `GameImageBlit::runs`). A Storage stub and a renderer double (retro AI-2, epic-install-and-launcher) would pin the rest. Review finding 19.
+
+## 3.6
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-cover-grid-home-games-tile-plan.md`
+  summary: `docs/crosshatch/game-icons.md` ("Names the runtime screens will use") still says no screen draws a library icon and lists entry 6's `game_controller` tile as future work; it should say the cover-grid Home tab draws `GAME_CONTROLLER_32` directly with `renderer.drawIcon` (ledger row 9), and "Adding or changing an icon" should warn that renaming or dropping `game_controller` fails the x4pro and sticky builds.
+  evidence: Review finding (blind hunter 1). Left out of 3.6 because entry 5 (Runtime lane) edits the same section in parallel and the epic Notes keep parallel entries off shared files; update it once both lanes are merged (entry 7's sweep).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-cover-grid-home-games-tile-plan.md`
+  summary: `scripts/check_layers.py` checks which game component an upstream file includes (`UPSTREAM_EDGES`) but not that the include sits inside `#if FREEINK_CAP_GAMES`, which AD-2 and the ledger's Guarded column require; an unguarded `#include <GameIcons.generated.h>` in `CoverGridHomeUi.cpp` would pass every check and every build.
+  evidence: Review finding (blind hunter 2). Pre-existing for rows 5 and 10 (`ActivityManager.cpp`, `OtaUpdater.cpp`); `docs/crosshatch/upstream-touches.md` says the job enforces paths only and review holds the Guarded column. Closing it needs a preprocessor-conditional tracker for each `UPSTREAM_EDGES` include.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-cover-grid-home-games-tile-plan.md`
+  summary: No host test pins the cover-grid tab order (`CoverGridHomeUi::drawTabs`'s `ICONS` and OPDS skip) against `HomeActivity::indexToMenuItem` / `menuItemToIndex`; a reorder on one side alone would put the controller on a tab that opens another screen, and only a simulator run shows it.
+  evidence: Review finding (verification gap). Checked by hand in 3.6 on x4pro and sticky with and without OPDS; a host test needs the upstream mapping moved into a testable unit, against the minimal-diff policy, or the screen harness (retro AI-2, epic-install-and-launcher).

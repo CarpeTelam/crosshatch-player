@@ -60,5 +60,10 @@ class CoverGridHomeUi final : public UiAppHost {
   freeink::ui::CoverGridProps grid;
   freeink::ui::Rect gridBounds{};
   freeink::ui::TabBarProps tabs;
+#if FREEINK_CAP_GAMES
+  // One more tab: Games, before Settings.
+  std::array<freeink::ui::TabItem, 6> tabItems;
+#else
   std::array<freeink::ui::TabItem, 5> tabItems;
+#endif
 };
