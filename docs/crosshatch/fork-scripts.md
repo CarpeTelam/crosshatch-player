@@ -40,6 +40,7 @@ workflow's sparse checkout of `scripts` includes it too.
 | `GAMES_MACRO`, `GAMES_BUILD_FLAG` | `FREEINK_CAP_GAMES` and `-DFREEINK_CAP_GAMES=1`, as `platformio.ini` spells it. |
 | `API_LEVEL_HEADER`, `api_list_path(level)` | `lib/GameCore/ApiLevel.h` and `docs/crosshatch/api-level-<level>.txt`, relative to the repository root. |
 | `ApiLevel`, `parse_api_level(text)` | Reads `(level, min_level, frozen)` from the header's one-line `#define`s; a missing, repeated, or malformed define is a `SetupError`. |
+| `frozen_top(level)` | The highest frozen level of an `ApiLevel`: `API_LEVEL` when `API_LEVEL_FROZEN` is true, else `API_LEVEL - 1`; 0 for `None` (no header) or when nothing is frozen. |
 
 A script's `main()` parses its arguments and returns `exit_code(...)`; the file ends with
 `if __name__ == '__main__': sys.exit(main())`:

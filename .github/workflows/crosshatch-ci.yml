@@ -236,10 +236,28 @@ jobs:
       - api-freeze
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
       - name: Fail because needed jobs failed
-        # Fail if any job failed or was cancelled (skipped jobs are ok)
+        # Fail if any job failed or was cancelled (skipped jobs are ok). A push cancels the run of the commit it
+        # supersedes (cancel-in-progress), so a cancelled job passes with a notice when this run's commit is no longer
+        # the PR's head; on the head a cancelled job still fails.
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: exit 1
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            exit 1
+          fi
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)
+          if [ -n "$head" ] && [ "$head" != "$RUN_SHA" ]; then
+            echo "::notice::$RUN_SHA is no longer the PR's head ($head); its cancelled jobs do not fail this check."
+            exit 0
+          fi
+          exit 1
       - name: Success
         run: exit 0

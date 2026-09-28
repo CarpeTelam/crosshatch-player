@@ -20,7 +20,7 @@ import argparse
 import sys
 
 import fork_common
-from fork_common import API_LEVEL_HEADER, Failure, SetupError, api_list_path
+from fork_common import API_LEVEL_HEADER, Failure, SetupError, api_list_path, frozen_top
 
 SUMMARY_HEADING = 'API freeze'
 
@@ -35,13 +35,6 @@ def resolve(ref, hint):
 def read_level(commit):
     data = fork_common.file_at(commit, API_LEVEL_HEADER)
     return None if data is None else fork_common.parse_api_level(data.decode('utf-8', errors='replace'))
-
-
-def frozen_top(level):
-    """The highest frozen level: 0 when nothing is frozen."""
-    if level is None:
-        return 0
-    return level.level if level.frozen else level.level - 1
 
 
 def describe(level):

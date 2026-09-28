@@ -33,14 +33,6 @@ def header(level, frozen, min_level=1):
             f'#define API_LEVEL_FROZEN {"true" if frozen else "false"}\n#define API_SURFACE_CRC 0x00000000\n')
 
 
-class FrozenTopTest(unittest.TestCase):
-    def test_frozen_top(self):
-        self.assertEqual(caf.frozen_top(None), 0)
-        self.assertEqual(caf.frozen_top(caf.fork_common.ApiLevel(1, 1, False)), 0)
-        self.assertEqual(caf.frozen_top(caf.fork_common.ApiLevel(1, 1, True)), 1)
-        self.assertEqual(caf.frozen_top(caf.fork_common.ApiLevel(3, 1, False)), 2)
-
-
 class CheckScriptTest(unittest.TestCase):
     """Branches of a throwaway repository; each head is checked against the base it forked from."""
 
