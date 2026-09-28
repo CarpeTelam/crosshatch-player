@@ -3,7 +3,7 @@ title: 'Icon regeneration job'
 type: 'chore'
 ticket: '3'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: 'bc6adc548587ec84c1530e72f1fb6908dc13895c'
 route: 'oneshot'
 route_source: 'auto'
