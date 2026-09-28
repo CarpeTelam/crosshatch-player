@@ -168,31 +168,38 @@ void copyReason(lua_State* L, const std::span<char> out) {
 }  // namespace
 
 LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
-                 const Canvas& canvas)
-    : arena(arena), frames(frames), sources(sources), ports(ports), canvas(canvas) {}
+                 const Canvas& canvas, const GameCore::GameImages& images)
+    : arena(arena), frames(frames), sources(sources), images(images), ports(ports), canvas(canvas) {}
 
 LuaGame::~LuaGame() { close(); }
 
-Outcome LuaGame::fail(const char* message) {
-  snprintf(error, sizeof(error), "%s", message);
+Outcome LuaGame::fail(const char* message, const HostFailure kind) {
+  // Cut at a UTF-8 boundary, since the error view shows it.
+  const size_t kept = utf8Cut(message, strlen(message), sizeof(error) - 1);
+  std::memcpy(error, message, kept);
+  error[kept] = '\0';
+  hostFailed = kind;
   return Outcome::ScriptError;
 }
 
 Outcome LuaGame::cancelled() {
   snprintf(error, sizeof(error), "%s", "cancelled");
+  hostFailed = HostFailure::None;
   return Outcome::Cancelled;
 }
 
 Outcome LuaGame::load() {
   close();
   error[0] = '\0';
+  hostFailed = HostFailure::None;
   // From the reserve, which the Lua heap can never take.
   scratch = arena.allocate(SCRATCH_BYTES);
-  if (!scratch) return fail("not enough memory");
+  if (!scratch) return fail("not enough memory", HostFailure::OutOfMemory);
   L = lua_newstate(&ArenaAllocator::luaAlloc, &arena, ports.random.next32());
-  if (!L) return fail("not enough memory");
+  if (!L) return fail("not enough memory", HostFailure::OutOfMemory);
   bindings.canvas = &canvas;
   bindings.sources = &sources;
+  bindings.images = &images;
   bindings.guard = &guard;
   bindings.lockedSections = &lockedSections;
   bindings.clock = &ports.clock;
@@ -211,7 +218,7 @@ Outcome LuaGame::load() {
 
 Outcome LuaGame::setup(const GameCore::GameContext& ctx, std::span<const uint8_t>& state) {
   state = {};
-  if (!L) return fail("game not started");
+  if (!L) return fail("game not started", HostFailure::NotLoaded);
   Call call;
   call.entry = Entry::Setup;
   call.ctx = &ctx;
@@ -222,7 +229,7 @@ Outcome LuaGame::setup(const GameCore::GameContext& ctx, std::span<const uint8_t
 }
 
 Outcome LuaGame::status(const std::span<const uint8_t> state, const GameCore::Roster& roster, GameCore::Status& out) {
-  if (!L) return fail("game not started");
+  if (!L) return fail("game not started", HostFailure::NotLoaded);
   Call call;
   call.entry = Entry::Status;
   call.state = state;
@@ -235,7 +242,7 @@ Outcome LuaGame::apply(const std::span<const uint8_t> state, const uint8_t seat,
                        std::span<const uint8_t>& next, const std::span<char> reason) {
   next = {};
   if (!reason.empty()) reason[0] = '\0';
-  if (!L) return fail("game not started");
+  if (!L) return fail("game not started", HostFailure::NotLoaded);
   Call call;
   call.entry = Entry::Apply;
   call.state = state;
@@ -249,7 +256,7 @@ Outcome LuaGame::apply(const std::span<const uint8_t> state, const uint8_t seat,
 }
 
 Outcome LuaGame::draw(const std::span<const uint8_t> state, const uint8_t seat) {
-  if (!L) return fail("game not started");
+  if (!L) return fail("game not started", HostFailure::NotLoaded);
   DisplayList& back = frames.back();
   back.clear();
   bindings.drawTarget = &back;
@@ -266,7 +273,7 @@ Outcome LuaGame::draw(const std::span<const uint8_t> state, const uint8_t seat) 
 Outcome LuaGame::input(const std::span<const uint8_t> state, const uint8_t seat, const GameCore::GameEvent& event,
                        std::span<const uint8_t>& move) {
   move = {};
-  if (!L) return fail("game not started");
+  if (!L) return fail("game not started", HostFailure::NotLoaded);
   Call call;
   call.entry = Entry::Input;
   call.state = state;
@@ -406,11 +413,10 @@ void LuaGame::pushUi(lua_State* L, const uint8_t seat) {
 void LuaGame::encodeTop(lua_State* L, const char* function, const char* what, const size_t limit,
                         std::span<const uint8_t>& out) {
   const Codec::Encoded encoded = Codec::encode(L, -1, limit, scratch, SCRATCH_BYTES);
-  if (encoded.error == Codec::Error::TooLarge) {
-    luaL_error(L, "%s: %s is too large (over %d bytes)", function, what, static_cast<int>(limit));
-  }
   if (encoded.error != Codec::Error::None) {
-    luaL_error(L, "%s: %s cannot be encoded (%s)", function, what, Codec::errorName(encoded.error));
+    char message[ENCODE_ERROR_BYTES];
+    encodeErrorMessage(message, sizeof(message), function, what, encoded.error, limit);
+    luaL_error(L, "%s", message);
   }
   out = {encoded.data, encoded.length};
 }

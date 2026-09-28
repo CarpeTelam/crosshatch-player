@@ -1,11 +1,13 @@
 add_executable(GameCoreTest
   ApiLevelTest.cpp
   ForkReleaseTest.cpp
+  GameImagesTest.cpp
   GameHostCapsTest.cpp
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
   SessionTest.cpp
+  ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp

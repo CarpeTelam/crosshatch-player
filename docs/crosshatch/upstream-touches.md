@@ -18,7 +18,10 @@ of its row or bullet. It fails a pull request when:
   upstream is merged.
 
 The job enforces paths only. The Change and Guarded columns describe what each row may change, and review holds a
-pull request to them.
+pull request to them, with one part checked by the `Layer check` job: every include of game code in an upstream
+file sits in the `FREEINK_CAP_GAMES` branch of an `#if`, `#ifdef`, `#elif`, or `#elifdef` (not in its `#else`), whose
+condition is `FREEINK_CAP_GAMES`, `defined(FREEINK_CAP_GAMES)`, or `FREEINK_CAP_GAMES == 1`, alone or joined to others by
+`&&` with no `||`; `scripts/check_layers.py`'s docstring has the full rule.
 
 ## Ledger
 
@@ -32,11 +35,14 @@ cannot be.
 | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
 | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |
 | 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping, `goToGames()` | yes |
-| 6 | `src/activities/home/HomeActivity.h` | index mapping, `onGamesOpen()` | yes |
-| 7 | `src/activities/home/HomeActivity.cpp` | item count, switch case, label; list mode reuses an existing `UIIcon` | yes |
-| 8 | `src/components/CoverGridHomeUi.h` | tab array size | yes |
-| 9 | `src/components/CoverGridHomeUi.cpp` | Games tile drawn from a `GameIcons` bitmap | yes |
+| 6 | `src/activities/home/HomeActivity.h` | Games in the index mapping after File Transfer and before Settings, one mapping for list and cover-grid Home; `onGamesOpen()`; no game header | yes |
+| 7 | `src/activities/home/HomeActivity.cpp` | Games in the item count in both Home modes, switch case, list-mode label; list mode reuses an existing `UIIcon`; no game header | yes |
+| 8 | `src/components/CoverGridHomeUi.h` | tab array size, one more for the Games tab; no game header | yes |
+| 9 | `src/components/CoverGridHomeUi.cpp` | Games tab before Settings, drawn from `GameIcons::GAME_CONTROLLER_32` with `renderer.drawIcon`; its `GameIcons.generated.h` include is the only upstream include of `lib/GameIcons` (`UPSTREAM_EDGES` in `scripts/check_layers.py`) | yes |
 | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison, and into `games/ForkReleaseProbe.h` after a failed fetch; a `static_assert` that `assetName` is `ForkRelease::ASSET_NAME_CAPACITY` bytes (AD-25) | yes |
+
+The game includes that rows 5, 9, and 10 make are held in `UPSTREAM_EDGES` in `scripts/check_layers.py`, and the Layer
+check fails any other upstream include of game code, and any of these outside an `#if FREEINK_CAP_GAMES` branch.
 
 Row 10 and fork releases (AD-25): an upstream merge that touches `src/network/OtaUpdater.*`,
 `src/network/HttpDownloader.*`, `lib/JsonParser/ReleaseJsonParser.*`, `src/network/FirmwareBoardTag.*`, a release
@@ -103,6 +109,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/game_codec.py`
 - `scripts/game_codec_test.py`
 - `scripts/gen_game_icons.py`
+- `scripts/gen_game_icons_test.py`
 - `scripts/check_upstream_touches.py`
 - `scripts/check_upstream_touches_test.py`
 - `scripts/check_flash_budget.py`

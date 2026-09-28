@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <climits>
 #include <cstdint>
 #include <iomanip>
 #include <lua.hpp>
@@ -16,19 +17,24 @@
 #include "ChBindings.h"
 #include "Codec.h"
 #include "DisplayList.h"
+#include "GameIcons.h"
+#include "GameImages.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
 #include "Manifest.h"
 #include "Sandbox.h"
 #include "Session.h"
 
+static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
+
 // The level-1 surface test (spine AD-19): a real LuaGame, whose load() opens the
 // device's sandbox and ch table, reports what a game can reach (fixtures/surface),
 // and each entry kind is compared with the union of docs/crosshatch/api-level-<n>.txt
 // in both directions, so a function, global, library member, enum value, event,
-// ctx field, or limit added on either side alone fails here. ApiLevelTest checks
-// the list's grammar and manifest entries; the icon table, ch.d.lua, and the catalog
-// are checked by the epics that add them.
+// ctx field, limit, or icon added on either side alone fails here. ApiLevelTest
+// checks the list's grammar and manifest entries; IconsMatchTheList checks the icon
+// names against the library's table; ch.d.lua and the catalog are checked by the
+// epics that add them.
 
 // A new EventKind, SwipeDir, or Mode enumerator must break the build until named() lists it.
 #pragma GCC diagnostic error "-Wswitch"
@@ -322,6 +328,7 @@ TEST_F(ApiSurfaceTest, GfxOptionsMatchTheList) {
       {"size", SIZE_NAMES, "ch.gfx.text(0, 0, 'a', v, 'black')"},
       {"align", ALIGN_NAMES, "ch.gfx.text(0, 0, 'a', 'small', 'black', v)"},
       {"refresh", REFRESH_NAMES, "ch.gfx.refresh(v)"},
+      {"weight", WEIGHT_NAMES, "ch.gfx.icon('x', 0, 0, 'small', 'black', v)"},
   };
   constexpr const char* UNLISTED = "grey";
   std::string probes;
@@ -355,6 +362,46 @@ TEST_F(ApiSurfaceTest, GfxOptionsMatchTheList) {
   EXPECT_EQ(results.count(std::string(UNLISTED) + " true"), 0u) << "ch.gfx accepts an unlisted value";
 }
 
+TEST_F(ApiSurfaceTest, IconsMatchTheList) {
+  Names library;
+  for (const GameIcons::Icon& icon : GameIcons::ICONS) library.insert(icon.name);
+  const Names icons = listed("icon", true);
+  expectSameNames(library, icons, "icon");
+  ASSERT_FALSE(icons.empty());
+
+  // Each listed name draws through ch.gfx.icon at every listed size in every
+  // listed weight, as its own index.
+  const Names sizes = listedEnum("size");
+  const Names weights = listedEnum("weight");
+  ASSERT_EQ(weights, (Names{"regular", "fill"}));
+  std::string calls;
+  Names every;  // "<size> <weight>"
+  for (const std::string& size : sizes) {
+    for (const std::string& weight : weights) every.insert(size + " " + weight);
+  }
+  for (const std::string& name : icons) {
+    for (const std::string& size : sizes) {
+      for (const std::string& weight : weights) {
+        calls += "ch.gfx.icon('" + name + "', 0, 0, '" + size + "', 'black', '" + weight + "')\n";
+      }
+    }
+  }
+  useSource("main", "return { setup = function() return {} end, draw = function()\n" + calls + "end }\n");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  std::map<std::string, Names> drawn;  // name -> "<size> <weight>"
+  for (const DrawCommand& c : frontCommands()) {
+    ASSERT_EQ(c.op, Op::Icon);
+    ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
+    drawn[GameIcons::ICONS[c.icon].name].insert(std::string(SIZE_NAMES[static_cast<size_t>(c.size)]) + " " +
+                                                WEIGHT_NAMES[static_cast<size_t>(c.weight)]);
+  }
+  for (const std::string& name : icons) {
+    EXPECT_EQ(drawn[name], every) << "icon " << name;
+  }
+}
+
 TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
   useSource("main",
             "return { setup = function() return {} end, draw = function() end,\n"
@@ -380,6 +427,8 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"table_elements_count", TABLE_ELEMENTS_LIMIT},
       {"timer_min_ms", TIMER_MIN_MS},
       {"timers_pending_count", pendingTimers},
+      {"images_bytes", GameCore::IMAGES_BYTES},
+      {"images_count", GameCore::MAX_IMAGES},
       // lib/lua/library.json's defines, as the Lua build (device and host) compiles them.
       {"c_stack_levels_count", LUA_BUILD_LUAI_MAXCCALLS},
       {"pattern_depth_count", LUA_BUILD_MAXCCALLS},

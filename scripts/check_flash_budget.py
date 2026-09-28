@@ -10,7 +10,8 @@ same commit, so upstream growth never counts against the budget.
   build on    `pio run -e x4pro`, the normal build in .pio/build
   build off   the same with PLATFORMIO_BUILD_UNFLAGS=-DFREEINK_CAP_GAMES=1, built into .pio/build-games-off
   compare     compare the two firmware.bin sizes against the flash limit, and the two ELFs' static internal RAM
-              (.dram0.data + .dram0.bss + .noinit, from the toolchain's `size -A`) against the RAM limit
+              (.dram0.data + .dram0.bss + .noinit + every .iram0.* section, from the toolchain's `size -A`) against
+              the RAM limit; IRAM counts because it shares internal SRAM with DRAM on the S3
   objects     read every object the games-on build compiled from lib/Game*, src/games, and src/activities/games,
               and fail on a static initializer (a .ctors, .init_array, or .preinit_array entry, or the guard
               variable of a dynamically initialized local static) or a mutable static over 64 B
@@ -32,6 +33,12 @@ classes game headers declare at file scope (the header-only GameTouch and ForkRe
 upstream or library name, such as a free function sharing a common name, makes that code's COMDAT statics count as
 well: a visible failure, never an escape. A free inline function at global scope in a game header, with no out-of-line
 definition, is still not recognized.
+
+What `objects` does not read, consistent with AD-2's wording: `lib/lua`, the vendored Lua sources; fork code inside
+the ledgered upstream files of docs/crosshatch/upstream-touches.md (the `#if FREEINK_CAP_GAMES` blocks in
+`ActivityManager.cpp`, `CoverGridHomeUi.cpp`, `OtaUpdater.cpp`, and the like), whose objects are upstream's; and a
+game library whose directory is not named `lib/Game*`, which stays unread until GAME_LIB_GLOB or GAME_SOURCE_DIRS
+names it. Review holds those; `compare`'s RAM limit still counts any static they add to internal RAM.
 
 Each build first saves `pio project metadata` for itself. `compare` checks from it that the "on" build defines
 FREEINK_CAP_GAMES=1 and the "off" build does not define it at all: a misspelled unflag, or the flag dropped from
@@ -75,9 +82,13 @@ DEFAULT_METADATA_DIR = PROJECT_DIR / '.pio' / 'flash-budget'
 STATES = ('on', 'off')
 
 # Static internal RAM, by ELF section name. .noinit may be absent when empty; the other two never are, so a missing
-# one means the section names changed and the gate would measure nothing.
+# one means the section names changed and the gate would measure nothing. IRAM shares internal SRAM with DRAM on the
+# S3, so every .iram0.* section present counts too (.iram0.vectors, .iram0.text, .iram0.text_end padding,
+# .iram0.data, .iram0.bss); .iram0.text is always there, and one build having an .iram0.* section the other lacks
+# counts it as 0 bytes in the other.
 RAM_SECTIONS = ('.dram0.data', '.dram0.bss', '.noinit')
-REQUIRED_RAM_SECTIONS = ('.dram0.data', '.dram0.bss')
+IRAM_SECTION_PREFIX = '.iram0.'
+REQUIRED_RAM_SECTIONS = ('.dram0.data', '.dram0.bss', '.iram0.text')
 
 # Game code (AD-2): source directories and their objects under the build directory.
 GAME_SOURCE_DIRS = ('src/games', 'src/activities/games')
@@ -191,8 +202,16 @@ def section_sizes(size_output):
     return sizes
 
 
+def ram_sections(sizes):
+    """The static internal RAM sections of one `size -A` result: each RAM_SECTIONS name (0 when absent), then every
+    .iram0.* section present, in the tool's order."""
+    counted = {name: sizes.get(name, 0) for name in RAM_SECTIONS}
+    counted.update((name, size) for name, size in sizes.items() if name.startswith(IRAM_SECTION_PREFIX))
+    return counted
+
+
 def static_ram(build_record, state):
-    """Bytes in each RAM_SECTIONS section of one build's ELF."""
+    """Bytes in each static internal RAM section of one build's ELF (ram_sections)."""
     if not build_record.elf.is_file():
         raise SetupError(f'missing games-{state} ELF {build_record.elf}; run "build {state}"')
     size_tool = toolchain_tool(build_record, state, 'size')
@@ -200,7 +219,7 @@ def static_ram(build_record, state):
     missing = [name for name in REQUIRED_RAM_SECTIONS if name not in sizes]
     if missing:
         raise SetupError(f'the games-{state} ELF {build_record.elf} has no {", ".join(missing)} section')
-    return {name: sizes.get(name, 0) for name in RAM_SECTIONS}
+    return ram_sections(sizes)
 
 
 def signed(value):
@@ -242,8 +261,11 @@ def ram_report(on_ram, off_ram, limit_bytes):
         '| x4pro `firmware.elf` section | Games on | Games off | Difference |',
         '| --- | ---: | ---: | ---: |',
     ]
-    for name in RAM_SECTIONS:
-        lines.append(f'| `{name}` | {on_ram[name]:,} | {off_ram[name]:,} | {signed(on_ram[name] - off_ram[name])} |')
+    # An .iram0.* section only one build has is 0 bytes in the other.
+    names = list(on_ram) + [name for name in off_ram if name not in on_ram]
+    for name in names:
+        on, off = on_ram.get(name, 0), off_ram.get(name, 0)
+        lines.append(f'| `{name}` | {on:,} | {off:,} | {signed(on - off)} |')
     lines += [
         f'| Total | {on_total:,} | {off_total:,} | {signed(on_total - off_total)} |',
         f'| Limit | | | {limit_bytes:,} |',
@@ -277,7 +299,7 @@ def compare(metadata_dir, limit_bytes, summary_path=None, ram_limit_bytes=DEFAUL
     print(text)
     if summary_path:
         fork_common.write_step_summary(text + '\n', summary_path)
-    return 0 if within and ram_within else 1
+    return fork_common.PASS if within and ram_within else fork_common.FAIL
 
 
 # `readelf -W -S -s` rows. A section header: [Nr] Name Type Address Off Size ES Flg Lk Inf Al (the name is blank for
@@ -539,7 +561,7 @@ def check_objects(metadata_dir, summary_path=None, project_dir=PROJECT_DIR):
     print(text)
     if summary_path:
         fork_common.write_step_summary(text + '\n', summary_path)
-    return 1 if problems else 0
+    return fork_common.FAIL if problems else fork_common.PASS
 
 
 def main(argv=None):
@@ -566,7 +588,7 @@ def main(argv=None):
     def step():
         if args.command == 'build':
             build(args.state, args.metadata_dir)
-            return 0
+            return fork_common.PASS
         if args.command == 'objects':
             return check_objects(args.metadata_dir, summary, args.project_dir)
         if args.limit_bytes is not None:

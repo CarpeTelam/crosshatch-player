@@ -437,16 +437,16 @@ dl.adlist dd{margin:0}
       <p>Games share a curated <strong>icon library</strong>, and so do the launcher and the runtime's own screens, so crosshatch games look like they belong together. Icon names are part of the API: a later level can add names but never rename or repurpose one.</p>
       <figure>
         <div class="scroll">
-        <svg viewBox="0 0 720 150" role="img" aria-label="Six example icons drawn at the medium size: mark_x, mark_o, die_5, suit_heart, piece_pawn and arrow_left.">
+        <svg viewBox="0 0 720 150" role="img" aria-label="Six example icons drawn at the medium size: x, circle, dice-five, heart, star and arrow-left.">
           <g transform="translate(36 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
             <path class="icon" d="M16 16 L48 48 M48 16 L16 48"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">mark_x</text>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">x</text>
           </g>
           <g transform="translate(152 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
             <circle class="icon" cx="32" cy="32" r="17"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">mark_o</text>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">circle</text>
           </g>
           <g transform="translate(268 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
@@ -454,28 +454,26 @@ dl.adlist dd{margin:0}
             <circle class="icon-fill" cx="22" cy="22" r="3.5"/><circle class="icon-fill" cx="42" cy="22" r="3.5"/>
             <circle class="icon-fill" cx="32" cy="32" r="3.5"/>
             <circle class="icon-fill" cx="22" cy="42" r="3.5"/><circle class="icon-fill" cx="42" cy="42" r="3.5"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">die_5</text>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">dice-five</text>
           </g>
           <g transform="translate(384 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
             <path class="icon-fill" d="M32 50 C20 40 13 34 13 25 C13 19 18 15 23 15 C27 15 30 17 32 21 C34 17 37 15 41 15 C46 15 51 19 51 25 C51 34 44 40 32 50 Z"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">suit_heart</text>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">heart</text>
           </g>
           <g transform="translate(500 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
-            <circle class="icon-fill" cx="32" cy="20" r="7"/>
-            <path class="icon-fill" d="M26 29 H38 L42 44 H22 Z"/>
-            <rect class="icon-fill" x="17" y="45" width="30" height="6" rx="2"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">piece_pawn</text>
+            <path class="icon-fill" d="M32.0 14.0 L36.7 26.5 L50.1 27.1 L39.6 35.5 L43.2 48.4 L32.0 41.0 L20.8 48.4 L24.4 35.5 L13.9 27.1 L27.3 26.5 Z"/>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">star</text>
           </g>
           <g transform="translate(616 20)">
             <rect x="0" y="0" width="64" height="64" rx="6" fill="none" stroke="var(--rule)"/>
             <path class="icon" d="M46 32 H18 M30 20 L18 32 L30 44"/>
-            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">arrow_left</text>
+            <text x="32" y="96" text-anchor="middle" class="mono" font-size="12">arrow-left</text>
           </g>
         </svg>
         </div>
-        <figcaption>Sketches of the kind of icons in the set; the real ones come from Phosphor Icons' filled style (MIT), rendered to 1-bit bitmaps. Scripts draw them with <code>ch.gfx.icon("die_5", x, y, "medium", "black")</code> at 32, 64 or 128 pixels.</figcaption>
+        <figcaption>Sketches of the kind of icons in the set; the real ones are Phosphor Icons (MIT) under Phosphor's own names, each in its regular and fill weights, rendered to 1-bit bitmaps. Scripts draw them with <code>ch.gfx.icon("dice-five", x, y, "medium", "black", "fill")</code> at 32, 64 or 128 pixels; the weight defaults to regular.</figcaption>
       </figure>
       <p>A game that needs something the library doesn't have ships its own PNGs, converted to black and white at install and drawn with <code>ch.gfx.image</code>.</p>
 

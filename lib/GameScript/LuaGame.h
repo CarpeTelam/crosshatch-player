@@ -1,5 +1,6 @@
 #pragma once
 
+#include <GameImages.h>
 #include <IGameRules.h>
 
 #include <atomic>
@@ -62,9 +63,10 @@ class LuaGame : public GameCore::IGameRules {
   // encode's output is copied out before Lua runs again); sized for the largest limit.
   static constexpr size_t SCRATCH_BYTES = Codec::scratchBytes(Codec::STORE_LIMIT);
 
-  // `canvas` (copied) is what ch.screen and ch.text_width report.
+  // `canvas` (copied) is what ch.screen and ch.text_width report; `images` (kept
+  // by reference, like `sources`) is what ch.gfx.image draws.
   LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
-          const Canvas& canvas);
+          const Canvas& canvas, const GameCore::GameImages& images = GameCore::NO_IMAGES);
   ~LuaGame() override;
   LuaGame(const LuaGame&) = delete;
   LuaGame& operator=(const LuaGame&) = delete;
@@ -113,8 +115,15 @@ class LuaGame : public GameCore::IGameRules {
 
   bool started() const { return L != nullptr; }
   // The last ScriptError's message (Lua's, with its chunk and line when it has
-  // them), or "cancelled".
+  // them, cut at a UTF-8 boundary to fit), or "cancelled". For a host failure it
+  // is English log text, which the error view replaces with its own tr() text.
   const char* errorMessage() const { return error; }
+  // A ScriptError the host raised itself rather than the script (AD-14): its
+  // scratch or state did not fit in the arena, or an entry ran before load().
+  enum class HostFailure : uint8_t { None, OutOfMemory, NotLoaded };
+  // The last ScriptError's host failure; None for the script's own errors, and
+  // after a Cancelled or a new load().
+  HostFailure hostFailure() const { return hostFailed; }
 
  private:
   enum class Entry : uint8_t { Load, Setup, Status, Apply, Draw, Input };
@@ -136,7 +145,7 @@ class LuaGame : public GameCore::IGameRules {
   static int trampoline(lua_State* L);
   static int messageHandler(lua_State* L);
   Outcome enter(Call& call);
-  Outcome fail(const char* message);
+  Outcome fail(const char* message, HostFailure kind = HostFailure::None);
   Outcome cancelled();
 
   // Run inside the trampoline; each may raise.
@@ -154,6 +163,7 @@ class LuaGame : public GameCore::IGameRules {
   ArenaAllocator& arena;
   FrameBuffers& frames;
   const GameSources& sources;
+  const GameCore::GameImages& images;
   const HostPorts ports;
   const Canvas canvas;
   GameTimer pendingTimer;
@@ -168,6 +178,7 @@ class LuaGame : public GameCore::IGameRules {
   int gameRef = -2;
   int uisRef = -2;  // seat -> ui table
   char error[ERROR_CAPACITY] = {};
+  HostFailure hostFailed = HostFailure::None;
 };
 
 }  // namespace GameScript

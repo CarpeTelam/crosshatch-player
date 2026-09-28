@@ -20,7 +20,7 @@ constexpr const char* FULL = R"({
   "seats": { "min": 2, "max": 2 },
   "modes": ["pass", "nearby"],
   "hidden": true,
-  "icon": "mark_x"
+  "icon": "game-controller"
 })";
 
 // A minimal valid manifest with one extra member spliced in before the closing brace.
@@ -49,7 +49,7 @@ TEST(ManifestTest, ParsesEveryKey) {
   EXPECT_TRUE(m.hasMode(Manifest::MODE_PASS));
   EXPECT_TRUE(m.hasMode(Manifest::MODE_NEARBY));
   EXPECT_TRUE(m.hidden);
-  EXPECT_STREQ(m.icon, "mark_x");
+  EXPECT_STREQ(m.icon, "game-controller");
 }
 
 TEST(ManifestTest, OptionalKeysDefault) {
@@ -115,7 +115,7 @@ TEST(ManifestTest, ReadsInChunks) {
   }
   Manifest m;
   ASSERT_EQ(reader->finish(m), ManifestError::None);
-  EXPECT_STREQ(m.icon, "mark_x");
+  EXPECT_STREQ(m.icon, "game-controller");
   // The same reader is reusable after begin().
   reader->begin();
   reader->feed("[]", 2);
@@ -201,6 +201,14 @@ TEST(ManifestTest, RejectsBadTextFields) {
   EXPECT_EQ(parse(withExtra(R"("icon": "")")), ManifestError::BadIcon);
   EXPECT_EQ(parse(withExtra(R"("icon": ")" + std::string(Manifest::MAX_ICON_BYTES + 1, 'i') + R"(")")),
             ManifestError::BadIcon);
+}
+
+// '_' stays valid in an icon name after the library moved to Phosphor's hyphenated
+// names, so a manifest that parsed before still parses (validIcon in Manifest.cpp).
+TEST(ManifestTest, AcceptsUnderscoreInIcon) {
+  Manifest m;
+  ASSERT_EQ(parse(withExtra(R"("icon": "old_name")"), m), ManifestError::None);
+  EXPECT_STREQ(m.icon, "old_name");
 }
 
 TEST(ManifestTest, RejectsDuplicateKnownKeys) {

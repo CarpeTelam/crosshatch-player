@@ -32,7 +32,8 @@
 #       One global from Lua 5.5.1's standard libraries (AD-4), or one member of
 #       a library table; every member a game can reach is listed after its table.
 #   icon <name>
-#       One library icon name (appended by epic-icon-library).
+#       One library icon name (appended by epic-icon-library): Phosphor's own,
+#       [a-z][a-z0-9-]{0,31}, each drawn in every `enum weight` value.
 #   seats_max <integer>
 #       The most seats a match can have.
 #
@@ -41,16 +42,32 @@
 # API_SURFACE_CRC is the CRC-32 (zlib's) of every entry line of the level files
 # in level order, each followed by "\n", leaving out comments and blank lines;
 # test/game_core/ApiLevelTest.cpp recomputes it. Change the define with the list.
+#
+# Contract and comments. Only entry lines are contract: they alone feed
+# API_SURFACE_CRC, which preview devices are matched by (AD-13). Behaviour a
+# comment describes is documentation, outside the CRC and the preview match: a
+# preview can change it without changing the CRC. Comments are still frozen
+# with the rest of the file once the level freezes (the API freeze job compares
+# the whole file). A rule a game may rely on across hosts becomes an entry (a
+# limit, an enum, a signature) before its level freezes.
 
 # ch: host functions and values (game-api-seed section 5)
 field ch.api integer
 field ch.screen.w integer
 field ch.screen.h integer
+# Coordinates and sizes (x, y, w, h, r, x1, y1, x2, y2) saturate to
+# -32768..32767 when the command is recorded, before it is clipped to the
+# canvas. So rect(-40000, 0, 80480, 800, c, true) is recorded as
+# rect(-32768, 0, 32767, 800, c, true), which covers x = -32768..-2 and draws
+# nothing, not the full-width rect the wide values describe; a circle or text
+# anchored beyond the range moves to its edge.
 fn ch.gfx.clear(color)
 fn ch.gfx.rect(x, y, w, h, color, filled?)
 fn ch.gfx.line(x1, y1, x2, y2, color)
 fn ch.gfx.circle(x, y, r, color, filled?)
 fn ch.gfx.text(x, y, str, size, color, align?)
+fn ch.gfx.icon(name, x, y, size, color, weight?)
+fn ch.gfx.image(name, x, y, color)
 fn ch.gfx.refresh(mode?)
 fn ch.text_width(str, size) -> integer
 fn ch.timer.after(ms)
@@ -73,10 +90,11 @@ fn setmetatable(t, mt) -> table
 # Lua 5.5.1 base library, without load, loadfile, and dofile. pcall and xpcall
 # cannot keep a game running past a fault that stops it (the instruction budget,
 # the heap cap, C stack headroom, a value or table over its limit, a full frame,
-# ch.gfx outside draw): they may return false once, and the call still ends.
-# error("not enough memory", 0) raises Lua's own memory error, so it stops the
-# game too. The string metatable is sealed: getmetatable("") returns false, and
-# string methods and arithmetic on numeric strings work as in Lua.
+# ch.gfx outside draw, an unknown icon or image name): they may return false
+# once, and the call still ends. error("not enough memory", 0) raises Lua's own
+# memory error, so it stops the game too. The string metatable is sealed:
+# getmetatable("") returns false, and string methods and arithmetic on numeric
+# strings work as in Lua.
 lib _G
 lib _VERSION
 lib assert
@@ -183,6 +201,8 @@ enum align right
 enum refresh fast
 enum refresh half
 enum refresh full
+enum weight regular
+enum weight fill
 enum mode solo
 enum mode pass
 enum mode nearby
@@ -217,6 +237,70 @@ manifest modes array
 manifest hidden boolean?
 manifest icon string?
 
+# Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
+# Marks
+icon circle
+icon dot-outline
+icon fire
+icon waves
+icon x
+# Card suits
+icon club
+icon diamond
+icon heart
+icon spade
+# Dice faces
+icon dice-five
+icon dice-four
+icon dice-one
+icon dice-six
+icon dice-three
+icon dice-two
+# Game pieces
+icon boat
+# Player markers
+icon hexagon
+icon square
+icon star
+icon triangle
+icon user
+icon users
+# Controls
+icon arrow-clockwise
+icon arrow-down
+icon arrow-left
+icon arrow-right
+icon arrow-u-up-left
+icon arrow-u-up-right
+icon arrow-up
+icon arrows-clockwise
+icon check
+icon eraser
+icon eye
+icon eye-closed
+icon game-controller
+icon gear-six
+icon hourglass
+icon house
+icon info
+icon lightbulb
+icon minus
+icon pause
+icon pencil-simple
+icon play
+icon plus
+icon question
+icon shuffle
+icon sign-out
+icon timer
+icon trash
+# Status
+icon flag-checkered
+icon smiley
+icon smiley-sad
+icon trophy
+icon warning
+
 # Limits
 limit manifest_id_bytes 32
 limit manifest_name_bytes 64
@@ -234,6 +318,13 @@ limit call_instructions_count 2000000
 limit table_elements_count 65536
 limit timer_min_ms 1000
 limit timers_pending_count 1
+# A game's own images (ch.gfx.image): the .bmp files in its folder, their bytes
+# with headers included and icon.bmp excluded, and how many there are. A w x h
+# image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
+# An image's name is its file name without ".bmp": 1 to 32 characters from [a-z0-9_]. Unlike icon names, it takes no
+# "-"; a file named otherwise is skipped with a log line, and drawing it stops the game as an unknown image.
+limit images_bytes 131072
+limit images_count 32
 # Lua's C-level limit (LUAI_MAXCCALLS in lib/lua/library.json): nested C calls
 # (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
 # the parser's nesting of expressions and blocks (right-associative .. or ^

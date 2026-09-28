@@ -11,6 +11,8 @@
 #include "ArenaAllocator.h"
 #include "LuaGame.h"
 
+static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
+
 using GameScript::ArenaAllocator;
 
 namespace {

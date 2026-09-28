@@ -25,6 +25,9 @@ class GameTimer {
   // Loop task: true once, when a pending timer is due at nowMs, with the arming's
   // serial for the event.
   bool takeDue(uint64_t nowMs, uint32_t& serial);
+  // Loop task: takeDue, and on true the Timer event to queue for input() (kind
+  // Timer, the arming's serial). GameVM::pollTimer and the host tests share it.
+  bool takeDueEvent(uint64_t nowMs, GameCore::GameEvent& event);
   // VM task, before input(): false for a Timer event whose arming was replaced or
   // cancelled after it fired; true for every other event.
   bool accepts(const GameCore::GameEvent& event) const;

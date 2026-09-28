@@ -1,0 +1,148 @@
+# The game icon library's name map: scripts/gen_game_icons.py reads it and writes
+# lib/GameIcons/GameIcons.generated.h.
+#
+# Source: the Phosphor icon set, npm package @phosphor-icons/core, version 2.1.1
+#   https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz
+#   sha256 313332be6190b724da24107addd781799b48bf76b13963f24501112ffe1baadd
+# Licence: MIT, phosphor/LICENSE (copied from the package). The SVGs under
+# phosphor/ are the package's assets/regular/ and assets/fill/ files, byte for byte.
+# The library holds Phosphor icons only.
+#
+# Every name is Phosphor's own: the SVG's file stem, hyphens included, without
+# "-fill". Only the names listed here are in the library; https://phosphoricons.com
+# previews an icon's drawing, and a Phosphor icon not listed here does not exist
+# for games. Every name ships in both weights, regular and fill.
+#
+# The names are part of the game API level: games call ch.gfx.icon by them, and
+# docs/crosshatch/api-level-<n>.txt lists each one as `icon <name>`. Never rename
+# or remove one in a frozen level.
+#
+# Two lines per name, regular then fill, whitespace-separated:
+#   <name> regular phosphor/regular/<name>.svg
+#   <name> fill phosphor/fill/<name>-fill.svg
+# A name is [a-z][a-z0-9-]{0,31} without "--", not ending in "-" or "-fill".
+# docs/crosshatch/game-icons.md lists every icon with its reason.
+
+# Marks
+x regular phosphor/regular/x.svg
+x fill phosphor/fill/x-fill.svg
+circle regular phosphor/regular/circle.svg
+circle fill phosphor/fill/circle-fill.svg
+dot-outline regular phosphor/regular/dot-outline.svg
+dot-outline fill phosphor/fill/dot-outline-fill.svg
+fire regular phosphor/regular/fire.svg
+fire fill phosphor/fill/fire-fill.svg
+waves regular phosphor/regular/waves.svg
+waves fill phosphor/fill/waves-fill.svg
+
+# Card suits
+club regular phosphor/regular/club.svg
+club fill phosphor/fill/club-fill.svg
+diamond regular phosphor/regular/diamond.svg
+diamond fill phosphor/fill/diamond-fill.svg
+heart regular phosphor/regular/heart.svg
+heart fill phosphor/fill/heart-fill.svg
+spade regular phosphor/regular/spade.svg
+spade fill phosphor/fill/spade-fill.svg
+
+# Dice faces
+dice-one regular phosphor/regular/dice-one.svg
+dice-one fill phosphor/fill/dice-one-fill.svg
+dice-two regular phosphor/regular/dice-two.svg
+dice-two fill phosphor/fill/dice-two-fill.svg
+dice-three regular phosphor/regular/dice-three.svg
+dice-three fill phosphor/fill/dice-three-fill.svg
+dice-four regular phosphor/regular/dice-four.svg
+dice-four fill phosphor/fill/dice-four-fill.svg
+dice-five regular phosphor/regular/dice-five.svg
+dice-five fill phosphor/fill/dice-five-fill.svg
+dice-six regular phosphor/regular/dice-six.svg
+dice-six fill phosphor/fill/dice-six-fill.svg
+
+# Game pieces
+boat regular phosphor/regular/boat.svg
+boat fill phosphor/fill/boat-fill.svg
+
+# Player markers
+square regular phosphor/regular/square.svg
+square fill phosphor/fill/square-fill.svg
+triangle regular phosphor/regular/triangle.svg
+triangle fill phosphor/fill/triangle-fill.svg
+star regular phosphor/regular/star.svg
+star fill phosphor/fill/star-fill.svg
+hexagon regular phosphor/regular/hexagon.svg
+hexagon fill phosphor/fill/hexagon-fill.svg
+user regular phosphor/regular/user.svg
+user fill phosphor/fill/user-fill.svg
+users regular phosphor/regular/users.svg
+users fill phosphor/fill/users-fill.svg
+
+# Controls
+arrow-left regular phosphor/regular/arrow-left.svg
+arrow-left fill phosphor/fill/arrow-left-fill.svg
+arrow-right regular phosphor/regular/arrow-right.svg
+arrow-right fill phosphor/fill/arrow-right-fill.svg
+arrow-up regular phosphor/regular/arrow-up.svg
+arrow-up fill phosphor/fill/arrow-up-fill.svg
+arrow-down regular phosphor/regular/arrow-down.svg
+arrow-down fill phosphor/fill/arrow-down-fill.svg
+arrow-u-up-left regular phosphor/regular/arrow-u-up-left.svg
+arrow-u-up-left fill phosphor/fill/arrow-u-up-left-fill.svg
+arrow-u-up-right regular phosphor/regular/arrow-u-up-right.svg
+arrow-u-up-right fill phosphor/fill/arrow-u-up-right-fill.svg
+arrows-clockwise regular phosphor/regular/arrows-clockwise.svg
+arrows-clockwise fill phosphor/fill/arrows-clockwise-fill.svg
+arrow-clockwise regular phosphor/regular/arrow-clockwise.svg
+arrow-clockwise fill phosphor/fill/arrow-clockwise-fill.svg
+shuffle regular phosphor/regular/shuffle.svg
+shuffle fill phosphor/fill/shuffle-fill.svg
+play regular phosphor/regular/play.svg
+play fill phosphor/fill/play-fill.svg
+pause regular phosphor/regular/pause.svg
+pause fill phosphor/fill/pause-fill.svg
+check regular phosphor/regular/check.svg
+check fill phosphor/fill/check-fill.svg
+plus regular phosphor/regular/plus.svg
+plus fill phosphor/fill/plus-fill.svg
+minus regular phosphor/regular/minus.svg
+minus fill phosphor/fill/minus-fill.svg
+info regular phosphor/regular/info.svg
+info fill phosphor/fill/info-fill.svg
+question regular phosphor/regular/question.svg
+question fill phosphor/fill/question-fill.svg
+lightbulb regular phosphor/regular/lightbulb.svg
+lightbulb fill phosphor/fill/lightbulb-fill.svg
+pencil-simple regular phosphor/regular/pencil-simple.svg
+pencil-simple fill phosphor/fill/pencil-simple-fill.svg
+eraser regular phosphor/regular/eraser.svg
+eraser fill phosphor/fill/eraser-fill.svg
+eye regular phosphor/regular/eye.svg
+eye fill phosphor/fill/eye-fill.svg
+eye-closed regular phosphor/regular/eye-closed.svg
+eye-closed fill phosphor/fill/eye-closed-fill.svg
+house regular phosphor/regular/house.svg
+house fill phosphor/fill/house-fill.svg
+gear-six regular phosphor/regular/gear-six.svg
+gear-six fill phosphor/fill/gear-six-fill.svg
+sign-out regular phosphor/regular/sign-out.svg
+sign-out fill phosphor/fill/sign-out-fill.svg
+trash regular phosphor/regular/trash.svg
+trash fill phosphor/fill/trash-fill.svg
+timer regular phosphor/regular/timer.svg
+timer fill phosphor/fill/timer-fill.svg
+hourglass regular phosphor/regular/hourglass.svg
+hourglass fill phosphor/fill/hourglass-fill.svg
+game-controller regular phosphor/regular/game-controller.svg
+game-controller fill phosphor/fill/game-controller-fill.svg
+
+# Status
+warning regular phosphor/regular/warning.svg
+warning fill phosphor/fill/warning-fill.svg
+flag-checkered regular phosphor/regular/flag-checkered.svg
+flag-checkered fill phosphor/fill/flag-checkered-fill.svg
+trophy regular phosphor/regular/trophy.svg
+trophy fill phosphor/fill/trophy-fill.svg
+smiley regular phosphor/regular/smiley.svg
+smiley fill phosphor/fill/smiley-fill.svg
+smiley-sad regular phosphor/regular/smiley-sad.svg
+smiley-sad fill phosphor/fill/smiley-sad-fill.svg

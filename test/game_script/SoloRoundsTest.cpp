@@ -37,8 +37,7 @@ class SoloRoundsTest : public LuaGameTest {
   bool tick(SoloRounds& rounds, LuaGame& game, uint64_t ms) {
     clock.advance(ms);
     InputEvent event;
-    event.kind = InputKind::Timer;
-    if (!game.timer().takeDue(clock.nowMs(), event.serial)) return false;
+    if (!game.timer().takeDueEvent(clock.nowMs(), event)) return false;
     EXPECT_EQ(rounds.step(event), Outcome::Ok) << game.errorMessage();
     return true;
   }
@@ -91,10 +90,10 @@ TEST_F(SoloRoundsTest, PlayAgainDropsQueuedTapsCancelsTheTimerAndKeepsCountingVe
   // Taps 6 and 7 still queued (a slow input), and a timer armed, when Play again comes.
   queue.push(tapAt(210));
   queue.push(tapAt(220));
-  uint32_t firedSerial = 0;
+  InputEvent fired;
   game.game.timer().arm(clock.nowMs(), TIMER_MIN_MS);
   clock.now += TIMER_MIN_MS;
-  ASSERT_TRUE(game.game.timer().takeDue(clock.nowMs(), firedSerial));
+  ASSERT_TRUE(game.game.timer().takeDueEvent(clock.nowMs(), fired));
   game.game.timer().arm(clock.nowMs(), 5000);
 
   EXPECT_FALSE(rounds.takePlayAgain());
@@ -111,16 +110,53 @@ TEST_F(SoloRoundsTest, PlayAgainDropsQueuedTapsCancelsTheTimerAndKeepsCountingVe
   EXPECT_TRUE(contains(frontText().c_str(), "Taps: 0 of 5")) << frontText();
   EXPECT_EQ(rounds.roundsEnded(), 1u);
   // A timer event fired in the last round is stale now and never reaches input.
-  InputEvent stale;
-  stale.kind = InputKind::Timer;
-  stale.serial = firedSerial;
-  EXPECT_FALSE(game.game.timer().accepts(stale));
-  ASSERT_EQ(rounds.step(stale), Outcome::Ok);
+  EXPECT_FALSE(game.game.timer().accepts(fired));
+  ASSERT_EQ(rounds.step(fired), Outcome::Ok);
   EXPECT_EQ(game.session->ver(), 7u);
 
   for (int i = 1; i <= 5; ++i) ASSERT_EQ(rounds.step(tapAt(200)), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(rounds.roundsEnded(), 2u);
   EXPECT_EQ(game.session->ver(), 12u);
+}
+
+// The match asks for no render after Play again until this count moves (the
+// retro's R3), so it must move only once the new round's first frame is out.
+TEST_F(SoloRoundsTest, ARoundCountsAsStartedOnceItsFirstFrameIsPublished) {
+  useSource("main", readFixture("tracer/main.lua"));
+  SessionGame game(*this);
+  InputQueue queue;
+  SoloRounds rounds(game.game.timer(), queue);
+  EXPECT_EQ(rounds.roundsStarted(), 0u);
+  ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(rounds.roundsStarted(), 1u);
+  EXPECT_EQ(frames.frameGen(), 1u);
+  for (int i = 1; i <= 5; ++i) ASSERT_EQ(rounds.step(tapAt(200)), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(rounds.roundsEnded(), 1u);
+  EXPECT_EQ(rounds.roundsStarted(), 1u);  // steps start nothing
+
+  // A step that was already running when Play again came publishes an old-round frame.
+  rounds.requestPlayAgain();
+  ASSERT_EQ(rounds.step(tapAt(300)), Outcome::Ok) << game.errorMessage();
+  const uint32_t oldRoundFrame = frames.frameGen();
+  EXPECT_EQ(rounds.roundsStarted(), 1u);
+  ASSERT_TRUE(rounds.takePlayAgain());
+  ASSERT_EQ(rounds.restart(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(rounds.roundsStarted(), 2u);
+  EXPECT_GT(frames.frameGen(), oldRoundFrame);
+  EXPECT_TRUE(contains(frontText().c_str(), "Taps: 0 of 5")) << frontText();
+}
+
+TEST_F(SoloRoundsTest, ARoundWhoseFirstDrawFailsNeverCountsAsStarted) {
+  useSource("main",
+            "return { setup = function() return {} end, status = function() return { turn = 1 } end,\n"
+            "  apply = function(s) return s end, input = function() return nil end,\n"
+            "  draw = function() error('no frame', 0) end }");
+  SessionGame game(*this);
+  InputQueue queue;
+  SoloRounds rounds(game.game.timer(), queue);
+  EXPECT_EQ(begin(game, rounds), Outcome::ScriptError);
+  EXPECT_EQ(rounds.roundsStarted(), 0u);
+  EXPECT_EQ(frames.frameGen(), 0u);
 }
 
 TEST_F(SoloRoundsTest, PlayAgainRunsSetupAgain) {

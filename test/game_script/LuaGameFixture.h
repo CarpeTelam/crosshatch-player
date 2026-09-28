@@ -2,8 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <span>
 #include <sstream>
@@ -15,6 +17,7 @@
 #include "CallGuard.h"
 #include "DisplayList.h"
 #include "FrameBuffers.h"
+#include "GameImages.h"
 #include "GameInput.h"
 #include "GameSources.h"
 #include "IClock.h"
@@ -22,6 +25,7 @@
 #include "IRandom.h"
 #include "LuaGame.h"
 #include "Session.h"
+#include "SoloRounds.h"
 #include "StoreSlot.h"
 
 namespace GameScriptTestSupport {
@@ -99,7 +103,7 @@ class DirectGame : public GameScript::LuaGame {
 };
 
 // Owns everything a LuaGame borrows: a malloc'd arena block (the device uses PSRAM),
-// two frame lists, and a source table.
+// two frame lists, a source table, and an image table.
 class LuaGameTest : public ::testing::Test {
  protected:
   using Module = std::pair<std::string, std::string>;  // name, text
@@ -128,33 +132,77 @@ class LuaGameTest : public ::testing::Test {
 
   void useSource(const std::string& moduleName, const std::string& source) { useSources({{moduleName, source}}); }
 
+  // Every image of test/game_script/fixtures/<folder>/ as GameAssets loads them:
+  // each *.bmp that imageNameOf names (so never icon.bmp), in name order, added to
+  // one GameCore::ImageBudget; a file that fails is a test failure.
+  void useImages(const std::string& folder) {
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(std::string(GAME_SCRIPT_FIXTURES_DIR) + "/" + folder)) {
+      files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+    imageSpans.clear();
+    imagePixels.clear();
+    GameCore::ImageBudget budget;
+    for (const auto& file : files) {
+      const std::string fileName = file.filename().string();
+      char name[GameCore::IMAGE_NAME_BYTES + 1];
+      if (!GameCore::imageNameOf(fileName.data(), fileName.size(), name)) continue;
+      const std::string bytes = readFixture(folder + "/" + fileName);
+      const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+      GameCore::ImageHeader header;
+      const GameCore::ImageCheck check = budget.add(data, bytes.size(), bytes.size(), header);
+      if (check != GameCore::ImageCheck::Ok) {
+        ADD_FAILURE() << folder << "/" << fileName << ": " << GameCore::imageCheckName(check);
+        continue;
+      }
+      GameCore::ImageSpan span{};
+      std::memcpy(span.name, name, sizeof(name));
+      span.width = header.width;
+      span.height = header.height;
+      span.rowBytes = header.rowBytes;
+      span.offset = static_cast<uint32_t>(imagePixels.size());
+      imagePixels.insert(imagePixels.end(), data + GameCore::IMAGE_HEADER_BYTES, data + bytes.size());
+      imageSpans.push_back(span);
+    }
+    images.spans = imageSpans.data();
+    images.count = imageSpans.size();
+    images.pixels = imagePixels.data();
+  }
+
   // test/game_script/fixtures/faults/<name>.lua as main.lua.
   void useFault(const std::string& name) { useSource("main", readFixture("faults/" + name + ".lua")); }
 
   // The GameVM task's composition (GameVM::run): a solo Session in the arena, taken
-  // before the Lua state, over a LuaGame; each step is followed by a draw.
+  // before the Lua state, over a LuaGame, driven by the production round loop
+  // (GameScript::SoloRounds) over its own input queue, so a regression in the loop
+  // fails these tests too.
   struct SessionGame {
     SessionGame(LuaGameTest& test)
-        : arena(test.arena), game(test.arena, test.frames, test.sources, test.ports, test.canvas) {
+        : arena(test.arena), game(test.arena, test.frames, test.sources, test.ports, test.canvas, test.images) {
       session = arena.create<GameCore::Session>(GameCore::Roster::solo(), game);
     }
     ~SessionGame() {
       game.close();
       arena.destroy(session);
     }
+    // load(), then the first round (SoloRounds::start: setup, status, draw).
     GameScript::Outcome start() {
       if (!session) return GameScript::Outcome::ScriptError;
-      GameScript::Outcome outcome = game.load();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->start();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
-      return outcome;
+      const GameScript::Outcome outcome = game.load();
+      if (outcome != GameScript::Outcome::Ok) return outcome;
+      return rounds.start(*session);
     }
-    // One event as GameVM handles it: input, the pending move, then a draw.
-    GameScript::Outcome step(const GameScript::InputEvent& event) {
-      GameScript::Outcome outcome = session->handle(event);
-      if (outcome == GameScript::Outcome::Ok) outcome = session->applyPending();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
-      return outcome;
+    // One event as GameVM handles it (SoloRounds::step): a stale timer event is
+    // dropped, then input, the pending move, and a draw.
+    GameScript::Outcome step(const GameScript::InputEvent& event) { return rounds.step(event); }
+    // Play again as the match asks for it and GameVM::run answers it: the queue is
+    // cleared, then a new round on the same Session.
+    GameScript::Outcome playAgain() {
+      rounds.requestPlayAgain();
+      if (!rounds.takePlayAgain()) return GameScript::Outcome::ScriptError;
+      return rounds.restart();
     }
     GameScript::Outcome tap(int16_t x, int16_t y) {
       return step(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
@@ -163,6 +211,8 @@ class LuaGameTest : public ::testing::Test {
 
     GameScript::ArenaAllocator& arena;
     GameScript::LuaGame game;
+    GameScript::InputQueue queue;
+    GameScript::SoloRounds rounds{game.timer(), queue};
     GameCore::Session* session = nullptr;
   };
 
@@ -220,6 +270,10 @@ class LuaGameTest : public ::testing::Test {
   std::string text;
   std::vector<GameScript::SourceSpan> spans;
   GameScript::GameSources sources;
+  std::vector<GameCore::ImageSpan> imageSpans;
+  std::vector<uint8_t> imagePixels;
+  // Empty until useImages.
+  GameCore::GameImages images;
 };
 
 }  // namespace GameScriptTestSupport

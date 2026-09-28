@@ -28,6 +28,9 @@ in small type), Back must return to Games, and the device must stay responsive.
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
+| `icons/` | Every library icon at 32, 64, and 128 px in both weights, up to three icons of one category a page (`docs/crosshatch/game-icons.md`'s order; the title shows the ink and page `n/N`, the heading the category, part, and "regular, fill"). The small and medium rows show each name regular then fill; the large area shows the regular icons above the fill ones, each name under its fill icon. Each tap turns to the next page: the 21 black pages (black icons on white) first, then the 21 white pages (white icons on black), then back to the first. The medium row sits on a light band, which shows through around each icon's ink. |
+| `images/` | `ch.gfx.image`: the game's own `badge.bmp` (100 x 60) and `dot.bmp` (37 x 37) at their own size, in black on one light band and in white on the next; each covers the band whole (opaque), and a last badge is clipped at the right edge. `icon.bmp` is the launcher's and is not loaded as an image. |
+| `bad-image/` | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
 | `loop/` | Runaway scripts, one band each (tap it); see below. |
 | `limits/` | The codec, status, and display-list limits, one band each (tap it); see below. |
 
@@ -105,6 +108,8 @@ Each ends in the error view as soon as the game opens, except `loop_input`, whic
 | `recursive_index.lua` | setup | `script recursion too deep (C stack nearly full)` in the simulator; on the device Lua's own `C stack overflow` may come first |
 | `table_insert_len.lua` | setup | `main.lua:6: table.insert: more than 65536 elements` |
 | `table_move.lua` | setup | `main.lua:3: table.move: more than 65536 elements` |
+| `unknown_icon.lua` | the first draw, inside `pcall` | `main.lua:10: ch.gfx.icon: unknown icon "no_such_icon"` |
+| `unknown_image.lua` | the first draw, inside `pcall` | `main.lua:10: ch.gfx.image: unknown image "no_such_image"` |
 
 The texts are those of the x4pro simulator (entry 13's run). Line numbers are the scripts' own; the stack-depth faults
 (`deep_parens`, `nested_pcall`, `recursive_index`, and `loop`'s recursion band) depend on frame sizes, so the device may

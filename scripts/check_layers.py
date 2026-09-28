@@ -4,7 +4,14 @@ Check that the game code's #include edges follow the spine's layer table (retro 
 
 The layer table in _bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/
 ARCHITECTURE-SPINE.md (Design Paradigm, and the diagram under Invariants & Rules) says what each game component may
-depend on. LAYERS below holds it as data. Every #include in lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
+depend on. TABLE below holds that table in its own terms (SPINE_TERMS says what each term names), BEYOND_TABLE the
+edges the check allows beyond it, each with its reason, and LAYERS the two together. check_layers_test.py's SpineTest
+parses the spine's table (its layer rows and its Upstream hooks row) and fails when the components a row reaches differ
+from TABLE's or UPSTREAM_EDGES's row, or when the row uses a term SPINE_TERMS does not know. It compares components,
+not terms: dropping one of two terms that name the same component (HAL / Storage, ESP-NOW / mbedTLS, UiListActivity /
+UiAppHost) changes nothing it can see. It does not compare the table's parenthetical file scopes, ONLY_FROM,
+FILE_EDGES, the Engine row, the diagram, or BEYOND_TABLE; those are reviewed by hand, each with its reason here.
+Every #include in lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
 and src/activities/games is resolved to what it reaches:
   - a quoted include to the including file's folder, then to src/;
   - any include to a header under lib/<name>/ or lib/<name>/src/ (the component lib/<name>);
@@ -15,7 +22,15 @@ and src/activities/games is resolved to what it reaches:
 A repository path under src/ outside the game folders is upstream (`src (upstream)`), except src/fontIds.h, which the
 table names on its own. Screens may include upstream src/ code (their screen infrastructure), so the check also:
   - fails any other source file under src/ or lib/ (outside the game folders and the vendored lib/lua) that includes
-    a lib/GameScript or lib/lua header, so no upstream header can launder that edge (this covers OtaUpdater's row);
+    a lib/GameScript or lib/lua header, so no upstream header can launder that edge;
+  - fails any such file that includes any other game component unless UPSTREAM_EDGES gives that file that component:
+    upstream code reaches game code only through its ledger rows (docs/crosshatch/upstream-touches.md, AD-3), and
+    UPSTREAM_EDGES is the spine's "Upstream hooks" row;
+  - fails such an include that UPSTREAM_EDGES allows but that is not in the FREEINK_CAP_GAMES branch of an #if,
+    #ifdef, #elif, or #elifdef (AD-2: every include of game code in an upstream file is guarded). The branch's
+    condition is FREEINK_CAP_GAMES, defined(FREEINK_CAP_GAMES), or FREEINK_CAP_GAMES == 1, alone or joined to others
+    by && and with no ||; an #else, an #ifndef or #elifndef, a negation, or any other spelling does not count, so an
+    unusual guard fails visibly instead of passing;
   - fails a Screens file that uses the word GameScript anywhere outside comments and literals (GameScript::,
     `using namespace`, a namespace alias, a #define): Screens reach lib/GameScript only through src/games;
   - fails a src/games header that re-exports GameScript at global scope (`using namespace GameScript;`,
@@ -31,7 +46,8 @@ missing, an unreadable file).
 Usage: python3 scripts/check_layers.py [--root <repository root>]   # default: this script's repository
        python3 scripts/check_layers_test.py                        # the script's own tests; standard library only
 
-When the spine's table changes, change LAYERS (and FILE_EDGES / ONLY_FROM) in the same commit.
+When the spine's table changes, change TABLE (and SPINE_TERMS, FILE_EDGES, ONLY_FROM, UPSTREAM_EDGES) in the same
+commit; check_layers_test.py fails until they agree.
 """
 
 import argparse
@@ -61,45 +77,92 @@ COMPONENTS = (SCREENS, ADAPTERS, 'lib/GameCore', 'lib/GameIcons', 'lib/GameScrip
 UNSCANNED = ('lib/lua',)
 GAME_SCRIPT_OR_LUA = {'lib/GameScript', 'lib/lua'}
 
-# Edges the rows below add to the spine's table, each a convention rather than a design decision:
+# The spine's layer table, where it lives in the repository (tracked, so CI's checkout has it).
+SPINE_PATH = ('_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/'
+              'ARCHITECTURE-SPINE.md')
+
+# What each term of the spine's table names, as the check spells it. A repository path in the table (`lib/Utf8`,
+# `src/fontIds.h`, `src/games/`) names itself and is not listed. check_layers_test.py parses the table through this map
+# and fails on a term it does not know.
+SPINE_TERMS = {
+    'C++ standard library': STD,
+    'nothing': None,  # the Icon data row: no edge at all
+    'GameCore': 'lib/GameCore',
+    'GameScript': 'lib/GameScript',
+    'GameIcons': 'lib/GameIcons',
+    'HAL': 'lib/hal',
+    'Storage': 'lib/hal',
+    'ZipFile': 'lib/ZipFile',
+    'PngToBmpConverter': 'lib/PngToBmpConverter',
+    'ESP-NOW': RADIO_CRYPTO,
+    'mbedTLS': RADIO_CRYPTO,
+    'the SDK\'s FreeInkUICore.h': 'sdk:FreeInkUICore.h',
+    'SecureHttpClient in ForkReleaseProbe only': 'sdk:SecureHttpClient.h',  # and ONLY_FROM below
+    'GfxRenderer': 'lib/GfxRenderer',
+    'UiListActivity': UPSTREAM_SRC,
+    'UiAppHost': UPSTREAM_SRC,
+}
+
+# The spine's layer table (ARCHITECTURE-SPINE.md, Design Paradigm), in its own terms through SPINE_TERMS: one row per
+# game component, what each may include besides its own headers. check_layers_test.py compares it with the spine.
+TABLE = {
+    # Domain: C++ standard library, lib/Memory, lib/JsonParser.
+    'lib/GameCore': {STD, 'lib/Memory', 'lib/JsonParser'},
+    # Icon data: nothing (generated data only).
+    'lib/GameIcons': set(),
+    # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
+    'lib/GameScript': {'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
+    # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
+    # and mbedTLS (radio and crypto); lib/Utf8; lib/EpdFont and src/fontIds.h (FrameReplay); the SDK's FreeInkUICore.h
+    # (GameTouch.h); SecureHttpClient (ForkReleaseProbe only, ONLY_FROM).
+    ADAPTERS: {
+        'lib/GameCore', 'lib/GameScript', 'lib/GameIcons', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter',
+        RADIO_CRYPTO, 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h', 'sdk:SecureHttpClient.h',
+    },
+    # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost (upstream's screen infrastructure, src/
+    # outside the game folders). Never lib/GameScript or lib/lua: those only through src/games.
+    SCREENS: {ADAPTERS, 'lib/GameCore', 'lib/GfxRenderer', UPSTREAM_SRC},
+}
+
+# Edges BEYOND_TABLE adds to the spine's table, each a convention rather than a design decision:
 #   - lib/Logging and lib/Memory for src/games and Screens: AGENTS.md makes device code log with LOG_* and allocate
 #     with makeUniqueNoThrow;
 #   - lib/I18n for Screens: AGENTS.md puts user-facing text through tr();
-#   - the standard library for GameIcons: its generated data uses the fixed-width integer types;
 #   - lua.hpp for src/games/GamesBuildAnchor.cpp only (FILE_EDGES): AD-2's build anchor.
 CONVENTIONS = {'lib/Logging', 'lib/Memory'}
 
-# The spine's layer table (ARCHITECTURE-SPINE.md, Design Paradigm) and its diagram, one row per game component: what
-# each may include besides its own headers.
-LAYERS = {
-    # Domain: C++ standard library, lib/Memory, lib/JsonParser.
-    'lib/GameCore': {STD, 'lib/Memory', 'lib/JsonParser'},
-    # Icon data: nothing (generated data only); standard integer types.
+# What each component may include beyond TABLE's row, with the reason for each.
+BEYOND_TABLE = {
+    # The standard integer types of its generated data.
     'lib/GameIcons': {STD},
-    # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
-    'lib/GameScript': {STD, 'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
-    # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
-    # and mbedTLS (the platform, radio and crypto included); lib/Utf8; lib/EpdFont and src/fontIds.h (FrameReplay); the
-    # SDK's FreeInkUICore.h (GameTouch.h); SecureHttpClient (ForkReleaseProbe only, ONLY_FROM). GfxRenderer from the
-    # diagram's upstream node.
-    ADAPTERS: {
-        STD, PLATFORM, RADIO_CRYPTO, 'lib/GameCore', 'lib/GameScript', 'lib/GameIcons', 'lib/hal', 'lib/ZipFile',
-        'lib/PngToBmpConverter', 'lib/GfxRenderer', 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h',
-        'sdk:SecureHttpClient.h', *CONVENTIONS,
-    },
-    # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost and the rest of upstream's screen
-    # infrastructure (src/ outside the game folders, lib/I18n), the diagram's upstream node (HAL, Storage, ZipFile,
-    # PngToBmpConverter), and the platform without the radio and crypto the table gives only to src/games. Never
-    # lib/GameScript or lib/lua: those only through src/games.
-    SCREENS: {
-        STD, PLATFORM, ADAPTERS, 'lib/GameCore', 'lib/GfxRenderer', UPSTREAM_SRC, 'lib/I18n', 'lib/hal',
-        'lib/ZipFile', 'lib/PngToBmpConverter', *CONVENTIONS,
-    },
+    # The C++ standard library, which the Domain row names and the adapter needs as much.
+    'lib/GameScript': {STD},
+    # The standard library; the platform (Arduino, ESP-IDF, FreeRTOS) that ESP-NOW and mbedTLS run on; GfxRenderer from
+    # the diagram's upstream node; the conventions.
+    ADAPTERS: {STD, PLATFORM, 'lib/GfxRenderer', *CONVENTIONS},
+    # The standard library; the platform without the radio and crypto the table gives only to src/games; lib/I18n for
+    # tr(); the diagram's upstream node (HAL, Storage, ZipFile, PngToBmpConverter); the conventions.
+    SCREENS: {STD, PLATFORM, 'lib/I18n', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter', *CONVENTIONS},
 }
+
+# What each game component may include besides its own headers: the spine's row and the additions above.
+LAYERS = {comp: TABLE[comp] | BEYOND_TABLE.get(comp, set()) for comp in TABLE}
 
 # Edges the table allows only from the files it names (the spine says "SecureHttpClient in ForkReleaseProbe only").
 ONLY_FROM = {
     'sdk:SecureHttpClient.h': {'src/games/ForkReleaseProbe.h', 'src/games/ForkReleaseProbe.cpp'},
+}
+
+# The spine's "Upstream hooks (AD-3 ledger rows)" row: each upstream file that includes game code, and the components
+# its ledger row lets it include. Any other upstream include of a game component (COMPONENTS) fails; lib/GameScript
+# and lib/lua fail from every upstream file.
+UPSTREAM_EDGES = {
+    # Row 5: goHome's mapping and goToGames() open the Games list.
+    'src/activities/ActivityManager.cpp': {SCREENS},
+    # Row 9: Home's cover-grid Games tab draws a GameIcons bitmap.
+    'src/components/CoverGridHomeUi.cpp': {'lib/GameIcons'},
+    # Row 10: ForkRelease.h and games/ForkReleaseProbe.h for the fork's release (AD-25).
+    'src/network/OtaUpdater.cpp': {'lib/GameCore', ADAPTERS},
 }
 
 # Edges of one file that its component's row does not have. AD-2: GamesBuildAnchor.cpp includes a header of each game
@@ -138,6 +201,10 @@ INCLUDE_TARGET = re.compile(r'(<([^>]+)>|"([^"]+)")')
 COMMENT_OR_LITERAL = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
 GAME_SCRIPT_WORD = re.compile(r'\bGameScript\b')
 PREPROCESSOR_LINE = re.compile(r'^[ \t]*#[^\n]*', re.M)
+CONDITIONAL = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$')
+GAMES = re.escape(fork_common.GAMES_MACRO)
+# One &&-joined part of an #if or #elif condition that requires the games flag.
+GAMES_CONJUNCT = re.compile(rf'(?:{GAMES}(?:\s*==\s*1)?|defined\s*\(\s*{GAMES}\s*\)|defined\s+{GAMES})')
 REEXPORT_START = re.compile(r'\s*(using\b|namespace\s+\w+\s*=)')
 
 
@@ -321,14 +388,50 @@ def reexport_problems(rel, text):
     return problems
 
 
+def games_branch(kind, condition):
+    """True when the branch #<kind> <condition> opens is compiled only with the games flag on (GAMES_CONJUNCT)."""
+    condition = condition.strip()
+    if kind in ('ifdef', 'elifdef'):
+        return condition == fork_common.GAMES_MACRO
+    if kind not in ('if', 'elif') or '||' in condition:
+        return False
+    return any(GAMES_CONJUNCT.fullmatch(part.strip()) for part in condition.split('&&'))
+
+
+def games_guarded_lines(text):
+    """The line numbers of text inside the games branch of an #if, #ifdef, #elif, or #elifdef, at any depth
+    (comments do not count as directives)."""
+    guarded = set()
+    branches = []  # one per open conditional: whether its current branch is a games branch
+    for number, line in enumerate(blank(text, literals=False).splitlines(), start=1):
+        match = CONDITIONAL.match(line)
+        if not match:
+            if any(branches):
+                guarded.add(number)
+            continue
+        kind, rest = match.groups()
+        if kind in ('if', 'ifdef', 'ifndef'):
+            branches.append(games_branch(kind, rest))
+        elif branches and kind in ('elif', 'elifdef', 'elifndef'):
+            branches[-1] = games_branch(kind, rest)
+        elif branches and kind == 'else':
+            branches[-1] = False
+        elif branches and kind == 'endif':
+            branches.pop()
+    return guarded
+
+
 def upstream_problems(root, index):
-    """path:line problems for a source file outside the game folders that includes lib/GameScript or lib/lua."""
+    """path:line problems for a source file outside the game folders that includes lib/GameScript or lib/lua, or a
+    game component its UPSTREAM_EDGES entry does not give it, or one it does give it outside a games branch."""
     problems = []
     for top in ('src', 'lib'):
         for rel, path in source_files(root, top):
             if is_game_or_unscanned(rel):
                 continue
-            for number, target, _ in includes(read_text(path)):
+            text = read_text(path)
+            guarded = None  # computed for the few files that include game code
+            for number, target, _ in includes(text):
                 if target is None:
                     continue
                 name, quoted = target_name(target)
@@ -336,6 +439,17 @@ def upstream_problems(root, index):
                 if reached in GAME_SCRIPT_OR_LUA:
                     problems.append(f'{rel}:{number}: upstream code may not include {target.group(1)} ({reached}); '
                                     'Screens may include it, so it would launder the edge; go through src/games')
+                elif reached in COMPONENTS and reached not in UPSTREAM_EDGES.get(rel, ()):
+                    problems.append(f'{rel}:{number}: upstream code may not include {target.group(1)} ({reached}); '
+                                    'an upstream file includes game code only as its ledger row allows (UPSTREAM_EDGES '
+                                    'in scripts/check_layers.py, the spine\'s "Upstream hooks" row)')
+                elif reached in COMPONENTS:
+                    if guarded is None:
+                        guarded = games_guarded_lines(text)
+                    if number not in guarded:
+                        problems.append(f'{rel}:{number}: upstream code includes {target.group(1)} ({reached}) '
+                                        f'outside an #if {fork_common.GAMES_MACRO} branch; AD-2 and its ledger row '
+                                        'guard every upstream include of game code')
     return problems
 
 
@@ -373,9 +487,10 @@ def check(root):
             print(problem)
         fork_common.write_step_summary(f'## {SUMMARY_HEADING}\n\n' + ''.join(f'- `{p}`\n' for p in problems))
         raise Failure(f'{len(problems)} problem(s) against the spine\'s layer table; fix the code, or change the '
-                      'spine and LAYERS in scripts/check_layers.py together')
-    print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and no other source file '
-          'includes lib/GameScript or lib/lua; passed.')
+                      'spine and TABLE (or BEYOND_TABLE) in scripts/check_layers.py together; '
+                      'scripts/check_layers_test.py compares TABLE with the spine')
+    print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and other source files '
+          f'include game code only as their ledger rows allow, inside #if {fork_common.GAMES_MACRO}; passed.')
 
 
 def main(argv=None):

@@ -41,7 +41,7 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
   "seats": { "min": 2, "max": 2 },
   "modes": ["pass", "nearby"],
   "hidden": false,
-  "icon": "mark_x"
+  "icon": "x"
 }
 ```
 
@@ -148,7 +148,7 @@ Colors are `"white"`, `"light"`, `"dark"`, and `"black"`. `"light"` and `"dark"`
 | `ch.gfx.line(x1, y1, x2, y2, color)` | Draws a line. |
 | `ch.gfx.circle(x, y, r, color, filled)` | Draws a circle. *(draft)* |
 | `ch.gfx.text(x, y, str, size, color, align)` | Draws text. `size`: `"small"`, `"medium"`, `"large"`; `align` *(draft)*: `"left"`, `"center"`, `"right"`. |
-| `ch.gfx.icon(name, x, y, size, color)` | Draws a library icon (see Icons, below) with its top-left corner at `x, y`. `size`: `"small"` (32 px), `"medium"` (64 px), `"large"` (128 px). |
+| `ch.gfx.icon(name, x, y, size, color, weight)` | Draws a library icon (see Icons, below) with its top-left corner at `x, y`. `size`: `"small"` (32 px), `"medium"` (64 px), `"large"` (128 px). `weight`: `"regular"` (default, outlines) or `"fill"` (solid). |
 | `ch.gfx.image(name, x, y, color)` | Draws one of your package's images at its own size; `name` is the file name without `.png`. `"black"` draws it as converted; `"white"` draws it inverted. |
 | `ch.gfx.refresh(mode)` | Requests `"fast"` (default), `"half"`, or `"full"` for this frame. The device may refresh more fully than you asked, never less. |
 
@@ -158,9 +158,9 @@ E-ink tips: every screen update is slow (about 0.7 seconds for a fast refresh) a
 
 ### Icons
 
-The device has a built-in icon library, and using it gives your game the same look as the rest of crosshatch. Prefer a library icon over drawing your own: `ch.gfx.icon("suit_heart", x, y, "medium", "black")`.
+The device has a built-in icon library, and using it gives your game the same look as the rest of crosshatch. Prefer a library icon over drawing your own: `ch.gfx.icon("heart", x, y, "medium", "black", "fill")`.
 
-The set covers marks, card suits, dice faces, board pieces, player markers, and common controls. Names are lowercase with `_`, such as `mark_x`, `suit_spade`, `die_6`, `piece_king`, `arrow_left`. *(The full list is draft; the reference will include a catalog with pictures.)* A name that doesn't exist stops the game with an error. Icons never change meaning within a frozen API level, and new levels only add names; while level 1 is a preview, names may still change. *(Amended 2026-09-28.)*
+The set covers marks, card suits, dice faces, board pieces, player markers, and common controls, all from Phosphor Icons (phosphoricons.com). Names are Phosphor's own, lowercase with `-`, such as `x`, `circle`, `spade`, `dice-six`, `boat`, `arrow-left`. The library holds only the icons its list names (`icon` lines in the API level list), a small curated part of Phosphor's set: use a name from that list, and use phosphoricons.com only to preview how a listed icon looks. Every icon comes in two weights, `"regular"` (outlines, the default) and `"fill"` (solid); pass the weight as the last argument. *(The full list is draft; the reference will include a catalog with pictures.)* A name that doesn't exist stops the game with an error; a weight other than those two is an ordinary Lua error. Icons never change meaning within a frozen API level, and new levels only add names; while level 1 is a preview, names may still change. *(Amended 2026-09-28; Phosphor names and both weights, entry 8.)*
 
 When you need something the library doesn't have, ship it as a package image and draw it with `ch.gfx.image`.
 
@@ -253,7 +253,7 @@ function game.draw(state, seat, ui)
     if m ~= "." then
       local x = x0 + ((i - 1) % 3) * c + (c - 128) // 2
       local y = y0 + ((i - 1) // 3) * c + (c - 128) // 2
-      ch.gfx.icon(m == "x" and "mark_x" or "mark_o", x, y, "large", "black")
+      ch.gfx.icon(m == "x" and "x" or "circle", x, y, "large", "black")
     end
   end
   local s = game.status(state)

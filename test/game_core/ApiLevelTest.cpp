@@ -42,7 +42,7 @@ TEST(ApiLevelTest, GrammarRejectsMalformedEntries) {
   for (const char* bad :
        {"fn ch.gfx.rect", "fn ch.gfx.rect(x,y)", "fn ch.gfx.rect(x, y) ", "fn  ch.log(...)", "field ch.api",
         "field api integer", "enum color", "limit state_bytes 01", "limit state_bytes", "manifest seats.min",
-        "seats_max 0", "icon Mark", "global x", "lib string\r", "ctx mode", "lib string.", "lib a.b.c"}) {
+        "seats_max 0", "icon Mark", "icon a_b", "global x", "lib string\r", "ctx mode", "lib string.", "lib a.b.c"}) {
     EXPECT_FALSE(parseEntry(bad).has_value()) << bad;
   }
   EXPECT_TRUE(parseEntry("fn ch.gfx.text(x, y, str, size, color, align?)").has_value());
@@ -81,6 +81,28 @@ TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
   EXPECT_EQ(limits["manifest_name_bytes"], std::to_string(GameCore::Manifest::MAX_NAME_BYTES));
   EXPECT_EQ(limits["manifest_version_bytes"], std::to_string(GameCore::Manifest::MAX_VERSION_BYTES));
   EXPECT_EQ(limits["manifest_icon_bytes"], std::to_string(GameCore::Manifest::MAX_ICON_BYTES));
+}
+
+// The list's manifest keys are the ones the parser reads (GameCore::MANIFEST_KEYS),
+// in both directions, each named once.
+TEST(ApiLevelTest, ManifestKeysMatchTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::set<std::string> listed;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "manifest") listed.insert(entry.name);
+  }
+  std::set<std::string> parsed;
+  for (const GameCore::ManifestKey& key : GameCore::MANIFEST_KEYS) {
+    EXPECT_TRUE(parsed.insert(std::string(key.path)).second) << "MANIFEST_KEYS names twice: " << key.path;
+  }
+  for (const std::string& name : listed) {
+    EXPECT_EQ(parsed.count(name), 1u) << "listed but not in MANIFEST_KEYS: " << name;
+  }
+  for (const std::string& name : parsed) {
+    EXPECT_EQ(listed.count(name), 1u) << "in MANIFEST_KEYS but not listed: " << name;
+  }
+  EXPECT_FALSE(listed.empty());
 }
 
 TEST(ApiLevelTest, SessionLimitsMatchTheList) {

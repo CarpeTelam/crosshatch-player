@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Codec.h"
 #include "TextMetrics.h"
 
 struct lua_State;
@@ -11,6 +12,7 @@ struct lua_State;
 namespace GameCore {
 class IClock;
 class IGameLog;
+struct GameImages;
 }  // namespace GameCore
 
 namespace GameScript {
@@ -29,13 +31,24 @@ inline constexpr size_t LOG_LINE_BYTES = 160;
 // without splitting a code point (ch.log lines, apply's rejection reason).
 size_t utf8Cut(const char* text, size_t length, size_t room);
 
+// Room for encodeErrorMessage's text with the longest `function` and `what` it is
+// given (ch.store.set's "the store").
+inline constexpr size_t ENCODE_ERROR_BYTES = 96;
+// The message for a value that `function` could not encode as `what` under `limit`
+// bytes: "<function>: <what> is too large (over <limit> bytes)", or "<function>:
+// <what> cannot be encoded (<error name>)". LuaGame's results and ch.store.set
+// share it.
+void encodeErrorMessage(char* out, size_t capacity, const char* function, const char* what, Codec::Error error,
+                        size_t limit);
+
 // The strings each ch.gfx option accepts (api-level-1.txt's `enum color`, `size`,
-// `align`, and `refresh`), null-terminated for luaL_checkoption; ChBindings.cpp maps
+// `align`, `refresh`, and `weight`), null-terminated for luaL_checkoption; ChBindings.cpp maps
 // them, index for index, to the DisplayList values.
 inline constexpr const char* const COLOR_NAMES[] = {"white", "light", "dark", "black", nullptr};
 inline constexpr const char* const SIZE_NAMES[] = {"small", "medium", "large", nullptr};
 inline constexpr const char* const ALIGN_NAMES[] = {"left", "center", "right", nullptr};
 inline constexpr const char* const REFRESH_NAMES[] = {"fast", "half", "full", nullptr};
+inline constexpr const char* const WEIGHT_NAMES[] = {"regular", "fill", nullptr};
 
 // The host's screen as a game sees it, fixed at VM start (AD-7): the canvas size
 // (GameViewport's), exposed as ch.screen, and the text metrics behind
@@ -56,6 +69,8 @@ struct BindingContext {
   const Canvas* canvas = nullptr;
   // The game's modules, which require() resolves against.
   const GameSources* sources = nullptr;
+  // The game's own images, which ch.gfx.image draws by name.
+  const GameCore::GameImages* images = nullptr;
   // The hook's limits for the current call (LuaGame's).
   CallGuard* guard = nullptr;
   // Bindings inside a locked section right now (LuaGame's); see enterLockedSection.

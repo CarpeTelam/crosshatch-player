@@ -58,8 +58,8 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
       log(gameId),
-      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store},
-           canvas) {}
+      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store}, canvas,
+           assets.images()) {}
 
 bool GameVM::start() {
   {
@@ -159,19 +159,15 @@ uint32_t GameVM::runningForMs(const uint32_t nowMs) {
 }
 
 void GameVM::pollTimer() {
-  uint32_t serial = 0;
-  if (!game.timer().takeDue(clock.nowMs(), serial)) return;
   GameScript::InputEvent event;
-  event.kind = GameScript::InputKind::Timer;
-  event.serial = serial;
-  postInput(event);
+  if (game.timer().takeDueEvent(clock.nowMs(), event)) postInput(event);
 }
 
 bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay) {
   if (frameBuffers.frameGen() == 0) return false;
   bool drawn = false;
   frameBuffers.takeFront([&](const GameScript::DisplayList& frame, const GameScript::Refresh hint) {
-    drawn = replay.draw(renderer, viewport, frame, hint);
+    drawn = replay.draw(renderer, viewport, frame, hint, assets.images());
   });
   return drawn;
 }

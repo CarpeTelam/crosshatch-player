@@ -10,11 +10,26 @@
 #include <Utf8.h>
 
 #include <cstddef>
+#include <iterator>
 
+#include "GameIconBlit.h"
+#include "GameIconDraw.h"
+#include "GameImageBlit.h"
 #include "GameViewport.h"
 #include "fontIds.h"
 
 namespace {
+
+// Icons draw at DRAWN_PIXELS[size], indexed by TextSize like the fonts below.
+static_assert(std::size(GameIconBlit::DRAWN_PIXELS) == static_cast<size_t>(GameScript::TextSize::Large) + 1,
+              "one drawn icon size per TextSize");
+// An icon command's weight is the library's, in the same order.
+static_assert(static_cast<size_t>(GameScript::IconWeight::Regular) == static_cast<size_t>(GameIcons::Weight::Regular),
+              "IconWeight follows GameIcons::Weight");
+static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) == static_cast<size_t>(GameIcons::Weight::Fill),
+              "IconWeight follows GameIcons::Weight");
+static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) + 1 == GameIcons::WEIGHT_COUNT,
+              "one IconWeight per library weight");
 
 // The built-in font each text size draws in, indexed by TextSize.
 constexpr int TEXT_FONT_IDS[] = {UI_10_FONT_ID, UI_12_FONT_ID, NOTOSANS_18_FONT_ID};
@@ -86,7 +101,7 @@ void FrameReplay::loadFonts(const GfxRenderer& renderer) {
 }
 
 bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DisplayList& frame,
-                       const GameScript::Refresh hint) {
+                       const GameScript::Refresh hint, const GameCore::GameImages& images) {
   if (!policy.decide(frame.hash(), hint, mode)) {
     LOG_DBG("GAME", "Frame identical to the one on screen; not refreshed");
     return false;
@@ -143,6 +158,26 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
                                  fill(GameScript::CanvasRect{x, y, w, 1}, command.color);
                                });
         break;
+      case GameScript::Op::Icon:
+        drawGameIconAt(renderer, command.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(command.size)], ox, oy,
+                       width, height, command.x, command.y, command.color == GameScript::Color::Black,
+                       command.weight == GameScript::IconWeight::Fill);
+        break;
+      case GameScript::Op::Image: {
+        if (command.image >= images.count) {
+          LOG_ERR("GAME", "No game image %u (the game has %u); not drawn", static_cast<unsigned>(command.image),
+                  static_cast<unsigned>(images.count));
+          break;
+        }
+        // Opaque: every visible pixel is filled with the ink runs() gives it.
+        const GameCore::ImageSpan& image = images.spans[command.image];
+        GameImageBlit::runs(image, images.pixelsOf(image), command.x, command.y, width, height,
+                            command.color == GameScript::Color::Black,
+                            [&](const int32_t y, const int32_t x, const int32_t w, const bool black) {
+                              renderer.fillRect(ox + x, oy + y, w, 1, black);
+                            });
+        break;
+      }
     }
   }
   renderer.setClipRect(savedClip[0], savedClip[1], savedClip[2], savedClip[3]);

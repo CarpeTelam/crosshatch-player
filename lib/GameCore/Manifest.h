@@ -61,7 +61,7 @@ struct Manifest {
   static constexpr size_t MAX_ID_BYTES = 32;       // ^[a-z0-9][a-z0-9-]{0,31}$
   static constexpr size_t MAX_NAME_BYTES = 64;     // bytes of UTF-8, at least 1
   static constexpr size_t MAX_VERSION_BYTES = 32;  // bytes, any text
-  static constexpr size_t MAX_ICON_BYTES = 32;     // [a-z0-9_]{1,32}, a library icon name
+  static constexpr size_t MAX_ICON_BYTES = 32;     // [a-z0-9_-]{1,32}, a library icon name
 
   enum Mode : uint8_t { MODE_SOLO = 1 << 0, MODE_PASS = 1 << 1, MODE_NEARBY = 1 << 2 };
 
@@ -90,6 +90,11 @@ struct Manifest {
 // token buffer and a Manifest (about 800 B), so allocate it on the heap.
 class ManifestReader {
  public:
+  // The top-level keys the parser reads, and the keys inside seats. MANIFEST_KEYS
+  // names each one; the Unknown values stand for any other key.
+  enum class Key : uint8_t { None, Id, Name, Version, Api, Seats, Modes, Hidden, Icon, Unknown };
+  enum class SeatKey : uint8_t { None, Min, Max, Unknown };
+
   ManifestReader();
   ManifestReader(const ManifestReader&) = delete;
   ManifestReader& operator=(const ManifestReader&) = delete;
@@ -108,9 +113,6 @@ class ManifestReader {
   void onContainerEnd(bool isObject);
 
  private:
-  enum class Key : uint8_t { None, Id, Name, Version, Api, Seats, Modes, Hidden, Icon, Unknown };
-  enum class SeatKey : uint8_t { None, Min, Max, Unknown };
-
   void fail(ManifestError error);
   // False (and fails the parse) for an event outside the root object.
   bool acceptEvent();
@@ -135,6 +137,29 @@ class ManifestReader {
   bool seatsMinSeen = false;
   bool seatsMaxSeen = false;
   uint32_t objectBits = 0;  // bit d set when the container at depth d+1 is an object
+};
+
+// One manifest.json key the parser reads, by its dotted path as the API level list
+// spells it (docs/crosshatch/api-level-<n>.txt `manifest` entries): `key` is its
+// top-level key, `seat` its key inside that object (None for a top-level value).
+struct ManifestKey {
+  std::string_view path;
+  ManifestReader::Key key;
+  ManifestReader::SeatKey seat;
+};
+
+// Every key the parser reads; ManifestReader::onKey looks names up here, and
+// ApiLevelTest compares it with the list both ways.
+inline constexpr ManifestKey MANIFEST_KEYS[] = {
+    {"id", ManifestReader::Key::Id, ManifestReader::SeatKey::None},
+    {"name", ManifestReader::Key::Name, ManifestReader::SeatKey::None},
+    {"version", ManifestReader::Key::Version, ManifestReader::SeatKey::None},
+    {"api", ManifestReader::Key::Api, ManifestReader::SeatKey::None},
+    {"seats.min", ManifestReader::Key::Seats, ManifestReader::SeatKey::Min},
+    {"seats.max", ManifestReader::Key::Seats, ManifestReader::SeatKey::Max},
+    {"modes", ManifestReader::Key::Modes, ManifestReader::SeatKey::None},
+    {"hidden", ManifestReader::Key::Hidden, ManifestReader::SeatKey::None},
+    {"icon", ManifestReader::Key::Icon, ManifestReader::SeatKey::None},
 };
 
 }  // namespace GameCore

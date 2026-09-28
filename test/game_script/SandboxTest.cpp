@@ -8,6 +8,8 @@
 #include "ChBindings.h"
 #include "LuaGameFixture.h"
 
+static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
+
 using namespace GameScript;
 using GameScriptTestSupport::DirectGame;
 using GameScriptTestSupport::FixedRandom;

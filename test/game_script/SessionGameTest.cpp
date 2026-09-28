@@ -17,6 +17,8 @@
 #include "Codec.h"
 #include "LuaGameFixture.h"
 
+static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
+
 // The game contract through a solo Session over a LuaGame, as the GameVM task runs
 // it (AD-8, AD-9, AD-10, AD-11).
 
@@ -77,8 +79,9 @@ TEST_F(SessionGameTest, TheTracerPlaysToGameOver) {
   EXPECT_EQ(game.session->discardedMoves(), 1u);
 }
 
-// Play again (AD-21) as GameVM runs it: Session::start() and draw() on the same
-// Session; ver keeps counting and the new round delivers `over` once more.
+// Play again (AD-21) as GameVM runs it, through SoloRounds: Session::start() and
+// draw() on the same Session; ver keeps counting and the new round delivers `over`
+// once more.
 TEST_F(SessionGameTest, TheTracerPlaysAgainAfterGameOver) {
   useSource("main", readFixture("tracer/main.lua"));
   SessionGame game(*this);
@@ -86,9 +89,11 @@ TEST_F(SessionGameTest, TheTracerPlaysAgainAfterGameOver) {
   for (int i = 1; i <= 5; ++i) ASSERT_EQ(game.tap(100, 200), Outcome::Ok) << game.errorMessage();
   ASSERT_TRUE(game.session->status().over);
   ASSERT_EQ(game.session->ver(), 6u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 1u);
+  EXPECT_EQ(game.rounds.roundsEnded(), 1u);
 
-  ASSERT_EQ(game.session->start(), Outcome::Ok) << game.errorMessage();
-  ASSERT_EQ(game.session->draw(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.rounds.roundsStarted(), 2u);
   EXPECT_EQ(game.session->ver(), 7u);
   EXPECT_FALSE(game.session->status().over);
   EXPECT_TRUE(contains(frontText().c_str(), "Taps: 0 of 5")) << frontText();
@@ -96,6 +101,7 @@ TEST_F(SessionGameTest, TheTracerPlaysAgainAfterGameOver) {
   for (int i = 1; i <= 5; ++i) ASSERT_EQ(game.tap(100, 200), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(game.session->ver(), 12u);
   EXPECT_TRUE(game.session->status().over);
+  EXPECT_EQ(game.rounds.roundsEnded(), 2u);
   // ui lives across rounds, so it has now counted one `over` per round.
   EXPECT_TRUE(contains(frontText().c_str(), "Over events: 2")) << frontText();
 }
@@ -242,14 +248,19 @@ TEST_F(SessionGameTest, EveryFaultScriptEndsWithTheReadmesText) {
     useSource("main", readFixture("faults/" + name));
     SessionGame game(*this);
     modelTaskStack(game.game);
+    // Each step on the Session directly, so a failure is attributed to the README's
+    // step (the round loop, SoloRounds, has its own tests). The input step is one tap
+    // as SoloRounds::step runs it: input, the pending move, then a draw.
     Step failed = Step::None;
+    const InputEvent tap{InputKind::Tap, 100, 100};
     if (game.game.load() != Outcome::Ok) {
       failed = Step::Load;
     } else if (game.session->start() != Outcome::Ok) {
       failed = Step::Setup;
     } else if (game.session->draw() != Outcome::Ok) {
       failed = Step::Draw;
-    } else if (game.tap(100, 100) != Outcome::Ok) {
+    } else if (game.session->handle(tap) != Outcome::Ok || game.session->applyPending() != Outcome::Ok ||
+               game.session->draw() != Outcome::Ok) {
       failed = Step::Input;
     }
     EXPECT_EQ(failed, expected) << name << " (README: " << row[1] << ") -> " << game.errorMessage();

@@ -38,7 +38,12 @@ Outcome SoloRounds::startRound() {
   roundOver = false;
   Outcome outcome = session->start();
   if (outcome == Outcome::Ok) outcome = session->draw();
-  if (outcome == Outcome::Ok) countRoundEnd();
+  if (outcome == Outcome::Ok) {
+    // After the first frame's publish and before any end, so the match never sees
+    // a round end without its start.
+    started.fetch_add(1, std::memory_order_acq_rel);
+    countRoundEnd();
+  }
   return outcome;
 }
 

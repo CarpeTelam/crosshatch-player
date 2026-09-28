@@ -97,7 +97,33 @@ title = "Owner review of the icon set and screens"
 description = "The owner reviews the v1 icon list and names, the original drawings, legibility at 32 px in black and white, the runtime views, and the Home tile from the plans' simulator screenshots, from the review packet the orchestrator builds after entry 7, and answers every `Assumption for entry 8:` line in the epic Notes, entry 7's deferral reasons included; the entry then makes the changes the owner asks for while level 1 is a preview (a rename, redraw, addition, or removal), updating the `assets/game-icons/` SVGs and name map, the regenerated header, the `docs/crosshatch/` name list and attribution, the `icons` fixture, the `icon` lines and `API_SURFACE_CRC` (`IconsMatchTheList`), and any view or tile that uses a changed name, and re-measures the flash and static RAM deltas against entry 7's when the set changed; a hardening story split off entry 7 goes into its `after`."
 verify = "The plan records the owner's approval and each answer; when anything changed, host tests, the `Icons up to date` job's commands, the `x4pro` and `sticky` builds, `check_layers.py`, and new simulator screenshots of the `icons` fixture, the views, and the Home tile pass or show the change."
 covers = ["R1", "R2", "R3", "R7", "R8", "R9", "R10", "R11"]
-after = [7]
+after = [7, 9, 10]
 hitl = true
 risk = "low"
 unknown = "What the owner changes; a change outside the icon set, its API lines, and the screens that draw it is a new story, not this one."
+
+[[entry]]
+id = 9
+type = "story"
+title = "Phosphor names and both weights"
+description = "Applies the owner's entry-8 answers to the icon set: renames every library icon to its exact Phosphor 2.1.1 name, kebab-case included (`x`, `circle`, `heart`, `dice-six`, `flag-checkered`, `game-controller`, `waves`, `dot-outline`, ...), with no category prefixes or action names; removes the chess pieces (`crown-cross`, `crown`, `castle-turret`, `horse`, and the originals `pawn` and `bishop`, so `assets/game-icons/original/` goes) and keeps every other icon; vendors each remaining icon in both the regular and the fill weight from the 2.1.1 tarball; extends `names.txt`, `scripts/gen_game_icons.py` and its sidecar test for hyphenated names and two weights per name (C++ identifiers map `-` to `_`, so the Home tile's constant still resolves), and regenerates the committed header; adds an optional sixth argument to `ch.gfx.icon(name, x, y, size, color, weight)`, `\"regular\"` (default) or `\"fill\"`, carried in the `Icon` display-list op and drawn by the blit, with an invalid weight raising like a bad size; raises the icon-data cap test from 48 KiB to 96 KiB; updates `api-level-1.txt` (the `fn` line and one `icon` line per name) and `API_SURFACE_CRC` with `IconsMatchTheList` both ways; renames the icons the pause, error and game-over views and the cover-grid Home tile use; updates `docs/crosshatch/game-icons.md` (one row per Phosphor name, a link to the Phosphor site, attribution), the `icons` fixture (every icon at small, medium and large, in both weights, black and white), and every planning or doc reference to an old name (game-api-seed section 5, the spine's AD-24, first-party-games.md)."
+verify = "Host tests pass, `IconsMatchTheList` included, and a weight test (default regular, fill, a bad weight raising); the generator's sidecar and two byte-identical runs; `Icons up to date`'s commands; x4pro, sticky and default build; `check_layers.py`, `check_upstream_touches.py`; simulator screenshots of the `icons` fixture (every icon, both weights, three sizes, black and white), the pause, error and game-over views on x4pro and sticky, and the cover-grid Home tile; the icon data's size by `nm -S` against 96 KiB, and x4pro flash and static RAM games on minus off measured with `check_flash_budget.py` against entry 7's +196,336 B / +776 B."
+covers = ["R1", "R2", "R3", "R4", "R7", "R8", "R9", "R10"]
+after = [7]
+hitl = false
+risk = "medium"
+unknown = "None known."
+references = ["_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/epic-icon-library.md, Notes (entry 8 decisions, 2026-09-28)", "_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/review-packet/README.md"]
+
+[[entry]]
+id = 10
+type = "story"
+title = "Deferred cleanup before epic-install-and-launcher"
+description = "Closes four deferred items the owner chose on 2026-09-28 before the next epic: (1) `sim.sh build` notices that the simulator's managed `platformio.local.ini` block is stale against `simulator.ini` (as after a build-flag change) and refuses or re-runs setup, with a test or a scripted check (deferred-work.md, epic-platform-baseline item); (2) the level-1 surface test compares `api-level-1.txt`'s `manifest` keys with the parser's key table in both directions (deferred-work.md, level-1 surface test item); (3) a test fails when `scripts/check_layers.py`'s `LAYERS` and the spine's layer table disagree, by parsing the spine's table (deferred-work.md, e2r-ai-5); (4) the error view's host-failure wording (`GameVM::failure()`'s order and `vmFailureText`'s `tr()` mapping) moves into a pure function in `lib/GameScript` with host tests, the match keeping its behaviour (deferred-work.md, 3.7). Marks each closed item `Resolved by entry 10 (<commit>)` in `deferred-work.md`."
+verify = "Host tests pass, including the new manifest-key, layer-table and host-failure-wording tests; every `scripts/*_test.py`; the sim.sh check shown failing on a stale block and passing after setup; `check_layers.py`; x4pro and default build; `sim.sh build x4pro`."
+covers = ["R11"]
+after = [7]
+hitl = false
+risk = "low"
+unknown = "None known."
+references = ["_bmad-output/implementation-artifacts/deferred-work.md"]

@@ -17,7 +17,8 @@ class InputQueue;
 
 // The solo round loop the GameVM task runs over one Session (AD-21): the first
 // round, one step per input event, Play again, and the count of ended rounds the
-// match watches to enter Over. requestPlayAgain() and roundsEnded() are for the
+// match watches to enter Over, and the count of started rounds it watches after
+// Play again. requestPlayAgain(), roundsStarted(), and roundsEnded() are for the
 // loop task; everything else runs on the VM task. Host-tested with a LuaGame.
 class SoloRounds {
  public:
@@ -31,6 +32,11 @@ class SoloRounds {
   // Rounds that have ended so far: one is counted when the status turns over,
   // after the Session has delivered `over` and the round's last frame is drawn.
   uint32_t roundsEnded() const { return ended.load(std::memory_order_acquire); }
+  // Rounds that have started so far: one is counted once a round's first frame is
+  // published (start() and each restart()), before that round can count as ended.
+  // Any frame published after Play again and before this count moves is the last
+  // round's, so the match asks for no render until it does.
+  uint32_t roundsStarted() const { return started.load(std::memory_order_acquire); }
 
   // VM task: the first round of `session` (setup, status, `over` if it is already
   // over, then draw).
@@ -53,6 +59,7 @@ class SoloRounds {
   GameCore::Session* session = nullptr;
   bool roundOver = false;  // VM task: the current round has been counted
   std::atomic<bool> playAgain{false};
+  std::atomic<uint32_t> started{0};
   std::atomic<uint32_t> ended{0};
 };
 

@@ -18,7 +18,7 @@ import fnmatch
 import re
 import sys
 
-from fork_common import SetupError, exit_code, git, git_text
+from fork_common import FAIL, PASS, SetupError, exit_code, git, git_text
 
 LEDGER_PATH = 'docs/crosshatch/upstream-touches.md'
 SDK_PATH = 'freeink-sdk'
@@ -159,7 +159,7 @@ def run(ref, upstream):
         print(f'Trial merge of {upstream}: clean')
 
     print('\nResult: ' + ('FAIL' if failed else 'PASS'))
-    return 1 if failed else 0
+    return FAIL if failed else PASS
 
 
 def main():

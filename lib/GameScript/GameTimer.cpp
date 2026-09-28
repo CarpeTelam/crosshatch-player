@@ -28,6 +28,15 @@ bool GameTimer::takeDue(const uint64_t nowMs, uint32_t& fired) {
   return true;
 }
 
+bool GameTimer::takeDueEvent(const uint64_t nowMs, GameCore::GameEvent& event) {
+  uint32_t fired = 0;
+  if (!takeDue(nowMs, fired)) return false;
+  event = GameCore::GameEvent{};
+  event.kind = GameCore::EventKind::Timer;
+  event.serial = fired;
+  return true;
+}
+
 bool GameTimer::accepts(const GameCore::GameEvent& event) const {
   if (event.kind != GameCore::EventKind::Timer) return true;
   std::lock_guard<std::mutex> lock(mutex);

@@ -89,8 +89,15 @@ def _put_varint(out, value):
             return
 
 
-def _as_bytes(text):
-    return text.encode('utf-8') if isinstance(text, str) else bytes(text)
+def _as_bytes(text, error='bad_type'):
+    """text as UTF-8 bytes. A str that has no UTF-8 form (a lone surrogate such as '\\ud800') is CodecError(error),
+    never a UnicodeEncodeError, so a caller such as pack_game.py handles one exception type."""
+    if not isinstance(text, str):
+        return bytes(text)
+    try:
+        return text.encode('utf-8')
+    except UnicodeEncodeError:
+        raise CodecError(error) from None
 
 
 def normalize_key(key):
@@ -108,7 +115,7 @@ def normalize_key(key):
             raise CodecError('float_key')
         return int(key)
     if isinstance(key, (str, bytes, bytearray)):
-        return _as_bytes(key)
+        return _as_bytes(key, 'bad_key')
     raise CodecError('bad_key')
 
 

@@ -5,6 +5,7 @@
 #include <HalMemory.h>
 #include <LuaGame.h>
 #include <SoloRounds.h>
+#include <VmFailure.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -69,6 +70,10 @@ class GameVM {
   // after the Session has delivered `over` and the round's last frame is
   // published. The match enters Over when the count moves (AD-21). Any task.
   uint32_t roundsEnded() const { return rounds.roundsEnded(); }
+  // Rounds that have started so far: the VM counts one once the round's first
+  // frame is published. After playAgain(), every frame published before this
+  // count moves is the last round's (SoloRounds::roundsStarted). Any task.
+  uint32_t roundsStarted() const { return rounds.roundsStarted(); }
   // Asks the VM for a new round (Play again): drops the queued events, and before
   // its next event the VM cancels the pending timer and runs Session::start() and
   // draw(), so ver keeps counting (GameScript::SoloRounds).
@@ -83,12 +88,29 @@ class GameVM {
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
-  // Ended with a ScriptError; errorMessage() then holds Lua's message.
+  // Ended with a ScriptError; failure() says whose.
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
+  // Why the VM failed, so the match words a host failure in tr() text (AD-14) and
+  // never has to name GameScript; VmFailure.h says what each value means.
+  using Failure = GameScript::VmFailure;
+  using HostFailureTexts = GameScript::HostFailureTexts;
+  // Returns before reading sessionOutOfMemory or game.hostFailure(): the VM task
+  // writes both, and failed() acquires `done`, so they are safe to read only once
+  // it is true. vmHealthy() calls this on every pass while the task still runs.
+  Failure failure() const {
+    if (!failed()) return Failure::None;
+    return GameScript::vmFailure(true, sessionOutOfMemory, game.hostFailure());
+  }
+  // Failed before any game code ran: the error view's headline says it could not start.
+  bool failedToStart() const { return GameScript::failedToStart(failure()); }
+  // The error view's detail: `texts` (tr() text) for a host failure, errorMessage()
+  // for the script's own.
+  const char* failureDetail(const HostFailureTexts& texts) const {
+    return GameScript::failureDetail(failure(), texts, errorMessage());
+  }
+  // The failure's English text, for the log; the error view shows it only for a
+  // Script failure.
   const char* errorMessage() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
-  // Failed because the arena's reserve had no room for the Session, before any Lua
-  // ran: the match shows its own out-of-memory text, not a Lua message.
-  bool failedOutOfMemory() const { return failed() && sessionOutOfMemory; }
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }

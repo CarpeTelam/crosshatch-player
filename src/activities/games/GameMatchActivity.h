@@ -51,6 +51,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   using MatchState = GameCore::MatchState;
   using MatchEvent = GameCore::MatchEvent;
   // How long a stop waits after cancel for the VM to end before abandoning it (AD-5).
+  // Independent of GameVM::ABANDON_WAIT_MS, the abandon's own wait that may follow;
+  // equal today by choice, not by rule. Sleep's worst case waits for both in turn;
+  // bounding it is deferred (the epic-script-runtime retro's AI-4).
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
   // A call into Lua still running after this long is a stuck script (AD-5).
   static constexpr uint32_t WATCHDOG_MS = 3000;
@@ -89,6 +92,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void renderView(MatchState state);
   static void viewScreen(UiScreen& screen, void* user);
   void buildView(UiScreen& screen);
+  // Draws the view's library icon centred in the dialog's content band `band`, and
+  // each of the `count` rows' icons at the row's left when its label leaves room
+  // (GameViewIcons), in the ink of the row's label. Nothing for an empty band.
+  void drawViewIcons(UiScreen& screen, freeink::ui::Rect band, MatchState state, const GameCore::MatchMenu& menu,
+                     uint8_t count) const;
   // The view's translated headline; null for a state with no view.
   const char* viewHeadline(MatchState state) const;
   // This loop pass's touch gesture on the logical screen, if any.
@@ -115,6 +123,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // GameVM::roundsEnded() when the match last entered Over (loop task).
   uint32_t roundsSeen = 0;
   uint32_t shownFrame = 0;  // loop task: the frameGen it last asked to render
+  // Loop task: Play again's GameVM::roundsStarted() plus one. Until the count
+  // reaches it, the loop asks for no render: every frame published meanwhile is
+  // the last round's (0 before any Play again, so never waits then).
+  uint32_t roundsStartedAwaited = 0;
   // Written by render: the frameGen its last render saw. The loop does not ask
   // again for a frame a render already took, so a render that sees no new frame
   // is always a repaint someone else asked for.
