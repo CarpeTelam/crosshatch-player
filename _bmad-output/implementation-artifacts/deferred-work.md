@@ -39,6 +39,8 @@
     - Retro AI-5 (fork_common.py, the all-tests step): entry 2. Retro AI-3 (`fr build` against clean-on-checksum): entry 5.
     - Epic-icon-library items: pointed to from that epic's Notes.
     - The 1.6 device check above (retro AI-2): closed by the owner's decision, 2026-09-27: the host tests are enough for the 404 and network-failure rows for now; no device check is scheduled.
+    2026-09-28, epic-icon-library inception (`epic-icon-library/tickets.toml`):
+    - The three epic-icon-library items (un-ignore `GameIcons.generated.h`, `lib/GameIcons/.clang-format`, the AGENTS.md generated-files line): entry 1.
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/story-fork-script-helper-and-one-test-step-plan.md`
   summary: Resolved by entry 5 (b3f89a32; `PublishTest.test_notes_go_to_the_file_and_the_job_summary`), closed by the refactor sweep (entry 15): no test asserted that `fork_release.py notes` writes its `## Fork release <tag>` section to the job summary.

@@ -23,6 +23,11 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the orchestrator's own
   included, runs as `flock {lock} sh -c '<commands>'` (a bare `flock {lock} a && b` locks only `a`); two builds at
   once can wipe a build directory mid-build or race on the shared `~/.platformio/packages`.
+- **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3, Claude
+  Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own review
+  subagents (the cause of O1). The build agents' review lenses need only 2. Before the first story, start
+  one subagent that reports whether it has the `Agent` tool; if it does not, the build agents run their lenses in their
+  own context, and step 3's fallback applies to every story.
 - **The upstream remote.** Worktrees share one git config, so add `upstream` once, fetch `develop`
   (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
   `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
@@ -34,13 +39,17 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
    prompt that the build runs for an orchestrator.
 2. **Answer blocking questions.** A question the repo does not settle goes to the owner (see Owner hand-offs); send the
    answer back to the same agent.
-3. **Review every story independently (AI-1).** A build agent cannot start subagents, so its own review runs every
-   lens in one context; in epic-script-runtime the three independent reviews found every defect the self-reviews had
-   rated low or dismissed (O1). After each build commit, run context-free review subagents over the story's diff
-   (`git diff <plan baseline>..<commit>`) with the plan as the intent: `bmad-review`, or bmad-build's thorough lenses
-   (blind hunter, edge-case hunter, verification gap, intent alignment). This applies to every story, not only the
-   risky ones. Send the findings to the build agent, which triages each one into its plan's Review Triage Log and fixes
-   what it accepts in a follow-up commit, so every plan keeps its review record (O2).
+3. **Review every story independently (AI-1).** In epic-script-runtime the build agents could not start subagents, so
+   each ran its review lenses in its own context, and the three independent reviews found every defect those
+   self-reviews had rated low or dismissed (O1). With nested subagents on (Before the first story), bmad-build's review
+   step runs each lens as a context-free subagent over the story's diff, and that is the story's independent review:
+   before merging, read the plan's Review Triage Log and confirm the lenses ran as subagents. When they did not (no
+   `Agent` tool, or the log says the lenses ran in the build agent's context), run context-free review subagents
+   yourself over the story's diff (`git diff <plan baseline>..<commit>`) with the plan as the intent: `bmad-review`, or
+   bmad-build's thorough lenses (blind hunter, edge-case hunter, verification gap, intent alignment). This applies to
+   every story, not only the risky ones. Send those findings to the build agent, which triages each one into its
+   plan's Review Triage Log and fixes what it accepts in a follow-up commit, so every plan keeps its review record
+   (O2).
 4. **Merge only a finished tree.** Never merge into, or rebase, a worktree whose agent is still working; wait for its
    report. `deferred-work.md` merges with `merge=union` (`.gitattributes`), so appends from two lanes combine without a
    conflict (O10); when two branches edited the same existing entry, union keeps both versions, so read the result.
@@ -49,10 +58,15 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 6. **Re-run the host suites on the combined tree before every push** (under the lock), plus
    `python3 scripts/<name>_test.py` for each fork script. In epic-script-runtime a parallel fix (c25a2ff6) broke another
    story's tests, and only this run caught it (O5).
-7. **Mark the ticket done and push.** Build agents never run `tickets.py mark` or `pull`; the orchestrator runs
+7. **Show the screenshots.** Right after merging a story whose verify names screenshots, send its
+   `{epic-folder}/story-<name>-screenshots/` images into this session with `SendUserFile` (`display: render`,
+   `status: proactive`), one call per story, captioned with the ref, the title, and one line on what each image shows,
+   so the owner can skim the session's results in order before loading a build on a device. A story with no
+   screenshots gets no call. Without `SendUserFile`, list the paths in the session instead.
+8. **Mark the ticket done and push.** Build agents never run `tickets.py mark` or `pull`; the orchestrator runs
    `uv run _bmad/method/scripts/tickets.py --project-root . mark <ref> done` on the combined tree, commits it, and pushes
    the epic branch to `origin`.
-8. **Delete finished trees (O7).** Remove a lane's worktree (`git worktree remove`) once its last story is merged, and
+9. **Delete finished trees (O7).** Remove a lane's worktree (`git worktree remove`) once its last story is merged, and
    each `{scratch}/<ref>/` fresh clone or archive tree once its gate has run. A worktree takes about 1.5 GB and a fresh
    clone about 1.8 GB; in epic-script-runtime a full disk half-installed `~/.platformio/packages` mid-build.
 
@@ -109,9 +123,10 @@ them:
   recommendation, at the top of your final report.
 - Any other HALT (a dirty tree or a branch mismatch at the version-control check, an intent_gap loopback, the review
   loop limit): stop and put it at the top of your final report as a blocking question.
-- Review step: if you cannot spawn subagents, do not HALT; run each lens yourself, one at a time, reading each lens
-  prompt fresh and judging only the diff, then triage into the plan's Review Triage Log. The orchestrator also runs an
-  independent review and sends you its findings; triage those into the same log.
+- Review step: run each review lens as a context-free subagent over your diff, as bmad-build's review step does, and
+  say in the plan's Review Triage Log that the lenses ran as subagents. Only if you have no `Agent` tool, do not HALT:
+  run each lens yourself, one at a time, reading each lens prompt fresh and judging only the diff, say so in the log
+  and at the top of your report, and triage the independent review the orchestrator then sends you into the same log.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
@@ -146,6 +161,11 @@ them:
   The recursion matters: `freeink-sdk` has nested submodules. Run the workflow step's commands there, and say in the
   plan which kind of tree it was. A new fork job goes in `Crosshatch Test Status`'s `needs` in
   `.github/workflows/crosshatch-ci.yml`; never edit `ci.yml`.
+- Screenshots: when your verify names simulator screenshots, look at each one (`build/sim/shots/`), then copy the ones
+  that show the result into `{epic-folder}/story-<name>-screenshots/`, `<name>` a word or two for the story
+  (epic-script-runtime used `story-gfx-screenshots/`), under short file names that say what they show, commit them with the story, and list
+  each path with one line on what it shows in the plan's Verification and your final report. The orchestrator shows
+  them to the owner.
 - Game fixtures live in `test/game_script/fixtures/`, never `games/`.
 - Upstream files change only as `docs/crosshatch/upstream-touches.md` allows; run
   `python3 scripts/check_upstream_touches.py` before committing when you touched a non-fork file.
@@ -165,4 +185,5 @@ them:
 ### Final report
 
 Under 300 words: blocking questions first, then the commit hash and branch, what changed (by path), the verification
-evidence (commands and results), anything deferred, and any risk or unfinished item.
+evidence (commands and results), the screenshot paths with one line each, whether the review lenses ran as subagents,
+anything deferred, and any risk or unfinished item.
