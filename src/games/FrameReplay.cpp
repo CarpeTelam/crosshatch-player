@@ -10,11 +10,18 @@
 #include <Utf8.h>
 
 #include <cstddef>
+#include <iterator>
 
+#include "GameIconBlit.h"
+#include "GameIconDraw.h"
 #include "GameViewport.h"
 #include "fontIds.h"
 
 namespace {
+
+// Icons draw at DRAWN_PIXELS[size], indexed by TextSize like the fonts below.
+static_assert(std::size(GameIconBlit::DRAWN_PIXELS) == static_cast<size_t>(GameScript::TextSize::Large) + 1,
+              "one drawn icon size per TextSize");
 
 // The built-in font each text size draws in, indexed by TextSize.
 constexpr int TEXT_FONT_IDS[] = {UI_10_FONT_ID, UI_12_FONT_ID, NOTOSANS_18_FONT_ID};
@@ -142,6 +149,10 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
                                [&](const int32_t y, const int32_t x, const int32_t w) {
                                  fill(GameScript::CanvasRect{x, y, w, 1}, command.color);
                                });
+        break;
+      case GameScript::Op::Icon:
+        drawGameIconAt(renderer, command.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(command.size)], ox, oy,
+                       width, height, command.x, command.y, command.color == GameScript::Color::Black);
         break;
     }
   }

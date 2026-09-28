@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "GameIcons.h"
 #include "LuaGameFixture.h"
 
 using namespace GameScript;
@@ -66,6 +67,9 @@ std::string describe(const DrawCommand& c) {
     case Op::Text:
       return "text " + n(c.x) + " " + n(c.y) + " '" + std::string(c.text, c.textLength) + "' " + sizeName(c.size) +
              " " + colorName(c.color) + " " + alignName(c.align);
+    case Op::Icon:
+      return std::string("icon ") + (c.icon < GameIcons::ICON_COUNT ? GameIcons::ICONS[c.icon].name : "?") + " " +
+             n(c.x) + " " + n(c.y) + " " + sizeName(c.size) + " " + colorName(c.color);
   }
   return "?";
 }
@@ -103,6 +107,9 @@ TEST_F(GfxBindingsTest, EveryCallAndArgumentFormDecodes) {
     ch.gfx.text(1, 2, "a", "small", "black"); ch.gfx.text(1, 2, "b", "medium", "white", "left")
     ch.gfx.text(1, 2, "c", "large", "black", "center"); ch.gfx.text(1, 2, "d", "small", "white", "right")
     ch.gfx.text(3.0, 4, 12, "medium", "black", nil)
+    ch.gfx.icon("die_6", 1, 2, "small", "black"); ch.gfx.icon("mark_o", -3, 4, "medium", "white")
+    ch.gfx.icon("suit_heart", 70000, -70000, "large", "black"); ch.gfx.icon("mark_x", 6.0, 7, "large", "white")
+    ch.gfx.icon("mark_x", 8, 9, "small", "white"); ch.gfx.icon("die_6", 10, 11, "medium", "black")
     ch.gfx.refresh("half")
   )"));
   DirectGame game(arena, frames, sources, ports, canvas);
@@ -132,6 +139,12 @@ TEST_F(GfxBindingsTest, EveryCallAndArgumentFormDecodes) {
       "text 1 2 'c' large black center",
       "text 1 2 'd' small white right",
       "text 3 4 '12' medium black left",
+      "icon die_6 1 2 small black",
+      "icon mark_o -3 4 medium white",
+      "icon suit_heart 32767 -32768 large black",
+      "icon mark_x 6 7 large white",
+      "icon mark_x 8 9 small white",
+      "icon die_6 10 11 medium black",
   };
   EXPECT_EQ(described(), expected);
   EXPECT_EQ(frontRefresh(), Refresh::Half);
@@ -174,6 +187,7 @@ TEST_F(GfxBindingsTest, EveryGfxCallOutsideDrawIsAScriptError) {
       {"line", "ch.gfx.line(0, 0, 1, 1, 'black')"},
       {"circle", "ch.gfx.circle(0, 0, 1, 'black')"},
       {"text", "ch.gfx.text(0, 0, 'x', 'small', 'black')"},
+      {"icon", "ch.gfx.icon('die_6', 0, 0, 'small', 'black')"},
       {"refresh", "ch.gfx.refresh('full')"},
   };
   for (const auto& call : calls) {
@@ -330,6 +344,15 @@ TEST_F(GfxBindingsTest, BadArgumentsAreScriptErrors) {
       {"ch.gfx.refresh('slow')", "bad argument #1 to 'refresh' (invalid option 'slow')"},
       {"ch.gfx.rect(0.5, 0, 1, 1, 'black')", "bad argument #1 to 'rect' (number has no integer representation)"},
       {"ch.gfx.circle(0, 0, 'r', 'black')", "bad argument #3 to 'circle' (number expected, got string)"},
+      {"ch.gfx.icon({}, 0, 0, 'small', 'black')", "bad argument #1 to 'icon' (string expected, got table)"},
+      {"ch.gfx.icon(nil, 0, 0, 'small', 'black')", "bad argument #1 to 'icon' (string expected, got nil)"},
+      {"ch.gfx.icon('die_6', 0.5, 0, 'small', 'black')", "bad argument #2 to 'icon' (number has no integer"},
+      {"ch.gfx.icon('die_6', 0, '1.5', 'small', 'black')", "bad argument #3 to 'icon' (number has no integer"},
+      {"ch.gfx.icon('die_6', 0, 0, 'huge', 'black')", "bad argument #4 to 'icon' (invalid option 'huge')"},
+      {"ch.gfx.icon('die_6', 0, 0, nil, 'black')", "bad argument #4 to 'icon' (string expected, got nil)"},
+      {"ch.gfx.icon('die_6', 0, 0, 'small', 'light')", "bad argument #5 to 'icon' (\"light\" and \"dark\" are only"},
+      {"ch.gfx.icon('die_6', 0, 0, 'small', 'dark')", "bad argument #5 to 'icon' (\"light\" and \"dark\" are only"},
+      {"ch.gfx.icon('die_6', 0, 0, 'small')", "bad argument #5 to 'icon' (string expected, got no value)"},
   };
   for (const auto& c : cases) {
     useSource("main", drawing(c[0]));
@@ -339,6 +362,89 @@ TEST_F(GfxBindingsTest, BadArgumentsAreScriptErrors) {
     EXPECT_TRUE(contains(game.errorMessage(), c[1])) << c[0] << " -> " << game.errorMessage();
   }
   EXPECT_EQ(frames.frameGen(), 0u);
+}
+
+TEST_F(GfxBindingsTest, IconArgumentErrorsAreCatchable) {
+  // Unlike an unknown name, a bad argument is an ordinary Lua error: pcall
+  // catches it and draw carries on.
+  useSource("main", drawing("local ok, err = pcall(function() ch.gfx.icon('die_6', 0, 0, 'huge', 'black') end)\n"
+                            "ch.gfx.text(0, 0, tostring(ok) .. ' ' .. err, 'small', 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "false main.lua:3: bad argument #4 to 'icon' (invalid option 'huge')");
+  EXPECT_EQ(game.callGuard().fault(), Fault::None);
+}
+
+// An unknown icon name stops the game like a full frame: through the guard, so a
+// script's pcall catches it at most once, and the frame is not published.
+TEST_F(GfxBindingsTest, AnUnknownIconStopsTheGameEvenUnderPcall) {
+  const char* const bodies[] = {
+      "ch.gfx.icon('no_such_icon', 0, 0, 'small', 'black')",
+      "pcall(function() ch.gfx.icon('no_such_icon', 0, 0, 'small', 'black') end)\n"
+      "ch.gfx.text(0, 0, 'still drawing', 'small', 'black')",
+  };
+  for (const char* body : bodies) {
+    useSource("main", drawing(std::string("ch.gfx.clear('white')\n") + body));
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << body;
+    EXPECT_STREQ(game.errorMessage(), "main.lua:4: ch.gfx.icon: unknown icon \"no_such_icon\"") << body;
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << body;
+    EXPECT_EQ(frames.frameGen(), 0u) << body;  // the frame was not published
+  }
+  // pcall straight on the binding: no Lua caller to name.
+  useSource("main", drawing("pcall(ch.gfx.icon, 'mark_z', 0, 0, 'small', 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_TRUE(contains(game.errorMessage(), "ch.gfx.icon: unknown icon \"mark_z\"")) << game.errorMessage();
+  EXPECT_EQ(game.callGuard().fault(), Fault::Binding);
+  EXPECT_EQ(frames.frameGen(), 0u);
+}
+
+TEST_F(GfxBindingsTest, AnUnknownIconsNameIsShownShortAndPrintable) {
+  struct Case {
+    const char* name;  // Lua expression
+    std::string shown;
+  };
+  std::string cut = "a";
+  for (int i = 0; i < 15; ++i) cut += "\xC3\xA9";  // 31 bytes: the 32nd would split an e-acute
+  const Case cases[] = {
+      {"string.rep('a', 40)", std::string(32, 'a')},
+      {"string.rep('b', 32)", std::string(32, 'b')},
+      {"'a' .. string.rep('\\u{e9}', 20)", cut},
+      {"'x\\ny\"z\\0w\\127v\\tu'", "x?y?z?w?v?u"},
+      {"''", ""},
+      {"42", "42"},  // a number is a string to Lua's string checks
+  };
+  for (const auto& c : cases) {
+    useSource("main", drawing(std::string("ch.gfx.icon(") + c.name + ", 0, 0, 'small', 'black')"));
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << c.name;
+    EXPECT_EQ(std::string(game.errorMessage()), "main.lua:3: ch.gfx.icon: unknown icon \"" + c.shown + "\"") << c.name;
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << c.name;
+  }
+}
+
+TEST_F(GfxBindingsTest, AnIconIsOneCommandWithinTheFrameLimits) {
+  useSource("main", drawing("for i = 1, 2047 do ch.gfx.clear('white') end\n"
+                            "ch.gfx.icon('mark_o', 0, 0, 'large', 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontCommands().size(), MAX_COMMANDS);
+  EXPECT_EQ(frontCommands().back().op, Op::Icon);
+  game.close();  // one VM per arena, as on the device: the reserve holds one scratch
+
+  useSource("main", drawing("for i = 1, 2048 do ch.gfx.clear('white') end\n"
+                            "ch.gfx.icon('mark_o', 0, 0, 'large', 'black')"));
+  DirectGame over(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(over.start(), Outcome::Ok) << over.errorMessage();
+  EXPECT_EQ(over.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(over.errorMessage(), "main.lua:4: frame is full (at most 2048 drawing calls or 32768 bytes)");
+  EXPECT_EQ(frames.frameGen(), 1u);
 }
 
 TEST_F(GfxBindingsTest, ScreenIsTheCanvasPassedAtStart) {

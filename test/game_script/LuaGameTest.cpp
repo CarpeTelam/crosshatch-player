@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "GameIcons.h"
 #include "GameInput.h"
 #include "LuaGameFixture.h"
 
@@ -116,6 +117,36 @@ TEST_F(LuaGameTest, TheGalleryDrawsEveryCommandAndFillColor) {
     EXPECT_TRUE(sizes[i]) << i;
   }
   EXPECT_TRUE(whiteInk);
+}
+
+// The icons fixture: the first draw is the black page, a tap turns to the white
+// page; each draws every library icon at each size in that page's color.
+TEST_F(LuaGameTest, TheIconsFixtureDrawsEveryIconAtEachSizeInBothColors) {
+  useSource("main", readFixture("icons/main.lua"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  const Color pages[] = {Color::Black, Color::White};
+  for (const Color ink : pages) {
+    if (ink == Color::White) {
+      ASSERT_EQ(game.input(InputEvent{InputKind::Tap, 10, 10}), Outcome::Ok) << game.errorMessage();
+    }
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    std::vector<std::vector<bool>> seen(GameIcons::ICON_COUNT, std::vector<bool>(3, false));
+    for (const DrawCommand& c : frontCommands()) {
+      if (c.op == Op::Clear) {
+        EXPECT_NE(c.color, ink);
+      }
+      if (c.op != Op::Icon) continue;
+      EXPECT_EQ(c.color, ink);
+      ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
+      seen[c.icon][static_cast<size_t>(c.size)] = true;
+    }
+    for (size_t i = 0; i < GameIcons::ICON_COUNT; ++i) {
+      for (size_t size = 0; size < 3; ++size) {
+        EXPECT_TRUE(seen[i][size]) << GameIcons::ICONS[i].name << " size " << size << " page " << static_cast<int>(ink);
+      }
+    }
+  }
 }
 
 TEST_F(LuaGameTest, EachEntryIntoLuaBumpsTheCallSerial) {

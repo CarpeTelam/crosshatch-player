@@ -103,6 +103,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/game_codec.py`
 - `scripts/game_codec_test.py`
 - `scripts/gen_game_icons.py`
+- `scripts/gen_game_icons_test.py`
 - `scripts/check_upstream_touches.py`
 - `scripts/check_upstream_touches_test.py`
 - `scripts/check_flash_budget.py`

@@ -1,0 +1,20 @@
+# The game icon library's name map: scripts/gen_game_icons.py reads it and writes
+# lib/GameIcons/GameIcons.generated.h.
+#
+# Source: the Phosphor icon set, npm package @phosphor-icons/core, version 2.1.1
+#   https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz
+#   sha256 313332be6190b724da24107addd781799b48bf76b13963f24501112ffe1baadd
+# Licence: MIT, phosphor/LICENSE (copied from the package). The SVGs under
+# phosphor/ are the package's assets/<weight>/ files, byte for byte.
+#
+# The names are part of the game API level: games call ch.gfx.icon by them, and
+# docs/crosshatch/api-level-<n>.txt lists each one as `icon <name>`. Never rename
+# or remove one in a frozen level.
+#
+# One icon per line, whitespace-separated: <name> <weight> <SVG path relative to
+# assets/game-icons>. A name is [a-z][a-z0-9_]{0,31} without "__".
+
+die_6 fill phosphor/fill/dice-six-fill.svg
+mark_o regular phosphor/regular/circle.svg
+mark_x regular phosphor/regular/x.svg
+suit_heart fill phosphor/fill/heart-fill.svg

@@ -51,6 +51,7 @@ fn ch.gfx.rect(x, y, w, h, color, filled?)
 fn ch.gfx.line(x1, y1, x2, y2, color)
 fn ch.gfx.circle(x, y, r, color, filled?)
 fn ch.gfx.text(x, y, str, size, color, align?)
+fn ch.gfx.icon(name, x, y, size, color)
 fn ch.gfx.refresh(mode?)
 fn ch.text_width(str, size) -> integer
 fn ch.timer.after(ms)
@@ -73,10 +74,11 @@ fn setmetatable(t, mt) -> table
 # Lua 5.5.1 base library, without load, loadfile, and dofile. pcall and xpcall
 # cannot keep a game running past a fault that stops it (the instruction budget,
 # the heap cap, C stack headroom, a value or table over its limit, a full frame,
-# ch.gfx outside draw): they may return false once, and the call still ends.
-# error("not enough memory", 0) raises Lua's own memory error, so it stops the
-# game too. The string metatable is sealed: getmetatable("") returns false, and
-# string methods and arithmetic on numeric strings work as in Lua.
+# ch.gfx outside draw, an unknown icon name): they may return false once, and
+# the call still ends. error("not enough memory", 0) raises Lua's own memory
+# error, so it stops the game too. The string metatable is sealed:
+# getmetatable("") returns false, and string methods and arithmetic on numeric
+# strings work as in Lua.
 lib _G
 lib _VERSION
 lib assert
@@ -216,6 +218,12 @@ manifest seats.max integer
 manifest modes array
 manifest hidden boolean?
 manifest icon string?
+
+# Icons (epic-icon-library)
+icon die_6
+icon mark_o
+icon mark_x
+icon suit_heart
 
 # Limits
 limit manifest_id_bytes 32

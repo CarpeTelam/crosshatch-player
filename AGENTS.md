@@ -14,7 +14,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Push feature branches to `origin` (this fork) and open PRs into its `develop`. Title every PR as a Conventional Commit (`type: subject`, types `feat` `fix` `docs` `style` `refactor` `perf` `test` `build` `ci` `chore` `revert`); the `Title Check` job (`amannn/action-semantic-pull-request`) fails any other title.
 - Ship each epic as one PR: check a ticket's verify locally in its build session, check CI on the epic PR, and never merge an epic PR with a red check.
 - Sync upstream by merging, with `upstream` = `https://github.com/crosspoint-reader/crosspoint-reader.git`: run `git config merge.ours.driver true` once per clone, then merge `upstream/develop` into `develop`. `AGENTS.md` is this fork's own; `.gitattributes` keeps our copy. Without the driver, resolve with `git checkout --ours AGENTS.md`; resolve an upstream `CLAUDE.md` change with `git rm CLAUDE.md`.
-- Never hand-edit generated files: `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` (from `lib/I18n/translations/*.yaml`) and `*.generated.h` (from `src/**/*.html` and `.js`); every `pio run` regenerates them.
+- Never hand-edit generated files: `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` (from `lib/I18n/translations/*.yaml`) and `*.generated.h` (from `src/**/*.html` and `.js`), which every `pio run` regenerates; `lib/GameIcons/GameIcons.generated.h` is committed and regenerated with `python3 scripts/gen_game_icons.py`.
 
 ## Where things are
 

@@ -72,7 +72,6 @@ endif()
 file(GLOB GAME_SCRIPT_SOURCES CONFIGURE_DEPENDS ${REPO_ROOT}/lib/GameScript/*.cpp)
 
 add_executable(GameScriptTest
-  GameScriptTest.cpp
   LuaOnHostTest.cpp
   ApiSurfaceTest.cpp
   ArenaAllocatorTest.cpp
@@ -80,6 +79,7 @@ add_executable(GameScriptTest
   CanvasClipTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp
+  GameIconBlitTest.cpp
   GameTimerTest.cpp
   GameTouchTest.cpp
   GfxBindingsTest.cpp
@@ -94,7 +94,6 @@ add_executable(GameScriptTest
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
-  ${REPO_ROOT}/lib/GameIcons/GameIcons.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
   # TextMetrics decodes with the renderer's UTF-8 reader.
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
@@ -106,7 +105,7 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Utf8
-  # GameTouch.h (header-only, pure) and the SDK's swipe classification it uses.
+  # GameTouch.h and GameIconBlit.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
   ${REPO_ROOT}/src/games
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
   # ApiLevelList.h, the API list reader ApiLevelTest shares.

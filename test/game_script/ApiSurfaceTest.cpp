@@ -16,6 +16,7 @@
 #include "ChBindings.h"
 #include "Codec.h"
 #include "DisplayList.h"
+#include "GameIcons.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
 #include "Manifest.h"
@@ -26,9 +27,10 @@
 // device's sandbox and ch table, reports what a game can reach (fixtures/surface),
 // and each entry kind is compared with the union of docs/crosshatch/api-level-<n>.txt
 // in both directions, so a function, global, library member, enum value, event,
-// ctx field, or limit added on either side alone fails here. ApiLevelTest checks
-// the list's grammar and manifest entries; the icon table, ch.d.lua, and the catalog
-// are checked by the epics that add them.
+// ctx field, limit, or icon added on either side alone fails here. ApiLevelTest
+// checks the list's grammar and manifest entries; IconsMatchTheList checks the icon
+// names against the library's table; ch.d.lua and the catalog are checked by the
+// epics that add them.
 
 // A new EventKind, SwipeDir, or Mode enumerator must break the build until named() lists it.
 #pragma GCC diagnostic error "-Wswitch"
@@ -353,6 +355,35 @@ TEST_F(ApiSurfaceTest, GfxOptionsMatchTheList) {
     }
   }
   EXPECT_EQ(results.count(std::string(UNLISTED) + " true"), 0u) << "ch.gfx accepts an unlisted value";
+}
+
+TEST_F(ApiSurfaceTest, IconsMatchTheList) {
+  Names library;
+  for (const GameIcons::Icon& icon : GameIcons::ICONS) library.insert(icon.name);
+  const Names icons = listed("icon", true);
+  expectSameNames(library, icons, "icon");
+  ASSERT_FALSE(icons.empty());
+
+  // Each listed name draws through ch.gfx.icon at every size, as its own index.
+  std::string calls;
+  for (const std::string& name : icons) {
+    for (const char* const* size = SIZE_NAMES; *size; ++size) {
+      calls += "ch.gfx.icon('" + name + "', 0, 0, '" + *size + "', 'black')\n";
+    }
+  }
+  useSource("main", "return { setup = function() return {} end, draw = function()\n" + calls + "end }\n");
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  std::map<std::string, Names> drawn;  // name -> sizes
+  for (const DrawCommand& c : frontCommands()) {
+    ASSERT_EQ(c.op, Op::Icon);
+    ASSERT_LT(c.icon, GameIcons::ICON_COUNT);
+    drawn[GameIcons::ICONS[c.icon].name].insert(SIZE_NAMES[static_cast<size_t>(c.size)]);
+  }
+  for (const std::string& name : icons) {
+    EXPECT_EQ(drawn[name], listedEnum("size")) << "icon " << name;
+  }
 }
 
 TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {

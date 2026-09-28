@@ -88,6 +88,35 @@ TEST(DisplayListTest, RoundTripsLinesCirclesAndAlignedText) {
   EXPECT_FALSE(reader.next(c));
 }
 
+TEST(DisplayListTest, RoundTripsIcons) {
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  ASSERT_TRUE(list.appendIcon(-7, 70000, 3, TextSize::Large, Color::White));
+  EXPECT_EQ(list.count(), 1);
+  EXPECT_EQ(list.bytes(), 9u);  // op, color, size, x, y, icon
+  ASSERT_TRUE(list.appendIcon(12, 34, 0xFFFF, TextSize::Small, Color::Black));
+  EXPECT_EQ(list.count(), 2);
+  EXPECT_EQ(list.bytes(), 18u);
+
+  auto reader = list.reader();
+  DrawCommand c;
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Icon);
+  EXPECT_EQ(c.color, Color::White);
+  EXPECT_EQ(c.size, TextSize::Large);
+  EXPECT_EQ(c.x, -7);
+  EXPECT_EQ(c.y, INT16_MAX);  // clamped
+  EXPECT_EQ(c.icon, 3);
+  ASSERT_TRUE(reader.next(c));
+  EXPECT_EQ(c.op, Op::Icon);
+  EXPECT_EQ(c.color, Color::Black);
+  EXPECT_EQ(c.size, TextSize::Small);
+  EXPECT_EQ(c.x, 12);
+  EXPECT_EQ(c.y, 34);
+  EXPECT_EQ(c.icon, 0xFFFF);
+  EXPECT_FALSE(reader.next(c));
+}
+
 TEST(DisplayListTest, TheRefreshRequestKeepsTheLargestAndIsNotACommand) {
   std::vector<uint8_t> storage(1024);
   DisplayList list(storage.data(), storage.size());
