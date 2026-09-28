@@ -119,5 +119,5 @@
 ## e2r-ai-5
 
 - source_plan: `_bmad-output/implementation-artifacts/plan-e2r-ai-5-screens-layering-and-layer-check.md`
-  summary: `scripts/check_layers.py`'s `LAYERS` mirrors the spine's layer table by hand; nothing compares them, so a spine change that tightens a row is not enforced until someone edits `LAYERS` (AI-10's spine reconciliation should update both, and name `MatchStore` in the Structural Seed).
+  summary: `scripts/check_layers.py`'s `LAYERS` mirrors the spine's layer table by hand; nothing compares them, so a spine change that tightens a row is not enforced until someone edits `LAYERS` (AI-10's spine reconciliation should update both). The `MatchStore` half is closed: the review follow-up named it in the spine's Structural Seed.
   evidence: The script's docstring asks for both in one commit; a loosened spine row without a `LAYERS` change fails the Layer check job loudly, a tightened one passes silently. Closing it needs the table in a form both read (a data block in the spine) or a test that parses the spine's table.

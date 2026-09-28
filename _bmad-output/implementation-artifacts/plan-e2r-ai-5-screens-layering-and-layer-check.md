@@ -95,6 +95,21 @@ Counts: high 0, medium 0, low 3, false 4, maybe-false 0.
 | 7 | verification gap | `LAYERS` can drift from the spine's table text; nothing compares them | low | defer | A loosened spine row fails CI loudly; a tightened one is silently unenforced. AI-10 is about to edit the table's edges; deferred-work `## e2r-ai-5`. |
 | 8 | intent alignment | The screen still passes a `GameScript::StoreSlot&` (from `store.slot()`) into `GameAssets::load` and `GameVM::create` without naming it | false | reject | The owner's rule is that Screens reach GameScript only through `src/games`; the screen neither includes nor names a GameScript type, and the task names `GameVM`/`GameSaveStore`-owned routing as the fix. |
 
+### Pass 2 (orchestrator's independent review of a52ff889)
+
+Counts: high 0, medium 2, low 5, false 0, maybe-false 0. No behaviour regression found in the C++ change.
+
+| # | Finding | Verdict | Route | Evidence / action |
+|---|---------|---------|-------|-------------------|
+| 9 | Screens may include any upstream `src/` file, which was never scanned, so `src/util2/Launder.h` including `<StoreSlot.h>`/`<lua.hpp>` launders the edge | medium | patch | `upstream_problems` scans every source file under `src/` and `lib/` outside the game folders and `lib/lua` and fails an include that reaches `lib/GameScript` or `lib/lua` (covers OtaUpdater); the Screens row keeps upstream `src/`. Tests: `src/` and `lib/` launder cases; the base fixture's OtaUpdater (GameCore, `src/games`) passes. |
+| 10 | `namespace GS = GameScript;` and `#define GS GameScript` in Screens pass | medium | patch | Screens now fail the word `GameScript` anywhere after comments and literals are blanked; tests for both. |
+| 11 | A global-scope `using`/`using namespace`/namespace alias into GameScript in a `src/games` header re-exports silently | low | patch | `reexport_problems` tracks brace depth after blanking comments, literals, and preprocessor lines, and fails such a statement at depth 0 in `src/games` headers; class-member and in-namespace aliases and `.cpp` directives pass (base fixture). Tests for directive, alias across lines, namespace alias, using-declaration. |
+| 12 | `#include_next`/`#import` and `.cxx`/`.inl`/`.ipp` not scanned | low | patch | Both added, with tests; digraphs, line continuations, macro includes, and literal-blanking corners are named in the docstring as deliberate evasions. |
+| 13 | Screens get radio/crypto platform headers the spine gives only to Device adapters | low | patch | `RADIO_CRYPTO` (Wi-Fi, ESP-NOW, netif/http/tls, lwIP, mbedTLS, OpenSSL) split from `PLATFORM`; only `src/games` has it; test. Other extras (I18n, Logging/Memory, GameIcons std, the anchor's lua) listed in the script as conventions. |
+| 14 | `lib/lua` not scanned | low | reject | Vendored and unmodified (spine); accepted by the orchestrator. |
+| 15 | `<games/GameVM.h>` in angle brackets fails as unclassified | low | patch | Angle includes now also resolve against `src/`; the base fixture's screen uses it. `fontIds.h`/`Utf8.h` from Screens still fail, as the spine says. |
+| 16 | Verification: also `sticky`, `simulator_sticky`, `pio check -e x4pro`; name `MatchStore` in the spine's Structural Seed | — | done | Seed and `scripts/check_layers.py` added to the spine's source tree, marked amended 2026-09-28; deferred entry's MatchStore half closed. Results in Verification. |
+
 ## Design Notes
 
 A new `MatchStore` rather than growing `GameSaveStore`: `GameSaveStoreTest` builds `GameSaveStore` over a span, and the slot-plus-buffer block is the match's lifetime concern. Screens → HAL/Storage/GfxRenderer and the rest of the upstream node come from the spine diagram (`ACT --> HAL`); "upstream screen infrastructure" (any upstream `src/` file, `lib/I18n`) and the AGENTS.md conventions (`lib/Logging`, `lib/Memory`) are allowed for Screens and `src/games`; platform headers (Arduino, ESP-IDF, FreeRTOS, POSIX) for `src/games` and Screens only. AD-2's anchor gives `GamesBuildAnchor.cpp` its `lua.hpp` edge.
@@ -108,6 +123,7 @@ A new `MatchStore` rather than growing `GameSaveStore`: `GameSaveStoreTest` buil
 - Fresh tree: cloning is refused in this sandbox, so an archive tree of commit a9902351 (no submodule archives: the Layer check job checks out without the submodule, and the archive's `freeink-sdk/` is empty like CI's). The job's step `python3 scripts/check_layers.py` there: 320 edges in 82 files, exit 0; `check_layers_test.py` there: OK.
 - `python3 scripts/check_upstream_touches.py` at a9902351: PASS, trial merge of upstream/develop clean.
 - `./bin/clang-format-fix` twice: no changes.
+- Review follow-up (pass 2): `pio run -e sticky` SUCCESS; `sim.sh build sticky` SUCCESS; `pio check -e x4pro --fail-on-defect low --fail-on-defect medium --fail-on-defect high`: "No defects found", PASSED. (The packaged cppcheck needs `libpcre.so.3`, which this container lacks; it ran with `LD_LIBRARY_PATH` pointing at a copy extracted from the `libpcre3` package into the scratch directory, with no system change.) `check_layers_test.py`: 29 tests OK; `check_layers.py` on the tree: exit 0 (also scans the other source files under `src/` and `lib/`; 0.2 s). Its fresh-tree run is in the orchestrator report.
 - `for t in scripts/*_test.py`: all 7 OK (`check_layers_test.py` 20 tests).
 - `python3 scripts/check_layers.py`: 320 edges in 82 files, exit 0; on an archive of the baseline's `lib/` and `src/` (93b1590f): exit 1, 7 problems (`GameMatchActivity.h:7` `<StoreSlot.h>`, `.cpp:6` `<Codec.h>`, `GameScript::` at `.h:104`, `.cpp:94,97,113,298`).
 

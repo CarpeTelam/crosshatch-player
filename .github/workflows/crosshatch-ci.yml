@@ -20,8 +20,9 @@
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
 # - Layer check: fails an #include edge of the game code (lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
-#   src/activities/games) that the spine's layer table does not allow, and a Screens file that names GameScript::
-#   (retro AI-5). scripts/check_layers.py holds the table as data and how to run it locally.
+#   src/activities/games) that the spine's layer table does not allow, any other source file that includes
+#   lib/GameScript or lib/lua, and a Screens file that names GameScript (retro AI-5). scripts/check_layers.py holds
+#   the table as data and how to run it locally.
 name: Crosshatch CI
 
 on:

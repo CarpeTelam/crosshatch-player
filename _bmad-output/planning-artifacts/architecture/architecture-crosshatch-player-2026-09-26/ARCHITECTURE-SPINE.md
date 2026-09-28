@@ -478,6 +478,8 @@ lib/
 src/
   games/                  # GameVM (the task, AD-5), GameArena (PSRAM arena backend), GameAssets (source/image/store loader),
                           # FrameReplay, GameViewport, GameTouch.h (touch to input events), GameSaveStore, GameHostCaps,
+                          # MatchStore (amended 2026-09-28, retro AI-5: one match's ch.store, its StoreSlot and
+                          # GameSaveStore in one PSRAM block, so Screens name no GameScript type),
                           # GameClock, GameRandom, GameLog (port providers); GameLink task, EspNowLink, NearbySession,
                           # GamePackageInstaller, GameRegistry, Sha256 helper,
                           # GamesBuildAnchor.cpp (AD-2: makes every env compile the game libraries and lua via lua.hpp),
@@ -492,6 +494,8 @@ scripts/gen_game_icons.py # assets/game-icons/*.svg → lib/GameIcons/GameIcons.
 scripts/check_upstream_touches.py  # AD-3 ledger check and trial merge; exit 0 pass, 1 fail, 2 could not run
 scripts/check_flash_budget.py      # games-on/off x4pro build pair, the 250 KiB and 1 KiB static-RAM compares, game objects
 scripts/check_api_freeze.py        # AD-19 frozen-level check against the merge base
+scripts/check_layers.py            # amended 2026-09-28 (retro AI-5): the layer table above as data; fails a disallowed
+                                   # #include edge and a GameScript name in Screens
 scripts/fork_common.py             # the fork scripts' shared exit contract, repository calls, and step summaries
 scripts/fork_release.py            # AD-25 release steps: preflight, prepare, build, check-images, pack-games, notes,
                                    # expected-assets, recheck (never reuses N)

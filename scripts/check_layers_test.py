@@ -43,9 +43,15 @@ BASE = {
     'src/activities/Activity.h': '#pragma once\n',
     'src/components/UiAppHost.h': '#pragma once\n',
     'src/games/MatchStore.h': '#pragma once\n#include <HalMemory.h>\n#include <StoreSlot.h>\n',
+    # A member alias and a using inside a namespace are not global re-exports; a .cpp's using-directive leaks nowhere.
     'src/games/GameVM.h': ('#pragma once\n#include <Codec.h>\n#include <freertos/task.h>\n#include <Logging.h>\n'
-                           '#include "MatchStore.h"\n'),
+                           '#include "MatchStore.h"\nclass GameVM {\n  using Slot = GameScript::StoreSlot;\n};\n'
+                           'namespace GameTouch {\nusing GameScript::StoreSlot;\n}\n'),
+    'src/games/GameVM.cpp': '#include "GameVM.h"\nusing namespace GameScript;\n',
+    'src/games/EspNowLink.cpp': '#include <esp_now.h>\n#include <WiFi.h>\n#include <mbedtls/sha256.h>\n',
     'src/games/FrameReplay.cpp': '#include <EpdFontData.h>\n#include <GfxRenderer.h>\n#include "fontIds.h"\n',
+    # Upstream code that includes game code other than lib/GameScript and lib/lua (OtaUpdater's row).
+    'src/network/OtaUpdater.cpp': '#include <Manifest.h>\n#include "games/GameVM.h"\n#include <WiFi.h>\n',
     'src/games/GameTouch.h': '#pragma once\n#include <FreeInkUICore.h>\n',
     'src/games/ForkReleaseProbe.cpp': '#include <SecureHttpClient.h>\n',
     'src/games/GamesBuildAnchor.cpp': '#include <GameIcons.h>\n#include <climits>\n#include <lua.hpp>\n',
@@ -55,6 +61,7 @@ BASE = {
         'class GameMatchActivity { MatchStore store; };\n'),
     'src/activities/games/GameMatchActivity.cpp': (
         '#include "GameMatchActivity.h"\n#include <Arduino.h>\n#include <GfxRenderer.h>\n#include <I18n.h>\n'
+        '#include <games/GameVM.h>\n#include <freertos/task.h>\n'
         '/*\n#include <Codec.h>\n*/\nconst char* text = "GameScript::Canvas";\nvoid f() { GameCore::GameEvent e; }\n'),
 }
 
@@ -143,7 +150,8 @@ class CheckLayersTest(unittest.TestCase):
                           'src/games/Other.cpp:1: cannot check a computed include')
 
     def test_ambiguous_header_fails(self):
-        self.assert_fails({'lib/Memory/Same.h': '', 'lib/Utf8/Same.h': '', 'src/games/Other.cpp': '#include <Same.h>\n'},
+        self.assert_fails({'lib/Memory/Same.h': '', 'lib/Utf8/Same.h': '',
+                           'src/games/Other.cpp': '#include <Same.h>\n'},
                           '"Same.h" matches headers in lib/Memory, lib/Utf8')
 
     def test_secure_http_client_only_from_fork_release_probe(self):
@@ -170,6 +178,55 @@ class CheckLayersTest(unittest.TestCase):
     def test_adapters_including_upstream_src_fails(self):
         self.assert_fails({'src/games/Other.cpp': '#include "activities/Activity.h"\n'},
                           'src/games/Other.cpp:1: src/games may not include "activities/Activity.h" (src (upstream))')
+
+    def test_upstream_src_laundering_game_script_fails(self):
+        self.assert_fails({'src/util2/Launder.h': '#pragma once\n#include <StoreSlot.h>\n#include <lua.hpp>\n',
+                           'src/activities/games/Other.cpp': '#include "util2/Launder.h"\n'},
+                          'src/util2/Launder.h:2: upstream code may not include <StoreSlot.h> (lib/GameScript)',
+                          'src/util2/Launder.h:3: upstream code may not include <lua.hpp> (lib/lua)', '2 problem(s)')
+
+    def test_upstream_lib_laundering_game_script_fails(self):
+        self.assert_fails({'lib/hal/HalLaunder.h': '#include "../GameScript/Codec.h"\n'},
+                          'lib/hal/HalLaunder.h:1: upstream code may not include "../GameScript/Codec.h" '
+                          '(lib/GameScript)')
+
+    def test_screen_namespace_alias_fails(self):
+        self.assert_fails({'src/activities/games/Other.cpp': 'namespace GS = GameScript;\nGS::StoreSlot* s;\n'},
+                          'Other.cpp:1: Screens name lib/GameScript', '1 problem(s)')
+
+    def test_screen_define_fails(self):
+        self.assert_fails({'src/activities/games/Other.cpp': '#define GS GameScript\n'},
+                          'Other.cpp:1: Screens name lib/GameScript')
+
+    def test_adapters_header_global_using_namespace_fails(self):
+        self.assert_fails({'src/games/Leak.h': '#pragma once\n#include <StoreSlot.h>\n\nusing namespace GameScript;\n'},
+                          'src/games/Leak.h:4: src/games header re-exports lib/GameScript at global scope '
+                          '(using namespace GameScript;)')
+
+    def test_adapters_header_global_alias_fails(self):
+        self.assert_fails({'src/games/Leak.h': ('#pragma once\n#include <StoreSlot.h>\nnamespace Games {\n}\n'
+                                                'using Slot =\n    GameScript::StoreSlot;\n'
+                                                'namespace GS = GameScript;\nusing GameScript::StoreSlot;\n')},
+                          'src/games/Leak.h:5: src/games header re-exports lib/GameScript at global scope '
+                          '(using Slot = GameScript::StoreSlot;)',
+                          'src/games/Leak.h:7:', 'src/games/Leak.h:8:', '3 problem(s)')
+
+    def test_include_next_and_import_are_read(self):
+        self.assert_fails({'src/activities/games/Other.cpp': '#include_next <StoreSlot.h>\n#import <Codec.h>\n'},
+                          'Other.cpp:1: src/activities/games may not include <StoreSlot.h>',
+                          'Other.cpp:2: src/activities/games may not include <Codec.h>')
+
+    def test_inline_and_cxx_files_are_scanned(self):
+        self.assert_fails({'src/activities/games/Other.inl': '#include <StoreSlot.h>\n',
+                           'src/activities/games/Other.cxx': '#include <Codec.h>\n'},
+                          'Other.inl:1: src/activities/games may not include <StoreSlot.h>',
+                          'Other.cxx:1: src/activities/games may not include <Codec.h>')
+
+    def test_screen_radio_and_crypto_headers_fail(self):
+        radio = '#include <esp_now.h>\n#include <WiFi.h>\n#include <mbedtls/sha256.h>\n#include <openssl/sha.h>\n'
+        self.assert_fails({'src/activities/games/Other.cpp': radio},
+                          'Other.cpp:1: src/activities/games may not include <esp_now.h> (platform radio/crypto)',
+                          'Other.cpp:4: src/activities/games may not include <openssl/sha.h>', '4 problem(s)')
 
     def test_missing_game_folder_could_not_run(self):
         root = self.tree(remove=[p for p in BASE if p.startswith('lib/GameIcons/')])
