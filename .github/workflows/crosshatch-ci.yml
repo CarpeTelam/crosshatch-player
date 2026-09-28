@@ -23,6 +23,9 @@
 #   src/activities/games) that the spine's layer table does not allow, any other source file that includes
 #   lib/GameScript or lib/lua, and a Screens file that names GameScript (retro AI-5). scripts/check_layers.py holds
 #   the table as data and how to run it locally.
+# - Icons up to date: runs scripts/gen_game_icons.py, unchanged, to a scratch file and fails when the result differs
+#   by any byte from the committed lib/GameIcons/GameIcons.generated.h (never edited by hand; spine AD-2, AD-24).
+#   Fix a failure with python3 scripts/gen_game_icons.py and commit the header; the script's docstring has the rest.
 name: Crosshatch CI
 
 on:
@@ -243,6 +246,33 @@ jobs:
       - name: Check the game code's include edges
         run: python3 scripts/check_layers.py
 
+  icons-up-to-date:
+    name: Icons up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Reads only assets/game-icons, scripts, and the committed header: neither history nor the submodule.
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # The generator writes to the runner's temp folder, so the committed header is compared, never rewritten. The
+      # annotation carries cmp's first difference (or its EOF or missing-file line); the diff is capped because the
+      # header is mostly rows of hex bytes.
+      - name: Regenerate the icon header and compare it with the committed one
+        run: |
+          fresh="$RUNNER_TEMP/GameIcons.generated.h"
+          python3 scripts/gen_game_icons.py --out "$fresh"
+          if ! difference=$(cmp lib/GameIcons/GameIcons.generated.h "$fresh" 2>&1); then
+            echo "::error file=lib/GameIcons/GameIcons.generated.h::differs from a fresh run of scripts/gen_game_icons.py ($difference); run python3 scripts/gen_game_icons.py and commit the header"
+            echo "diff -u of the committed header and the fresh run, first 200 lines:"
+            diff -u lib/GameIcons/GameIcons.generated.h "$fresh" | head -n 200 || true
+            exit 1
+          fi
+          echo "lib/GameIcons/GameIcons.generated.h matches a fresh run of scripts/gen_game_icons.py"
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -254,6 +284,7 @@ jobs:
       - fork-script-tests
       - api-freeze
       - layer-check
+      - icons-up-to-date
     if: always()
     runs-on: ubuntu-latest
     permissions:
