@@ -83,6 +83,7 @@ add_executable(GameScriptTest
   GameImageBlitTest.cpp
   GameTimerTest.cpp
   GameTouchTest.cpp
+  GameViewIconsTest.cpp
   GfxBindingsTest.cpp
   HostBindingsTest.cpp
   LuaGameTest.cpp
@@ -94,11 +95,15 @@ add_executable(GameScriptTest
   TextMetricsTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
+  # GameViewIconsTest walks every state's menu.
+  ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
   # TextMetrics decodes with the renderer's UTF-8 reader.
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  # GameViewIconsTest lays out a real fui::optionDialog (ensureMinTouchRect, drawText).
+  ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/src/FreeInkUI.cpp
 )
 
 target_include_directories(GameScriptTest PRIVATE
@@ -107,7 +112,7 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Utf8
-  # GameTouch.h, GameIconBlit.h, and GameImageBlit.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
+  # GameTouch.h, GameIconBlit.h, GameImageBlit.h, and GameViewIcons.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
   ${REPO_ROOT}/src/games
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
   # ApiLevelList.h, the API list reader ApiLevelTest shares, and ConverterBmpLayout.h, the image tests' converter mirror.

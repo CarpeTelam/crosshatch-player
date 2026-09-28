@@ -89,6 +89,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void renderView(MatchState state);
   static void viewScreen(UiScreen& screen, void* user);
   void buildView(UiScreen& screen);
+  // Draws the view's library icon centred in the dialog's content band `band`, and
+  // each of the `count` rows' icons at the row's left when its label leaves room
+  // (GameViewIcons), in the ink of the row's label. Nothing for an empty band.
+  void drawViewIcons(UiScreen& screen, freeink::ui::Rect band, MatchState state, const GameCore::MatchMenu& menu,
+                     uint8_t count) const;
   // The view's translated headline; null for a state with no view.
   const char* viewHeadline(MatchState state) const;
   // This loop pass's touch gesture on the logical screen, if any.

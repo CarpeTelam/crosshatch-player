@@ -149,3 +149,9 @@
     - `FrameReplay`'s `Op::Image` viewport offset;
     - the match's `BadImage` → `STR_GAMES_BAD_IMAGE` mapping.
   evidence: `test/` compiles neither `GameAssets.cpp`, `FrameReplay.cpp`, nor `GameMatchActivity.cpp`, since they need Storage and `GfxRenderer`. Dropping `image.offset = pixelOffset` passes every host test. The budget, the count cap, the verdicts, and the ink rule are pure and tested (`ImageBudget`, `GameImageBlit::runs`). A Storage stub and a renderer double (retro AI-2, epic-install-and-launcher) would pin the rest. Review finding 19.
+
+## 3.5
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-runtime-views-draw-from-the-library-plan.md`
+  summary: Propose upstream that the SDK's `DialogOption` pass an icon through to `ButtonProps` (`icon` / `iconAsset` / `iconSize`), so option rows can show an icon beside their label in the state's own ink. The match's views then need neither their own row-icon placement (`GameViewIcons::rowTop`, `rowIconFits`) nor the copied state-to-ink rule in `GameMatchActivity::drawViewIcons`.
+  evidence: `freeink-sdk/libs/ui/FreeInkUI/include/components/overlays/option-dialog.h` builds each row's `ButtonProps` from `DialogOption`, which has no icon field, although `components/controls/button.h` already centres an icon and label together. AGENTS.md forbids SDK edits for fork-only work and says to propose them upstream. The icon bitmaps would also need a `BitmapRef` form of the `GameIcons` layout. Review (blind hunter), 3.5.

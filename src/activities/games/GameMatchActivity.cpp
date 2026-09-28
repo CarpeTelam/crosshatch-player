@@ -15,7 +15,9 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
+#include "games/GameIconDraw.h"
 #include "games/GameVM.h"
+#include "games/GameViewIcons.h"
 
 namespace fui = freeink::ui;
 
@@ -480,6 +482,8 @@ void GameMatchActivity::buildView(UiScreen& screen) {
   props.options = options;
   props.optionCount = count;
   props.verticalOptions = true;
+  // The view's library icon sits in the content band, between the text and the rows.
+  props.contentHeight = GameViewIcons::forView(state) ? static_cast<int16_t>(GameViewIcons::VIEW_PIXELS) : 0;
   // Touch only: the buttons are read in loopView().
   props.inputMask = fui::InputTouch;
   // A framed panel, as OptionPopup draws it, so it stands out over the game.
@@ -499,7 +503,33 @@ void GameMatchActivity::buildView(UiScreen& screen) {
   const fui::Rect safe = screen.frame().safeRect();
   const auto width = static_cast<int16_t>(safe.width * 4 / 5);
   const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
-  fui::optionDialog(screen.frame(), fui::centeredRect(safe, fui::Size{width, height}), props);
+  const fui::Rect band = fui::optionDialog(screen.frame(), fui::centeredRect(safe, fui::Size{width, height}), props);
+  drawViewIcons(screen, band, state, menu, count);
+}
+
+void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, const MatchState state,
+                                      const GameCore::MatchMenu& menu, const uint8_t count) const {
+  // The dialog has no icon field, so the icons are drawn over the finished dialog.
+  if (band.empty()) return;
+  const fui::OptionDialogProps& props = dialogProps;
+  const char* viewIcon = GameViewIcons::forView(state);
+  if (viewIcon) {
+    drawGameIcon(renderer, viewIcon, band.x + (band.width - GameViewIcons::VIEW_PIXELS) / 2, band.y,
+                 GameViewIcons::VIEW_PIXELS, true);
+  }
+  // optionDialog stacks the rows directly below the band (verticalOptions).
+  const int inset = GameViewIcons::rowIconInset(props.buttonHeight);
+  for (uint8_t i = 0; i < count; ++i) {
+    const char* rowIcon = GameViewIcons::forOption(menu.events[i]);
+    const char* label = props.options[i].label;
+    if (!rowIcon || !label) continue;
+    const int labelWidth = screen.target().measureText(props.buttonText.font, label, props.buttonText).width;
+    if (!GameViewIcons::rowIconFits(band.width, props.buttonHeight, labelWidth, props.gap)) continue;
+    const int rowY = GameViewIcons::rowTop(band.bottom(), i, props.buttonHeight, props.gap);
+    const fui::State rowState = screen.frame().stateFor(ACTION_OPTION, static_cast<int16_t>(i), props.options[i].state);
+    const bool black = props.buttonStyles.resolve(rowState).foreground.color != fui::Color::White;
+    drawGameIcon(renderer, rowIcon, band.x + inset, rowY + inset, GameViewIcons::ROW_PIXELS, black);
+  }
 }
 
 #endif  // FREEINK_CAP_GAMES

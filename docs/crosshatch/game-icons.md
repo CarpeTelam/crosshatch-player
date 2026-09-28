@@ -84,9 +84,10 @@ and 128 px in black and in white.
 
 No screen draws a library icon yet. These are the names the epic's later entries will use:
 
-- Entry 5, the match's views (`GameMatchActivity`): `pause` for the pause view, `warning` for the error view, and
-  `flag_checkered` for the game-over view; `play` (Resume), `leave` (Leave), and `restart` (Play again) for their
-  option rows, should they draw them.
+- Entry 5, the match's views (`GameMatchActivity`), which draw these names: `pause` for the pause view, `warning` for
+  the error view, and `flag_checkered` for the game-over view, each in the dialog's content band; `play` (Resume),
+  `leave` (Leave, and the error view's Back, which leaves the match), and `restart` (Play again) at their option rows'
+  left, when the label leaves room ([game-canvas.md](game-canvas.md)).
 - Entry 6, the cover-grid Home's Games tile: `game_controller`.
 
 ### Left out
