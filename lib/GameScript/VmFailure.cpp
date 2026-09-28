@@ -16,7 +16,18 @@ VmFailure vmFailure(const bool failed, const bool sessionOutOfMemory, const LuaG
   return VmFailure::Script;
 }
 
-bool failedToStart(const VmFailure failure) { return failure == VmFailure::NoSession; }
+bool failedToStart(const VmFailure failure) {
+  switch (failure) {
+    case VmFailure::NoSession:
+    case VmFailure::OutOfMemory:
+    case VmFailure::NotLoaded:
+      return true;  // before any game code ran
+    case VmFailure::Script:
+    case VmFailure::None:
+      break;
+  }
+  return false;
+}
 
 const char* failureDetail(const VmFailure failure, const HostFailureTexts& texts, const char* const scriptMessage) {
   switch (failure) {

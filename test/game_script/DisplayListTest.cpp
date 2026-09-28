@@ -237,6 +237,64 @@ TEST(DisplayListTest, AnIconPastTheByteLimitIsRefused) {
   EXPECT_FALSE(reader.next(c));
 }
 
+// The icon and image budget counts each blit's pixels inside the canvas.
+TEST(DisplayListTest, ChargeBlitCountsTheVisiblePixelsUpToTheLimit) {
+  constexpr int32_t W = 480;
+  constexpr int32_t H = 800;
+  std::vector<uint8_t> storage(MAX_BYTES);
+  DisplayList list(storage.data(), storage.size());
+  EXPECT_EQ(list.blitPixels(), 0u);
+
+  // Exactly the limit: 64 large icons at the origin, then one pixel more is refused
+  // and charges nothing, though a blit wholly off the canvas still fits.
+  for (int i = 0; i < 64; ++i) ASSERT_TRUE(list.chargeBlit(0, 0, 128, 128, W, H)) << i;
+  EXPECT_EQ(list.blitPixels(), MAX_BLIT_PIXELS);
+  EXPECT_FALSE(list.chargeBlit(W - 1, H - 1, 128, 128, W, H));
+  EXPECT_EQ(list.blitPixels(), MAX_BLIT_PIXELS);
+  EXPECT_TRUE(list.chargeBlit(W, 0, 128, 128, W, H));
+  EXPECT_TRUE(list.chargeBlit(-128, -128, 128, 128, W, H));
+  EXPECT_EQ(list.blitPixels(), MAX_BLIT_PIXELS);
+  EXPECT_EQ(list.count(), 0);  // charging appends nothing
+
+  // clear() starts the next frame from 0.
+  list.clear();
+  EXPECT_EQ(list.blitPixels(), 0u);
+
+  // Partly on: only the visible part counts, on each edge.
+  ASSERT_TRUE(list.chargeBlit(-30, 0, 100, 60, W, H));  // 70 x 60
+  EXPECT_EQ(list.blitPixels(), 70u * 60u);
+  list.clear();
+  ASSERT_TRUE(list.chargeBlit(W - 10, H - 20, 100, 60, W, H));  // 10 x 20
+  EXPECT_EQ(list.blitPixels(), 10u * 20u);
+  list.clear();
+  ASSERT_TRUE(list.chargeBlit(5, -40, 100, 60, W, H));  // 100 x 20
+  EXPECT_EQ(list.blitPixels(), 100u * 20u);
+  list.clear();
+  // Larger than the canvas: the canvas.
+  ASSERT_TRUE(list.chargeBlit(-10, -10, 2000, 2000, W, H));
+  EXPECT_EQ(list.blitPixels(), static_cast<uint32_t>(W * H));
+  list.clear();
+
+  // Coordinates clamp to int16_t as the append records them, so a blit at
+  // -70000 sits at -32768 and one at 70000 at 32767: both off the canvas.
+  EXPECT_TRUE(list.chargeBlit(-70000, 0, 480, 800, W, H));
+  EXPECT_TRUE(list.chargeBlit(0, 70000, 480, 800, W, H));
+  EXPECT_TRUE(list.chargeBlit(INT64_MIN, INT64_MAX, UINT32_MAX, UINT32_MAX, W, H));
+  EXPECT_EQ(list.blitPixels(), 0u);
+  // At -32768 a blit 32800 wide still reaches x = 0..31.
+  ASSERT_TRUE(list.chargeBlit(-70000, 0, 32800, 1, W, H));
+  EXPECT_EQ(list.blitPixels(), 32u);
+  list.clear();
+
+  // A charge that would pass the limit is refused whole, not in part.
+  ASSERT_TRUE(list.chargeBlit(0, 0, W, H, W, H));
+  ASSERT_TRUE(list.chargeBlit(0, 0, W, H, W, H));
+  EXPECT_FALSE(list.chargeBlit(0, 0, W, H, W, H));
+  EXPECT_EQ(list.blitPixels(), 2u * W * H);
+  ASSERT_TRUE(list.chargeBlit(0, 0, W, (MAX_BLIT_PIXELS - 2 * W * H) / W, W, H));
+  EXPECT_EQ(list.blitPixels(), MAX_BLIT_PIXELS - (MAX_BLIT_PIXELS - 2 * W * H) % W);
+}
+
 TEST(FrameBuffersTest, PublishSwapsAndCountsFrames) {
   std::vector<uint8_t> a(1024), b(1024);
   FrameBuffers frames(a.data(), b.data(), 1024);

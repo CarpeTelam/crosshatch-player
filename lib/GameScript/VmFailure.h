@@ -8,10 +8,10 @@ namespace GameScript {
 
 // Why a GameVM failed (AD-14), kept pure so the error view's wording is host-tested.
 // Script: the script's own error, worded by Lua's message. NoSession: the arena's
-// reserve had no room for the Session, before any Lua ran (the game could not
-// start). OutOfMemory: LuaGame::load's scratch or Lua state did not fit.
-// NotLoaded: a call into the game came before its load; defensive, since the VM
-// calls an entry only after load() returned Ok.
+// reserve had no room for the Session, before any Lua ran. OutOfMemory:
+// LuaGame::load's scratch or Lua state did not fit, before its chunk ran.
+// NotLoaded: a call into the game came before its load, so with no Lua state;
+// defensive, since the VM calls an entry only after load() returned Ok.
 enum class VmFailure : uint8_t { None, Script, NoSession, OutOfMemory, NotLoaded };
 
 // The failure of a VM that `failed` (ended with a ScriptError): None when it did
@@ -20,7 +20,9 @@ enum class VmFailure : uint8_t { None, Script, NoSession, OutOfMemory, NotLoaded
 VmFailure vmFailure(bool failed, bool sessionOutOfMemory, LuaGame::HostFailure host);
 
 // True when the failure came before any game code ran, so the error view's
-// headline says the game could not start: NoSession only.
+// headline says the game could not start (AD-14, as amended by the owner
+// 2026-09-28): every host failure, NoSession, OutOfMemory, and NotLoaded. Only a
+// Script failure says the game stopped with an error.
 bool failedToStart(VmFailure failure);
 
 // The host's own words for the failures it words itself, tr() text from the

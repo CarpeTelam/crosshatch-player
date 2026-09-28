@@ -10,6 +10,11 @@ namespace GameScript {
 // Limits per frame (AD-7): at most MAX_COMMANDS commands and MAX_BYTES bytes.
 inline constexpr uint16_t MAX_COMMANDS = 2048;
 inline constexpr size_t MAX_BYTES = 32 * 1024;
+// And at most MAX_BLIT_PIXELS canvas pixels covered by icon and image commands
+// (api-level-1.txt's frame_icon_image_pixels): their replay walks each visible
+// pixel and fills each one-colour run, so this bounds a frame's icon and image
+// replay only; filled rects and circles are not charged.
+inline constexpr uint32_t MAX_BLIT_PIXELS = 1024 * 1024;
 
 enum class Color : uint8_t { White, Light, Dark, Black };
 enum class TextSize : uint8_t { Small, Medium, Large };
@@ -56,7 +61,7 @@ class DisplayList {
   // capacity is capped at MAX_BYTES.
   DisplayList(uint8_t* storage, size_t capacity);
 
-  // Empties the list and resets its refresh request to Fast.
+  // Empties the list, resets its refresh request to Fast, and its blit pixels to 0.
   void clear();
   uint16_t count() const { return commands; }
   size_t bytes() const { return used; }
@@ -79,6 +84,15 @@ class DisplayList {
   // `image` is an index into the game's GameCore::GameImages, which the bindings
   // check against the table the replay draws from.
   bool appendImage(int64_t x, int64_t y, uint16_t image, Color color);
+
+  // Charges the frame's icon and image budget for a w x h icon or image with its
+  // top-left at x, y (clamped to int16_t as the append records them): the pixels
+  // of it inside the canvas [0, canvasW) x [0, canvasH), which are those its replay
+  // walks, so one wholly off the canvas is free. False, charging nothing, when the
+  // frame would pass MAX_BLIT_PIXELS. The bindings charge before they append.
+  bool chargeBlit(int64_t x, int64_t y, uint32_t w, uint32_t h, int32_t canvasW, int32_t canvasH);
+  // The pixels charged since clear().
+  uint32_t blitPixels() const { return blitted; }
 
   // The frame's refresh request: the largest one made since clear(). Not a
   // command, so it counts toward neither limit.
@@ -107,6 +121,7 @@ class DisplayList {
   size_t capacityBytes = 0;
   size_t used = 0;
   uint16_t commands = 0;
+  uint32_t blitted = 0;
   Refresh hint = Refresh::Fast;
 };
 

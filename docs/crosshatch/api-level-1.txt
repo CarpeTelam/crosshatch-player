@@ -34,6 +34,16 @@
 #   icon <name>
 #       One library icon name (appended by epic-icon-library): Phosphor's own,
 #       [a-z][a-z0-9-]{0,31}, each drawn in every `enum weight` value.
+#   draw <fn path> ink|opaque
+#       How a ch.gfx function's pixels reach the canvas (appended by e3r-1, the
+#       icon-library retrospective's follow-up): ink draws only the shape's own
+#       pixels in the color and leaves the rest as it was; opaque draws every
+#       pixel of its rectangle.
+#   name <what> <pattern>
+#       The names a game gives something of its own (appended by e3r-1, the
+#       icon-library retrospective's follow-up): <what> is lower-case letters
+#       and '_'; every name must match <pattern>, an ECMAScript regular
+#       expression with no spaces, matched whole.
 #   seats_max <integer>
 #       The most seats a match can have.
 #
@@ -90,11 +100,11 @@ fn setmetatable(t, mt) -> table
 # Lua 5.5.1 base library, without load, loadfile, and dofile. pcall and xpcall
 # cannot keep a game running past a fault that stops it (the instruction budget,
 # the heap cap, C stack headroom, a value or table over its limit, a full frame,
-# ch.gfx outside draw, an unknown icon or image name): they may return false
-# once, and the call still ends. error("not enough memory", 0) raises Lua's own
-# memory error, so it stops the game too. The string metatable is sealed:
-# getmetatable("") returns false, and string methods and arithmetic on numeric
-# strings work as in Lua.
+# a frame's icons and images over frame_icon_image_pixels, ch.gfx outside draw,
+# an unknown icon or image name): they may return false once, and the call still
+# ends. error("not enough memory", 0) raises Lua's own memory error, so it stops
+# the game too. The string metatable is sealed: getmetatable("") returns false,
+# and string methods and arithmetic on numeric strings work as in Lua.
 lib _G
 lib _VERSION
 lib assert
@@ -211,6 +221,13 @@ enum dir right
 enum dir up
 enum dir down
 
+# How ch.gfx.icon and ch.gfx.image reach the canvas. An icon draws only its ink
+# pixels, in its color, so what is under the rest of its square shows through. An
+# image draws every pixel of its rectangle: with "black" its black pixels black and
+# its white pixels white, as converted; with "white" the two swapped.
+draw ch.gfx.icon ink
+draw ch.gfx.image opaque
+
 # Events delivered to input()
 event tap x y
 event long_press x y
@@ -313,6 +330,24 @@ limit store_bytes 4096
 limit codec_depth_count 16
 limit frame_commands_count 2048
 limit frame_bytes 32768
+# The canvas pixels one frame's ch.gfx.icon and ch.gfx.image calls may cover,
+# summed over the calls. Each counts the part of its square (an icon's drawn
+# size) or rectangle (an image's own size) inside the canvas, at its coordinates
+# as recorded (saturated as above), counting only pixels inside this host's
+# canvas (ch.screen.w x ch.screen.h), so a call wholly off the canvas counts
+# nothing, and overlapping calls count each time. About 2.8 canvases on the X4
+# Pro and the Sticky (474 x 788 is 373,512): the host replays a frame by walking
+# each covered pixel, so this bounds that icon and image replay only; filled
+# rects and circles are not charged. The call that would pass it stops the game
+# with "ch.gfx.<icon or image>: the frame's icons and images cover over 1048576
+# pixels", pcall or not, and that frame is not shown. Each frame starts again
+# from 0.
+limit frame_icon_image_pixels 1048576
+# ch.gfx.icon's drawn sizes, small, medium, and large, in pixels a side: large is
+# the medium bitmap with each pixel drawn as a 2 x 2 block.
+limit icon_small_side_pixels 32
+limit icon_medium_side_pixels 64
+limit icon_large_side_pixels 128
 limit lua_heap_bytes 262144
 limit call_instructions_count 2000000
 limit table_elements_count 65536
@@ -321,10 +356,13 @@ limit timers_pending_count 1
 # A game's own images (ch.gfx.image): the .bmp files in its folder, their bytes
 # with headers included and icon.bmp excluded, and how many there are. A w x h
 # image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
-# An image's name is its file name without ".bmp": 1 to 32 characters from [a-z0-9_]. Unlike icon names, it takes no
-# "-"; a file named otherwise is skipped with a log line, and drawing it stops the game as an unknown image.
 limit images_bytes 131072
 limit images_count 32
+# An image's name, which ch.gfx.image takes, is its file name without ".bmp".
+# Unlike icon names, it takes no "-": a file named otherwise is skipped with a log
+# line, and drawing it stops the game as an unknown image. icon.bmp is the
+# launcher's and never an image, so the pattern leaves out "icon".
+name image (?!icon$)[a-z0-9_]{1,32}
 # Lua's C-level limit (LUAI_MAXCCALLS in lib/lua/library.json): nested C calls
 # (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
 # the parser's nesting of expressions and blocks (right-associative .. or ^

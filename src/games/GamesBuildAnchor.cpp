@@ -2,10 +2,13 @@
 
 // Build anchor for the game libraries. PlatformIO's default
 // `chain` dependency finder follows these includes without evaluating the #if, so
-// every env, C3 included, compiles lib/GameCore, lib/GameScript, and lib/lua, and
-// header-only lib/GameIcons's headers here; the linker drops them where nothing
-// references them. Envs using `deep+`
+// every env, C3 included, compiles lib/GameCore, lib/GameScript, and lib/lua; the
+// linker drops them where nothing references them. Envs using `deep+`
 // (the simulator) evaluate the #if and build them only where FREEINK_CAP_GAMES is set.
+// This file's own body compiles only where FREEINK_CAP_GAMES is set, so the checks
+// here run only there. Header-only lib/GameIcons's static_asserts still run wherever
+// lib/GameScript compiles, the C3 included: lib/GameScript/ChBindings.cpp includes
+// GameIcons.h without an #if.
 // Keep this file free of definitions; it exists only for its includes and the
 // compile-time checks on them.
 #include <GameIcons.h>

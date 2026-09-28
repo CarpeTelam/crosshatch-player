@@ -16,7 +16,10 @@ these rules apply only to fork scripts.
   directory; never depend on this repository's history or submodule.
 - **Exit contract.** 0: passed. 1: a rule is broken. 2: the check could not run (a missing file or ref, a failed
   tool, a shallow clone). CI fails on both 1 and 2; the difference tells the reader whether to fix the change or the
-  setup. The module docstring says what each code means for that script and how to run it locally.
+  setup. A script may add a code above 2 for a broken rule whose fix differs from the rest, so CI can give that fix
+  alone: `gen_game_icons.py` exits 3 (`PIN_MISMATCH`) when the SVGs and `SHA256SUMS` disagree, and only then does the
+  `Icons up to date` job advise re-pinning. The module docstring says what each code means for that script and how to
+  run it locally.
 - **Shared plumbing from `scripts/fork_common.py`.** Never define another `SetupError`, git runner, exit-code
   handler, step-summary writer, or copy of the games-flag literal.
 - Style: single quotes; the whole-tree clang-format check does not cover Python.
@@ -60,9 +63,12 @@ that script.
 The `Fork script tests` job in `.github/workflows/crosshatch-ci.yml` runs every `scripts/*_test.py` on every pull
 request, each file in its own process, and reports each failing file. It also fails a file whose output has no
 `Ran <n> tests` line with n above 0, so a test file that forgets `unittest.main()`, and so exits 0 having run
-nothing, cannot pass. A new sidecar test is picked up with no workflow change. A script that is itself a CI gate gets
-its own job there, listed in `Crosshatch Test Status`'s `needs`, and is run once from a fresh clone before its ticket
-counts as built.
+nothing, cannot pass. A new sidecar test is picked up with no workflow change; `scripts/sim_sh_test.py`, which tests
+the simulator skill's `sim.sh setup` and `check` on scratch git repositories, runs there too. A script that is itself
+a CI gate gets its own job there, listed in `Crosshatch Test Status`'s `needs`, and is run once from a fresh clone
+before its ticket counts as built. `gen_game_icons.py` is one: the `Icons up to date` job runs it, and it checks the
+vendored SVGs against `assets/game-icons/SHA256SUMS` before rendering, so an edited SVG fails that job
+(`docs/crosshatch/game-icons.md`).
 
 Run the same tests locally from the repository root:
 

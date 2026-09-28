@@ -85,7 +85,7 @@ No reserve row remains.
 Upstream files the fork had already changed before the ledger existed.
 
 - `AGENTS.md` -- the fork's own agent instructions; `.gitattributes` keeps our copy on merge.
-- `.gitattributes` -- added by the fork for the `merge=ours` rule on `AGENTS.md` and the `merge=union` rule on `deferred-work.md`; listed in case upstream adds one.
+- `.gitattributes` -- added by the fork for the `merge=ours` rule on `AGENTS.md`, the `merge=union` rule on `deferred-work.md`, and the `-text` rule on `assets/game-icons/**` (no line-ending conversion in `assets/game-icons`, so no checkout, `core.autocrlf=true` included, can change the bytes `SHA256SUMS` pins: `names.txt`, `SHA256SUMS`, `LICENSE`, and any SVG with line breaks); listed in case upstream adds one.
 - `.gitignore` -- fork-local ignores.
 - `.github/PULL_REQUEST_TEMPLATE.md` -- the fork's PR title rules.
 - `CLAUDE.md` -- removed by the fork; an upstream change to it is resolved with `git rm CLAUDE.md`.
@@ -123,6 +123,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_api_freeze_test.py`
 - `scripts/check_layers.py` -- the layer check job's check of the spine's layer table (retro AI-5).
 - `scripts/check_layers_test.py`
+- `scripts/sim_sh_test.py` -- tests the simulator skill's `sim.sh` (epic-icon-library retrospective, AI-11).
 
 ## Running the check locally
 

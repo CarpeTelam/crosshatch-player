@@ -123,16 +123,20 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // GameVM::roundsEnded() when the match last entered Over (loop task).
   uint32_t roundsSeen = 0;
   uint32_t shownFrame = 0;  // loop task: the frameGen it last asked to render
-  // Loop task: Play again's GameVM::roundsStarted() plus one. Until the count
-  // reaches it, the loop asks for no render: every frame published meanwhile is
-  // the last round's (0 before any Play again, so never waits then).
-  uint32_t roundsStartedAwaited = 0;
+  // Play again's GameVM::roundsStarted() plus one (loop task writes). Until the
+  // count reaches it, the loop asks for no render, since every frame published
+  // meanwhile is the last round's, drops every gesture, since none was aimed at the
+  // new round, and renderCanvas draws nothing, so a Resume in the gap keeps the
+  // pause menu rather than a board whose taps are dropped (0 before any Play
+  // again, so never waits then). Atomic since render reads it.
+  std::atomic<uint32_t> roundsStartedAwaited{0};
   // Written by render: the frameGen its last render saw. The loop does not ask
   // again for a frame a render already took, so a render that sees no new frame
   // is always a repaint someone else asked for.
   std::atomic<uint32_t> renderedFrame{0};
-  // Render task only: a view was drawn over the canvas, so the next frame is
-  // drawn on a cleared screen with a full refresh.
+  // Render task only: the screen does not hold the canvas (a view was drawn over
+  // it, or a render skipped it while awaiting a round), so the next frame is drawn
+  // on a cleared screen with a full refresh.
   bool viewOnScreen = false;
   // Render task only: the state whose view renderView is drawing.
   MatchState viewState = MatchState::Starting;

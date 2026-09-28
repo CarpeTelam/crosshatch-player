@@ -5,7 +5,9 @@ The game icon library: the icons a game draws with `ch.gfx.icon(name, x, y, size
 each a 1-bit bitmap at 32 px (`small`) and 64 px (`medium`); `large` (128 px) draws the 64 px bitmap doubled. The
 names are part of the game API level: `api-level-1.txt` lists each one as `icon <name>`, and
 `ApiSurfaceTest.IconsMatchTheList` checks that list against the library both ways and draws every name at every size
-in both weights.
+in both weights. The list also holds the drawn sizes (`limit icon_small_side_pixels`,
+`icon_medium_side_pixels`, `icon_large_side_pixels`), that an icon draws its ink only (`draw ch.gfx.icon ink`), and the
+canvas pixels a frame's icons and images may cover (`limit frame_icon_image_pixels`).
 
 ## Where the icons come from
 
@@ -23,6 +25,19 @@ licence file, and the generated header repeats the copyright line.
 hand; the `Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
 whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
 name in only one weight or in one weight twice.
+
+`assets/game-icons/SHA256SUMS` pins each SVG's content: one `<sha256>  <path>` line, in `sha256sum`'s format and sorted
+bytewise by path, for exactly the SVGs `names.txt` names. The generator checks every SVG against it before rendering and
+exits 3 (`PIN_MISMATCH`) naming an SVG whose bytes differ, an SVG the file does not list, or a line that names a path
+`names.txt` does not name; a malformed or repeated line is exit 1, and a missing `SHA256SUMS` exit 2. An edited SVG
+therefore fails `Icons up to date` instead of regenerating cleanly, and only exit 3 gets the job's advice to restore the
+SVG or re-pin; any other failure is annotated with its exit code. `(cd assets/game-icons && sha256sum -c SHA256SUMS)`
+checks the same sums without the generator. After a deliberate change of source, rewrite the file with
+`python3 scripts/gen_game_icons.py --write-sums`, which writes no header.
+
+Regenerate on Linux, as CI does. The fill uses no libm call, but arc flattening uses `math.sin`, `cos`, and `atan2`,
+whose last bits can differ between platforms' libm; the header was checked byte-identical only on Linux, for Python
+3.10 to 3.13. A run on macOS or Windows may differ from CI's bytes, and then `Icons up to date` fails.
 
 ## Weights
 
@@ -51,7 +66,8 @@ the same bitmap. A screen draws the fill weight with `drawGameIcon(..., black, t
 - One name per glyph: no alias for an icon already in the set.
 - A game's own images (`ch.gfx.image`) follow a different rule: the file name without `.bmp`, 1 to 32 characters from
   `[a-z0-9_]`, with no `-`. A chess game that ships `crown-cross.bmp` has it skipped with a log line; name it
-  `crown_cross.bmp` (`api-level-1.txt` says so beside the image limits).
+  `crown_cross.bmp` (`api-level-1.txt` lists the rule as `name image (?!icon$)[a-z0-9_]{1,32}`, beside the image
+  limits).
 - Level 1 is a preview until `API_LEVEL_FROZEN`: names may still change. Once a level is frozen, no name in it is
   renamed or removed; a new icon joins the next level.
 
@@ -150,11 +166,13 @@ duplicate `x`. None was cut for size.
 2. Copy `assets/regular/<name>.svg` and `assets/fill/<name>-fill.svg` from the pinned 2.1.1 package, byte for byte,
    into `assets/game-icons/phosphor/regular/` and `phosphor/fill/`, and add the name's two lines (regular, then fill)
    under its category in `assets/game-icons/names.txt`.
-3. Run `python3 scripts/gen_game_icons.py` and commit the regenerated header.
-4. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
+3. Run `python3 scripts/gen_game_icons.py --write-sums` and check that `SHA256SUMS` changed only by the new SVGs'
+   lines (`git diff`); a changed line for an existing SVG means that file is no longer the package's.
+4. On Linux, run `python3 scripts/gen_game_icons.py` and commit the regenerated header with `SHA256SUMS`.
+5. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
    `lib/GameCore/ApiLevel.h` to the value `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` prints.
-5. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
-6. Update this file's table and its Size figures.
+6. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
+7. Update this file's table and its Size figures.
 
 Renaming or dropping an icon a screen uses breaks it: `game-controller` fails the x4pro and sticky builds (and the
 simulator's), since the cover-grid Home names `GameIcons::GAME_CONTROLLER_32`; one of the match's view icons fails
@@ -183,7 +201,7 @@ tracer's four icons measured 2,608 B the same way (without their strings).
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
 
-| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`965c55d7`) | Phosphor names, both weights (entry 9) |
+| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`8e233695`) | Phosphor names, both weights (entry 9) |
 | --- | ---: | ---: | ---: | ---: |
 | `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 | 5,902,784 |
 | `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 | 5,675,376 |
@@ -196,7 +214,7 @@ working tree, from an empty `.pio`, not an archive tree) adds +31,072 B to the g
 icon data (71,975 B against 40,964 B) and 61 B of code for the weight argument, with no static internal RAM change.
 The runtime is now 28,592 B under the 250 KiB gate.
 
-After the refactor sweep (entry 7, measured from a fresh archive tree of `965c55d7` with the flash budget job's four
+After the refactor sweep (entry 7, measured from a fresh archive tree of entry 7's pre-amend commit (the same code as `8e233695`, which only adds the measured figures) with the flash budget job's four
 commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate. The epic's base `1eacdc77`, measured
 the same way with entry 7's script copied in, is +151,088 B of flash and +776 B of static internal RAM. So this epic
 adds +76,320 B of flash in all (+45,248 B up to entry 7, +31,072 B in entry 9) and no static internal RAM. The RAM

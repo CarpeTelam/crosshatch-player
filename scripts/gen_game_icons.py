@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
 Generate lib/GameIcons/GameIcons.generated.h, the game icon library's bitmaps, from the SVGs that
-assets/game-icons/names.txt names. Standard library only; the output is the same, byte for byte, on every run.
+assets/game-icons/names.txt names. Standard library only; the output is the same, byte for byte, on every run on one
+platform (see "Run it on Linux" below).
 
     python3 scripts/gen_game_icons.py [--assets DIR] [--out PATH]
-        DIR   the folder holding names.txt and the SVGs (default: <repo>/assets/game-icons)
+        DIR   the folder holding names.txt, SHA256SUMS, and the SVGs (default: <repo>/assets/game-icons)
         PATH  the header to write (default: <repo>/lib/GameIcons/GameIcons.generated.h)
+    python3 scripts/gen_game_icons.py [--assets DIR] --write-sums   # rewrite DIR/SHA256SUMS; writes no header
     python3 scripts/gen_game_icons_test.py   # the script's own tests
+
+Run it on Linux, as CI's Icons up to date job does: arcs use libm (below), and the header was checked byte-identical
+only on Linux, for Python 3.10 to 3.13, so a run elsewhere may differ from CI's bytes.
 
 names.txt: `#` comment lines and blank lines, then one line per icon and weight, whitespace-separated:
 `<name> <weight> <SVG path relative to DIR>`. The library holds Phosphor 2.1.1 icons only, by Phosphor's own names:
@@ -16,27 +21,37 @@ phosphor/regular/<name>.svg or phosphor/fill/<name>-fill.svg. Every name has exa
 header a name's identifiers are its upper case with "-" as "_", plus "_FILL" for the fill weight (dice-six:
 DICE_SIX_32, DICE_SIX_FILL_64); names hold no "_", so no two names share an identifier.
 
+SHA256SUMS pins each SVG's content: one `<sha256>  <path>` line (sha256sum's format, lower-case hex, sorted bytewise
+by path) for exactly the SVGs names.txt names, so `sha256sum -c SHA256SUMS` in DIR verifies it too. The generator
+checks every SVG against it before rendering, so an edited SVG fails instead of regenerating cleanly. After a
+deliberate change of source (a new icon, or a new Phosphor release), run --write-sums and commit the file.
+
 Each SVG must be what Phosphor ships: one <svg viewBox="0 0 N N"> (fill absent or currentColor) whose children are
 <path d="..."> elements only. Paths take the commands M L H V C S Q T A Z in both cases. Curves are flattened
 (cubics and quadratics to 32 segments, arcs to one segment per pi/32 of sweep), scaled to the bitmap, every vertex
 rounded to 1/4096 px, and filled by the nonzero winding rule with 16 sample lines per pixel row; a pixel is ink when
 its coverage is at least THRESHOLD. Each icon is drawn in each weight at 32 px (small) and 64 px (medium). The fill
 uses no libm call; arcs use math.sin, cos, and atan2, whose last-bit differences between platforms the rounding makes
-very unlikely to move a pixel.
+very unlikely, but not impossible, to move a pixel; hence "run it on Linux" above.
 
 The bitmaps use GfxRenderer::drawIcon's layout: square, 1 bit per pixel, MSB first, rows padded to whole bytes,
 bit 0 = ink, stored rotated 90 degrees counter-clockwise, so stored (row, col) is drawn at (pixels - 1 - row, col).
 
-Exit 0: the header was written. Exit 1: a rule is broken: a malformed or non-UTF-8 map, a bad name, weight, or
-path (anything but Phosphor's own file for the name and weight), a name given twice in one weight or missing a
-weight, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
+Exit 0: the header (or, with --write-sums, SHA256SUMS) was written. Exit 1: a rule is broken: a malformed or
+non-UTF-8 map, a bad name, weight, or path (anything but Phosphor's own file for the name and weight), a name given
+twice in one weight or missing a weight, a SHA256SUMS that is not UTF-8 or has a line that is malformed or lists a
+path twice, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
 message names the file, line, or name.
-Exit 2: the script could not run: no names.txt, a map line naming an SVG that does not exist, or an unreadable or
-unwritable file.
+Exit 2: the script could not run: no names.txt, no SHA256SUMS (without --write-sums), a map line naming an SVG that
+does not exist, or an unreadable or unwritable file.
+Exit 3 (PIN_MISMATCH): the SVGs and SHA256SUMS disagree: an SVG whose SHA-256 differs from its line, an SVG names.txt
+names that SHA256SUMS does not list, or a SHA256SUMS line for a path names.txt does not name. Restore the SVG, or,
+after a deliberate change of source, run --write-sums; only this code calls for re-pinning.
 """
 
 import argparse
 import collections
+import hashlib
 import math
 import pathlib
 import re
@@ -46,10 +61,21 @@ import xml.etree.ElementTree as ET
 import fork_common
 from fork_common import Failure, SetupError
 
+
+class PinMismatch(Failure):
+    """The SVGs and SHA256SUMS disagree (exit PIN_MISMATCH): the one failure that re-pinning may fix."""
+
+
+# The exit code for a PinMismatch (see the docstring's exit list).
+PIN_MISMATCH = 3
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_ASSETS = REPO / 'assets' / 'game-icons'
 DEFAULT_OUT = REPO / 'lib' / 'GameIcons' / 'GameIcons.generated.h'
 MAP_NAME = 'names.txt'
+SUMS_NAME = 'SHA256SUMS'
+# One SHA256SUMS line as sha256sum writes it: the digest, a space, the mode (" " text or "*" binary), the path.
+SUM_LINE = re.compile(r'([0-9a-f]{64}) [ *](\S.*)')
 
 # Where every icon comes from, as the header's comments name it ({weight} filled in).
 SOURCE = 'Phosphor 2.1.1 {weight}'
@@ -508,19 +534,67 @@ def header_text(icons):
     return '\n'.join(lines) + '\n'
 
 
+def read_svg(assets, entry):
+    """(path, bytes) of a map entry's SVG; a missing or unreadable file is a SetupError."""
+    path = assets / entry.path
+    if not path.is_file():
+        raise SetupError(f'{assets / MAP_NAME}:{entry.line}: {entry.name} {entry.weight}\'s SVG {path} '
+                         'does not exist')
+    try:
+        return path, path.read_bytes()
+    except OSError as exc:
+        raise SetupError(f'cannot read {path}: {exc}')
+
+
+def read_sums(assets, named):
+    """{path: (sha256 hex, line number)} from SHA256SUMS, whose every line is well formed and names a distinct path in
+    `named` (the map's SVG paths); a path in `named` it does not list is found when that SVG is checked."""
+    sums_path = assets / SUMS_NAME
+    try:
+        text = sums_path.read_bytes().decode('utf-8')
+    except OSError as exc:
+        raise SetupError(f'cannot read {sums_path}: {exc}; write it with --write-sums')
+    except UnicodeDecodeError as exc:
+        raise Failure(f'{sums_path} is not UTF-8: {exc}')
+    sums = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        where = f'{sums_path}:{number}'
+        match = SUM_LINE.fullmatch(line)
+        if not match:
+            raise Failure(f'{where}: expected "<sha256>  <path>" (sha256sum\'s format, lower-case hex), got {line!r}')
+        digest, rel = match.groups()
+        if rel in sums:
+            raise Failure(f'{where}: {rel} is already listed on line {sums[rel][1]}')
+        if rel not in named:
+            raise PinMismatch(f'{where}: {rel} is not an SVG {MAP_NAME} names; list exactly the SVGs it names '
+                              '(--write-sums rewrites the file)')
+        sums[rel] = (digest, number)
+    return sums
+
+
+def check_sum(assets, sums, entry, data):
+    """PinMismatch unless SHA256SUMS lists the entry's SVG with the SHA-256 of `data`, its bytes."""
+    sums_path = assets / SUMS_NAME
+    if entry.path not in sums:
+        raise PinMismatch(f'{sums_path}: {entry.path} ({entry.name} {entry.weight}) is not listed; after checking '
+                          'the SVG is Phosphor\'s own, run --write-sums')
+    expected, number = sums[entry.path]
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected:
+        raise PinMismatch(f'{assets / entry.path}: its SHA-256 {actual} differs from {sums_path}:{number} '
+                          f'({expected}); restore Phosphor\'s file, or, for a deliberate change of source, run '
+                          '--write-sums')
+
+
 def generate(assets, out):
+    entries = read_map(assets)
+    sums = read_sums(assets, {entry.path for weights in entries for entry in weights.values()})
     icons = []
-    for weights in read_map(assets):
+    for weights in entries:
         rendered = {}
         for weight, entry in weights.items():
-            path = assets / entry.path
-            if not path.is_file():
-                raise SetupError(f'{assets / MAP_NAME}:{entry.line}: {entry.name} {weight}\'s SVG {path} '
-                                 'does not exist')
-            try:
-                text = path.read_bytes()
-            except OSError as exc:
-                raise SetupError(f'cannot read {path}: {exc}')
+            path, text = read_svg(assets, entry)
+            check_sum(assets, sums, entry, text)
             rendered[weight] = (entry, render(text, str(path)))
         icons.append(rendered)
     try:
@@ -531,13 +605,43 @@ def generate(assets, out):
     print(f'wrote {out} ({len(icons)} icons, {len(WEIGHTS)} weights each)')
 
 
+def write_sums(assets):
+    """Write SHA256SUMS for the SVGs the map names, sorted bytewise by path; no header."""
+    lines = []
+    for weights in read_map(assets):
+        for entry in weights.values():
+            _, data = read_svg(assets, entry)
+            lines.append((entry.path, hashlib.sha256(data).hexdigest()))
+    lines.sort(key=lambda line: line[0].encode())
+    sums_path = assets / SUMS_NAME
+    try:
+        with open(sums_path, 'w', encoding='utf-8', newline='\n') as sums:
+            sums.write(''.join(f'{digest}  {rel}\n' for rel, digest in lines))
+    except OSError as exc:
+        raise SetupError(f'cannot write {sums_path}: {exc}')
+    print(f'wrote {sums_path} ({len(lines)} SVGs)')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Generate the game icon library header from its SVGs.')
     parser.add_argument('--assets', type=pathlib.Path, default=DEFAULT_ASSETS,
-                        help='the folder holding names.txt and the SVGs')
+                        help='the folder holding names.txt, SHA256SUMS, and the SVGs')
     parser.add_argument('--out', type=pathlib.Path, default=DEFAULT_OUT, help='the header to write')
+    parser.add_argument('--write-sums', action='store_true',
+                        help=f'rewrite <assets>/{SUMS_NAME} from the SVGs names.txt names, and write no header')
     args = parser.parse_args(argv)
-    return fork_common.exit_code(lambda: generate(args.assets, args.out))
+    if args.write_sums:
+        return fork_common.exit_code(lambda: write_sums(args.assets))
+
+    def step():
+        try:
+            generate(args.assets, args.out)
+        except PinMismatch as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            return PIN_MISMATCH
+        return None
+
+    return fork_common.exit_code(step)
 
 
 if __name__ == '__main__':

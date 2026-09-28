@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
 namespace {
 
@@ -18,14 +19,21 @@ bool readExactly(HalFile& file, uint8_t* out, const size_t count) {
 
 bool writeExactly(HalFile& file, const uint8_t* data, const size_t count) { return file.write(data, count) == count; }
 
+// The longest path, store.bin.tmp's with the longest id, fits the path buffers:
+// the folder, '/', the id, then "/store.bin.tmp" with its terminator.
+static_assert(std::char_traits<char>::length(GamePaths::GAMES_DATA_DIR) + 1 + GameCore::Manifest::MAX_ID_BYTES +
+                      sizeof("/store.bin.tmp") <=
+                  GamePaths::DATA_PATH_BYTES,
+              "GamePaths::DATA_PATH_BYTES holds GAMES_DATA_DIR/<id>/store.bin.tmp");
+
 }  // namespace
 
 GameSaveStore::GameSaveStore(const char* gameId, const std::span<uint8_t> buffer, const uint32_t startMs)
     : buffer(buffer), lastWriteMs(startMs) {
   snprintf(id, sizeof(id), "%s", gameId);
-  snprintf(dirPath, sizeof(dirPath), "/.games-data/%s", id);
-  snprintf(storePath, sizeof(storePath), "/.games-data/%s/store.bin", id);
-  snprintf(tmpPath, sizeof(tmpPath), "/.games-data/%s/store.bin.tmp", id);
+  snprintf(dirPath, sizeof(dirPath), "%s/%s", GamePaths::GAMES_DATA_DIR, id);
+  snprintf(storePath, sizeof(storePath), "%s/%s/store.bin", GamePaths::GAMES_DATA_DIR, id);
+  snprintf(tmpPath, sizeof(tmpPath), "%s/%s/store.bin.tmp", GamePaths::GAMES_DATA_DIR, id);
 }
 
 size_t GameSaveStore::loadStore(const std::span<uint8_t> out) {

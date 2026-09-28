@@ -5,10 +5,13 @@ Tests for gen_game_icons.py. Standard library only:
     python3 scripts/gen_game_icons_test.py [-v]
 
 The rasterizer cases draw small SVGs and compare pixels; the main() cases build an assets folder in a temp directory
-and assert the exit code of every outcome, so a regression that makes a bad input pass is caught.
+(with a SHA256SUMS for the SVGs its map names, unless a case says otherwise) and assert the exit code of every
+outcome, so a regression that makes a bad input pass is caught. SumsTest checks the committed SHA256SUMS against the
+committed SVGs and names.txt.
 """
 
 import contextlib
+import hashlib
 import io
 import pathlib
 import shutil
@@ -192,6 +195,22 @@ GOOD_MAP = ('x regular phosphor/regular/x.svg\nx fill phosphor/fill/x-fill.svg\n
 X_BOTH = 'x regular phosphor/regular/x.svg\nx fill phosphor/fill/x-fill.svg\n'
 
 
+def sums_text(assets, paths):
+    """SHA256SUMS text for the given SVG paths under assets, computed here rather than by the script."""
+    rows = sorted(paths, key=str.encode)
+    return ''.join(f'{hashlib.sha256((assets / rel).read_bytes()).hexdigest()}  {rel}\n' for rel in rows)
+
+
+def map_paths(names):
+    """The SVG paths a map's three-field lines name, as read without the script's rules."""
+    paths = set()
+    for line in names.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and not line.lstrip().startswith('#'):
+            paths.add(fields[2])
+    return paths
+
+
 class MainTest(unittest.TestCase):
 
     def setUp(self):
@@ -207,12 +226,24 @@ class MainTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def run_main(self, names=GOOD_MAP, out=None):
+    def run_main(self, names=GOOD_MAP, out=None, sums=True, extra=()):
+        """main() on the temp assets folder; with `sums`, first writes a SHA256SUMS for the SVGs `names` names that
+        exist (a map left in place when `names` is None)."""
         if names is not None:
             (self.assets / 'names.txt').write_text(names)
+            if sums:
+                paths = {rel for rel in map_paths(names) if (self.assets / rel).is_file()}
+                (self.assets / ggi.SUMS_NAME).write_text(sums_text(self.assets, paths))
         stderr = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
-            code = ggi.main(['--assets', str(self.assets), '--out', str(out or self.out)])
+            code = ggi.main(['--assets', str(self.assets), '--out', str(out or self.out), *extra])
+        return code, stderr.getvalue()
+
+    def main_only(self, *args):
+        """main() on the temp assets folder as it is, with --assets and `args`."""
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            code = ggi.main(['--assets', str(self.assets), *args])
         return code, stderr.getvalue()
 
     def write_svg(self, name, text):
@@ -346,6 +377,113 @@ class MainTest(unittest.TestCase):
         code, err = self.run_main(out=self.tmp / 'no-such-folder' / 'out.h')
         self.assertEqual(code, 2, err)
         self.assertIn('cannot write', err)
+
+    def test_an_edited_svg_exits_3_naming_it(self):
+        # epic-icon-library retrospective R8 (c): an SVG edited after its sum was taken fails, although it still
+        # renders.
+        self.assertEqual(self.run_main()[0], 0)
+        self.out.unlink()
+        svg_path = self.assets / 'phosphor' / 'fill' / 'x-fill.svg'
+        svg_path.write_bytes(svg_path.read_bytes() + b'\n')
+        code, err = self.run_main(names=None)
+        self.assertEqual(code, 3, err)  # ggi.PIN_MISMATCH, which CI's Icons up to date step matches
+        self.assertIn(f'{svg_path}: its SHA-256', err)
+        self.assertIn('SHA256SUMS:2 (', err)
+        self.assertFalse(self.out.exists())
+
+    def test_sums_list_drift_exits_3_and_malformed_sums_exit_1(self):
+        sums = sums_text(self.assets, map_paths(GOOD_MAP))
+        lines = sums.splitlines(keepends=True)
+        shutil.copy(PHOSPHOR / 'regular' / 'heart.svg', self.assets / 'phosphor' / 'regular' / 'heart.svg')
+        digest = hashlib.sha256(b'').hexdigest()
+        cases = {
+            # (SHA256SUMS text, the exit code, a fragment the message must hold); a pin mismatch is 3, the rest 1
+            'an SVG unlisted': (''.join(lines[:-1]), 3, 'phosphor/regular/x.svg (x regular) is not listed'),
+            'a path not named': (sums + sums_text(self.assets, ['phosphor/regular/heart.svg']), 3,
+                                 'SHA256SUMS:5: phosphor/regular/heart.svg is not an SVG names.txt names'),
+            'a path twice': (sums + lines[0], 1,
+                             f'SHA256SUMS:5: {lines[0][66:].strip()} is already listed on line 1'),
+            'one space': (sums.replace('  ', ' ', 1), 1, 'SHA256SUMS:1: expected'),
+            'upper-case hex': (lines[0].upper() + ''.join(lines[1:]), 1, 'SHA256SUMS:1: expected'),
+            'short digest': (lines[0][1:] + ''.join(lines[1:]), 1, 'SHA256SUMS:1: expected'),
+            'no path': (sums + f'{digest}  \n', 1, 'SHA256SUMS:5: expected'),
+            'a blank line': (sums + '\n', 1, 'SHA256SUMS:5: expected'),
+            'a comment': ('# sums\n' + sums, 1, 'SHA256SUMS:1: expected'),
+        }
+        for label, (text, want, fragment) in cases.items():
+            with self.subTest(label):
+                (self.assets / ggi.SUMS_NAME).write_text(text)
+                code, err = self.run_main(sums=False)
+                self.assertEqual(code, want, err)
+                self.assertIn(fragment, err)
+        (self.assets / ggi.SUMS_NAME).write_bytes(b'\xff\n')
+        code, err = self.run_main(sums=False)
+        self.assertEqual(code, 1, err)
+        self.assertIn('not UTF-8', err)
+        self.assertFalse(self.out.exists())
+
+    def test_binary_mode_lines_are_read(self):
+        (self.assets / 'names.txt').write_text(GOOD_MAP)
+        sums = sums_text(self.assets, map_paths(GOOD_MAP)).replace('  ', ' *')
+        (self.assets / ggi.SUMS_NAME).write_text(sums)
+        code, err = self.run_main(names=None)
+        self.assertEqual(code, 0, err)
+
+    def test_no_sums_file_exits_2(self):
+        code, err = self.run_main(sums=False)
+        self.assertEqual(code, 2, err)
+        self.assertIn('SHA256SUMS', err)
+        self.assertIn('--write-sums', err)
+        self.assertFalse(self.out.exists())
+
+    def test_write_sums_writes_sorted_sha256sum_lines_and_no_header(self):
+        (self.assets / 'names.txt').write_text(GOOD_MAP)
+        code, err = self.main_only('--write-sums', '--out', str(self.out))
+        self.assertEqual(code, 0, err)
+        self.assertFalse(self.out.exists())
+        text = (self.assets / ggi.SUMS_NAME).read_bytes().decode()
+        self.assertEqual(text, sums_text(self.assets, map_paths(GOOD_MAP)))
+        paths = [line.split('  ', 1)[1] for line in text.splitlines()]
+        self.assertEqual(paths, ['phosphor/fill/dice-six-fill.svg', 'phosphor/fill/x-fill.svg',
+                                 'phosphor/regular/dice-six.svg', 'phosphor/regular/x.svg'])
+        # Round trip: the written file passes, and rewriting it after an edit passes again.
+        self.assertEqual(self.main_only('--out', str(self.out))[0], 0)
+        svg_path = self.assets / 'phosphor' / 'regular' / 'x.svg'
+        svg_path.write_bytes(svg_path.read_bytes() + b'\n')
+        self.assertEqual(self.main_only('--out', str(self.out))[0], 3)
+        self.assertEqual(self.main_only('--write-sums')[0], 0)
+        self.assertEqual(self.main_only('--out', str(self.out))[0], 0)
+
+    def test_write_sums_setup_errors_exit_2(self):
+        code, err = self.main_only('--write-sums')
+        self.assertEqual(code, 2, err)
+        self.assertIn('names.txt', err)
+        (self.assets / 'names.txt').write_text(GOOD_MAP)
+        (self.assets / ggi.SUMS_NAME).mkdir()
+        code, err = self.main_only('--write-sums')
+        self.assertEqual(code, 2, err)
+        self.assertIn('cannot write', err)
+        (self.assets / ggi.SUMS_NAME).rmdir()
+        (self.assets / 'phosphor' / 'fill' / 'x-fill.svg').unlink()
+        code, err = self.main_only('--write-sums')
+        self.assertEqual(code, 2, err)
+        self.assertIn('x-fill.svg', err)
+        self.assertFalse((self.assets / ggi.SUMS_NAME).exists())
+
+    def test_write_sums_rejects_a_broken_map(self):
+        (self.assets / 'names.txt').write_text('x regular\n')
+        code, err = self.main_only('--write-sums')
+        self.assertEqual(code, 1, err)
+        self.assertFalse((self.assets / ggi.SUMS_NAME).exists())
+
+
+class SumsTest(unittest.TestCase):
+
+    def test_the_committed_sums_match_the_committed_svgs(self):
+        # Checked here without the script's parser, so a bug in it cannot hide a stale file.
+        assets = ggi.DEFAULT_ASSETS
+        named = {entry.path for weights in ggi.read_map(assets) for entry in weights.values()}
+        self.assertEqual((assets / ggi.SUMS_NAME).read_text(), sums_text(assets, named))
 
 
 if __name__ == '__main__':

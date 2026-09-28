@@ -25,6 +25,7 @@ in small type), Back must return to Games, and the device must stay responsive.
 | --- | --- |
 | `solo/` | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
+| `slow-restart/` | The tracer's round (three taps) with a slow Play again: every later round's `setup` spins about 2 s on `ch.time.ms()`, so the end-of-round menu stays on screen meanwhile. A tap on the canvas in that gap is dropped: the new round starts at "taps: 0" with no square. Play again, then Back and Resume within the gap: the pause menu stays on screen (inert) until round 2's first frame, never the round-1 board. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
@@ -92,6 +93,7 @@ Each ends in the error view as soon as the game opens, except `loop_input`, whic
 | `gc_loop.lua` | setup | `main.lua:5: setmetatable: __gc metamethods are not supported` |
 | `gc_recursive.lua` | setup | `main.lua:6: setmetatable: __gc metamethods are not supported` |
 | `heap.lua` | setup | `not enough memory` |
+| `icon_image_pixels.lua` | the first draw, inside `pcall` | `main.lua:11: ch.gfx.icon: the frame's icons and images cover over 1048576 pixels` |
 | `io.lua` | setup | `main.lua:2: attempt to index a nil value (global 'io')` |
 | `load.lua` | setup | `main.lua:2: attempt to call a nil value (global 'load')` |
 | `loop_draw.lua` | the first draw | `main.lua:7: instruction budget exceeded` |

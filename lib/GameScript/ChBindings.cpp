@@ -39,10 +39,18 @@ static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value pe
 static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
 static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
 static_assert(std::size(WEIGHT_NAMES) == std::size(WEIGHT_VALUES) + 1, "one value per weight name");
+static_assert(std::size(GameIcons::DRAWN_PIXELS) == std::size(SIZE_VALUES), "one drawn icon size per size name");
+static_assert(GameIcons::DRAWN_PIXELS[static_cast<size_t>(TextSize::Small)] == GameIcons::SMALL_PIXELS,
+              "DRAWN_PIXELS is indexed by TextSize");
+static_assert(GameIcons::DRAWN_PIXELS[static_cast<size_t>(TextSize::Medium)] == GameIcons::MEDIUM_PIXELS,
+              "DRAWN_PIXELS is indexed by TextSize");
+static_assert(GameIcons::DRAWN_PIXELS[static_cast<size_t>(TextSize::Large)] == 2 * GameIcons::MEDIUM_PIXELS,
+              "DRAWN_PIXELS is indexed by TextSize");
 
-// The gfx faults (ch.gfx outside draw, a full frame, an unknown icon or image name)
-// stop the game (the contract's Errors), so they go through the guard: a script's
-// own pcall cannot catch them and publish a cut frame.
+// The gfx faults (ch.gfx outside draw, a full frame, an unknown icon or image name,
+// a frame's icons and images over their pixel budget) stop the game (the contract's
+// Errors), so they go through the guard: a script's own pcall cannot catch them and
+// publish a cut frame.
 
 // The frame being drawn; raises unless draw is running.
 DisplayList& drawTarget(lua_State* L, const char* function) {
@@ -157,6 +165,16 @@ int unknownName(lua_State* L, const char* kind, const char* name, const size_t l
   return bindingContext(L)->guard->raise(L, message);
 }
 
+// A frame's icons and images past MAX_BLIT_PIXELS canvas pixels stop the game
+// through the guard, as a full frame does: "ch.gfx.<kind>: the frame's icons and
+// images cover over <limit> pixels".
+int blitBudgetFull(lua_State* L, const char* kind) {
+  char message[96];
+  snprintf(message, sizeof(message), "ch.gfx.%s: the frame's icons and images cover over %lu pixels", kind,
+           static_cast<unsigned long>(MAX_BLIT_PIXELS));
+  return bindingContext(L)->guard->raise(L, message);
+}
+
 // ch.gfx.icon(name, x, y, size, color, weight?): a library icon in its regular
 // (the default) or fill weight with its top-left at x, y; only its ink pixels are
 // drawn.
@@ -171,6 +189,9 @@ int gfxIcon(lua_State* L) {
   const IconWeight weight = WEIGHT_VALUES[luaL_checkoption(L, 6, "regular", WEIGHT_NAMES)];
   const int icon = GameIcons::find(name, length);
   if (icon < 0) return unknownName(L, "icon", name, length);
+  const auto side = static_cast<uint32_t>(GameIcons::DRAWN_PIXELS[static_cast<size_t>(size)]);
+  const Canvas& canvas = *bindingContext(L)->canvas;
+  if (!list.chargeBlit(x, y, side, side, canvas.width, canvas.height)) return blitBudgetFull(L, "icon");
   if (!list.appendIcon(x, y, static_cast<uint16_t>(icon), size, color, weight)) return frameFull(L);
   return 0;
 }
@@ -187,6 +208,11 @@ int gfxImage(lua_State* L) {
   const GameCore::GameImages* images = bindingContext(L)->images;
   const int image = images ? images->find(name, length) : -1;
   if (image < 0) return unknownName(L, "image", name, length);
+  const GameCore::ImageSpan& span = images->spans[image];
+  const Canvas& canvas = *bindingContext(L)->canvas;
+  if (!list.chargeBlit(x, y, span.width, span.height, canvas.width, canvas.height)) {
+    return blitBudgetFull(L, "image");
+  }
   if (!list.appendImage(x, y, static_cast<uint16_t>(image), color)) return frameFull(L);
   return 0;
 }

@@ -101,16 +101,18 @@ class GameVM {
     if (!failed()) return Failure::None;
     return GameScript::vmFailure(true, sessionOutOfMemory, game.hostFailure());
   }
-  // Failed before any game code ran: the error view's headline says it could not start.
+  // Failed before any game code ran (any host failure), so the error view's
+  // headline says the game could not start (AD-14; GameScript::failedToStart).
   bool failedToStart() const { return GameScript::failedToStart(failure()); }
   // The error view's detail: `texts` (tr() text) for a host failure, errorMessage()
-  // for the script's own.
+  // for the script's own. Gated like failure(), through both.
   const char* failureDetail(const HostFailureTexts& texts) const {
     return GameScript::failureDetail(failure(), texts, errorMessage());
   }
   // The failure's English text, for the log; the error view shows it only for a
-  // Script failure.
-  const char* errorMessage() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
+  // Script failure. "" until failed(), for the same reason as failure(): the VM
+  // task writes what failureText() reads.
+  const char* errorMessage() const { return failed() ? failureText() : ""; }
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }
@@ -144,6 +146,9 @@ class GameVM {
          GameScript::StoreSlot& store);
   static void taskEntry(void* param);
   void run();
+  // errorMessage() without its gate: for run(), the task that writes it, which
+  // logs it before it publishes `done`.
+  const char* failureText() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
   // Notifies the task only while it is alive: it deletes itself when it ends, and
   // a notification to a deleted task would touch freed memory.
   void notifyTask();
