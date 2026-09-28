@@ -12,6 +12,7 @@ namespace GameScript {
 //   Line   op u8, color u8, x1 y1 x2 y2 i16
 //   Circle op u8, color u8, filled u8, x y r i16
 //   Icon   op u8, color u8, size u8, x y i16, icon u16
+//   Image  op u8, color u8, x y i16, image u16
 namespace {
 
 constexpr size_t CLEAR_BYTES = 2;
@@ -20,6 +21,7 @@ constexpr size_t TEXT_HEADER_BYTES = 4 + 2 * sizeof(int16_t) + sizeof(uint16_t);
 constexpr size_t LINE_BYTES = 2 + 4 * sizeof(int16_t);
 constexpr size_t CIRCLE_BYTES = 3 + 3 * sizeof(int16_t);
 constexpr size_t ICON_BYTES = 3 + 2 * sizeof(int16_t) + sizeof(uint16_t);
+constexpr size_t IMAGE_BYTES = 2 + 2 * sizeof(int16_t) + sizeof(uint16_t);
 
 int16_t clamp16(const int64_t v) {
   if (v < std::numeric_limits<int16_t>::min()) return std::numeric_limits<int16_t>::min();
@@ -145,6 +147,17 @@ bool DisplayList::appendIcon(const int64_t x, const int64_t y, const uint16_t ic
   return true;
 }
 
+bool DisplayList::appendImage(const int64_t x, const int64_t y, const uint16_t image, const Color color) {
+  uint8_t* p = reserve(IMAGE_BYTES);
+  if (!p) return false;
+  *p++ = static_cast<uint8_t>(Op::Image);
+  *p++ = static_cast<uint8_t>(color);
+  p = put16(p, clamp16(x));
+  p = put16(p, clamp16(y));
+  std::memcpy(p, &image, sizeof(image));
+  return true;
+}
+
 bool DisplayList::Reader::next(DrawCommand& out) {
   if (offset >= list.used) return false;
   const uint8_t* p = list.storage + offset;
@@ -194,6 +207,12 @@ bool DisplayList::Reader::next(DrawCommand& out) {
       p = get16(p, out.y);
       std::memcpy(&out.icon, p, sizeof(out.icon));
       offset += ICON_BYTES;
+      return true;
+    case Op::Image:
+      p = get16(p, out.x);
+      p = get16(p, out.y);
+      std::memcpy(&out.image, p, sizeof(out.image));
+      offset += IMAGE_BYTES;
       return true;
   }
   return false;

@@ -13,9 +13,13 @@
 
 namespace {
 
-constexpr size_t NAME_BUFFER = 48;  // longer names cannot be modules and are skipped
+constexpr size_t NAME_BUFFER = 48;  // longer names cannot be modules or images and are skipped
 constexpr size_t PATH_BUFFER = 96;
 constexpr size_t LUA_EXT_BYTES = 4;  // ".lua"
+
+// One buffer holds a module name or an image name, whichever the file is.
+static_assert(GameScript::SourceSpan::MAX_NAME_BYTES == GameCore::IMAGE_NAME_BYTES, "one stem buffer for both");
+using Stem = char[GameCore::IMAGE_NAME_BYTES + 1];
 
 // Writes the module name of `fileName` ("main" for "main.lua") when it matches
 // [a-z0-9_]{1,32}.lua; false otherwise.
@@ -37,11 +41,20 @@ bool looksLikeLua(const char* fileName, const size_t length) {
   return length > LUA_EXT_BYTES && strcasecmp(fileName + length - LUA_EXT_BYTES, ".lua") == 0;
 }
 
+// Reads the header at the start of `file` and adds the image to `budget`
+// (GameCore::ImageBudget::add), leaving the file at its pixel rows when Ok. Its own
+// frame holds the header, so load()'s stays small.
+[[gnu::noinline]] GameCore::ImageCheck addImage(HalFile& file, GameCore::ImageBudget& budget,
+                                                GameCore::ImageHeader& out) {
+  uint8_t header[GameCore::IMAGE_HEADER_BYTES];
+  const int read = file.read(header, sizeof(header));
+  return budget.add(header, read > 0 ? static_cast<size_t>(read) : 0, file.fileSize(), out);
+}
+
 }  // namespace
 
 GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
-  block.reset();
-  view = GameScript::GameSources{};
+  release();
 
   char path[PATH_BUFFER];
   snprintf(path, sizeof(path), "/.games/%s", gameId);
@@ -59,26 +72,48 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
     return LoadResult::FolderMissing;
   }
 
-  // Pass 1: count the modules and their bytes so one block holds them all.
+  // Pass 1: count the modules and images and their bytes so one block holds them
+  // all, checking each image's header against the budget left on the way.
   char name[NAME_BUFFER];
-  char module[GameScript::SourceSpan::MAX_NAME_BYTES + 1];
+  Stem stem;
   size_t count = 0;
   size_t misnamed = 0;
   size_t textBytes = 0;
+  GameCore::ImageBudget budget;
+  bool badImage = false;
+  GameCore::ImageHeader header;
   dir.rewindDirectory();
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     const size_t length = file.getName(name, sizeof(name));
     if (file.isDirectory() || length == 0) continue;
-    if (length >= sizeof(name) - 1 || !moduleNameOf(name, length, module)) {
-      // A .lua file no require can name: said, so it never goes missing silently.
-      if (looksLikeLua(name, length)) {
-        ++misnamed;
-        LOG_ERR("GAME", "%s/%s is not loaded: a module name is [a-z0-9_]{1,32}.lua", path, name);
+    const bool fits = length < sizeof(name) - 1;
+    if (fits && moduleNameOf(name, length, stem)) {
+      // A module: counted, and read in pass 2.
+      ++count;
+      textBytes += file.fileSize();
+    } else if (fits && GameCore::imageNameOf(name, length, stem)) {
+      // An image: checked now, within the budget the images before it left.
+      const GameCore::ImageCheck check = addImage(file, budget, header);
+      if (check == GameCore::ImageCheck::OverBudget) {
+        LOG_ERR("GAME", "%s/%s is not a usable image: %s (images take at most %u bytes in all)", path, name,
+                GameCore::imageCheckName(check), static_cast<unsigned>(GameCore::IMAGES_BYTES));
+      } else if (check == GameCore::ImageCheck::TooMany) {
+        LOG_ERR("GAME", "%s/%s is one image too many: a game has at most %u", path, name,
+                static_cast<unsigned>(GameCore::MAX_IMAGES));
+      } else if (check != GameCore::ImageCheck::Ok) {
+        LOG_ERR("GAME", "%s/%s is not a usable image: %s", path, name, GameCore::imageCheckName(check));
       }
-      continue;
+      badImage = badImage || check != GameCore::ImageCheck::Ok;
+    } else if (looksLikeLua(name, length)) {
+      // A .lua file no require can name: said, so it never goes missing silently.
+      ++misnamed;
+      LOG_ERR("GAME", "%s/%s is not loaded: a module name is [a-z0-9_]{1,32}.lua", path, name);
+    } else if (GameCore::looksLikeImage(name, length) && strcasecmp(name, "icon.bmp") != 0) {
+      // A .bmp file no ch.gfx.image can name: skipped with a log line on purpose,
+      // not a load failure; the game fails later only if it draws that name.
+      // icon.bmp is the launcher's, not a game image.
+      LOG_ERR("GAME", "%s/%s is not loaded: an image name is [a-z0-9_]{1,32}.bmp", path, name);
     }
-    ++count;
-    textBytes += file.fileSize();
   }
   if (count == 0) {
     LOG_ERR("GAME", "%s holds no loadable Lua sources", path);
@@ -90,54 +125,91 @@ GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves
             static_cast<unsigned>(MAX_SOURCE_BYTES));
     return LoadResult::TooLarge;
   }
+  if (badImage) return LoadResult::BadImage;
+  const size_t imageCount = budget.count;
+  const size_t pixelBytes = budget.pixelBytes;
 
+  // One block: [SourceSpan x count][ImageSpan x imageCount][image rows][text]. Both
+  // span types are 4-byte multiples aligned to at most 4, so the image spans stay aligned.
+  static_assert(alignof(GameScript::SourceSpan) <= 4 && sizeof(GameScript::SourceSpan) % 4 == 0, "span alignment");
+  static_assert(alignof(GameCore::ImageSpan) <= 4 && sizeof(GameCore::ImageSpan) % 4 == 0, "span alignment");
   const size_t spanBytes = count * sizeof(GameScript::SourceSpan);
-  block = HalMemory::allocatePsram(spanBytes + textBytes);
+  const size_t imageSpanBytes = imageCount * sizeof(GameCore::ImageSpan);
+  const size_t blockBytes = spanBytes + imageSpanBytes + pixelBytes + textBytes;
+  block = HalMemory::allocatePsram(blockBytes);
   if (!block) {
-    LOG_ERR("GAME", "OOM: %u bytes of PSRAM for Lua sources", static_cast<unsigned>(spanBytes + textBytes));
+    LOG_ERR("GAME", "OOM: %u bytes of PSRAM for Lua sources and images", static_cast<unsigned>(blockBytes));
     return LoadResult::OutOfMemory;
   }
-  // SourceSpan is an implicit-lifetime aggregate, so the zeroed bytes are its objects.
-  std::memset(block.get(), 0, spanBytes);
+  // SourceSpan and ImageSpan are implicit-lifetime aggregates, so the zeroed bytes
+  // are their objects.
+  std::memset(block.get(), 0, spanBytes + imageSpanBytes);
   auto* spans = reinterpret_cast<GameScript::SourceSpan*>(block.get());
-  char* text = reinterpret_cast<char*>(block.get() + spanBytes);
+  auto* imageSpans = reinterpret_cast<GameCore::ImageSpan*>(block.get() + spanBytes);
+  uint8_t* pixels = block.get() + spanBytes + imageSpanBytes;
+  char* text = reinterpret_cast<char*>(pixels + pixelBytes);
 
-  // Pass 2: read each module into place. The folder may change between passes, so
-  // stay inside what pass 1 sized.
+  // Pass 2: read each module and each image's rows into place. The folder may
+  // change between passes, so re-check each image and stay inside what pass 1
+  // sized: its budget as well as its bytes.
   size_t loaded = 0;
   size_t offset = 0;
+  size_t imagesLoaded = 0;
+  GameCore::ImageBudget reread;
   dir.rewindDirectory();
-  for (auto file = dir.openNextFile(); file && loaded < count; file = dir.openNextFile()) {
+  for (auto file = dir.openNextFile(); file && (loaded < count || imagesLoaded < imageCount);
+       file = dir.openNextFile()) {
     const size_t length = file.getName(name, sizeof(name));
-    if (file.isDirectory() || length == 0 || length >= sizeof(name) - 1 || !moduleNameOf(name, length, module)) {
-      continue;
+    if (file.isDirectory() || length == 0 || length >= sizeof(name) - 1) continue;
+    if (moduleNameOf(name, length, stem)) {
+      if (loaded == count) continue;
+      const size_t size = file.fileSize();
+      if (size > textBytes - offset || file.read(text + offset, size) != static_cast<int>(size)) {
+        LOG_ERR("GAME", "Cannot read %s/%s", path, name);
+        release();
+        return LoadResult::CannotRead;
+      }
+      GameScript::SourceSpan& span = spans[loaded++];
+      std::memcpy(span.name, stem, sizeof(stem));
+      span.offset = static_cast<uint32_t>(offset);
+      span.length = static_cast<uint32_t>(size);
+      offset += size;
+    } else if (GameCore::imageNameOf(name, length, stem)) {
+      if (imagesLoaded == imageCount) continue;
+      const size_t pixelOffset = reread.pixelBytes;
+      const bool same = addImage(file, reread, header) == GameCore::ImageCheck::Ok &&
+                        reread.fileBytes <= budget.fileBytes && reread.pixelBytes <= pixelBytes;
+      if (!same || file.read(pixels + pixelOffset, header.pixelBytes()) != static_cast<int>(header.pixelBytes())) {
+        LOG_ERR("GAME", "Cannot read %s/%s, or it changed since it was checked", path, name);
+        release();
+        return LoadResult::CannotRead;
+      }
+      GameCore::ImageSpan& image = imageSpans[imagesLoaded++];
+      std::memcpy(image.name, stem, sizeof(stem));
+      image.width = header.width;
+      image.height = header.height;
+      image.rowBytes = header.rowBytes;
+      image.offset = static_cast<uint32_t>(pixelOffset);
     }
-    const size_t size = file.fileSize();
-    if (size > textBytes - offset || file.read(text + offset, size) != static_cast<int>(size)) {
-      LOG_ERR("GAME", "Cannot read %s/%s", path, name);
-      block.reset();
-      return LoadResult::CannotRead;
-    }
-    GameScript::SourceSpan& span = spans[loaded++];
-    std::memcpy(span.name, module, sizeof(module));
-    span.offset = static_cast<uint32_t>(offset);
-    span.length = static_cast<uint32_t>(size);
-    offset += size;
   }
 
-  if (loaded != count) {
+  if (loaded != count || imagesLoaded != imageCount) {
     // The folder lost a file between the passes.
-    LOG_ERR("GAME", "Read %u of %u Lua files from %s", static_cast<unsigned>(loaded), static_cast<unsigned>(count),
-            path);
-    block.reset();
+    LOG_ERR("GAME", "Read %u of %u Lua files and %u of %u images from %s", static_cast<unsigned>(loaded),
+            static_cast<unsigned>(count), static_cast<unsigned>(imagesLoaded), static_cast<unsigned>(imageCount), path);
+    release();
     return LoadResult::CannotRead;
   }
 
   view.spans = spans;
   view.count = loaded;
   view.text = text;
-  LOG_INF("GAME", "Loaded %u Lua files (%u bytes) from %s", static_cast<unsigned>(loaded),
-          static_cast<unsigned>(offset), path);
+  imageView.spans = imageSpans;
+  imageView.count = imagesLoaded;
+  imageView.pixels = pixels;
+  LOG_INF("GAME", "Loaded %u Lua files (%u bytes) and %u images (%u bytes) from %s", static_cast<unsigned>(loaded),
+          static_cast<unsigned>(offset), static_cast<unsigned>(imagesLoaded), static_cast<unsigned>(reread.fileBytes),
+          path);
   saves.restoreInto(store);
   return LoadResult::Ok;
 }

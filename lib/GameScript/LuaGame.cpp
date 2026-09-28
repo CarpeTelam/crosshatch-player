@@ -168,8 +168,8 @@ void copyReason(lua_State* L, const std::span<char> out) {
 }  // namespace
 
 LuaGame::LuaGame(ArenaAllocator& arena, FrameBuffers& frames, const GameSources& sources, const HostPorts& ports,
-                 const Canvas& canvas)
-    : arena(arena), frames(frames), sources(sources), ports(ports), canvas(canvas) {}
+                 const Canvas& canvas, const GameCore::GameImages& images)
+    : arena(arena), frames(frames), sources(sources), images(images), ports(ports), canvas(canvas) {}
 
 LuaGame::~LuaGame() { close(); }
 
@@ -193,6 +193,7 @@ Outcome LuaGame::load() {
   if (!L) return fail("not enough memory");
   bindings.canvas = &canvas;
   bindings.sources = &sources;
+  bindings.images = &images;
   bindings.guard = &guard;
   bindings.lockedSections = &lockedSections;
   bindings.clock = &ports.clock;

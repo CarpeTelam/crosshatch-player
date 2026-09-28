@@ -134,3 +134,18 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-tracer-a-phosphor-icon-from-svg-to-the-game-canvas-plan.md`
   summary: `FrameReplay`'s `Op::Icon` case and `drawGameIconAt` (canvas origin offset, size mapping, ink color, clipping to the canvas) have no automated test; only the story's simulator screenshots check them.
   evidence: `test/game_script/CMakeLists.txt` compiles neither `src/games/FrameReplay.cpp` nor `GameIconDraw.cpp` (they need `GfxRenderer`); dropping the origin offset or inverting the color passes every host test. A renderer test double or a scripted simulator screenshot diff (retro AI-2, epic-install-and-launcher) would pin it.
+
+## 3.2
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-ch-gfx-image-and-package-images-plan.md`
+  summary: The replay cost of an Image command is unmeasured. `FrameReplay` fills each one-colour run with `fillRect(w, 1)`, so a dithered, photo-like, full-canvas image means about 200k calls.
+  evidence: `PngToBmpConverter` applies Atkinson dithering, which leaves runs of 1-2 px. Settle it by timing a worst-case dithered 480x800 image (and a frame of several) on the render task on an X4 Pro. If the time is too long, write the rows straight to the framebuffer, or cap the pixels drawn per frame. Review finding 10, unverified; medium if true.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-ch-gfx-image-and-package-images-plan.md`
+  summary: Handoff to epic-install-and-launcher. The installer and `pack_game.py` must count the converted-image budget as `GameCore::IMAGES_BYTES` does: whole `.bmp` bytes, 62 + ceil(w / 32) * 4 * h each, headers included and `icon.bmp` excluded, at most `MAX_IMAGES` images. Otherwise a package can install and then fail to start with `BadImage`.
+  evidence: `lib/GameCore/GameImages.h` (`IMAGES_BYTES`, `MAX_IMAGES`, `ImageBudget`), and the `images_bytes` / `images_count` limits and size-rule comment in `docs/crosshatch/api-level-1.txt`. AD-15 says only "converted images at most 128 KB in total". Review finding 11.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-icon-library/story-ch-gfx-image-and-package-images-plan.md`
+  summary: Three device-side pieces have no host test; only the simulator screenshots check them:
+    - `GameAssets::load`'s wiring: the block layout, each `ImageSpan`'s offset, and the pass-2 re-read;
+    - `FrameReplay`'s `Op::Image` viewport offset;
+    - the match's `BadImage` → `STR_GAMES_BAD_IMAGE` mapping.
+  evidence: `test/` compiles neither `GameAssets.cpp`, `FrameReplay.cpp`, nor `GameMatchActivity.cpp`, since they need Storage and `GfxRenderer`. Dropping `image.offset = pixelOffset` passes every host test. The budget, the count cap, the verdicts, and the ink rule are pure and tested (`ImageBudget`, `GameImageBlit::runs`). A Storage stub and a renderer double (retro AI-2, epic-install-and-launcher) would pin the rest. Review finding 19.

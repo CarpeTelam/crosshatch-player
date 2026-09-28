@@ -14,6 +14,7 @@
 
 #include "GameIconBlit.h"
 #include "GameIconDraw.h"
+#include "GameImageBlit.h"
 #include "GameViewport.h"
 #include "fontIds.h"
 
@@ -93,7 +94,7 @@ void FrameReplay::loadFonts(const GfxRenderer& renderer) {
 }
 
 bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DisplayList& frame,
-                       const GameScript::Refresh hint) {
+                       const GameScript::Refresh hint, const GameCore::GameImages& images) {
   if (!policy.decide(frame.hash(), hint, mode)) {
     LOG_DBG("GAME", "Frame identical to the one on screen; not refreshed");
     return false;
@@ -154,6 +155,21 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
         drawGameIconAt(renderer, command.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(command.size)], ox, oy,
                        width, height, command.x, command.y, command.color == GameScript::Color::Black);
         break;
+      case GameScript::Op::Image: {
+        if (command.image >= images.count) {
+          LOG_ERR("GAME", "No game image %u (the game has %u); not drawn", static_cast<unsigned>(command.image),
+                  static_cast<unsigned>(images.count));
+          break;
+        }
+        // Opaque: every visible pixel is filled with the ink runs() gives it.
+        const GameCore::ImageSpan& image = images.spans[command.image];
+        GameImageBlit::runs(image, images.pixelsOf(image), command.x, command.y, width, height,
+                            command.color == GameScript::Color::Black,
+                            [&](const int32_t y, const int32_t x, const int32_t w, const bool black) {
+                              renderer.fillRect(ox + x, oy + y, w, 1, black);
+                            });
+        break;
+      }
     }
   }
   renderer.setClipRect(savedClip[0], savedClip[1], savedClip[2], savedClip[3]);

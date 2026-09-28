@@ -1,6 +1,7 @@
 #pragma once
 
 #include <DisplayList.h>
+#include <GameImages.h>
 #include <HalDisplay.h>
 #include <RefreshPolicy.h>
 #include <TextMetrics.h>
@@ -33,10 +34,11 @@ class FrameReplay {
 
   // Draws the frame inside the viewport, clipped to it, unless it is identical to
   // the frame on screen and nothing forces it; `hint` is the largest refresh
-  // request of the frames coalesced into it. True when drawn: then
-  // refreshMode() is the refresh to show it with. Render task.
+  // request of the frames coalesced into it, and `images` the table its image
+  // commands index (the VM's, which lives as long as the frame). True when drawn:
+  // then refreshMode() is the refresh to show it with. Render task.
   bool draw(const GfxRenderer& renderer, const GameViewport& viewport, const GameScript::DisplayList& frame,
-            GameScript::Refresh hint);
+            GameScript::Refresh hint, const GameCore::GameImages& images);
   HalDisplay::RefreshMode refreshMode() const;
 
  private:
