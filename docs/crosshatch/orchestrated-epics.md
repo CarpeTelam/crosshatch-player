@@ -151,9 +151,11 @@ them:
   and at the top of your report, and triage the independent review the orchestrator then sends you into the same log.
   Start implementation and lens subagents in the foreground (`run_in_background: false`; lenses in one message so they
   still run in parallel) whenever you have nothing else to do meanwhile: a background subagent lets your turn end, and
-  the harness then takes an unfinished report from you. Wait for every lens subagent, and any implementation subagent,
-  to return before you triage or report. If one has not returned, wait for it instead of reporting without it. The
-  Review Triage Log names the lenses that returned.
+  the harness then takes an unfinished report from you. A nested agent's subagents may still run in the background
+  despite the flag (the icon epic's follow-up reviewer, 2026-09-28), so if your turn ends early anyway, say at the top
+  of the report that it is interim and which subagents are still running; you resume when they return. Wait for every
+  lens subagent, and any implementation subagent, to return before you triage or give a final report. The Review Triage
+  Log names the lenses that returned.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
