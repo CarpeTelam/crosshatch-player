@@ -558,7 +558,11 @@ No finding blocks acceptance. Every Done-when criterion holds in the final state
 
 ## Open questions
 
-Each would change an action item:
+Answered by the owner on 2026-09-28:
+- **R3:** widen `failedToStart` to every host failure that precedes game code (NoSession, load out-of-memory, `NotLoaded`), so each shows "The game could not start"; AD-14 amended to match (built in the follow-up lane e3r-2).
+- **The proposed edits:** apply them all (8bd18e86, 9d53b6db); build the should-have and higher items as follow-up lanes e3r-1 to e3r-3 before the next epic is planned.
+
+Still open; each would change an action item:
 
 1. **R1's fix shape.** A per-frame drawn-pixel limit (a new `limit` in level 1, simple, API-visible), or a row-blit replay path (no API change; its cost is still proportional to image bytes times commands)? And should it land in epic-install-and-launcher or wait for the freeze epic?
 2. **AI-6's checkpoint.** Is an asynchronous owner question during an overnight run acceptable, given that the epic was designed to need no owner input until its end (Notes :82)? If not, the alternative is to pin API-visible naming at inception, in the epic's Requirements.
