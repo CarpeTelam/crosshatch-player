@@ -3,7 +3,7 @@ title: 'Cover-grid Home Games tile'
 type: 'feature'
 ticket: '6'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: '7329a0201859c240bcc0f3aee6829d3328e3b6b3'
 route: 'full'
 route_source: 'auto'
