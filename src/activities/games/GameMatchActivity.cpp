@@ -50,6 +50,22 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
   return StrId::STR_GAMES_START_FAILED;
 }
 
+// The error view's detail for a failed VM: tr() text for the host's own failures,
+// Lua's message for the script's (AD-14).
+const char* vmFailureText(const GameVM& vm) {
+  switch (vm.failure()) {
+    case GameVM::Failure::NoSession:
+    case GameVM::Failure::OutOfMemory:
+      return tr(STR_GAMES_OUT_OF_MEMORY);
+    case GameVM::Failure::NotLoaded:
+      return tr(STR_GAMES_NOT_LOADED);
+    case GameVM::Failure::Script:
+    case GameVM::Failure::None:
+      break;
+  }
+  return vm.errorMessage();
+}
+
 // A menu choice's label.
 StrId optionLabel(const MatchEvent event) {
   switch (event) {
@@ -152,9 +168,11 @@ void GameMatchActivity::handle(const MatchEvent event) {
   switch (to) {
     case MatchState::Playing:
       if (event == MatchEvent::PlayAgain) {
-        // Frames the last round drew after it ended are never shown; the new
-        // round's first frame is the next one asked for.
+        // Frames the last round drew after it ended are never shown, one from a
+        // step still running when Play again came included: the loop asks for no
+        // render until the new round's first frame is published.
         shownFrame = vm->frameGen();
+        roundsStartedAwaited = vm->roundsStarted() + 1;
         vm->playAgain();
       }
       // A new round's first frame asks for its own render; a resumed one is redrawn.
@@ -227,7 +245,7 @@ void GameMatchActivity::stopStuckVm() {
     RenderLock lock(*this);
     if (vm->stop(STOP_TIMEOUT_MS)) {
       // It may have ended on its own error meanwhile; that message says more.
-      if (vm->failed()) snprintf(detail, sizeof(detail), "%s", vm->errorMessage());
+      if (vm->failed()) snprintf(detail, sizeof(detail), "%s", vmFailureText(*vm));
       vm.reset();
     } else {
       abandonVm();
@@ -237,12 +255,11 @@ void GameMatchActivity::stopStuckVm() {
 }
 
 bool GameMatchActivity::vmHealthy() {
-  if (vm->failedOutOfMemory()) {
-    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
-    return false;
-  }
-  if (vm->failed()) {
-    fail(StrId::STR_GAMES_ERROR, vm->errorMessage());
+  const GameVM::Failure failure = vm->failure();
+  if (failure != GameVM::Failure::None) {
+    // Only a Session that never fit failed before any game code ran (AD-14).
+    fail(failure == GameVM::Failure::NoSession ? StrId::STR_GAMES_START_FAILED : StrId::STR_GAMES_ERROR,
+         vmFailureText(*vm));
     return false;
   }
   // A C loop runs no Lua instructions, so neither the budget nor the cancel flag
@@ -293,6 +310,9 @@ void GameMatchActivity::loopPlaying() {
   vm->pollTimer();
   store.flushIfDue(millis());
 
+  // After Play again, any frame before the new round's first is the last round's;
+  // once the count moves, coalescing shows the newest frame.
+  if (vm->roundsStarted() < roundsStartedAwaited) return;
   const uint32_t frame = vm->frameGen();
   if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {
     shownFrame = frame;

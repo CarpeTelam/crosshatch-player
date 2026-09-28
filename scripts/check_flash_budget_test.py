@@ -28,7 +28,7 @@ ON_DEFINES = ['FREEINK_DEVICE_X4PRO=1', 'FREEINK_CAP_GAMES=1', 'BOARD_HAS_PSRAM'
 OFF_DEFINES = ['FREEINK_DEVICE_X4PRO=1', 'BOARD_HAS_PSRAM']
 
 # The measured x4pro sections (2026-09-27); each fixture ELF starts from these.
-RAM = {'.dram0.data': 29_615, '.dram0.bss': 72_200, '.noinit': 1}
+RAM = {'.dram0.data': 29_615, '.dram0.bss': 72_200, '.noinit': 1, '.iram0.text': 84_091}
 
 # Real `xtensa-esp32s3-elf-size -A firmware.elf` output, shortened.
 REAL_SIZE_OUTPUT = """\
@@ -155,7 +155,7 @@ def write_fake_tools(bin_dir):
 
 
 def size_output(sections):
-    rows = ['firmware.elf  :', 'section                    size         addr', '.iram0.text  84091   1077363716']
+    rows = ['firmware.elf  :', 'section                    size         addr', '.rtc.text  92   1611653120']
     rows += [f'{name:<20} {size:>10}   {1070173440 + i}' for i, (name, size) in enumerate(sections.items())]
     rows += ['.debug_info  44334835  0', f'Total  {sum(sections.values())}', '', '']
     return '\n'.join(rows)
@@ -241,11 +241,36 @@ class CompareTest(unittest.TestCase):
         self.assertIn('Within budget', text.split('## x4pro static internal RAM')[0])
         self.assertIn('Over budget** by 1 B', text.split('## x4pro static internal RAM')[1])
 
-    def test_ram_sums_all_three_sections(self):
-        # 400 + 400 + 225 = 1,025 B: no single section is over, the sum is.
-        self.put_ram(400, **{'.dram0.data': RAM['.dram0.data'] + 400, '.noinit': RAM['.noinit'] + 225})
+    def test_ram_sums_every_section(self):
+        # 300 + 300 + 225 + 200 = 1,025 B: no single section is over, the sum is.
+        self.put_ram(300, **{'.dram0.data': RAM['.dram0.data'] + 300, '.noinit': RAM['.noinit'] + 225,
+                             '.iram0.text': RAM['.iram0.text'] + 200})
         self.assertEqual(self.run_compare(), 1)
         self.assertEqual(self.run_compare(ram_limit_bytes=1025), 0)
+
+    def test_iram_growth_alone_fails(self):
+        # IRAM shares internal SRAM with DRAM on the S3 (retro F5): an IRAM_ATTR function over the limit fails.
+        self.put_ram(0, **{'.iram0.text': RAM['.iram0.text'] + 1025})
+        self.assertEqual(self.run_compare(), 1)
+        self.assertIn('| `.iram0.text` | 85,116 | 84,091 | +1,025 |', self.summary.read_text())
+
+    def test_every_iram0_section_counts_and_one_build_only_is_zero_in_the_other(self):
+        # .iram0.vectors in both builds, .iram0.bss in the games-on build only.
+        self.put('on', 1_000_000, ON_DEFINES, ram=dict(RAM, **{'.iram0.vectors': 1028, '.iram0.bss': 600}))
+        self.put('off', 1_000_000, OFF_DEFINES, ram=dict(RAM, **{'.iram0.vectors': 1000}))
+        self.assertEqual(self.run_compare(), 0)
+        text = self.summary.read_text()
+        self.assertIn('| `.iram0.vectors` | 1,028 | 1,000 | +28 |', text)
+        self.assertIn('| `.iram0.bss` | 600 | 0 | +600 |', text)
+        self.assertIn('| Total |', text)
+        self.assertIn('+628 |', text)
+        self.assertEqual(self.run_compare(ram_limit_bytes=627), 1)
+
+    def test_non_ram_sections_do_not_count(self):
+        self.put('on', 1_000_000, ON_DEFINES, ram=dict(RAM, **{'.flash.text': 5000, '.rtc_noinit': 5000}))
+        self.put('off', 1_000_000, OFF_DEFINES)
+        self.assertEqual(self.run_compare(), 0)
+        self.assertNotIn('.flash.text', self.summary.read_text())
 
     def test_ram_table_lists_each_section(self):
         self.put_ram(300)
@@ -254,7 +279,8 @@ class CompareTest(unittest.TestCase):
         self.assertIn('| `.dram0.bss` | 72,500 | 72,200 | +300 |', text)
         self.assertIn('| `.dram0.data` | 29,615 | 29,615 | +0 |', text)
         self.assertIn('| `.noinit` | 1 | 1 | +0 |', text)
-        self.assertIn('| Total | 102,116 | 101,816 | +300 |', text)
+        self.assertIn('| `.iram0.text` | 84,091 | 84,091 | +0 |', text)
+        self.assertIn('| Total | 186,207 | 185,907 | +300 |', text)
         self.assertIn('724 B to spare', text)
 
     def test_ram_shrink_passes(self):
@@ -436,7 +462,7 @@ class ParseTest(unittest.TestCase):
 
     def test_size_output(self):
         sizes = cfb.section_sizes(REAL_SIZE_OUTPUT)
-        self.assertEqual({name: sizes[name] for name in cfb.RAM_SECTIONS}, RAM)
+        self.assertEqual(cfb.ram_sections(sizes), RAM)
         self.assertEqual(sizes['.debug_info'], 44_334_835)
         self.assertNotIn('Total', sizes)
         self.assertNotIn('section', sizes)

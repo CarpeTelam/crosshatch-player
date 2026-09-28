@@ -58,12 +58,17 @@ that script.
 ## CI
 
 The `Fork script tests` job in `.github/workflows/crosshatch-ci.yml` runs every `scripts/*_test.py` on every pull
-request, each file in its own process, and reports each failing file. A new sidecar test is picked up with no
-workflow change. A script that is itself a CI gate gets its own job there, listed in `Crosshatch Test Status`'s
-`needs`, and is run once from a fresh clone before its ticket counts as built.
+request, each file in its own process, and reports each failing file. It also fails a file whose output has no
+`Ran <n> tests` line with n above 0, so a test file that forgets `unittest.main()`, and so exits 0 having run
+nothing, cannot pass. A new sidecar test is picked up with no workflow change. A script that is itself a CI gate gets
+its own job there, listed in `Crosshatch Test Status`'s `needs`, and is run once from a fresh clone before its ticket
+counts as built.
 
 Run the same tests locally from the repository root:
 
 ```sh
-for t in scripts/*_test.py; do python3 "$t" || echo "FAILED: $t"; done
+for t in scripts/*_test.py; do
+  out="$(python3 "$t" 2>&1)" || { echo "FAILED: $t"; continue; }
+  printf '%s\n' "$out" | grep -Eq '^Ran [1-9][0-9]* tests? in ' || echo "RAN NO TESTS: $t"
+done
 ```

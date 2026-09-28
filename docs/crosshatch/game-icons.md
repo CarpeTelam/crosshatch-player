@@ -80,15 +80,18 @@ second side apart by the ink on a contrasting square, and outlined pieces are no
 The `icons` fixture (`test/game_script/fixtures/icons/`) pages through the set in this order, every icon at 32, 64,
 and 128 px in black and in white.
 
-### Names the runtime screens will use
+### Names the runtime screens use
 
-No screen draws a library icon yet. These are the names the epic's later entries will use:
+Two screens draw library icons besides the games:
 
-- Entry 5, the match's views (`GameMatchActivity`), which draw these names: `pause` for the pause view, `warning` for
-  the error view, and `flag_checkered` for the game-over view, each in the dialog's content band; `play` (Resume),
+- The match's views (`GameMatchActivity`) draw by name through `drawGameIcon`: `pause` for the pause view, `warning`
+  for the error view, and `flag_checkered` for the game-over view, each in the dialog's content band; `play` (Resume),
   `leave` (Leave, and the error view's Back, which leaves the match), and `restart` (Play again) at their option rows'
-  left, when the label leaves room ([game-canvas.md](game-canvas.md)).
-- Entry 6, the cover-grid Home's Games tile: `game_controller`.
+  left, when the label leaves room ([game-canvas.md](game-canvas.md)). `src/games/GameViewIcons.h` holds the names,
+  and `GameViewIconsTest` checks each against the library.
+- The cover-grid Home's Games tab (`src/components/CoverGridHomeUi.cpp`, ledger row 9 of
+  [upstream-touches.md](upstream-touches.md)) draws `game_controller` directly, as the generated symbol
+  `GameIcons::GAME_CONTROLLER_32` passed to `renderer.drawIcon`, beside upstream's own tab icons.
 
 ### Left out
 
@@ -104,6 +107,10 @@ Considered and not in v1: `handshake` (a draw; illegible at 32 px in both weight
    `lib/GameCore/ApiLevel.h` to the value `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` prints.
 4. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
 5. Update this file's table and its Size figures.
+
+Renaming or dropping an icon a screen uses breaks it: `game_controller` fails the x4pro and sticky builds (and the
+simulator's), since the cover-grid Home names `GameIcons::GAME_CONTROLLER_32`; one of the match's view icons fails
+`GameViewIconsTest`. Change the screen in the same commit.
 
 ## Size
 
@@ -127,12 +134,21 @@ fixed size. The tracer's four icons measured 2,608 B the same way (without their
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
 
-| x4pro | At `068a9ad0` (four icons) | With this set (62 icons) |
-| --- | ---: | ---: |
-| `firmware.bin`, games on | 5,833,504 | 5,871,760 |
-| `firmware.bin`, games off | 5,675,280 | 5,675,280 |
-| Flash difference (limit 256,000) | +158,224 | +196,480 |
-| Static internal RAM difference (limit 1,024) | +8 | +8 |
+| x4pro | At `068a9ad0` (four icons) | With this set (62 icons) | End of the epic (`965c55d7`) |
+| --- | ---: | ---: | ---: |
+| `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 |
+| `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 |
+| Flash difference (limit 256,000) | +158,224 | +196,480 | +196,336 |
+| Static internal RAM difference, `.dram0.*` + `.noinit` | +8 | +8 | +8 |
+| Static internal RAM difference, the gate's sum with `.iram0.*` (limit 1,024) | unmeasured | unmeasured | +776 |
 
 The set adds 38,256 B to the games-on image and no static internal RAM: the data is `inline constexpr`, so it sits
 in flash (`.flash.rodata`).
+
+At the end of the epic (the refactor sweep, entry 7, measured from a fresh archive tree of `965c55d7` with the flash
+budget job's four commands) the runtime adds +196,336 B of flash, 59,664 B under the 250 KiB gate; epic 2 closed at
++150,448 B, so this epic added +45,888 B (the base `1eacdc77` itself was not re-measured). Since entry 7 the RAM gate
+also counts IRAM, which shares internal SRAM on the S3: +8 B of `.dram0.bss`, +684 B of `.iram0.text` (the FreeRTOS
+task functions only games link, which ESP-IDF places in IRAM: `vTaskSuspend` 240 B, `vTaskResume` 216 B,
+`eTaskGetState` 154 B, `uxTaskGetStackHighWaterMark` 35 B, `pxTaskGetStackStart` 14 B, by `objdump -t`), and +84 B
+of `.iram0.text_end` alignment padding: +776 B, 248 B under the 1,024 B gate.

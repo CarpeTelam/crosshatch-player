@@ -18,7 +18,8 @@ of its row or bullet. It fails a pull request when:
   upstream is merged.
 
 The job enforces paths only. The Change and Guarded columns describe what each row may change, and review holds a
-pull request to them.
+pull request to them, with one part checked by the `Layer check` job: every include of game code in an upstream
+file sits in the `#if FREEINK_CAP_GAMES` branch of an `#if`, `#ifdef`, or `#elif` (not in its `#else`).
 
 ## Ledger
 
@@ -39,7 +40,7 @@ cannot be.
 | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison, and into `games/ForkReleaseProbe.h` after a failed fetch; a `static_assert` that `assetName` is `ForkRelease::ASSET_NAME_CAPACITY` bytes (AD-25) | yes |
 
 The game includes that rows 5, 9, and 10 make are held in `UPSTREAM_EDGES` in `scripts/check_layers.py`, and the Layer
-check fails any other upstream include of game code.
+check fails any other upstream include of game code, and any of these outside an `#if FREEINK_CAP_GAMES` branch.
 
 Row 10 and fork releases (AD-25): an upstream merge that touches `src/network/OtaUpdater.*`,
 `src/network/HttpDownloader.*`, `lib/JsonParser/ReleaseJsonParser.*`, `src/network/FirmwareBoardTag.*`, a release

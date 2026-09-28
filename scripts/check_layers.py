@@ -19,6 +19,11 @@ table names on its own. Screens may include upstream src/ code (their screen inf
   - fails any such file that includes any other game component unless UPSTREAM_EDGES gives that file that component:
     upstream code reaches game code only through its ledger rows (docs/crosshatch/upstream-touches.md, AD-3), and
     UPSTREAM_EDGES is the spine's "Upstream hooks" row;
+  - fails such an include that UPSTREAM_EDGES allows but that is not in the FREEINK_CAP_GAMES branch of an #if,
+    #ifdef, #elif, or #elifdef (AD-2: every include of game code in an upstream file is guarded). The branch's
+    condition is FREEINK_CAP_GAMES, defined(FREEINK_CAP_GAMES), or FREEINK_CAP_GAMES == 1, alone or joined to others
+    by && and with no ||; an #else, an #ifndef or #elifndef, a negation, or any other spelling does not count, so an
+    unusual guard fails visibly instead of passing;
   - fails a Screens file that uses the word GameScript anywhere outside comments and literals (GameScript::,
     `using namespace`, a namespace alias, a #define): Screens reach lib/GameScript only through src/games;
   - fails a src/games header that re-exports GameScript at global scope (`using namespace GameScript;`,
@@ -153,6 +158,10 @@ INCLUDE_TARGET = re.compile(r'(<([^>]+)>|"([^"]+)")')
 COMMENT_OR_LITERAL = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
 GAME_SCRIPT_WORD = re.compile(r'\bGameScript\b')
 PREPROCESSOR_LINE = re.compile(r'^[ \t]*#[^\n]*', re.M)
+CONDITIONAL = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$')
+GAMES = re.escape(fork_common.GAMES_MACRO)
+# One &&-joined part of an #if or #elif condition that requires the games flag.
+GAMES_CONJUNCT = re.compile(rf'(?:{GAMES}(?:\s*==\s*1)?|defined\s*\(\s*{GAMES}\s*\)|defined\s+{GAMES})')
 REEXPORT_START = re.compile(r'\s*(using\b|namespace\s+\w+\s*=)')
 
 
@@ -336,15 +345,50 @@ def reexport_problems(rel, text):
     return problems
 
 
+def games_branch(kind, condition):
+    """True when the branch #<kind> <condition> opens is compiled only with the games flag on (GAMES_CONJUNCT)."""
+    condition = condition.strip()
+    if kind in ('ifdef', 'elifdef'):
+        return condition == fork_common.GAMES_MACRO
+    if kind not in ('if', 'elif') or '||' in condition:
+        return False
+    return any(GAMES_CONJUNCT.fullmatch(part.strip()) for part in condition.split('&&'))
+
+
+def games_guarded_lines(text):
+    """The line numbers of text inside the games branch of an #if, #ifdef, #elif, or #elifdef, at any depth
+    (comments do not count as directives)."""
+    guarded = set()
+    branches = []  # one per open conditional: whether its current branch is a games branch
+    for number, line in enumerate(blank(text, literals=False).splitlines(), start=1):
+        match = CONDITIONAL.match(line)
+        if not match:
+            if any(branches):
+                guarded.add(number)
+            continue
+        kind, rest = match.groups()
+        if kind in ('if', 'ifdef', 'ifndef'):
+            branches.append(games_branch(kind, rest))
+        elif branches and kind in ('elif', 'elifdef', 'elifndef'):
+            branches[-1] = games_branch(kind, rest)
+        elif branches and kind == 'else':
+            branches[-1] = False
+        elif branches and kind == 'endif':
+            branches.pop()
+    return guarded
+
+
 def upstream_problems(root, index):
     """path:line problems for a source file outside the game folders that includes lib/GameScript or lib/lua, or a
-    game component its UPSTREAM_EDGES entry does not give it."""
+    game component its UPSTREAM_EDGES entry does not give it, or one it does give it outside a games branch."""
     problems = []
     for top in ('src', 'lib'):
         for rel, path in source_files(root, top):
             if is_game_or_unscanned(rel):
                 continue
-            for number, target, _ in includes(read_text(path)):
+            text = read_text(path)
+            guarded = None  # computed for the few files that include game code
+            for number, target, _ in includes(text):
                 if target is None:
                     continue
                 name, quoted = target_name(target)
@@ -356,6 +400,13 @@ def upstream_problems(root, index):
                     problems.append(f'{rel}:{number}: upstream code may not include {target.group(1)} ({reached}); '
                                     'an upstream file includes game code only as its ledger row allows (UPSTREAM_EDGES '
                                     'in scripts/check_layers.py, the spine\'s "Upstream hooks" row)')
+                elif reached in COMPONENTS:
+                    if guarded is None:
+                        guarded = games_guarded_lines(text)
+                    if number not in guarded:
+                        problems.append(f'{rel}:{number}: upstream code includes {target.group(1)} ({reached}) '
+                                        f'outside an #if {fork_common.GAMES_MACRO} branch; AD-2 and its ledger row '
+                                        'guard every upstream include of game code')
     return problems
 
 
@@ -395,7 +446,7 @@ def check(root):
         raise Failure(f'{len(problems)} problem(s) against the spine\'s layer table; fix the code, or change the '
                       'spine and LAYERS in scripts/check_layers.py together')
     print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and other source files '
-          'include game code only as their ledger rows allow; passed.')
+          f'include game code only as their ledger rows allow, inside #if {fork_common.GAMES_MACRO}; passed.')
 
 
 def main(argv=None):

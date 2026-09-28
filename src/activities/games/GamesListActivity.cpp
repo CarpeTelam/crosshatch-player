@@ -17,14 +17,13 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GameHostCaps.h"
+#include "games/GamePaths.h"
 
 namespace fui = freeink::ui;
 
 namespace {
 
-constexpr const char* GAMES_DIR = "/.games";
 constexpr size_t DIR_NAME_BUFFER = 64;
-constexpr size_t PATH_BUFFER = 96;
 constexpr size_t CHUNK_BYTES = 96;
 
 bool nameLess(const GameCore::Manifest& a, const GameCore::Manifest& b) {
@@ -45,8 +44,8 @@ void GamesListActivity::onEnter() {
 }
 
 bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestReader& reader, GameCore::Manifest& out) {
-  char path[PATH_BUFFER];
-  snprintf(path, sizeof(path), "%s/%s/manifest.json", GAMES_DIR, dirName);
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s/manifest.json", GamePaths::GAMES_DIR, dirName);
   auto file = Storage.open(path);
   if (!file) {
     LOG_INF("GAME", "Skipping %s: no manifest.json", dirName);
@@ -84,7 +83,7 @@ void GamesListActivity::loadGames() {
   games.reset();
   rows.reset();
   gameCount = 0;
-  auto dir = Storage.open(GAMES_DIR);
+  auto dir = Storage.open(GamePaths::GAMES_DIR);
   if (!dir || !dir.isDirectory()) return;
 
   size_t folders = 0;

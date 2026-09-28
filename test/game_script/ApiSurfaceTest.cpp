@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <climits>
 #include <cstdint>
 #include <iomanip>
 #include <lua.hpp>
@@ -23,6 +24,8 @@
 #include "Manifest.h"
 #include "Sandbox.h"
 #include "Session.h"
+
+static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 
 // The level-1 surface test (spine AD-19): a real LuaGame, whose load() opens the
 // device's sandbox and ch table, reports what a game can reach (fixtures/surface),

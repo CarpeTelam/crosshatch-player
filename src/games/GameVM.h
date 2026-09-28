@@ -69,6 +69,10 @@ class GameVM {
   // after the Session has delivered `over` and the round's last frame is
   // published. The match enters Over when the count moves (AD-21). Any task.
   uint32_t roundsEnded() const { return rounds.roundsEnded(); }
+  // Rounds that have started so far: the VM counts one once the round's first
+  // frame is published. After playAgain(), every frame published before this
+  // count moves is the last round's (SoloRounds::roundsStarted). Any task.
+  uint32_t roundsStarted() const { return rounds.roundsStarted(); }
   // Asks the VM for a new round (Play again): drops the queued events, and before
   // its next event the VM cancels the pending timer and runs Session::start() and
   // draw(), so ver keeps counting (GameScript::SoloRounds).
@@ -83,12 +87,19 @@ class GameVM {
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
-  // Ended with a ScriptError; errorMessage() then holds Lua's message.
+  // Ended with a ScriptError; failure() says whose.
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
+  // Why the VM failed, so the match words a host failure in tr() text (AD-14) and
+  // never has to name GameScript. Script: Lua's own message, errorMessage().
+  // NoSession: the arena's reserve had no room for the Session, before any Lua ran
+  // (the game could not start). OutOfMemory: LuaGame::load's scratch or Lua state
+  // did not fit. NotLoaded: a call into the game came before its load; defensive,
+  // since run() calls an entry only after load() returned Ok.
+  enum class Failure : uint8_t { None, Script, NoSession, OutOfMemory, NotLoaded };
+  Failure failure() const;
+  // The failure's English text, for the log; the error view shows it only for a
+  // Script failure.
   const char* errorMessage() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
-  // Failed because the arena's reserve had no room for the Session, before any Lua
-  // ran: the match shows its own out-of-memory text, not a Lua message.
-  bool failedOutOfMemory() const { return failed() && sessionOutOfMemory; }
 
   // True while a callback runs in Lua; the match then skips its loop delay (AD-5).
   bool busy() const { return game.inLua(); }

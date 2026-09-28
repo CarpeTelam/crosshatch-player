@@ -25,6 +25,7 @@
 #include "IRandom.h"
 #include "LuaGame.h"
 #include "Session.h"
+#include "SoloRounds.h"
 #include "StoreSlot.h"
 
 namespace GameScriptTestSupport {
@@ -174,7 +175,9 @@ class LuaGameTest : public ::testing::Test {
   void useFault(const std::string& name) { useSource("main", readFixture("faults/" + name + ".lua")); }
 
   // The GameVM task's composition (GameVM::run): a solo Session in the arena, taken
-  // before the Lua state, over a LuaGame; each step is followed by a draw.
+  // before the Lua state, over a LuaGame, driven by the production round loop
+  // (GameScript::SoloRounds) over its own input queue, so a regression in the loop
+  // fails these tests too.
   struct SessionGame {
     SessionGame(LuaGameTest& test)
         : arena(test.arena), game(test.arena, test.frames, test.sources, test.ports, test.canvas, test.images) {
@@ -184,19 +187,22 @@ class LuaGameTest : public ::testing::Test {
       game.close();
       arena.destroy(session);
     }
+    // load(), then the first round (SoloRounds::start: setup, status, draw).
     GameScript::Outcome start() {
       if (!session) return GameScript::Outcome::ScriptError;
-      GameScript::Outcome outcome = game.load();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->start();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
-      return outcome;
+      const GameScript::Outcome outcome = game.load();
+      if (outcome != GameScript::Outcome::Ok) return outcome;
+      return rounds.start(*session);
     }
-    // One event as GameVM handles it: input, the pending move, then a draw.
-    GameScript::Outcome step(const GameScript::InputEvent& event) {
-      GameScript::Outcome outcome = session->handle(event);
-      if (outcome == GameScript::Outcome::Ok) outcome = session->applyPending();
-      if (outcome == GameScript::Outcome::Ok) outcome = session->draw();
-      return outcome;
+    // One event as GameVM handles it (SoloRounds::step): a stale timer event is
+    // dropped, then input, the pending move, and a draw.
+    GameScript::Outcome step(const GameScript::InputEvent& event) { return rounds.step(event); }
+    // Play again as the match asks for it and GameVM::run answers it: the queue is
+    // cleared, then a new round on the same Session.
+    GameScript::Outcome playAgain() {
+      rounds.requestPlayAgain();
+      if (!rounds.takePlayAgain()) return GameScript::Outcome::ScriptError;
+      return rounds.restart();
     }
     GameScript::Outcome tap(int16_t x, int16_t y) {
       return step(GameScript::InputEvent{GameScript::InputKind::Tap, x, y});
@@ -205,6 +211,8 @@ class LuaGameTest : public ::testing::Test {
 
     GameScript::ArenaAllocator& arena;
     GameScript::LuaGame game;
+    GameScript::InputQueue queue;
+    GameScript::SoloRounds rounds{game.timer(), queue};
     GameCore::Session* session = nullptr;
   };
 

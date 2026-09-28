@@ -248,14 +248,8 @@ int storeSet(lua_State* L) {
   const BindingContext& context = *bindingContext(L);
   const Codec::Encoded encoded = Codec::encode(L, 1, Codec::STORE_LIMIT, context.scratch, context.scratchBytes);
   if (encoded.error != Codec::Error::None) {
-    char message[96];
-    if (encoded.error == Codec::Error::TooLarge) {
-      snprintf(message, sizeof(message), "ch.store.set: the store is too large (over %d bytes)",
-               static_cast<int>(Codec::STORE_LIMIT));
-    } else {
-      snprintf(message, sizeof(message), "ch.store.set: the store cannot be encoded (%s)",
-               Codec::errorName(encoded.error));
-    }
+    char message[ENCODE_ERROR_BYTES];
+    encodeErrorMessage(message, sizeof(message), "ch.store.set", "the store", encoded.error, Codec::STORE_LIMIT);
     return context.guard->raise(L, message);
   }
   enterLockedSection(L);
@@ -299,6 +293,15 @@ size_t utf8Cut(const char* text, const size_t length, const size_t room) {
   size_t kept = room;
   while (kept > 0 && (static_cast<uint8_t>(text[kept]) & 0xC0) == 0x80) --kept;
   return kept;
+}
+
+void encodeErrorMessage(char* out, const size_t capacity, const char* function, const char* what,
+                        const Codec::Error error, const size_t limit) {
+  if (error == Codec::Error::TooLarge) {
+    snprintf(out, capacity, "%s: %s is too large (over %d bytes)", function, what, static_cast<int>(limit));
+  } else {
+    snprintf(out, capacity, "%s: %s cannot be encoded (%s)", function, what, Codec::errorName(error));
+  }
 }
 
 int chLog(lua_State* L) {

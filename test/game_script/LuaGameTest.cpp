@@ -298,6 +298,42 @@ TEST_F(LuaGameTest, ErrorsBecomeScriptErrorsWithTheirMessage) {
   }
 }
 
+// The error view shows the message, so a long one is cut at a UTF-8 boundary, not
+// inside a character (the retro's R6).
+TEST_F(LuaGameTest, ALongErrorIsCutAtACharacterBoundary) {
+  // 158 ASCII bytes then a 2-byte character: 160 bytes, one over the 159 kept.
+  useSource("main", "return { setup = function() error(string.rep('x', 158) .. '\\u{e9}', 0) end }");
+  {
+    DirectGame game(arena, frames, sources, ports, canvas);
+    EXPECT_EQ(game.start(), Outcome::ScriptError);
+    EXPECT_EQ(std::string(game.errorMessage()), std::string(158, 'x'));
+    EXPECT_EQ(game.hostFailure(), LuaGame::HostFailure::None);  // the script's own error
+  }
+
+  // One byte shorter fits whole.
+  useSource("main", "return { setup = function() error(string.rep('x', 157) .. '\\u{e9}', 0) end }");
+  DirectGame fits(arena, frames, sources, ports, canvas);
+  EXPECT_EQ(fits.start(), Outcome::ScriptError);
+  EXPECT_EQ(std::string(fits.errorMessage()), std::string(157, 'x') + "\xc3\xa9");
+}
+
+// Load's own allocations failing is a host failure, which the error view words in
+// tr() text (AD-14), not the English log text.
+TEST_F(LuaGameTest, LoadOutOfMemoryIsAHostFailure) {
+  useSource("main", readFixture("tracer/main.lua"));
+  std::vector<void*> taken;
+  for (void* p = arena.allocate(1024); p; p = arena.allocate(1024)) taken.push_back(p);
+  for (void* p = arena.allocate(64); p; p = arena.allocate(64)) taken.push_back(p);
+  DirectGame game(arena, frames, sources, ports, canvas);
+  EXPECT_EQ(game.start(), Outcome::ScriptError);
+  EXPECT_STREQ(game.errorMessage(), "not enough memory");
+  EXPECT_EQ(game.hostFailure(), LuaGame::HostFailure::OutOfMemory);
+  for (void* p : taken) arena.release(p);
+  // A new load starts clean.
+  EXPECT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.hostFailure(), LuaGame::HostFailure::None);
+}
+
 TEST_F(LuaGameTest, MissingMainIsAScriptError) {
   useSource("helper", "return {}");
   DirectGame game(arena, frames, sources, ports, canvas);
@@ -549,6 +585,7 @@ TEST_F(LuaGameTest, AbandonForgetsTheStateWithoutClosingIt) {
   EXPECT_EQ(arena.bytesInUse(), held);  // nothing freed: the owner drops the arena whole
   EXPECT_EQ(game.draw(), Outcome::ScriptError);
   EXPECT_STREQ(game.errorMessage(), "game not started");
+  EXPECT_EQ(game.hostFailure(), LuaGame::HostFailure::NotLoaded);
 }
 
 }  // namespace

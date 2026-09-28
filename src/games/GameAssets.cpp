@@ -9,12 +9,12 @@
 #include <cstdio>
 #include <cstring>
 
+#include "GamePaths.h"
 #include "GameSaveStore.h"
 
 namespace {
 
-constexpr size_t NAME_BUFFER = 48;  // longer names cannot be modules or images and are skipped
-constexpr size_t PATH_BUFFER = 96;
+constexpr size_t NAME_BUFFER = 48;   // longer names cannot be modules or images and are skipped
 constexpr size_t LUA_EXT_BYTES = 4;  // ".lua"
 
 // One buffer holds a module name or an image name, whichever the file is.
@@ -56,8 +56,8 @@ bool looksLikeLua(const char* fileName, const size_t length) {
 GameAssets::LoadResult GameAssets::load(const char* gameId, GameSaveStore& saves, GameScript::StoreSlot& store) {
   release();
 
-  char path[PATH_BUFFER];
-  snprintf(path, sizeof(path), "/.games/%s", gameId);
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, gameId);
   if (!Storage.exists(path)) {
     LOG_ERR("GAME", "No game folder %s", path);
     return LoadResult::FolderMissing;

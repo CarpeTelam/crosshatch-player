@@ -114,6 +114,13 @@ class PythonOnlyTest(unittest.TestCase):
         self.assert_error('bad_type', object())
         self.assert_error('bad_type', {1, 2})
 
+    def test_lone_surrogates_are_codec_errors(self):
+        # A str with no UTF-8 form is a CodecError, never a UnicodeEncodeError (retro F9).
+        self.assert_error('bad_type', '\ud800')
+        self.assert_error('bad_type', ['ok', 'a\udfffb'])
+        self.assert_error('bad_key', {'\ud800': 1})
+        self.assert_error('bad_key', {'k': {'\udc80': True}})
+
     def test_python_containers(self):
         self.assertEqual(gc.encode([1, None, 3]), gc.parse_hex('06 01 03 02 01 03 06 03 06'))
         self.assertEqual(gc.encode((True,)), gc.parse_hex('06 01 02 00'))

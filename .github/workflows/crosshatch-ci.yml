@@ -6,16 +6,18 @@
 #   of crosspoint-reader's develop branch stay clean. That file has the rules and how to run the check locally.
 # - x4pro flash budget: caps the flash and the static internal RAM the game runtime adds to the X4 Pro firmware.
 #   Builds x4pro on the PR's commit with FREEINK_CAP_GAMES on (the normal env) and off, and fails when the image
-#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit more than the RAM
-#   limit larger. Both builds come from the same commit, so upstream growth never uses up the budget. It also fails
-#   a game object (lib/Game*, src/games, src/activities/games) with a static initializer or a mutable static over
-#   64 B (spine AD-2). scripts/check_flash_budget.py holds the logic and how to run it locally.
+#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections
+#   more than the RAM limit larger (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so
+#   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
+#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2).
+#   scripts/check_flash_budget.py holds the logic and how to run it locally.
 # - Simulator build: builds the desktop simulator for the X4 Pro and the Sticky, both of which turn FREEINK_CAP_GAMES
 #   on, so game code that only builds on the device fails here and not in a later session. Device-only files guard
 #   themselves with !defined(SIMULATOR); .claude/skills/run-crosshatch-player/ has the simulator and how to run it.
 # - Fork script tests: runs every scripts/*_test.py, the sidecar tests of the fork's scripts, including those of the
 #   release workflow's script, which otherwise runs only when dispatched. A regression that made a check always pass
-#   would go unnoticed on compliant PRs. docs/crosshatch/fork-scripts.md has the script conventions.
+#   would go unnoticed on compliant PRs, and so does a file that runs no test (its log has no "Ran <n>" line with
+#   n > 0, as when unittest.main() is missing). docs/crosshatch/fork-scripts.md has the script conventions.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
@@ -197,21 +199,30 @@ jobs:
           python-version: '3.13'
 
       # Each file in its own process, so one file's environment changes cannot leak into another, and every file runs
-      # even after one fails. Standard library and git only, as docs/crosshatch/fork-scripts.md requires.
+      # even after one fails. Standard library and git only, as docs/crosshatch/fork-scripts.md requires. Each file's
+      # output is captured and must report "Ran <n> tests" with n > 0: a file that forgets unittest.main() exits 0
+      # having run nothing (retro F7).
       - name: Run every scripts/*_test.py
         run: |
           status=0
           found=0
+          log="$(mktemp)"
           for test in scripts/*_test.py; do
             [ -f "$test" ] || continue
             found=1
             echo "::group::$test"
-            if ! python3 "$test" -v; then
-              status=1
-              echo "::error::$test failed"
-            fi
+            if python3 "$test" -v >"$log" 2>&1; then code=0; else code=$?; fi
+            cat "$log"
             echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              status=1
+              echo "::error::$test failed ($code)"
+            elif ! grep -Eq '^Ran [1-9][0-9]* tests? in ' "$log"; then
+              status=1
+              echo "::error::$test ran no tests (no \"Ran <n> tests\" line with n > 0); does it call unittest.main()?"
+            fi
           done
+          rm -f "$log"
           if [ "$found" -eq 0 ]; then
             echo "::error::no scripts/*_test.py found"
             exit 1

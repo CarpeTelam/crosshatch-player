@@ -41,11 +41,25 @@
 # API_SURFACE_CRC is the CRC-32 (zlib's) of every entry line of the level files
 # in level order, each followed by "\n", leaving out comments and blank lines;
 # test/game_core/ApiLevelTest.cpp recomputes it. Change the define with the list.
+#
+# Contract and comments. Only entry lines are contract: they alone feed
+# API_SURFACE_CRC, which preview devices are matched by (AD-13). Behaviour a
+# comment describes is documentation, outside the CRC and the preview match: a
+# preview can change it without changing the CRC. Comments are still frozen
+# with the rest of the file once the level freezes (the API freeze job compares
+# the whole file). A rule a game may rely on across hosts becomes an entry (a
+# limit, an enum, a signature) before its level freezes.
 
 # ch: host functions and values (game-api-seed section 5)
 field ch.api integer
 field ch.screen.w integer
 field ch.screen.h integer
+# Coordinates and sizes (x, y, w, h, r, x1, y1, x2, y2) saturate to
+# -32768..32767 when the command is recorded, before it is clipped to the
+# canvas. So rect(-40000, 0, 80480, 800, c, true) is recorded as
+# rect(-32768, 0, 32767, 800, c, true), which covers x = -32768..-2 and draws
+# nothing, not the full-width rect the wide values describe; a circle or text
+# anchored beyond the range moves to its edge.
 fn ch.gfx.clear(color)
 fn ch.gfx.rect(x, y, w, h, color, filled?)
 fn ch.gfx.line(x1, y1, x2, y2, color)

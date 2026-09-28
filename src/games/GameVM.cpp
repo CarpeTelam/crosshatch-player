@@ -143,6 +143,21 @@ void GameVM::run() {
   done.store(true, std::memory_order_release);
 }
 
+GameVM::Failure GameVM::failure() const {
+  using HostFailure = GameScript::LuaGame::HostFailure;
+  if (!failed()) return Failure::None;
+  if (sessionOutOfMemory) return Failure::NoSession;
+  switch (game.hostFailure()) {
+    case HostFailure::OutOfMemory:
+      return Failure::OutOfMemory;
+    case HostFailure::NotLoaded:
+      return Failure::NotLoaded;
+    case HostFailure::None:
+      break;
+  }
+  return Failure::Script;
+}
+
 void GameVM::playAgain() {
   rounds.requestPlayAgain();
   notifyTask();
@@ -159,12 +174,8 @@ uint32_t GameVM::runningForMs(const uint32_t nowMs) {
 }
 
 void GameVM::pollTimer() {
-  uint32_t serial = 0;
-  if (!game.timer().takeDue(clock.nowMs(), serial)) return;
   GameScript::InputEvent event;
-  event.kind = GameScript::InputKind::Timer;
-  event.serial = serial;
-  postInput(event);
+  if (game.timer().takeDueEvent(clock.nowMs(), event)) postInput(event);
 }
 
 bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay) {

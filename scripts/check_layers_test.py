@@ -54,7 +54,11 @@ BASE = {
     'src/games/FrameReplay.cpp': '#include <EpdFontData.h>\n#include <GfxRenderer.h>\n#include "fontIds.h"\n',
     # Upstream code that includes game code other than lib/GameScript and lib/lua, as its ledger row allows (rows 5,
     # 9, and 10; UPSTREAM_EDGES).
-    'src/network/OtaUpdater.cpp': '#include <Manifest.h>\n#include "games/GameVM.h"\n#include <WiFi.h>\n',
+    # Each guard spelling the check accepts, nested and after an #elif included.
+    'src/network/OtaUpdater.cpp': ('#include <WiFi.h>\n#if defined(FREEINK_CAP_GAMES) && !defined(SIMULATOR)\n'
+                                   '#include <Manifest.h>\n#endif\n#ifdef FREEINK_CAP_GAMES\n#if X\n#else\n'
+                                   '#include "games/GameVM.h"\n#endif\n#endif\n#if X\n#elif FREEINK_CAP_GAMES == 1 '
+                                   '// games\n#include "games/GameVM.h"\n#endif\n'),
     'src/activities/ActivityManager.cpp': ('#include "Activity.h"\n#if FREEINK_CAP_GAMES\n'
                                            '#include "games/GameMatchActivity.h"\n#endif\n'),
     'src/components/CoverGridHomeUi.cpp': ('#include "UiAppHost.h"\n#include <GfxRenderer.h>\n#if FREEINK_CAP_GAMES\n'
@@ -204,10 +208,52 @@ class CheckLayersTest(unittest.TestCase):
                           '1 problem(s)')
 
     def test_upstream_file_beyond_its_ledger_edge_fails(self):
-        self.assert_fails({'src/components/CoverGridHomeUi.cpp': ('#include <GameIcons.generated.h>\n'
-                                                                  '#include <Manifest.h>\n')},
-                          'src/components/CoverGridHomeUi.cpp:2: upstream code may not include <Manifest.h> '
+        self.assert_fails({'src/components/CoverGridHomeUi.cpp': ('#if FREEINK_CAP_GAMES\n'
+                                                                  '#include <GameIcons.generated.h>\n'
+                                                                  '#include <Manifest.h>\n#endif\n')},
+                          'src/components/CoverGridHomeUi.cpp:3: upstream code may not include <Manifest.h> '
                           '(lib/GameCore)', '1 problem(s)')
+
+    def test_unguarded_upstream_edge_fails(self):
+        # Deferred finding 3.6: the ledgered include with no guard, in the #else, or behind a guard that does not
+        # require the games flag. Each case is one problem at the include's line.
+        cases = {
+            'no guard': ('#include <GfxRenderer.h>\n#include <GameIcons.generated.h>\n', 2),
+            'the #else': ('#if FREEINK_CAP_GAMES\n#else\n#include <GameIcons.generated.h>\n#endif\n', 3),
+            '#ifndef': ('#ifndef FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n#endif\n', 2),
+            'negated': ('#if !FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n#endif\n', 2),
+            'an || condition': ('#if FREEINK_CAP_GAMES || X\n#include <GameIcons.generated.h>\n#endif\n', 2),
+            'another flag': ('#if FREEINK_CAP_GAMES_EXTRA\n#include <GameIcons.generated.h>\n#endif\n', 2),
+            'after the #endif': ('#if FREEINK_CAP_GAMES\n#endif\n#include <GameIcons.generated.h>\n', 3),
+            'an #elif after it': ('#if FREEINK_CAP_GAMES\n#elif X\n#include <GameIcons.generated.h>\n#endif\n', 3),
+            'a commented guard': ('// #if FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n', 2),
+            'an #elifndef after it': ('#if FREEINK_CAP_GAMES\n#elifndef X\n#include <GameIcons.generated.h>\n'
+                                      '#endif\n', 3),
+            'an #elifdef after it': ('#if FREEINK_CAP_GAMES\n#elifdef X\n#include <GameIcons.generated.h>\n'
+                                     '#endif\n', 3),
+            'an #elifndef of the flag': ('#if X\n#elifndef FREEINK_CAP_GAMES\n#include <GameIcons.generated.h>\n'
+                                         '#endif\n', 3),
+        }
+        for name, (text, line) in cases.items():
+            with self.subTest(name):
+                self.assert_fails({'src/components/CoverGridHomeUi.cpp': text},
+                                  f'src/components/CoverGridHomeUi.cpp:{line}: upstream code includes '
+                                  '<GameIcons.generated.h> (lib/GameIcons) outside an #if FREEINK_CAP_GAMES branch',
+                                  '1 problem(s)')
+
+    def test_games_branch_reads_each_guard_spelling(self):
+        accepted = [('if', 'FREEINK_CAP_GAMES'), ('if', 'FREEINK_CAP_GAMES == 1'), ('ifdef', 'FREEINK_CAP_GAMES'),
+                    ('if', 'defined(FREEINK_CAP_GAMES)'), ('if', 'defined FREEINK_CAP_GAMES'),
+                    ('elif', 'FREEINK_CAP_GAMES && !defined(SIMULATOR)'), ('if', 'X && FREEINK_CAP_GAMES'),
+                    ('elifdef', 'FREEINK_CAP_GAMES')]
+        refused = [('ifndef', 'FREEINK_CAP_GAMES'), ('if', '!FREEINK_CAP_GAMES'), ('if', 'FREEINK_CAP_GAMES == 0'),
+                   ('if', 'FREEINK_CAP_GAMES || X'), ('if', '(FREEINK_CAP_GAMES)'), ('else', ''),
+                   ('ifdef', 'FREEINK_CAP_GAMES_X'), ('if', 'X'), ('elifndef', 'FREEINK_CAP_GAMES'),
+                   ('elifdef', 'X'), ('elifndef', 'X')]
+        for kind, condition in accepted:
+            self.assertTrue(check_layers.games_branch(kind, condition), (kind, condition))
+        for kind, condition in refused:
+            self.assertFalse(check_layers.games_branch(kind, condition), (kind, condition))
 
     def test_upstream_header_without_a_ledger_edge_fails(self):
         self.assert_fails({'src/components/CoverGridHomeUi.h': '#pragma once\n#include <GameIcons.generated.h>\n'},
@@ -221,8 +267,9 @@ class CheckLayersTest(unittest.TestCase):
                           'upstream file includes game code only as its ledger row allows', '1 problem(s)')
 
     def test_ledgered_upstream_file_still_may_not_include_game_script(self):
-        self.assert_fails({'src/network/OtaUpdater.cpp': '#include <Manifest.h>\n#include <Codec.h>\n'},
-                          'src/network/OtaUpdater.cpp:2: upstream code may not include <Codec.h> (lib/GameScript); '
+        self.assert_fails({'src/network/OtaUpdater.cpp': ('#if FREEINK_CAP_GAMES\n#include <Manifest.h>\n'
+                                                          '#include <Codec.h>\n#endif\n')},
+                          'src/network/OtaUpdater.cpp:3: upstream code may not include <Codec.h> (lib/GameScript); '
                           'Screens may include it', '1 problem(s)')
 
     def test_screen_namespace_alias_fails(self):

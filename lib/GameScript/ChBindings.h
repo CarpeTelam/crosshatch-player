@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Codec.h"
 #include "TextMetrics.h"
 
 struct lua_State;
@@ -29,6 +30,16 @@ inline constexpr size_t LOG_LINE_BYTES = 160;
 // Where `length` bytes of UTF-8 at `text` may be cut to keep at most `room` bytes
 // without splitting a code point (ch.log lines, apply's rejection reason).
 size_t utf8Cut(const char* text, size_t length, size_t room);
+
+// Room for encodeErrorMessage's text with the longest `function` and `what` it is
+// given (ch.store.set's "the store").
+inline constexpr size_t ENCODE_ERROR_BYTES = 96;
+// The message for a value that `function` could not encode as `what` under `limit`
+// bytes: "<function>: <what> is too large (over <limit> bytes)", or "<function>:
+// <what> cannot be encoded (<error name>)". LuaGame's results and ch.store.set
+// share it.
+void encodeErrorMessage(char* out, size_t capacity, const char* function, const char* what, Codec::Error error,
+                        size_t limit);
 
 // The strings each ch.gfx option accepts (api-level-1.txt's `enum color`, `size`,
 // `align`, and `refresh`), null-terminated for luaL_checkoption; ChBindings.cpp maps

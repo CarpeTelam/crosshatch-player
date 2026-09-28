@@ -811,7 +811,7 @@ def main(argv=None):
         return fork_common.exit_code(step)
     except (OSError, KeyError, TypeError) as exc:
         print(f'error: could not run: {exc!r}', file=sys.stderr)
-        return 2
+        return fork_common.COULD_NOT_RUN
 
 
 if __name__ == '__main__':

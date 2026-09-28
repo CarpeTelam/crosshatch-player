@@ -28,6 +28,25 @@ TEST(GameTimerTest, FiresOnceWhenDue) {
   EXPECT_TRUE(timer.accepts(timerEvent(serial)));
 }
 
+// GameVM::pollTimer's event: kind Timer, the arming's serial, nothing else set.
+TEST(GameTimerTest, TakeDueEventMakesTheTimerEventOnce) {
+  GameTimer timer;
+  GameEvent event;
+  event.x = 7;
+  EXPECT_FALSE(timer.takeDueEvent(0, event));
+  EXPECT_EQ(event.x, 7);  // untouched when nothing is due
+  timer.arm(0, 1000);
+  EXPECT_FALSE(timer.takeDueEvent(999, event));
+  ASSERT_TRUE(timer.takeDueEvent(1000, event));
+  EXPECT_EQ(event.kind, EventKind::Timer);
+  EXPECT_EQ(event.x, 0);
+  EXPECT_TRUE(timer.accepts(event));
+  EXPECT_FALSE(timer.pending());
+  EXPECT_FALSE(timer.takeDueEvent(5000, event));
+  timer.arm(5000, 1000);
+  EXPECT_FALSE(timer.accepts(event));  // re-armed: the fired event is stale
+}
+
 TEST(GameTimerTest, ANewArmingReplacesThePendingOne) {
   GameTimer timer;
   uint32_t serial = 0;

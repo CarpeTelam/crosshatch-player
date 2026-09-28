@@ -36,24 +36,23 @@ constexpr const char* DRAW_UI_TEXT =
 
 class HostBindingsTest : public GameScriptTestSupport::LuaGameTest {
  protected:
-  // A Timer event as GameVM::pollTimer posts it, if the timer is due now.
+  // GameVM::pollTimer: queues the Timer event takeDueEvent makes, if the timer is
+  // due now.
   bool pollTimer(LuaGame& game, InputQueue& queue) {
-    uint32_t serial = 0;
-    if (!game.timer().takeDue(clock.nowMs(), serial)) return false;
     InputEvent event;
-    event.kind = InputKind::Timer;
-    event.serial = serial;
+    if (!game.timer().takeDueEvent(clock.nowMs(), event)) return false;
     queue.push(event);
     return true;
   }
 
-  // GameVM::run's handling of one queued event; false when the queue was empty or
-  // the event was stale.
+  // GameVM::run's handling of one queued event (SoloRounds::step, which drops a
+  // stale timer event); false when the queue was empty or the event was stale.
   bool deliverNext(SessionGame& game, InputQueue& queue) {
     InputEvent event;
-    if (!queue.pop(event) || !game.game.timer().accepts(event)) return false;
+    if (!queue.pop(event)) return false;
+    const bool fresh = game.game.timer().accepts(event);
     EXPECT_EQ(game.step(event), Outcome::Ok) << game.errorMessage();
-    return true;
+    return fresh;
   }
 
   // Runs setup, then input with a tap whose handler is `body`, then draw; returns
@@ -111,7 +110,7 @@ std::string timerGame(const std::string& onTap) {
 TEST_F(HostBindingsTest, ATimerReachesInputThroughTheQueueOnce) {
   useSource("main", timerGame(""));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   clock.advance(1499);
   EXPECT_FALSE(pollTimer(game.game, queue));
@@ -128,7 +127,7 @@ TEST_F(HostBindingsTest, ATimerReachesInputThroughTheQueueOnce) {
 TEST_F(HostBindingsTest, ATimerEventSurvivesATapBurstThatFillsTheQueue) {
   useSource("main", timerGame(""));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   queue.push(InputEvent{InputKind::Tap, 1, 1});
   clock.advance(1500);
@@ -148,7 +147,7 @@ TEST_F(HostBindingsTest, ATimerEventSurvivesATapBurstThatFillsTheQueue) {
 TEST_F(HostBindingsTest, ANewTimerReplacesThePendingOne) {
   useSource("main", timerGame("ch.timer.after(1500)"));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();  // due at 1500
   clock.advance(1000);
   ASSERT_EQ(game.tap(1, 1), Outcome::Ok) << game.errorMessage();  // now due at 2500
@@ -165,7 +164,7 @@ TEST_F(HostBindingsTest, ANewTimerReplacesThePendingOne) {
 TEST_F(HostBindingsTest, CancelClearsThePendingTimer) {
   useSource("main", timerGame("ch.timer.cancel()"));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.tap(1, 1), Outcome::Ok) << game.errorMessage();
   clock.advance(10000);
@@ -176,7 +175,7 @@ TEST_F(HostBindingsTest, CancelClearsThePendingTimer) {
 TEST_F(HostBindingsTest, AnEventFiredBeforeACancelIsDropped) {
   useSource("main", timerGame("ch.timer.cancel()"));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   clock.advance(1500);
   ASSERT_TRUE(pollTimer(game.game, queue));  // fired and queued...
@@ -189,7 +188,7 @@ TEST_F(HostBindingsTest, AnEventFiredBeforeACancelIsDropped) {
 TEST_F(HostBindingsTest, TheTimerFixtureTicksThreeTimesAndSaves) {
   useSource("main", GameScriptTestSupport::readFixture("timer/main.lua"));
   SessionGame game(*this);
-  InputQueue queue;
+  InputQueue& queue = game.queue;
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   EXPECT_TRUE(hasText(frontCommands(), "Ticks: 0 of 3"));
   for (int tick = 1; tick <= 3; ++tick) {
