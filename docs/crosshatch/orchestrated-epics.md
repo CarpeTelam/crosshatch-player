@@ -23,9 +23,9 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the orchestrator's own
   included, runs as `flock {lock} sh -c '<commands>'` (a bare `flock {lock} a && b` locks only `a`); two builds at
   once can wipe a build directory mid-build or race on the shared `~/.platformio/packages`.
-- **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 2, because
-  cloud sessions start Claude Code with 1, which keeps a build agent from starting its own review subagents (the cause
-  of O1). At 2 the orchestrator's build agents can start subagents, and theirs cannot. Before the first story, start
+- **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3, Claude
+  Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own review
+  subagents (the cause of O1). The build agents' review lenses need only 2. Before the first story, start
   one subagent that reports whether it has the `Agent` tool; if it does not, the build agents run their lenses in their
   own context, and step 3's fallback applies to every story.
 - **The upstream remote.** Worktrees share one git config, so add `upstream` once, fetch `develop`
