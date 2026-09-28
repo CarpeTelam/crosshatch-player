@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <iterator>
 #include <string>
 #include <vector>
 
+#include "GameIconBlit.h"
 #include "GameIcons.h"
+#include "GameImageBlit.h"
 #include "LuaGameFixture.h"
 
 using namespace GameScript;
@@ -104,7 +107,61 @@ class GfxBindingsTest : public LuaGameTest {
     frames.readFront([&](const DisplayList& list) { hint = list.refresh(); });
     return hint;
   }
+
+  // The front frame's icon and image budget charged.
+  uint32_t frontBlitPixels() {
+    uint32_t pixels = 0;
+    frames.readFront([&](const DisplayList& list) { pixels = list.blitPixels(); });
+    return pixels;
+  }
+
+  // One image, "checker": a 480 x 800 checkerboard, whose every pixel is a run of
+  // its own, so its replay fills each covered pixel on its own (the worst case).
+  void useChecker() {
+    constexpr uint32_t W = 480;
+    constexpr uint32_t H = 800;
+    constexpr uint32_t ROW_BYTES = W / 8;  // already a multiple of 4
+    imageSpans.assign(1, GameCore::ImageSpan{});
+    std::strncpy(imageSpans[0].name, "checker", GameCore::IMAGE_NAME_BYTES);
+    imageSpans[0].width = W;
+    imageSpans[0].height = H;
+    imageSpans[0].rowBytes = ROW_BYTES;
+    imageSpans[0].offset = 0;
+    imagePixels.assign(static_cast<size_t>(ROW_BYTES) * H, 0);
+    for (uint32_t y = 0; y < H; ++y) {
+      std::memset(imagePixels.data() + static_cast<size_t>(y) * ROW_BYTES, (y & 1) ? 0xAA : 0x55, ROW_BYTES);
+    }
+    images.spans = imageSpans.data();
+    images.count = imageSpans.size();
+    images.pixels = imagePixels.data();
+  }
+
+  // The fills the replay makes for the front frame's icons and images: each run
+  // GameIconBlit::inkRuns and GameImageBlit::runs give on the canvas, as
+  // FrameReplay draws them.
+  uint64_t frontBlitFills() {
+    uint64_t fills = 0;
+    const auto count = [&](auto...) { ++fills; };
+    for (const DrawCommand& c : frontCommands()) {
+      if (c.op == Op::Icon) {
+        GameIconBlit::Source source;
+        if (!GameIconBlit::sourceFor(c.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(c.size)],
+                                     static_cast<GameIcons::Weight>(c.weight), source)) {
+          ADD_FAILURE() << "no bitmap for icon " << c.icon;
+          continue;
+        }
+        GameIconBlit::inkRuns(source, c.x, c.y, canvas.width, canvas.height, count);
+      } else if (c.op == Op::Image) {
+        const GameCore::ImageSpan& span = images.spans[c.image];
+        GameImageBlit::runs(span, images.pixelsOf(span), c.x, c.y, canvas.width, canvas.height, c.color == Color::Black,
+                            count);
+      }
+    }
+    return fills;
+  }
 };
+
+constexpr const char* BLIT_BUDGET_TEXT = "the frame's icons and images cover over 1048576 pixels";
 
 TEST_F(GfxBindingsTest, EveryCallAndArgumentFormDecodes) {
   useSource("main", drawing(R"(
@@ -589,6 +646,182 @@ TEST_F(GfxBindingsTest, AnImageIsOneCommandWithinTheFrameLimits) {
   EXPECT_EQ(over.draw(), Outcome::ScriptError);
   EXPECT_STREQ(over.errorMessage(), "main.lua:4: frame is full (at most 2048 drawing calls or 32768 bytes)");
   EXPECT_EQ(frames.frameGen(), 1u);
+}
+
+// ch.gfx.icon and ch.gfx.image share a budget of MAX_BLIT_PIXELS canvas pixels a
+// frame (api-level-1.txt's frame_icon_image_pixels): exactly the budget draws, one
+// pixel more stops the game, and the frame is not published.
+TEST_F(GfxBindingsTest, IconsAndImagesDrawUpToTheFramesPixelBudget) {
+  ASSERT_EQ(MAX_BLIT_PIXELS, 1048576u);
+  ASSERT_EQ(canvas.width, 480);
+  ASSERT_EQ(canvas.height, 800);
+  useChecker();
+  // 2 x 384,000, 480 x 584 = 280,320 (rows 216..799), and 1 x 256 (x = 479):
+  // 1,048,576.
+  const std::string checkerAtBudget =
+      "ch.gfx.image('checker', 0, 0, 'black'); ch.gfx.image('checker', 0, 0, 'white')\n"
+      "ch.gfx.image('checker', 0, 216, 'black'); ch.gfx.image('checker', 479, 544, 'white')";
+  // 64 large icons of 128 x 128 = 16,384 pixels each: 1,048,576.
+  const std::string iconsAtBudget = "for i = 1, 64 do ch.gfx.icon('circle', 0, 0, 'large', 'black', 'fill') end";
+  struct Case {
+    std::string atBudget;
+    std::string onePixelMore;
+    const char* kind;
+  };
+  const Case cases[] = {
+      {checkerAtBudget, "ch.gfx.image('checker', 479, 799, 'black')", "image"},
+      {iconsAtBudget, "ch.gfx.icon('x', -127, -127, 'large', 'black')", "icon"},
+      // Across the kinds: the budget is one.
+      {iconsAtBudget, "ch.gfx.image('checker', -479, -799, 'black')", "image"},
+      {checkerAtBudget, "ch.gfx.icon('x', 479, 799, 'small', 'black')", "icon"},
+  };
+  for (const Case& c : cases) {
+    {
+      useSource("main", drawing(c.atBudget));
+      DirectGame game(arena, frames, sources, ports, canvas, images);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      ASSERT_EQ(game.draw(), Outcome::Ok) << c.atBudget << " -> " << game.errorMessage();
+      EXPECT_EQ(frontBlitPixels(), MAX_BLIT_PIXELS) << c.atBudget;
+    }
+    useSource("main", drawing(c.atBudget + "\n" + c.onePixelMore));
+    DirectGame over(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(over.start(), Outcome::Ok) << over.errorMessage();
+    const uint32_t before = frames.frameGen();
+    EXPECT_EQ(over.draw(), Outcome::ScriptError) << c.onePixelMore;
+    EXPECT_EQ(std::string(over.errorMessage()), std::string("main.lua:") + (c.atBudget == iconsAtBudget ? "4" : "5") +
+                                                    ": ch.gfx." + c.kind + ": " + BLIT_BUDGET_TEXT)
+        << c.onePixelMore;
+    EXPECT_EQ(over.callGuard().fault(), Fault::Binding) << c.onePixelMore;
+    EXPECT_EQ(frames.frameGen(), before) << c.onePixelMore;  // not published
+  }
+}
+
+// Like a full frame, the budget stops the game under pcall: the fault is sticky,
+// and the cut frame is not published.
+TEST_F(GfxBindingsTest, TheFramesPixelBudgetUnderPcallStillStopsTheGameUnpublished) {
+  useImages("images");
+  const char* const bodies[] = {
+      // pcall straight on the binding: the error has no Lua caller to name.
+      "for i = 1, 70 do pcall(ch.gfx.icon, 'circle', 0, 0, 'large', 'black') end",
+      // pcall around Lua that passes it, which then carries on drawing.
+      "pcall(function() for i = 1, 65 do ch.gfx.icon('circle', 0, 0, 'large', 'black') end end)\n"
+      "ch.gfx.text(0, 0, 'still drawing', 'small', 'black')",
+      "pcall(function() for i = 1, 200 do ch.gfx.image('badge', 0, 0, 'black') end end)\n"
+      "ch.gfx.image('dot', 0, 0, 'black')",
+  };
+  for (const char* body : bodies) {
+    useSource("main", drawing(body));
+    DirectGame game(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    const uint32_t before = frames.frameGen();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << body;
+    EXPECT_TRUE(contains(game.errorMessage(), BLIT_BUDGET_TEXT)) << body << " -> " << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << body;
+    EXPECT_EQ(frames.frameGen(), before) << body;
+  }
+}
+
+// The checks before the budget keep their order: a bad argument is still an
+// ordinary error pcall catches, and an unknown name is reported as such, even with
+// the budget spent.
+TEST_F(GfxBindingsTest, TheBudgetComesAfterTheArgumentAndNameChecks) {
+  const std::string full = "for i = 1, 64 do ch.gfx.icon('circle', 0, 0, 'large', 'black') end\n";
+  useSource("main",
+            drawing(full + "local ok, err = pcall(function() ch.gfx.icon('circle', 0, 0, 'huge', 'black') end)\n"
+                           "ch.gfx.text(0, 0, tostring(ok) .. ' ' .. err, 'small', 'black')"));
+  {
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(frontText(), "false main.lua:4: bad argument #4 to 'icon' (invalid option 'huge')");
+    EXPECT_EQ(game.callGuard().fault(), Fault::None);
+  }
+  useSource("main", drawing(full + "ch.gfx.icon('no_such_icon', 0, 0, 'large', 'black')"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.draw(), Outcome::ScriptError);
+  EXPECT_STREQ(game.errorMessage(), "main.lua:4: ch.gfx.icon: unknown icon \"no_such_icon\"");
+}
+
+// Only the pixels a command's replay walks count: none for one wholly off the
+// canvas (at its saturated coordinates), the visible part of one partly on.
+TEST_F(GfxBindingsTest, OnlyTheVisiblePixelsCountTowardTheBudget) {
+  useImages("images");  // badge 100 x 60, dot 37 x 37
+  useSource("main", drawing(R"(
+    for i = 1, 100 do
+      ch.gfx.icon('circle', -200, 0, 'large', 'black'); ch.gfx.icon('circle', 480, 0, 'large', 'black')
+      ch.gfx.icon('circle', 0, 800, 'large', 'black'); ch.gfx.icon('circle', 0, -128, 'large', 'black')
+      ch.gfx.icon('circle', -70000, 0, 'large', 'black'); ch.gfx.icon('circle', 70000, 70000, 'large', 'black')
+      ch.gfx.image('badge', -100, 0, 'black'); ch.gfx.image('badge', 0, 70000, 'white')
+      ch.gfx.image('dot', -70000, -70000, 'black')
+    end
+  )"));
+  {
+    DirectGame game(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(frontBlitPixels(), 0u);
+    EXPECT_EQ(frontBlitFills(), 0u);
+  }
+
+  struct Case {
+    const char* call;
+    uint32_t pixels;
+  };
+  const Case cases[] = {
+      {"ch.gfx.image('badge', 440, 0, 'black')", 40 * 60},          // right edge
+      {"ch.gfx.image('badge', 0, 770, 'white')", 100 * 30},         // bottom edge
+      {"ch.gfx.image('dot', -30, -30, 'black')", 7 * 7},            // top-left corner
+      {"ch.gfx.icon('x', -100, 700, 'large', 'black')", 28 * 100},  // left and bottom
+      {"ch.gfx.icon('x', 470, 10, 'small', 'white')", 10 * 32},     // right edge
+      {"ch.gfx.icon('x', 10, 10, 'medium', 'black')", 64 * 64},     // whole
+  };
+  for (const Case& c : cases) {
+    useSource("main", drawing(c.call));
+    DirectGame game(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(frontBlitPixels(), c.pixels) << c.call;
+  }
+}
+
+// Each frame starts from 0: a game that spends the whole budget every frame keeps
+// drawing.
+TEST_F(GfxBindingsTest, EachFrameStartsItsPixelBudgetAtZero) {
+  useSource("main", drawing("for i = 1, 64 do ch.gfx.icon('square', 0, 0, 'large', 'black', 'fill') end"));
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  for (int frame = 0; frame < 3; ++frame) {
+    ASSERT_EQ(game.draw(), Outcome::Ok) << frame << ": " << game.errorMessage();
+    EXPECT_EQ(frontBlitPixels(), MAX_BLIT_PIXELS) << frame;
+  }
+}
+
+// The budget bounds the replay: a frame at the budget makes at most
+// MAX_BLIT_PIXELS fills, and a checkerboard, a run a pixel, exactly that many
+// (was up to 2,048 x 384,000).
+TEST_F(GfxBindingsTest, AFrameAtTheBudgetReplaysInAtMostThatManyFills) {
+  useChecker();
+  const char* const bodies[] = {
+      "ch.gfx.image('checker', 0, 0, 'black'); ch.gfx.image('checker', 0, 0, 'white')\n"
+      "ch.gfx.image('checker', 0, 216, 'black'); ch.gfx.image('checker', 479, 544, 'white')",
+      "for i = 1, 64 do ch.gfx.icon('circle', 0, 0, 'large', 'black', 'fill') end",
+      "for i = 0, 63 do ch.gfx.icon('dice-five', (i % 4) * 100, (i // 4) * 40, 'large', 'black') end",
+      "ch.gfx.image('checker', 0, 0, 'black'); ch.gfx.image('checker', 0, 0, 'white')\n"
+      "for i = 1, 17 do ch.gfx.icon('square', 300, 600, 'large', 'white') end\n"
+      "ch.gfx.image('checker', 224, 792, 'black')",
+  };
+  const uint64_t exact[] = {MAX_BLIT_PIXELS, 0, 0, 0};  // 0: at most
+  for (size_t i = 0; i < std::size(bodies); ++i) {
+    useSource("main", drawing(bodies[i]));
+    DirectGame game(arena, frames, sources, ports, canvas, images);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << bodies[i] << " -> " << game.errorMessage();
+    EXPECT_EQ(frontBlitPixels(), MAX_BLIT_PIXELS) << bodies[i];
+    const uint64_t fills = frontBlitFills();
+    EXPECT_LE(fills, MAX_BLIT_PIXELS) << bodies[i];
+    if (exact[i] != 0) EXPECT_EQ(fills, exact[i]) << bodies[i];
+  }
 }
 
 TEST_F(GfxBindingsTest, ScreenIsTheCanvasPassedAtStart) {

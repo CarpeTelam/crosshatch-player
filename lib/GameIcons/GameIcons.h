@@ -49,6 +49,10 @@ constexpr bool strictlySorted() {
 
 }  // namespace detail
 
+// The drawn sizes in pixels, indexed like ch.gfx's size names (small, medium,
+// large). Large is the medium bitmap with each pixel drawn as a 2 x 2 block.
+inline constexpr int DRAWN_PIXELS[] = {SMALL_PIXELS, MEDIUM_PIXELS, 2 * MEDIUM_PIXELS};
+
 static_assert(ICON_COUNT > 0, "the icon library has no icons");
 static_assert(detail::strictlySorted(), "ICONS must be sorted by name, bytewise, with no name twice");
 

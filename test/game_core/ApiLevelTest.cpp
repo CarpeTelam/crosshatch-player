@@ -45,9 +45,17 @@ TEST(ApiLevelTest, GrammarRejectsMalformedEntries) {
         "seats_max 0", "icon Mark", "icon a_b", "global x", "lib string\r", "ctx mode", "lib string.", "lib a.b.c"}) {
     EXPECT_FALSE(parseEntry(bad).has_value()) << bad;
   }
+  // draw names a ch.gfx function and ink or opaque; name a pattern of printable
+  // ASCII without spaces.
+  const char* const badRules[] = {
+      "draw ch.gfx.icon", "draw ch.gfx.icon clear", "draw ch.log ink",  "draw ch.gfx.icon ink opaque",
+      "name image",       "name image a b",         "name Image [a-z]", "name image [a-z] "};
+  for (const char* bad : badRules) EXPECT_FALSE(parseEntry(bad).has_value()) << bad;
   EXPECT_TRUE(parseEntry("fn ch.gfx.text(x, y, str, size, color, align?)").has_value());
   EXPECT_TRUE(parseEntry("fn ch.text_width(str, size) -> integer").has_value());
   EXPECT_TRUE(parseEntry("lib string.format").has_value());
+  EXPECT_EQ(parseEntry("draw ch.gfx.image opaque")->key, "draw ch.gfx.image");
+  EXPECT_EQ(parseEntry("name image [a-z0-9_]{1,32}")->key, "name image");
   EXPECT_EQ(parseEntry("lib math.pi")->key, "sym math.pi");
 }
 

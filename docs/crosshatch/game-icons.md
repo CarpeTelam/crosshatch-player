@@ -5,7 +5,9 @@ The game icon library: the icons a game draws with `ch.gfx.icon(name, x, y, size
 each a 1-bit bitmap at 32 px (`small`) and 64 px (`medium`); `large` (128 px) draws the 64 px bitmap doubled. The
 names are part of the game API level: `api-level-1.txt` lists each one as `icon <name>`, and
 `ApiSurfaceTest.IconsMatchTheList` checks that list against the library both ways and draws every name at every size
-in both weights.
+in both weights. The list also holds the drawn sizes (`limit icon_small_side_pixels`,
+`icon_medium_side_pixels`, `icon_large_side_pixels`), that an icon draws its ink only (`draw ch.gfx.icon ink`), and the
+canvas pixels a frame's icons and images may cover (`limit frame_icon_image_pixels`).
 
 ## Where the icons come from
 
@@ -51,7 +53,8 @@ the same bitmap. A screen draws the fill weight with `drawGameIcon(..., black, t
 - One name per glyph: no alias for an icon already in the set.
 - A game's own images (`ch.gfx.image`) follow a different rule: the file name without `.bmp`, 1 to 32 characters from
   `[a-z0-9_]`, with no `-`. A chess game that ships `crown-cross.bmp` has it skipped with a log line; name it
-  `crown_cross.bmp` (`api-level-1.txt` says so beside the image limits).
+  `crown_cross.bmp` (`api-level-1.txt` lists the rule as `name image (?!icon$)[a-z0-9_]{1,32}`, beside the image
+  limits).
 - Level 1 is a preview until `API_LEVEL_FROZEN`: names may still change. Once a level is frozen, no name in it is
   renamed or removed; a new icon joins the next level.
 
