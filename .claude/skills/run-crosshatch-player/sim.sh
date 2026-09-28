@@ -60,12 +60,30 @@ managed_block() {
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{on=1;next} $0==e{on=0;next} on' platformio.local.ini
 }
 
+# Exit 0 when platformio.local.ini's managed block equals simulator.ini, else say why and exit 1.
+cmd_check() {
+  local local_ini=platformio.local.ini
+  if [ ! -f "$local_ini" ] || ! grep -qxF "$MARK_BEGIN" "$local_ini"; then
+    echo "sim: $local_ini has no managed simulator block; run '$0 setup'" >&2
+    return 1
+  fi
+  if ! grep -qxF "$MARK_END" "$local_ini"; then
+    echo "sim: $local_ini's managed simulator block has no end marker '$MARK_END'; restore it by hand (setup will not replace such a block)" >&2
+    return 1
+  fi
+  if [ "$(managed_block)" != "$(cat "$SKILL_DIR/simulator.ini")" ]; then
+    echo "sim: $local_ini's managed simulator block differs from simulator.ini (stale); run '$0 setup'" >&2
+    return 1
+  fi
+  echo "sim: $local_ini's managed simulator block is current"
+}
+
 cmd_build() {
   local env
   env=$(env_for "${1:-}")
   # A missing or outdated copy (simulator.ini edited since setup) would build with the wrong flags.
-  if [ "$(managed_block)" != "$(cat "$SKILL_DIR/simulator.ini")" ]; then
-    echo "sim: platformio.local.ini lacks the current simulator.ini; running setup"
+  if ! cmd_check; then
+    echo "sim: running setup"
     cmd_setup
   fi
   pio run -e "$env" -j "$(nproc)"
@@ -217,6 +235,7 @@ usage() {
 
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;    # install sim envs + seed fs_/books
+  check) shift; cmd_check "$@" ;;    # exit 1 if the managed block is missing or stale
   build) shift; cmd_build "$@" ;;    # [x4pro|sticky|x4]
   start) shift; cmd_start "$@" ;;    # [x4pro|sticky|x4] launch on Xvfb
   stop) shift; cmd_stop "$@" ;;      # kill simulator + Xvfb

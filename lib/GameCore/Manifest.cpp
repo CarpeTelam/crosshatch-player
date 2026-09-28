@@ -51,6 +51,46 @@ bool copyField(char (&field)[N], const std::string_view text) {
   return true;
 }
 
+// The first component of a dotted path ("seats" for "seats.min"), and the rest ("" for a top-level path).
+std::string_view topOf(const std::string_view path) { return path.substr(0, path.find('.')); }
+
+std::string_view innerOf(const std::string_view path) {
+  const size_t dot = path.find('.');
+  return dot == std::string_view::npos ? std::string_view() : path.substr(dot + 1);
+}
+
+// Every MANIFEST_KEYS entry is one onKey reads: a Seats entry has a seat and a
+// dotted path, any other entry neither.
+constexpr bool manifestKeysAreReadable() {
+  for (const ManifestKey& entry : MANIFEST_KEYS) {
+    const bool seats = entry.key == ManifestReader::Key::Seats;
+    const bool hasSeat = entry.seat != ManifestReader::SeatKey::None;
+    const bool dotted = entry.path.find('.') != std::string_view::npos;
+    if (hasSeat != seats || dotted != seats) return false;
+  }
+  return true;
+}
+static_assert(manifestKeysAreReadable(), "MANIFEST_KEYS: a seat and a dotted path exactly for Key::Seats entries");
+
+// The top-level key MANIFEST_KEYS names `name`, or Unknown.
+ManifestReader::Key topLevelKey(const std::string_view name) {
+  for (const ManifestKey& entry : MANIFEST_KEYS) {
+    if (topOf(entry.path) == name) return entry.key;
+  }
+  return ManifestReader::Key::Unknown;
+}
+
+// The seats key MANIFEST_KEYS names `name`, or Unknown.
+ManifestReader::SeatKey seatKeyNamed(const std::string_view name) {
+  for (const ManifestKey& entry : MANIFEST_KEYS) {
+    if (entry.key == ManifestReader::Key::Seats && entry.seat != ManifestReader::SeatKey::None &&
+        innerOf(entry.path) == name) {
+      return entry.seat;
+    }
+  }
+  return ManifestReader::SeatKey::Unknown;
+}
+
 ManifestReader* self(void* ctx) { return static_cast<ManifestReader*>(ctx); }
 
 JsonCallbacks callbacksFor(ManifestReader* reader) {
@@ -237,24 +277,7 @@ void ManifestReader::onKey(const std::string_view name) {
       fail(ManifestError::Syntax);
       return;
     }
-    Key k = Key::Unknown;
-    if (name == "id") {
-      k = Key::Id;
-    } else if (name == "name") {
-      k = Key::Name;
-    } else if (name == "version") {
-      k = Key::Version;
-    } else if (name == "api") {
-      k = Key::Api;
-    } else if (name == "seats") {
-      k = Key::Seats;
-    } else if (name == "modes") {
-      k = Key::Modes;
-    } else if (name == "hidden") {
-      k = Key::Hidden;
-    } else if (name == "icon") {
-      k = Key::Icon;
-    }
+    const Key k = topLevelKey(name);
     if (k != Key::Unknown) {
       const auto bit = static_cast<uint16_t>(1u << static_cast<unsigned>(k));
       if ((seen & bit) != 0) {
@@ -273,14 +296,15 @@ void ManifestReader::onKey(const std::string_view name) {
       return;
     }
     seatKey = SeatKey::Unknown;
-    if (name == "min") {
+    const SeatKey named = seatKeyNamed(name);
+    if (named == SeatKey::Min) {
       if (seatsMinSeen) {
         fail(ManifestError::DuplicateKey);
         return;
       }
       seatsMinSeen = true;
       seatKey = SeatKey::Min;
-    } else if (name == "max") {
+    } else if (named == SeatKey::Max) {
       if (seatsMaxSeen) {
         fail(ManifestError::DuplicateKey);
         return;

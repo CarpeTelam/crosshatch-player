@@ -83,6 +83,28 @@ TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
   EXPECT_EQ(limits["manifest_icon_bytes"], std::to_string(GameCore::Manifest::MAX_ICON_BYTES));
 }
 
+// The list's manifest keys are the ones the parser reads (GameCore::MANIFEST_KEYS),
+// in both directions, each named once.
+TEST(ApiLevelTest, ManifestKeysMatchTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::set<std::string> listed;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "manifest") listed.insert(entry.name);
+  }
+  std::set<std::string> parsed;
+  for (const GameCore::ManifestKey& key : GameCore::MANIFEST_KEYS) {
+    EXPECT_TRUE(parsed.insert(std::string(key.path)).second) << "MANIFEST_KEYS names twice: " << key.path;
+  }
+  for (const std::string& name : listed) {
+    EXPECT_EQ(parsed.count(name), 1u) << "listed but not in MANIFEST_KEYS: " << name;
+  }
+  for (const std::string& name : parsed) {
+    EXPECT_EQ(listed.count(name), 1u) << "in MANIFEST_KEYS but not listed: " << name;
+  }
+  EXPECT_FALSE(listed.empty());
+}
+
 TEST(ApiLevelTest, SessionLimitsMatchTheList) {
   const Surface surface = loadSurface();
   ASSERT_TRUE(surface.loaded);

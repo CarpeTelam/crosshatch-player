@@ -93,6 +93,7 @@ add_executable(GameScriptTest
   SoloRoundsTest.cpp
   StoreSlotTest.cpp
   TextMetricsTest.cpp
+  VmFailureTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   # GameViewIconsTest walks every state's menu.

@@ -143,21 +143,6 @@ void GameVM::run() {
   done.store(true, std::memory_order_release);
 }
 
-GameVM::Failure GameVM::failure() const {
-  using HostFailure = GameScript::LuaGame::HostFailure;
-  if (!failed()) return Failure::None;
-  if (sessionOutOfMemory) return Failure::NoSession;
-  switch (game.hostFailure()) {
-    case HostFailure::OutOfMemory:
-      return Failure::OutOfMemory;
-    case HostFailure::NotLoaded:
-      return Failure::NotLoaded;
-    case HostFailure::None:
-      break;
-  }
-  return Failure::Script;
-}
-
 void GameVM::playAgain() {
   rounds.requestPlayAgain();
   notifyTask();

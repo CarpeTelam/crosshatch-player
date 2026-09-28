@@ -5,6 +5,7 @@
 #include <HalMemory.h>
 #include <LuaGame.h>
 #include <SoloRounds.h>
+#include <VmFailure.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -90,13 +91,17 @@ class GameVM {
   // Ended with a ScriptError; failure() says whose.
   bool failed() const { return finished() && scriptFailed.load(std::memory_order_acquire); }
   // Why the VM failed, so the match words a host failure in tr() text (AD-14) and
-  // never has to name GameScript. Script: Lua's own message, errorMessage().
-  // NoSession: the arena's reserve had no room for the Session, before any Lua ran
-  // (the game could not start). OutOfMemory: LuaGame::load's scratch or Lua state
-  // did not fit. NotLoaded: a call into the game came before its load; defensive,
-  // since run() calls an entry only after load() returned Ok.
-  enum class Failure : uint8_t { None, Script, NoSession, OutOfMemory, NotLoaded };
-  Failure failure() const;
+  // never has to name GameScript; VmFailure.h says what each value means.
+  using Failure = GameScript::VmFailure;
+  using HostFailureTexts = GameScript::HostFailureTexts;
+  Failure failure() const { return GameScript::vmFailure(failed(), sessionOutOfMemory, game.hostFailure()); }
+  // Failed before any game code ran: the error view's headline says it could not start.
+  bool failedToStart() const { return GameScript::failedToStart(failure()); }
+  // The error view's detail: `texts` (tr() text) for a host failure, errorMessage()
+  // for the script's own.
+  const char* failureDetail(const HostFailureTexts& texts) const {
+    return GameScript::failureDetail(failure(), texts, errorMessage());
+  }
   // The failure's English text, for the log; the error view shows it only for a
   // Script failure.
   const char* errorMessage() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
