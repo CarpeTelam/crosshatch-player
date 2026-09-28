@@ -1,0 +1,91 @@
+# tickets.toml — epic-icon-library's agreed stories in build order. tickets.py reads it.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: a Phosphor icon from SVG to the game canvas"
+description = "Vendors four Phosphor 2.1.1 SVGs (regular `x` and `circle` as `mark_x` and `mark_o`, fill `heart` and `dice-six` as `suit_heart` and `die_6`) with Phosphor's licence and the name map (name, source file, weight) in `assets/game-icons/`; adds `scripts/gen_game_icons.py` on `fork_common.py` with a standard-library path rasterizer (absolute and relative M L H V C S Q A Z, nonzero winding) and a standard-library sidecar test, rendering 32 and 64 px bitmaps in `GfxRenderer::drawIcon`'s layout (square, 1 bpp, MSB-first, byte-padded rows, 0 = ink, stored rotated 90° counter-clockwise) into a committed `GameIcons.generated.h` with a name table, a lookup API, and per-name bitmaps entry 6 reaches at compile time; un-ignores the header in `.gitignore`, adds `lib/GameIcons/.clang-format` (`DisableFormat`), narrows AGENTS.md's generated-files line, adds the sidecar test to the ledger's Game paths, and removes the `GameIcons::libraryName()` stub and its `LinksLibraries` check; adds `ch.gfx.icon(name, x, y, size, color)` with an `Icon` display-list op, a pure host-tested blit in `src/games` (large doubles the 64 px bitmap, `white` inks white, clipped) that `FrameReplay` uses, and a `drawGameIcon` helper in `src/games` for screens that takes no `GameScript` type (entries 5 and 6, and epic-install-and-launcher's launcher rows, use it); raises an unknown name through `CallGuard::raise`, with `faults/unknown_icon.lua` and its fixtures README row; appends `fn ch.gfx.icon` and the four `icon` lines with `API_SURFACE_CRC`, and adds `ApiSurfaceTest.IconsMatchTheList`; and adds an `icons` fixture game in `test/game_script/fixtures/`."
+verify = "Host tests pass, including the generator's sidecar (a ring's hole case, and two runs byte-identical), the blit, the icon binding with an unknown name under `pcall`, `SessionGameTest`'s every-fault check reaching the README's text for `unknown_icon`, and `IconsMatchTheList`; `x4pro` and `sticky` build; a simulator screenshot of the `icons` fixture shows the four icons at small, medium, and large in black and in white."
+covers = ["R1", "R2", "R4", "R6", "R7"]
+after = ["2.9", "2.11"]
+hitl = false
+risk = "medium"
+unknown = "Whether the rasterizer's 1-bit threshold at 32 px keeps dice pips, suit points, and the regular weight's 2 px lines legible; the owner judges it from the screenshot."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-2, AD-7, AD-19, AD-24, layer table", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, sections 5 and 6", "_bmad-output/implementation-artifacts/deferred-work.md, spine rules ahead of the code (epic-icon-library)", "docs/crosshatch/fork-scripts.md", "freeink-sdk/libs/assets/Icons/tools/gen_icons.py, for the bitmap layout only", "test/game_script/fixtures/README.md", ".claude/skills/run-crosshatch-player/SKILL.md"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "ch.gfx.image and package images"
+description = "Extends `GameAssets` to load each `/.games/<id>/<name>.bmp` except `icon.bmp` (`PngToBmpConverter`'s 62-byte 1-bit header, top-down rows padded to 4 bytes, palette index 0 = black) into its PSRAM block with a name table, through a pure host-tested header parser and within one named 128 KB converted-image constant that epic-install-and-launcher's installer and `pack_game.py` reuse; passes the table to `GameScript` through a port in `BindingContext`, with no new include edge; adds `ch.gfx.image(name, x, y, color)` with an `Image` display-list op and an opaque image blit beside entry 1's (`white` inverted, clipped); raises an unknown name through `CallGuard::raise`, with `faults/unknown_image.lua` and its README row; maps a malformed or over-budget image to a load failure with one appended `STR_GAMES_*` key in `GameMatchActivity.cpp`'s load-failure mapping; appends `fn ch.gfx.image` and the image limits with `API_SURFACE_CRC`; adds an `images` fixture whose `.bmp` files match the converter's layout; and leaves the spine unchanged."
+verify = "Host tests pass, including the header parser (valid, truncated, wrong bit depth, over budget), the image binding with an unknown name under `pcall`, the every-fault check for `unknown_image`, and the surface test; simulator screenshots show the `images` fixture's image in black and in white at its native size, and a fixture with a malformed `.bmp` in the load-failure view."
+covers = ["R5", "R6", "R7"]
+after = [1, "2.1"]
+hitl = false
+risk = "medium"
+unknown = "Whether the fixture `.bmp` files come from running `PngToBmpConverter` in a host test or are committed bytes a test checks against the converter's layout."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-15, AD-16, AD-24, Consistency Conventions", "lib/PngToBmpConverter/PngToBmpConverter.cpp, writeBmpHeader1bit"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Icon regeneration job"
+description = "Adds an `Icons up to date` job to `.github/workflows/crosshatch-ci.yml` that runs entry 1's `scripts/gen_game_icons.py`, unchanged, to a scratch path and fails when the result differs by any byte from the committed `lib/GameIcons/GameIcons.generated.h`, and lists it in `Crosshatch Test Status` `needs`; the spine's CI row is left to entry 7."
+verify = "From a fresh tree (a clone, or `git archive` with every submodule's archive), the job's commands pass on the committed header, fail after one byte of it changes, and produce the same bytes under two Python versions."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "low"
+unknown = "None known."
+
+[[entry]]
+id = 4
+type = "story"
+title = "The v1 icon set"
+description = "Drafts the v1 list by category (marks, card suits, dice faces, board pieces, player markers, common controls) from game-api-seed section 5 and `first-party-games.md`, including `game_controller` for entry 6 and the icons entry 5's pause, error, and game-over views use, which the owner approves; vendors every chosen Phosphor fill or regular SVG and draws originals in the matching weight's style where Phosphor has none (no pawn, bishop, or queen; `crown`, `horse`, and `castle-turret` exist); regenerates the header with the unchanged generator; writes the attribution and name list in `docs/crosshatch/`; appends every `icon` line with `API_SURFACE_CRC`; and extends the `icons` fixture to draw every library icon; it follows entry 2 because both edit `api-level-1.txt` and `ApiLevel.h`."
+verify = "Host tests pass, `IconsMatchTheList` included; a simulator screenshot of the extended `icons` fixture shows every library icon at small, medium, and large; the plan records the icons' flash and static RAM deltas, measured as x4pro games on minus games off at the entry's base commit and at its commit, with the method, beside epic 2's +150,448 B."
+covers = ["R1", "R3", "R7", "R10"]
+after = [2]
+hitl = true
+risk = "low"
+unknown = "How many original drawings the set needs and whether they read at 32 px in 1-bit."
+references = ["_bmad-output/specs/spec-crosshatch-player/first-party-games.md", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-24, Operational envelope", "scripts/check_flash_budget.py"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "Runtime views draw from the library"
+description = "The pause, error, and game-over views in `GameMatchActivity` draw the library icons entry 4 names in the option dialog's content band through entry 1's `drawGameIcon` helper, with no new include edge and no new strings."
+verify = "Simulator screenshots of the pause, game-over, and error views on `x4pro` and `sticky` show their icons; host tests and both builds pass; `check_layers.py` passes."
+covers = ["R8"]
+after = [4, "2.13"]
+hitl = false
+risk = "low"
+unknown = "None known."
+references = ["freeink-sdk/libs/ui/FreeInkUI/include/components/overlays/option-dialog.h", "docs/contributing/touch-and-ui.md"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Cover-grid Home Games tile"
+description = "Under `FREEINK_CAP_GAMES`, grows `CoverGridHomeUi`'s tab array (row 8), draws a Games tile from entry 4's `game_controller` 32 px bitmap with `renderer.drawIcon` (row 9), and shows Games in cover-grid mode with its tab mapping in `HomeActivity` (rows 6 and 7); adds the `CoverGridHomeUi.cpp` → `lib/GameIcons` edge to the spine's layer table and to `scripts/check_layers.py`, with a rule that an upstream file includes game headers only from its ledger row; and updates the rows' text in `docs/crosshatch/upstream-touches.md`."
+verify = "A cover-grid simulator screenshot shows the Games tile and a tap on it opens Games; the list theme is unchanged; all five envs build; `check_layers.py` with its sidecar test and `check_upstream_touches.py` pass."
+covers = ["R9", "R10"]
+after = [4, "2.1"]
+hitl = false
+risk = "medium"
+unknown = "None known."
+references = ["_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-3 rows 6 to 9, layer table", "docs/crosshatch/upstream-touches.md"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Refactor sweep"
+description = "Takes the epic's deferred review findings and the epic-script-runtime retrospective's AI-11 list — F5, F6, F7, F8 (the header line the owner decided), F9, A4, A5, and retro R3, R4, R6, R9, R10, leaving A3 to epic-install-and-launcher and retro R8 to epic-game-api-docs; adds `Layer check` and `Icons up to date` to the spine's Operational-envelope CI row; and records the epic's final flash and static RAM deltas."
+verify = "Host tests, every `scripts/*_test.py`, the five env builds, `pio check`, the whole-tree format check, and `check_layers.py` pass; the plan lists each AI-11 item as fixed, documented, or deferred with the owner's reason."
+covers = ["R10", "R11"]
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "medium"
+unknown = "Whether all of AI-11 fits one session; retro R10 may need `FrontlightPanelActivity.cpp`, which is outside the ledger, and is then documented."
+references = ["_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime/epic-script-runtime-retrospective.md, AI-11 and findings F5 to F9, A3 to A5, R3 to R10"]
