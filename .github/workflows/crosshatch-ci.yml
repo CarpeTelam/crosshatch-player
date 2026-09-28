@@ -17,7 +17,8 @@
 # - Fork script tests: runs every scripts/*_test.py, the sidecar tests of the fork's scripts, including those of the
 #   release workflow's script, which otherwise runs only when dispatched. A regression that made a check always pass
 #   would go unnoticed on compliant PRs, and so does a file that runs no test (its log has no "Ran <n>" line with
-#   n > 0, as when unittest.main() is missing). docs/crosshatch/fork-scripts.md has the script conventions.
+#   n > 0, as when unittest.main() is missing). scripts/sim_sh_test.py also tests the simulator skill's sim.sh setup
+#   and check on scratch repositories. docs/crosshatch/fork-scripts.md has the script conventions.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
@@ -26,8 +27,11 @@
 #   lib/GameScript or lib/lua, and a Screens file that names GameScript (retro AI-5). scripts/check_layers.py holds
 #   the table as data and how to run it locally.
 # - Icons up to date: runs scripts/gen_game_icons.py, unchanged, to a scratch file and fails when the result differs
-#   by any byte from the committed lib/GameIcons/GameIcons.generated.h (never edited by hand; spine AD-2, AD-24).
-#   Fix a failure with python3 scripts/gen_game_icons.py and commit the header; the script's docstring has the rest.
+#   by any byte from the committed lib/GameIcons/GameIcons.generated.h (never edited by hand; spine AD-2, AD-24), or
+#   when the generator itself fails, as it does for an SVG whose SHA-256 differs from assets/game-icons/SHA256SUMS;
+#   each failure is annotated.
+#   Fix a failure with python3 scripts/gen_game_icons.py on Linux and commit the header (after a deliberate change of
+#   source, --write-sums first); the script's docstring has the rest.
 name: Crosshatch CI
 
 on:
@@ -275,9 +279,12 @@ jobs:
       - name: Regenerate the icon header and compare it with the committed one
         run: |
           fresh="$RUNNER_TEMP/GameIcons.generated.h"
-          python3 scripts/gen_game_icons.py --out "$fresh"
+          if ! python3 scripts/gen_game_icons.py --out "$fresh"; then
+            echo "::error::scripts/gen_game_icons.py failed (its message is above); restore an SVG whose SHA-256 differs from assets/game-icons/SHA256SUMS from Phosphor 2.1.1, or, after a deliberate change of source, rewrite SHA256SUMS with python3 scripts/gen_game_icons.py --write-sums"
+            exit 1
+          fi
           if ! difference=$(cmp lib/GameIcons/GameIcons.generated.h "$fresh" 2>&1); then
-            echo "::error file=lib/GameIcons/GameIcons.generated.h::differs from a fresh run of scripts/gen_game_icons.py ($difference); run python3 scripts/gen_game_icons.py and commit the header"
+            echo "::error file=lib/GameIcons/GameIcons.generated.h::differs from a fresh run of scripts/gen_game_icons.py ($difference); run python3 scripts/gen_game_icons.py on Linux and commit the header"
             echo "diff -u of the committed header and the fresh run, first 200 lines:"
             diff -u lib/GameIcons/GameIcons.generated.h "$fresh" | head -n 200 || true
             exit 1

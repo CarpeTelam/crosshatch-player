@@ -35,13 +35,24 @@ need_window() {
   echo "$w"
 }
 
+# Exit 0 when platformio.local.ini is absent, has neither marker, or has exactly one begin marker followed by one end
+# marker; else exit 1. setup's block replace drops every line from a begin marker to the next end marker, so any other
+# shape (no end marker, an end marker first, a second begin marker, a second block) would lose the user's lines.
+markers_ok() {
+  [ -f platformio.local.ini ] || return 0
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+    $0==b { if (begins || ends) bad=1; begins++ }
+    $0==e { if (!begins || ends) bad=1; ends++ }
+    END { exit (bad || begins != ends) }' platformio.local.ini
+}
+
+MARKERS_BAD="markers are not one '$MARK_BEGIN' line followed by one '$MARK_END' line"
+
 cmd_setup() {
   local local_ini=platformio.local.ini tmp
   touch "$local_ini"
-  # Without the end marker the block replace below would drop everything after the begin marker.
-  if grep -qxF "$MARK_BEGIN" "$local_ini" && ! grep -qxF "$MARK_END" "$local_ini"; then
-    die "$local_ini has the line '$MARK_BEGIN' but not '$MARK_END'; restore it by hand"
-  fi
+  # Any other marker shape would make the block replace below drop the user's lines.
+  markers_ok || die "$local_ini's simulator $MARKERS_BAD; restore it by hand"
   tmp=$(mktemp)
   # Replace any previous managed block, keep the user's own settings.
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$local_ini" > "$tmp"
@@ -63,6 +74,10 @@ managed_block() {
 # Exit 0 when platformio.local.ini's managed block equals simulator.ini, else say why and exit 1.
 cmd_check() {
   local local_ini=platformio.local.ini
+  if ! markers_ok; then
+    echo "sim: $local_ini's simulator $MARKERS_BAD; restore it by hand (setup will not replace such a block)" >&2
+    return 1
+  fi
   if [ ! -f "$local_ini" ] || ! grep -qxF "$MARK_BEGIN" "$local_ini"; then
     echo "sim: $local_ini has no managed simulator block; run '$0 setup'" >&2
     return 1

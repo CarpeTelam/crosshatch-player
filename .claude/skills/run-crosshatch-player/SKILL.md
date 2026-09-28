@@ -43,12 +43,15 @@ $S build x4pro    # or: sticky | x4.  ~80 s cold, ~12 s incremental or with a wa
 `setup` copies `simulator.ini` (from this skill directory) into the gitignored
 `platformio.local.ini`, which `platformio.ini` already loads through
 `extra_configs`. No tracked file changes. `check` exits 1 when
-`platformio.local.ini` lacks the current `simulator.ini` (never set up, a block
-without its end marker, or `simulator.ini` edited since), and `build` runs
-`setup` first when `check` fails; `setup` replaces its own marked block and
-leaves the rest alone. A block without its end marker is the one case `build`
-does not repair: `setup` stops there rather than drop the settings after it, so
-restore the end marker by hand.
+`platformio.local.ini` lacks the current `simulator.ini` (never set up, malformed
+markers, or `simulator.ini` edited since), and `build` runs `setup` first when
+`check` fails; `setup` replaces its own marked block and leaves the rest alone.
+The markers must be absent, or exactly one begin marker followed by one end
+marker. Any other shape (a begin or an end marker alone, an end marker first,
+two begin or two end markers, two blocks) is the one case `build` does not
+repair: `setup` exits 1 without changing the file rather than drop the settings
+around the markers, and `check` exits 1 saying so, so restore them by hand.
+`scripts/sim_sh_test.py` tests both commands on scratch repositories.
 The envs are `simulator_x4pro`, `simulator_sticky`, and `simulator` (X4).
 
 ## Run: live session (agent path)

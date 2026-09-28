@@ -35,9 +35,13 @@ table names on its own. Screens may include upstream src/ code (their screen inf
     `using namespace`, a namespace alias, a #define): Screens reach lib/GameScript only through src/games;
   - fails a src/games header that re-exports GameScript at global scope (`using namespace GameScript;`,
     `using X = GameScript::Y;`, `using GameScript::Y;`, `namespace X = GameScript;`).
-It reads #include, #include_next, and #import lines. Deliberate evasions are out of scope: digraphs (`%:include`), a
-directive split by line continuations, an include through a macro (which fails as a computed include when it is a
-plain `#include MACRO`), and raw string literals or other text that fools the comment and literal blanking.
+It reads #include, #include_next, and #import lines. It splices backslash-continued lines before blanking comments
+and reading a conditional, so a guard continued onto a second line (`#if FREEINK_CAP_GAMES && \\` then `X || 1`) is
+judged by its whole condition. A conditional whose line opens a block comment that spans lines is never a games
+branch, so its include fails visibly, since the condition may go on after the comment (`#if FREEINK_CAP_GAMES /*`
+then `*/ || 1`). Deliberate evasions are out of scope: digraphs (`%:include`), an #include split by line
+continuations, an include through a macro (which fails as a computed include when it is a plain `#include MACRO`),
+and raw string literals or other text that fools the comment and literal blanking.
 
 Exit 0: every edge is allowed. Exit 1: an edge the table does not allow, an include it cannot classify, or one of the
 GameScript uses above; each is printed as path:line. Exit 2: the check could not run (no such root, a game folder
@@ -202,6 +206,8 @@ COMMENT_OR_LITERAL = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\
 GAME_SCRIPT_WORD = re.compile(r'\bGameScript\b')
 PREPROCESSOR_LINE = re.compile(r'^[ \t]*#[^\n]*', re.M)
 CONDITIONAL = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$')
+# A backslash ending a physical line (compilers allow trailing blanks after it, with a warning).
+CONTINUATION = re.compile(r'\\[ \t]*$')
 GAMES = re.escape(fork_common.GAMES_MACRO)
 # One &&-joined part of an #if or #elif condition that requires the games flag.
 GAMES_CONJUNCT = re.compile(rf'(?:{GAMES}(?:\s*==\s*1)?|defined\s*\(\s*{GAMES}\s*\)|defined\s+{GAMES})')
@@ -398,22 +404,56 @@ def games_branch(kind, condition):
     return any(GAMES_CONJUNCT.fullmatch(part.strip()) for part in condition.split('&&'))
 
 
+def logical_lines(text):
+    """(first, last, text) for each logical line of text: its physical lines joined at each backslash-newline, as C
+    translation phase 2 splices them, with first and last its 1-based physical line numbers."""
+    first = None
+    parts = []
+    number = 0
+    for number, line in enumerate(text.splitlines(), start=1):
+        if first is None:
+            first = number
+        continued = CONTINUATION.search(line)
+        if continued:
+            parts.append(line[:continued.start()])
+            continue
+        parts.append(line)
+        yield first, number, ''.join(parts)
+        first = None
+        parts = []
+    if first is not None:  # a backslash on the last line continues into nothing
+        yield first, number, ''.join(parts)
+
+
 def games_guarded_lines(text):
     """The line numbers of text inside the games branch of an #if, #ifdef, #elif, or #elifdef, at any depth
-    (comments do not count as directives)."""
+    (comments do not count as directives). Lines are spliced at each backslash-newline first and comments blanked
+    after, in C's order, so a directive is read from its whole logical line, and every physical line of a guarded
+    logical line is guarded. A conditional whose line opens a block comment that spans lines is never a games branch:
+    its condition may continue after the comment (`#if FREEINK_CAP_GAMES /*` then `*/ || 1`)."""
+    logical = list(logical_lines(text))
+    if not logical:
+        return set()
+    joined = '\n'.join(line for _, _, line in logical)
+    # The logical lines (indexes into `logical`) on which a block comment spanning lines opens.
+    spanning = {joined.count('\n', 0, found.start()) for found in COMMENT_OR_LITERAL.finditer(joined)
+                if found.group(0).startswith('/*') and '\n' in found.group(0)}
     guarded = set()
     branches = []  # one per open conditional: whether its current branch is a games branch
-    for number, line in enumerate(blank(text, literals=False).splitlines(), start=1):
+    # blank keeps line breaks, so its line i is logical line i.
+    for index, line in enumerate(blank(joined, literals=False).split('\n')):
+        first, last, _ = logical[index]
         match = CONDITIONAL.match(line)
         if not match:
             if any(branches):
-                guarded.add(number)
+                guarded.update(range(first, last + 1))
             continue
         kind, rest = match.groups()
+        games = index not in spanning and games_branch(kind, rest)
         if kind in ('if', 'ifdef', 'ifndef'):
-            branches.append(games_branch(kind, rest))
+            branches.append(games)
         elif branches and kind in ('elif', 'elifdef', 'elifndef'):
-            branches[-1] = games_branch(kind, rest)
+            branches[-1] = games
         elif branches and kind == 'else':
             branches[-1] = False
         elif branches and kind == 'endif':
