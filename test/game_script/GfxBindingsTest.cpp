@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -235,6 +236,53 @@ TEST_F(GfxBindingsTest, TheCommandLimitIs2048AndRefreshIsNotACommand) {
   EXPECT_EQ(over.draw(), Outcome::ScriptError);
   EXPECT_STREQ(over.errorMessage(), "main.lua:3: frame is full (at most 2048 drawing calls or 32768 bytes)");
   EXPECT_EQ(frames.frameGen(), 1u);  // the overflowing frame was not published
+}
+
+// Both gfx faults stop the game (game-api-seed.md section 6): a script's pcall
+// catches them at most once, and the call still ends in a ScriptError.
+TEST_F(GfxBindingsTest, AFullFrameUnderPcallStillStopsTheGameUnpublished) {
+  const char* const bodies[] = {
+      // pcall straight on the binding: the error has no Lua caller to name.
+      "for i = 1, 2100 do pcall(ch.gfx.rect, 0, 0, 1, 1, 'black') end",
+      // pcall around Lua that overflows, which then carries on drawing.
+      "pcall(function() for i = 1, 2100 do ch.gfx.clear('white') end end)\n"
+      "ch.gfx.refresh('full')",
+  };
+  for (const char* body : bodies) {
+    useSource("main", drawing(body));
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    const uint32_t before = frames.frameGen();
+    EXPECT_EQ(game.draw(), Outcome::ScriptError) << body;
+    EXPECT_TRUE(contains(game.errorMessage(), "frame is full (at most 2048 drawing calls or 32768 bytes)"))
+        << body << " -> " << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << body;
+    EXPECT_EQ(frames.frameGen(), before) << body;  // the cut frame was not published
+  }
+}
+
+TEST_F(GfxBindingsTest, GfxOutsideDrawUnderPcallStillStopsTheGame) {
+  const std::string sourcesFor[] = {
+      "return { setup = function() pcall(ch.gfx.clear, 'white') return {} end }",
+      "return { setup = function() local ok = pcall(function() ch.gfx.line(0, 0, 1, 1, 'black') end)\n"
+      "  return { ok = ok } end }",
+      "return { setup = function() return {} end, draw = function() end,\n"
+      "  input = function() pcall(ch.gfx.refresh, 'full') return nil end }",
+  };
+  const char* const messages[] = {
+      "ch.gfx.clear called outside draw",
+      "main.lua:1: ch.gfx.line called outside draw",
+      "ch.gfx.refresh called outside draw",
+  };
+  for (size_t i = 0; i < std::size(sourcesFor); ++i) {
+    useSource("main", sourcesFor[i]);
+    DirectGame game(arena, frames, sources, ports, canvas);
+    Outcome outcome = game.start();
+    if (outcome == Outcome::Ok) outcome = game.input(InputEvent{InputKind::Tap, 1, 1});
+    EXPECT_EQ(outcome, Outcome::ScriptError) << sourcesFor[i];
+    EXPECT_TRUE(contains(game.errorMessage(), messages[i])) << sourcesFor[i] << " -> " << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Binding) << sourcesFor[i];
+  }
 }
 
 TEST_F(GfxBindingsTest, TheByteLimitIs32KiB) {

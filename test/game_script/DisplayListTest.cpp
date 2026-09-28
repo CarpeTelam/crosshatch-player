@@ -230,4 +230,53 @@ TEST(InputQueueTest, KeepsOrderAndDropsTheOldestWhenFull) {
   EXPECT_FALSE(queue.pop(out));
 }
 
+// A due timer is disarmed when GameVM::pollTimer queues its event, so a burst of
+// touches must never evict that event (the retro's R2).
+TEST(InputQueueTest, AFullQueueDropsTheOldestTouchNeverTheTimer) {
+  InputQueue queue;
+  InputEvent timer;
+  timer.kind = InputKind::Timer;
+  timer.serial = 7;
+  EXPECT_FALSE(queue.push(InputEvent{InputKind::Tap, 0, 0}));
+  EXPECT_FALSE(queue.push(timer));  // second in line
+  for (int i = 1; i < static_cast<int>(INPUT_QUEUE_DEPTH) - 1; ++i) {
+    EXPECT_FALSE(queue.push(InputEvent{InputKind::Tap, static_cast<int16_t>(i), 0}));
+  }
+  // Full: taps 0..6 and the timer. Ten swipes drop taps 0..6, then swipes 100..102.
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_TRUE(queue.push(InputEvent{InputKind::Swipe, static_cast<int16_t>(100 + i), 0})) << i;
+  }
+  InputEvent out;
+  ASSERT_TRUE(queue.pop(out));
+  EXPECT_EQ(out.kind, InputKind::Timer);  // still first, as it came before every kept touch
+  EXPECT_EQ(out.serial, 7u);
+  for (int i = 103; i < 110; ++i) {
+    ASSERT_TRUE(queue.pop(out));
+    EXPECT_EQ(out.kind, InputKind::Swipe);
+    EXPECT_EQ(out.x, i);
+  }
+  EXPECT_FALSE(queue.pop(out));
+}
+
+TEST(InputQueueTest, AQueueOfTimersDropsTheOldestTimer) {
+  // Only a re-armed timer fires again, so every Timer event but the newest is stale.
+  InputQueue queue;
+  for (uint32_t serial = 1; serial <= INPUT_QUEUE_DEPTH; ++serial) {
+    InputEvent timer;
+    timer.kind = InputKind::Timer;
+    timer.serial = serial;
+    EXPECT_FALSE(queue.push(timer));
+  }
+  EXPECT_TRUE(queue.push(InputEvent{InputKind::Tap, 5, 5}));
+  InputEvent out;
+  for (uint32_t serial = 2; serial <= INPUT_QUEUE_DEPTH; ++serial) {
+    ASSERT_TRUE(queue.pop(out));
+    EXPECT_EQ(out.kind, InputKind::Timer);
+    EXPECT_EQ(out.serial, serial);
+  }
+  ASSERT_TRUE(queue.pop(out));
+  EXPECT_EQ(out.kind, InputKind::Tap);
+  EXPECT_FALSE(queue.pop(out));
+}
+
 }  // namespace

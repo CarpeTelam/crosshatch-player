@@ -49,7 +49,7 @@ void CallGuard::trip(lua_State* L, lua_Debug* ar, const Fault fault) {
       }
       shown = text;
       break;
-    case Fault::Codec:  // raise() formats its own message
+    case Fault::Binding:  // raise() formats its own message
     case Fault::None:
       break;
   }
@@ -77,7 +77,7 @@ void CallGuard::hook(lua_State* L, lua_Debug* ar) {
 }
 
 int CallGuard::raise(lua_State* L, const char* message) {
-  tripped = Fault::Codec;
+  tripped = Fault::Binding;
   lua_Debug caller;
   if (lua_getstack(L, 1, &caller) && lua_getinfo(L, "Sl", &caller) && caller.currentline > 0) {
     snprintf(text, sizeof(text), "%s:%d: %s", caller.short_src, caller.currentline, message);

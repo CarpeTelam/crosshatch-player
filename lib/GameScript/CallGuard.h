@@ -12,9 +12,10 @@ namespace GameScript {
 // The GameVM task's stack (AD-5): 16 KiB of internal RAM.
 inline constexpr size_t VM_STACK_BYTES = 16 * 1024;
 
-// Why the guard stopped a call. Codec: a binding refused a value under AD-10's
-// limits (ch.store.set), which ends the call as surely as a state over its limit.
-enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Codec };
+// Why the guard stopped a call. Binding: a binding hit a fault the game contract
+// says stops the game (a store over AD-10's limit, a full frame, ch.gfx outside
+// draw), which ends the call as surely as a state over its limit.
+enum class Fault : uint8_t { None, Budget, Cancelled, Stack, Binding };
 
 // The limits on one call into a game, enforced from a single Lua hook (AD-6, and
 // the owner's stack decision of 2026-09-27): the instruction budget, the cancel
@@ -72,7 +73,7 @@ class CallGuard {
 
   static void hook(lua_State* L, lua_Debug* ar);
 
-  // From a binding: records a Codec fault with `message`, prefixed with the calling
+  // From a binding: records a Binding fault with `message`, prefixed with the calling
   // script's chunk and line, and raises it; like every fault it is sticky, so the
   // script's own pcall cannot keep the call going. Does not return.
   int raise(lua_State* L, const char* message);

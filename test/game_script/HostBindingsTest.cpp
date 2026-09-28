@@ -123,6 +123,28 @@ TEST_F(HostBindingsTest, ATimerReachesInputThroughTheQueueOnce) {
   EXPECT_FALSE(pollTimer(game.game, queue));
 }
 
+// pollTimer disarms the timer as it queues the event, so a burst of taps that
+// overflows the queue must drop taps, not the event (the retro's R2).
+TEST_F(HostBindingsTest, ATimerEventSurvivesATapBurstThatFillsTheQueue) {
+  useSource("main", timerGame(""));
+  SessionGame game(*this);
+  InputQueue queue;
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  queue.push(InputEvent{InputKind::Tap, 1, 1});
+  clock.advance(1500);
+  ASSERT_TRUE(pollTimer(game.game, queue));
+  EXPECT_FALSE(game.game.timer().pending());
+  int dropped = 0;
+  for (int i = 0; i < static_cast<int>(INPUT_QUEUE_DEPTH) * 2; ++i) {
+    dropped += queue.push(InputEvent{InputKind::Tap, 1, 1}) ? 1 : 0;
+  }
+  EXPECT_EQ(dropped, static_cast<int>(INPUT_QUEUE_DEPTH) + 2);
+  int delivered = 0;
+  while (deliverNext(game, queue)) ++delivered;
+  EXPECT_EQ(delivered, static_cast<int>(INPUT_QUEUE_DEPTH));
+  EXPECT_EQ(frontText(), "ticks 1");  // the timer's move went through apply
+}
+
 TEST_F(HostBindingsTest, ANewTimerReplacesThePendingOne) {
   useSource("main", timerGame("ch.timer.after(1500)"));
   SessionGame game(*this);

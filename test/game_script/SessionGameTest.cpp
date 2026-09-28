@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 #include <pthread.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <lua.hpp>
@@ -112,6 +114,86 @@ TEST_F(SessionGameTest, EveryLimitsFixtureBandIsAScriptError) {
     const auto y = static_cast<int16_t>(TOP + band * BAND_HEIGHT + BAND_HEIGHT / 2);
     EXPECT_EQ(game.tap(100, y), Outcome::ScriptError) << "band " << band + 1;
     EXPECT_TRUE(contains(game.errorMessage(), messages[band])) << "band " << band + 1 << ": " << game.errorMessage();
+  }
+}
+
+// The error text of every fault fixture, as fixtures/README.md's "Fault bands" and
+// "Fault scripts" tables give it, through the GameVM composition on a modelled
+// 16 KiB task stack (the retro's O4 and AI-6). Keep this table and the README in
+// step: the README is what the device run checks by eye.
+TEST_F(SessionGameTest, EveryFaultFixtureEndsWithTheReadmesText) {
+  constexpr const char* STACK = "script recursion too deep (C stack nearly full)";
+  constexpr const char* LUA_STACK = "C stack overflow";
+  struct Case {
+    const char* script;   // faults/<script>.lua, or null for a loop/ band
+    int loopBand;         // 1-based band of loop/main.lua when script is null
+    const char* message;  // the README's text
+    bool stackDepth;      // the README allows the other stack message instead
+  };
+  const Case cases[] = {
+      {"binary_chunk", 0, "main.lua:2: attempt to call a nil value (global 'load')", false},
+      {"deep_parens", 0, LUA_STACK, true},
+      {"deep_pattern", 0, "main.lua:5: pattern too complex", false},
+      {"gc_loop", 0, "main.lua:5: setmetatable: __gc metamethods are not supported", false},
+      {"gc_recursive", 0, "main.lua:6: setmetatable: __gc metamethods are not supported", false},
+      {"heap", 0, "not enough memory", false},
+      {"io", 0, "main.lua:2: attempt to index a nil value (global 'io')", false},
+      {"load", 0, "main.lua:2: attempt to call a nil value (global 'load')", false},
+      {"loop_draw", 0, "main.lua:7: instruction budget exceeded", false},
+      {"loop_in_pcall", 0, "main.lua:10: instruction budget exceeded", false},
+      {"loop_in_xpcall_handler", 0, "main.lua:5: instruction budget exceeded", false},
+      {"loop_input", 0, "main.lua:8: instruction budget exceeded", false},
+      {"loop_load", 0, "main.lua:2: instruction budget exceeded", false},
+      {"loop_setup", 0, "main.lua:2: instruction budget exceeded", false},
+      {"lua_error", 0, "main.lua:2: boom", false},
+      {"missing_require", 0, "main.lua:2: module 'nothere' not found", false},
+      {"nested_pcall", 0, STACK, true},
+      {"os", 0, "main.lua:2: attempt to index a nil value (global 'os')", false},
+      {"recurse_in_xpcall_handler", 0, "main.lua:5: instruction budget exceeded", false},
+      {"recursive_index", 0, STACK, true},
+      {"table_insert_len", 0, "main.lua:6: table.insert: more than 65536 elements", false},
+      {"table_move", 0, "main.lua:3: table.move: more than 65536 elements", false},
+      {nullptr, 1, "main.lua:7: instruction budget exceeded", false},  // Loop forever
+      {nullptr, 2, "main.lua:7: instruction budget exceeded", false},  // Loop inside pcall
+      {nullptr, 3, STACK, true},                                       // Recurse through pcall
+      // Bands 4 and 5 (Slow C calls forever, Stuck in one C call) end on the 3 s
+      // watchdog in GameMatchActivity, which the host does not build; not modelled.
+  };
+  constexpr int LOOP_TOP = 100;
+  constexpr int LOOP_BAND_HEIGHT = 130;
+
+  // Every script under faults/ has a row, so a new fixture cannot skip this test.
+  std::vector<std::string> onDisk;
+  for (const auto& entry : std::filesystem::directory_iterator(std::string(GAME_SCRIPT_FIXTURES_DIR) + "/faults")) {
+    if (entry.path().extension() == ".lua") onDisk.push_back(entry.path().stem().string());
+  }
+  std::vector<std::string> listed;
+  for (const auto& c : cases) {
+    if (c.script) listed.emplace_back(c.script);
+  }
+  std::sort(onDisk.begin(), onDisk.end());
+  std::sort(listed.begin(), listed.end());
+  EXPECT_EQ(onDisk, listed);
+
+  for (const auto& c : cases) {
+    const std::string name = c.script ? std::string(c.script) : "loop band " + std::to_string(c.loopBand);
+    useSource("main",
+              c.script ? readFixture("faults/" + std::string(c.script) + ".lua") : readFixture("loop/main.lua"));
+    SessionGame game(*this);
+    modelTaskStack(game.game);
+    Outcome outcome = game.start();
+    // loop_input and the loop bands wait for a tap; the rest stop before it.
+    if (outcome == Outcome::Ok) {
+      const int y = c.script ? 10 : LOOP_TOP + (c.loopBand - 1) * LOOP_BAND_HEIGHT + LOOP_BAND_HEIGHT / 2;
+      outcome = game.tap(100, static_cast<int16_t>(y));
+    }
+    EXPECT_EQ(outcome, Outcome::ScriptError) << name;
+    const std::string message = game.errorMessage();
+    if (c.stackDepth) {
+      EXPECT_TRUE(message == STACK || message.find(LUA_STACK) != std::string::npos) << name << " -> " << message;
+    } else {
+      EXPECT_EQ(message, c.message) << name;
+    }
   }
 }
 

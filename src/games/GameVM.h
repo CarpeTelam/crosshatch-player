@@ -58,7 +58,8 @@ class GameVM {
   // task cannot be created.
   bool start();
   // Queues an event for input(): a touch event (GameTouch.h), or pollTimer's Timer
-  // event. A full queue drops its oldest event, with a log line.
+  // event. A full queue drops its oldest event that is not a Timer (InputQueue),
+  // with a log line.
   void postInput(const GameScript::InputEvent& event);
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.

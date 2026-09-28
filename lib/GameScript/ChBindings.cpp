@@ -34,16 +34,25 @@ static_assert(std::size(SIZE_NAMES) == std::size(SIZE_VALUES) + 1, "one value pe
 static_assert(std::size(ALIGN_NAMES) == std::size(ALIGN_VALUES) + 1, "one value per align name");
 static_assert(std::size(REFRESH_NAMES) == std::size(REFRESH_VALUES) + 1, "one value per refresh name");
 
+// Both gfx faults stop the game (the contract's Errors), so they go through the
+// guard: a script's own pcall cannot catch them and publish a cut frame.
+
 // The frame being drawn; raises unless draw is running.
 DisplayList& drawTarget(lua_State* L, const char* function) {
-  DisplayList* list = bindingContext(L)->drawTarget;
-  if (!list) luaL_error(L, "ch.gfx.%s called outside draw", function);
-  return *list;
+  const BindingContext& context = *bindingContext(L);
+  if (!context.drawTarget) {
+    char message[48];
+    snprintf(message, sizeof(message), "ch.gfx.%s called outside draw", function);
+    context.guard->raise(L, message);
+  }
+  return *context.drawTarget;
 }
 
 int frameFull(lua_State* L) {
-  return luaL_error(L, "frame is full (at most %d drawing calls or %d bytes)", static_cast<int>(MAX_COMMANDS),
-                    static_cast<int>(MAX_BYTES));
+  char message[72];
+  snprintf(message, sizeof(message), "frame is full (at most %d drawing calls or %d bytes)",
+           static_cast<int>(MAX_COMMANDS), static_cast<int>(MAX_BYTES));
+  return bindingContext(L)->guard->raise(L, message);
 }
 
 Color checkFillColor(lua_State* L, const int arg) {
