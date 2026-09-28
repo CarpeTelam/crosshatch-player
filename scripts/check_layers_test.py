@@ -22,12 +22,14 @@ SCRIPT = HERE / 'check_layers.py'
 sys.path.insert(0, str(HERE))
 
 import check_layers  # noqa: E402
+import check_upstream_touches  # noqa: E402
 
 # A tree whose every edge the spine's table allows.
 BASE = {
     'lib/GameCore/Manifest.h': '#pragma once\n#include <cstdint>\n#include <Memory.h>\n',
     'lib/GameCore/GameEvent.h': '#pragma once\n#include "Manifest.h"\n',
     'lib/GameIcons/GameIcons.h': '#pragma once\n#include <cstdint>\n',
+    'lib/GameIcons/GameIcons.generated.h': '#pragma once\n#include <cstdint>\n',
     'lib/GameScript/StoreSlot.h': '#pragma once\n#include <mutex>\n',
     'lib/GameScript/Codec.h': '#pragma once\n#include <GameEvent.h>\n#include <Utf8.h>\n#include "StoreSlot.h"\n',
     'lib/GameScript/LuaGame.cpp': '#include <lua.hpp>\n#include <GameIcons.h>\n',
@@ -50,8 +52,13 @@ BASE = {
     'src/games/GameVM.cpp': '#include "GameVM.h"\nusing namespace GameScript;\n',
     'src/games/EspNowLink.cpp': '#include <esp_now.h>\n#include <WiFi.h>\n#include <mbedtls/sha256.h>\n',
     'src/games/FrameReplay.cpp': '#include <EpdFontData.h>\n#include <GfxRenderer.h>\n#include "fontIds.h"\n',
-    # Upstream code that includes game code other than lib/GameScript and lib/lua (OtaUpdater's row).
+    # Upstream code that includes game code other than lib/GameScript and lib/lua, as its ledger row allows (rows 5,
+    # 9, and 10; UPSTREAM_EDGES).
     'src/network/OtaUpdater.cpp': '#include <Manifest.h>\n#include "games/GameVM.h"\n#include <WiFi.h>\n',
+    'src/activities/ActivityManager.cpp': ('#include "Activity.h"\n#if FREEINK_CAP_GAMES\n'
+                                           '#include "games/GameMatchActivity.h"\n#endif\n'),
+    'src/components/CoverGridHomeUi.cpp': ('#include "UiAppHost.h"\n#include <GfxRenderer.h>\n#if FREEINK_CAP_GAMES\n'
+                                           '#include <GameIcons.generated.h>\n#endif\n'),
     'src/games/GameTouch.h': '#pragma once\n#include <FreeInkUICore.h>\n',
     'src/games/ForkReleaseProbe.cpp': '#include <SecureHttpClient.h>\n',
     'src/games/GamesBuildAnchor.cpp': '#include <GameIcons.h>\n#include <climits>\n#include <lua.hpp>\n',
@@ -190,6 +197,34 @@ class CheckLayersTest(unittest.TestCase):
                           'lib/hal/HalLaunder.h:1: upstream code may not include "../GameScript/Codec.h" '
                           '(lib/GameScript)')
 
+    def test_upstream_file_without_a_ledger_edge_fails(self):
+        self.assert_fails({'src/activities/home/HomeActivity.cpp': '#include <I18n.h>\n#include <GameIcons.h>\n'},
+                          'src/activities/home/HomeActivity.cpp:2: upstream code may not include <GameIcons.h> '
+                          '(lib/GameIcons); an upstream file includes game code only as its ledger row allows',
+                          '1 problem(s)')
+
+    def test_upstream_file_beyond_its_ledger_edge_fails(self):
+        self.assert_fails({'src/components/CoverGridHomeUi.cpp': ('#include <GameIcons.generated.h>\n'
+                                                                  '#include <Manifest.h>\n')},
+                          'src/components/CoverGridHomeUi.cpp:2: upstream code may not include <Manifest.h> '
+                          '(lib/GameCore)', '1 problem(s)')
+
+    def test_upstream_header_without_a_ledger_edge_fails(self):
+        self.assert_fails({'src/components/CoverGridHomeUi.h': '#pragma once\n#include <GameIcons.generated.h>\n'},
+                          'src/components/CoverGridHomeUi.h:2: upstream code may not include '
+                          '<GameIcons.generated.h> (lib/GameIcons); an upstream file includes game code only as its '
+                          'ledger row allows', '1 problem(s)')
+
+    def test_upstream_lib_file_without_a_ledger_edge_fails(self):
+        self.assert_fails({'lib/hal/HalIcons.h': '#pragma once\n#include <GameIcons.h>\n'},
+                          'lib/hal/HalIcons.h:2: upstream code may not include <GameIcons.h> (lib/GameIcons); an '
+                          'upstream file includes game code only as its ledger row allows', '1 problem(s)')
+
+    def test_ledgered_upstream_file_still_may_not_include_game_script(self):
+        self.assert_fails({'src/network/OtaUpdater.cpp': '#include <Manifest.h>\n#include <Codec.h>\n'},
+                          'src/network/OtaUpdater.cpp:2: upstream code may not include <Codec.h> (lib/GameScript); '
+                          'Screens may include it', '1 problem(s)')
+
     def test_screen_namespace_alias_fails(self):
         self.assert_fails({'src/activities/games/Other.cpp': 'namespace GS = GameScript;\nGS::StoreSlot* s;\n'},
                           'Other.cpp:1: Screens name lib/GameScript', '1 problem(s)')
@@ -259,6 +294,14 @@ class TableTest(unittest.TestCase):
 
     def test_every_component_has_a_row(self):
         self.assertEqual(set(check_layers.COMPONENTS), set(check_layers.LAYERS))
+
+    def test_every_upstream_edge_is_a_ledger_row(self):
+        ledger = (HERE.parent / check_upstream_touches.LEDGER_PATH).read_text()
+        rows = set(check_upstream_touches.parse_ledger(ledger)['Ledger'])
+        for path, targets in check_layers.UPSTREAM_EDGES.items():
+            self.assertIn(path, rows)
+            self.assertTrue(targets <= set(check_layers.COMPONENTS), path)
+            self.assertFalse(targets & check_layers.GAME_SCRIPT_OR_LUA, path)
 
 
 if __name__ == '__main__':

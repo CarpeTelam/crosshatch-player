@@ -15,7 +15,10 @@ and src/activities/games is resolved to what it reaches:
 A repository path under src/ outside the game folders is upstream (`src (upstream)`), except src/fontIds.h, which the
 table names on its own. Screens may include upstream src/ code (their screen infrastructure), so the check also:
   - fails any other source file under src/ or lib/ (outside the game folders and the vendored lib/lua) that includes
-    a lib/GameScript or lib/lua header, so no upstream header can launder that edge (this covers OtaUpdater's row);
+    a lib/GameScript or lib/lua header, so no upstream header can launder that edge;
+  - fails any such file that includes any other game component unless UPSTREAM_EDGES gives that file that component:
+    upstream code reaches game code only through its ledger rows (docs/crosshatch/upstream-touches.md, AD-3), and
+    UPSTREAM_EDGES is the spine's "Upstream hooks" row;
   - fails a Screens file that uses the word GameScript anywhere outside comments and literals (GameScript::,
     `using namespace`, a namespace alias, a #define): Screens reach lib/GameScript only through src/games;
   - fails a src/games header that re-exports GameScript at global scope (`using namespace GameScript;`,
@@ -31,7 +34,7 @@ missing, an unreadable file).
 Usage: python3 scripts/check_layers.py [--root <repository root>]   # default: this script's repository
        python3 scripts/check_layers_test.py                        # the script's own tests; standard library only
 
-When the spine's table changes, change LAYERS (and FILE_EDGES / ONLY_FROM) in the same commit.
+When the spine's table changes, change LAYERS (and FILE_EDGES / ONLY_FROM / UPSTREAM_EDGES) in the same commit.
 """
 
 import argparse
@@ -100,6 +103,18 @@ LAYERS = {
 # Edges the table allows only from the files it names (the spine says "SecureHttpClient in ForkReleaseProbe only").
 ONLY_FROM = {
     'sdk:SecureHttpClient.h': {'src/games/ForkReleaseProbe.h', 'src/games/ForkReleaseProbe.cpp'},
+}
+
+# The spine's "Upstream hooks (AD-3 ledger rows)" row: each upstream file that includes game code, and the components
+# its ledger row lets it include. Any other upstream include of a game component (COMPONENTS) fails; lib/GameScript
+# and lib/lua fail from every upstream file.
+UPSTREAM_EDGES = {
+    # Row 5: goHome's mapping and goToGames() open the Games list.
+    'src/activities/ActivityManager.cpp': {SCREENS},
+    # Row 9: Home's cover-grid Games tab draws a GameIcons bitmap.
+    'src/components/CoverGridHomeUi.cpp': {'lib/GameIcons'},
+    # Row 10: ForkRelease.h and games/ForkReleaseProbe.h for the fork's release (AD-25).
+    'src/network/OtaUpdater.cpp': {'lib/GameCore', ADAPTERS},
 }
 
 # Edges of one file that its component's row does not have. AD-2: GamesBuildAnchor.cpp includes a header of each game
@@ -322,7 +337,8 @@ def reexport_problems(rel, text):
 
 
 def upstream_problems(root, index):
-    """path:line problems for a source file outside the game folders that includes lib/GameScript or lib/lua."""
+    """path:line problems for a source file outside the game folders that includes lib/GameScript or lib/lua, or a
+    game component its UPSTREAM_EDGES entry does not give it."""
     problems = []
     for top in ('src', 'lib'):
         for rel, path in source_files(root, top):
@@ -336,6 +352,10 @@ def upstream_problems(root, index):
                 if reached in GAME_SCRIPT_OR_LUA:
                     problems.append(f'{rel}:{number}: upstream code may not include {target.group(1)} ({reached}); '
                                     'Screens may include it, so it would launder the edge; go through src/games')
+                elif reached in COMPONENTS and reached not in UPSTREAM_EDGES.get(rel, ()):
+                    problems.append(f'{rel}:{number}: upstream code may not include {target.group(1)} ({reached}); '
+                                    'an upstream file includes game code only as its ledger row allows (UPSTREAM_EDGES '
+                                    'in scripts/check_layers.py, the spine\'s "Upstream hooks" row)')
     return problems
 
 
@@ -374,8 +394,8 @@ def check(root):
         fork_common.write_step_summary(f'## {SUMMARY_HEADING}\n\n' + ''.join(f'- `{p}`\n' for p in problems))
         raise Failure(f'{len(problems)} problem(s) against the spine\'s layer table; fix the code, or change the '
                       'spine and LAYERS in scripts/check_layers.py together')
-    print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and no other source file '
-          'includes lib/GameScript or lib/lua; passed.')
+    print(f'{edges} include edges in {files} game files follow the spine\'s layer table, and other source files '
+          'include game code only as their ledger rows allow; passed.')
 
 
 def main(argv=None):

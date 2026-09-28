@@ -35,8 +35,11 @@ companions:
 | Engine (vendored) | `lib/lua/` | C standard library |
 | Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/Utf8`; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); the SDK's `FreeInkUICore.h` (`GameTouch.h`'s touch types, AD-20); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
 | Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
+| Upstream hooks (AD-3 ledger rows) | `src/activities/ActivityManager.cpp` (row 5), `src/components/CoverGridHomeUi.cpp` (row 9), `src/network/OtaUpdater.cpp` (row 10) | row 5: `src/activities/games/` (the Games list); row 9: `lib/GameIcons` (`GAME_CONTROLLER_32` for Home's cover-grid Games tab); row 10: `GameCore` (`ForkRelease.h`), `src/games/` (`ForkReleaseProbe.h`); never `GameScript` or `lib/lua`. No other upstream file includes game code. |
 
 **Amended 2026-09-28 (owner):** the `lib/Utf8` edges (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`, and `src/games/FrameReplay.cpp`), the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`), and the SDK `FreeInkUICore.h` edge (`src/games/GameTouch.h`) are as built and reviewed (epic-script-runtime retro A1); the diagram below shows them. The rule for Screens is unchanged: they reach `GameScript` only through `src/games` (retro AI-5 restores the code to it).
+
+**Amended 2026-09-28 (owner):** the Upstream hooks row. Its `src/components/CoverGridHomeUi.cpp` → `lib/GameIcons` edge is new (epic icon-library R9: the cover-grid Home's Games tab draws `GAME_CONTROLLER_32` with `renderer.drawIcon`); the `ActivityManager.cpp` (row 5) and `OtaUpdater.cpp` (row 10) edges are as built in epic 2. `scripts/check_layers.py` holds the row as `UPSTREAM_EDGES` and fails any other upstream include of game code; the diagram below shows rows 9 and 10.
 
 ## Invariants & Rules
 
@@ -56,6 +59,8 @@ flowchart TD
   ACT --> HAL
   OTA["upstream: network/OtaUpdater.cpp<br/>(ledger row 10, guarded)"] --> CORE
   OTA --> ADP
+  %% Amended 2026-09-28 (owner): Home's cover-grid Games tab (ledger row 9).
+  HOME["upstream: components/CoverGridHomeUi.cpp<br/>(ledger row 9, guarded: Games tab)"] --> ICO
   ADP --> HTTP["SDK: SecureHttpClient<br/>(ForkReleaseProbe only)"]
   SCR --> UTF["upstream: lib/Utf8"]
   ADP --> UTF
@@ -63,7 +68,7 @@ flowchart TD
   ADP --> FUI["SDK: FreeInkUICore.h<br/>(GameTouch.h)"]
 ```
 
-Arrows are the only allowed dependencies among fork code. Upstream code reaches game code only through the ledgered, guarded rows of AD-3; the diagram shows row 10, which exists today. `GameCore` includes no Arduino, ESP-IDF, Lua, HAL, or `src/` header. `GameScript` includes no `GfxRenderer`, HAL, or Arduino header; platform services (arena, sources, text metrics, randomness) reach it through injected ports.
+Arrows are the only allowed dependencies among fork code. Upstream code reaches game code only through the ledgered, guarded rows of AD-3; the diagram shows rows 9 and 10, and the layer table's Upstream hooks row lists every such edge. `GameCore` includes no Arduino, ESP-IDF, Lua, HAL, or `src/` header. `GameScript` includes no `GfxRenderer`, HAL, or Arduino header; platform services (arena, sources, text metrics, randomness) reach it through injected ports.
 
 ### AD-1: Hexagonal host, reducer scripts [ADOPTED]
 
