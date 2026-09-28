@@ -183,7 +183,7 @@ tracer's four icons measured 2,608 B the same way (without their strings).
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
 
-| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`965c55d7`) | Phosphor names, both weights (entry 9) |
+| x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`8e233695`) | Phosphor names, both weights (entry 9) |
 | --- | ---: | ---: | ---: | ---: |
 | `firmware.bin`, games on | 5,833,504 | 5,871,760 | 5,871,712 | 5,902,784 |
 | `firmware.bin`, games off | 5,675,280 | 5,675,280 | 5,675,376 | 5,675,376 |
@@ -196,7 +196,7 @@ working tree, from an empty `.pio`, not an archive tree) adds +31,072 B to the g
 icon data (71,975 B against 40,964 B) and 61 B of code for the weight argument, with no static internal RAM change.
 The runtime is now 28,592 B under the 250 KiB gate.
 
-After the refactor sweep (entry 7, measured from a fresh archive tree of `965c55d7` with the flash budget job's four
+After the refactor sweep (entry 7, measured from a fresh archive tree of entry 7's pre-amend commit (the same code as `8e233695`, which only adds the measured figures) with the flash budget job's four
 commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate. The epic's base `1eacdc77`, measured
 the same way with entry 7's script copied in, is +151,088 B of flash and +776 B of static internal RAM. So this epic
 adds +76,320 B of flash in all (+45,248 B up to entry 7, +31,072 B in entry 9) and no static internal RAM. The RAM

@@ -30,7 +30,7 @@ Each figure is a measurement, with its method.
 | Figure | Value | Method |
 | --- | ---: | --- |
 | Flash, games on − off, x4pro, at the epic's base `1eacdc77` | +151,088 B | `scripts/check_flash_budget.py` (entry 7's version, IRAM counted) copied onto the base tree: build on, build off, compare |
-| The same at entry 7 (`965c55d7`) | +196,336 B | same, fresh archive tree |
+| The same at entry 7 (`8e233695`; measured on its pre-amend tree, the same code) | +196,336 B | same, fresh archive tree |
 | The same at entry 9 (`9197d046`) | +227,408 B | same, from an empty `.pio` |
 | The same after the review fixes (`f27dcefd`) | +227,712 B | same, on the fix worktree |
 | **This epic's flash** | **+76,624 B** | +227,712 − 151,088 |

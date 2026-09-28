@@ -32,6 +32,12 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
   `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
   complete clone) before any agent runs `scripts/check_upstream_touches.py`.
+- **Toolchain and base measurement.** On the epic's base commit, under the lock, apply AGENTS.md's certifi steps, build
+  all five envs, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
+  static-RAM figures, with the commit, as a dated `Measurement` line in the epic Notes. Every delta in the epic
+  subtracts this measurement, not a figure an earlier epic recorded. In epic-icon-library, `sticky` and `default`
+  stopped mid-story on the certifi step, and the flash cost was first quoted against a figure recorded before the gate
+  counted IRAM (retro O3, O5).
 
 ### Each story
 
@@ -50,9 +56,16 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
    every story, not only the risky ones. Send those findings to the build agent, which triages each one into its
    plan's Review Triage Log and fixes what it accepts in a follow-up commit, so every plan keeps its review record
    (O2).
+3a. **Surface API-visible choices early.** When an epic runs unattended and a story fixes an API-visible choice that
+    later stories will build on (names, a list's convention, an argument's shape), send the owner one question with its
+    screenshot as soon as the tracer shows it. Keep building the lanes that do not depend on the answer. In
+    epic-icon-library the naming convention came back at entry 8, and entry 9 rebuilt the set: 158 files, retro O4.
 4. **Merge only a finished tree.** Never merge into, or rebase, a worktree whose agent is still working; wait for its
-   report. `deferred-work.md` merges with `merge=union` (`.gitattributes`), so appends from two lanes combine without a
-   conflict (O10); when two branches edited the same existing entry, union keeps both versions, so read the result.
+   report. A report that says a lens, implementation, or other subagent has not returned is not finished: resume the
+   same agent (`SendMessage`), wait for its final report, and only then read its Review Triage Log or merge. In
+   epic-icon-library a reviewer reported 8 minutes before its adversarial lens returned (retro O1). `deferred-work.md`
+   merges with `merge=union` (`.gitattributes`), so appends from two lanes combine without a conflict (O10); when two
+   branches edited the same existing entry, union keeps both versions, so read the result.
 5. **Record out-of-session fixes.** A fix that lands outside its story's session, such as one that changes an earlier
    story's code, records its verification in the plan of the story it changes (O5).
 6. **Re-run the host suites on the combined tree before every push** (under the lock), plus
@@ -77,12 +90,19 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   the plan's Verification.
 - **Decisions.** Give the owner the options, what each means, and a recommendation. Record the answer, dated, in the
   epic file's Notes, and in the architecture spine when it changes a decision there.
-- **Measure before quoting (O8).** A memory, flash, or timing figure goes to the owner as a measurement with its
-  method, or labelled "unmeasured". In epic-script-runtime about 320 KiB was quoted for Lua's region; the measurement
-  was 448 KiB.
+- **Measure before quoting (O8).** A memory, flash, or timing figure goes to the owner as a measurement with its method,
+  or labelled "unmeasured". In epic-script-runtime about 320 KiB was quoted for Lua's region; the measurement was 448
+  KiB. A delta is two measurements made the same way, one at each commit. The base is the one measured before the first
+  story, re-measured when a story changes how a gate measures (epic-icon-library retro O3).
 
 ### Before the epic PR
 
+- **Cross-story review.** After the last story lands, run context-free review subagents (`bmad-review`'s adversarial,
+  edge-case, and verification-gap lenses) over `git diff <epic base>..HEAD`, excluding generated files, vendored assets,
+  and screenshots, and weight the boundaries between stories. Record it as `{epic-folder}/cross-story-review.md` with a
+  triage table. A build agent fixes what is accepted, and that fix commit gets the same review before the push. A story
+  that lands after the review gets its own combined-diff pass. In epic-icon-library this pass found a medium data race
+  that every per-story review missed (retro O2).
 - On the combined tree, under the lock: build all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`), run
   `pio check` as AGENTS.md gives it, the host suites, the fork script tests, `sim.sh build x4pro` when `src/games` or a
   screen changed, and `./bin/clang-format-fix` twice with nothing new in `git status`.
@@ -127,6 +147,8 @@ them:
   say in the plan's Review Triage Log that the lenses ran as subagents. Only if you have no `Agent` tool, do not HALT:
   run each lens yourself, one at a time, reading each lens prompt fresh and judging only the diff, say so in the log
   and at the top of your report, and triage the independent review the orchestrator then sends you into the same log.
+  Wait for every lens subagent, and any implementation subagent, to return before you triage or report. If one has not
+  returned, wait for it instead of reporting without it. The Review Triage Log names the lenses that returned.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
@@ -174,7 +196,11 @@ them:
 - Deferred items: append to `_bmad-output/implementation-artifacts/deferred-work.md` only under a heading `## {ref}` at
   the end of the file, each entry in the file's existing format (`- source_plan:`, `summary:`, `evidence:`). The file
   merges with `merge=union`; a distinct first line per story keeps two lanes' appends from interleaving line by line.
-- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured".
+- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured". A
+  delta subtracts two measurements made the same way, never a recorded figure, and names commits that exist.
+- Before moving or rewriting an existing function, run `git log -L` on it and say in Design Notes what each guard or
+  early return in it protects. Keep each one, with a comment when its reason is ordering or safety (AGENTS.md, Known
+  pitfalls).
 - Formatting: run `./bin/clang-format-fix` (no arguments) as the very last step before the commit, after every edit
   (review fixes and plan edits included), then run it a second time and confirm `git status` shows nothing new. Keep
   any formatting-only change it makes to fork files outside your paths in your commit (never revert it) and name it
@@ -185,5 +211,5 @@ them:
 ### Final report
 
 Under 300 words: blocking questions first, then the commit hash and branch, what changed (by path), the verification
-evidence (commands and results), the screenshot paths with one line each, whether the review lenses ran as subagents,
-anything deferred, and any risk or unfinished item.
+evidence (commands and results), the screenshot paths with one line each, whether every review lens ran as a subagent
+and returned, anything deferred, and any risk or unfinished item.
