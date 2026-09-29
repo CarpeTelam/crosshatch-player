@@ -3,7 +3,7 @@ title: 'Remove a game from the launcher (with whole-page paging and the return t
 type: 'feature'
 ticket: '10'
 created: '2026-09-29'
-status: 'built'
+status: done
 baseline_revision: '764e49088660d9a946f5e37beba5480c63b01d25'
 route: 'full'
 route_source: 'auto'
