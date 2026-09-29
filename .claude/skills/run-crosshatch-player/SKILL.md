@@ -84,8 +84,15 @@ Coordinates are window pixels, which equal the firmware's logical pixels
 | List screens | first row; header back arrow | 240,138; 25,63 |
 | File Transfer | Join / Calibre / Create Hotspot | 240,145 / 240,220 / 240,285 |
 
-Games lists `fs_/.games/<id>/` folders whose `manifest.json` parses and names the
-same id. To try one, copy a fixture: `cp -r test/game_script/fixtures/tracer fs_/.games/`.
+Opening Games installs every `fs_/games/*.cpgame` (an "Installing games..." popup shows
+while it works, and a `.cpgame` that fails is renamed `.cpgame.bad` with its reason in a
+popup), then lists the installed games, `fs_/.games/<id>/` folders with a `.pkg`. To try a
+fixture, pack it and drop the package in the inbox, then open Games:
+`python3 scripts/pack_game.py test/game_script/fixtures/tracer /tmp/packs && mkdir -p fs_/games && cp /tmp/packs/tracer.cpgame fs_/games/`.
+Never copy a fixture folder into `fs_/.games/`: without the installer's `.pkg` it is not listed.
+`images/`, `bad-image/`, and `solo/` are host-only (they hold `.bmp` files or a
+`screenshots/` folder, so `pack_game.py` refuses them); `test/game_script/fixtures/README.md`
+says how to place the rest, faults included.
 Games run in both `x4pro` and `sticky` (both envs set `BOARD_HAS_PSRAM`). The
 `gallery` fixture draws every command and color and prints the last touch event:
 `hold X Y 800` is a long press, `swipe` a swipe; a swipe from the left quarter

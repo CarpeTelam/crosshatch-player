@@ -273,6 +273,20 @@ TEST_F(HarnessTest, AListingCanFailPartWay) {
   EXPECT_EQ(namesIn("/f").size(), 3u);
 }
 
+TEST_F(HarnessTest, SeekCurMovesRelativeToThePositionAndRefusesAMoveBeforeTheStart) {
+  fakesd::addFile("/s.bin", Bytes{0, 1, 2, 3, 4, 5, 6, 7});
+  auto file = Storage.open("/s.bin");
+  ASSERT_TRUE(file.seekCur(3));
+  EXPECT_EQ(file.position(), 3u);
+  EXPECT_EQ(file.read(), 3);  // the byte at 3; the position is now 4
+  ASSERT_TRUE(file.seekCur(2));
+  EXPECT_EQ(file.read(), 6);
+  ASSERT_TRUE(file.seekCur(-4));
+  EXPECT_EQ(file.read(), 3);
+  EXPECT_FALSE(file.seekCur(-100));
+  EXPECT_EQ(file.position(), 4u);  // a refused move leaves the position
+}
+
 TEST_F(HarnessTest, AReadThatOnlyReachesPastTheEndDoesNotFail) {
   fakesd::addFile("/h.bmp", Bytes(40, 1));
   fakesd::sim().failReadAt["/h.bmp"] = 50;  // past the file's 40 bytes

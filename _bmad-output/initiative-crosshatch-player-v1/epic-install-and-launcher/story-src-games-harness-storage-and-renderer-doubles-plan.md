@@ -149,6 +149,7 @@ Pass 2, source: the orchestrator's independent review (adversarial, edge-case, a
 - `python3 scripts/check_upstream_touches.py` -- PASS (no upstream file changed).
 - `./bin/clang-format-fix` twice -- the second run and `git status` show nothing new; it changed only this entry's files.
 - No CI gate or workflow changed, so no fresh-tree run applies.
+- Out-of-session fix (orchestrator-approved exception to entry 3's `touches`, 2026-09-29): entry 3 added `bool seekCur(int64_t)` to `test/game_script/harness/stubs/HalStorage.h` (relative to the position, as `HalFile::seekCur` in `lib/hal`; a move before the start fails and leaves the position), with `HarnessTest.SeekCurMovesRelativeToThePositionAndRefusesAMoveBeforeTheStart`, so the real `ZipFile` runs on the fake. `GameHarnessTest` passed 76 of 76 (75 before), and the host suites 860 of 860 on that tree. Recorded in entry 3's plan.
 - The extension convention, tried by hand and removed: a new `src/games/ZzBad.cpp` (includes `<mbedtls/sha256.h>`) breaks `game_harness_src` but not `GameScriptTest`; a `zz.sources.cmake` that excludes it (and a file that does not exist) restores the harness build (75 tests pass) without editing an existing file.
 
 **Mutations (one guarded line changed at a time in the source under test, host suites rebuilt and run, source restored).** Each made the named test fail, from the final tree.
