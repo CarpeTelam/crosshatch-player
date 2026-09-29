@@ -87,12 +87,13 @@ void GameModeActivity::activateIndex(const int index) {
   if (mode.bit == Manifest::MODE_SOLO) {
     LOG_INF("GAME", "Mode solo picked for %s", manifest.id);
   } else {
-    LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until pass and play exists", mode.log, manifest.id);
+    LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", mode.log, manifest.id, mode.log);
   }
   app.clearTapFlash();  // the row leaves this screen
   auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, manifest);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
+    requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
     return;
   }
   activityManager.replaceActivity(std::move(match));

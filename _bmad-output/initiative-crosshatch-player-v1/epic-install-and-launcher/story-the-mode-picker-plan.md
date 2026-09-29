@@ -96,6 +96,16 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 | 12 | blind | `lineAfter(...) == "SoloAndPass"` is order dependent | low, reject | Rows are in the registry's name order by design, tested elsewhere. |
 | 13 | intent | Readings: the diff implements the routing and screen (A), not an effect of the pick (B) or device reachability (C) | no finding | B is epic-pass-and-play's by the ticket; C follows `HostCaps.pass` being false until that epic. |
 
+Pass 2 (source: orchestrator's independent review of 000cafe6..60b59a4b, one context-free reviewer; it found no high findings). Also recorded: the one-line edit to entry 8's `games_launcher.cmake` (`GameModeActivity.cpp` in `game_launcher_src`) is approved, same lane.
+
+| # | Lens | Finding | Verdict, route | Evidence / action |
+|---|------|---------|----------------|-------------------|
+| 14 | verification-gap | Nothing pins that the picker's rows come from `check.modes`, not `manifest.modes` (mutation survived) | medium, patch | `AGameWithTwoModesOpensThePickerAboveTheLauncher` now has a solo, pass, nearby manifest with `pass` on and nearby off, and asserts Solo, Pass only. Rerun with the mutation: that test fails. |
+| 15 | verification-gap | The row-to-mode lookup `MODE_TEXTS[rowKind[index]]` is unpinned | low, patch | Added `TheFirstRowOfAPassAndNearbyPickerStartsPass` and `TheSecondRowOfAPassAndNearbyPickerStartsNearby`; with the lookup mutated to `MODE_TEXTS[index]` both fail. |
+| 16 | verification-gap | `ThePickerIsNamedByTheConstantGoHomeMapsToTheGamesRow` overclaims | low, patch | Renamed `ThePickerIsNamedGameModeAndNotTheLaunchersName`; the `goHome` deferral stands. |
+| 17 | adversarial | The solo fallback is handed only to epic-pass-and-play, but `NEARBY_BUILT` can turn nearby on first | low, patch | The `## 4.9` deferral names both epics; both logs name the mode ("until it can run <mode>", "offers only <mode>"); tests match. |
+| 18 | edge | Match allocation failure returns without `requestUpdate()` (picker and launcher) | low, patch | `requestUpdate()` before returning in both match branches, and in the launcher's picker branch (same cleared tap flash). |
+
 ## Design Notes
 
 - The picker is pushed, not a replacement: Back returns to the same launcher (selection kept, inbox not reinstalled), and the match's `replaceActivity` clears the stack. A replacement picker would need `goToGames()` on Back, which re-runs the inbox install and loses the selection.
@@ -108,9 +118,9 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 
 Results (worktree at baseline 000cafe6 plus this change, uncommitted when run; the commit hash is in the report):
 
-- Host suites: `flock <lock> sh -c 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j'` -- 1202 of 1202 passed, including `ModePickerHarnessTest` (18 tests) and `GamesLauncherHarnessTest`.
+- Host suites: `flock <lock> sh -c 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j'` -- 1204 of 1204 passed after pass 2, including `ModePickerHarnessTest` and `GamesLauncherHarnessTest` (each run 20 times with `--gtest_repeat=20`, no failure) and `GamesLauncherHarnessTest`.
 - `python3 scripts/check_upstream_touches.py` -- PASS (run again on the commit); `python3 scripts/check_layers.py` -- PASS, 461 edges.
-- Firmware, each under the lock, after the last code change: `pio run -e x4pro`, `default`, `sticky`, `x4c`, `papermono` -- all SUCCESS.
+- Firmware, each under the lock: pass 1 built `x4pro`, `default`, `sticky`, `x4c`, `papermono` (all SUCCESS); after pass 2, `x4pro` and `default` (both SUCCESS).
 - Simulator (`sim.sh build x4pro`, `start`, `tap`, `ss`): Home, Games, Counter is 2 taps to a playing counter (`counter-playing.png`). The picker cannot open on the real host (`pass` is false), so `mode-picker.png` and `back-to-launcher.png` come from a temporary local build with `PASS = true` in `GameHostCaps.cpp` and a two-mode `pair` package, reverted and not committed: Games, Pair opens the picker (Solo, Pass and play), Back returns to Games with the same scroll and selection, and Pass and play logs `the match plays solo until pass and play exists` and starts the match. With the real caps that path is Home, Games, game, mode: 3 taps.
 
 Screenshots (`story-modepicker-screenshots/`):

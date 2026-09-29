@@ -215,7 +215,7 @@ TEST_F(PickerTest, AGameWhoseOnlyStartableModeIsPassAlsoGoesStraightToItsMatch) 
   EXPECT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started counter")) << "today's match plays solo whatever the mode";
-  EXPECT_TRUE(logHas("counter has no solo mode: the match plays solo until"));
+  EXPECT_TRUE(logHas("counter offers only pass: the match plays solo until it can run pass"));
 }
 
 TEST_F(PickerTest, AGameThisHostCannotStartOpensNeitherTheMatchNorThePicker) {
@@ -235,8 +235,8 @@ TEST_F(PickerTest, AGameThisHostCannotStartOpensNeitherTheMatchNorThePicker) {
 // ---- the launcher: two modes open the picker ----
 
 TEST_F(PickerTest, AGameWithTwoModesOpensThePickerAboveTheLauncher) {
-  hostcaps::script().pass = true;
-  installCounter("\"solo\",\"pass\"", 2);
+  hostcaps::script().pass = true;  // nearby stays off, though the manifest offers it: the rows are check's modes
+  installCounter("\"solo\",\"pass\",\"nearby\"", 2);
   openLauncher();
   tapRow("Counter");
   EXPECT_EQ(activityManager.asks.pushed, 1) << "pushed, so Back returns to the launcher as it was";
@@ -287,6 +287,23 @@ TEST_F(PickerTest, AOneModePickerIsOneRowAndStartsTheMatch) {
   EXPECT_EQ(activityManager.asks.replaced, 1);
 }
 
+// Rows are looked up by their place in the picker, not by the mode bit's place among all three.
+TEST_F(PickerTest, TheFirstRowOfAPassAndNearbyPickerStartsPass) {
+  installCounter("\"pass\",\"nearby\"", 2);
+  openPickerFor(PASS | NEARBY);
+  tapRow(tr(STR_GAMES_MODE_PASS));
+  EXPECT_TRUE(logHas("Mode pass picked"));
+  EXPECT_FALSE(logHas("Mode nearby picked"));
+}
+
+TEST_F(PickerTest, TheSecondRowOfAPassAndNearbyPickerStartsNearby) {
+  installCounter("\"pass\",\"nearby\"", 2);
+  openPickerFor(PASS | NEARBY);
+  tapRow(tr(STR_GAMES_MODE_NEARBY));
+  EXPECT_TRUE(logHas("Mode nearby picked"));
+  EXPECT_FALSE(logHas("Mode pass picked"));
+}
+
 TEST_F(PickerTest, OnlyTheModesGivenAreRows) {
   openPickerFor(PASS | NEARBY);
   const std::vector<std::string> expected{tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
@@ -302,7 +319,7 @@ TEST_F(PickerTest, ATapOnSoloReplacesThePickerWithTheMatch) {
   ASSERT_NE(enterReplacement(), nullptr) << "what the picker opens is a GameMatchActivity";
   EXPECT_TRUE(logHas("Started counter"));
   EXPECT_TRUE(logHas("Mode solo picked for counter"));
-  EXPECT_FALSE(logHas("plays solo until"));
+  EXPECT_FALSE(logHas("the match plays solo"));
 }
 
 // A placeholder like the test above: epic-pass-and-play passes the picked mode into the match.
@@ -313,7 +330,7 @@ TEST_F(PickerTest, ATapOnPassStartsTheSoloMatchAndSaysSo) {
   EXPECT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started counter"));
-  EXPECT_TRUE(logHas("Mode pass picked for counter: the match plays solo until"));
+  EXPECT_TRUE(logHas("Mode pass picked for counter: the match plays solo until it can run pass"));
 }
 
 TEST_F(PickerTest, ConfirmStartsTheSelectedRowAndNextMovesTheSelection) {
@@ -346,7 +363,7 @@ TEST_F(PickerTest, BackPopsToTheLauncherAndDoesNotGoHomeOrStartAnything) {
   EXPECT_EQ(activityManager.asks.replaced, 0);
 }
 
-TEST_F(PickerTest, ThePickerIsNamedByTheConstantGoHomeMapsToTheGamesRow) {
+TEST_F(PickerTest, ThePickerIsNamedGameModeAndNotTheLaunchersName) {
   openPickerFor(SOLO | PASS);
   EXPECT_EQ(NameOf::of(*picker), std::string(GameModeActivity::NAME));
   EXPECT_STRNE(GameModeActivity::NAME, GamesLauncherActivity::NAME);

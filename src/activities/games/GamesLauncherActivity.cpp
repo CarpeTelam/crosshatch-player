@@ -276,17 +276,22 @@ void GamesLauncherActivity::activateIndex(const int index) {
     auto picker = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game.manifest, game.check.modes);
     if (!picker) {
       LOG_ERR("GAME", "OOM: %u byte mode activity", static_cast<unsigned>(sizeof(GameModeActivity)));
+      requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
       return;
     }
     activityManager.pushActivity(std::move(picker));
     return;
   }
-  // The match runs solo only (epic-pass-and-play passes the mode in), so a game with no solo mode plays solo here too.
-  if ((game.check.modes & GameCore::Manifest::MODE_SOLO) == 0)
-    LOG_INF("GAME", "%s has no solo mode: the match plays solo until pass and play exists", game.manifest.id);
+  // The match runs solo only (epic-pass-and-play and epic-play-nearby pass the mode in), so a game with no solo mode
+  // plays solo here too.
+  if ((game.check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
+    const char* only = (game.check.modes & GameCore::Manifest::MODE_PASS) != 0 ? "pass" : "nearby";
+    LOG_INF("GAME", "%s offers only %s: the match plays solo until it can run %s", game.manifest.id, only, only);
+  }
   auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
+    requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
     return;
   }
   activityManager.replaceActivity(std::move(match));
