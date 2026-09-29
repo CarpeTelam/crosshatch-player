@@ -10,9 +10,12 @@ release workflow reads (`fork_release.py` `pack_one`). This is the only Python r
 `Manifest::parse`'s rules, `Manifest::check`'s solo and nearby seat rules, R9's icon check, and the API range of
 `lib/GameCore/ApiLevel.h`. It refuses what it can see in the folder that the installer would refuse; it does not
 decode: a PNG is checked through its IHDR only (a truncated or corrupt image is left to the installer's converter),
-a Lua file only for a leading binary-chunk signature, and a manifest is not depth-limited. The `icon` grammar and the
-`icon_weight` values are R9's (the spine's AD-15 amendment), stricter than `Manifest.cpp`'s `validIcon` until
-epic-install-and-launcher's entry 6 aligns it.
+`icon.png` must be square, the `.lua` members' bytes together stay within `GameCore::LUA_SOURCES_BYTES`, a Lua file is
+checked only for a leading binary-chunk signature, and a manifest is not depth-limited. The `icon` grammar and the
+`icon_weight` values are R9's (the spine's AD-15 amendment) and `Manifest.cpp`'s `validIcon` and `parseIconWeight` apply
+the same rules: `ICON_NAME` and `MAX_ICON_BYTES` here, `test_icon_grammar` in the sidecar test, and the C++ table in
+`ManifestTest`. The name check against `assets/game-icons/names.txt` has no C++ twin in `GameCore`, which cannot see the
+library: the installer checks it through `GameIcons::find`.
 
 Exit codes: 0 packed. 1 the package is invalid: each problem is printed as `error: ...` on stderr, nothing is
 written, and a package an earlier run left at `<out_dir>/<id>.cpgame` is deleted. 2 the packer could not run: `<dir>`
@@ -52,6 +55,7 @@ NAMES_PATH = 'assets/game-icons/names.txt'
 # and one over.
 PACKAGE_BYTES = 256 * 1024
 MEMBER_BYTES = 128 * 1024
+LUA_SOURCES_BYTES = 256 * 1024  # GameCore::LUA_SOURCES_BYTES: the .lua members together, uncompressed
 MAX_MEMBERS = 32
 MAX_MEMBER_NAME_CHARS = 32  # the stem of a .lua or .png member: [a-z0-9_]{1,32}
 IMAGES_BYTES = 128 * 1024  # GameCore::IMAGES_BYTES
@@ -351,6 +355,9 @@ def check_members(members, dir_name, api_range, load_icons):
             problems.append(f'{name}: {len(data):,} bytes; at most {MEMBER_BYTES:,} per member')
         if name.endswith('.lua') and data.startswith(LUA_BINARY_CHUNK):
             problems.append(f'{name}: is a precompiled Lua chunk; only source is accepted')
+    lua_bytes = sum(len(data) for name, data in members.items() if name.endswith('.lua'))
+    if lua_bytes > LUA_SOURCES_BYTES:
+        problems.append(f'the .lua members total {lua_bytes:,} bytes; at most {LUA_SOURCES_BYTES:,} together')
     if MANIFEST_MEMBER in members:
         problems += read_manifest(members[MANIFEST_MEMBER], dir_name, api_range, load_icons)[1]
     sizes = []
@@ -362,7 +369,11 @@ def check_members(members, dir_name, api_range, load_icons):
         except ValueError as exc:
             problems.append(f'{name}: {exc}')
             continue
-        if name != ICON_MEMBER:
+        if name == ICON_MEMBER:
+            # The installer scales the icon to a square and refuses a rectangle rather than crop it.
+            if size[0] != size[1]:
+                problems.append(f'{name}: is {size[0]}x{size[1]}; the icon must be square')
+        else:
             sizes.append(size)
     problems += check_images(sizes)
     return problems

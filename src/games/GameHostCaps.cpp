@@ -15,9 +15,12 @@ constexpr bool IS_SIMULATOR = true;
 constexpr bool IS_SIMULATOR = false;
 #endif
 constexpr bool NEARBY = NEARBY_BUILT && !IS_SIMULATOR;
+// epic-pass-and-play sets this with the seat choice; until then no match can run a pass game, so
+// Manifest::check must not offer the mode.
+constexpr bool PASS = false;
 
 }  // namespace
 
-GameCore::HostCaps gameHostCaps() { return GameCore::HostCaps{API_LEVEL, API_MIN_LEVEL, MAX_SEATS, NEARBY}; }
+GameCore::HostCaps gameHostCaps() { return GameCore::HostCaps{API_LEVEL, API_MIN_LEVEL, MAX_SEATS, NEARBY, PASS}; }
 
 #endif  // FREEINK_CAP_GAMES

@@ -31,6 +31,11 @@
         "bytes": 131074
       }
     },
+    "lua_sources_bytes": {
+      "limit": 262144,
+      "at": 262144,
+      "over": 262145
+    },
     "member_name_chars": {
       "limit": 32,
       "at": 32,

@@ -253,6 +253,14 @@ manifest seats.max integer
 manifest modes array
 manifest hidden boolean?
 manifest icon string?
+manifest icon_weight string?
+# icon is a library icon name: it matches the pattern below whole ("_" is not
+# accepted) and takes at most manifest_icon_bytes bytes, and a name the library
+# lacks makes the package invalid (the installer and scripts/pack_game.py check
+# it; Manifest::parse cannot see the library). icon_weight is "regular" (when absent) or
+# "fill", ch.gfx.icon's weights; any other value makes the package invalid. It
+# needs no icon (without one it has no effect).
+name manifest_icon [a-z][a-z0-9]*(-[a-z0-9]+)*
 
 # Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
 # Marks
@@ -361,8 +369,7 @@ limit images_count 32
 # A .cpgame package (docs/crosshatch/formats.md): the file's bytes, its members (a folder is
 # not allowed), one member's bytes uncompressed, the .lua members' bytes together, and the stem
 # of a .lua or .png member's name ([a-z0-9_]{1,32}). The installer rejects a package over any
-# of them; scripts/pack_game.py refuses to make one over any but the .lua total, which its
-# next change adds.
+# of them; scripts/pack_game.py refuses to make one over any of them.
 limit package_bytes 262144
 limit package_members_count 32
 limit member_bytes 131072
