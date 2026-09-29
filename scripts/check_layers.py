@@ -117,11 +117,13 @@ TABLE = {
     # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
     'lib/GameScript': {'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
     # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
-    # and mbedTLS (radio and crypto); lib/Utf8; lib/EpdFont and src/fontIds.h (FrameReplay); the SDK's FreeInkUICore.h
-    # (GameTouch.h); SecureHttpClient (ForkReleaseProbe only, ONLY_FROM).
+    # and mbedTLS (radio and crypto); lib/miniz (mz_crc32, the installer's CRC check); lib/Utf8; lib/EpdFont and
+    # src/fontIds.h (FrameReplay); the SDK's FreeInkUICore.h (GameTouch.h); SecureHttpClient (ForkReleaseProbe only,
+    # ONLY_FROM).
     ADAPTERS: {
         'lib/GameCore', 'lib/GameScript', 'lib/GameIcons', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter',
-        RADIO_CRYPTO, 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h', 'sdk:SecureHttpClient.h',
+        RADIO_CRYPTO, 'lib/miniz', 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h',
+        'sdk:SecureHttpClient.h',
     },
     # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost (upstream's screen infrastructure, src/
     # outside the game folders). Never lib/GameScript or lib/lua: those only through src/games.

@@ -21,6 +21,8 @@
 #include "GameHash.h"
 #include "GameHostCaps.h"
 #include "GamePaths.h"
+#include "MemberGuard.h"
+#include "ZipDirectory.h"
 
 namespace GamePackageInstaller {
 
@@ -44,8 +46,13 @@ static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs and failures in 
 
 enum class MemberKind : uint8_t { Invalid, Manifest, Lua, Png };
 
-struct MemberName {
-  char text[GameCore::MEMBER_NAME_BYTES];
+// What the directory said of a member: its name, and the CRC and size the streamed bytes must match.
+struct Member {
+  char name[GameCore::MEMBER_NAME_BYTES];
+  uint32_t crc;
+  uint32_t size;
+  uint32_t localAt;  // the bytes it takes in the zip, [localAt, dataEnd)
+  uint32_t dataEnd;
 };
 
 struct InboxName {
@@ -56,7 +63,7 @@ struct InboxName {
 struct Job {
   GameCore::ManifestReader reader;
   GameCore::Manifest manifest;
-  MemberName members[GameCore::PACKAGE_MEMBERS];
+  Member members[GameCore::PACKAGE_MEMBERS];
   size_t memberCount = 0;
   char inboxPath[GamePaths::INBOX_PATH_BYTES];
   bool renameTried = false;  // commit reached the folder rename: /.games-tmp/<id> may share clusters with /.games/<id>
@@ -71,39 +78,42 @@ struct Job {
 // Writes into ManifestReader, so manifest.json is parsed as it streams out of the zip.
 class ManifestSink final : public Print {
  public:
-  explicit ManifestSink(GameCore::ManifestReader& reader) : reader(reader) {}
+  ManifestSink(GameCore::ManifestReader& reader, MemberGuard& guard) : reader(reader), guard(guard) {}
   size_t write(const uint8_t byte) override { return write(&byte, 1); }
   size_t write(const uint8_t* buffer, const size_t size) override {
+    if (!guard.admit(buffer, size)) return 0;
     reader.feed(reinterpret_cast<const char*>(buffer), size);
     return size;
   }
 
  private:
   GameCore::ManifestReader& reader;
+  MemberGuard& guard;
 };
 
-// Writes to a file, and into the package hash too when there is one, and notes any short write:
-// the converter ignores write results, so this is how a card fault is told from bad data.
+// Writes to a file, and into the package hash and the guard too when there are any, and notes any
+// short write: the converter ignores write results, so this is how a card fault is told from bad data.
 class FileSink final : public Print {
  public:
-  FileSink(HalFile& file, GameHash* hash) : file(file), hash(hash) {}
+  FileSink(HalFile& file, GameHash* hash, MemberGuard* guard = nullptr) : file(file), hash(hash), guard(guard) {}
   size_t write(const uint8_t byte) override { return write(&byte, 1); }
   size_t write(const uint8_t* buffer, const size_t size) override {
+    if (guard && !guard->admit(buffer, size)) return 0;
     const size_t written = file.write(buffer, size);
     if (hash) hash->update(buffer, written);
-    total += written;
     if (written != size) writeFailed = true;
     return written;
   }
 
-  size_t total = 0;
   bool writeFailed = false;
 
  private:
   HalFile& file;
   GameHash* hash;
+  MemberGuard* guard;
 };
 
+// (A backstop: the stored name is already bounded by MEMBER_NAME_BYTES, so no stem over the limit gets here.)
 bool isStem(const std::string_view stem) {
   if (stem.empty() || stem.size() > GameCore::MEMBER_STEM_BYTES) return false;
   return std::all_of(stem.begin(), stem.end(),
@@ -211,46 +221,100 @@ void removeTmp() {
   Storage.rmdir(GamePaths::TMP_DIR);  // only an empty folder goes, so a kept one stays
 }
 
-// Lists the members, checks each name against the whitelist, sorts them by name (the order
-// the package hash takes), and requires manifest.json and main.lua.
-Error listMembers(Job& job, ZipFile& zip) {
+// Reads the file into ZipDirectory's terms: bytes at an offset.
+class FileReader {
+ public:
+  explicit FileReader(HalFile& file) : file(file) {}
+  bool read(const uint32_t offset, void* out, const size_t count) {
+    return file.seek(offset) && file.read(out, count) == static_cast<int>(count);
+  }
+
+ private:
+  HalFile& file;
+};
+
+// Reads the zip's directory (ZipDirectory), checks each name against the whitelist and each declared
+// size against the member limit, sorts the members by name (the order the package hash takes), and
+// requires manifest.json and main.lua. Nothing is extracted yet, so a rejection here has touched no card
+// folder. A file of the wrong size is judged before its directory is read.
+Error listMembers(Job& job) {
+  HalFile file;
+  if (!Storage.openFileForRead("GAME", job.inboxPath, file)) return Error::SdCard;
+  const size_t fileBytes = file.size();
+  if (fileBytes > GameCore::PACKAGE_BYTES) return Error::PackageTooBig;
+
   job.memberCount = 0;
   bool hasManifest = false;
   bool hasMain = false;
+  uint32_t luaBytes = 0;
   Error error = Error::None;
-  const bool listed = zip.enumerateFileEntries([&](const std::string_view name, uint32_t, uint32_t) {
-    if (error != Error::None) return;
-    const MemberKind kind = classify(name);
-    if (kind == MemberKind::Invalid) {
-      LOG_ERR("GAME", "Member \"%.*s\" is not allowed in a package", static_cast<int>(name.size()), name.data());
-      error = Error::BadMember;
-      return;
-    }
-    if (job.memberCount >= GameCore::PACKAGE_MEMBERS) {
-      error = Error::TooManyMembers;
-      return;
-    }
-    // classify() bounded the name by MEMBER_NAME_BYTES - 1.
-    std::memcpy(job.members[job.memberCount].text, name.data(), name.size());
-    job.members[job.memberCount].text[name.size()] = '\0';
-    ++job.memberCount;
-    hasManifest = hasManifest || kind == MemberKind::Manifest;
-    hasMain = hasMain || name == "main.lua";
-  });
-  if (!listed) return Error::NotAPackage;
-  if (error != Error::None) return error;
+  FileReader reader(file);
+  const ZipDirectory::Status status =
+      ZipDirectory::read(reader, static_cast<uint32_t>(fileBytes), [&](const ZipDirectory::Entry& entry) {
+        const MemberKind kind = entry.nameUsable ? classify(entry.name) : MemberKind::Invalid;
+        if (kind == MemberKind::Invalid) {
+          LOG_ERR("GAME", "Member \"%s\" is not allowed in a package", entry.name);
+          error = Error::BadMember;
+        } else if (job.memberCount >= GameCore::PACKAGE_MEMBERS) {
+          error = Error::TooManyMembers;
+        } else if (entry.uncompressedSize > GameCore::MEMBER_BYTES) {
+          LOG_ERR("GAME", "Member \"%s\" declares %lu bytes", entry.name,
+                  static_cast<unsigned long>(entry.uncompressedSize));
+          error = Error::MemberTooBig;
+        }
+        // Two members on the same bytes would extract far more than the package holds.
+        for (size_t i = 0; i < job.memberCount && error == Error::None; ++i) {
+          if (entry.localAt < job.members[i].dataEnd && job.members[i].localAt < entry.dataEnd) {
+            LOG_ERR("GAME", "Members \"%s\" and \"%s\" overlap", job.members[i].name, entry.name);
+            error = Error::BadDirectory;
+          }
+        }
+        // Each member is at most MEMBER_BYTES, so the total cannot wrap.
+        if (kind == MemberKind::Lua) luaBytes += entry.uncompressedSize;
+        if (error == Error::None && luaBytes > GameCore::LUA_SOURCES_BYTES) error = Error::SourcesTooBig;
+        if (error != Error::None) return false;
+        // classify() bounded the name by MEMBER_NAME_BYTES - 1.
+        Member& member = job.members[job.memberCount++];
+        std::memcpy(member.name, entry.name, std::strlen(entry.name) + 1);
+        member.crc = entry.crc;
+        member.size = entry.uncompressedSize;
+        member.localAt = entry.localAt;
+        member.dataEnd = entry.dataEnd;
+        hasManifest = hasManifest || kind == MemberKind::Manifest;
+        hasMain = hasMain || std::strcmp(entry.name, "main.lua") == 0;
+        return true;
+      });
+  file.close();
+  switch (status) {
+    case ZipDirectory::Status::Ok:
+      break;
+    case ZipDirectory::Status::Stopped:
+      return error;
+    case ZipDirectory::Status::ReadError:
+      return Error::SdCard;
+    case ZipDirectory::Status::Unsupported:
+      return Error::Unsupported;
+    case ZipDirectory::Status::CountMismatch:
+      return Error::BadDirectory;
+    case ZipDirectory::Status::TooMany:
+      return Error::TooManyMembers;
+    case ZipDirectory::Status::BadSize:
+      return Error::BadSize;
+    case ZipDirectory::Status::Malformed:
+      return Error::NotAPackage;
+  }
 
   // Insertion sort: at most 32 names, and std::sort would cost about 1 KB of flash for them.
   for (size_t i = 1; i < job.memberCount; ++i) {
-    const MemberName moving = job.members[i];
+    const Member moving = job.members[i];
     size_t at = i;
-    for (; at > 0 && std::strcmp(job.members[at - 1].text, moving.text) > 0; --at)
+    for (; at > 0 && std::strcmp(job.members[at - 1].name, moving.name) > 0; --at)
       job.members[at] = job.members[at - 1];
     job.members[at] = moving;
   }
   for (size_t i = 1; i < job.memberCount; ++i) {
-    if (std::strcmp(job.members[i - 1].text, job.members[i].text) == 0) {
-      LOG_ERR("GAME", "Member \"%s\" appears twice", job.members[i].text);
+    if (std::strcmp(job.members[i - 1].name, job.members[i].name) == 0) {
+      LOG_ERR("GAME", "Member \"%s\" appears twice", job.members[i].name);
       return Error::BadMember;
     }
   }
@@ -259,12 +323,31 @@ Error listMembers(Job& job, ZipFile& zip) {
   return Error::None;
 }
 
+// What a member streamed through a guard was: Lua bytecode (the guard then refused the chunk, so no
+// write was made and the card cannot be at fault), else the card's fault (a failed write), else the
+// package's (more, fewer, or other bytes than the directory declared, or a stream ZipFile could not
+// finish, which includes its own read and allocation failures; a wrong CRC).
+Error judge(const MemberGuard& guard, const Member& member, const bool streamed, const bool writeFailed) {
+  if (guard.binary) return Error::BinaryLua;
+  if (writeFailed) return Error::SdCard;
+  if (guard.overrun || !streamed || guard.total != member.size) return Error::BadSize;
+  return guard.crc == member.crc ? Error::None : Error::BadCrc;
+}
+
 // Parses manifest.json as it streams out of the zip, and applies Manifest::check. An
 // Unavailable game is installed: the launcher marks it.
 Error readManifest(Job& job, ZipFile& zip) {
+  const Member* member = nullptr;
+  for (size_t i = 0; i < job.memberCount && !member; ++i) {
+    if (std::strcmp(job.members[i].name, "manifest.json") == 0) member = &job.members[i];
+  }
+  if (!member) return Error::BadManifest;
   job.reader.begin();
-  ManifestSink sink(job.reader);
-  if (!zip.readFileToStream("manifest.json", sink, CHUNK_BYTES)) return Error::BadManifest;
+  MemberGuard guard(member->size, false);
+  ManifestSink sink(job.reader, guard);
+  const bool streamed = zip.readFileToStream("manifest.json", sink, CHUNK_BYTES);
+  const Error judged = judge(guard, *member, streamed, false);
+  if (judged != Error::None) return judged;
   const GameCore::ManifestError parsed = job.reader.finish(job.manifest);
   if (parsed != GameCore::ManifestError::None) {
     LOG_ERR("GAME", "manifest.json: %s", GameCore::describe(parsed));
@@ -289,8 +372,6 @@ uint32_t bigEndian(const uint8_t* bytes) {
 bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
   constexpr size_t HEADER_BYTES = 8 + 8 + 13;  // signature, IHDR's length and type, IHDR's data
   constexpr uint8_t SIGNATURE[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  constexpr uint32_t MAX_WIDTH = 2048;  // the converter's own limits
-  constexpr uint32_t MAX_HEIGHT = 3072;
   uint8_t h[HEADER_BYTES];
   if (png.read(h, sizeof(h)) != static_cast<int>(sizeof(h)) || std::memcmp(h, SIGNATURE, sizeof(SIGNATURE)) != 0 ||
       bigEndian(h + 8) != 13 || std::memcmp(h + 12, "IHDR", 4) != 0) {
@@ -307,7 +388,7 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
                           : (colour == 2 || colour == 4 || colour == 6) ? 0x18
                                                                         : 0;
   return (depth & (depth - 1)) == 0 && (allowed & depth) != 0 && h[26] == 0 && h[27] == 0 && h[28] == 0 && width > 0 &&
-         width <= MAX_WIDTH && height > 0 && height <= MAX_HEIGHT;
+         width <= GameCore::IMAGE_MAX_WIDTH && height > 0 && height <= GameCore::IMAGE_MAX_HEIGHT;
 }
 
 // Converts the extracted job.pathA (<name>.png) to job.pathB (<name>.bmp) in the converter's
@@ -363,7 +444,9 @@ Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
   if (check != GameCore::ImageCheck::Ok) {
     LOG_ERR("GAME", "%s: %s", job.pathB, GameCore::imageCheckName(check));
     // The converter writes a whole file, so a short one lost a write to the card.
-    return check == GameCore::ImageCheck::Truncated ? Error::SdCard : Error::BadImage;
+    if (check == GameCore::ImageCheck::Truncated) return Error::SdCard;
+    return check == GameCore::ImageCheck::OverBudget || check == GameCore::ImageCheck::TooMany ? Error::ImagesTooBig
+                                                                                               : Error::BadImage;
   }
   if (isIcon && (header.width != GameCore::ICON_PIXELS || header.height != GameCore::ICON_PIXELS)) {
     LOG_ERR("GAME", "icon.bmp came out %ux%u, not %dx%d", static_cast<unsigned>(header.width),
@@ -380,18 +463,19 @@ Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES
   if (!hash.ok()) return Error::OutOfMemory;
   GameCore::ImageBudget budget;
   for (size_t i = 0; i < job.memberCount; ++i) {
-    const char* name = job.members[i].text;
-    size_t size = 0;
-    if (!zip.getInflatedFileSize(name, &size)) return Error::NotAPackage;
-    GamePkg::hashMemberStart(hash, name, static_cast<uint32_t>(size));
+    const Member& member = job.members[i];
+    const char* name = member.name;
+    GamePkg::hashMemberStart(hash, name, member.size);
 
     snprintf(job.pathA, sizeof(job.pathA), "%s/%s", job.tmpDir, name);
     HalFile out;
     if (!Storage.openFileForWrite("GAME", job.pathA, out)) return Error::SdCard;
-    FileSink sink(out, &hash);
+    MemberGuard guard(member.size, classify(name) == MemberKind::Lua);
+    FileSink sink(out, &hash, &guard);
     const bool streamed = zip.readFileToStream(name, sink, CHUNK_BYTES);
     const bool closed = out.close();
-    if (!streamed || sink.total != size) return sink.writeFailed ? Error::SdCard : Error::NotAPackage;
+    const Error judged = judge(guard, member, streamed, sink.writeFailed);
+    if (judged != Error::None) return judged;
     if (!closed) return Error::SdCard;
 
     if (classify(name) == MemberKind::Png) {
@@ -438,12 +522,11 @@ Error install(Job& job, const char* fileName) {
   job.tmpDir[0] = '\0';
   job.renameTried = false;
   snprintf(job.inboxPath, sizeof(job.inboxPath), "%s/%s", GamePaths::INBOX_DIR, fileName);
+  Error error = listMembers(job);
+  if (error != Error::None) return error;
   // ZipFile keeps a reference to its path.
   const std::string zipPath(job.inboxPath);
   ZipFile zip(zipPath);
-
-  Error error = listMembers(job, zip);
-  if (error != Error::None) return error;
   error = readManifest(job, zip);
   if (error != Error::None) return error;
 
@@ -505,6 +588,24 @@ const char* describe(const Error error) {
       return "too many members";
     case Error::BadImage:
       return "an image is not usable";
+    case Error::PackageTooBig:
+      return "the package is over its size limit";
+    case Error::MemberTooBig:
+      return "a member is over its size limit";
+    case Error::ImagesTooBig:
+      return "the images are over their budget";
+    case Error::BadSize:
+      return "a member is not the size it declares";
+    case Error::BadCrc:
+      return "a member fails its CRC";
+    case Error::BinaryLua:
+      return "a Lua member is a bytecode chunk";
+    case Error::Unsupported:
+      return "the zip uses ZIP64, encryption, or another compression method";
+    case Error::BadDirectory:
+      return "the zip's entry count does not match its directory, or members overlap";
+    case Error::SourcesTooBig:
+      return "the Lua members are over their size limit together";
   }
   return "unknown error";
 }

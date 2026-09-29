@@ -8,7 +8,9 @@
 // The one installer (spine AD-16): it installs every /games/*.cpgame when Games opens.
 // For each file it validates the package (AD-15), extracts it to /.games-tmp/<id>/,
 // converts its images to .bmp, replaces any /.games/<id>/ with the new folder, writes .pkg
-// last as the commit marker, and deletes the inbox file. /.games-data/<id>/ is never touched.
+// last as the commit marker, and deletes the inbox file. Validation comes first and touches no card
+// folder: the file's size, then the zip's directory (ZipDirectory), then each member as it streams
+// (its declared size as a cap, no bytecode, its CRC). /.games-data/<id>/ is never touched.
 // A package that is not valid is renamed <name>.cpgame.bad. All file access goes through
 // Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
 namespace GamePackageInstaller {
@@ -25,7 +27,17 @@ enum class Error : uint8_t {
   BadMember,    // a member name off the whitelist, or the same name twice
   NoMain,       // main.lua missing
   TooManyMembers,
-  BadImage,  // an image the converter refuses or fails on, a non-square icon, or images over their budget
+  BadImage,  // an image the converter refuses or fails on, or a non-square icon
+  // The hardening rejections (AD-15), each with its own reason: every one is the package's fault.
+  PackageTooBig,  // the file is over PACKAGE_BYTES
+  MemberTooBig,   // a member declares more than MEMBER_BYTES uncompressed
+  ImagesTooBig,   // the converted images pass IMAGES_BYTES or MAX_IMAGES
+  BadSize,        // a member streams more, fewer, or other bytes than the directory declares
+  BadCrc,         // a member's bytes do not match its CRC-32
+  BinaryLua,      // a .lua member starts with Lua's bytecode signature
+  Unsupported,    // ZIP64, encryption, or a compression method other than stored and deflate
+  BadDirectory,   // the EOCD's entry count differs from the directory's, or two members share bytes of the file
+  SourcesTooBig,  // the .lua members together pass LUA_SOURCES_BYTES, more than GameAssets::load accepts
 };
 
 // The most inbox files one installAll takes; the rest wait for the next call.

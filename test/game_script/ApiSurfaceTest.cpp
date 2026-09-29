@@ -26,6 +26,7 @@
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
 #include "Manifest.h"
+#include "PackageLimits.h"
 #include "Sandbox.h"
 #include "Session.h"
 
@@ -440,6 +441,13 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"timers_pending_count", pendingTimers},
       {"images_bytes", GameCore::IMAGES_BYTES},
       {"images_count", GameCore::MAX_IMAGES},
+      {"package_bytes", GameCore::PACKAGE_BYTES},
+      {"package_members_count", GameCore::PACKAGE_MEMBERS},
+      {"member_bytes", GameCore::MEMBER_BYTES},
+      {"lua_sources_bytes", GameCore::LUA_SOURCES_BYTES},
+      {"member_stem_bytes", GameCore::MEMBER_STEM_BYTES},
+      {"image_width_pixels", GameCore::IMAGE_MAX_WIDTH},
+      {"image_height_pixels", GameCore::IMAGE_MAX_HEIGHT},
       // lib/lua/library.json's defines, as the Lua build (device and host) compiles them.
       {"c_stack_levels_count", LUA_BUILD_LUAI_MAXCCALLS},
       {"pattern_depth_count", LUA_BUILD_MAXCCALLS},
