@@ -348,3 +348,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
   summary: `docs/crosshatch/formats.md` still says "the first Games list shows only games that can start" although the launcher lists every game with its reason.
   evidence: `formats.md` (Install, step 1) and `docs/crosshatch/game-icons.md` (no `GameRowIcon` section) are outside this entry's `touches`.
+
+## owner-e4-launcher
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/epic-install-and-launcher.md` (Notes, owner Decision 2026-09-29, the launcher-screenshot question)
+  summary: Design a Crosshatch logo icon and make it the launcher's row fallback (and any other "game without an icon" fallback) in place of `game-controller`, which stands for games not made for this system.
+  evidence: The owner's answer to the launcher-screenshot question (2026-09-29, point 3). Today `GamesLauncherActivity` falls back to the library's `game-controller` for a game with neither `icon.png` nor a known manifest `icon`; the new icon needs a design and an asset (in the library's 1-bit 32/64 px format, or a raw bitmap like `GAME_CONTROLLER_32`), so it is not this epic's work.
