@@ -3,7 +3,7 @@ title: 'Manifest icon grammar, library check, and the pass capability'
 type: 'feature'
 ticket: '7'
 created: '2026-09-29'
-status: built
+status: done
 baseline_revision: '76e0cc45daa4bc1fec5dc860b7d4ad92bd6627a9'
 route: 'full'
 route_source: 'auto'
