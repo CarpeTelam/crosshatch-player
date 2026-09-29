@@ -14,10 +14,13 @@ import contextlib
 import hashlib
 import io
 import pathlib
+import random
+import re
 import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -188,6 +191,198 @@ class ParseTest(unittest.TestCase):
                          ink(grid_of(svg('M4,16a12,12,0,0,1,20,0a12,12,0,0,1,-20,0z'))))
 
 
+def expand(packed):
+    """Every run of `packed` decoded, written here without the script's code (a decoder as the firmware's does it);
+    control 128 fails."""
+    out = bytearray()
+    pos = 0
+    while pos < len(packed):
+        control = packed[pos]
+        assert control != 128, 'control 128 is malformed'
+        if control < 128:
+            assert pos + 1 + control < len(packed), 'a copy passes the end of the runs'
+            out += packed[pos + 1:pos + 2 + control]
+            pos += 2 + control
+        else:
+            assert pos + 1 < len(packed), 'a repeat has no byte to repeat'
+            out += bytes([packed[pos + 1]]) * (257 - control)
+            pos += 2
+    return bytes(out)
+
+
+def unpack(packed, pixels):
+    """The drawn rows of a packed bitmap, joined: its length prefix checked, and exactly pixels rows of pixels / 8."""
+    assert len(packed) == 2 + int.from_bytes(packed[:2], 'little')
+    rows = expand(packed[2:])
+    assert len(rows) == pixels * pixels // 8, 'the runs are not exactly the bitmap\'s rows'
+    return rows
+
+
+def stored_layout(rows):
+    """Drawn rows (pixels / 8 bytes each) put in drawIcon's layout: drawn (x, y) is stored at (pixels - 1 - x, y)."""
+    pixels = int((len(rows) * 8) ** 0.5)
+    row_bytes = pixels // 8
+    out = bytearray(b'\xff' * len(rows))
+    for y in range(pixels):
+        for x in range(pixels):
+            if not rows[y * row_bytes + x // 8] >> (7 - x % 8) & 1:
+                stored_row, col = pixels - 1 - x, y
+                out[stored_row * row_bytes + col // 8] &= ~(0x80 >> (col % 8)) & 0xFF
+    return bytes(out)
+
+
+def shortest(data):
+    """The length of the shortest PackBits encoding of `data`, by exhaustion over every copy and repeat length at
+    every position (no assumption about how the cost falls)."""
+    size = len(data)
+    cost = [0] * (size + 1)
+    for i in range(size - 1, -1, -1):
+        limit = min(size - i, ggi.MAX_RUN)
+        best = min(1 + length + cost[i + length] for length in range(1, limit + 1))
+        for length in range(2, limit + 1):
+            if data[i + length - 1] != data[i]:
+                break
+            best = min(best, 2 + cost[i + length])
+        cost[i] = best
+    return cost[0]
+
+
+class PackBitsTest(unittest.TestCase):
+
+    def test_bytes_round_trip_and_are_the_shortest_encoding(self):
+        rng = random.Random(15)
+        data = [bytes([b] * n) for b in (0x00, 0xFF, 0x5A) for n in range(1, 9)]
+        data += [bytes(rng.choice((0x00, 0xFF, 0x3C)) for _ in range(rng.randint(1, 8))) for _ in range(300)]
+        # Longer, with runs of every length, so a repeat crosses what would be a row and a copy is cut at 128.
+        for _ in range(120):
+            pieces = [bytes([rng.choice((0x00, 0xFF, 0x18, 0xC3))]) * rng.choice((1, 1, 2, 3, 5, 9)) for _ in range(12)]
+            data.append(b''.join(pieces))
+        data.append(bytes(rng.randrange(256) for _ in range(200)))
+        data.append(b'\xff' * 130 + b'\x00' + b'\xff' * 129)
+        for row in data:
+            packed = ggi.packbits(row)
+            self.assertEqual(expand(packed), row, row.hex())
+            self.assertEqual(len(packed), shortest(row), row.hex())
+
+    def test_control_128_is_never_written(self):
+        rng = random.Random(128)
+        for _ in range(300):
+            data = bytes(rng.choice((0x00, 0x80, 0xFF)) for _ in range(rng.randint(1, 300)))
+            packed = ggi.packbits(data)
+            self.assertEqual(expand(packed), data)  # walks the runs, so a data byte of 0x80 is not a control
+
+    def test_runs_are_at_most_128_long(self):
+        packed = ggi.packbits(b'\x00' * 300)  # three repeats: 128 + 128 + 44
+        self.assertEqual(len(packed), 6)
+        self.assertEqual(sorted(packed[0::2]), [257 - 128, 257 - 128, 257 - 44])
+        self.assertEqual(packed[1::2], b'\x00' * 3)
+        self.assertEqual(ggi.packbits(b'\x01\x02' * 64)[0], 127)
+        distinct = bytes(range(200))  # two copies: 128 + 72, each with its control byte
+        self.assertEqual(len(ggi.packbits(distinct)), 202)
+        self.assertEqual(expand(ggi.packbits(distinct)), distinct)
+        self.assertEqual(ggi.packbits(b''), b'')
+
+    def test_a_row_of_equal_bytes_is_a_repeat_and_a_lone_byte_a_copy(self):
+        self.assertEqual(ggi.packbits(b'\xff' * 4), bytes([253, 0xFF]))
+        self.assertEqual(ggi.packbits(b'\xff' * 8), bytes([249, 0xFF]))
+        self.assertEqual(ggi.packbits(b'\x12'), bytes([0, 0x12]))
+        self.assertEqual(ggi.packbits(b'\x12\x34\x56\x78'), bytes([3, 0x12, 0x34, 0x56, 0x78]))
+
+    def test_pack_rows_puts_drawn_column_x_at_the_msb_first_bit_x_and_ink_as_a_clear_bit(self):
+        for pixels in (32, 64):
+            grid = [[False] * pixels for _ in range(pixels)]
+            grid[13][3] = True
+            grid[pixels - 1][pixels - 1] = True
+            rows = ggi.pack_rows(grid)
+            row_bytes = pixels // 8
+            self.assertEqual(len(rows), pixels * row_bytes)
+            expected = bytearray(b'\xff' * len(rows))
+            expected[13 * row_bytes] = 0xFF & ~(0x80 >> 3)
+            expected[-1] = 0xFE
+            self.assertEqual(rows, bytes(expected))
+
+    def test_compress_writes_the_length_then_the_runs_of_all_the_rows(self):
+        for pixels in (32, 64):
+            grid = [[(x * 7 + y * 3) % 5 == 0 or y == 4 for x in range(pixels)] for y in range(pixels)]
+            packed = ggi.compress(grid)
+            self.assertEqual(unpack(packed, pixels), ggi.pack_rows(grid))
+            self.assertEqual(packed[2:], ggi.packbits(ggi.pack_rows(grid)))
+        # A blank bitmap is one run of 128 bytes at 32 px, and four at 64 px: runs cross rows.
+        blank = [[False] * 32 for _ in range(32)]
+        self.assertEqual(ggi.compress(blank), (2).to_bytes(2, 'little') + bytes([129, 0xFF]))
+        blank = [[False] * 64 for _ in range(64)]
+        self.assertEqual(ggi.compress(blank), (8).to_bytes(2, 'little') + bytes([129, 0xFF]) * 4)
+
+    def test_a_bitmap_without_whole_bytes_a_row_or_past_the_length_is_a_failure(self):
+        with self.assertRaises(ggi.Failure):
+            ggi.pack_rows([[False] * 12 for _ in range(12)])
+        rng = random.Random(64)
+        checker = [[rng.random() < 0.5 for _ in range(64)] for _ in range(64)]  # noise: about 514 bytes of runs
+        self.assertLess(len(ggi.compress(checker)), 1 << 16)
+        with unittest.mock.patch.object(ggi, 'PACKED_LENGTH_BYTES', 1):  # a 1-byte length holds under 256 bytes of runs
+            with self.assertRaises(ggi.Failure):
+                ggi.compress(checker)
+
+    def test_stored_layout_puts_drawn_x_y_at_row_px_minus_1_minus_x_col_y(self):
+        grid = [[False] * 32 for _ in range(32)]
+        grid[13][3] = True
+        self.assertEqual(stored_layout(ggi.pack_rows(grid)), ggi.pack(grid))
+
+
+class CommittedTest(unittest.TestCase):
+    """The committed header, its raw reference, and the packing, from the committed SVGs (about a second)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.icons = []
+        for weights in ggi.read_map(ggi.DEFAULT_ASSETS):
+            rendered = {}
+            for weight, entry in weights.items():
+                path = ggi.DEFAULT_ASSETS / entry.path
+                rendered[weight] = (entry, ggi.render(path.read_text(), str(path)))
+            cls.icons.append(rendered)
+
+    def test_every_bitmap_decodes_to_its_raw_bitmap(self):
+        count = 0
+        for weights in self.icons:
+            for entry, bitmaps in weights.values():
+                for pixels, bitmap in bitmaps.items():
+                    self.assertEqual(stored_layout(unpack(bitmap.packed, pixels)), bitmap.raw,
+                                     f'{entry.name} {entry.weight} {pixels}')
+                    self.assertEqual(len(bitmap.raw), pixels * pixels // 8)
+                    self.assertLess(len(bitmap.packed), 1 << 16)
+                    count += 1
+        self.assertEqual(count, len(self.icons) * len(ggi.WEIGHTS) * len(ggi.SIZES))
+
+    def test_the_committed_header_is_a_fresh_run(self):
+        self.assertEqual(ggi.DEFAULT_OUT.read_text(), ggi.header_text(self.icons))
+
+    def test_the_committed_raw_reference_is_a_fresh_run(self):
+        reference = ggi.REPO / 'test' / 'game_script' / 'GameIconsRaw.h'
+        self.assertEqual(reference.read_text(), ggi.reference_text(self.icons),
+                         'run python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h')
+
+    def test_the_cover_grids_controller_is_raw_in_drawicons_layout_and_the_rest_is_packed(self):
+        text = ggi.DEFAULT_OUT.read_text()
+        self.assertEqual(text.count('GAME_CONTROLLER_32['), 1)
+        self.assertEqual(len(re.findall(r'uint8_t \w+\[SMALL_BYTES\]', text)), 1)
+        self.assertEqual(len(re.findall(r'uint8_t \w+\[MEDIUM_BYTES\]', text)), 0)
+        raw = next(bitmaps[32].raw for weights in self.icons for entry, bitmaps in [weights['regular']]
+                   if entry.name == 'game-controller')
+        block = text[text.index('uint8_t GAME_CONTROLLER_32['):]
+        block = block[:block.index('};')]
+        self.assertEqual(bytes(int(token, 16) for token in re.findall(r'0x([0-9A-F]{2})', block)), raw)
+        self.assertIn('inline constexpr uint8_t GAME_CONTROLLER_32_PB[', text)
+
+    def test_the_packed_data_is_smaller_than_the_raw_data(self):
+        packed = sum(len(bitmap.packed) for weights in self.icons for _, bitmaps in weights.values()
+                     for bitmap in bitmaps.values())
+        raw = sum(len(bitmap.raw) for weights in self.icons for _, bitmaps in weights.values()
+                  for bitmap in bitmaps.values())
+        self.assertEqual(raw, len(self.icons) * len(ggi.WEIGHTS) * sum(size * size // 8 for size in ggi.SIZES))
+        self.assertLess(packed, raw)
+
+
 PHOSPHOR = ggi.REPO / 'assets' / 'game-icons' / 'phosphor'
 # Two names in both weights; dice-six carries a hyphen, and x is listed first but sorts last.
 GOOD_MAP = ('x regular phosphor/regular/x.svg\nx fill phosphor/fill/x-fill.svg\n'
@@ -256,26 +451,69 @@ class MainTest(unittest.TestCase):
         self.assertIn('enum class Weight : uint8_t { Regular, Fill };', text)
         self.assertIn('inline constexpr size_t WEIGHT_COUNT = 2;', text)
         self.assertIn('  const uint8_t* small[WEIGHT_COUNT];\n  const uint8_t* medium[WEIGHT_COUNT];\n', text)
-        for array in ('DICE_SIX_32[SMALL_BYTES]', 'DICE_SIX_64[MEDIUM_BYTES]', 'DICE_SIX_FILL_32[SMALL_BYTES]',
-                      'DICE_SIX_FILL_64[MEDIUM_BYTES]', 'X_32[SMALL_BYTES]', 'X_FILL_64[MEDIUM_BYTES]'):
-            self.assertIn(f'inline constexpr uint8_t {array} = {{', text)
+        for array in ('DICE_SIX_32_PB', 'DICE_SIX_64_PB', 'DICE_SIX_FILL_32_PB', 'DICE_SIX_FILL_64_PB', 'X_32_PB',
+                      'X_FILL_64_PB'):
+            # Each packed array's length is its stored size, the two length bytes and the runs.
+            size = len(self.array_bytes(text, array))
+            self.assertIn(f'inline constexpr uint8_t {array}[{size}] = {{', text)
+            self.assertEqual(size, 2 + int.from_bytes(self.array_bytes(text, array)[:2], 'little'), array)
+        self.assertNotIn('uint8_t GAME_CONTROLLER_32', text)  # the map has no game-controller: no raw array
         self.assertIn('// dice-six: Phosphor 2.1.1 regular, phosphor/regular/dice-six.svg', text)
         self.assertIn('// dice-six: Phosphor 2.1.1 fill, phosphor/fill/dice-six-fill.svg', text)
         self.assertIn('// x: Phosphor 2.1.1 regular, phosphor/regular/x.svg', text)
         self.assertIn('// x: Phosphor 2.1.1 fill, phosphor/fill/x-fill.svg', text)
         self.assertIn('\n' + ggi.LICENCE_NOTICE + '\n', text)
-        dice = '{"dice-six", {DICE_SIX_32, DICE_SIX_FILL_32}, {DICE_SIX_64, DICE_SIX_FILL_64}},'
-        x = '{"x", {X_32, X_FILL_32}, {X_64, X_FILL_64}},'
+        dice = '{"dice-six", {DICE_SIX_32_PB, DICE_SIX_FILL_32_PB}, {DICE_SIX_64_PB, DICE_SIX_FILL_64_PB}},'
+        x = '{"x", {X_32_PB, X_FILL_32_PB}, {X_64_PB, X_FILL_64_PB}},'
         self.assertLess(text.index(dice), text.index(x))
         # Each name's regular bitmaps come before its fill ones, and the weights differ.
-        self.assertLess(text.index('X_32[SMALL_BYTES]'), text.index('X_FILL_32[SMALL_BYTES]'))
-        self.assertNotEqual(self.array(text, 'X_32'), self.array(text, 'X_FILL_32'))
+        self.assertLess(text.index('uint8_t X_32_PB['), text.index('uint8_t X_FILL_32_PB['))
+        self.assertNotEqual(self.array(text, 'X_32_PB'), self.array(text, 'X_FILL_32_PB'))
         self.assertNotIn('static', text)
         self.assertNotIn('original', text)
 
     def array(self, text, name):
         start = text.index(f'uint8_t {name}[')
         return text[start:text.index('};', start)].split('{', 1)[1]
+
+    def array_bytes(self, text, name):
+        return bytes(int(token, 16) for token in re.findall(r'0x([0-9A-F]{2})', self.array(text, name)))
+
+    def test_raw_out_writes_the_uncompressed_bitmaps_the_packed_ones_decode_to(self):
+        raw = self.tmp / 'raw.h'
+        code, err = self.run_main(extra=('--raw-out', str(raw)))
+        self.assertEqual(code, 0, err)
+        packed_text, raw_text = self.out.read_text(), raw.read_text()
+        self.assertIn('namespace GameIconsRaw {', raw_text)
+        self.assertIn('\n// clang-format off\n', raw_text)
+        self.assertNotIn('_PB', raw_text)
+        self.assertIn('{"dice-six", {DICE_SIX_32, DICE_SIX_FILL_32}, {DICE_SIX_64, DICE_SIX_FILL_64}},', raw_text)
+        for name in ('X', 'DICE_SIX_FILL'):
+            for pixels in (32, 64):
+                stored = self.array_bytes(raw_text, f'{name}_{pixels}')
+                self.assertEqual(len(stored), pixels * pixels // 8)
+                self.assertEqual(stored_layout(unpack(self.array_bytes(packed_text, f'{name}_{pixels}_PB'), pixels)),
+                                 stored, f'{name} {pixels}')
+        self.assertFalse(self.out.read_text() == raw_text)
+
+    def test_no_raw_out_writes_no_reference(self):
+        self.assertEqual(self.run_main()[0], 0)
+        self.assertEqual(sorted(path.name for path in self.tmp.iterdir()), ['assets', 'out.h'])
+
+    def test_raw_out_cannot_name_the_header_or_go_with_write_sums(self):
+        code, err = self.run_main(extra=('--raw-out', str(self.out)))
+        self.assertEqual(code, 1, err)
+        self.assertIn('would overwrite the header', err)
+        self.assertFalse(self.out.exists())
+        code, err = self.main_only('--write-sums', '--raw-out', str(self.tmp / 'raw.h'))
+        self.assertEqual(code, 1, err)
+        self.assertIn('--write-sums writes no header', err)
+        self.assertFalse((self.tmp / 'raw.h').exists())
+
+    def test_an_unwritable_raw_out_exits_2(self):
+        code, err = self.run_main(extra=('--raw-out', str(self.tmp / 'no-such-folder' / 'raw.h')))
+        self.assertEqual(code, 2, err)
+        self.assertIn('cannot write', err)
 
     def test_the_committed_map_names_phosphor_icons_only_in_both_weights(self):
         entries = ggi.read_map(ggi.DEFAULT_ASSETS)

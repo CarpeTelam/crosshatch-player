@@ -4,9 +4,11 @@ Generate lib/GameIcons/GameIcons.generated.h, the game icon library's bitmaps, f
 assets/game-icons/names.txt names. Standard library only; the output is the same, byte for byte, on every run on one
 platform (see "Run it on Linux" below).
 
-    python3 scripts/gen_game_icons.py [--assets DIR] [--out PATH]
+    python3 scripts/gen_game_icons.py [--assets DIR] [--out PATH] [--raw-out RAW]
         DIR   the folder holding names.txt, SHA256SUMS, and the SVGs (default: <repo>/assets/game-icons)
         PATH  the header to write (default: <repo>/lib/GameIcons/GameIcons.generated.h)
+        RAW   also write the uncompressed bitmaps the host tests compare the packed ones with (nothing by default;
+              the committed copy is test/game_script/GameIconsRaw.h)
     python3 scripts/gen_game_icons.py [--assets DIR] --write-sums   # rewrite DIR/SHA256SUMS; writes no header
     python3 scripts/gen_game_icons_test.py   # the script's own tests
 
@@ -34,13 +36,21 @@ its coverage is at least THRESHOLD. Each icon is drawn in each weight at 32 px (
 uses no libm call; arcs use math.sin, cos, and atan2, whose last-bit differences between platforms the rounding makes
 very unlikely, but not impossible, to move a pixel; hence "run it on Linux" above.
 
-The bitmaps use GfxRenderer::drawIcon's layout: square, 1 bit per pixel, MSB first, rows padded to whole bytes,
-bit 0 = ink, stored rotated 90 degrees counter-clockwise, so stored (row, col) is drawn at (pixels - 1 - row, col).
+The header stores each bitmap PackBits-compressed, in drawn orientation, so a draw decodes one row at a time with no
+buffer past the row: a 2-byte little-endian length N, then N bytes of PackBits that decode to the drawn rows from the
+top, pixels / 8 bytes each (1 bit per pixel, MSB first, bit 0 = ink, bit x = drawn column x). A run is a control byte c
+and its data: c 0..127 copies the next c + 1 bytes, c 129..255 repeats the next byte 257 - c times, and 128 is never
+written (a decoder treats it as malformed). A run may cross from one row into the next, and the whole bitmap gets the
+shortest encoding, so the output is deterministic. `game-controller` regular at 32 px is also written raw, as
+GAME_CONTROLLER_32, in GfxRenderer::drawIcon's layout (square, rows padded to whole bytes, bit 0 = ink, stored rotated
+90 degrees counter-clockwise: stored (row, col) is drawn at (pixels - 1 - row, col)), because Home's cover-grid Games
+tab draws that array with drawIcon. --raw-out writes every bitmap in that layout, uncompressed.
 
 Exit 0: the header (or, with --write-sums, SHA256SUMS) was written. Exit 1: a rule is broken: a malformed or
 non-UTF-8 map, a bad name, weight, or path (anything but Phosphor's own file for the name and weight), a name given
 twice in one weight or missing a weight, a SHA256SUMS that is not UTF-8 or has a line that is malformed or lists a
-path twice, SVG content outside the subset above (a non-finite number included), or an icon that renders empty; the
+path twice, SVG content outside the subset above (a non-finite number included), an icon that renders empty, or
+--raw-out given with --write-sums or naming the --out file; the
 message names the file, line, or name.
 Exit 2: the script could not run: no names.txt, no SHA256SUMS (without --write-sums), a map line naming an SVG that
 does not exist, or an unreadable or unwritable file.
@@ -88,6 +98,13 @@ NAME = re.compile(r'[a-z][a-z0-9-]{0,31}')
 SMALL_PIXELS = 32
 MEDIUM_PIXELS = 64
 SIZES = (SMALL_PIXELS, MEDIUM_PIXELS)
+PACKED_LENGTH_BYTES = 2
+# The largest run: a repeat of 128 bytes, or a copy of 128.
+MAX_RUN = 128
+# The icons also written raw, (name, weight, pixels), because upstream code draws the array with GfxRenderer::drawIcon:
+# Home's cover-grid Games tab draws GAME_CONTROLLER_32 (CoverGridHomeUi.cpp, ledger row 9).
+RAW_ICONS = (('game-controller', 'regular', SMALL_PIXELS),)
+Bitmap = collections.namedtuple('Bitmap', 'raw packed')
 
 # A pixel is ink when at least this fraction of it is covered.
 THRESHOLD = 0.5
@@ -453,8 +470,69 @@ def pack(grid):
     return bytes(out)
 
 
+def pack_rows(grid):
+    """The drawn rows of a square [y][x] ink grid, top to bottom, each pixels / 8 bytes: MSB first, bit 0 = ink,
+    bit x of the row is column x."""
+    pixels = len(grid)
+    if pixels % 8:
+        raise Failure(f'a {pixels} px bitmap does not have whole bytes a row')
+    out = bytearray()
+    for row in grid:
+        for start in range(0, pixels, 8):
+            byte = 0xFF
+            for bit in range(8):
+                if row[start + bit]:
+                    byte &= ~(0x80 >> bit) & 0xFF
+            out.append(byte)
+    return bytes(out)
+
+
+def packbits(data):
+    """The shortest PackBits encoding of `data`: a copy of L bytes is 1 + L bytes, a repeat of R >= 2 equal bytes is 2,
+    each at most MAX_RUN long. Control 128 is never written. cost[i] is the shortest encoding of data[i:], and it never
+    grows with i (dropping a first byte shortens a copy or a repeat, or leaves a repeat of 2 as a copy of 1, at the same
+    size), so a repeat is best as long as it can be, and a copy is best where cost[j] + j is least."""
+    size = len(data)
+    cost = [0] * (size + 1)
+    same = [0] * (size + 1)  # the run of equal bytes starting at i
+    choice = [None] * size  # (is a repeat, length) taken at each position
+    reach = [0] * size + [size]  # j + cost[j]
+    for i in range(size - 1, -1, -1):
+        same[i] = same[i + 1] + 1 if i + 1 < size and data[i + 1] == data[i] else 1
+        window = reach[i + 1:min(size, i + MAX_RUN) + 1]  # a copy of L ends at j = i + L
+        least = min(window)
+        best = (1 + least - i, False, window.index(least) + 1)
+        repeat = min(MAX_RUN, same[i])
+        if repeat >= 2 and (2 + cost[i + repeat], True, repeat) < best:
+            best = (2 + cost[i + repeat], True, repeat)
+        cost[i] = best[0]
+        reach[i] = i + cost[i]
+        choice[i] = best[1:]
+    out = bytearray()
+    i = 0
+    while i < size:
+        repeated, length = choice[i]
+        if repeated:
+            out.append(257 - length)
+            out.append(data[i])
+        else:
+            out.append(length - 1)
+            out.extend(data[i:i + length])
+        i += length
+    return bytes(out)
+
+
+def compress(grid):
+    """A bitmap as the header stores it: the 2-byte little-endian length of the runs, then the PackBits of the drawn
+    rows' bytes, top to bottom, as one stream (a run may cross from one row into the next)."""
+    body = packbits(pack_rows(grid))
+    if len(body) >= 1 << (8 * PACKED_LENGTH_BYTES):
+        raise Failure(f'a {len(grid)} px bitmap packs to {len(body)} bytes, past the {PACKED_LENGTH_BYTES}-byte length')
+    return len(body).to_bytes(PACKED_LENGTH_BYTES, 'little') + body
+
+
 def render(text, where):
-    """{pixels: packed bitmap} of one SVG at each size; an icon with no ink at a size is a Failure."""
+    """{pixels: Bitmap(raw, packed)} of one SVG at each size; an icon with no ink at a size is a Failure."""
     view, paths = parse_svg(text, where)
     contours = []
     for d in paths:
@@ -464,30 +542,42 @@ def render(text, where):
         grid = rasterize(contours, view, pixels)
         if not any(any(row) for row in grid):
             raise Failure(f'{where}: renders empty at {pixels} px')
-        bitmaps[pixels] = pack(grid)
+        bitmaps[pixels] = Bitmap(pack(grid), compress(grid))
     return bitmaps
 
 
-def array_lines(name, size_bytes, data):
-    lines = [f'inline constexpr uint8_t {name}[{size_bytes}] = {{']
+def array_lines(name, size, data):
+    lines = [f'inline constexpr uint8_t {name}[{size}] = {{']
     for i in range(0, len(data), 16):
         lines.append('    ' + ' '.join(f'0x{byte:02X},' for byte in data[i:i + 16]))
     lines.append('};')
     return lines
 
 
+def packed_identifier(name, weight, pixels):
+    """The array name of a packed bitmap: identifier() and _PB (PackBits), so it never names a raw array."""
+    return identifier(name, weight, pixels) + '_PB'
+
+
+def raw_bytes(pixels):
+    return pixels * ((pixels + 7) // 8)
+
+
 def header_text(icons):
-    """The header for [{weight: (Entry, {pixels: bytes})}], sorted by name, every weight of WEIGHTS in each."""
-    small_bytes = SMALL_PIXELS * ((SMALL_PIXELS + 7) // 8)
-    medium_bytes = MEDIUM_PIXELS * ((MEDIUM_PIXELS + 7) // 8)
+    """The header for [{weight: (Entry, {pixels: Bitmap})}], sorted by name, every weight of WEIGHTS in each."""
     lines = [
         f'// Generated by scripts/gen_game_icons.py from assets/game-icons/{MAP_NAME}; never edit by hand.',
         '//',
-        '// Each bitmap is square, 1 bit per pixel, MSB first, rows padded to whole bytes, bit 0 = ink, and stored',
-        '// rotated 90 degrees counter-clockwise: stored (row, col) is drawn at (pixels - 1 - row, col), as',
-        '// GfxRenderer::drawIcon draws it. ICONS is sorted by name, bytewise; each name has a bitmap per weight and',
-        '// size. Names are Phosphor\'s own; identifiers are the name in upper case with "-" as "_", plus _FILL for',
-        '// the fill weight.',
+        '// Each icon bitmap is square, PackBits-compressed in drawn orientation: a 2-byte little-endian length N, then N',
+        '// bytes of PackBits that decode to the drawn rows from the top, pixels / 8 bytes each (1 bit per pixel, MSB',
+        '// first, bit 0 = ink, bit x = drawn column x). A run is a control byte c and its data: c 0..127 copies the next',
+        '// c + 1 bytes, c 129..255 repeats the next byte 257 - c times; 128 is never written; a run may cross from one',
+        '// row into the next. Identifiers are the name in upper case with "-" as "_", plus _FILL for the fill weight,',
+        '// the size, and _PB. ICONS is sorted by name, bytewise; each name has a bitmap per weight and size. Names are',
+        '// Phosphor\'s own.',
+        '// The arrays without _PB are raw: GAME_CONTROLLER_32 is 1 bit per pixel, MSB first, rows padded to whole bytes,',
+        '// bit 0 = ink, rotated 90 degrees counter-clockwise (stored (row, col) is drawn at (pixels - 1 - row, col)), as',
+        '// GfxRenderer::drawIcon draws it.',
         LICENCE_NOTICE,
         '#pragma once',
         '',
@@ -498,8 +588,8 @@ def header_text(icons):
         '',
         f'inline constexpr int SMALL_PIXELS = {SMALL_PIXELS};',
         f'inline constexpr int MEDIUM_PIXELS = {MEDIUM_PIXELS};',
-        f'inline constexpr size_t SMALL_BYTES = {small_bytes};',
-        f'inline constexpr size_t MEDIUM_BYTES = {medium_bytes};',
+        f'inline constexpr size_t SMALL_BYTES = {raw_bytes(SMALL_PIXELS)};  // a raw bitmap, drawIcon\'s layout',
+        f'inline constexpr size_t MEDIUM_BYTES = {raw_bytes(MEDIUM_PIXELS)};',
         '',
         f'enum class Weight : uint8_t {{ {", ".join(weight.capitalize() for weight in WEIGHTS)} }};  '
         '// indexes Icon::small and Icon::medium',
@@ -516,10 +606,65 @@ def header_text(icons):
             entry, bitmaps = weights[weight]
             lines.append('')
             lines.append(f'// {entry.name}: {entry.source}, {entry.path}')
+            for pixels in SIZES:
+                packed = bitmaps[pixels].packed
+                lines.extend(array_lines(packed_identifier(entry.name, weight, pixels), len(packed), packed))
+            for name, raw_weight, pixels in RAW_ICONS:
+                if (entry.name, weight) == (name, raw_weight):
+                    lines.append(f'// {name} {weight} at {pixels} px, raw in drawIcon\'s layout: Home\'s cover-grid Games tab '
+                                 'draws it with GfxRenderer::drawIcon')
+                    lines.extend(array_lines(identifier(name, weight, pixels), 'SMALL_BYTES', bitmaps[pixels].raw))
+    lines.append('')
+    lines.append('inline constexpr Icon ICONS[] = {')
+    for weights in icons:
+        name = weights[WEIGHTS[0]][0].name
+        small = ', '.join(packed_identifier(name, weight, SMALL_PIXELS) for weight in WEIGHTS)
+        medium = ', '.join(packed_identifier(name, weight, MEDIUM_PIXELS) for weight in WEIGHTS)
+        lines.append(f'    {{"{name}", {{{small}}}, {{{medium}}}}},')
+    lines.append('};')
+    lines.append('inline constexpr size_t ICON_COUNT = sizeof(ICONS) / sizeof(ICONS[0]);')
+    lines.append('')
+    lines.append('}  // namespace GameIcons')
+    return '\n'.join(lines) + '\n'
+
+
+def reference_text(icons):
+    """The host tests' reference for [{weight: (Entry, {pixels: Bitmap})}]: every raw bitmap, drawIcon's layout, in
+    namespace GameIconsRaw, with the same names and order as ICONS."""
+    lines = [
+        f'// Generated by scripts/gen_game_icons.py --raw-out from assets/game-icons/{MAP_NAME}; never edit by hand.',
+        '//',
+        '// The uncompressed bitmaps GameIcons.generated.h packs: the host tests decode the packed ones and compare them',
+        '// with these, so a packing fault cannot hide behind the decoder. Each bitmap is square, 1 bit per pixel, MSB',
+        '// first, rows padded to whole bytes, bit 0 = ink, rotated 90 degrees counter-clockwise: stored (row, col) is',
+        '// drawn at (pixels - 1 - row, col), as GfxRenderer::drawIcon draws it. Tests only; never built into firmware.',
+        LICENCE_NOTICE,
+        '// clang-format off',
+        '#pragma once',
+        '',
+        '#include <cstddef>',
+        '#include <cstdint>',
+        '',
+        'namespace GameIconsRaw {',
+        '',
+        f'inline constexpr size_t SMALL_BYTES = {raw_bytes(SMALL_PIXELS)};',
+        f'inline constexpr size_t MEDIUM_BYTES = {raw_bytes(MEDIUM_PIXELS)};',
+        '',
+        'struct Icon {',
+        '  const char* name;',
+        f'  const uint8_t* small[{len(WEIGHTS)}];',
+        f'  const uint8_t* medium[{len(WEIGHTS)}];',
+        '};',
+    ]
+    for weights in icons:
+        for weight in WEIGHTS:
+            entry, bitmaps = weights[weight]
+            lines.append('')
+            lines.append(f'// {entry.name}: {entry.source}, {entry.path}')
             lines.extend(array_lines(identifier(entry.name, weight, SMALL_PIXELS), 'SMALL_BYTES',
-                                     bitmaps[SMALL_PIXELS]))
+                                     bitmaps[SMALL_PIXELS].raw))
             lines.extend(array_lines(identifier(entry.name, weight, MEDIUM_PIXELS), 'MEDIUM_BYTES',
-                                     bitmaps[MEDIUM_PIXELS]))
+                                     bitmaps[MEDIUM_PIXELS].raw))
     lines.append('')
     lines.append('inline constexpr Icon ICONS[] = {')
     for weights in icons:
@@ -530,7 +675,7 @@ def header_text(icons):
     lines.append('};')
     lines.append('inline constexpr size_t ICON_COUNT = sizeof(ICONS) / sizeof(ICONS[0]);')
     lines.append('')
-    lines.append('}  // namespace GameIcons')
+    lines.append('}  // namespace GameIconsRaw')
     return '\n'.join(lines) + '\n'
 
 
@@ -586,7 +731,17 @@ def check_sum(assets, sums, entry, data):
                           '--write-sums')
 
 
-def generate(assets, out):
+def write_text(path, text):
+    try:
+        with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(text)
+    except OSError as exc:
+        raise SetupError(f'cannot write {path}: {exc}')
+
+
+def generate(assets, out, raw_out=None):
+    if raw_out is not None and pathlib.Path(raw_out).resolve() == pathlib.Path(out).resolve():
+        raise Failure(f'--raw-out and --out are both {out}: the reference would overwrite the header')
     entries = read_map(assets)
     sums = read_sums(assets, {entry.path for weights in entries for entry in weights.values()})
     icons = []
@@ -597,12 +752,11 @@ def generate(assets, out):
             check_sum(assets, sums, entry, text)
             rendered[weight] = (entry, render(text, str(path)))
         icons.append(rendered)
-    try:
-        with open(out, 'w', encoding='utf-8', newline='\n') as header:
-            header.write(header_text(icons))
-    except OSError as exc:
-        raise SetupError(f'cannot write {out}: {exc}')
+    write_text(out, header_text(icons))
     print(f'wrote {out} ({len(icons)} icons, {len(WEIGHTS)} weights each)')
+    if raw_out is not None:
+        write_text(raw_out, reference_text(icons))
+        print(f'wrote {raw_out} (the uncompressed bitmaps)')
 
 
 def write_sums(assets):
@@ -627,15 +781,23 @@ def main(argv=None):
     parser.add_argument('--assets', type=pathlib.Path, default=DEFAULT_ASSETS,
                         help='the folder holding names.txt, SHA256SUMS, and the SVGs')
     parser.add_argument('--out', type=pathlib.Path, default=DEFAULT_OUT, help='the header to write')
+    parser.add_argument('--raw-out', type=pathlib.Path, default=None,
+                        help='also write the uncompressed bitmaps the host tests compare the packed ones with')
     parser.add_argument('--write-sums', action='store_true',
                         help=f'rewrite <assets>/{SUMS_NAME} from the SVGs names.txt names, and write no header')
     args = parser.parse_args(argv)
     if args.write_sums:
-        return fork_common.exit_code(lambda: write_sums(args.assets))
+
+        def sums():
+            if args.raw_out is not None:
+                raise Failure('--raw-out goes with the header, and --write-sums writes no header')
+            write_sums(args.assets)
+
+        return fork_common.exit_code(sums)
 
     def step():
         try:
-            generate(args.assets, args.out)
+            generate(args.assets, args.out, args.raw_out)
         except PinMismatch as exc:
             print(f'error: {exc}', file=sys.stderr)
             return PIN_MISMATCH

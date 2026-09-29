@@ -270,3 +270,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-tracer-one-package-from-the-inbox-to-a-started-game-plan.md`
   summary: `PngToBmpConverter` returns a bare `false` when its own allocation fails as well as when the image is damaged, so a valid package that meets low memory during conversion is renamed `.cpgame.bad` with the image reason.
   evidence: Orchestrator review of 4.3 (accepted residual). The installer tells a card fault from bad data by the short writes its `FileSink` sees; the converter's allocation failure (`PngToBmpConverter.cpp`, its `makeUniqueNoThrow` calls) leaves no such trace, and `lib/PngToBmpConverter` is outside this entry's `touches`. A reason code from the converter would close it.
+
+## 4.15
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-icon-compression-packbits-plan.md`
+  summary: The `Icons up to date` job compares only `lib/GameIcons/GameIcons.generated.h` with a fresh run; the new host-test reference `test/game_script/GameIconsRaw.h` (`--raw-out`) is not regenerated or compared by that job.
+  evidence: 4.15 may not touch `.github/**` (its `stays_out`). A stale reference is caught by the host suite (`GameIconBlitTest`'s equivalence test decodes the firmware header and compares it with the reference) and by `gen_game_icons_test.py` (`CommittedTest` compares the committed reference with a fresh render), so it fails a PR's checks, but not the job named "up to date". A later CI edit could add `--raw-out "$RUNNER_TEMP/GameIconsRaw.h"` and a `cmp` to that step in `.github/workflows/crosshatch-ci.yml`.
