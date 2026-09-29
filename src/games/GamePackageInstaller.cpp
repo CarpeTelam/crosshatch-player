@@ -47,6 +47,11 @@ static_assert(std::char_traits<char>::length(GamePaths::INBOX_DIR) + 1 + GamePat
 static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs in a byte");
 static_assert(GamePaths::INBOX_PATH_BYTES <= FILE_PATH_BYTES, "installAll builds an inbox path in Job::pathA");
 
+// How many names moveAside tries: <name><suffix>, then <name><suffix>.2 and on. One digit, which Job::asidePath has
+// room for.
+constexpr unsigned ASIDE_NAMES = 5;
+static_assert(ASIDE_NAMES <= 9, "Job::asidePath has room for a one-digit number after the suffix");
+
 enum class MemberKind : uint8_t { Invalid, Manifest, Lua, Png };
 
 // What the directory said of a member: its name, and the CRC and size the streamed bytes must match.
@@ -564,9 +569,6 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
 // inbox scan skips both.
 constexpr char INSTALLED_SUFFIX[] = ".installed";
 
-// How many names moveAside tries: <name><suffix>, then <name><suffix>.2 and on.
-constexpr unsigned ASIDE_NAMES = 5;
-
 // Renames the inbox file to <name><suffix>, replacing an earlier copy. A copy that will not go (a file the card marks
 // read-only keeps that mark when it is renamed, and SdFat's rename will not replace a name) leaves the next name, so
 // an update of the same file cannot be stuck behind it; false when no name is free or the rename itself fails.
@@ -639,6 +641,15 @@ bool wouldBeOverTheLimit(Job& job) {
   error = readManifest(job, zip->file);
   if (error != Error::None) return error;
 
+  // Right after the manifest and before anything is written: a package that waits for room is read again on every
+  // visit, so its cost is the zip's directory and manifest, not an extraction. (An invalid package at the limit
+  // says "too many" until a game is removed, and then gets its own reason.)
+  if (wouldBeOverTheLimit(job)) {
+    LOG_ERR("GAME", "Not installing %s: %u games are installed already", job.manifest.id,
+            static_cast<unsigned>(GameRegistry::MAX_GAMES));
+    return Error::TooManyGames;
+  }
+
   snprintf(job.tmpDir, sizeof(job.tmpDir), "%s/%s", GamePaths::TMP_DIR, job.manifest.id);
   snprintf(job.finalDir, sizeof(job.finalDir), "%s/%s", GamePaths::GAMES_DIR, job.manifest.id);
   if (!Storage.mkdir(job.tmpDir)) {
@@ -651,15 +662,13 @@ bool wouldBeOverTheLimit(Job& job) {
   uint8_t packageHash[GamePkg::HASH_BYTES];
   error = extract(job, zip->file, packageHash);
   if (error != Error::None) return error;
-  // After the package has proved valid (an invalid one at the limit is .bad with its real reason, not "too many"), and
-  // before it touches /.games.
-  if (wouldBeOverTheLimit(job)) {
-    LOG_ERR("GAME", "Not installing %s: %u games are installed already", job.manifest.id,
-            static_cast<unsigned>(GameRegistry::MAX_GAMES));
-    return Error::TooManyGames;
-  }
   error = commit(job, packageHash);
-  if (error != Error::None) return error;
+  if (error != Error::None) {
+    // A commit that failed after the folder moved can still have left a valid .pkg (its close failing, say): a game
+    // this call has not counted. Count again for the next package.
+    if (job.renameTried) job.gamesCounted = false;
+    return error;
+  }
   if (job.gamesCounted && job.addsGame) ++job.installedGames;
 
   LOG_INF("GAME", "Installed %s from %s", job.manifest.id, fileName);

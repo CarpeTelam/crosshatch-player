@@ -927,6 +927,7 @@ TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
   EXPECT_FALSE(exists("/games/extra.cpgame.bad"));
   EXPECT_FALSE(exists("/.games/extra"));
   EXPECT_FALSE(exists("/.games-tmp"));
+  EXPECT_EQ(fakesd::countOps("mkdir /.games-tmp"), 0u);
   EXPECT_TRUE(fakelog::any("Not installing extra: 64 games are installed already"));
 
   // It tries again on the next visit, and installs once a game has been removed.
@@ -937,18 +938,61 @@ TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
   EXPECT_FALSE(exists("/games/extra.cpgame"));
 }
 
-// The limit is judged after the package has proved valid, so an invalid one at the limit is .bad with its real reason.
-TEST_F(GameLimitTest, AnInvalidPackageAtTheLimitIsBadWithItsOwnReason) {
+// The limit is judged right after the manifest, before anything is written, so a package that waits costs a read of its
+// directory and manifest on every visit and no extraction. An invalid one at the limit therefore says "too many" until
+// a game is removed, and then gets its own reason.
+TEST_F(GameLimitTest, AnInvalidPackageAtTheLimitWaitsLikeAnyOtherAndIsBadOnceThereIsRoom) {
   installedGames(GameRegistry::MAX_GAMES);
   const Bytes package = gamePackage("extra", {{"pic.png", toBytes("not a png at all, no header")}});
   drop("extra.cpgame", package);
   const GamePackageInstaller::Report report = install();
-  EXPECT_EQ(report.failed, 1);
-  EXPECT_EQ(report.firstError, Error::BadImage) << GamePackageInstaller::describe(report.firstError);
+  EXPECT_EQ(report.firstError, Error::TooManyGames);
+  EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame"), package);
+  EXPECT_FALSE(exists("/games/extra.cpgame.bad"));
+
+  ASSERT_EQ(GamePackageInstaller::remove("game-07"), Error::None);
+  const GamePackageInstaller::Report later = install();
+  EXPECT_EQ(later.firstError, Error::BadImage) << GamePackageInstaller::describe(later.firstError);
   EXPECT_FALSE(exists("/games/extra.cpgame"));
   EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame.bad"), package);
   EXPECT_FALSE(exists("/.games/extra"));
+}
+
+// Nothing of a package that waits is written to the card: no scratch folder, no extracted member, no converted image.
+TEST_F(GameLimitTest, APackageThatWaitsForRoomWritesNothing) {
+  installedGames(GameRegistry::MAX_GAMES);
+  drop("extra.cpgame", gamePackage("extra", {{"icon.png", solidPng(16, 16, 0)}}));
+  const std::vector<std::string> before = fakesd::sim().ops;
+  EXPECT_EQ(install().firstError, Error::TooManyGames);
+  for (size_t i = before.size(); i < fakesd::sim().ops.size(); ++i) {
+    const std::string& op = fakesd::sim().ops[i];
+    for (const char* verb : {"mkdir ", "write ", "rename ", "remove "}) {
+      EXPECT_NE(op.rfind(verb, 0), 0u) << "the card was asked to: " << op;
+    }
+    EXPECT_EQ(op.find("/.games-tmp/"), std::string::npos) << op;
+  }
   EXPECT_FALSE(exists("/.games-tmp"));
+}
+
+// A commit that fails after the folder moved can leave a valid .pkg (here its close fails, after the bytes are
+// written): a game the count did not know. The next package counts again, so the 65th is refused.
+TEST_F(GameLimitTest, AGameALateFailedCommitLeftBehindIsCountedForTheNextPackage) {
+  installedGames(GameRegistry::MAX_GAMES - 1);
+  drop("a.cpgame", gamePackage("a"));
+  drop("b.cpgame", gamePackage("b"));
+  fakesd::sim().failClose.insert("/.games/a/.pkg");
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 0);
+  EXPECT_EQ(report.failed, 2);
+  EXPECT_STREQ(report.firstFile, "a.cpgame");
+  EXPECT_EQ(report.firstError, Error::SdCard);
+  EXPECT_TRUE(exists("/.games/a/.pkg")) << "a is installed all the same";
+  EXPECT_TRUE(exists("/games/b.cpgame"));
+  EXPECT_FALSE(exists("/.games/b"));
+  EXPECT_TRUE(fakelog::any("Not installing b:"));
+  GameRegistry::Listing listing;
+  ASSERT_TRUE(GameRegistry::load(listing));
+  EXPECT_EQ(listing.count, GameRegistry::MAX_GAMES) << "63 and a: every installed game is listed";
 }
 
 TEST_F(GameLimitTest, ThePackagesBehindManyThatWaitForRoomAreStillReached) {
