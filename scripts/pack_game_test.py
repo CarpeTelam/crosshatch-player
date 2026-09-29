@@ -371,6 +371,18 @@ class LimitTest(PackerTestCase):
         over = self.project.game(self.images_files(case['over']['images']))
         self.assertRefused(over, 'the images convert to 131,074 bytes; at most 131,072')
 
+    def test_icon_png_must_be_square(self):
+        for size in ((64, 64), (1, 1), (100, 100), (2048, 2048)):
+            with self.subTest(size=size):
+                self.assertEqual(self.project.run(self.project.game({'icon.png': png(*size)}))[0], 0)
+                shutil.rmtree(self.project.out)
+        for size in ((100, 50), (50, 100), (64, 63), (1, 2), (2048, 1)):
+            with self.subTest(size=size):
+                self.assertRefused(self.project.game({'icon.png': png(*size)}),
+                                   f'icon.png: is {size[0]}x{size[1]}; the icon must be square')
+        # Any other image keeps its own size, whatever its shape.
+        self.assertEqual(self.project.run(self.project.game({'badge.png': png(100, 50)}))[0], 0)
+
     def test_icon_png_is_not_in_the_image_budget(self):
         files = self.images_files(LIMITS['images_bytes']['at']['images'])
         files['icon.png'] = png(64, 64)
@@ -382,9 +394,30 @@ class LimitTest(PackerTestCase):
             ('image_height', png(1, LIMITS['image_height']['at']), png(1, LIMITS['image_height']['over'])),
         ):
             with self.subTest(key):
-                self.assertEqual(self.project.run(self.project.game({'icon.png': at_png}))[0], 0)
+                self.assertEqual(self.project.run(self.project.game({'badge.png': at_png}))[0], 0)
                 shutil.rmtree(self.project.out)
-                self.assertRefused(self.project.game({'icon.png': over_png}), 'empty or over 2048x3072')
+                self.assertRefused(self.project.game({'badge.png': over_png}), 'empty or over 2048x3072')
+
+    def test_lua_sources_bytes(self):
+        # Repetitive comment lines deflate well, so the package stays under its own byte limit.
+        def lua(size):
+            return (b'-- a\n' * (size // 5 + 1))[:size]
+
+        case = LIMITS['lua_sources_bytes']
+        first = LIMITS['member_bytes']['at']
+        at_files = {'main.lua': lua(first), 'b.lua': lua(case['at'] - first)}
+        self.assertEqual(self.project.run(self.project.game(at_files))[0], 0)
+        shutil.rmtree(self.project.out)
+        over_files = {'main.lua': lua(first), 'b.lua': lua(case['over'] - first)}
+        self.assertRefused(self.project.game(over_files), 'the .lua members total 262,145 bytes; at most 262,144')
+        # Three members, each under the per-member limit, pass it together.
+        three = {f'p{i}.lua': lua(100000) for i in range(3)}
+        self.assertRefused(self.project.game(three), 'the .lua members total')
+
+    def test_icon_png_over_the_dimension_limit_is_refused(self):
+        for side in (LIMITS['image_width']['over'], LIMITS['image_height']['over']):
+            with self.subTest(side=side):
+                self.assertRefused(self.project.game({'icon.png': png(side, side)}), 'empty or over 2048x3072')
 
     def test_images_count_at_function_level(self):
         # The member cap binds first (a package holds 30 images at most), so the count is tested on check_images.
@@ -398,6 +431,7 @@ class LimitTest(PackerTestCase):
         self.assertEqual(LIMITS['package_bytes']['limit'], pg.PACKAGE_BYTES)
         self.assertEqual(LIMITS['member_bytes']['limit'], pg.MEMBER_BYTES)
         self.assertEqual(LIMITS['members']['limit'], pg.MAX_MEMBERS)
+        self.assertEqual(LIMITS['lua_sources_bytes']['limit'], pg.LUA_SOURCES_BYTES)
         self.assertEqual(LIMITS['member_name_chars']['limit'], pg.MAX_MEMBER_NAME_CHARS)
         self.assertEqual(LIMITS['images']['limit'], pg.MAX_IMAGES)
         self.assertEqual(LIMITS['images_bytes']['limit'], pg.IMAGES_BYTES)
@@ -617,12 +651,20 @@ class ReadManifestTest(unittest.TestCase):
         self.assertEqual(self.read(manifest_text(hidden=False)), [])
 
     def test_icon_grammar(self):
+        # Manifest::parse takes the same names: test/game_core/ManifestTest.cpp's icon tables.
         for good in ('x', 'a1', 'game-controller', 'a-1', 'a1-b2-c3', 'x' * 32):
             with self.subTest(good=good):
                 self.assertEqual(self.read(manifest_text(icon=good), icons={good}), [])
-        for bad in ('', 'Foo', 'a_b', 'a--b', '-a', 'a-', '1a', 'a b', 'a.b', 'x' * 33, 'é', 1, None, ['x']):
+        for bad in ('', 'Foo', 'a_b', 'old_name', '_a', 'a--b', '-a', 'a-', '1a', 'a b', 'a.b', 'x' * 33, 'é', 1, None, ['x']):
             with self.subTest(bad=bad):
                 self.refused(manifest_text(icon=bad), 'icon must be', icons={bad} if isinstance(bad, str) else set())
+
+    def test_a_fill_name_points_to_icon_weight(self):
+        self.refused(manifest_text(icon='x-fill'), "use icon 'x' with icon_weight 'fill'", icons={'x'})
+        # No hint when the stem is not a library icon either.
+        err = self.read(manifest_text(icon='nope-fill'), icons={'x'})
+        self.assertEqual(len(err), 1)
+        self.assertNotIn('icon_weight', err[0])
 
     def test_icon_must_be_in_the_library(self):
         self.refused(manifest_text(icon='no-such-icon'), "icon 'no-such-icon' is not in the game icon library")
@@ -634,6 +676,28 @@ class ReadManifestTest(unittest.TestCase):
 
         self.assertEqual(pg.read_manifest(manifest_text().encode(), 'demo', LEVELS, fail)[1], [])
         pg.read_manifest(manifest_text(icon='Bad').encode(), 'demo', LEVELS, fail)
+
+    def test_the_api_list_holds_the_packers_manifest_rules(self):
+        # docs/crosshatch/api-level-1.txt is what ApiLevelTest ties to Manifest::parse, so tying the packer
+        # to the same lines ties the two readers together.
+        entries = [line.split(' ', 1) for line in (REPO / 'docs' / 'crosshatch' / 'api-level-1.txt').read_text(
+            encoding='utf-8').splitlines() if line and not line.startswith('#')]
+        names = {body.split(' ', 1)[0]: body.split(' ', 1)[1] for kind, body in entries if kind == 'name'}
+        limits = {body.split(' ', 1)[0]: int(body.split(' ', 1)[1]) for kind, body in entries if kind == 'limit'}
+        weights = {body.split(' ', 1)[1] for kind, body in entries if kind == 'enum' and body.startswith('icon_weight ')}
+        manifest_keys = {body.split(' ', 1)[0].split('.')[0] for kind, body in entries if kind == 'manifest'}
+        self.assertEqual(pg.ICON_NAME.pattern, names['manifest_icon'])
+        self.assertEqual(pg.MAX_ICON_BYTES, limits['manifest_icon_bytes'])
+        self.assertEqual(weights, set(pg.ICON_WEIGHTS))
+        self.assertEqual(manifest_keys, set(pg.KNOWN_KEYS))
+        # The listed pattern and cap decide the same names as the packer, over the edge names.
+        pattern = re.compile(names['manifest_icon'])
+        edge = ['', '-', 'a', 'a-', '-a', 'a--b', 'a-b', 'a_b', '_', '1', '1a', 'a1', 'A', 'aB', 'a b', 'a.b', 'a-1',
+                'a-b-c', 'old_name', 'é', 'x' * 32, 'x' * 33, 'x' * 30 + '-b', 'x' * 31 + '-b']
+        for name in edge:
+            with self.subTest(name=name):
+                listed = len(name) <= limits['manifest_icon_bytes'] and bool(pattern.fullmatch(name))
+                self.assertEqual(listed, self.read(manifest_text(icon=name), icons={name}) == [])
 
     def test_icon_weight(self):
         for bad in ('bold', 'Regular', '', 'thin', 1, None, True, ['fill']):

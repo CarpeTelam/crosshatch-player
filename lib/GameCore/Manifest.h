@@ -25,6 +25,7 @@ enum class ManifestError : uint8_t {
   BadSeats,
   BadModes,
   BadIcon,
+  BadIconWeight,
 };
 
 const char* describe(ManifestError error);
@@ -42,7 +43,7 @@ enum class CheckReason : uint8_t {
   ApiTooOld,            // Unavailable: api below the host's minApi
   ApiTooNew,            // Unavailable: api above the host's api
   TooManySeats,         // Unavailable: seats.min above the host's maxSeats
-  NoHostMode,           // Unavailable: no declared mode can start on this host
+  NoHostMode,           // Unavailable: no declared mode can start on this host (pass needs HostCaps::pass)
 };
 
 const char* describe(CheckReason reason);
@@ -61,14 +62,18 @@ struct Manifest {
   static constexpr size_t MAX_ID_BYTES = 32;       // ^[a-z0-9][a-z0-9-]{0,31}$
   static constexpr size_t MAX_NAME_BYTES = 64;     // bytes of UTF-8, at least 1
   static constexpr size_t MAX_VERSION_BYTES = 32;  // bytes, any text
-  static constexpr size_t MAX_ICON_BYTES = 32;     // [a-z0-9_-]{1,32}, a library icon name
+  // [a-z][a-z0-9]*(-[a-z0-9]+)* in at most 32 bytes: the library's own grammar (spine AD-15, AD-24)
+  static constexpr size_t MAX_ICON_BYTES = 32;
 
   enum Mode : uint8_t { MODE_SOLO = 1 << 0, MODE_PASS = 1 << 1, MODE_NEARBY = 1 << 2 };
+  // The manifest's icon_weight, in the order of ch.gfx.icon's weight names.
+  enum IconWeight : uint8_t { ICON_REGULAR, ICON_FILL };
 
   char id[MAX_ID_BYTES + 1] = {};
   char name[MAX_NAME_BYTES + 1] = {};
   char version[MAX_VERSION_BYTES + 1] = {};
   char icon[MAX_ICON_BYTES + 1] = {};  // empty when the key is absent
+  uint8_t iconWeight = ICON_REGULAR;   // an IconWeight; regular when the key is absent
   int32_t api = 0;
   int32_t seatsMin = 0;
   int32_t seatsMax = 0;
@@ -92,7 +97,7 @@ class ManifestReader {
  public:
   // The top-level keys the parser reads, and the keys inside seats. MANIFEST_KEYS
   // names each one; the Unknown values stand for any other key.
-  enum class Key : uint8_t { None, Id, Name, Version, Api, Seats, Modes, Hidden, Icon, Unknown };
+  enum class Key : uint8_t { None, Id, Name, Version, Api, Seats, Modes, Hidden, Icon, IconWeight, Unknown };
   enum class SeatKey : uint8_t { None, Min, Max, Unknown };
 
   ManifestReader();
@@ -160,6 +165,7 @@ inline constexpr ManifestKey MANIFEST_KEYS[] = {
     {"modes", ManifestReader::Key::Modes, ManifestReader::SeatKey::None},
     {"hidden", ManifestReader::Key::Hidden, ManifestReader::SeatKey::None},
     {"icon", ManifestReader::Key::Icon, ManifestReader::SeatKey::None},
+    {"icon_weight", ManifestReader::Key::IconWeight, ManifestReader::SeatKey::None},
 };
 
 }  // namespace GameCore

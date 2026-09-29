@@ -97,6 +97,7 @@ TEST(PackageLimitsTest, ConstantsMatchTheVectors) {
   expectLimit(limits, "package_bytes", GameCore::PACKAGE_BYTES);
   expectLimit(limits, "member_bytes", GameCore::MEMBER_BYTES);
   expectLimit(limits, "members", GameCore::PACKAGE_MEMBERS);
+  expectLimit(limits, "lua_sources_bytes", GameCore::LUA_SOURCES_BYTES);
   expectLimit(limits, "images", GameCore::MAX_IMAGES);
   expectLimit(limits, "member_name_chars", GameCore::MEMBER_STEM_BYTES);
   expectLimit(limits, "image_width", GameCore::IMAGE_MAX_WIDTH);

@@ -34,15 +34,32 @@ bool validId(const std::string_view text) {
   return true;
 }
 
-// A manifest's icon: lower case, digits, '_', and '-'. '-' is accepted because the
-// library's names are Phosphor's own, hyphenated (game-controller); '_' stays
-// accepted so no manifest that parsed before fails now. Whether the name is in the
-// library is not checked here: drawGameIcon refuses an unknown name when a screen
-// draws it.
+// A manifest's icon: the library's grammar, [a-z][a-z0-9]*(-[a-z0-9]+)* in at most MAX_ICON_BYTES
+// (spine AD-15, AD-24): a letter first, and each '-' between lower-case letters or digits, so no "--"
+// and no '-' at either end. '_' is refused. scripts/pack_game.py's ICON_NAME is the same rule. Whether
+// the name is in the library is checked outside GameCore (the installer and the packer), because
+// GameCore cannot depend on lib/GameIcons.
 bool validIcon(const std::string_view text) {
   if (text.empty() || text.size() > Manifest::MAX_ICON_BYTES) return false;
-  for (const char c : text) {
-    if (!isLowerDigit(c) && c != '_' && c != '-') return false;
+  if (text[0] < 'a' || text[0] > 'z') return false;
+  for (size_t i = 1; i < text.size(); ++i) {
+    if (text[i] == '-') {
+      if (i + 1 == text.size() || !isLowerDigit(text[i + 1])) return false;
+    } else if (!isLowerDigit(text[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// icon_weight's two values, in Manifest::IconWeight order.
+bool parseIconWeight(const std::string_view text, uint8_t& out) {
+  if (text == "regular") {
+    out = Manifest::ICON_REGULAR;
+  } else if (text == "fill") {
+    out = Manifest::ICON_FILL;
+  } else {
+    return false;
   }
   return true;
 }
@@ -143,6 +160,8 @@ const char* describe(const ManifestError error) {
       return "invalid modes";
     case ManifestError::BadIcon:
       return "invalid icon";
+    case ManifestError::BadIconWeight:
+      return "invalid icon_weight";
   }
   return "unknown error";
 }
@@ -194,7 +213,8 @@ bool fieldsValid(const Manifest& m) {
   const std::string_view icon = fieldText(m.icon);
   return validId(fieldText(m.id)) && !name.empty() && name.size() <= Manifest::MAX_NAME_BYTES &&
          fieldText(m.version).size() <= Manifest::MAX_VERSION_BYTES && (icon.empty() || validIcon(icon)) &&
-         m.api >= 1 && m.seatsMin >= 1 && m.seatsMax >= m.seatsMin && m.modes != 0 && (m.modes & ~ALL_MODES) == 0;
+         m.iconWeight <= Manifest::ICON_FILL && m.api >= 1 && m.seatsMin >= 1 && m.seatsMax >= m.seatsMin &&
+         m.modes != 0 && (m.modes & ~ALL_MODES) == 0;
 }
 
 CheckResult verdict(const CheckStatus status, const CheckReason reason) { return CheckResult{status, reason, 0}; }
@@ -210,9 +230,10 @@ CheckResult Manifest::check(const HostCaps& host) const {
   if (api > host.api) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooNew);
   if (seatsMin > host.maxSeats) return verdict(CheckStatus::Unavailable, CheckReason::TooManySeats);
 
-  // Solo and pass start whenever the rules above hold; nearby also needs the radio
-  // and a second seat on this host.
-  uint8_t startable = modes & (MODE_SOLO | MODE_PASS);
+  // Solo starts whenever the rules above hold; pass needs the host's pass capability (no match
+  // can run it until epic-pass-and-play), and nearby needs the radio and a second seat.
+  uint8_t startable = modes & MODE_SOLO;
+  if (hasMode(MODE_PASS) && host.pass) startable |= MODE_PASS;
   if (hasMode(MODE_NEARBY) && host.nearby && host.maxSeats >= 2) startable |= MODE_NEARBY;
   if (startable == 0) return verdict(CheckStatus::Unavailable, CheckReason::NoHostMode);
   return CheckResult{CheckStatus::Ok, CheckReason::None, startable};
@@ -338,6 +359,9 @@ void ManifestReader::onString(const std::string_view value) {
         break;
       case Key::Icon:
         if (!validIcon(value) || !copyField(result.icon, value)) fail(ManifestError::BadIcon);
+        break;
+      case Key::IconWeight:
+        if (!parseIconWeight(value, result.iconWeight)) fail(ManifestError::BadIconWeight);
         break;
       case Key::Unknown:
         break;

@@ -536,7 +536,6 @@ TEST_F(ApiSurfaceTest, ImageNameMatchesTheLoader) {
   for (const Entry& entry : entries) {
     if (entry.kind == "name") patterns[entry.name] = entry.body.substr(entry.name.size() + 1);
   }
-  ASSERT_EQ(patterns.size(), 1u);
   ASSERT_TRUE(patterns.count("image"));
   const std::regex pattern(patterns["image"]);
 

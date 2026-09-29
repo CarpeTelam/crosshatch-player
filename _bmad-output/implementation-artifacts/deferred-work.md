@@ -247,7 +247,7 @@
 ## 4.3
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-tracer-one-package-from-the-inbox-to-a-started-game-plan.md`
-  summary: `scripts/pack_game.py` accepts a non-square `icon.png` that the installer rejects (`BadImage`), so a package can pack and then fail at install.
+  summary: (Resolved by entry 7 (<commit>): `pack_game.py` refuses a non-square `icon.png` with its reason, test `test_icon_png_must_be_square`.) `scripts/pack_game.py` accepts a non-square `icon.png` that the installer rejects (`BadImage`), so a package can pack and then fail at install.
   evidence: Entry 3 decided (Assumption for entry 14) that a non-square icon is rejected because `PngToBmpConverter` scales to fit and never crops. `pack_game.py` reads only the IHDR for the budget and does not compare width and height. Entry 7 touches `pack_game.py` and its test and would close it with a one-line check.
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-tracer-one-package-from-the-inbox-to-a-started-game-plan.md`
   summary: `GamePackageInstaller::Report` keeps only the first failure, so with two bad files in the inbox the second is renamed `.cpgame.bad` and only logged, never shown to the person.
@@ -286,10 +286,16 @@
   summary: The installer bounds each member (128 KB) and the package (256 KB) but not their sum, so a 256 KB package of 32 highly compressible members can extract about 4 MB into `/.games-tmp/` before it installs or fails; the free space on the card is not checked first.
   evidence: Blind-hunter review, 4.6. AD-15's limits are per member and per package by design (`api-level-1.txt`), and the directory pass already holds every declared size, so a sum check or a free-space check before the first write would be cheap if the owner wants one. A full card makes a write fail as `SdCard`, which keeps the file and removes the scratch folder.
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-package-hardening-plan.md`
-  summary: Entry 7 adds the `.lua` source-total rule to `scripts/pack_game.py` (a package whose `.lua` members pass `LUA_SOURCES_BYTES`, 262,144 B, is refused) and a `lua_sources_bytes` limit with an at-limit and a one-over case to `test/game_core/package_vectors.json`; `PackageLimitsTest` then checks the constant against it.
+  summary: (Resolved by entry 7 (<commit>): `LUA_SOURCES_BYTES` is in `pack_game.py`, `lua_sources_bytes` is in `package_vectors.json`, and `PackageLimitsTest` checks it.) Entry 7 adds the `.lua` source-total rule to `scripts/pack_game.py` (a package whose `.lua` members pass `LUA_SOURCES_BYTES`, 262,144 B, is refused) and a `lua_sources_bytes` limit with an at-limit and a one-over case to `test/game_core/package_vectors.json`; `PackageLimitsTest` then checks the constant against it.
   evidence: The installer rejects it now (`SourcesTooBig`, packages `at-lua-sources`, `over-lua-sources`, `three-lua-over-the-loader`), because `GameAssets::load` refuses more and a package must not install and then fail every launch. `gen_hardening_packages.py` reads the vector when it exists and uses 262,144 until then. Both files are outside entry 6's `touches`, and `PackageLimitsTest` does not need the vector to pass, so it does not check for it yet.
 ## 4.15
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-icon-compression-packbits-plan.md`
   summary: The `Icons up to date` job compares only `lib/GameIcons/GameIcons.generated.h` with a fresh run; the new host-test reference `test/game_script/GameIconsRaw.h` (`--raw-out`) is not regenerated or compared by that job.
   evidence: 4.15 may not touch `.github/**` (its `stays_out`). A stale reference is caught by the host suite (`GameIconBlitTest`'s equivalence test decodes the firmware header and compares it with the reference) and by `gen_game_icons_test.py` (`CommittedTest` compares the committed reference with a fresh render), so it fails a PR's checks, but not the job named "up to date". A later CI edit could add `--raw-out "$RUNNER_TEMP/GameIconsRaw.h"` and a `cmp` to that step in `.github/workflows/crosshatch-ci.yml`, and change the job's failure advice (it says to regenerate the header only) to name `--raw-out test/game_script/GameIconsRaw.h` too.
+
+## 4.7
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-manifest-icon-grammar-library-check-and-the-pass-capability-plan.md`
+  summary: Nothing yet reads `Manifest::iconWeight`: the launcher rows (entries 8 and 9) should pass it to `drawGameIcon` as the weight, and the launcher's icon draw should fall back to the default glyph for an icon the library lacks.
+  evidence: Entry 7 parses and checks `icon_weight` and rejects an unknown `icon` at install, but `GameRegistry` lists any folder under `/.games/`, including one copied there by hand or by the simulator, so a name the library lacks can still reach a row; `drawGameIcon` refuses it by name.

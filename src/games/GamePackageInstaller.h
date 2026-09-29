@@ -38,6 +38,7 @@ enum class Error : uint8_t {
   Unsupported,    // ZIP64, encryption, or a compression method other than stored and deflate
   BadDirectory,   // the EOCD's entry count differs from the directory's, or two members share bytes of the file
   SourcesTooBig,  // the .lua members together pass LUA_SOURCES_BYTES, more than GameAssets::load accepts
+  UnknownIcon,    // the manifest's icon is well formed but no name in the game icon library (R9)
 };
 
 // The most inbox files one installAll takes; the rest wait for the next call.

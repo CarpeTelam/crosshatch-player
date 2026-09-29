@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -155,6 +157,87 @@ TEST(ApiLevelTest, DefinesStayOnSingleRegularLines) {
     names.insert(parts[1]);
   }
   EXPECT_EQ(names, (std::set<std::string>{"API_LEVEL", "API_MIN_LEVEL", "API_LEVEL_FROZEN", "API_SURFACE_CRC"}));
+}
+
+// The manifest_icon entry's pattern, with manifest_icon_bytes as its length cap, is Manifest::parse's icon
+// rule: every name built from the grammar's edge cases matches exactly when parse takes it as an icon.
+TEST(ApiLevelTest, ManifestIconMatchesTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::string pattern;
+  size_t cap = 0;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "name" && entry.name == "manifest_icon") pattern = entry.body.substr(entry.name.size() + 1);
+    if (entry.kind == "limit" && entry.name == "manifest_icon_bytes") {
+      cap = std::stoul(entry.body.substr(entry.name.size() + 1));
+    }
+  }
+  ASSERT_FALSE(pattern.empty());
+  ASSERT_EQ(cap, GameCore::Manifest::MAX_ICON_BYTES);
+  const std::regex icon(pattern);
+
+  std::vector<std::string> names = {"",   "-", "a",  "a-",  "-a",  "a--b", "a-b",   "a_b", "_",        "1",       "1a",
+                                    "a1", "A", "aB", "a b", "a.b", "a-1",  "a-b-c", "x-",  "\xC3\xA9", "old_name"};
+  names.push_back(std::string(cap, 'a'));
+  names.push_back(std::string(cap + 1, 'a'));
+  names.push_back(std::string(cap - 1, 'a') + "-b");  // cap + 1 bytes
+  names.push_back(std::string(cap - 2, 'a') + "-b");  // exactly cap bytes
+  for (int byte = 0; byte <= 0xFF; ++byte) {
+    const char c = static_cast<char>(byte);
+    names.push_back(std::string(1, c));
+    names.push_back("a" + std::string(1, c));
+    names.push_back("a" + std::string(1, c) + "b");
+    names.push_back("a-" + std::string(1, c));
+  }
+  std::set<std::string> exceptions;
+  for (const std::string& name : names) {
+    // A quote, a backslash, or a control byte would need an escape in the JSON string below.
+    const auto plain = [](const unsigned char c) { return c >= 0x20 && c != '"' && c != '\\'; };
+    if (!std::all_of(name.begin(), name.end(), plain)) continue;
+    GameCore::Manifest parsed;
+    const std::string json = R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, )"
+                             R"("modes": ["solo"], "icon": ")" +
+                             name + R"("})";
+    const bool takes = GameCore::Manifest::parse(json, parsed) == GameCore::ManifestError::None;
+    const bool listed = name.size() <= cap && std::regex_match(name, icon);
+    if (takes == listed) continue;
+    std::string shown;
+    for (const unsigned char c : name) {
+      char hex[5];
+      snprintf(hex, sizeof(hex), "\\x%02X", c);
+      shown += (c >= 0x21 && c <= 0x7E) ? std::string(1, static_cast<char>(c)) : std::string(hex);
+    }
+    exceptions.insert(shown + (listed ? " listed only" : " parsed only"));
+  }
+  EXPECT_EQ(exceptions, std::set<std::string>{});
+}
+
+// The list's `enum icon_weight` values are the ones Manifest::parse accepts, both ways: each listed value parses
+// (regular as ICON_REGULAR, fill as ICON_FILL), and any other value is BadIconWeight. scripts/pack_game_test.py
+// reads the same lines for the packer.
+TEST(ApiLevelTest, IconWeightsMatchTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::set<std::string> listed;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "enum" && entry.body.rfind("icon_weight ", 0) == 0) listed.insert(entry.body.substr(12));
+  }
+  EXPECT_EQ(listed, (std::set<std::string>{"fill", "regular"}));
+  const std::string head =
+      R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"], )";
+  for (const std::string& weight : listed) {
+    GameCore::Manifest m;
+    ASSERT_EQ(GameCore::Manifest::parse(head + "\"icon_weight\": \"" + weight + "\"}", m),
+              GameCore::ManifestError::None)
+        << weight;
+    EXPECT_EQ(m.iconWeight, weight == "fill" ? GameCore::Manifest::ICON_FILL : GameCore::Manifest::ICON_REGULAR);
+  }
+  for (const std::string weight : {"bold", "Regular", "FILL", "", "regular ", "duotone"}) {
+    GameCore::Manifest m;
+    EXPECT_EQ(GameCore::Manifest::parse(head + "\"icon_weight\": \"" + weight + "\"}", m),
+              GameCore::ManifestError::BadIconWeight)
+        << weight;
+  }
 }
 
 }  // namespace

@@ -2,6 +2,7 @@
 
 #include "GamePackageInstaller.h"
 
+#include <GameIcons.h>
 #include <GameImages.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -358,6 +359,12 @@ Error readManifest(Job& job, ZipFile& zip) {
     LOG_ERR("GAME", "manifest.json: %s", GameCore::describe(verdict.reason));
     return Error::BadManifest;
   }
+  // Manifest::parse checks the icon's grammar; only this side of the GameCore boundary can see the library.
+  const size_t iconLength = std::strlen(job.manifest.icon);
+  if (iconLength > 0 && GameIcons::find(job.manifest.icon, iconLength) < 0) {
+    LOG_ERR("GAME", "manifest.json: icon \"%s\" is not in the game icon library", job.manifest.icon);
+    return Error::UnknownIcon;
+  }
   return Error::None;
 }
 
@@ -606,6 +613,8 @@ const char* describe(const Error error) {
       return "the zip's entry count does not match its directory, or members overlap";
     case Error::SourcesTooBig:
       return "the Lua members are over their size limit together";
+    case Error::UnknownIcon:
+      return "the manifest's icon is not in the game icon library";
   }
   return "unknown error";
 }

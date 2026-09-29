@@ -24,6 +24,8 @@ target_include_directories(game_installer_src PUBLIC
   ${HARNESS_DIR}/installer_stubs
   ${HARNESS_DIR}/stubs
   ${REPO_ROOT}/lib/GameCore
+  # GameIcons.h, which the installer checks a manifest's icon against (entry 7).
+  ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/lib/Memory
