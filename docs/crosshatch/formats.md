@@ -278,16 +278,20 @@ For each inbox file the installer:
 3. removes any `/.games/<id>/` (its `.pkg` first, so a removal that stops partway leaves no listed game), renames
    `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;
 4. deletes the inbox file; if the card will not delete it, renames it `<name>.cpgame.installed` (replacing an earlier
-   one), which the inbox scan ignores, so the installed game does not install again on every visit and undo a Remove.
-   The leftover file is harmless; renaming it back to `.cpgame` installs it again, and it may be deleted from a
-   computer.
+   one; one that will not go, such as a file the card marks read-only, leaves `.installed.2`, then `.3`, up to `.5`),
+   which the inbox scan ignores, so the installed game does not install again on every visit and undo a Remove. An
+   invalid package's `.bad` name works the same way. The leftover file is harmless; renaming it back to `.cpgame`
+   installs it again, and it may be deleted from a computer.
 
-Before step 2 it refuses an install that would make more than 64 games (`GameRegistry::MAX_GAMES`, the most the
-registry lists, in directory order): a package whose `id` is not installed, with 64 games installed already, stays in
-the inbox with its own reason ("Too many games are installed; remove one first") and installs once a game is removed.
-It is not renamed `.bad`, since the package is valid. A package that replaces an installed `id` is always allowed. A
-folder counts as a game when it holds a valid `.pkg` (the first test the registry applies; a folder whose manifest the
-registry then skips still counts, so the count can only be high).
+Between steps 2 and 3, once the package has proved valid, it refuses an install that would make more than 64 games
+(`GameRegistry::MAX_GAMES`, the most the registry lists, in directory order): a package whose `id` is not installed,
+with 64 games installed already, stays in the inbox with its own reason ("Too many games are installed; remove one
+first") and installs once a game is removed. It is not renamed `.bad`, since the package is valid; an invalid package at
+the limit is `.bad` with its own reason. A package that replaces an installed `id` is always allowed. A folder counts as
+a game when it holds a valid `.pkg` (the first test the registry applies; a folder whose manifest the registry then
+skips still counts, so the count can only be high). The folders are counted once per visit and the count follows the
+installs, and a package that waits for room does not use up the 32 of a visit, so one behind them (an update of an
+installed game, say) is still reached; each visit judges the waiting ones again.
 
 `/.games-data/<id>/` is never touched, so a reinstall keeps a game's saved data. A package whose `id` is already
 installed replaces it whatever the `version`, and of two inbox files with one `id` the last installed wins.

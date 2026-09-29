@@ -103,9 +103,11 @@ const char* readResume(const char* path, const uint8_t (&pkgHash)[GameSaveStore:
 }
 
 // Replaces `path` with `head` then `body` by way of `tmp`, as saveStore does for
-// store.bin (see there for why each step is ordered as it is); false when it could not.
+// store.bin (see there for why each step is ordered as it is); false when it could not. `removedOld` (when given) is
+// set once the old `path` has been removed, whether or not the rename after it then succeeds: from there the old file
+// is gone and `tmp` holds the new one.
 bool replaceFile(const char* id, const char* dir, const char* path, const char* tmp,
-                 const std::span<const uint8_t> head, const std::span<const uint8_t> body) {
+                 const std::span<const uint8_t> head, const std::span<const uint8_t> body, bool* removedOld = nullptr) {
   if (!Storage.ensureDirectoryExists(dir)) {
     LOG_ERR("GAME", "%s: cannot create %s", id, dir);
     return false;
@@ -125,9 +127,12 @@ bool replaceFile(const char* id, const char* dir, const char* path, const char* 
     Storage.remove(tmp);
     return false;
   }
-  if (Storage.exists(path) && !Storage.remove(path)) {
-    LOG_ERR("GAME", "%s: cannot replace %s", id, path);
-    return false;
+  if (Storage.exists(path)) {
+    if (!Storage.remove(path)) {
+      LOG_ERR("GAME", "%s: cannot replace %s", id, path);
+      return false;
+    }
+    if (removedOld) *removedOld = true;
   }
   if (!Storage.rename(tmp, path)) {
     LOG_ERR("GAME", "%s: cannot rename %s to %s", id, tmp, path);
@@ -339,7 +344,10 @@ bool GameSaveStore::saveResume(const std::span<const uint8_t> snapshot, const ui
   // The spine's u16: the low 16 bits of ver.
   prefix[RESUME_VER_AT] = static_cast<uint8_t>(ver & 0xFF);
   prefix[RESUME_VER_AT + 1] = static_cast<uint8_t>((ver >> 8) & 0xFF);
-  return replaceFile(id, dirPath, resumePath, resumeTmpPath, prefix, snapshot);
+  bool removedOld = false;
+  const bool written = replaceFile(id, dirPath, resumePath, resumeTmpPath, prefix, snapshot, &removedOld);
+  if (written || removedOld) ++resumeReplaceCount;
+  return written;
 }
 
 bool GameSaveStore::deleteResume() {
@@ -368,8 +376,8 @@ bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) 
   const bool done = taken.over ? deleteResume() : saveResume({buffer.data(), taken.length}, taken.ver);
   if (done) {
     resumeFailed = false;
+    if (taken.over) ++resumeReplaceCount;  // the delete took the file away
     if (!taken.over) {
-      ++resumeWriteCount;
       LOG_DBG("GAME", "%s: saved resume.bin (%u bytes, ver %u)", id, static_cast<unsigned>(taken.length),
               static_cast<unsigned>(taken.ver));
     }

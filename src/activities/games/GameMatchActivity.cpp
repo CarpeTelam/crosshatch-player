@@ -323,12 +323,13 @@ void GameMatchActivity::flushResume() {
 void GameMatchActivity::flushResumeOf(GameVM& from) {
   if (!resumeWritable || !store.ready() || !from.committed().pending()) return;
   if (!sdStepAllowed("the resume write")) return;
-  const uint32_t writesBefore = store.saves().resumeWrites();
+  const uint32_t replacedBefore = store.saves().resumeReplacements();
   store.saves().flushResume(from.committed(), millis());
-  // A snapshot written now replaced the finished round's resume.bin (the write renames over it), so an Over delete
-  // that failed has nothing left to remove, and a retry from here on would delete this round's save. Until one is
-  // written, the delete keeps retrying (loopPlaying, loopView, Leave, the forced exit).
-  if (store.saves().resumeWrites() != writesBefore) resumeDeletePending = false;
+  // The finished round's resume.bin is gone once a snapshot has replaced it, or once a write that then failed to
+  // rename has removed it (the new snapshot waits in resume.bin.tmp). Either way an Over delete that failed has
+  // nothing left to remove, and a retry from here on would delete this round's save. Until then the delete keeps
+  // retrying (loopPlaying, loopView, Leave, the forced exit).
+  if (store.saves().resumeReplacements() != replacedBefore) resumeDeletePending = false;
 }
 
 void GameMatchActivity::flushStore() {

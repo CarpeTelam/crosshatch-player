@@ -917,6 +917,47 @@ TEST_F(ResumeMatchTest, ALeaveBeforeTheRematchsFirstWriteStillRemovesTheFinished
   EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::None) << "Continue would offer it";
 }
 
+// The finished round's file can go before the rematch's write is done with it: the Over delete succeeds once the card
+// recovers, or the write removes resume.bin and then fails to rename the new snapshot into place. Either way the new
+// round's snapshot waits in resume.bin.tmp, and a delete that was still pending must not take it (a Leave inside the
+// write backoff would). Which of the two happens depends on whether the loop takes the over snapshot before the VM
+// publishes the new round's (a race this test does not fix); GameSaveStoreTest pins the counter for the second.
+TEST_F(ResumeMatchTest, ARematchSnapshotWaitingInTheTmpFileSurvivesALeaveAfterAFailedOverDelete) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  ASSERT_TRUE(fakesd::has(resumePath("cnt")));
+
+  input->click(Button::Confirm);  // Play again
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  fakesd::sim().failRemove.clear();                       // the card recovers ...
+  fakesd::sim().failRename.insert(resumeTmpPath("cnt"));  // ... but will not move the new snapshot into place
+  ASSERT_TRUE(pump([&] {
+    fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+    return logHas("cannot rename " + resumeTmpPath("cnt"));
+  }));
+  EXPECT_FALSE(fakesd::has(resumePath("cnt"))) << "the finished round's file is gone";
+  EXPECT_TRUE(fakesd::has(resumeTmpPath("cnt"))) << "and the new snapshot waits in the tmp file";
+
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  input->press(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);  // Leave
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_TRUE(fakesd::has(resumeTmpPath("cnt"))) << "the pending delete took the new round's save";
+  EXPECT_EQ(fakesd::bytesOf(resumeTmpPath("cnt")), resumeBytes(snapshotOf(0), 3));
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::Valid) << "Continue finds it";
+}
+
 TEST_F(ResumeMatchTest, ARematchWhoseSetupErrorsStillRemovesTheFinishedRoundsSaveAtLeave) {
   // Round 1 ends normally; round 2's setup errors. The error view's Back is Leave.
   installGame("erg", R"(

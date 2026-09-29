@@ -46,13 +46,14 @@ enum class Error : uint8_t {
   TooManyGames,
 };
 
-// The most inbox files one installAll takes; the rest wait for the next call.
+// The most inbox files one installAll judges; the rest wait for the next call. A package that waits for room
+// (TooManyGames) does not count, so it cannot keep the files behind it from being reached.
 inline constexpr size_t MAX_PER_RUN = 32;
 
 // What one run of installAll did.
 struct Report {
   uint8_t installed = 0;
-  uint8_t failed = 0;
+  uint8_t failed = 0;  // stops at 255
   // The first failure, for the one-time notice. A package that installed but whose inbox file would neither delete
   // nor rename aside, or an invalid one that would not rename to .bad, is a failure (SdCard).
   Error firstError = Error::None;

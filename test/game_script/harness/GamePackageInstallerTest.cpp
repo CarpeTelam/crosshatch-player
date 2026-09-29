@@ -98,7 +98,12 @@ TEST_F(InstallerTest, WritesPkgLastAndDeletesTheInboxFileAfterIt) {
   drop("package-vector.cpgame", loadVector().package);
   install();
   const int renamed = opIndex("rename /.games-tmp/package-vector /.games/package-vector");
-  const int pkg = opIndex("open /.games/package-vector/.pkg");
+  // The last open of the .pkg: the limit check looks for an installed one before the folder is moved (opens nothing).
+  int pkg = -1;
+  const auto& opsSoFar = fakesd::sim().ops;
+  for (size_t i = 0; i < opsSoFar.size(); ++i) {
+    if (opsSoFar[i] == "open /.games/package-vector/.pkg") pkg = static_cast<int>(i);
+  }
   const int deleted = opIndex("remove /games/package-vector.cpgame");
   ASSERT_GE(renamed, 0);
   ASSERT_GE(pkg, 0);
@@ -808,16 +813,53 @@ TEST_F(InstallerTest, AnEarlierInstalledCopyIsReplacedByTheNextOne) {
   EXPECT_FALSE(exists("/games/g.cpgame"));
 }
 
-TEST_F(InstallerTest, AnEarlierInstalledCopyThatWillNotBeReplacedLeavesTheFileReported) {
-  drop("g.cpgame", gamePackage("g"));
+// A file the card marks read-only keeps the mark when it is renamed, and will not delete: an earlier copy under the
+// aside name that will not go must not keep an update of the same file in the inbox (the fake card's failRemove stands
+// in for the mark, and its rename, like SdFat's, will not replace a name).
+TEST_F(InstallerTest, AnEarlierInstalledCopyThatWillNotGoLeavesTheNextNameFree) {
+  const Bytes update = gamePackage("g", {{"extra.lua", toBytes("return 2\n")}});
+  drop("g.cpgame", update);
   fakesd::addFile("/games/g.cpgame.installed", toBytes("an earlier copy"));
   fakesd::sim().failRemove.insert("/games/g.cpgame");
   fakesd::sim().failRemove.insert("/games/g.cpgame.installed");
   const GamePackageInstaller::Report report = install();
-  EXPECT_EQ(report.firstError, Error::SdCard) << "the rename onto a name that stays is refused";
-  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_FALSE(exists("/games/g.cpgame"));
   EXPECT_EQ(toText(fakesd::bytesOf("/games/g.cpgame.installed")), "an earlier copy");
+  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.installed.2"), update);
   EXPECT_TRUE(fakelog::any("Cannot remove /games/g.cpgame.installed"));
+  EXPECT_FALSE(GamePackageInstaller::hasInbox()) << "no name it takes ends in .cpgame";
+  EXPECT_EQ(install().installed, 0) << "and nothing installs again";
+}
+
+TEST_F(InstallerTest, AnEarlierBadCopyThatWillNotGoLeavesTheNextNameFree) {
+  const Bytes package = gamePackage("g", {{"pic.png", toBytes("not a png at all, no header")}});
+  drop("g.cpgame", package);
+  fakesd::addFile("/games/g.cpgame.bad", toBytes("an earlier verdict"));
+  fakesd::sim().failRemove.insert("/games/g.cpgame.bad");
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.firstError, Error::BadImage) << "the package's reason, not the card's";
+  EXPECT_FALSE(exists("/games/g.cpgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.bad.2"), package);
+  EXPECT_EQ(toText(fakesd::bytesOf("/games/g.cpgame.bad")), "an earlier verdict");
+}
+
+TEST_F(InstallerTest, WhenEveryAsideNameIsTakenAndStuckTheFileIsReportedAndKept) {
+  drop("g.cpgame", gamePackage("g"));
+  fakesd::sim().failRemove.insert("/games/g.cpgame");
+  for (const char* name : {"", ".2", ".3", ".4", ".5"}) {
+    const std::string path = std::string("/games/g.cpgame.installed") + name;
+    fakesd::addFile(path, toBytes("stuck"));
+    fakesd::sim().failRemove.insert(path);
+  }
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.failed, 1);
+  EXPECT_EQ(report.firstError, Error::SdCard);
+  EXPECT_TRUE(exists("/.games/g/.pkg")) << "it did install";
+  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_FALSE(exists("/games/g.cpgame.installed.6"));
+  EXPECT_TRUE(fakelog::any("No free name for /games/g.cpgame.installed"));
 }
 
 TEST_F(InstallerTest, AnInstalledInboxFileThatWillNeitherDeleteNorRenameIsReportedAndKept) {
@@ -847,10 +889,11 @@ class GameLimitTest : public InstallerTest {
     std::snprintf(id, sizeof(id), "game-%02u", static_cast<unsigned>(n));
     return id;
   }
-  // `count` installed games (their .pkg is what counts), game-00 upward.
+  // `count` installed games, game-00 upward: a .pkg and the manifest the registry needs to list them.
   static void installedGames(const size_t count) {
     for (size_t i = 0; i < count; ++i) {
       fakesd::addFile("/.games/" + idOf(i) + "/.pkg", std::string("v1\n0000000000000000\n"));
+      fakesd::addFile("/.games/" + idOf(i) + "/manifest.json", manifestJson(idOf(i)));
     }
   }
 };
@@ -864,6 +907,7 @@ TEST_F(GameLimitTest, TheLimitIsTheRegistrysAndAllOfItsGamesAreListed) {
   EXPECT_EQ(install().installed, 1) << "the 64th game installs";
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
+  EXPECT_EQ(listing.count, GameRegistry::MAX_GAMES) << "the registry lists every one of them";
   bool listed = false;
   for (size_t i = 0; i < listing.count; ++i) listed = listed || std::string(listing.entries[i].manifest.id) == "last";
   EXPECT_TRUE(listed);
@@ -891,6 +935,53 @@ TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
   EXPECT_EQ(install().installed, 1);
   EXPECT_TRUE(exists("/.games/extra/.pkg"));
   EXPECT_FALSE(exists("/games/extra.cpgame"));
+}
+
+// The limit is judged after the package has proved valid, so an invalid one at the limit is .bad with its real reason.
+TEST_F(GameLimitTest, AnInvalidPackageAtTheLimitIsBadWithItsOwnReason) {
+  installedGames(GameRegistry::MAX_GAMES);
+  const Bytes package = gamePackage("extra", {{"pic.png", toBytes("not a png at all, no header")}});
+  drop("extra.cpgame", package);
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.failed, 1);
+  EXPECT_EQ(report.firstError, Error::BadImage) << GamePackageInstaller::describe(report.firstError);
+  EXPECT_FALSE(exists("/games/extra.cpgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame.bad"), package);
+  EXPECT_FALSE(exists("/.games/extra"));
+  EXPECT_FALSE(exists("/.games-tmp"));
+}
+
+TEST_F(GameLimitTest, ThePackagesBehindManyThatWaitForRoomAreStillReached) {
+  installedGames(GameRegistry::MAX_GAMES);
+  constexpr int WAITING = 40;  // more than MAX_PER_RUN
+  for (int i = 0; i < WAITING; ++i) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "wait-%02d", i);
+    drop(std::string(name) + ".cpgame", gamePackage(name));
+  }
+  drop("update.cpgame", gamePackage("game-33", {{"extra.lua", toBytes("return 2\n")}}));  // last in the inbox
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 1) << "the update of an installed game is reached behind " << WAITING;
+  EXPECT_EQ(report.failed, WAITING);
+  EXPECT_EQ(report.firstError, Error::TooManyGames);
+  EXPECT_TRUE(exists("/.games/game-33/extra.lua"));
+  EXPECT_FALSE(exists("/games/update.cpgame"));
+  for (int i = 0; i < WAITING; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "/games/wait-%02d.cpgame", i);
+    EXPECT_TRUE(exists(name)) << name << " waits";
+  }
+}
+
+TEST_F(GameLimitTest, TheFoldersAreCountedOnceACallAndKeptAsInstallsLand) {
+  installedGames(GameRegistry::MAX_GAMES - 3);
+  for (const char* id : {"a", "b", "c", "d"}) drop(std::string(id) + ".cpgame", gamePackage(id));
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 3);
+  EXPECT_EQ(report.failed, 1) << "the count went up with each install, so the fourth was over the limit";
+  EXPECT_STREQ(report.firstFile, "d.cpgame");
+  // One read of each folder's .pkg for the count, not one more for every package.
+  EXPECT_EQ(fakesd::countOps("open /.games/game-05/.pkg"), 1u);
 }
 
 TEST_F(GameLimitTest, ReplacingAnInstalledGameIsAllowedAtTheLimit) {
