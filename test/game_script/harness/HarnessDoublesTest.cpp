@@ -144,6 +144,153 @@ TEST_F(HarnessTest, WritesRenamesRemovesAndMkdirsFailPerPath) {
   EXPECT_EQ(fakesd::countOps("rename "), 3u);
 }
 
+TEST_F(HarnessTest, RenamingAFolderMovesItsWholeSubtree) {
+  fakesd::addFile("/.games-tmp/demo/main.lua", "m");
+  fakesd::addFile("/.games-tmp/demo/assets/logo.bmp", "l");
+  fakesd::addDir("/.games");
+  ASSERT_TRUE(Storage.rename("/.games-tmp/demo", "/.games/demo"));
+  EXPECT_TRUE(fakesd::has("/.games/demo/main.lua"));
+  EXPECT_TRUE(fakesd::has("/.games/demo/assets/logo.bmp"));
+  EXPECT_FALSE(fakesd::has("/.games-tmp/demo"));
+  EXPECT_FALSE(fakesd::has("/.games-tmp/demo/main.lua"));
+  EXPECT_EQ(namesIn("/.games/demo"), (std::vector<std::string>{"main.lua", "assets/"}));
+  EXPECT_EQ(namesIn("/.games-tmp"), std::vector<std::string>{});
+  // A name that only starts like the folder's is not in its subtree.
+  fakesd::addFile("/.games-tmp/demo2/x.lua", "x");
+  fakesd::addDir("/.games-tmp/demo3");
+  ASSERT_TRUE(Storage.rename("/.games-tmp/demo3", "/.games-tmp/demo4"));
+  EXPECT_TRUE(fakesd::has("/.games-tmp/demo2/x.lua"));
+}
+
+TEST_F(HarnessTest, RenameRefusesAnExistingTargetItsOwnSubtreeAndAFileForAFolder) {
+  fakesd::addFile("/a/f.txt", "x");
+  fakesd::addDir("/b");
+  fakesd::addFile("/file", "x");
+  EXPECT_FALSE(Storage.rename("/a", "/b"));            // exists
+  EXPECT_FALSE(Storage.rename("/a", "/a/inside"));     // into itself
+  EXPECT_FALSE(Storage.rename("/a", "/file/inside"));  // the target's parent is a file
+  EXPECT_FALSE(Storage.rename("/a", "/nope/a"));       // no such folder
+  EXPECT_FALSE(Storage.rename("/missing", "/c"));
+  EXPECT_TRUE(fakesd::has("/a/f.txt"));
+}
+
+TEST_F(HarnessTest, RemoveDirRemovesTheSubtreeAndStopsAtTheFirstFailure) {
+  fakesd::addFile("/g/a.lua", "a");
+  fakesd::addFile("/g/sub/b.bmp", "b");
+  fakesd::addFile("/g/sub/deep/c.txt", "c");
+  fakesd::addFile("/g/d.lua", "d");
+  fakesd::addFile("/keep/x", "x");
+  EXPECT_FALSE(Storage.removeDir("/g/a.lua"));  // a file
+  EXPECT_FALSE(Storage.removeDir("/none"));
+  fakesd::sim().failRemove.insert("/g/sub/b.bmp");
+  EXPECT_FALSE(Storage.removeDir("/g"));
+  EXPECT_TRUE(fakesd::has("/g"));
+  EXPECT_TRUE(fakesd::has("/g/sub/b.bmp"));
+  fakesd::sim().failRemove.clear();
+  EXPECT_TRUE(Storage.removeDir("/g"));
+  EXPECT_FALSE(fakesd::has("/g"));
+  EXPECT_FALSE(fakesd::has("/g/sub/deep/c.txt"));
+  EXPECT_TRUE(fakesd::has("/keep/x"));
+}
+
+TEST_F(HarnessTest, RemovingWhileAFolderIsListedSkipsNothing) {
+  for (const char* name : {"a", "b", "c", "d", "e"}) fakesd::addFile(std::string("/f/") + name, "x");
+  auto dir = Storage.open("/f");
+  dir.rewindDirectory();
+  std::vector<std::string> seen;
+  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    char name[16];
+    entry.getName(name, sizeof(name));
+    seen.emplace_back(name);
+    entry.close();
+    ASSERT_TRUE(Storage.remove((std::string("/f/") + name).c_str()));
+  }
+  EXPECT_EQ(seen, (std::vector<std::string>{"a", "b", "c", "d", "e"}));
+  EXPECT_TRUE(Storage.rmdir("/f"));
+}
+
+TEST_F(HarnessTest, MkdirFailsOnAPathThatExistsAndEnsureDirectoryExistsDoesNot) {
+  fakesd::addDir("/d");
+  fakesd::addFile("/file", "x");
+  EXPECT_FALSE(Storage.mkdir("/d"));  // SdFat creates with O_EXCL
+  EXPECT_FALSE(Storage.mkdir("/file"));
+  EXPECT_FALSE(Storage.mkdir("/file/sub"));    // a file for a parent
+  EXPECT_FALSE(Storage.mkdir("/x/y", false));  // no parents asked for
+  EXPECT_TRUE(Storage.ensureDirectoryExists("/d"));
+  EXPECT_FALSE(Storage.ensureDirectoryExists("/file"));
+  EXPECT_TRUE(Storage.ensureDirectoryExists("/x/y"));
+}
+
+TEST_F(HarnessTest, AFileTakesWritesThroughPrintAndTheModeLimitsWhatItAllows) {
+  HalFile file;
+  ASSERT_TRUE(Storage.openFileForWrite("T", "/w.bin", file));
+  Print& out = file;  // ZipFile::readFileToStream and the converters write to a Print&
+  EXPECT_EQ(out.write(static_cast<uint8_t>('a')), 1u);
+  const uint8_t more[2] = {'b', 'c'};
+  EXPECT_EQ(out.write(more, 2), 2u);
+  file.close();
+  EXPECT_EQ(fakesd::bytesOf("/w.bin"), (Bytes{'a', 'b', 'c'}));
+
+  uint8_t buffer[4];
+  HalFile readOnly = Storage.open("/w.bin", O_RDONLY);
+  EXPECT_EQ(readOnly.write(more, 2), 0u);  // a read-only handle stores nothing
+  EXPECT_EQ(readOnly.read(buffer, 3), 3);
+  HalFile writeOnly = Storage.open("/w.bin", O_WRONLY);
+  EXPECT_EQ(writeOnly.read(buffer, 3), -1);
+  EXPECT_EQ(writeOnly.write(more, 1), 1u);
+  EXPECT_FALSE(Storage.open("/", O_RDWR));
+  fakesd::addDir("/dir");
+  EXPECT_FALSE(Storage.open("/dir", O_RDWR | O_CREAT));  // a folder does not open for writing
+  EXPECT_TRUE(Storage.open("/dir"));
+  fakesd::addFile("/plain", "x");
+  EXPECT_FALSE(Storage.open("/plain/child", O_RDWR | O_CREAT));  // a file is not a folder
+}
+
+TEST_F(HarnessTest, AFileClosesWhenItsHandleGoesOutOfScopeOrIsAssignedOver) {
+  fakesd::addFile("/a", "x");
+  fakesd::addFile("/b", "y");
+  fakesd::sim().failClose.insert("/a");  // close() reports it, a destructor cannot
+  {
+    HalFile file = Storage.open("/a");
+    EXPECT_EQ(fakesd::countOps("close "), 0u);
+  }
+  EXPECT_EQ(fakesd::countOps("close /a"), 1u);
+  HalFile file;
+  ASSERT_TRUE(Storage.openFileForRead("T", "/a", file));
+  ASSERT_TRUE(Storage.openFileForRead("T", "/b", file));  // assigned over: /a closes
+  EXPECT_EQ(fakesd::countOps("close /a"), 2u);
+  file.close();
+  EXPECT_EQ(fakesd::countOps("close /b"), 1u);
+}
+
+TEST_F(HarnessTest, AListingCanFailPartWay) {
+  for (const char* name : {"a", "b", "c"}) fakesd::addFile(std::string("/f/") + name, "x");
+  fakesd::sim().failListAfter["/f"] = 2;
+  EXPECT_EQ(namesIn("/f"), (std::vector<std::string>{"a", "b"}));
+  fakesd::sim().failListAfter["/f"] = 0;
+  EXPECT_TRUE(namesIn("/f").empty());
+  fakesd::sim().failListAfter.clear();
+  EXPECT_EQ(namesIn("/f").size(), 3u);
+}
+
+TEST_F(HarnessTest, AReadThatOnlyReachesPastTheEndDoesNotFail) {
+  fakesd::addFile("/h.bmp", Bytes(40, 1));
+  fakesd::sim().failReadAt["/h.bmp"] = 50;  // past the file's 40 bytes
+  uint8_t out[62];
+  auto file = Storage.open("/h.bmp");
+  EXPECT_EQ(file.read(out, sizeof(out)), 40);
+  fakesd::sim().failReadAt["/h.bmp"] = 30;
+  auto again = Storage.open("/h.bmp");
+  EXPECT_EQ(again.read(out, sizeof(out)), -1);
+}
+
+TEST_F(HarnessTest, APathTheFakeDoesNotModelAborts) {
+  EXPECT_DEATH(Storage.exists("/a/"), "not normalised");
+  EXPECT_DEATH(Storage.exists("a"), "not normalised");
+  EXPECT_DEATH(Storage.open("/a//b"), "not normalised");
+  EXPECT_TRUE(Storage.exists("/"));
+}
+
 TEST_F(HarnessTest, ThePsramStubCatchesAWritePastTheEnd) {
   expectCleanPsram = false;  // this test damages blocks on purpose
   {
@@ -200,6 +347,11 @@ TEST_F(HarnessTest, TheRemainingCardCallsBehaveAndFailPerPath) {
   EXPECT_TRUE(file.rename("/d/y.bin"));
   EXPECT_TRUE(fakesd::has("/d/y.bin"));
   EXPECT_FALSE(fakesd::has("/d/y.tmp"));
+}
+
+TEST_F(HarnessTest, ThePsramStubGivesNullForZeroBytesLikeTheDevice) {
+  EXPECT_FALSE(HalMemory::allocatePsram(0));
+  EXPECT_EQ(fakepsram::liveBlocks, 0u);
 }
 
 TEST_F(HarnessTest, ThePsramStubFailsOnRequest) {

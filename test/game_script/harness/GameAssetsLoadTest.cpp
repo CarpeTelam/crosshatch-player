@@ -421,6 +421,40 @@ TEST_F(GameAssetsLoadTest, AnImageThatShrankBetweenThePassesStillLoadsWithItsNew
   EXPECT_EQ(Bytes(assets.images().pixels, assets.images().pixels + rows.size()), rows);
 }
 
+TEST_F(GameAssetsLoadTest, AnImageThatGrewBeyondItsOwnRowsIsRefusedEvenWhenTheFilesStillFitTheBudget) {
+  // Two 8 x 8 images: pass 1 counts 2 x (62 + 32) file bytes and 64 row bytes. Pass 2 lists
+  // a.bmp first, grown to 8 x 23: 154 file bytes (within the 188) but 92 row bytes (over the 64).
+  fakesd::addFile(path("main.lua"), "return 1");
+  fakesd::addFile(path("a.bmp"), image(8, 8));
+  fakesd::addFile(path("b.bmp"), image(8, 8, 1));
+  fakesd::sim().onRewind = [&](const std::string&, const int rewinds) {
+    if (rewinds == 2) fakesd::addFile(path("a.bmp"), image(8, 23));
+  };
+  EXPECT_EQ(load(), Result::CannotRead);
+  EXPECT_TRUE(logHas("or it changed since it was checked"));
+  EXPECT_EQ(fakepsram::liveBlocks, 0u);
+  EXPECT_EQ(fakepsram::overruns, 0u);
+}
+
+TEST_F(GameAssetsLoadTest, AnImageThatAppearsInPassTwoIsNotReadPastThePassOneCount) {
+  const Bytes logo = image(8, 8);
+  fakesd::addFile(path("logo.bmp"), logo);
+  fakesd::addFile(path("main.lua"), "return 1");
+  fakesd::sim().onRewind = [&](const std::string&, const int rewinds) {
+    if (rewinds != 2) return;
+    // Pass 2 lists logo.bmp, a new image, then main.lua.
+    fakesd::removeEntry(path("main.lua"));
+    fakesd::addFile(path("late.bmp"), image(8, 8, 2));
+    fakesd::addFile(path("main.lua"), "return 1");
+  };
+  ASSERT_EQ(load(), Result::Ok);
+  ASSERT_EQ(assets.images().count, 1u);
+  EXPECT_STREQ(assets.images().spans[0].name, "logo");
+  ASSERT_EQ(assets.sources().count, 1u);
+  EXPECT_STREQ(assets.sources().spans[0].name, "main");
+  EXPECT_EQ(fakepsram::overruns, 0u);
+}
+
 TEST_F(GameAssetsLoadTest, AnImageSwappedForAnotherLayoutBetweenThePassesIsRefused) {
   fakesd::addFile(path("main.lua"), "return 1");
   fakesd::addFile(path("logo.bmp"), image(8, 8));
@@ -493,6 +527,48 @@ TEST_F(GameAssetsLoadTest, ANameThatFitsButIsTooLongForAModuleIsMisnamedNotLong)
   EXPECT_EQ(load(), Result::BadSourceName);
   EXPECT_TRUE(logHas("is not loaded: a module name is [a-z0-9_]{1,32}.lua"));
   EXPECT_FALSE(logHas("47 bytes or longer"));
+}
+
+TEST_F(GameAssetsLoadTest, TheNameLengthLimitsAreExactlyThirtyTwoAndFortySix) {
+  const auto stem = [](const size_t n) { return std::string(n, 'a'); };
+  // A 32-character stem is a module and an image; 33 is neither, and said so.
+  fakesd::addFile(path(stem(32) + ".lua"), "return 1");
+  fakesd::addFile(path(stem(32) + ".bmp"), image(8, 8));
+  ASSERT_EQ(load(), Result::Ok);
+  EXPECT_EQ(assets.sources().count, 1u);
+  ASSERT_EQ(assets.images().count, 1u);
+  EXPECT_STREQ(assets.sources().spans[0].name, stem(32).c_str());
+  EXPECT_STREQ(assets.images().spans[0].name, stem(32).c_str());
+
+  fakesd::removeEntry(path(stem(32) + ".lua"));
+  fakesd::removeEntry(path(stem(32) + ".bmp"));
+  fakesd::addFile(path(stem(33) + ".lua"), "return 1");
+  fakesd::addFile(path(stem(33) + ".bmp"), image(8, 8));
+  fakelog::lines.clear();
+  EXPECT_EQ(load(), Result::BadSourceName);
+  EXPECT_TRUE(logHas(stem(33) + ".lua is not loaded: a module name is"));
+  EXPECT_TRUE(logHas(stem(33) + ".bmp is not loaded: an image name is"));
+
+  // A 46-byte name still fits the buffer (so it is misnamed, not long); a 47-byte one does not.
+  fakesd::removeEntry(path(stem(33) + ".lua"));
+  fakesd::removeEntry(path(stem(33) + ".bmp"));
+  fakesd::addFile(path(stem(42) + ".lua"), "return 1");
+  fakelog::lines.clear();
+  EXPECT_EQ(load(), Result::BadSourceName);
+  EXPECT_TRUE(logHas(stem(42) + ".lua is not loaded: a module name is"));
+  EXPECT_FALSE(logHas("47 bytes or longer"));
+  fakesd::removeEntry(path(stem(42) + ".lua"));
+  fakesd::addFile(path(stem(46)), "x");  // fits, and is neither Lua nor a bitmap: nothing to say
+  fakesd::addFile(path("main.lua"), "return 1");
+  fakelog::lines.clear();
+  EXPECT_EQ(load(), Result::Ok);
+  EXPECT_FALSE(logHas("bytes or longer"));
+  fakesd::removeEntry(path(stem(46)));
+  fakesd::removeEntry(path("main.lua"));
+  fakesd::addFile(path(stem(47)), "x");
+  fakelog::lines.clear();
+  EXPECT_EQ(load(), Result::NoSources);
+  EXPECT_TRUE(logHas("... has a name of 47 bytes or longer; it is not loaded"));
 }
 
 TEST_F(GameAssetsLoadTest, ANameThatFillsTheBufferIsNeverClassified) {

@@ -39,6 +39,7 @@ HalMemory::PsramBuffer HalMemory::allocatePsram(const size_t bytes) {
     return PsramBuffer();
   }
   if (fakepsram::failAbove != 0 && bytes > fakepsram::failAbove) return PsramBuffer();
+  if (bytes == 0) return PsramBuffer();  // heap_caps_malloc(0) is NULL on the device
   auto* const raw = static_cast<uint8_t*>(std::malloc(HEADER_BYTES + GUARD_BYTES + bytes + GUARD_BYTES));
   if (!raw) return PsramBuffer();
   std::memset(raw, 0, HEADER_BYTES);

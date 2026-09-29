@@ -68,7 +68,7 @@ context: []
 
 ## Implementation Notes
 
-Implemented directly in the planning session rather than by an implementation subagent: the investigation was already loaded, and a fresh subagent would have re-derived it.
+Implemented directly in the planning session rather than by an implementation subagent: the investigation was already loaded, and a fresh subagent would have re-derived it. A follow-up commit applied the orchestrator's independent review (Review Triage Log, pass 2).
 
 No source seam was needed (the plan's unknown): `FrameReplay.cpp`, `GameIconDraw.cpp`, `GameViewport.cpp`, `GameAssets.cpp`, `GameSaveStore.cpp` and the other host-buildable `src/games` sources compile unchanged against the doubles.
 
@@ -108,6 +108,27 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 | 26 | intent | `## 3.2`'s third item and `## e3r-2` are only partly closed | false | reject | Intended: the `BadImage` mapping and the gesture drop need `GameMatchActivity` (entry 4); the entries say so. |
 | 27 | gap | Whether `GameScriptTest` links with the harness archives | false | reject | It builds and links; the full host suite passed (see Verification). |
 
+Pass 2, source: the orchestrator's independent review (adversarial, edge-case, and verification-gap lenses), triaged once per shared finding. Verdict counts: 0 high, 11 medium, 5 low, 0 false; every finding has a row (row 43 is rejected, the rest patched). The build agent applied the patches in one follow-up commit.
+
+| # | Lens | Finding | Verdict | Route | Evidence |
+|---|------|---------|---------|-------|----------|
+| 28 | adversarial 1 | A later entry cannot add a `src/games` source that does not compile against the doubles, rename or delete one, or add includes, defines, or libraries without editing `CMakeLists.txt`; `GameScriptTest` depends on the glob | medium | patch | Real: entries 3, 8, and 9 add or rename such files and may not edit shared files, and a stale exclusion was a `FATAL_ERROR`. Now a `*.sources.cmake` pre-phase appends to `HARNESS_EXCLUDE_*`, `HARNESS_EXTRA_*`, a missing excluded name is ignored, entry 1's exclusions moved to `harness_base.sources.cmake`, the convention is documented at the top of `CMakeLists.txt`, and `GameScriptTest`'s probe is built from an explicit source list. Tried by hand with a non-compiling file and an extra `.sources.cmake` (Verification). |
+| 29 | adversarial 2, edge 1 | The fake cannot model entry 3's installer: rename moves only the folder's own entry, no `removeDir`, `HalFile` is not a `Print` | medium | patch | Real (`/.games-tmp/<id>` to `/.games/<id>` left the files behind). Rename moves the subtree and refuses a target inside the source or under a file; `removeDir` follows `SDCardManager::removeDir`; `HalFile` derives from `stubs/Print.h`. Tested in `HarnessDoublesTest`. |
+| 30 | edge 2 | Removing while a folder is listed skips entries | medium | patch | Real: `openNextFile` walked an index into a vector that removal shifted. Removed entries are now tombstones; `RemovingWhileAFolderIsListedSkipsNothing`. |
+| 31 | adversarial 3, edge 4 | `mkdir` of an existing folder returns true; SdFat's `O_EXCL` fails | medium | patch | Now false for any existing path; `ensureDirectoryExists` keeps its own already-a-folder check. |
+| 32 | adversarial 4, edge 3 | No open modes, folder-with-write-flags, `O_RDWR` for `openFileForWrite`, destructor close, or listing failure | low | patch | All matched cheaply: modes on the handle, a folder opens read-only, `openFileForWrite` is `O_RDWR`, a handle closes on destruction or assignment, `failListAfter` ends a listing early. Case-insensitivity stays open, under `## 4.1`. |
+| 33 | edge 5 | Exact-string paths; SdFat reads a trailing `/` and FAT ignores case | low | patch | The fake aborts on a path that is not normalised (`APathTheFakeDoesNotModelAborts`); the case difference is recorded under `## 4.1`. |
+| 34 | adversarial 5 | Image opacity unpinned: a transparent replay passes | medium | patch | `expectImage` takes a base; images are drawn over black in both inks. Mutation 3.2h. |
+| 35 | adversarial 6, edge 6 | `allocatePsram(0)` returns a live block; the device returns null | low | patch | The stub returns null for 0 bytes; tested. |
+| 36 | edge 7 | `failReadAt` fails a read that only reaches past the end | medium | patch | Only bytes that exist can fail a read now; `AReadThatOnlyReachesPastTheEndDoesNotFail`. |
+| 37 | edge 8 | No name-length boundary tests | medium | patch | `TheNameLengthLimitsAreExactlyThirtyTwoAndFortySix` (32 and 33 stems, 42+4 and 46 and 47 bytes). Mutations e2n and e2o. |
+| 38 | verification gap 1 | The `pixelBytes` conjunct of the pass-2 re-check is unpinned | medium | patch | Real: dropping it alone passed everything. `AnImageThatGrewBeyondItsOwnRowsIsRefusedEvenWhenTheFilesStillFitTheBudget` (two images, the first grown so its file bytes fit and its rows do not). Mutation 3.2c2; the `fileBytes` conjunct alone (3.2c1) is implied by it. |
+| 39 | verification gap 2 | `## 3.10`'s second item marked resolved though `build`'s fallback has no test | medium | patch | The mark now says `check` is resolved by 6973ec8 and the `build` fallback stays open. |
+| 40 | verification gap 3 | `if (imagesLoaded == imageCount) continue;` unpinned | medium | patch | `AnImageThatAppearsInPassTwoIsNotReadPastThePassOneCount`. Mutation 3.2i. |
+| 41 | verification gap 4 | The plan's "708 before this entry" is stale | low | patch | Verification says 719 before, 794 after. |
+| 42 | verification gap 5 | The plan cites no durable evidence for the pio builds | low | patch | Verification pastes the two `SUCCESS` lines and the empty `git diff` over `src`, `lib`, and `platformio.ini`. |
+| 43 | adversarial 7 | `(<commit>)` placeholders in `deferred-work.md` | medium | reject | The orchestrator substitutes the hash when merging (same as row 1). |
+
 ## Design Notes
 
 - **Doubles shadow, never replace.** The stubs directory is the first include path, so `<HalStorage.h>`, `<GfxRenderer.h>`, `<HalDisplay.h>`, and `<Logging.h>` resolve to doubles; `<HalMemory.h>` forwards to the real header, and the stub defines only `allocatePsram` and the deleter.
@@ -115,19 +136,22 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 - **The PSRAM stub guards the block.** 4 KiB guard bands and poison, checked on free, so a write past what pass 1 sized fails a test cleanly instead of corrupting the heap.
 - **Fake folder semantics.** Children list in creation order; `getName` returns 0 for a name that does not fit (SdFat), or cuts it with `getNameCuts` (the simulator); `onRewind` lets a test change the card between the loader's two passes; `failReadAt` (byte offset) fails only the row read of a two-pass reader; `shortReadAt` gives a short read.
 - **`frontBlitFills` history.** `git log -L` shows one commit, 131fe505; its one guard was `ADD_FAILURE` for an icon with no bitmap. `harness::replayFills` keeps it as the `errors` list (`LOG_ERR` lines from an icon or image the replay could not draw), which `frontBlitFills` reports as failures.
-- **Excluded from the shared source set:** `GameClock.cpp`, `GameRandom.cpp` (esp_timer, esp_random), `GameVM.cpp` (FreeRTOS, Arduino), `ForkReleaseProbe.cpp` (HTTPS client), `GamesBuildAnchor.cpp` (link anchor), `GameMatchActivity.cpp`, `GamesListActivity.cpp` (activity framework: the next harness entries).
+- **Excluded from the shared source set** (now in `harness_base.sources.cmake`, with the reasons): `GameClock.cpp`, `GameRandom.cpp` (esp_timer, esp_random), `GameVM.cpp` (FreeRTOS, Arduino), `ForkReleaseProbe.cpp` (HTTPS client), `GamesBuildAnchor.cpp` (link anchor), `GameMatchActivity.cpp`, `GamesListActivity.cpp` (activity framework: the next harness entries).
+- **Extension convention (follow-up).** Later entries add `<name>.sources.cmake` (runs before the shared libraries: appends to `HARNESS_EXCLUDE_*` and `HARNESS_EXTRA_*`) and `<name>.cmake` (a suite), and edit no existing harness file. A missing excluded name is ignored. `GameScriptTest`'s replay probe has its own explicit source list.
+- **The fake follows SdFat where game code can tell (follow-up):** subtree rename, `O_EXCL` mkdir, open modes, tombstoned removal, destructor close, `Print` base, `removeDir` as `SDCardManager::removeDir`, listing failure injection, and an abort on a path that is not normalised.
 
 ## Verification
 
-**Commands (all under `flock <lock>`, on the final tree):**
-- `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j` -- 780 of 780 passed (`GameHarnessTest` 61 tests; `GfxBindingsTest` unchanged in count, its fill counts now from the real replay; 708 before this entry).
-- `pio run -e x4pro` -- SUCCESS (3 min 53 s); `pio run -e default` -- SUCCESS (6 min 17 s). No file under `src/` or `lib/` changed (`git diff 8f389a52 -- src lib` is empty), so both build what the baseline built; run before the review patches, which touch `test/` only.
-- `python3 scripts/sim_sh_test.py` -- 4 tests OK: `## 3.10`'s `sim.sh check` item is resolved by 6973ec8 (a doc mark, no mutation).
+**Commands (host suites under `flock <lock>`, on the final tree of the follow-up commit):**
+- `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j` -- 794 of 794 passed (`GameHarnessTest` 75 tests; 719 before this entry, so 719 + 75).
+- `pio run -e x4pro` -- `x4pro SUCCESS 00:03:53.009`; `pio run -e default` -- `default SUCCESS 00:06:16.797`. Both ran on the first commit (6ae85f41) before any review patch. The follow-up changes `test/game_script/harness/**` and two markdown files only, and `git diff 8f389a52 HEAD --stat -- src lib platformio.ini` is empty, so neither firmware build has anything new to build.
+- `python3 scripts/sim_sh_test.py` -- 4 tests OK (`## 3.10`'s `sim.sh check` half).
 - `python3 scripts/check_upstream_touches.py` -- PASS (no upstream file changed).
-- `./bin/clang-format-fix` twice -- second run and `git status` show nothing new; it changed only this entry's files.
+- `./bin/clang-format-fix` twice -- the second run and `git status` show nothing new; it changed only this entry's files.
 - No CI gate or workflow changed, so no fresh-tree run applies.
+- The extension convention, tried by hand and removed: a new `src/games/ZzBad.cpp` (includes `<mbedtls/sha256.h>`) breaks `game_harness_src` but not `GameScriptTest`; a `zz.sources.cmake` that excludes it (and a file that does not exist) restores the harness build (75 tests pass) without editing an existing file.
 
-**Mutations (one guarded line changed at a time in the source under test, host suites rebuilt and run, source restored).** Every mutation below made the named test fail; each run is a separate build of `GameHarnessTest` and `GameScriptTest`, failing names taken from the run.
+**Mutations (one guarded line changed at a time in the source under test, host suites rebuilt and run, source restored).** Each made the named test fail, from the final tree.
 
 **`## 3.1` (icon origin, size, ink, clip)**
 
@@ -138,16 +162,20 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 | 3.1c | `FrameReplay.cpp`: icon ink inverted | `FrameReplayTest.AnIconIsDrawnFromTheCanvasOriginInEachSize`, `FrameReplayTest.AnIconPartlyOffTheCanvasIsClippedToTheCanvasBeforeItIsDrawn` (+2 more) |
 | 3.1d | `FrameReplay.cpp`: icon clip widened | `FrameReplayTest.AnIconPartlyOffTheCanvasIsClippedToTheCanvasBeforeItIsDrawn`, `FrameReplayTest.AnIconWhollyOffTheCanvasCostsNothing` (+1 more) |
 
-**`## 3.2` third item (spans, offsets, pass-2 re-read, image offset)**
+**`## 3.2` third item (spans, offsets, pass-2 re-read, image offset and opacity)**
 
 | Mutation | Guarded line changed | Test that fails |
 |---|---|---|
 | 3.2a | `GameAssets.cpp`: image span offset = 0 | `GameAssetsLoadTest.ModulesAndImagesLandInOneBlockAtTheirOwnOffsets` |
 | 3.2b | `GameAssets.cpp`: source span offset = 0 | `GameAssetsLoadTest.ModulesAndImagesLandInOneBlockAtTheirOwnOffsets` |
-| 3.2c | `GameAssets.cpp`: pass-2 budget re-check dropped | `GameAssetsLoadTest.AnImageThatGrewBetweenThePassesIsRefusedWithoutOverrunningTheBlock` |
-| 3.2d | `GameAssets.cpp`: image spans placed at block start | `GameAssetsLoadTest.AModuleThatAppearsInPassTwoIsNotReadPastThePassOneCount`, `GameAssetsLoadTest.ModulesAndImagesLandInOneBlockAtTheirOwnOffsets` |
+| 3.2c1 | `GameAssets.cpp`: pass-2 fileBytes conjunct dropped | none: equivalent mutation (see below) |
+| 3.2c2 | `GameAssets.cpp`: pass-2 pixelBytes conjunct dropped | `GameAssetsLoadTest.AnImageThatGrewBeyondItsOwnRowsIsRefusedEvenWhenTheFilesStillFitTheBudget` |
+| 3.2d | `GameAssets.cpp`: image spans placed at block start | `GameAssetsLoadTest.AModuleThatAppearsInPassTwoIsNotReadPastThePassOneCount`, `GameAssetsLoadTest.AnImageThatAppearsInPassTwoIsNotReadPastThePassOneCount` (+1 more) |
 | 3.2e | `FrameReplay.cpp`: replay image origin dropped | `FrameReplayTest.AnImageIsDrawnFromItsOwnRowsAtTheCanvasOrigin`, `FrameReplayTest.AnImagePartlyOffTheCanvasIsClippedBeforeItIsDrawn` (+1 more) |
 | 3.2f | `FrameReplay.cpp`: replay ignores the span offset | `FrameReplayTest.AnImageIsDrawnFromItsOwnRowsAtTheCanvasOrigin` |
+| 3.2g | `FrameReplay.cpp`: replay image index bound off by one | the suite crashes on the read past the table (detected, not clean) |
+| 3.2h | `FrameReplay.cpp`: images drawn transparent (white pixels skipped) | `FrameReplayTest.AnImageIsDrawnFromItsOwnRowsAtTheCanvasOrigin`, `GfxBindingsTest.AFrameAtTheBudgetReplaysInAtMostThatManyFills` |
+| 3.2i | `GameAssets.cpp`: pass-2 image past the count is read | `GameAssetsLoadTest.AnImageThatAppearsInPassTwoIsNotReadPastThePassOneCount` |
 
 **f27dcefd (image-header read error)**
 
@@ -178,9 +206,9 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 
 | Mutation | Guarded line changed | Test that fails |
 |---|---|---|
-| e2a | `GameAssets.cpp`: BadSourceName never returned | `GameAssetsLoadTest.ANameThatFitsButIsTooLongForAModuleIsMisnamedNotLong`, `GameAssetsLoadTest.NoLuaFilesIsNoSourcesAndOnlyMisnamedOnesIsBadSourceName` |
-| e2b | `GameAssets.cpp`: release() after a pass-2 failure dropped | `GameAssetsLoadTest.AFileTheFolderLostBetweenThePassesIsCannotReadWithTheCounts`, `GameAssetsLoadTest.AModuleReadThatFailsOrComesUpShortReleasesTheBlock` (+4 more) |
-| e2c | `GameAssets.cpp`: long-name line dropped | `GameAssetsLoadTest.ALongNameTheSimulatorCutsIsSaidWithItsPrefixAndNeverLoaded`, `GameAssetsLoadTest.ANameThatFillsTheBufferIsNeverClassified` |
+| e2a | `GameAssets.cpp`: BadSourceName never returned | `GameAssetsLoadTest.ANameThatFitsButIsTooLongForAModuleIsMisnamedNotLong`, `GameAssetsLoadTest.NoLuaFilesIsNoSourcesAndOnlyMisnamedOnesIsBadSourceName` (+1 more) |
+| e2b | `GameAssets.cpp`: release() after a pass-2 failure dropped | `GameAssetsLoadTest.AFileTheFolderLostBetweenThePassesIsCannotReadWithTheCounts`, `GameAssetsLoadTest.AModuleReadThatFailsOrComesUpShortReleasesTheBlock` (+5 more) |
+| e2c | `GameAssets.cpp`: long-name line dropped | `GameAssetsLoadTest.ALongNameTheSimulatorCutsIsSaidWithItsPrefixAndNeverLoaded`, `GameAssetsLoadTest.ANameThatFillsTheBufferIsNeverClassified` (+1 more) |
 | e2d | `GameAssets.cpp`: unreadable-name line dropped | `GameAssetsLoadTest.ANameSdFatCannotFitIsSaidAndNeverLoaded` |
 | e2e | `GameAssets.cpp`: pass-2 module past the count is read | `GameAssetsLoadTest.AModuleThatAppearsInPassTwoIsNotReadPastThePassOneCount` |
 | e2f | `GameAssets.cpp`: pass-2 text bound dropped | `GameAssetsLoadTest.ModuleTextThatGrewBetweenThePassesIsRefusedWithoutOverrunningTheBlock` |
@@ -188,10 +216,12 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 | e2h | `GameAssets.cpp`: module count cap exclusive | `GameAssetsLoadTest.TheModuleCapsAreInclusive` |
 | e2i | `GameAssets.cpp`: text cap exclusive | `GameAssetsLoadTest.OneByteOverTheTextLimitIsTooLarge`, `GameAssetsLoadTest.TheModuleCapsAreInclusive` |
 | e2j | `GameAssets.cpp`: store restored even on failure | `GameAssetsLoadTest.TheSavedStoreIsRestoredOnlyOnceTheLoadSucceeds` |
-| e2k | `GameAssets.cpp`: name that fills the buffer classified | `GameAssetsLoadTest.ALongNameTheSimulatorCutsIsSaidWithItsPrefixAndNeverLoaded`, `GameAssetsLoadTest.ANameThatFillsTheBufferIsNeverClassified` |
+| e2k | `GameAssets.cpp`: name that fills the buffer classified | `GameAssetsLoadTest.ALongNameTheSimulatorCutsIsSaidWithItsPrefixAndNeverLoaded`, `GameAssetsLoadTest.ANameThatFillsTheBufferIsNeverClassified` (+1 more) |
 | e2l | `GameAssets.cpp`: folder not-a-folder passes | `GameAssetsLoadTest.AMissingFolderOrANonFolderIsFolderMissing` |
+| e2n | `GameAssets.cpp`: module stem limit 32 becomes 31 | `GameAssetsLoadTest.TheNameLengthLimitsAreExactlyThirtyTwoAndFortySix` |
+| e2o | `GameAssets.cpp`: buffer-fit limit 46 becomes 45 | `GameAssetsLoadTest.TheNameLengthLimitsAreExactlyThirtyTwoAndFortySix` |
 
-Two more: dropping the replay's image-index bound to `>` (`FrameReplay.cpp`, `command.image > images.count`) makes `AnImageIndexPastTheTableDrawsNothingAndIsLogged` read past the table and crash the suite (a detected failure, not a clean one); and making a failed header read return `WrongLayout` instead of `Truncated` changes nothing (the caller ignores the value once `readFailed` is set), so it is an equivalent mutation and pins nothing.
+Two mutations pin nothing. Making a failed header read return `WrongLayout` instead of `Truncated` (`GameAssets.cpp`) changes no result, because the caller ignores the value once `readFailed` is set. Dropping only the `fileBytes` conjunct of the pass-2 re-check (3.2c1) changes none either: pass 2 stops at pass 1's image count, so its file bytes are 62 x k plus its row bytes with k at most pass 1's count, and the `pixelBytes` conjunct (3.2c2, pinned) already bounds them. The doubles' own behaviour (subtree rename, `removeDir`, tombstones, `mkdir`, open modes, `Print`, PSRAM zero bytes, read failure past the end, path abort) is pinned by `HarnessDoublesTest` and was not mutation-tested.
 
 For `## e3r-1`'s second item, mutations e1c and e1d are the ones the old `frontBlitFills` copy could not see: widening the real replay's image clip fails `GfxBindingsTest.AFrameAtTheBudgetReplaysInAtMostThatManyFills`, and widening its icon clip fails `GfxBindingsTest.OnlyTheVisiblePixelsCountTowardTheBudget`.
 

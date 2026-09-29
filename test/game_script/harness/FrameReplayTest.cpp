@@ -157,24 +157,28 @@ class FrameReplayTest : public harness::HarnessTest {
     images.pixels = imagePixels.data();
   }
 
-  // One image over a white canvas: what it must leave. An image is opaque, so every pixel of it
-  // is filled: black pixels in `ink`, white ones in the other.
-  void expectImage(const size_t index, const Color ink, const int x, const int y) {
+  // One image over a canvas cleared to `base` (white or black): what it must leave. An image is
+  // opaque, so every pixel of it is filled: black pixels in `ink`, white ones in the other,
+  // whatever was under it.
+  void expectImage(const size_t index, const Color ink, const int x, const int y, const Color base = Color::White) {
     SCOPED_TRACE("image " + std::to_string(index) + (ink == Color::Black ? " black" : " white") + " at " +
-                 std::to_string(x) + "," + std::to_string(y));
+                 std::to_string(x) + "," + std::to_string(y) + (base == Color::Black ? " over black" : ""));
     renderer.forget();
     list.clear();
+    if (base == Color::Black) {
+      ASSERT_TRUE(list.appendClear(Color::Black));
+    }
     ASSERT_TRUE(list.appendImage(x, y, static_cast<uint16_t>(index), ink));
     replay = FrameReplay();
     ASSERT_TRUE(draw());
     const GameCore::ImageSpan& span = images.spans[index];
     const uint8_t* const rows = images.pixels + span.offset;
     expectScreen([&](const int px, const int py) {
+      if (!onCanvas(px, py)) return Px::PixelWhite;
       const int dx = px - OX - x;
       const int dy = py - OY - y;
-      if (!onCanvas(px, py) || dx < 0 || dy < 0 || dx >= static_cast<int>(span.width) ||
-          dy >= static_cast<int>(span.height)) {
-        return Px::PixelWhite;
+      if (dx < 0 || dy < 0 || dx >= static_cast<int>(span.width) || dy >= static_cast<int>(span.height)) {
+        return base == Color::Black ? Px::PixelBlack : Px::PixelWhite;
       }
       const bool blackPixel =
           GameImageBlit::blackAt(rows, span.rowBytes, static_cast<uint32_t>(dx), static_cast<uint32_t>(dy));
@@ -286,6 +290,10 @@ TEST_F(FrameReplayTest, AnImageIsDrawnFromItsOwnRowsAtTheCanvasOrigin) {
   expectImage(0, Color::Black, 10, 20);
   expectImage(1, Color::Black, 10, 20);  // the second's rows sit after the first's
   expectImage(1, Color::White, 200, 300);
+  // Opaque: the image's white pixels are drawn over black, and its black ones over black too.
+  expectImage(0, Color::Black, 10, 20, Color::Black);
+  expectImage(0, Color::White, 10, 20, Color::Black);
+  expectImage(1, Color::White, 200, 300, Color::Black);
 }
 
 TEST_F(FrameReplayTest, AnImagePartlyOffTheCanvasIsClippedBeforeItIsDrawn) {
