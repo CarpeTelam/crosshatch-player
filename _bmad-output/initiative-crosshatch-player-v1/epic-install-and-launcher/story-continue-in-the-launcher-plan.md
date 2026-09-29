@@ -3,7 +3,7 @@ title: 'Continue in the launcher'
 type: 'feature'
 ticket: '12'
 created: '2026-09-29'
-status: built
+status: done
 baseline_revision: 'b698fbe6a3ff3e05d12f0183d9683c88ff70a358'
 route: 'full'
 route_source: 'auto'
