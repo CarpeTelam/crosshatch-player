@@ -18,11 +18,13 @@ add_library(game_list_manifest STATIC
 target_link_libraries(game_list_manifest PUBLIC game_harness_doubles)
 target_link_libraries(game_list_src PUBLIC game_match_src game_list_manifest)
 
-add_executable(GamesListHarnessTest GamesListTest.cpp)
+# GameHostCapsDouble.cpp is in the executable, not a library, so it wins over GameHostCaps.cpp in game_match_src.
+add_executable(GamesListHarnessTest GamesListTest.cpp ${HARNESS_DIR}/list_stubs/GameHostCapsDouble.cpp)
 target_compile_definitions(GamesListHarnessTest PRIVATE
   # The fixture games (tracer, timer, counter) a row opens.
   MATCH_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures")
 # GamesListTest lists every installer Error in a switch with no default: a new one must not compile until it is added.
+# Copies of this suite (entries 8 to 12) must keep this option.
 target_compile_options(GamesListHarnessTest PRIVATE -Werror=switch)
 target_link_libraries(GamesListHarnessTest PRIVATE game_list_src GTest::gtest_main)
 gtest_discover_tests(GamesListHarnessTest)

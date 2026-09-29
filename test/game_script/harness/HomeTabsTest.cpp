@@ -94,6 +94,19 @@ const KnownIcon KNOWN_ICONS[] = {
 
 // Home as the manager runs it: onEnter, then render (with the UI host's render the theme would ask for) and loop
 // passes.
+// The tabs, in Home's order, by the screen each opens. The boards without games (this file is built for them
+// too, without FREEINK_CAP_GAMES) have no Games tab.
+std::vector<std::string> tabNames(const bool opds) {
+  std::vector<std::string> names{"files", "library"};
+  if (opds) names.push_back("opds");
+  names.push_back("transfer");
+#if FREEINK_CAP_GAMES
+  names.push_back("games");
+#endif
+  names.push_back("settings");
+  return names;
+}
+
 class HomeTest : public match::ScreenTest {
  protected:
   void SetUp() override {
@@ -141,7 +154,6 @@ class HomeTest : public match::ScreenTest {
   // (UITheme::drawCoverGridHome); the theme double only records that ask, so the test makes it.
   void render() {
     renderer->forgetAll();
-    GfxRenderer::drawnIcons().clear();
     UITheme::getInstance().getTheme().calls.clear();
     if (screen::RecordingTarget::newest()) screen::RecordingTarget::newest()->forget();
     home->render(RenderLock(*home));
@@ -160,7 +172,7 @@ class HomeTest : public match::ScreenTest {
   // The tab icons on screen, left to right, by the screen each stands for ("?" for a bitmap that is none of them).
   std::vector<std::string> tabsDrawn() {
     std::vector<GfxRenderer::IconDrawn> tabs;
-    for (const GfxRenderer::IconDrawn& icon : GfxRenderer::drawnIcons())
+    for (const GfxRenderer::IconDrawn& icon : renderer->icons)
       if (icon.size == 32) tabs.push_back(icon);
     std::stable_sort(tabs.begin(), tabs.end(),
                      [](const GfxRenderer::IconDrawn& a, const GfxRenderer::IconDrawn& b) { return a.x < b.x; });
@@ -177,7 +189,7 @@ class HomeTest : public match::ScreenTest {
 
   // Taps the middle of the tab drawn with `name`'s icon, as a finger would.
   void tapTab(const std::string& name) {
-    for (const GfxRenderer::IconDrawn& icon : GfxRenderer::drawnIcons()) {
+    for (const GfxRenderer::IconDrawn& icon : renderer->icons) {
       if (icon.size != 32 || icon.bitmap.size() != ICON_BYTES) continue;
       for (const KnownIcon& known : KNOWN_ICONS) {
         if (name != known.name || std::memcmp(icon.bitmap.data(), known.bits, ICON_BYTES) != 0) continue;
@@ -212,7 +224,7 @@ class HomeTest : public match::ScreenTest {
 // ---- the cover grid: the tabs and what each opens (## 3.6) ----
 
 TEST_F(HomeTest, TheTabsAreInHomesOrderAndEachOpensItsOwnScreen) {
-  const std::vector<std::string> expected{"files", "library", "transfer", "games", "settings"};
+  const std::vector<std::string> expected = tabNames(false);
   for (const bool touchBoard : {true, false}) {  // a button board lays the grid out differently, the tabs alike
     SCOPED_TRACE(touchBoard ? "touch board" : "button board");
     BoardConfig::touchPanel() = touchBoard;
@@ -234,7 +246,7 @@ TEST_F(HomeTest, TheTabsAreInHomesOrderAndEachOpensItsOwnScreen) {
 TEST_F(HomeTest, WithAnOpdsServerThereIsOneMoreTabBeforeTransferAndItOpensTheBrowser) {
   OPDS_STORE.servers = true;
   open();
-  const std::vector<std::string> expected{"files", "library", "opds", "transfer", "games", "settings"};
+  const std::vector<std::string> expected = tabNames(true);
   ASSERT_EQ(tabsDrawn(), expected);
   for (const std::string& name : expected) {
     SCOPED_TRACE(name);
@@ -255,8 +267,7 @@ TEST_F(HomeTest, RecentBooksComeBeforeTheTabsAndDoNotMoveThemOrWhatTheyOpen) {
     } else {
       open();
     }
-    std::vector<std::string> expected{"files", "library", "transfer", "games", "settings"};
-    if (opds) expected.insert(expected.begin() + 2, "opds");
+    const std::vector<std::string> expected = tabNames(opds);
     ASSERT_EQ(tabsDrawn(), expected);
     for (const std::string& name : expected) {
       SCOPED_TRACE(name);
@@ -281,7 +292,7 @@ TEST_F(HomeTest, RecentBooksComeBeforeTheTabsAndDoNotMoveThemOrWhatTheyOpen) {
 TEST_F(HomeTest, TheSideButtonsWalkTheTabsInTheOrderTheyAreDrawn) {
   // With no books the walk starts on the first tab (Files); Right steps over the drawn order.
   open();
-  const std::vector<std::string> expected{"files", "library", "transfer", "games", "settings"};
+  const std::vector<std::string> expected = tabNames(false);
   ASSERT_EQ(tabsDrawn(), expected);
   for (size_t step = 0; step < expected.size(); ++step) {
     SCOPED_TRACE(expected[step]);
@@ -310,7 +321,7 @@ TEST_F(HomeTest, WithBooksAndAnOpdsServerTheSideButtonsStillWalkTheTabsInOrder) 
   addBook("/books/two.epub", "Two");
   OPDS_STORE.servers = true;
   open();
-  const std::vector<std::string> expected{"files", "library", "opds", "transfer", "games", "settings"};
+  const std::vector<std::string> expected = tabNames(true);
   ASSERT_EQ(tabsDrawn(), expected);
   for (size_t step = 0; step < expected.size(); ++step) {
     SCOPED_TRACE(expected[step]);
@@ -337,11 +348,15 @@ TEST_F(HomeTest, HomeOpenedOnAnItemSelectsThatItemsTab) {
       {HomeMenuItem::FILE_BROWSER, "files", false},
       {HomeMenuItem::LIBRARY, "library", false},
       {HomeMenuItem::FILE_TRANSFER, "transfer", false},
+#if FREEINK_CAP_GAMES
       {HomeMenuItem::GAMES, "games", false},
+#endif
       {HomeMenuItem::SETTINGS_MENU, "settings", false},
       {HomeMenuItem::OPDS_BROWSER, "opds", true},
       {HomeMenuItem::FILE_TRANSFER, "transfer", true},
+#if FREEINK_CAP_GAMES
       {HomeMenuItem::GAMES, "games", true},
+#endif
       {HomeMenuItem::SETTINGS_MENU, "settings", true},
       // No such tab, or none asked for: the first.
       {HomeMenuItem::OPDS_BROWSER, "files", false},
@@ -367,37 +382,47 @@ TEST_F(HomeTest, TheTwoIndexMappingsAreInversesOverEveryItemThatHasATab) {
   const auto indexToItem = reach::Slot<reach::IndexToItemTag>::value;
   const auto itemToIndex = reach::Slot<reach::ItemToIndexTag>::value;
   for (const bool opds : {false, true}) {
-    const HomeMenuItem items[] = {HomeMenuItem::FILE_BROWSER,  HomeMenuItem::LIBRARY, HomeMenuItem::OPDS_BROWSER,
-                                  HomeMenuItem::FILE_TRANSFER, HomeMenuItem::GAMES,   HomeMenuItem::SETTINGS_MENU};
+    const HomeMenuItem items[] = {HomeMenuItem::FILE_BROWSER, HomeMenuItem::LIBRARY,
+                                  HomeMenuItem::OPDS_BROWSER, HomeMenuItem::FILE_TRANSFER,
+#if FREEINK_CAP_GAMES
+                                  HomeMenuItem::GAMES,
+#endif
+                                  HomeMenuItem::SETTINGS_MENU};
     for (const HomeMenuItem item : items) {
       if (item == HomeMenuItem::OPDS_BROWSER && !opds) continue;  // no such row: its index falls back to 0
       EXPECT_EQ(indexToItem(itemToIndex(item, opds), opds), item)
           << "item " << static_cast<int>(item) << " opds " << opds;
     }
     const int rows = itemToIndex(HomeMenuItem::SETTINGS_MENU, opds) + 1;  // Settings is the last row
-    EXPECT_EQ(rows, opds ? 6 : 5);
+    EXPECT_EQ(rows, static_cast<int>(tabNames(opds).size()));
     EXPECT_EQ(indexToItem(rows, opds), HomeMenuItem::NONE) << "one past the last row";
-    if (!opds) EXPECT_EQ(itemToIndex(HomeMenuItem::OPDS_BROWSER, opds), 0) << "no such row: falls back to the first";
+    if (!opds) {
+      EXPECT_EQ(itemToIndex(HomeMenuItem::OPDS_BROWSER, opds), 0) << "no such row: falls back to the first";
+    }
   }
 }
 
 // ---- the classic list: the same mapping under its rows ----
 
-TEST_F(HomeTest, TheListHomeShowsGamesJustAboveSettingsAndEachRowOpensItsOwnScreen) {
+TEST_F(HomeTest, TheListHomeRowsAreInHomesOrderAndEachOpensItsOwnScreen) {
   UITheme::getInstance().coverGridHome = false;
   OPDS_STORE.servers = true;
   open();
-  ASSERT_TRUE(UITheme::getInstance().getTheme().drew(
-      "drawButtonMenu", std::string(tr(STR_BROWSE_FILES)) + "|" + tr(STR_LIBRARY) + "|" + tr(STR_OPDS_BROWSER) + "|" +
-                            tr(STR_FILE_TRANSFER) + "|" + tr(STR_GAMES_TITLE) + "|" + tr(STR_SETTINGS_TITLE)));
+  std::string labels = std::string(tr(STR_BROWSE_FILES)) + "|" + tr(STR_LIBRARY) + "|" + tr(STR_OPDS_BROWSER) + "|" +
+                       tr(STR_FILE_TRANSFER) + "|";
+#if FREEINK_CAP_GAMES
+  labels += std::string(tr(STR_GAMES_TITLE)) + "|";  // Games sits just above Settings
+#endif
+  labels += tr(STR_SETTINGS_TITLE);
+  ASSERT_TRUE(UITheme::getInstance().getTheme().drew("drawButtonMenu", labels));
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int top = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   const int step = UITheme::getInstance().getTheme().getMenuRowHeight(*renderer) + metrics.menuSpacing;
-  const char* rowsOpened[] = {"files", "library", "opds", "transfer", "games", "settings"};
-  for (int row = 0; row < 6; ++row) {
+  const std::vector<std::string> rowsOpened = tabNames(true);
+  for (size_t row = 0; row < rowsOpened.size(); ++row) {
     SCOPED_TRACE(rowsOpened[row]);
     activityManager.reset();
-    input->tap(100, top + row * step + 2);
+    input->tap(100, top + static_cast<int>(row) * step + 2);
     frame();
     EXPECT_EQ(asked(), rowsOpened[row]);
   }

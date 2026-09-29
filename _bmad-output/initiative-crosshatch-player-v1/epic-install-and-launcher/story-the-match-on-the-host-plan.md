@@ -241,3 +241,5 @@ Review pass 2, source: the orchestrator's independent review of c73b3a51 (advers
 Rows that survive, by design (`## 4.4`): M7b, M13b, V20, H7b (M7b and H7b, the order of two atomic stores, which a render beside the loop sees differently only in a window of a few instructions; M13b, a text no host game reaches; V20, a guard for a task caught mid frame swap, which no test can stage).
 
 **Repeat and load.** `GameMatchHarnessTest --gtest_repeat=20` in one process: 20 passes of 64 tests; ctest repeat and shuffled-load runs above; the first pass ran 40 repeats and 6 concurrent processes of 10 on 58 tests.
+
+Entry 5 added `drawIcon`, `getRegionByteSize`, `copyRegionToBuffer`, and `copyBufferToRegion` to `screen_stubs/GfxRenderer.h` (17 lines, approved by the orchestrator; Home's cover-grid tabs and cover snapshot call them). After it, `GameMatchHarnessTest` (64 tests) and the rest of the host suite pass (1090 of 1090), and `GameMatchHarnessTest` passes `--gtest_repeat=20 --gtest_shuffle`.

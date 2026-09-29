@@ -33,11 +33,28 @@ class GfxRenderer : public GfxRendererRecorder {
     logicalY = static_cast<int>(y);
   }
 
+  // One drawIcon call: the bitmap's bytes (size * size / 8), where, and how big.
+  struct IconDrawn {
+    std::vector<uint8_t> bitmap;
+    int x;
+    int y;
+    int size;
+  };
+  void drawIcon(const uint8_t bitmap[], const int x, const int y, const int size) const {
+    icons.push_back({std::vector<uint8_t>(bitmap, bitmap + size * size / 8), x, y, size});
+  }
+  // The snapshot calls Home makes around a cover (no panel memory here: a region holds nothing).
+  size_t getRegionByteSize(int, int, const int w, const int h) const { return static_cast<size_t>((w + 7) / 8) * h; }
+  bool copyRegionToBuffer(int, int, int, int, uint8_t*, size_t) const { return true; }
+  bool copyBufferToRegion(int, int, int, int, const uint8_t*, size_t) const { return true; }
+
   // Forgets the recorded calls, the screen model, and the displays.
   void forgetAll() const {
     forget();
     shown.clear();
+    icons.clear();
   }
 
   mutable std::vector<Shown> shown;
+  mutable std::vector<IconDrawn> icons;
 };

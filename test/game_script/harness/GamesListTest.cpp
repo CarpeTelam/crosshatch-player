@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "HostCapsScript.h"
 #include "InstallerScript.h"
 #include "MatchSupport.h"
 #include "activities/games/GameMatchActivity.h"
@@ -40,31 +41,53 @@ std::string flat(std::string text) {
   return text;
 }
 
-// Whether the test's table knows an Error: a switch over the whole enum, so a new value must be added here.
-constexpr bool listed(const Error error) {
+// What a person should be told for each installer Error: written out here, not derived from the source. A switch
+// over the whole enum with no default and -Werror=switch on this target (games_list.cmake): a new value does not
+// compile until it has a case, and the test below then shows the screen every value with a text is given, so a
+// value reasonText does not handle fails too. Copies of this test (entries 8 to 12) must keep both.
+// Null: no text (None is not a failure, and the values past the last are none).
+const char* expectedText(const Error error) {
   switch (error) {
     case Error::None:
+      return nullptr;
     case Error::SdCard:
+      return tr(STR_GAMES_INSTALL_STORAGE);
     case Error::OutOfMemory:
+      return tr(STR_GAMES_OUT_OF_MEMORY);
     case Error::NotAPackage:
+      return tr(STR_GAMES_INSTALL_NOT_A_PACKAGE);
     case Error::BadManifest:
+      return tr(STR_GAMES_INSTALL_BAD_MANIFEST);
     case Error::BadMember:
+      return tr(STR_GAMES_INSTALL_BAD_MEMBER);
     case Error::NoMain:
+      return tr(STR_GAMES_INSTALL_NO_MAIN);
     case Error::TooManyMembers:
+      return tr(STR_GAMES_INSTALL_TOO_MANY);
     case Error::BadImage:
+      return tr(STR_GAMES_BAD_IMAGE);
     case Error::PackageTooBig:
+      return tr(STR_GAMES_INSTALL_PACKAGE_TOO_BIG);
     case Error::MemberTooBig:
+      return tr(STR_GAMES_INSTALL_MEMBER_TOO_BIG);
     case Error::ImagesTooBig:
+      return tr(STR_GAMES_INSTALL_IMAGES_TOO_BIG);
     case Error::BadSize:
+      return tr(STR_GAMES_INSTALL_BAD_SIZE);
     case Error::BadCrc:
+      return tr(STR_GAMES_INSTALL_BAD_CRC);
     case Error::BinaryLua:
+      return tr(STR_GAMES_INSTALL_BINARY_LUA);
     case Error::Unsupported:
+      return tr(STR_GAMES_INSTALL_UNSUPPORTED);
     case Error::BadDirectory:
+      return tr(STR_GAMES_INSTALL_BAD_LIST);
     case Error::SourcesTooBig:
+      return tr(STR_GAMES_SOURCES_TOO_LARGE);
     case Error::UnknownIcon:
-      return true;
+      return tr(STR_GAMES_INSTALL_UNKNOWN_ICON);
   }
-  return false;
+  return nullptr;
 }
 
 class ListTest : public match::ScreenTest {
@@ -72,6 +95,7 @@ class ListTest : public match::ScreenTest {
   void SetUp() override {
     ScreenTest::SetUp();
     installerscript::reset();
+    hostcaps::reset();
     ButtonNavigator::setMappedInputManager(*input);
   }
 
@@ -317,6 +341,19 @@ TEST_F(ListTest, AGameThisHostCannotStartSoloIsNotListed) {
   EXPECT_FALSE(logHas("Not listing solo-game"));
 }
 
+// The solo-mode term of the same filter. With pass off on this host (as it is), a game that is not solo is not Ok
+// either, so the term cannot be told from `check.ok()`; the double turns pass on, where a pass-only game is Ok and only
+// that term leaves it out.
+TEST_F(ListTest, AGameThatCannotStartSoloIsNotListedEvenWhenAnotherModeCanStart) {
+  hostcaps::script().pass = true;
+  addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);
+  addGame("solo-and-pass", "SoloAndPass", "\"solo\",\"pass\"", 1, 1, 2);
+  open();
+  const std::vector<std::string> expected{"SoloAndPass"};
+  EXPECT_EQ(rows({"PassOnly", "SoloAndPass"}), expected);
+  EXPECT_TRUE(logHas("Not listing pass-only: no solo mode on this host"));
+}
+
 // ---- opening a game: a tap or Confirm replaces the list with the match (## 4.4: the tracer item) ----
 
 TEST_F(ListTest, ATapOnARowReplacesTheListWithThatGamesMatch) {
@@ -440,46 +477,24 @@ TEST_F(ListTest, NoFailureShowsNoNote) {
 // Every Error the installer can report reads as its own words (reasonText): a swapped label would
 // tell a person the wrong thing to fix. The table is written out here, not derived from the source.
 TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
-  struct Case {
-    Error error;
-    const char* key;  // for the failure message
-    std::string text;
-  };
-  const std::vector<Case> cases = {
-      {Error::SdCard, "STR_GAMES_INSTALL_STORAGE", tr(STR_GAMES_INSTALL_STORAGE)},
-      {Error::OutOfMemory, "STR_GAMES_OUT_OF_MEMORY", tr(STR_GAMES_OUT_OF_MEMORY)},
-      {Error::NotAPackage, "STR_GAMES_INSTALL_NOT_A_PACKAGE", tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)},
-      {Error::BadManifest, "STR_GAMES_INSTALL_BAD_MANIFEST", tr(STR_GAMES_INSTALL_BAD_MANIFEST)},
-      {Error::BadMember, "STR_GAMES_INSTALL_BAD_MEMBER", tr(STR_GAMES_INSTALL_BAD_MEMBER)},
-      {Error::NoMain, "STR_GAMES_INSTALL_NO_MAIN", tr(STR_GAMES_INSTALL_NO_MAIN)},
-      {Error::TooManyMembers, "STR_GAMES_INSTALL_TOO_MANY", tr(STR_GAMES_INSTALL_TOO_MANY)},
-      {Error::BadImage, "STR_GAMES_BAD_IMAGE", tr(STR_GAMES_BAD_IMAGE)},
-      {Error::PackageTooBig, "STR_GAMES_INSTALL_PACKAGE_TOO_BIG", tr(STR_GAMES_INSTALL_PACKAGE_TOO_BIG)},
-      {Error::MemberTooBig, "STR_GAMES_INSTALL_MEMBER_TOO_BIG", tr(STR_GAMES_INSTALL_MEMBER_TOO_BIG)},
-      {Error::ImagesTooBig, "STR_GAMES_INSTALL_IMAGES_TOO_BIG", tr(STR_GAMES_INSTALL_IMAGES_TOO_BIG)},
-      {Error::BadSize, "STR_GAMES_INSTALL_BAD_SIZE", tr(STR_GAMES_INSTALL_BAD_SIZE)},
-      {Error::BadCrc, "STR_GAMES_INSTALL_BAD_CRC", tr(STR_GAMES_INSTALL_BAD_CRC)},
-      {Error::BinaryLua, "STR_GAMES_INSTALL_BINARY_LUA", tr(STR_GAMES_INSTALL_BINARY_LUA)},
-      {Error::Unsupported, "STR_GAMES_INSTALL_UNSUPPORTED", tr(STR_GAMES_INSTALL_UNSUPPORTED)},
-      {Error::BadDirectory, "STR_GAMES_INSTALL_BAD_LIST", tr(STR_GAMES_INSTALL_BAD_LIST)},
-      {Error::SourcesTooBig, "STR_GAMES_SOURCES_TOO_LARGE", tr(STR_GAMES_SOURCES_TOO_LARGE)},
-      {Error::UnknownIcon, "STR_GAMES_INSTALL_UNKNOWN_ICON", tr(STR_GAMES_INSTALL_UNKNOWN_ICON)},
-  };
-  // Every value but None has a case. A value added anywhere is a compile error in listed() below (a switch with
-  // no default, and -Werror=switch on this target), so it cannot slip past the table.
-  ASSERT_EQ(cases.size(), 18u);
-  for (const Case& c : cases) EXPECT_TRUE(listed(c.error)) << c.key;
+  // Every value a uint8_t can hold, so an Error added to the enum is met whatever its number.
+  std::vector<int> withText;
+  for (int value = 0; value < 256; ++value)
+    if (expectedText(static_cast<Error>(value))) withText.push_back(value);
+  ASSERT_GE(withText.size(), 18u) << "the eighteen reasons that exist today";
 
   // Two reasons that read alike would let a swap through.
-  for (size_t i = 0; i < cases.size(); ++i)
-    for (size_t j = i + 1; j < cases.size(); ++j)
-      EXPECT_NE(cases[i].text, cases[j].text) << cases[i].key << " and " << cases[j].key << " read the same";
+  for (size_t i = 0; i < withText.size(); ++i)
+    for (size_t j = i + 1; j < withText.size(); ++j)
+      EXPECT_STRNE(expectedText(static_cast<Error>(withText[i])), expectedText(static_cast<Error>(withText[j])))
+          << "Error " << withText[i] << " and " << withText[j] << " read the same";
 
-  for (const Case& c : cases) {
-    SCOPED_TRACE(c.key);
+  for (const int value : withText) {
+    SCOPED_TRACE("Error " + std::to_string(value));
+    const std::string text = expectedText(static_cast<Error>(value));
     installerscript::reset();
     installerscript::script().report.failed = 1;
-    installerscript::script().report.firstError = c.error;
+    installerscript::script().report.firstError = static_cast<Error>(value);
     std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
                   "a.cpgame");
     if (list) {
@@ -488,10 +503,11 @@ TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
       open();
     }
     const std::string shown = flat(ui().joined());
-    EXPECT_NE(shown.find("a.cpgame: " + c.text), std::string::npos) << "shown: " << shown;
-    for (const Case& other : cases) {
-      if (&other == &c) continue;
-      EXPECT_EQ(shown.find(other.text), std::string::npos) << "it also says " << other.key << ": " << shown;
+    EXPECT_NE(shown.find("a.cpgame: " + text), std::string::npos) << "shown: " << shown;
+    for (const int other : withText) {
+      if (other == value) continue;
+      EXPECT_EQ(shown.find(expectedText(static_cast<Error>(other))), std::string::npos)
+          << "it also says Error " << other << "'s: " << shown;
     }
   }
 }
