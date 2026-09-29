@@ -36,16 +36,26 @@ the only place that changes state and runs what entering a state requires. Any e
 
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
-| Starting | the VM started | Playing | The first frame replaces the Games list. |
+| Starting | the VM started | Playing | The first frame replaces the Games list. With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts. |
 | Starting | a load or start failure | Error | The error view names the reason in `tr()` text. |
 | Playing | Back or Home | Paused | The pause menu (Resume, Leave) opens over the frame; the game gets no input or timers. |
-| Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; the end-of-round menu (Play again, Leave) opens over the last frame. |
+| Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; `resume.bin` and its tmp are deleted (an over snapshot is never written, and one still pending deletes the file instead); the end-of-round menu (Play again, Leave) opens over the last frame. A round that ends while the pause menu is open deletes the file at once, from the pause menu's loop pass. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. The last round's board, which would take no taps, is never shown. |
 | Paused, Over | Leave | Leaving | See Leaving. |
-| Over | Play again | Playing | The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published are read and dropped (`GameMatchActivity::loopPlaying`); a tap during the e-ink refresh that then shows the frame still reaches the new round. |
+| Over | Play again | Playing | The new round's snapshots are written to `resume.bin` again. The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published are read and dropped (`GameMatchActivity::loopPlaying`); a tap during the e-ink refresh that then shows the frame still reaches the new round. |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
 | Error | Back | Leaving | See Leaving. |
 | any but Leaving | forced exit (sleep, any Replace) | Leaving | See the forced exit. |
+
+### Resume
+
+A match with an installed package (`.pkg`) keeps `resume.bin` (docs/crosshatch/formats.md) so a solo match survives
+sleep. The VM hands each snapshot it commits to the loop task through a latest-wins mailbox (`GameVM::committed()`), and
+in Playing and Paused every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the forced
+exit write the last pending one, once more and at once, after the VM has stopped and before it is freed. Only Over
+deletes the file; Leave and the forced exit keep it. Entering with `Start::Resume` restores it (`Session::restore`), so
+the match continues from the snapshot and does not write it again until a move commits. The VM task never touches the
+card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -65,8 +75,9 @@ is deferred (`deferred-work.md`, 3.7).
 
 ### Leaving
 
-A user exit runs from `loop()`: take `RenderLock`, cancel the VM and join it for up to 500 ms or abandon it, release the
-lock, flush a dirty `ch.store`, then `goToGames()`. When an abandon leaves the task alive (the simulator always does,
+A user exit runs from `loop()`: take `RenderLock`, cancel the VM and join it for up to 500 ms or abandon it (writing the
+last pending snapshot as `resume.bin` between the two, unless the round is over), release the lock, flush a dirty
+`ch.store`, then `goToGames()`. When an abandon leaves the task alive (the simulator always does,
 since it cannot stop a thread), the slot is still flushed, then leaked with the task when the match is destroyed: the
 slot's mutex is held only for a copy inside a locked binding, which an abandon never deletes or leaves suspended, so
 the flush waits at most one copy and saves every set made before the leak.
@@ -74,8 +85,18 @@ the flush waits at most one copy and saves every set made before the leak.
 ### The forced exit
 
 `onExit()` without a user exit (sleep, any Replace) runs under the `RenderLock` that `ActivityManager` already holds and
-never takes it again (pitfall 12cc816): the same stop (cancel, join, or abandon) and the same flush. It is the only SD
-write in `onExit()` (AD-17).
+never takes it again (pitfall 12cc816). The order is: cancel the VM and join it; then the pending snapshot is written as
+`resume.bin` (in Playing or Paused only, and forced: a write the loop failed and throttled is retried at once), before an
+abandon can free the memory the snapshot lives in; then abandon the VM if it did not join; then the `ch.store` flush.
+Those are the only SD writes in `onExit()` (AD-17).
+
+**The bound.** The stop's two waits count `millis()`, not polls: the join ends 500 ms (`STOP_TIMEOUT_MS`) after it began
+and the abandon 500 ms (`GameVM::ABANDON_WAIT_MS`) after it began, each late by at most one iteration (a 5 ms poll, and
+in the abandon the settle of up to 10 ticks that follows a suspend, which is 10 ms at the firmware's 1 kHz tick). A VM that never stops, such as one held inside a
+locked binding, therefore costs about 1,030 ms of `RenderLock` at the worst, however slowly the polls run. The store
+write and the resume write that follow are each one tmp write and rename on the card, whose time the code does not
+bound. `ResumeMatchTest` pins the arithmetic on the host's fake clock, and counts elapsed time under a thread that
+advances it faster than the polls do.
 
 ## The views
 

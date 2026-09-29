@@ -1,0 +1,874 @@
+#include <gtest/gtest.h>
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "ArenaSize.h"
+#include "FrameReplay.h"
+#include "GameAssets.h"
+#include "GameHash.h"
+#include "GameSaveStore.h"
+#include "GameViewport.h"
+#include "MatchStore.h"
+#include "MatchSupport.h"
+#include "Session.h"
+#include "activities/games/GameMatchActivity.h"
+
+// resume.bin and resuming a solo match, entry 11 of epic-install-and-launcher: the real GameVM,
+// GameSaveStore, and GameMatchActivity over the screen doubles. The fixtures here shadow the ones in
+// GameVmTest.cpp and GameMatchTest.cpp, whose fixtures sit in anonymous namespaces.
+//
+// Time is the fake clock (screen_stubs/FakeRtos.h): a wait moves it by what it waited, and a Ticker
+// thread moves it further, so a wait that counts polls instead of time is told from one that counts it.
+
+namespace {
+
+using match::installGame;
+using match::waitFor;
+using Button = MappedInputManager::Button;
+using harness::Bytes;
+
+constexpr int CANVAS_X = 3;
+constexpr int CANVAS_Y = 6;
+
+const uint8_t HASH_A[GamePkg::HASH_BYTES] = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1};
+const uint8_t HASH_B[GamePkg::HASH_BYTES] = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf2};
+
+// A game of `goal` taps that logs its setup and every draw, so a resumed match shows which snapshot
+// it drew and whether setup ran.
+std::string countingGame(const int goal) {
+  return std::string(R"(
+local game = {}
+local GOAL = )") +
+         std::to_string(goal) + R"(
+function game.setup(ctx)
+  ch.log("setup ran")
+  return { taps = 0 }
+end
+function game.status(state)
+  if state.taps >= GOAL then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(state, seat, move)
+  state.taps = state.taps + 1
+  return state
+end
+function game.draw(state, seat, ui)
+  ch.log("draw", state.taps)
+  ch.gfx.clear("white")
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+return game
+)";
+}
+
+// A game that commits its first tap and errors on the second.
+const char* const ERROR_GAME = R"(
+local game = {}
+function game.setup(ctx) return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move)
+  state.n = state.n + 1
+  return state
+end
+function game.draw(state, seat, ui)
+  ch.log("draw", state.n)
+  ch.gfx.clear("white")
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.time.ms()
+    if state.n >= 1 then error("boom") end
+    return { tap = true }
+  end
+end
+return game
+)";
+
+// A game whose draw, after a committed move, reads the clock (where a test's gate can hold it) and then
+// spins reading it until the run is cancelled.
+const char* const CANCEL_GAME = R"(
+local game = {}
+function game.setup(ctx) return { taps = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move)
+  state.taps = state.taps + 1
+  return state
+end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+  if state.taps > 0 then
+    ch.time.ms()
+    while true do ch.time.ms() end
+  end
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+return game
+)";
+
+// {n = k}: the codec bytes ERROR_GAME's snapshot has.
+Bytes nSnapshotOf(const uint8_t n) {
+  return Bytes{0x06, 0x00, 0x01, 0x05, 0x01, 'n', 0x03, static_cast<uint8_t>(n << 1)};
+}
+
+// {taps = n}: the codec bytes the counting game's snapshot has.
+Bytes snapshotOf(const uint8_t taps) {
+  return Bytes{0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, static_cast<uint8_t>(taps << 1)};
+}
+
+// resume.bin as GameSaveStore lays it out for the package `hash`.
+Bytes resumeBytes(const Bytes& snapshot, const uint16_t ver, const uint8_t (&hash)[GamePkg::HASH_BYTES] = HASH_A) {
+  Bytes out = {'C', 'H', 'R', 'S', 1, 1};
+  out.insert(out.end(), hash, hash + GamePkg::HASH_BYTES);
+  out.push_back(0);
+  out.push_back(1);
+  out.push_back(static_cast<uint8_t>(ver & 0xFF));
+  out.push_back(static_cast<uint8_t>(ver >> 8));
+  out.insert(out.end(), snapshot.begin(), snapshot.end());
+  return out;
+}
+
+std::string resumePath(const std::string& id) { return "/.games-data/" + id + "/resume.bin"; }
+std::string resumeTmpPath(const std::string& id) { return resumePath(id) + ".tmp"; }
+
+void installPkg(const std::string& id, const uint8_t (&hash)[GamePkg::HASH_BYTES] = HASH_A) {
+  char bytes[GamePkg::FILE_BYTES];
+  GamePkg::formatPkg(hash, bytes);
+  fakesd::addFile("/.games/" + id + "/.pkg", std::string(bytes, sizeof(bytes)));
+}
+
+// Moves the fake clock by `stepMs` every real millisecond while it lives: time that passes while
+// the code under test waits on its own polls.
+class Ticker {
+ public:
+  explicit Ticker(const uint64_t stepMs) {
+    thread = std::thread([this, stepMs] {
+      while (!stop.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fakertos::advance(stepMs);
+      }
+    });
+  }
+  ~Ticker() {
+    stop.store(true);
+    thread.join();
+  }
+
+ private:
+  std::atomic<bool> stop{false};
+  std::thread thread;
+};
+
+uint64_t clockMs() { return fakertos::S().nowMs.load(); }
+
+// ---- the match ----
+
+class ResumeMatchTest : public match::ScreenTest {
+ protected:
+  void TearDown() override {
+    fakertos::release();  // a test that failed while holding the VM must not leave it held
+    fakearena::reserveBytes = GameScript::SCRATCH_RESERVE_BYTES;
+    if (activity) {
+      if (!exited) activityManager.exitHolding(*activity);
+      activityManager.destroyHolding(activity);
+    }
+    ScreenTest::TearDown();
+  }
+
+  void enter(const std::string& id, const GameMatchActivity::Start start = GameMatchActivity::Start::New) {
+    gameId = id;
+    exited = false;
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id), start);
+    activity->onEnter();
+  }
+
+  // The screen goes (sleep, or any Replace): the manager's exit under the lock, then the destructor.
+  void sleep() {
+    exited = true;
+    activityManager.exitHolding(*activity);
+    ASSERT_TRUE(fakertos::waitNoTasks(1000));
+    activityManager.destroyHolding(activity);
+  }
+
+  void frame() {
+    activity->loop();
+    input->clear();
+  }
+  bool pump(const std::function<bool()>& done, const int timeoutMs = 10000) {
+    return waitFor(
+        [&] {
+          frame();
+          return done();
+        },
+        timeoutMs);
+  }
+  void showFrame() {
+    ASSERT_TRUE(pump([&] { return activityManager.updateRequested(); }));
+    activity->render(RenderLock(*activity));
+    activityManager.markRendered();
+  }
+  void tapCanvas(const int x, const int y) { input->tap(CANVAS_X + x, CANVAS_Y + y); }
+
+  bool fileIs(const Bytes& expected) const { return fakesd::bytesOf(resumePath(gameId)) == expected; }
+  // Loops until resume.bin holds `expected`.
+  bool pumpToFile(const Bytes& expected) {
+    return pump([&] { return fileIs(expected); });
+  }
+
+  std::string state() const {
+    std::string found = "Starting";
+    const std::string prefix = "INF GAME: " + gameId + ": ";
+    for (const std::string& line : fakelog::snapshot()) {
+      if (line.rfind(prefix, 0) != 0) continue;
+      const size_t arrow = line.find(" -> ");
+      const size_t on = line.find(" on ", arrow);
+      if (arrow == std::string::npos || on == std::string::npos) continue;
+      found = line.substr(arrow + 4, on - arrow - 4);
+    }
+    return found;
+  }
+
+  size_t tmpOpens() const { return fakesd::countOps("open " + resumeTmpPath(gameId)); }
+
+  std::unique_ptr<GameMatchActivity> activity;
+  std::string gameId;
+  bool exited = false;
+};
+
+TEST_F(ResumeMatchTest, EachCommittedSnapshotIsWrittenOnTheNextLoopPass) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+  EXPECT_TRUE(GameSaveStore::peek("cnt", HASH_A));
+
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(1), 2)));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(2), 3)));
+  // Through the tmp and a rename, once per snapshot.
+  EXPECT_GE(fakesd::countOps("rename " + resumeTmpPath("cnt") + " " + resumePath("cnt")), 3u);
+}
+
+TEST_F(ResumeMatchTest, NothingCommittedMeansNothingIsWrittenAgain) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  const size_t opens = tmpOpens();
+  for (int i = 0; i < 20; ++i) frame();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS * 2);
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_EQ(tmpOpens(), opens) << "no new snapshot, so no new write, however long it has been";
+}
+
+TEST_F(ResumeMatchTest, WithoutAPkgTheMatchPlaysAndWritesNothing) {
+  installGame("cnt", countingGame(5));
+  enter("cnt");
+  EXPECT_TRUE(logHas("cnt: no valid .pkg; no resume.bin"));
+  showFrame();
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(waitFor([&] {
+    frame();
+    return logHas("draw\t1");
+  }));
+  for (int i = 0; i < 20; ++i) frame();
+  sleep();
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+  EXPECT_EQ(fakesd::countOps("open " + resumePath("cnt")), 0u);
+  EXPECT_EQ(tmpOpens(), 0u);
+}
+
+TEST_F(ResumeMatchTest, AnOtherwiseValidSaveIsNotResumedWithoutAPkg) {
+  installGame("cnt", countingGame(5));
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
+  enter("cnt", GameMatchActivity::Start::Resume);
+  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(2), 3)) << "and it is not overwritten either";
+}
+
+TEST_F(ResumeMatchTest, TheEndOfARoundDeletesTheSaveAndNoOverSnapshotIsEverWritten) {
+  installGame("cnt", countingGame(2));
+  installPkg("cnt");
+  enter("cnt");
+  std::set<Bytes> seen;
+  auto watch = [&] { seen.insert(fakesd::bytesOf(resumePath("cnt"))); };
+  ASSERT_TRUE(pump([&] {
+    watch();
+    return fileIs(resumeBytes(snapshotOf(0), 1));
+  }));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] {
+    watch();
+    return fileIs(resumeBytes(snapshotOf(1), 2));
+  }));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] {
+    watch();
+    return state() == "Over";
+  }));
+  watch();
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+  EXPECT_FALSE(GameSaveStore::peek("cnt", HASH_A));
+  for (int i = 0; i < 20; ++i) {
+    frame();
+    watch();
+  }
+  EXPECT_EQ(seen.count(resumeBytes(snapshotOf(2), 3)), 0u) << "the round's last snapshot was written";
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+
+  // The forced exit in the end-of-round menu writes nothing either.
+  sleep();
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+}
+
+TEST_F(ResumeMatchTest, PlayAgainWritesTheNewRoundsSnapshotsAgain) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+
+  input->click(Button::Confirm);  // Play again is the first option
+  frame();
+  EXPECT_EQ(state(), "Playing");
+  // ver keeps counting: setup 1, the tap 2, and the new round's setup 3.
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 3)));
+}
+
+TEST_F(ResumeMatchTest, ARoundThatEndsWhilePausedDeletesTheSaveAndIsOverAfterResume) {
+  installGame("cnt", countingGame(2));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(1), 2)));
+  tapCanvas(50, 50);
+  frame();  // the second tap is posted; the round may end at any moment
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  // Paused: the loop passes flush, and the over snapshot deletes the save instead of replacing it.
+  ASSERT_TRUE(pump([&] { return !fakesd::has(resumePath("cnt")); }));
+  EXPECT_EQ(state(), "Paused");
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+  input->click(Button::Back);  // Resume
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+}
+
+TEST_F(ResumeMatchTest, LeavingWritesTheLastSnapshotAndKeepsIt) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  // The write of the next snapshot fails, so the loop leaves it pending.
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(waitFor([&] {
+    frame();
+    return logHas("cannot write " + resumeTmpPath("cnt"));
+  }));
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(0), 1))) << "a failed write leaves the previous save";
+  fakesd::sim().failOpenWrite.clear();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  // Leave: the second option, by keys.
+  input->press(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(1), 2))) << "Leave writes what the loop could not";
+  EXPECT_TRUE(GameSaveStore::peek("cnt", HASH_A)) << "and Leave keeps the save";
+}
+
+TEST_F(ResumeMatchTest, TheForcedExitWritesTheSnapshotALoopWriteFailedAndWasThrottledFor) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(waitFor([&] {
+    frame();
+    return logHas("cannot write " + resumeTmpPath("cnt"));
+  }));
+  // Throttled: passes within FLUSH_INTERVAL_MS make no attempt.
+  const size_t attempts = tmpOpens();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS - 100);
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_EQ(tmpOpens(), attempts) << "a retry before the interval";
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(0), 1)));
+
+  // The card recovers; sleep comes before the interval is up.
+  fakesd::sim().failOpenWrite.clear();
+  exited = true;
+  activityManager.exitHolding(*activity);
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit took the RenderLock the manager holds (12cc816)";
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(1), 2))) << "the forced exit writes at once";
+  EXPECT_EQ(activityManager.asks.goToGames, 0);
+}
+
+TEST_F(ResumeMatchTest, ASleepingMatchResumesFromTheSameSnapshotWithoutSetupOrARewrite) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  for (int taps = 1; taps <= 2; ++taps) {
+    tapCanvas(50, 50);
+    frame();
+    ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(static_cast<uint8_t>(taps)), static_cast<uint16_t>(taps + 1))));
+  }
+  sleep();
+  const Bytes saved = resumeBytes(snapshotOf(2), 3);
+  ASSERT_TRUE(fileIs(saved));
+
+  fakelog::clearLines();
+  const size_t writesBefore = fakesd::countOps("write ");
+  enter("cnt", GameMatchActivity::Start::Resume);
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pump([&] { return logHas("Round started at ver 3"); }));
+  EXPECT_TRUE(logHas("Resuming at ver 3"));
+  EXPECT_TRUE(logHas("draw\t2")) << "the saved snapshot is what is drawn";
+  EXPECT_FALSE(logHas("setup ran")) << "setup does not run";
+  showFrame();
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_TRUE(fileIs(saved)) << "the file is unchanged";
+  EXPECT_EQ(fakesd::countOps("write "), writesBefore) << "and nothing was written for the restored ver";
+
+  // The next tap advances from the restored ver.
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(3), 4)));
+  EXPECT_TRUE(logHas("draw\t3"));
+  EXPECT_FALSE(logHas("setup ran"));
+}
+
+TEST_F(ResumeMatchTest, AResumedMatchThatPlaysOnToTheEndDeletesTheSave) {
+  installGame("cnt", countingGame(3));
+  installPkg("cnt");
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
+  enter("cnt", GameMatchActivity::Start::Resume);
+  showFrame();
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+}
+
+TEST_F(ResumeMatchTest, ASaveOfAnotherPackageIsNotResumedAndANewMatchStarts) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt", HASH_B);
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3, HASH_A));
+  enter("cnt", GameMatchActivity::Start::Resume);
+  EXPECT_TRUE(logHas("discarded " + resumePath("cnt") + ": other package"));
+  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
+  EXPECT_EQ(state(), "Playing");
+  // The new match's first snapshot replaces the obsolete save, for the package now installed.
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1, HASH_B)));
+}
+
+TEST_F(ResumeMatchTest, AnUnreadableSaveStartsANewMatch) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
+  fakesd::sim().failReadAt[resumePath("cnt")] = 0;
+  enter("cnt", GameMatchActivity::Start::Resume);
+  EXPECT_TRUE(logHas("discarded " + resumePath("cnt") + ": cannot read"));
+  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
+  EXPECT_EQ(state(), "Playing");
+}
+
+TEST_F(ResumeMatchTest, StartResumeWithNoSaveStartsANewMatch) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  enter("cnt", GameMatchActivity::Start::Resume);
+  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
+}
+
+TEST_F(ResumeMatchTest, ADeleteTheCardRefusesAtOverIsRetriedUntilTheFileIsGone) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_TRUE(logHas("cannot delete " + resumePath("cnt")));
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_TRUE(fakesd::has(resumePath("cnt"))) << "the card still refuses";
+  fakesd::sim().failRemove.clear();
+  ASSERT_TRUE(pump([&] { return !fakesd::has(resumePath("cnt")); })) << "the retry never came";
+  EXPECT_FALSE(GameSaveStore::peek("cnt", HASH_A));
+}
+
+TEST_F(ResumeMatchTest, ADeleteTheCardRefusedAtOverIsRetriedAtTheForcedExit) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  ASSERT_TRUE(fakesd::has(resumePath("cnt")));
+  fakesd::sim().failRemove.clear();
+  sleep();  // no loop pass since the card recovered
+  EXPECT_FALSE(fakesd::has(resumePath("cnt")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
+}
+
+TEST_F(ResumeMatchTest, PlayAgainAfterAFailedDeleteIsNotDeletedUnderTheNewRound) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  input->click(Button::Confirm);  // Play again, the card still refusing the delete
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  fakesd::sim().failRemove.clear();
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 3)));
+  for (int i = 0; i < 20; ++i) frame();
+  // The pause menu's loop passes are where a pending delete would retry.
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(0), 3))) << "the retry deleted the new round's save";
+}
+
+// The Error view: a game commits a move (its write fails, so the snapshot is pending) and then errors.
+class ResumeErrorTest : public ResumeMatchTest {
+ protected:
+  void reachErrorWithASnapshotPending() {
+    installGame("err", ERROR_GAME);
+    installPkg("err");
+    enter("err");
+    ASSERT_TRUE(pumpToFile(resumeBytes(nSnapshotOf(0), 1)));
+    fakertos::arm();  // each tap's input reads the clock first, where the gate holds it
+    tapCanvas(50, 50);
+    frame();
+    ASSERT_TRUE(fakertos::waitParked());
+    fakertos::pass();  // tap 1 finishes: ver 2 is committed
+    ASSERT_TRUE(waitFor([&] { return logHas("draw\t1"); }));
+    // No loop pass has run since: ver 2 is unwritten, and its write is going to fail.
+    fakesd::sim().failOpenWrite.insert(resumeTmpPath("err"));
+    tapCanvas(50, 50);
+    frame();
+    ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("err")); }));
+    ASSERT_TRUE(fakertos::waitParked());  // tap 2 is held in its input
+    fakertos::release();                  // and now errors
+    ASSERT_TRUE(pump([&] { return state() == "Error"; }));
+    fakesd::sim().failOpenWrite.clear();
+  }
+};
+
+TEST_F(ResumeErrorTest, LeavingFromTheErrorViewWritesNothing) {
+  reachErrorWithASnapshotPending();
+  ASSERT_FALSE(HasFatalFailure());
+  const size_t opens = tmpOpens();
+  input->click(Button::Back);
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_TRUE(fileIs(resumeBytes(nSnapshotOf(0), 1))) << "the pending snapshot was written after the error";
+  EXPECT_EQ(tmpOpens(), opens);
+}
+
+TEST_F(ResumeErrorTest, TheForcedExitFromTheErrorViewWritesNothing) {
+  reachErrorWithASnapshotPending();
+  ASSERT_FALSE(HasFatalFailure());
+  const size_t opens = tmpOpens();
+  sleep();
+  EXPECT_TRUE(fileIs(resumeBytes(nSnapshotOf(0), 1))) << "the pending snapshot was written after the error";
+  EXPECT_EQ(tmpOpens(), opens);
+}
+
+TEST_F(ResumeMatchTest, TheForcedExitOfAVmStuckInALockedBindingEndsWithinTheBoundAndStillWritesTheSnapshot) {
+  // The activity's stop: join 500 ms, then abandon 500 ms, each late by at most one iteration; then the write.
+  installGame("logger", match::LOGGING_GAME);
+  installPkg("logger");
+  // The loop's own write of the first snapshot fails, so the forced exit is what writes it.
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("logger"));
+  enter("logger");
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  expectCleanPsram = false;  // the abandon leaks the VM and the store slot on purpose
+  fakertos::arm(fakertos::At::Log);
+  input->tap(CANVAS_X + 100, CANVAS_Y + 200);
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("logger")); }));
+  ASSERT_FALSE(fakesd::has(resumePath("logger")));
+  fakesd::sim().failOpenWrite.clear();
+
+  const uint64_t began = clockMs();
+  exited = true;
+  activityManager.exitHolding(*activity);
+  const uint64_t elapsed = clockMs() - began;
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_GE(elapsed, 2u * GameVM::ABANDON_WAIT_MS);
+  // Two waits of 500 ms, and on the device one late iteration each: the join's 5 ms poll; the abandon's
+  // poll and its settle of up to 10 ticks. docs/crosshatch/game-canvas.md records about 1,030 ms.
+  EXPECT_LE(elapsed, 1030u);
+  EXPECT_TRUE(logHas("did not stop within"));
+  EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
+  // The snapshot committed before the call that hangs is written before the VM is let go.
+  EXPECT_TRUE(fileIs(resumeBytes(Bytes{0x06, 0x00, 0x00}, 1)));
+  fakertos::release();  // the leaked task ends at its next hook: the cancel flag is set
+  EXPECT_TRUE(fakertos::waitNoTasks());
+}
+
+// ---- the waits (R11): elapsed time, not polls ----
+
+class ResumeVmTest : public match::ScreenTest {
+ protected:
+  void SetUp() override {
+    ScreenTest::SetUp();
+    fakearena::reserveBytes = GameScript::SCRATCH_RESERVE_BYTES;
+    replay.loadFonts(*renderer);
+    viewport = GameViewport::forRenderer(*renderer);
+  }
+
+  void TearDown() override {
+    fakertos::release();
+    if (vm && !vm->stop(5000)) {
+      ADD_FAILURE() << "the VM would not stop; leaking it rather than freeing memory its task may use";
+      (void)vm.release();
+      expectCleanPsram = false;
+    }
+    vm.reset();
+    store.reset();
+    fakearena::reserveBytes = GameScript::SCRATCH_RESERVE_BYTES;
+    ScreenTest::TearDown();
+  }
+
+  bool prepare(const std::string& id) {
+    store = std::make_unique<MatchStore>();
+    if (!store->allocate(id.c_str(), static_cast<uint32_t>(clockMs()))) return false;
+    GameAssets assets;
+    if (assets.load(id.c_str(), store->saves(), store->slot()) != GameAssets::LoadResult::Ok) return false;
+    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot());
+    return vm != nullptr;
+  }
+  bool startAndWaitFirstFrame() {
+    return vm->start() && waitFor([&] { return vm->frameGen() >= 1; });
+  }
+
+  static GameCore::GameEvent tapAt(const int x, const int y) {
+    GameCore::GameEvent event;
+    event.kind = GameCore::EventKind::Tap;
+    event.x = static_cast<int16_t>(x);
+    event.y = static_cast<int16_t>(y);
+    return event;
+  }
+
+  // A VM held inside ch.log, a locked binding: it neither joins nor can abandon delete it.
+  void stickInALockedBinding() {
+    installGame("logger", match::LOGGING_GAME);
+    ASSERT_TRUE(prepare("logger"));
+    ASSERT_TRUE(startAndWaitFirstFrame());
+    ASSERT_TRUE(waitFor(match::roundStarted));
+    expectCleanPsram = false;  // the abandon leaks it on purpose
+    fakertos::arm(fakertos::At::Log);
+    vm->postInput(tapAt(100, 200));
+    ASSERT_TRUE(fakertos::waitParked());
+    vm->cancel();
+  }
+
+  void letTheLeakedTaskEnd() {
+    fakertos::release();
+    EXPECT_TRUE(fakertos::waitNoTasks());
+  }
+
+  FrameReplay replay;
+  GameViewport viewport;
+  std::unique_ptr<MatchStore> store;
+  std::unique_ptr<GameVM> vm;
+};
+
+TEST_F(ResumeVmTest, JoinEndsFiveHundredMillisecondsOfClockAfterItBegan) {
+  stickInALockedBinding();
+  const uint64_t began = clockMs();
+  EXPECT_FALSE(vm->join(500));
+  const uint64_t elapsed = clockMs() - began;
+  EXPECT_GE(elapsed, 500u);
+  EXPECT_LE(elapsed, 500u + 10u) << "at most one poll late";
+}
+
+TEST_F(ResumeVmTest, JoinCountsElapsedTimeNotPollsWhenTheClockMovesFasterThanItsPolls) {
+  stickInALockedBinding();
+  const uint64_t began = clockMs();
+  bool joined = true;
+  {
+    // 25 ms of clock per real millisecond: each 5 ms poll spans about 130 ms of it, so 500 ms are up in
+    // about four polls. A join that counted its 100 polls would take about 12,500 fake ms; the limit
+    // below is loose enough for a loaded host to overshoot by several polls.
+    Ticker ticker(25);
+    joined = vm->join(500);
+  }
+  const uint64_t elapsed = clockMs() - began;
+  EXPECT_FALSE(joined);
+  EXPECT_GE(elapsed, 500u);
+  EXPECT_LT(elapsed, 6000u) << "the wait counted polls, not time";
+}
+
+TEST_F(ResumeVmTest, JoinReturnsAtOnceForATaskThatEndsBeforeItsTime) {
+  installGame("tracer-lite", match::STILL_GAME);
+  ASSERT_TRUE(prepare("tracer-lite"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  vm->cancel();
+  const uint64_t began = clockMs();
+  EXPECT_TRUE(vm->join(500));
+  EXPECT_LT(clockMs() - began, 500u);
+}
+
+TEST_F(ResumeVmTest, AbandonEndsFiveHundredMillisecondsOfClockAfterItBegan) {
+  stickInALockedBinding();
+  EXPECT_FALSE(vm->join(50));
+  const uint64_t began = clockMs();
+  EXPECT_FALSE(GameVM::abandon(std::move(vm)));
+  const uint64_t elapsed = clockMs() - began;
+  EXPECT_GE(elapsed, static_cast<uint64_t>(GameVM::ABANDON_WAIT_MS));
+  // One iteration late at most: the poll, and the settle of up to ten ticks.
+  EXPECT_LE(elapsed, GameVM::ABANDON_WAIT_MS + 5u + 10u + 10u);
+  EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
+  letTheLeakedTaskEnd();
+}
+
+TEST_F(ResumeVmTest, AbandonCountsElapsedTimeNotPollsWhenTheClockMovesFasterThanItsPolls) {
+  stickInALockedBinding();
+  EXPECT_FALSE(vm->join(50));
+  const uint64_t began = clockMs();
+  bool abandoned = true;
+  {
+    // As for join: a poll-counting abandon would take about 12,500 fake ms here.
+    Ticker ticker(25);
+    abandoned = GameVM::abandon(std::move(vm));
+  }
+  const uint64_t elapsed = clockMs() - began;
+  EXPECT_FALSE(abandoned);
+  EXPECT_GE(elapsed, 500u);
+  EXPECT_LT(elapsed, 6000u) << "the wait counted polls, not time";
+  letTheLeakedTaskEnd();
+}
+
+TEST_F(ResumeVmTest, ACancelledStepStillPublishesTheMoveItCommitted) {
+  installGame("cancelling", CANCEL_GAME);
+  ASSERT_TRUE(prepare("cancelling"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  std::vector<uint8_t> out(GameCore::SNAPSHOT_BYTES);
+  SnapshotMailbox::Taken taken;
+  ASSERT_TRUE(vm->committed().take(out, taken));
+  ASSERT_EQ(taken.ver, 1u);
+
+  fakertos::arm();  // the draw after the move reads the clock: held there, the move already committed
+  vm->postInput(tapAt(100, 200));
+  ASSERT_TRUE(fakertos::waitParked());
+  vm->cancel();
+  fakertos::release();  // the draw spins on, and the next hook ends it Cancelled
+  ASSERT_TRUE(vm->join(5000));
+  EXPECT_FALSE(vm->failed());
+  EXPECT_TRUE(logHas("VM cancelled"));
+  ASSERT_TRUE(vm->committed().take(out, taken)) << "a Cancelled step dropped the snapshot it committed";
+  EXPECT_EQ(taken.ver, 2u);
+  EXPECT_FALSE(taken.over);
+}
+
+TEST_F(ResumeVmTest, AVmPublishesEachNewVerOnceAndNothingForARejectedMove) {
+  match::installFixture("tracer");
+  ASSERT_TRUE(prepare("tracer"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the publish comes before this line
+  std::vector<uint8_t> out(GameCore::SNAPSHOT_BYTES);
+  SnapshotMailbox::Taken taken;
+  ASSERT_TRUE(vm->committed().take(out, taken));
+  EXPECT_EQ(taken.ver, 1u);
+  EXPECT_FALSE(taken.over);
+  EXPECT_GT(taken.length, 0u);
+
+  // A tap on the banner is rejected: the frame changes, the snapshot does not.
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 50));
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > before; }));
+  EXPECT_FALSE(vm->committed().pending());
+
+  const uint32_t beforeMove = vm->frameGen();
+  vm->postInput(tapAt(100, 200));
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > beforeMove; }));
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  ASSERT_TRUE(vm->committed().take(out, taken));
+  EXPECT_EQ(taken.ver, 2u);
+}
+
+TEST_F(ResumeVmTest, AVmSeededWithASnapshotRestoresItWithoutPublishingUntilItsNextMove) {
+  match::installFixture("tracer");
+  ASSERT_TRUE(prepare("tracer"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  std::vector<uint8_t> first(GameCore::SNAPSHOT_BYTES);
+  SnapshotMailbox::Taken taken;
+  ASSERT_TRUE(vm->committed().take(first, taken));
+  first.resize(taken.length);
+  ASSERT_TRUE(vm->stop(5000));
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  vm.reset();
+  fakelog::clearLines();
+
+  ASSERT_TRUE(prepare("tracer"));
+  EXPECT_FALSE(vm->setResume({}, 3));
+  EXPECT_FALSE(vm->setResume(std::vector<uint8_t>(GameCore::SNAPSHOT_BYTES + 1, 1), 3));
+  ASSERT_TRUE(vm->setResume(first, 41));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  EXPECT_TRUE(logHas("Resuming at ver 41"));
+  EXPECT_TRUE(logHas("Round started at ver 41"));
+  EXPECT_FALSE(vm->committed().pending()) << "a restored snapshot is already saved";
+  ASSERT_TRUE(vm->drawFront(*renderer, viewport, replay));
+
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 200));
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > before; }));
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  std::vector<uint8_t> out(GameCore::SNAPSHOT_BYTES);
+  ASSERT_TRUE(vm->committed().take(out, taken));
+  EXPECT_EQ(taken.ver, 42u);
+}
+
+}  // namespace

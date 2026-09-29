@@ -26,12 +26,22 @@
 // runtime's own views: the pause menu, the end-of-round menu, and the error view
 // (docs/crosshatch/game-canvas.md).
 //
+// A solo match with a .pkg also saves its latest snapshot as resume.bin (GameSaveStore):
+// the VM hands each committed one to the loop through GameVM::committed(), the loop
+// writes it every pass in Playing and Paused, the forced exit and Leave write the last
+// pending one, and entering Over deletes the file. Start::Resume restores it.
+//
 // The match follows AD-21's solo states (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing until Leaving, or until a stuck VM is
 // stopped on the way to Error, so Playing, Paused, and Over always have one.
 class GameMatchActivity final : public Activity, private UiAppHost {
  public:
-  GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest);
+  // New starts a round with setup; Resume continues from the game's resume.bin when
+  // GameSaveStore can use it, and otherwise (logged) starts a new match.
+  enum class Start : uint8_t { New, Resume };
+
+  GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
+                    Start start = Start::New);
   ~GameMatchActivity() override;
 
   void onEnter() override;
@@ -50,10 +60,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
  private:
   using MatchState = GameCore::MatchState;
   using MatchEvent = GameCore::MatchEvent;
-  // How long a stop waits after cancel for the VM to end before abandoning it (AD-5).
-  // Independent of GameVM::ABANDON_WAIT_MS, the abandon's own wait that may follow;
-  // equal today by choice, not by rule. Sleep's worst case waits for both in turn;
-  // bounding it is deferred (the epic-script-runtime retro's AI-4).
+  // How long a stop waits after cancel for the VM to end before abandoning it (AD-5),
+  // counted in millis() from when it began. Independent of GameVM::ABANDON_WAIT_MS, the
+  // abandon's own wait that may follow, counted the same way; equal today by choice, not
+  // by rule. The forced exit's worst case for the VM is the two in turn plus one late
+  // poll each, about 1,030 ms (docs/crosshatch/game-canvas.md, The forced exit), and
+  // then the store and resume writes, whose time the code does not bound (the
+  // epic-script-runtime retro's AI-4).
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
   // A call into Lua still running after this long is a stuck script (AD-5).
   static constexpr uint32_t WATCHDOG_MS = 3000;
@@ -77,11 +90,21 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void choose(const GameCore::MatchMenu& menu, int index);
   // A user exit (Leave, or Back from the error view), from loop().
   void leave();
-  // Cancels the VM, joins it or abandons it (AD-5). The caller holds RenderLock,
-  // since render reads vm and the frames an abandon frees.
+  // Cancels the VM, joins it or abandons it (AD-5), and writes its last pending
+  // snapshot before it is freed. The caller holds RenderLock, since render reads vm
+  // and the frames an abandon frees.
   void stopVm();
   // Writes a dirty ch.store now (round end, Leave, onExit; AD-17).
   void flushStore();
+  // Playing and Paused: writes the VM's latest committed snapshot as resume.bin,
+  // throttled after a failed write unless `force` (Leave and the forced exit).
+  // Nothing in Over or Error, or without a .pkg.
+  void flushResume(bool force);
+  // Removes resume.bin again after Over's delete failed (resumeDeletePending).
+  void retryResumeDelete();
+  // Start::Resume, before the VM starts: seeds it with the saved snapshot, or logs why
+  // it starts a new match.
+  void seedResume(GameVM& created);
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
   // For a VM that did not join: abandons it (GameVM::abandon); a task that may
@@ -114,6 +137,14 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // An abandon left the VM task alive: the slot is still flushed on Leave and in
   // onExit, and the destructor leaks it (and saves' buffer) with the task.
   bool slotLeaked = false;
+
+  Start start;
+  // The state allows resume.bin to be written: Playing or Paused, not yet Over or Error
+  // (loop task; handle() keeps it).
+  bool resumeWritable = false;
+  // Entering Over could not delete resume.bin (the card refused): the loop retries until it
+  // can, so a finished round's save does not survive one failed remove. Loop task.
+  bool resumeDeletePending = false;
 
   GameCore::MatchLifecycle lifecycle;  // loop task
   // lifecycle's state for render, stored by handle() after each transition.

@@ -146,6 +146,46 @@ While the game
 runs, the match writes a changed store at most every 5 s (`GameSaveStore::flushIfDue`); `GameSaveStore::flush`
 writes it at once, for round end and the match's `onExit()` (AD-17).
 
+## resume.bin
+
+`/.games-data/<id>/resume.bin` holds the latest snapshot of a solo match, so the match can continue after the device
+sleeps (AD-17). `src/games/GameSaveStore` is its only reader and writer, on the loop task only; the VM task never
+touches Storage (AD-5). It sits beside `store.bin` and is written and read the same way.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 6 | blob header: magic `CHRS` (`43 48 52 53`), file version 1, codec version 1 |
+| 6 | 8 | package hash: the 8 bytes of `.pkg`'s hash (see [`.pkg` and the package hash](#pkg-and-the-package-hash)) |
+| 14 | 1 | mode: 0 (solo) |
+| 15 | 1 | seats saved, n: 1 |
+| 16 | 2 | ver, unsigned 16-bit, little-endian: the low 16 bits of the Session's ver |
+| 18 | 1 to 1,400 | the snapshot's codec bytes (at most `Codec::SNAPSHOT_LIMIT`) |
+
+The snapshot runs to the end of the file. For the package hash `0530a15766e91bf1`, a save of ver 7 holding
+`{taps = 3}` is `43 48 52 53 01 01 05 30 a1 57 66 e9 1b f1 00 01 07 00 06 00 01 05 04 74 61 70 73 03 06`.
+
+**Usable** is what `GameSaveStore::peek(id, pkgHash)` says, and it is exactly what loading accepts, so a Continue row
+never leads to a new match: the header checks `ok`, the package hash is the installed package's, the mode is 0 and n is
+1, and the snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is
+refused before it is read. `peek` reads the whole file into a buffer allocated for the call (false, with a log line,
+when that fails). Anything else is not usable: `peek` is false, one `LOG_ERR` line names why (the header status,
+`cannot open`, `cannot read`, `other package`, `not a solo save`, `empty snapshot`, `truncated`, `too large`, or the codec's
+error), and the file stays, so a save of another package survives until the game's next match replaces it. The
+launcher's Continue row, a later entry of this epic, is the caller of `peek` and of `Start::Resume`; none exists yet.
+Loading, which the match does when it starts with `Start::Resume`, applies the same checks. Without a valid `.pkg`
+there is no hash, and the match neither reads nor writes `resume.bin` (entering Over still removes a stale file).
+
+**Writing** is `store.bin`'s: the header and snapshot go to `resume.bin.tmp`, which is closed, then `resume.bin` is
+removed and the tmp renamed over it. A failed write removes the partial tmp and leaves `resume.bin` as it was, a stop
+after the tmp is whole leaves the tmp as the copy that is read while `resume.bin` is missing, and a write that finds
+that state renames the tmp first. The VM hands each snapshot it commits to the loop task through a latest-wins mailbox
+(`src/games/SnapshotMailbox.h`), and the loop task writes the newest one on its next pass, so a pass that finds two
+snapshots writes the later. A failed write keeps the snapshot pending: the loop retries `FLUSH_INTERVAL_MS` (5 s) after
+the failure, while the forced exit and Leave retry at once. The match writes only in Playing and Paused, only for a
+snapshot whose status is not over, and deletes `resume.bin` and its tmp instead when the latest snapshot is over or
+when it enters Over (a finished round never resumes; a delete the card refuses is retried on each loop pass in Over and Paused, and at Leave and the forced exit, until it succeeds). Leave keeps the file. The `ver` a resumed match continues from
+is the file's, so a match that has passed 65,535 snapshots wraps in the file (the spine's `u16`) and only there.
+
 ## Game package (`.cpgame`)
 
 A game ships as one `.cpgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
@@ -256,7 +296,7 @@ one SHA-256 helper in the firmware (mbedTLS on the device, OpenSSL in the simula
 `scripts/pack_game.py` computes the same value. Both pass one vector: `test/game_core/package_vectors.json`
 (`hash_vector`) and `package_vector.cpgame`, whose hash is `0530a15766e91bf1`. The registry
 (`src/games/GameRegistry`) lists a folder of `/.games/` only when its `.pkg` is valid and its `manifest.json` names the
-folder's own id; it has no index. `resume.bin` records the 8 hash bytes to tell a changed package.
+folder's own id; it has no index. `resume.bin` records the 8 hash bytes to tell a changed package ([resume.bin](#resumebin)).
 
 ## Golden vectors
 
