@@ -232,5 +232,5 @@
 ## 4.2
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-pack-game-py-and-the-package-vectors-plan.md`
-  summary: `pack_game.py` checks a PNG through its IHDR fields only (not bit depth, color type, IDAT, IEND, or chunk CRCs) and does not limit manifest nesting depth (the C++ reader stops at 32), so a package can pack and then be refused at install.
+  summary: `pack_game.py` checks a PNG through its IHDR fields only (not IDAT, IEND, or a full chunk walk; colour type and bit depth are checked) and does not limit manifest nesting depth (the C++ reader stops at 32), so a package can pack and then be refused at install.
   evidence: Review (blind hunter, edge-case hunter), 4.2. The ticket asks for the image budget from each PNG's IHDR; a corrupt image or a 32-deep manifest in a game folder is unlikely. Entry 3's installer is the enforcer; a chunk walk and a depth check in the packer would close it if a release ever ships such a game.

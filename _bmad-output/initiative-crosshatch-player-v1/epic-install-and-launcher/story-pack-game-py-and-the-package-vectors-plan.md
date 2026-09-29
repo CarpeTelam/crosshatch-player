@@ -68,7 +68,7 @@ context:
 
 ## Implementation Notes
 
-Implemented by a subagent from this plan. Beyond the plan: `png_size` also refuses a non-zero PNG compression or filter method (the converter does); subfolders and symlinks are refused as non-regular files; `.bmp` is refused in any letter case with its reason; `icon_weight` other than `regular` or `fill` is invalid (AD-15's amendment, R9); `pass` is a valid mode; the vectors add `image_width` and `image_height` limits (2048, 3072). The images-total vectors are `[[2048,511],[32,33]]` = 131,072 B and `[[2048,511],[32,9],[32,9]]` = 131,074 B. The package's file name and the id check use `directory.resolve().name`. The vector package is 589 B, hash `1ac5ece47021dedf`; `main.lua` is deflated and `util.lua` stored. Tests found and fixed one bug (an uncreatable `<out_dir>` crashed the cleanup instead of exiting 2).
+Implemented by a subagent from this plan. Beyond the plan: `png_size` also refuses a non-zero PNG compression or filter method (the converter does); subfolders and symlinks are refused as non-regular files; `.bmp` is refused in any letter case with its reason; `icon_weight` other than `regular` or `fill` is invalid (AD-15's amendment, R9); `pass` is a valid mode; the vectors add `image_width` and `image_height` limits (2048, 3072). The images-total vectors are `[[2048,511],[32,33]]` = 131,072 B and `[[2048,511],[32,9],[32,9]]` = 131,074 B. The package's file name and the id check use `directory.resolve().name`. The vector package was 589 B, hash `1ac5ece47021dedf`, until the follow-up (575 B, `0530a15766e91bf1`); `main.lua` is deflated and `util.lua` stored. Tests found and fixed one bug (an uncreatable `<out_dir>` crashed the cleanup instead of exiting 2).
 
 ## Plan Change Log
 
@@ -89,6 +89,23 @@ The four lenses (blind hunter, edge-case hunter, verification gap, intent alignm
 | No `docs/file-formats.md` or `formats.md` entry for the package hash (blind) | false | none | Entry 3 writes the package format into `docs/crosshatch/formats.md` (epic Notes); not in `touches`. |
 | Intent alignment: readings A to D; the diff is reading D with the packer-side equality check | none | none | Descriptive; the installer-side consumer is entry 6, as the ticket says. |
 
+### Orchestrator's independent review (adversarial, edge-case, verification-gap lenses)
+
+Follow-up commit fixes. One row per distinct finding; findings two lenses shared are triaged once.
+
+| Finding (lens) | Verdict | Route | Evidence / action |
+|---|---|---|---|
+| `json.loads` decodes `\uXXXX`, the device's `StreamingJsonParser` keeps it literal (lines 149-154), so escaped keys, values, and names counted in characters differ (adversarial 1, edge-case 1) | high | patch | Confirmed in `StreamingJsonParser.cpp`; a manifest written with `ensure_ascii=True` would pack and then fail `Manifest::parse`. `read_manifest` now refuses any `\u` escape (a regex that ignores an escaped backslash before `u`); tests cover an escaped key, id, mode, name, icon, extra key, and the still-valid escaped backslash and `\n`. `manifest_text` in the tests writes raw UTF-8. |
+| Vector `main.lua` was 947 B, over the parser's 511 B token limit, so a C++ test reading the JSON would lose it (adversarial 2, edge-case 2) | medium | patch | Shortened to 403 B (still deflated); vector package regenerated (575 B, hash `0530a15766e91bf1`); a test asserts every member string is at most 511 B escaped and holds no `\u`. |
+| 32-character member-name limit had no vector and no at-limit test (verification-gap 1) | medium | patch | `MAX_MEMBER_NAME_CHARS` builds both regexes; `member_name_chars` vector (32, 33); tests pack 32-character `.lua` and `.png` and refuse 33; a mutation to 31 now fails 3 tests. |
+| Stale `<out_dir>/<id>.cpgame` stays after a failed pack (adversarial 3) | low | patch | Deleted on exit 1 (only that file, only a regular file); tested, other packages untouched. Docstring says so. |
+| `png_size` ignored colour type and bit depth (adversarial 4; my own earlier low, rejected) | low | patch | One table check, `PNG_DEPTHS`; tests for types 1, 5, 7, depth 3, palette at 16 bits, and the legal pairs. Chunk walk stays deferred. |
+| BOM refused though the device skips it (edge-case 3) | low | patch | Checked `handleScanning`: an unknown byte (0xEF...) outside a string falls into the ignored default, so the device accepts a BOM. Decoded with `utf-8-sig`; test now expects acceptance. |
+| `out_dir` resolving to the game folder writes the package into it (edge-case 4) | low | patch | Exit 2, "is the game folder"; test for three spellings, folder unchanged. |
+| Vector fields `row_pixels_per_word` and `word_bytes` never checked (verification-gap 2) | low | patch | Test recomputes `image_bytes` from the JSON's own fields over widths 1, 31, 32, 33, 64, 65, 2048. |
+| Duplicate-key test covered 5 of 9 known keys (verification-gap 3) | low | patch | Loops over `KNOWN_KEYS` (and asserts the loop table equals it). |
+| `deferred-work.md` entry appended under `## 4.2` (verification-gap 4) | false | none | The orchestrator rejected it: `tickets.toml`'s header allows every entry to append under `## <ref>`. |
+
 ## Design Notes
 
 - No existing function is moved or rewritten: `pack_game.py` is new and `pack_one`'s contract is only read (git log -L is not applicable).
@@ -99,11 +116,13 @@ The four lenses (blind hunter, edge-case hunter, verification gap, intent alignm
 
 ## Verification
 
-**Commands** (run in this worktree after the review patches):
-- `python3 scripts/pack_game_test.py` -- Ran 65 tests, OK.
+**Commands** (run in this worktree after the follow-up fixes):
+- `python3 scripts/pack_game_test.py` -- Ran 70 tests, OK.
 - `for t in scripts/*_test.py; ...` (the loop from `docs/crosshatch/fork-scripts.md`) -- no FAILED and no RAN NO TESTS line.
-- `python3 scripts/check_upstream_touches.py` -- Result: PASS (trial merge of upstream/develop clean).
-- `python3 scripts/pack_game.py test/game_script/fixtures/counter <tmp>` -- exit 0, last line `e8c3ac8dfb646d3b`.
-- `./bin/clang-format-fix` twice -- see the final report; nothing new in `git status`.
+- `python3 scripts/check_upstream_touches.py` -- Result: PASS.
+- `./bin/clang-format-fix` twice -- nothing new in `git status`.
+- Mutations (each failed the suite, then reverted): `MAX_MEMBER_NAME_CHARS` 32 to 31 (3 failures), the `\u` check disabled (1), the colour-type check disabled (13).
+
+First commit (289a6abe): 65 tests OK; `pack_game.py` on the `counter` fixture printed `e8c3ac8dfb646d3b`.
 
 No CI gate or workflow changed (`crosshatch-ci.yml` already runs every `scripts/*_test.py`), so no fresh-tree run applies. No memory, flash, or timing figure was taken; no C++ changed.

@@ -14,9 +14,13 @@ a Lua file only for a leading binary-chunk signature, and a manifest is not dept
 `icon_weight` values are R9's (the spine's AD-15 amendment), stricter than `Manifest.cpp`'s `validIcon` until
 epic-install-and-launcher's entry 6 aligns it.
 
-Exit codes: 0 packed. 1 the package is invalid: each problem is printed as `error: ...` on stderr and nothing is
-written. 2 the packer could not run: `<dir>` is missing, `ApiLevel.h` or `assets/game-icons/names.txt` (read only when
-the manifest has an `icon`) is unreadable, or `<out_dir>` cannot be created; nothing is written.
+Exit codes: 0 packed. 1 the package is invalid: each problem is printed as `error: ...` on stderr, nothing is
+written, and a package an earlier run left at `<out_dir>/<id>.cpgame` is deleted. 2 the packer could not run: `<dir>`
+is missing, `ApiLevel.h` or `assets/game-icons/names.txt` (read only when the manifest has an `icon`) is unreadable,
+`<out_dir>` cannot be created, or `<out_dir>` is the game folder itself; nothing is written.
+
+The manifest is read the way the device reads it: a UTF-8 BOM is skipped, and a `\\u` escape is refused, because the
+device's JSON parser keeps `\\uXXXX` as six literal characters where Python would decode it.
 
 The package is a flat zip of the whitelisted members (`manifest.json`, `main.lua`, `[a-z0-9_]{1,32}.lua`, and
 `[a-z0-9_]{1,32}.png`), sorted by name, with fixed timestamps and permissions, deflated at level 9 unless that does
@@ -49,6 +53,7 @@ NAMES_PATH = 'assets/game-icons/names.txt'
 PACKAGE_BYTES = 256 * 1024
 MEMBER_BYTES = 128 * 1024
 MAX_MEMBERS = 32
+MAX_MEMBER_NAME_CHARS = 32  # the stem of a .lua or .png member: [a-z0-9_]{1,32}
 IMAGES_BYTES = 128 * 1024  # GameCore::IMAGES_BYTES
 MAX_IMAGES = 32  # GameCore::MAX_IMAGES
 IMAGE_HEADER_BYTES = 62  # the converter's 1-bit BMP header (GameCore::IMAGE_HEADER_BYTES)
@@ -67,8 +72,13 @@ REQUIRED_KEYS = ('id', 'name', 'version', 'api', 'seats', 'modes')
 
 GAME_ID = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
 ICON_NAME = re.compile(r'[a-z][a-z0-9]*(-[a-z0-9]+)*')
-LUA_MEMBER = re.compile(r'[a-z0-9_]{1,32}\.lua')
-PNG_MEMBER = re.compile(r'[a-z0-9_]{1,32}\.png')
+LUA_MEMBER = re.compile(rf'[a-z0-9_]{{1,{MAX_MEMBER_NAME_CHARS}}}\.lua')
+PNG_MEMBER = re.compile(rf'[a-z0-9_]{{1,{MAX_MEMBER_NAME_CHARS}}}\.png')
+# A \u escape: an odd run of backslashes, then u. The device's StreamingJsonParser keeps `\uXXXX` as six literal
+# characters where Python decodes it, so the two would read different strings.
+UNICODE_ESCAPE = re.compile(r'(?<!\\)(?:\\\\)*\\u')
+# The PNG colour types the converter accepts, each with the bit depths the PNG format allows for it.
+PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
 MANIFEST_MEMBER = 'manifest.json'
 MAIN_MEMBER = 'main.lua'
 ICON_MEMBER = 'icon.png'
@@ -125,7 +135,7 @@ def read_manifest(data, dir_name, api_range, load_icons):
     """
     try:
         manifest = json.loads(
-            data.decode('utf-8'),
+            data.decode('utf-8-sig'),  # the device's parser skips a BOM
             object_pairs_hook=_object,
             parse_constant=_reject_constant,
         )
@@ -135,6 +145,11 @@ def read_manifest(data, dir_name, api_range, load_icons):
         return None, [f'{MANIFEST_MEMBER}: not a JSON object']
 
     problems = []
+    if UNICODE_ESCAPE.search(data.decode('utf-8-sig')):
+        problems.append(
+            f'{MANIFEST_MEMBER}: has a \\u escape; the device reads it as six literal characters, so write the '
+            'character itself as UTF-8'
+        )
 
     def bad(message):
         problems.append(f'{MANIFEST_MEMBER}: {message}')
@@ -235,7 +250,9 @@ def png_size(data):
     if struct.unpack('>I', data[29:33])[0] != zlib.crc32(data[12:29]):
         raise ValueError('malformed PNG (IHDR CRC mismatch)')
     width, height = struct.unpack('>II', data[16:24])
-    compression, filter_method, interlace = data[26], data[27], data[28]
+    depth, color, compression, filter_method, interlace = data[24], data[25], data[26], data[27], data[28]
+    if depth not in PNG_DEPTHS.get(color, ()):
+        raise ValueError(f'unsupported PNG colour type {color} at {depth} bits')
     if compression != 0 or filter_method != 0:
         raise ValueError('unsupported PNG compression or filter method')
     if interlace != 0:
@@ -362,6 +379,9 @@ def pack(directory, out_dir):
     except (OSError, UnicodeDecodeError) as exc:
         raise SetupError(f'cannot read {fork_common.API_LEVEL_HEADER}: {exc}')
     dir_name = directory.resolve().name
+    if pathlib.Path(out_dir).resolve() == directory.resolve():
+        raise SetupError(f'{out_dir} is the game folder; a package is never written into it')
+    target = pathlib.Path(out_dir) / f'{dir_name}.cpgame'
 
     members, problems = read_members(directory)
     problems += check_members(members, dir_name, (level.min_level, level.level), load_icon_names)
@@ -371,9 +391,12 @@ def pack(directory, out_dir):
     if problems:
         for problem in problems:
             print(f'error: {problem}', file=sys.stderr)
+        # An earlier run's package for this game must not outlive the folder that no longer packs.
+        if target.is_file():
+            with contextlib.suppress(OSError):
+                target.unlink()
         return fork_common.FAIL
 
-    target = pathlib.Path(out_dir) / f'{dir_name}.cpgame'
     temporary = target.with_name(target.name + '.tmp')
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

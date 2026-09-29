@@ -47,12 +47,13 @@ def manifest_text(**changes):
         'modes': ['solo'],
     }
     manifest.update(changes)
-    return json.dumps({key: value for key, value in manifest.items() if value is not DROP})
+    # Raw UTF-8: the packer refuses \u escapes, which the device's JSON parser would read as literal text.
+    return json.dumps({key: value for key, value in manifest.items() if value is not DROP}, ensure_ascii=False)
 
 
-def png(width, height, interlace=0, compression=0, signature=pg.PNG_SIGNATURE, bad_crc=False):
+def png(width, height, interlace=0, compression=0, signature=pg.PNG_SIGNATURE, bad_crc=False, depth=1, color=0):
     """A PNG with only what the packer reads: the signature, IHDR, and IEND."""
-    body = b'IHDR' + struct.pack('>IIBBBBB', width, height, 1, 0, compression, 0, interlace)
+    body = b'IHDR' + struct.pack('>IIBBBBB', width, height, depth, color, compression, 0, interlace)
     crc = zlib.crc32(body) ^ (1 if bad_crc else 0)
     return signature + struct.pack('>I', 13) + body + struct.pack('>I', crc) + b'\x00\x00\x00\x00IEND\xaeB`\x82'
 
@@ -183,6 +184,21 @@ class PackTest(PackerTestCase):
         self.assertEqual((self.project.root / 'one' / 'demo.cpgame').read_bytes(),
                          (self.project.root / 'two' / 'demo.cpgame').read_bytes())
 
+    def test_a_stale_package_is_deleted_when_the_folder_stops_packing(self):
+        folder = self.project.game()
+        self.assertEqual(self.project.run(folder)[0], 0)
+        stale = self.project.out / 'demo.cpgame'
+        self.assertTrue(stale.is_file())
+        (folder / 'notes.txt').write_bytes(b'x')
+        got, out, err = self.project.run(folder)
+        self.assertEqual((got, out), (1, ''), err)
+        self.assertFalse(stale.exists())
+        (folder / 'notes.txt').unlink()
+        (self.project.out / 'other.cpgame').write_bytes(b'x')
+        (folder / 'notes.txt').write_bytes(b'x')
+        self.assertEqual(self.project.run(folder)[0], 1)
+        self.assertTrue((self.project.out / 'other.cpgame').exists())
+
     def test_out_dir_is_created(self):
         folder = self.project.game()
         out = self.project.root / 'a' / 'b'
@@ -245,6 +261,11 @@ class BadPackageTest(PackerTestCase):
             'truncated': (png(8, 8)[:20], 'malformed'),
             'empty': (b'', 'bad signature'),
             'unknown compression': (png(8, 8, compression=1), 'compression'),
+            'colour type 1': (png(8, 8, color=1), 'colour type 1'),
+            'colour type 5': (png(8, 8, color=5), 'colour type 5'),
+            'colour type 7': (png(8, 8, color=7), 'colour type 7'),
+            'depth 3': (png(8, 8, depth=3), 'colour type 0 at 3 bits'),
+            'palette at 16 bits': (png(8, 8, depth=16, color=3), 'colour type 3 at 16 bits'),
             'zero width': (png(0, 8), 'empty or over'),
             'zero height': (png(8, 0), 'empty or over'),
             'too wide': (png(pg.MAX_IMAGE_WIDTH + 1, 1), 'empty or over'),
@@ -316,6 +337,18 @@ class LimitTest(PackerTestCase):
     def member_files(self, count):
         return {f'm{i}.lua': b'-- m\n' for i in range(count - 2)}  # main.lua and manifest.json make up the rest
 
+    def test_member_name_chars(self):
+        case = LIMITS['member_name_chars']
+        at, over = 'a' * case['at'], 'a' * case['over']
+        for extension in ('lua', 'png'):
+            with self.subTest(extension=extension):
+                data = png(1, 1) if extension == 'png' else b'-- x\n'
+                self.assertEqual(self.project.run(self.project.game({f'{at}.{extension}': data}))[0], 0)
+                with zipfile.ZipFile(self.project.out / 'demo.cpgame') as package:
+                    self.assertIn(f'{at}.{extension}', package.namelist())
+                shutil.rmtree(self.project.out)
+                self.assertRefused(self.project.game({f'{over}.{extension}': data}), 'is not a package member')
+
     def test_member_count(self):
         at, over = LIMITS['members']['at'], LIMITS['members']['over']
         self.assertEqual(self.project.run(self.project.game(self.member_files(at)))[0], 0)
@@ -365,6 +398,7 @@ class LimitTest(PackerTestCase):
         self.assertEqual(LIMITS['package_bytes']['limit'], pg.PACKAGE_BYTES)
         self.assertEqual(LIMITS['member_bytes']['limit'], pg.MEMBER_BYTES)
         self.assertEqual(LIMITS['members']['limit'], pg.MAX_MEMBERS)
+        self.assertEqual(LIMITS['member_name_chars']['limit'], pg.MAX_MEMBER_NAME_CHARS)
         self.assertEqual(LIMITS['images']['limit'], pg.MAX_IMAGES)
         self.assertEqual(LIMITS['images_bytes']['limit'], pg.IMAGES_BYTES)
         self.assertEqual(LIMITS['image_width']['limit'], pg.MAX_IMAGE_WIDTH)
@@ -380,6 +414,12 @@ class LimitTest(PackerTestCase):
                     self.assertLessEqual(case['at']['bytes'], case['limit'])
                     self.assertGreater(case['over']['bytes'], case['limit'])
         self.assertEqual(formula['icon_excluded'], pg.ICON_MEMBER)
+        # The formula from the JSON's own fields, over widths either side of a word boundary.
+        for width in (1, 31, 32, 33, 64, 65, 2048):
+            for height in (1, 7):
+                words = -(-width // formula['row_pixels_per_word'])
+                self.assertEqual(pg.image_bytes(width, height),
+                                 formula['header_bytes'] + words * formula['word_bytes'] * height, (width, height))
 
 
 class CannotRunTest(PackerTestCase):
@@ -407,6 +447,14 @@ class CannotRunTest(PackerTestCase):
         shutil.rmtree(self.project.out)
         self.assertRefused(self.project.game(manifest=manifest_text(icon='x')), 'cannot read assets/game-icons/names.txt',
                            code=2)
+
+    def test_out_dir_that_is_the_game_folder(self):
+        folder = self.project.game()
+        for out in (folder, folder / '.', self.project.root / 'games' / '..' / 'games' / 'demo'):
+            got, stdout, err = self.project.run(folder, out)
+            self.assertEqual((got, stdout), (2, ''), err)
+            self.assertIn('is the game folder', err)
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ['main.lua', 'manifest.json'])
 
     def test_out_dir_that_cannot_be_created(self):
         folder = self.project.game()
@@ -462,7 +510,7 @@ class ReadManifestTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.refused(text)
         self.refused(b'\xff\xfe{}', 'not valid JSON')
-        self.refused(b'\xef\xbb\xbf' + manifest_text().encode(), 'not valid JSON')
+        self.assertEqual(self.read(b'\xef\xbb\xbf' + manifest_text().encode()), [])  # the device skips a BOM
 
     def test_missing_keys(self):
         for key in pg.REQUIRED_KEYS:
@@ -472,12 +520,31 @@ class ReadManifestTest(unittest.TestCase):
                 self.refused(json.dumps(manifest), f'missing key {key!r}')
 
     def test_duplicate_known_keys(self):
-        text = manifest_text(hidden=False)
-        for key in ('"id": "demo"', '"name": "Demo"', '"api": 3', '"modes": ["solo"]', '"hidden": false'):
+        text = manifest_text(hidden=False, icon='x', icon_weight='fill')
+        repeated = {'id': '"demo"', 'name': '"Demo"', 'version': '"1.0.0"', 'api': '3', 'seats': '{"min": 1, "max": 1}',
+                    'modes': '["solo"]', 'hidden': 'false', 'icon': '"x"', 'icon_weight': '"fill"'}
+        self.assertEqual(sorted(repeated), sorted(pg.KNOWN_KEYS))
+        for key in pg.KNOWN_KEYS:
             with self.subTest(key=key):
-                self.refused(text[:-1] + ', ' + key + '}', 'duplicate key')
+                self.refused(text[:-1] + f', "{key}": {repeated[key]}' + '}', 'duplicate key')
         self.refused(text.replace('"min": 1', '"min": 1, "min": 1'), 'duplicate key seats.min')
         self.refused(text.replace('"max": 1', '"max": 1, "max": 1'), 'duplicate key seats.max')
+
+    def test_unicode_escapes_are_refused(self):
+        # The device's parser keeps \uXXXX as six literal characters, so Python and the device would read different
+        # strings: an escaped key or value, or a name counted in decoded characters.
+        base = manifest_text()
+        self.refused(base.replace('"id"', '"\\u0069d"'), 'escape')
+        self.refused(base.replace('"demo"', '"\\u0064emo"'), 'escape')
+        self.refused(base.replace('"solo"', '"\\u0073olo"'), 'escape')
+        self.refused(json.dumps(json.loads(manifest_text(name='\u00e9' * 32))), 'escape')  # 64 bytes, 192 on the device
+        self.refused(json.dumps(json.loads(manifest_text(icon='x'))).replace('"x"', '"\\u0078"'), 'escape')
+        self.refused(base[:-1] + ', "other": "\\u00e9"}', 'escape')
+        self.refused(base[:-1] + ', "other": "\\\\\\u00e9"}', 'escape')  # an escaped backslash, then a real \u
+        # Other escapes decode alike in Python and on the device, and an escaped backslash before u is literal text.
+        self.assertEqual(self.read(manifest_text(name='a\nb"c')), [])
+        self.assertEqual(self.read(json.dumps(json.loads(manifest_text(name='a\\u')))), [])
+        self.assertEqual(self.read(manifest_text(name='\u00e9' * 32)), [])  # raw UTF-8: 64 bytes, as the device counts
 
     def test_duplicate_unknown_keys_are_ignored(self):
         text = manifest_text()
@@ -499,7 +566,7 @@ class ReadManifestTest(unittest.TestCase):
         self.refused(manifest_text(name='é' * 33), 'name ')
         self.refused(manifest_text(name=''), 'name ')
         self.refused(manifest_text(name=5), 'name ')
-        self.refused(manifest_text(name='\ud800'), 'name ')
+        self.refused(manifest_text(name='\ud800'))
         self.assertEqual(self.read(manifest_text(version='v' * 32)), [])
         self.assertEqual(self.read(manifest_text(version='')), [])
         self.refused(manifest_text(version='v' * 33), 'version ')
@@ -584,9 +651,12 @@ class PngSizeTest(unittest.TestCase):
         self.assertEqual(pg.png_size(png(64, 32)), (64, 32))
         self.assertEqual(pg.png_size(png(2048, 3072)), (2048, 3072))
         self.assertEqual(pg.png_size(png(1, 1)), (1, 1))
+        for depth, color in ((1, 0), (16, 0), (8, 2), (1, 3), (8, 3), (8, 4), (16, 4), (8, 6), (16, 6)):
+            self.assertEqual(pg.png_size(png(3, 2, depth=depth, color=color)), (3, 2), (depth, color))
 
     def test_refuses_what_the_converter_refuses(self):
-        for data in (png(1, 1, interlace=1), png(0, 1), png(1, 0), png(2049, 1), png(1, 3073), png(1, 1, compression=2),
+        for data in (png(1, 1, interlace=1), png(0, 1), png(1, 0), png(2049, 1), png(1, 3073), png(1, 1, compression=2), png(1, 1, color=1),
+                     png(1, 1, depth=2, color=6), png(1, 1, color=7),
                      png(1, 1, bad_crc=True), png(1, 1, signature=bytes(8)), png(1, 1)[:32], b'', b'\x89PNG'):
             with self.subTest(size=len(data)), self.assertRaises(ValueError):
                 pg.png_size(data)
@@ -619,6 +689,14 @@ class VectorTest(PackerTestCase):
         self.assertEqual(self.vector['package_hash'], self.vector['sha256'][:16])
         self.assertRegex(self.vector['package_hash'], HASH_LINE)
         self.assertEqual(pg.package_hash(self.members), self.vector['package_hash'])
+
+    def test_every_member_string_fits_the_device_json_parser(self):
+        # C++ tests read this file with StreamingJsonParser, which drops a string over TOKEN_BUF_SIZE - 1 = 511 bytes
+        # without a callback; the escaped form is at least as long as the decoded one.
+        for name, text in self.vector['members'].items():
+            with self.subTest(name=name):
+                self.assertLessEqual(len(json.dumps(text)) - 2, 511)
+                self.assertNotIn('\\u', json.dumps(text))
 
     def test_the_committed_package_holds_the_members(self):
         data = self.package_path.read_bytes()
