@@ -4,7 +4,8 @@
 Python makes them because the firmware's miniz cannot deflate, and a zip bomb, a deflated member at its
 limit, and most of the malformed layouts need real deflate streams or hand-set header fields. Standard
 library only. Each case is a file `<name>.cpgame` plus a line `<name>.cpgame <expected>` in `cases.txt`, where
-`<expected>` is `Ok` (it installs) or the name of the `GamePackageInstaller::Error` that rejects it. The at-limit
+`<expected>` is `Ok` (it installs) or the name of the `GamePackageInstaller::Error` that rejects it; an optional third
+field is the most bytes any file under /.games-tmp may ever hold while it is installed. The at-limit
 and one-over cases take their numbers from test/game_core/package_vectors.json (the file scripts/pack_game.py's
 test reads, and test/game_core/PackageLimitsTest.cpp), so a limit changes in one place.
 
@@ -41,7 +42,8 @@ def deflate(data):
 class Member:
     """A zip member. `declared` overrides the fields the directory states (crc, csize, usize, method, flags)."""
 
-    def __init__(self, name, data, method=8, payload=None, **declared):
+    def __init__(self, name, data, method=8, payload=None, alias_of=None, **declared):
+        self.alias_of = alias_of  # a member whose local header and data this one's directory entry shares
         self.name = name if isinstance(name, bytes) else name.encode()
         self.method = method
         self.payload = payload if payload is not None else (deflate(data) if method == 8 else data)
@@ -74,7 +76,12 @@ def zip_of(members, total=None, disk_total=None, before_eocd=b'', comment=b'', e
     directory offset."""
     body = b''
     directory = b''
+    offsets = {}
     for member in members:
+        if member.alias_of is not None:
+            directory += central_header(member, offsets[id(member.alias_of)])
+            continue
+        offsets[id(member)] = len(body)
         directory += central_header(member, len(body))
         body += local_header(member) + member.payload
     count = len(members)
@@ -131,8 +138,8 @@ def cases(vectors):
     limits = vectors['limits']
     out = []
 
-    def add(name, expected, data):
-        out.append((name, expected, data))
+    def add(name, expected, data, held=None):
+        out.append((name, expected, data, held))
 
     # ---- at the limits, and one over (package_vectors.json) ----
     package = limits['package_bytes']
@@ -160,10 +167,31 @@ def cases(vectors):
 
     # ---- zip bombs ----
     add('zip-bomb-declared', 'MemberTooBig', zip_of(game(lua('bomb.lua', b'0' * (10 * 1024 * 1024)))))
-    add('zip-bomb-understated', 'BadSize',
-        zip_of(game(Member('bomb.lua', b'0' * (300 * 1024), usize=100))))
+    # The stream is cut off at the declared size: nothing past it may reach the card (held: at most 100 bytes).
+    add('zip-bomb-understated', 'BadSize', zip_of(game(Member('bomb.lua', b'0' * (300 * 1024), usize=100))), 100)
+    add('zip-bomb-understated-large', 'BadSize',
+        zip_of(game(Member('bomb.lua', b'0' * (300 * 1024), usize=5000))), 5000)
+    # All its bytes arrive, then the deflate stream ends without its final block: no success.
+    text = b'-- a\n' * 20
+    unfinished = b'\x00' + struct.pack('<HH', len(text), len(text) ^ 0xFFFF) + text
+    add('deflate-unterminated', 'BadSize', zip_of(game(Member('a.lua', text, payload=unfinished))))
     add('deflated-size-overstated', 'BadSize', zip_of(game(Member('a.lua', b'-- a\n' * 20, usize=200))))
     add('stored-size-mismatch', 'BadSize', zip_of(game(stored('a.lua', b'-- hi\n', usize=10))))
+
+    # ---- the .lua members together (GameAssets::load's limit; entry 7 moves it into the vectors) ----
+    sources = limits.get('lua_sources_bytes', {'limit': 262144, 'at': 262144, 'over': 262145})
+    for label, total in (('at', sources['at']), ('over', sources['over'])):
+        rest = total - len(MAIN) - member['limit']
+        add(f'{label}-lua-sources', 'Ok' if label == 'at' else 'SourcesTooBig',
+            zip_of(game(lua('a.lua', filled_lua(member['limit'])), lua('b.lua', filled_lua(rest)))))
+    add('three-lua-over-the-loader', 'SourcesTooBig',
+        zip_of(game(*[lua(f'p{i}.lua', filled_lua(100000)) for i in range(3)])))
+    # Thirty directory entries on one local header and one 128 KB stream: about 3.9 MB from 2 KB.
+    shared = lua('o0.lua', filled_lua(member['limit']))
+    add('overlap-members', 'BadDirectory',
+        zip_of(game(shared, *[Member(f'o{i}.lua', b'', alias_of=shared, crc=shared.fields['crc'],
+                                     csize=shared.fields['csize'], usize=shared.fields['usize'])
+                              for i in range(1, 30)])))
 
     # ---- names ----
     for name, label in ((b'../evil.lua', 'dotdot'), (b'/abs.lua', 'absolute'), (b'sub/x.lua', 'subdir'),
@@ -234,9 +262,9 @@ def main(argv):
         out = pathlib.Path(argv[1])
         out.mkdir(parents=True, exist_ok=True)
         lines = []
-        for name, expected, data in cases(vectors):
+        for name, expected, data, held in cases(vectors):
             (out / f'{name}.cpgame').write_bytes(data)
-            lines.append(f'{name}.cpgame {expected}\n')
+            lines.append(f'{name}.cpgame {expected}' + (f' {held}' if held is not None else '') + '\n')
         (out / 'cases.txt').write_text(''.join(lines))
     except (OSError, KeyError, ValueError) as exc:
         print(f'error: {exc}', file=sys.stderr)

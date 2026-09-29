@@ -102,6 +102,7 @@ TEST(ApiLevelTest, PackageLimitsMatchTheList) {
   EXPECT_EQ(limits["package_bytes"], std::to_string(GameCore::PACKAGE_BYTES));
   EXPECT_EQ(limits["package_members_count"], std::to_string(GameCore::PACKAGE_MEMBERS));
   EXPECT_EQ(limits["member_bytes"], std::to_string(GameCore::MEMBER_BYTES));
+  EXPECT_EQ(limits["lua_sources_bytes"], std::to_string(GameCore::LUA_SOURCES_BYTES));
   EXPECT_EQ(limits["member_stem_bytes"], std::to_string(GameCore::MEMBER_STEM_BYTES));
   EXPECT_EQ(limits["image_width_pixels"], std::to_string(GameCore::IMAGE_MAX_WIDTH));
   EXPECT_EQ(limits["image_height_pixels"], std::to_string(GameCore::IMAGE_MAX_HEIGHT));

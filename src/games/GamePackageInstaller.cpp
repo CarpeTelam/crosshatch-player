@@ -51,6 +51,8 @@ struct Member {
   char name[GameCore::MEMBER_NAME_BYTES];
   uint32_t crc;
   uint32_t size;
+  uint32_t localAt;  // the bytes it takes in the zip, [localAt, dataEnd)
+  uint32_t dataEnd;
 };
 
 struct InboxName {
@@ -111,6 +113,7 @@ class FileSink final : public Print {
   MemberGuard* guard;
 };
 
+// (A backstop: the stored name is already bounded by MEMBER_NAME_BYTES, so no stem over the limit gets here.)
 bool isStem(const std::string_view stem) {
   if (stem.empty() || stem.size() > GameCore::MEMBER_STEM_BYTES) return false;
   return std::all_of(stem.begin(), stem.end(),
@@ -243,6 +246,7 @@ Error listMembers(Job& job) {
   job.memberCount = 0;
   bool hasManifest = false;
   bool hasMain = false;
+  uint32_t luaBytes = 0;
   Error error = Error::None;
   FileReader reader(file);
   const ZipDirectory::Status status =
@@ -258,12 +262,24 @@ Error listMembers(Job& job) {
                   static_cast<unsigned long>(entry.uncompressedSize));
           error = Error::MemberTooBig;
         }
+        // Two members on the same bytes would extract far more than the package holds.
+        for (size_t i = 0; i < job.memberCount && error == Error::None; ++i) {
+          if (entry.localAt < job.members[i].dataEnd && job.members[i].localAt < entry.dataEnd) {
+            LOG_ERR("GAME", "Members \"%s\" and \"%s\" overlap", job.members[i].name, entry.name);
+            error = Error::BadDirectory;
+          }
+        }
+        // Each member is at most MEMBER_BYTES, so the total cannot wrap.
+        if (kind == MemberKind::Lua) luaBytes += entry.uncompressedSize;
+        if (error == Error::None && luaBytes > GameCore::LUA_SOURCES_BYTES) error = Error::SourcesTooBig;
         if (error != Error::None) return false;
         // classify() bounded the name by MEMBER_NAME_BYTES - 1.
         Member& member = job.members[job.memberCount++];
         std::memcpy(member.name, entry.name, std::strlen(entry.name) + 1);
         member.crc = entry.crc;
         member.size = entry.uncompressedSize;
+        member.localAt = entry.localAt;
+        member.dataEnd = entry.dataEnd;
         hasManifest = hasManifest || kind == MemberKind::Manifest;
         hasMain = hasMain || std::strcmp(entry.name, "main.lua") == 0;
         return true;
@@ -587,7 +603,9 @@ const char* describe(const Error error) {
     case Error::Unsupported:
       return "the zip uses ZIP64, encryption, or another compression method";
     case Error::BadDirectory:
-      return "the zip's entry count does not match its directory";
+      return "the zip's entry count does not match its directory, or members overlap";
+    case Error::SourcesTooBig:
+      return "the Lua members are over their size limit together";
   }
   return "unknown error";
 }

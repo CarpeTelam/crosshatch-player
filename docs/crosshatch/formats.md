@@ -172,14 +172,24 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Package file | `PACKAGE_BYTES` | 262,144 B |
 | Members | `PACKAGE_MEMBERS` | 32 |
 | One member, uncompressed | `MEMBER_BYTES` | 131,072 B |
+| The `.lua` members together, uncompressed (`GameAssets::MAX_SOURCE_BYTES`) | `LUA_SOURCES_BYTES` | 262,144 B |
 | Name of a `.lua` or `.png` member, without its extension | `MEMBER_STEM_BYTES` | 32 |
 | Converted images, all `.bmp` files but `icon.bmp` | `IMAGES_BYTES` | 131,072 B |
 | Converted images | `MAX_IMAGES` | 32 |
 | Side of `icon.bmp` | `ICON_PIXELS` | 64 |
 
 The installer counts converted images as the game loader does: each `.bmp` is 62 + ceil(width / 32) * 4 * height
-bytes, header included, and `icon.bmp` is left out. It does not yet check the package and member byte limits or the
-members' CRCs; `pack_game.py` refuses a package over any limit.
+bytes, header included, and `icon.bmp` is left out.
+
+The installer reads the zip's directory itself (`src/games/ZipDirectory.h`) before it extracts anything, and rejects,
+each with its own reason: a file over `PACKAGE_BYTES`; a member declaring more than `MEMBER_BYTES`; `.lua` members
+over `LUA_SOURCES_BYTES` together; more members than `PACKAGE_MEMBERS`; ZIP64, encryption, or a compression method
+other than stored and deflate; a stored member whose two sizes differ; an EOCD entry count that differs from the
+directory's; two members that share bytes of the file. The EOCD must be the last 22 bytes (a zip comment is refused,
+and `pack_game.py` writes none) and the central directory must end where it begins. Each member then streams
+through `ZipFile` into a guard that never lets more than the declared size reach the card, refuses a `.lua` whose
+first byte is Lua's bytecode signature (ESC, 0x1B), and checks the CRC-32. `pack_game.py` refuses a package over the
+limits it knows (the `.lua` total is added there in a later entry).
 
 ### Images
 

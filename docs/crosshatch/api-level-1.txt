@@ -358,13 +358,15 @@ limit timers_pending_count 1
 # image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
 limit images_bytes 131072
 limit images_count 32
-# A .cpgame package (docs/crosshatch/formats.md): the file's bytes, its members (folders
-# included), one member's bytes uncompressed, and the stem of a .lua or .png member's name
-# ([a-z0-9_]{1,32}). The installer rejects a package over any of them, and scripts/pack_game.py
-# refuses to make one.
+# A .cpgame package (docs/crosshatch/formats.md): the file's bytes, its members (a folder is
+# not allowed), one member's bytes uncompressed, the .lua members' bytes together, and the stem
+# of a .lua or .png member's name ([a-z0-9_]{1,32}). The installer rejects a package over any
+# of them; scripts/pack_game.py refuses to make one over any but the .lua total, which its
+# next change adds.
 limit package_bytes 262144
 limit package_members_count 32
 limit member_bytes 131072
+limit lua_sources_bytes 262144
 limit member_stem_bytes 32
 # A .png member's largest width and height in pixels (icon.png is scaled to 64 x 64).
 limit image_width_pixels 2048

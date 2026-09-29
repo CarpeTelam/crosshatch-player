@@ -57,6 +57,8 @@ const char* reasonText(const GamePackageInstaller::Error error) {
       return tr(STR_GAMES_INSTALL_UNSUPPORTED);
     case Error::BadDirectory:
       return tr(STR_GAMES_INSTALL_BAD_LIST);
+    case Error::SourcesTooBig:
+      return tr(STR_GAMES_SOURCES_TOO_LARGE);
     case Error::None:
       break;
   }

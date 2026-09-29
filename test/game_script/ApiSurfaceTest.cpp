@@ -444,6 +444,7 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"package_bytes", GameCore::PACKAGE_BYTES},
       {"package_members_count", GameCore::PACKAGE_MEMBERS},
       {"member_bytes", GameCore::MEMBER_BYTES},
+      {"lua_sources_bytes", GameCore::LUA_SOURCES_BYTES},
       {"member_stem_bytes", GameCore::MEMBER_STEM_BYTES},
       {"image_width_pixels", GameCore::IMAGE_MAX_WIDTH},
       {"image_height_pixels", GameCore::IMAGE_MAX_HEIGHT},

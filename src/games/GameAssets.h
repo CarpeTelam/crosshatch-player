@@ -3,6 +3,7 @@
 #include <GameImages.h>
 #include <GameSources.h>
 #include <HalMemory.h>
+#include <PackageLimits.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +24,7 @@ class GameAssets {
  public:
   // AD-15 package limits, applied to what a hand-placed game holds.
   static constexpr size_t MAX_SOURCES = 32;
-  static constexpr size_t MAX_SOURCE_BYTES = 256 * 1024;
+  static constexpr size_t MAX_SOURCE_BYTES = GameCore::LUA_SOURCES_BYTES;
 
   // Why a load failed; the match shows each as a translated reason (AD-14).
   // BadSourceName: the only .lua files have names no module can have. BadImage: an

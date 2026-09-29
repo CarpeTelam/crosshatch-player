@@ -36,7 +36,8 @@ enum class Error : uint8_t {
   BadCrc,         // a member's bytes do not match its CRC-32
   BinaryLua,      // a .lua member starts with Lua's bytecode signature
   Unsupported,    // ZIP64, encryption, or a compression method other than stored and deflate
-  BadDirectory,   // the EOCD's entry count differs from the directory's
+  BadDirectory,   // the EOCD's entry count differs from the directory's, or two members share bytes of the file
+  SourcesTooBig,  // the .lua members together pass LUA_SOURCES_BYTES, more than GameAssets::load accepts
 };
 
 // The most inbox files one installAll takes; the rest wait for the next call.

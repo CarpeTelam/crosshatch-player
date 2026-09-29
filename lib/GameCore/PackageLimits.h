@@ -23,6 +23,11 @@ inline constexpr size_t MEMBER_STEM_BYTES = 32;
 // Room for a member name as stored, ".lua" or ".png" included and the terminating NUL too;
 // "manifest.json" (13 bytes) is shorter than the longest stem plus an extension.
 inline constexpr size_t MEMBER_NAME_BYTES = MEMBER_STEM_BYTES + 4 + 1;
+static_assert(MEMBER_NAME_BYTES - 1 == MEMBER_STEM_BYTES + 4,
+              "a stored name of the longest stem fits, one byte more does not");
+// The .lua members together, uncompressed: what GameAssets::load accepts of a game's sources, so a package that
+// installs also loads (GameAssets::MAX_SOURCE_BYTES is this constant).
+inline constexpr size_t LUA_SOURCES_BYTES = 256 * 1024;
 // The widest and tallest .png member, in pixels: the converter's own limits, which the installer
 // checks before it converts, so that a picture it cannot convert is invalid and not a card fault.
 inline constexpr size_t IMAGE_MAX_WIDTH = 2048;

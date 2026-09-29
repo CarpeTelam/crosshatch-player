@@ -34,6 +34,9 @@ struct Entry {
   bool nameUsable;
   uint32_t crc;
   uint32_t uncompressedSize;
+  // The bytes the member takes in the file: its local header through its data, [localAt, dataEnd).
+  uint32_t localAt;
+  uint32_t dataEnd;
 };
 
 namespace detail {
@@ -122,6 +125,8 @@ Status read(Reader& reader, const uint32_t fileBytes, Visit&& visit) {
     entry.nameUsable = nameBytes < sizeof(entry.name) && std::strlen(entry.name) == nameBytes;
     entry.crc = le32(central + 16);
     entry.uncompressedSize = uncompressedSize;
+    entry.localAt = localAt;
+    entry.dataEnd = static_cast<uint32_t>(dataAt + compressedSize);
     if (!visit(entry)) return Status::Stopped;
     at = static_cast<uint32_t>(next);
   }

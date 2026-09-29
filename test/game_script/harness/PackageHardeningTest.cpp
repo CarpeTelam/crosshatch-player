@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "HalDisplay.h"
 #include "InstallerSupport.h"
 #include "PackageLimits.h"
+#include "PngToBmpConverter.h"
 
 HalDisplay display;
 
@@ -28,13 +30,20 @@ namespace {
 struct Case {
   std::string file;      // "<name>.cpgame", in HARDENING_PACKAGES_DIR
   std::string expected;  // "Ok", or an Error's name
+  int64_t held = -1;     // the most bytes any file under /.games-tmp may ever hold, or -1 for no check
 };
 
 std::vector<Case> loadCases() {
   std::vector<Case> cases;
   std::ifstream list(std::string(HARDENING_PACKAGES_DIR) + "/cases.txt");
-  Case next;
-  while (list >> next.file >> next.expected) cases.push_back(next);
+  std::string line;
+  while (std::getline(list, line)) {
+    std::istringstream fields(line);
+    Case next;
+    if (!(fields >> next.file >> next.expected)) continue;
+    if (!(fields >> next.held)) next.held = -1;
+    cases.push_back(next);
+  }
   return cases;
 }
 
@@ -52,6 +61,7 @@ const std::map<std::string, Error>& errorsByName() {
       {"BadSize", Error::BadSize},
       {"BadCrc", Error::BadCrc},
       {"BinaryLua", Error::BinaryLua},
+      {"SourcesTooBig", Error::SourcesTooBig},
       {"Unsupported", Error::Unsupported},
       {"BadDirectory", Error::BadDirectory},
   };
@@ -72,8 +82,24 @@ Snapshot snapshotOfGames() {
   return snapshot;
 }
 
-// An installed game and its saved data, which no rejection may touch.
+// The most bytes any file under the scratch folder ever held: a removed file keeps its bytes in the fake card's
+// entry list, so this sees files the installer has since deleted.
+int64_t mostBytesHeldInScratch() {
+  int64_t most = 0;
+  for (const auto& entry : fakesd::sim().entries) {
+    if (!entry.isDir && fakesd::inSubtree(entry.path, "/.games-tmp")) {
+      most = std::max<int64_t>(most, static_cast<int64_t>(entry.bytes.size()));
+    }
+  }
+  return most;
+}
+
+// An installed game and its saved data, which no rejection may touch. The game with the crafted packages' own id
+// is there too, so a rejected upgrade must leave it whole.
 void seedInstalledGame() {
+  fakesd::addFile("/.games/hardening/manifest.json", toBytes(manifestJson("hardening")));
+  fakesd::addFile("/.games/hardening/main.lua", toBytes("return 'old'\n"));
+  fakesd::addFile("/.games/hardening/.pkg", toBytes("v1\nfedcba9876543210\n"));
   fakesd::addFile("/.games/keeper/manifest.json", toBytes(manifestJson("keeper")));
   fakesd::addFile("/.games/keeper/main.lua", toBytes("return {}\n"));
   fakesd::addFile("/.games/keeper/.pkg", toBytes("v1\n0123456789abcdef\n"));
@@ -121,6 +147,9 @@ TEST_P(CraftedPackageTest, EndsAsTheGeneratorSaysItShould) {
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
 
   EXPECT_FALSE(exists("/.games-tmp"));
+  if (crafted.held >= 0) {
+    EXPECT_LE(mostBytesHeldInScratch(), crafted.held) << "more reached the card than the member declares";
+  }
   if (crafted.expected == "Ok") {
     EXPECT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
     EXPECT_EQ(report.failed, 0);
@@ -150,8 +179,8 @@ TEST_F(HardeningTest, TheGeneratorMadeOnePackageForEachRejection) {
   std::set<std::string> expected;
   for (const Case& crafted : cases) expected.insert(crafted.expected);
   for (const char* name :
-       {"Ok", "PackageTooBig", "MemberTooBig", "ImagesTooBig", "TooManyMembers", "BadMember", "BadImage", "BadSize",
-        "BadCrc", "BinaryLua", "Unsupported", "BadDirectory", "NotAPackage"}) {
+       {"Ok", "PackageTooBig", "MemberTooBig", "ImagesTooBig", "SourcesTooBig", "TooManyMembers", "BadMember",
+        "BadImage", "BadSize", "BadCrc", "BinaryLua", "Unsupported", "BadDirectory", "NotAPackage"}) {
     EXPECT_EQ(expected.count(name), 1u) << "no crafted package for " << name;
   }
   // Each name in cases.txt is one the installer knows, and none of the card-fault errors (those keep the file).
@@ -162,10 +191,10 @@ TEST_F(HardeningTest, TheGeneratorMadeOnePackageForEachRejection) {
 
 TEST_F(HardeningTest, EveryErrorHasItsOwnDescription) {
   std::set<std::string> texts;
-  for (const Error error :
-       {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember, Error::NoMain,
-        Error::TooManyMembers, Error::BadImage, Error::PackageTooBig, Error::MemberTooBig, Error::ImagesTooBig,
-        Error::BadSize, Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory}) {
+  for (const Error error : {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember,
+                            Error::NoMain, Error::TooManyMembers, Error::BadImage, Error::PackageTooBig,
+                            Error::MemberTooBig, Error::ImagesTooBig, Error::SourcesTooBig, Error::BadSize,
+                            Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory}) {
     const std::string text = GamePackageInstaller::describe(error);
     EXPECT_NE(text, "unknown error");
     EXPECT_TRUE(texts.insert(text).second) << "two errors describe themselves as: " << text;
@@ -221,4 +250,35 @@ TEST_F(HardeningTest, TheVectorPackageStillInstallsWithItsCrcsChecked) {
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/" + vector.id + "/.pkg")), "v1\n" + vector.packageHash + "\n");
+}
+
+// ---- the picture limits are the converter's own -----------------------------------------------------------
+
+namespace {
+
+// Takes what the converter writes and keeps none of it.
+class DiscardSink final : public Print {
+ public:
+  size_t write(const uint8_t) override { return 1; }
+  size_t write(const uint8_t*, const size_t size) override { return size; }
+};
+
+bool converts(const int width, const int height) {
+  fakesd::addFile("/probe.png", solidPng(width, height, 200));
+  HalFile png;
+  EXPECT_TRUE(Storage.openFileForRead("TEST", "/probe.png", png));
+  DiscardSink sink;
+  return PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(png, sink, 0, 0);
+}
+
+}  // namespace
+
+// IMAGE_MAX_WIDTH and IMAGE_MAX_HEIGHT repeat constants inside PngToBmpConverter.cpp; this ties them.
+TEST_F(HardeningTest, TheConverterAcceptsThePictureLimitsAndRefusesOneOver) {
+  const int width = static_cast<int>(GameCore::IMAGE_MAX_WIDTH);
+  const int height = static_cast<int>(GameCore::IMAGE_MAX_HEIGHT);
+  EXPECT_TRUE(converts(width, 1));
+  EXPECT_FALSE(converts(width + 1, 1));
+  EXPECT_TRUE(converts(1, height));
+  EXPECT_FALSE(converts(1, height + 1));
 }
