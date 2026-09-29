@@ -1,37 +1,82 @@
+#include <GameIcons.h>
 #include <I18n.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
+#include "GameRowIcon.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
 #include "MatchSupport.h"
 #include "activities/games/GameMatchActivity.h"
-#include "activities/games/GamesListActivity.h"
+#include "activities/games/GamesLauncherActivity.h"
 #include "util/ButtonNavigator.h"
 
-// The real GamesListActivity, GameRegistry, UiListActivity, and FreeInkUI over the screen doubles
-// (screen_stubs/), the installer scripted (list_stubs/InstallerScript.h). Entry 5 of
-// epic-install-and-launcher. Entries 8 to 12 copy this file for the launcher, the mode picker, and
-// the installer screens: the fixture below opens a screen, draws it, and finds a row by the text it drew.
-// Each test names the deferred-work item it pins.
+// The real GamesLauncherActivity, GameRegistry, GameRowIcon, UiListActivity, and FreeInkUI over the
+// screen doubles (screen_stubs/), the installer scripted (list_stubs/InstallerScript.h). Entry 5 of
+// epic-install-and-launcher built it for the minimal Games list; entry 8 made it the launcher's. Entries
+// 9 to 12 copy this file for the mode picker and the installer screens: the fixture below opens a screen,
+// draws it, and finds a row by the text it drew. Each test names the deferred-work item it pins.
+
+// A nothrow array allocation of exactly this many bytes fails while it is non-zero: how a test makes the launcher's
+// makeUniqueNoThrow<T[]> return null (test/font_cache_manager does the same to count allocations). Every other
+// allocation is malloc, as the default operator's, so nothing else changes.
+namespace oom {
+std::size_t failSize = 0;
+}
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+  if (oom::failSize != 0 && size == oom::failSize) return nullptr;
+  return std::malloc(size);
+}
 
 namespace {
+
+// Reads the protected name an Activity was constructed with.
+struct NameOf : Activity {
+  static const std::string& of(const Activity& activity) { return activity.*(&NameOf::name); }
+};
+
+// A library icon's rows decoded without GameRowIcon or GameIconBlit: the packed bitmap's PackBits, from the top.
+std::vector<uint8_t> libraryRows(const char* name, const bool fill) {
+  const GameIcons::PackedBitmap bitmap =
+      GameIcons::ICONS[GameIcons::find(name, std::strlen(name))].medium[fill ? 1 : 0];
+  const size_t length = bitmap.data[0] | (static_cast<size_t>(bitmap.data[1]) << 8);
+  std::vector<uint8_t> rows;
+  for (size_t pos = 2; pos < 2 + length;) {
+    const uint8_t control = bitmap.data[pos++];
+    if (control < 128) {
+      for (int i = 0; i <= control; ++i) rows.push_back(bitmap.data[pos++]);
+    } else {
+      const uint8_t value = bitmap.data[pos++];
+      for (int i = 0; i < 257 - control; ++i) rows.push_back(value);
+    }
+  }
+  return rows;
+}
 
 using Button = MappedInputManager::Button;
 using GamePackageInstaller::Error;
 
 const std::string PKG = "v1\n0530a15766e91bf1\n";
 
+// `extra` is more members of the manifest object, each with its leading comma (`,"icon":"dice-six"`).
 std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int api,
-                         const int seatsMin, const int seatsMax) {
+                         const int seatsMin, const int seatsMax, const std::string& extra = "") {
   return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"version\":\"1.0.0\",\"api\":" + std::to_string(api) +
          ",\"seats\":{\"min\":" + std::to_string(seatsMin) + ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" +
-         modes + "]}";
+         modes + "]" + extra + "}";
+}
+
+// A 64 x 64 icon.bmp as the installer writes it, its pixels a pattern that differs by seed.
+harness::Bytes iconBmp(const int seed) {
+  return harness::bmpFile(64, 64, [seed](const int x, const int y) { return harness::speckle(x, y, seed); });
 }
 
 // A message that wrapped over lines, read as one line of words.
@@ -42,9 +87,9 @@ std::string flat(std::string text) {
 }
 
 // What a person should be told for each installer Error: written out here, not derived from the source. A switch
-// over the whole enum with no default and -Werror=switch on this target (games_list.cmake): a new value does not
+// over the whole enum with no default and -Werror=switch on this target (games_launcher.cmake): a new value does not
 // compile until it has a case, and the test below then shows the screen every value with a text is given, so a
-// value reasonText does not handle fails too. Copies of this test (entries 8 to 12) must keep both.
+// value reasonText does not handle fails too. Copies of this test (entries 9 to 12) must keep both.
 // Null: no text (None is not a failure, and the values past the last are none).
 const char* expectedText(const Error error) {
   switch (error) {
@@ -100,6 +145,7 @@ class ListTest : public match::ScreenTest {
   }
 
   void TearDown() override {
+    oom::failSize = 0;
     fakertos::release();  // a test that failed while holding the VM must not leave it held
     // What the manager does when a screen goes: onExit under the lock, then the destructor under it.
     if (list) {
@@ -133,6 +179,20 @@ class ListTest : public match::ScreenTest {
     if (!pkg.empty()) fakesd::addFile(dir + "/.pkg", pkg);
   }
 
+  // An installed game whose manifest names a library icon (and, when `weight` is not empty, its weight).
+  static void addIconGame(const std::string& id, const std::string& name, const std::string& icon,
+                          const std::string& weight = "") {
+    std::string extra = ",\"icon\":\"" + icon + "\"";
+    if (!weight.empty()) extra += ",\"icon_weight\":\"" + weight + "\"";
+    const std::string dir = "/.games/" + id;
+    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, "\"solo\"", 1, 1, 1, extra));
+    fakesd::addFile(dir + "/main.lua", std::string("return {}\n"));
+    fakesd::addFile(dir + "/.pkg", PKG);
+  }
+  static void addIconFile(const std::string& id, const harness::Bytes& file) {
+    fakesd::addFile("/.games/" + id + "/icon.bmp", file);
+  }
+
   // The fixture game `name` (test/game_script/fixtures) as an installed game: its files and a .pkg.
   static void installFixtureWithPkg(const std::string& name) {
     match::installFixture(name);
@@ -146,7 +206,7 @@ class ListTest : public match::ScreenTest {
 
   // Opens the list as the manager would (onEnter), and draws it.
   void open() {
-    list = std::make_unique<GamesListActivity>(*renderer, *input);
+    list = std::make_unique<GamesLauncherActivity>(*renderer, *input);
     activity().onEnter();
     render();
   }
@@ -212,11 +272,11 @@ class ListTest : public match::ScreenTest {
     return match;
   }
 
-  std::unique_ptr<GamesListActivity> list;
+  std::unique_ptr<GamesLauncherActivity> list;
   Activity* entered = nullptr;  // the replacement enterReplacement() started, which needs its onExit
 };
 
-// ---- opening: the inbox first, then the installed games (## 4.4: GamesListActivity's filters) ----
+// ---- opening: the inbox first, then the installed games (## 4.4: GamesLauncherActivity's filters) ----
 
 TEST_F(ListTest, OpeningInstallsTheInboxOnceAndThenListsTheGames) {
   addGame("alpha", "Alpha");
@@ -319,39 +379,281 @@ TEST_F(ListTest, OnlyAFolderWithAValidPkgAndAManifestOfItsOwnIdIsListed) {
   EXPECT_TRUE(logHas("Started good"));
 }
 
-// ## 4.4 (the host-caps item): the Manifest::check filter. Only a game that can start solo on this host is listed.
-TEST_F(ListTest, AGameThisHostCannotStartSoloIsNotListed) {
-  addGame("solo-game", "SoloGame");
-  addGame("solo-and-pass", "SoloAndPass", "\"solo\",\"pass\"", 1, 1, 2);        // solo starts; pass is not offered yet
-  addGame("solo-and-nearby", "SoloAndNearby", "\"solo\",\"nearby\"", 1, 1, 2);  // solo starts; there is no radio
-  addGame("too-new", "TooNew", "\"solo\"", 2);                                  // api 2 on an api 1 host
-  addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);                        // no pass capability on this host
-  addGame("nearby-only", "NearbyOnly", "\"nearby\"", 1, 2, 2);                  // no nearby capability on this host
-  addGame("too-many-seats", "TooManySeats", "\"pass\"", 1, 3, 4);               // more seats than the host has
-  open();
-  const std::vector<std::string> all{"SoloGame", "SoloAndPass", "SoloAndNearby", "TooNew",
-                                     "PassOnly", "NearbyOnly",  "TooManySeats"};
-  const std::vector<std::string> expected{"SoloAndNearby", "SoloAndPass", "SoloGame"};
-  EXPECT_EQ(rows(all), expected);
-  // The reason is logged for each one left out, from the check's own verdict.
-  EXPECT_TRUE(logHas("Not listing too-new: "));
-  EXPECT_TRUE(logHas("Not listing pass-only: "));
-  EXPECT_TRUE(logHas("Not listing nearby-only: "));
-  EXPECT_TRUE(logHas("Not listing too-many-seats: "));
-  EXPECT_FALSE(logHas("Not listing solo-game"));
+// ---- a game this host cannot start (R7): listed, with its reason, and never started ----
+
+// The line drawn right after `label`: a row draws its name and then, if it has one, its reason under it.
+std::string lineAfter(const screen::RecordingTarget& target, const std::string& label) {
+  for (size_t i = 0; i < target.drawn.size(); ++i)
+    if (target.drawn[i].text == label) return i + 1 < target.drawn.size() ? target.drawn[i + 1].text : "";
+  return "<no such row>";
 }
 
-// The solo-mode term of the same filter. With pass off on this host (as it is), a game that is not solo is not Ok
-// either, so the term cannot be told from `check.ok()`; the double turns pass on, where a pass-only game is Ok and only
-// that term leaves it out.
-TEST_F(ListTest, AGameThatCannotStartSoloIsNotListedEvenWhenAnotherModeCanStart) {
+// ## 4.4 (the host-caps item): what Manifest::check says about a game is on its row; it is not left off the list.
+TEST_F(ListTest, AGameThisHostCannotStartIsListedWithItsOwnReasonAndDoesNotStart) {
+  addGame("solo-game", "SoloGame");
+  addGame("too-new", "TooNew", "\"solo\"", 2);                     // api 2 on an api 1 host
+  addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);           // no pass capability on this host
+  addGame("too-many-seats", "TooManySeats", "\"pass\"", 1, 3, 4);  // more seats than the host has
+  addGame("bad-solo", "BadSolo", "\"solo\"", 1, 2, 2);             // solo needs one seat: the manifest breaks its rules
+  open();
+  const std::vector<std::string> all{"SoloGame", "TooNew", "PassOnly", "TooManySeats", "BadSolo"};
+  const std::vector<std::string> byName{"BadSolo", "PassOnly", "SoloGame", "TooManySeats", "TooNew"};
+  ASSERT_EQ(rows(all), byName) << "every registry game is a row, in the registry's order";
+  // Each reason is under its own game, and the game that can start has none: the next line is the next name.
+  EXPECT_EQ(lineAfter(ui(), "TooNew"), tr(STR_GAMES_UNAVAILABLE_NEWER));
+  EXPECT_EQ(lineAfter(ui(), "TooManySeats"), tr(STR_GAMES_UNAVAILABLE_SEATS));
+  EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_UNAVAILABLE_MODE));
+  EXPECT_EQ(lineAfter(ui(), "BadSolo"), tr(STR_GAMES_UNAVAILABLE_INVALID));
+  EXPECT_EQ(lineAfter(ui(), "SoloGame"), "TooManySeats");
+  // The reason is logged for each one, from the check's own verdict.
+  EXPECT_TRUE(logHas("Unavailable too-new: "));
+  EXPECT_TRUE(logHas("Unavailable pass-only: "));
+  EXPECT_TRUE(logHas("Unavailable too-many-seats: "));
+  EXPECT_FALSE(logHas("Unavailable solo-game"));
+}
+
+TEST_F(ListTest, AGameWrittenForAnOlderApiThanTheHostKeepsSaysSo) {
+  hostcaps::script().minApi = 2;  // this host has dropped api 1
+  addGame("old-game", "OldGame");
+  addGame("new-game", "NewGame", "\"solo\"", 2);
+  open();
+  EXPECT_EQ(lineAfter(ui(), "OldGame"), tr(STR_GAMES_UNAVAILABLE_OLDER));
+  EXPECT_TRUE(logHas("Unavailable old-game: "));
+  tapRow("OldGame");
+  EXPECT_TRUE(activityManager.replacements.empty());
+}
+
+TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
+  addGame("alpha", "Alpha");
+  addGame("too-new", "TooNew", "\"solo\"", 2);
+  open();
+  tapRow("TooNew");
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_TRUE(logHas("Not starting too-new: "));
+
+  // The tap moved the selection to TooNew; Confirm acts on it.
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.goHome, 0) << "the row's own screen stays up";
+
+  // The available row beside it still opens.
+  tapRow("Alpha");
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started alpha"));
+}
+
+// Solo is the only start until the mode picker (entry 9): with pass on, a pass-only game is Ok and is listed, and it
+// still does not open, while a game that also offers solo does.
+TEST_F(ListTest, AGameOnlyAnotherModeCanStartIsListedButDoesNotOpenYet) {
   hostcaps::script().pass = true;
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);
   addGame("solo-and-pass", "SoloAndPass", "\"solo\",\"pass\"", 1, 1, 2);
   open();
-  const std::vector<std::string> expected{"SoloAndPass"};
+  const std::vector<std::string> expected{"PassOnly", "SoloAndPass"};
   EXPECT_EQ(rows({"PassOnly", "SoloAndPass"}), expected);
-  EXPECT_TRUE(logHas("Not listing pass-only: no solo mode on this host"));
+  // The host can start it, but not in a mode a row starts yet: the row says so rather than ignore a tap in silence.
+  EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_UNAVAILABLE_MODE));
+  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "") << "the game that opens has no reason";
+  tapRow("PassOnly");
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_TRUE(logHas("Not starting pass-only: no solo mode on this host"));
+  tapRow("SoloAndPass");
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started solo-and-pass"));
+}
+
+// ---- paging (R7): the list pages past one screen ----
+
+TEST_F(ListTest, ManyGamesPageAndEveryDrawnRowDrawsOneIcon) {
+  std::vector<std::string> names;
+  for (int i = 1; i <= 25; ++i) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "Game %02d", i);
+    names.push_back(name);
+    char id[16];
+    std::snprintf(id, sizeof(id), "game-%02d", i);
+    addGame(id, name);
+  }
+  open();
+  std::vector<std::string> page = rows(names);
+  ASSERT_FALSE(page.empty());
+  EXPECT_EQ(page.front(), "Game 01");
+  ASSERT_LT(page.size(), names.size()) << "25 games must not fit one screen";
+  EXPECT_FALSE(ui().drewLine("Game 25"));
+  EXPECT_EQ(ui().bitmaps, static_cast<int>(page.size())) << "one icon for each row drawn";
+
+  // A swipe up brings the next rows; enough of them reach the last game.
+  const std::string firstPageLast = page.back();
+  input->swipeDirection(MappedInputManager::SwipeDir::Up);
+  frame();
+  render();
+  page = rows(names);
+  ASSERT_FALSE(page.empty());
+  EXPECT_FALSE(ui().drewLine("Game 01"));
+  size_t firstPageLastIndex = 0;
+  while (names[firstPageLastIndex] != firstPageLast) ++firstPageLastIndex;
+  EXPECT_EQ(page.front(), names[firstPageLastIndex + 1]) << "the second page starts where the first ended";
+  EXPECT_EQ(ui().bitmaps, static_cast<int>(page.size()));
+  for (int swipes = 0; swipes < 10 && !ui().drewLine("Game 25"); ++swipes) {
+    input->swipeDirection(MappedInputManager::SwipeDir::Up);
+    frame();
+    render();
+  }
+  EXPECT_TRUE(ui().drewLine("Game 25"));
+  // The rows on the last page open the game they name.
+  tapRow("Game 25");
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  EXPECT_TRUE(activityManager.replacements.back() != nullptr);
+}
+
+TEST_F(ListTest, PageKeysMoveTheSelectionPastTheFirstScreen) {
+  for (int i = 1; i <= 25; ++i) {
+    char id[16];
+    std::snprintf(id, sizeof(id), "game-%02d", i);
+    char name[16];
+    std::snprintf(name, sizeof(name), "Game %02d", i);
+    addGame(id, name);
+  }
+  open();
+  for (int step = 0; step < 24; ++step) {
+    input->click(Button::NavNext);
+    frame();
+  }
+  render();
+  EXPECT_TRUE(ui().drewLine("Game 25")) << "the last row is drawn once the selection reaches it";
+  EXPECT_FALSE(ui().drewLine("Game 01"));
+  input->click(Button::Confirm);
+  frame();
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-25"));
+}
+
+// ---- the row icon (R7, AD-24): icon.bmp, else the manifest icon in its weight, else game-controller ----
+
+TEST_F(ListTest, ARowsIconComesFromIconBmpElseTheManifestIconElseGameController) {
+  addIconGame("a-both", "A Both", "dice-six", "fill");  // icon.bmp wins over the manifest's icon
+  addIconFile("a-both", iconBmp(1));
+  addIconGame("b-fill", "B Fill", "dice-six", "fill");
+  addIconGame("c-regular", "C Regular", "dice-six", "regular");
+  addIconGame("d-default", "D Default", "dice-six");  // no icon_weight: regular
+  addGame("e-none", "E None");
+  addIconGame("f-unknown", "F Unknown", "not-in-the-library");  // hand-copied: the installer would refuse it
+  open();
+  EXPECT_TRUE(logHas("Icon for a-both: icon.bmp"));
+  EXPECT_TRUE(logHas("Icon for b-fill: library dice-six fill"));
+  EXPECT_TRUE(logHas("Icon for c-regular: library dice-six regular"));
+  EXPECT_TRUE(logHas("Icon for d-default: library dice-six regular"));
+  EXPECT_TRUE(logHas("Icon for e-none: fallback game-controller"));
+  EXPECT_TRUE(logHas("Icon for f-unknown: fallback game-controller"));
+  // Every row drawn has its icon, whichever the source.
+  const std::vector<std::string> names{"A Both", "B Fill", "C Regular", "D Default", "E None", "F Unknown"};
+  EXPECT_EQ(ui().bitmaps, static_cast<int>(rows(names).size()));
+}
+
+TEST_F(ListTest, AnIconBmpThatIsNotUsableFallsBackToTheNextSource) {
+  harness::Bytes truncated = iconBmp(2);
+  truncated.resize(80);
+  addIconGame("g-truncated", "G Truncated", "boat");
+  addIconFile("g-truncated", truncated);
+  addIconGame("h-small", "H Small", "boat", "fill");  // a valid image, but 32 x 32
+  addIconFile("h-small", harness::bmpFile(32, 32, [](int x, int y) { return harness::speckle(x, y); }));
+  addGame("i-small-none", "I Small None");
+  addIconFile("i-small-none", harness::bmpFile(64, 32, [](int x, int y) { return harness::speckle(x, y); }));
+  open();
+  EXPECT_TRUE(logHas("Icon for g-truncated: library boat regular"));
+  EXPECT_TRUE(logHas("Icon for h-small: library boat fill"));
+  EXPECT_TRUE(logHas("Icon for i-small-none: fallback game-controller"));
+  EXPECT_TRUE(logHas("/.games/g-truncated/icon.bmp is not a usable icon"));
+  EXPECT_TRUE(logHas("/.games/h-small/icon.bmp is 32x32"));
+}
+
+// The bits handed to the list for each row (RecordingTarget::bitmapsDrawn, in draw order: one per row, top to bottom).
+TEST_F(ListTest, EachRowDrawsItsOwnBitsAs64x64Mask1) {
+  addIconGame("a-first", "A First", "dice-six", "fill");  // icon.bmp wins, seed 1
+  addIconFile("a-first", iconBmp(1));
+  addIconGame("b-second", "B Second", "boat");  // icon.bmp wins, a different seed
+  addIconFile("b-second", iconBmp(2));
+  addIconGame("c-fill", "C Fill", "dice-six", "fill");
+  addIconGame("d-regular", "D Regular", "dice-six");
+  addGame("e-fallback", "E Fallback");
+  addIconGame("f-unknown", "F Unknown", "not-in-the-library");
+  open();
+  const std::vector<std::string> names{"A First", "B Second", "C Fill", "D Regular", "E Fallback", "F Unknown"};
+  ASSERT_EQ(rows(names), names) << "all six rows fit the page";
+  const auto& drawn = ui().bitmapsDrawn;
+  ASSERT_EQ(drawn.size(), names.size());
+  for (const screen::DrawnBitmap& bitmap : drawn) {
+    EXPECT_EQ(bitmap.format, freeink::ui::BitmapFormat::Mask1);
+    EXPECT_EQ(bitmap.width, 64);
+    EXPECT_EQ(bitmap.height, 64);
+  }
+  EXPECT_EQ(drawn[0].data, harness::rowsOf(iconBmp(1)));
+  EXPECT_EQ(drawn[1].data, harness::rowsOf(iconBmp(2)));
+  EXPECT_NE(drawn[0].data, drawn[1].data);
+  EXPECT_EQ(drawn[2].data, libraryRows("dice-six", true));
+  EXPECT_EQ(drawn[3].data, libraryRows("dice-six", false));
+  EXPECT_NE(drawn[2].data, drawn[3].data);
+  EXPECT_EQ(drawn[4].data, libraryRows("game-controller", false));
+  EXPECT_EQ(drawn[5].data, libraryRows("game-controller", false));
+}
+
+// The two allocations loadIcons makes: when either fails the rows are still listed, each with its library icon.
+TEST_F(ListTest, WhenTheIconCacheCannotBeAllocatedTheRowsUseLibraryIcons) {
+  addIconGame("a-first", "A First", "dice-six", "fill");
+  addIconFile("a-first", iconBmp(1));
+  addIconGame("b-second", "B Second", "boat");
+  addIconFile("b-second", iconBmp(2));
+  oom::failSize = 2 * GameRowIcon::BYTES;
+  open();
+  EXPECT_TRUE(logHas("OOM: 1024 B of package icons"));
+  const std::vector<std::string> names{"A First", "B Second"};
+  EXPECT_EQ(rows(names), names);
+  ASSERT_EQ(ui().bitmapsDrawn.size(), 2u);
+  EXPECT_EQ(ui().bitmapsDrawn[0].data, libraryRows("dice-six", true));
+  EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("boat", false));
+  EXPECT_TRUE(logHas("Icon for a-first: library dice-six fill"));
+  tapRow("B Second");
+  EXPECT_EQ(activityManager.replacements.size(), 1u) << "the row still opens";
+}
+
+TEST_F(ListTest, WhenTheSlotArrayCannotBeAllocatedTheRowsUseLibraryIcons) {
+  addIconGame("a-first", "A First", "dice-six");
+  addIconFile("a-first", iconBmp(1));
+  addGame("b-second", "B Second");
+  oom::failSize = 2 * sizeof(int16_t);
+  open();
+  EXPECT_TRUE(logHas("OOM: 4 icon slots"));
+  const std::vector<std::string> names{"A First", "B Second"};
+  EXPECT_EQ(rows(names), names);
+  ASSERT_EQ(ui().bitmapsDrawn.size(), 2u);
+  EXPECT_EQ(ui().bitmapsDrawn[0].data, libraryRows("dice-six", false));
+  EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("game-controller", false));
+}
+
+// ActivityManager::goHome selects Home's Games row by this name (ledger row 5): the screen is named by the constant.
+TEST_F(ListTest, TheLauncherIsNamedByTheConstantGoHomeMapsToTheGamesRow) {
+  open();
+  EXPECT_EQ(NameOf::of(*list), std::string(GamesLauncherActivity::NAME));
+}
+
+TEST_F(ListTest, IconBmpIsReadOncePerVisitNotOncePerFrame) {
+  addGame("alpha", "Alpha");
+  addIconFile("alpha", iconBmp(3));
+  open();
+  render();
+  render();
+  frame();
+  render();
+  EXPECT_EQ(fakesd::countOps("open /.games/alpha/icon.bmp"), 1u);
+  reopen();
+  EXPECT_EQ(fakesd::countOps("open /.games/alpha/icon.bmp"), 2u) << "a new visit reads it again";
+  EXPECT_EQ(ui().bitmaps, 1);
 }
 
 // ---- opening a game: a tap or Confirm replaces the list with the match (## 4.4: the tracer item) ----

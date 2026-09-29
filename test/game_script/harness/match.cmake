@@ -49,8 +49,8 @@ list(REMOVE_ITEM MATCH_EXCLUDE_GAMES GameVM.cpp GameClock.cpp GameRandom.cpp)
 list(APPEND MATCH_EXCLUDE_GAMES GameArena.cpp)
 set(MATCH_EXCLUDE_ACTIVITIES ${HARNESS_EXCLUDE_ACTIVITIES})
 list(REMOVE_ITEM MATCH_EXCLUDE_ACTIVITIES GameMatchActivity.cpp)
-# The list screen is the next entry's; never built here, whatever the shared list says.
-list(APPEND MATCH_EXCLUDE_ACTIVITIES GamesListActivity.cpp)
+# The launcher is built by games_launcher.cmake (entry 8); never here, whatever the shared list says.
+list(APPEND MATCH_EXCLUDE_ACTIVITIES GamesLauncherActivity.cpp)
 harness_game_sources(MATCH_SOURCES
                      EXCLUDE_GAMES ${MATCH_EXCLUDE_GAMES}
                      EXCLUDE_ACTIVITIES ${MATCH_EXCLUDE_ACTIVITIES})
@@ -59,7 +59,7 @@ add_library(game_match_src STATIC
   ${MATCH_SOURCES}
   ${REAL_ACTIVITY_DIR}/activities/Activity.cpp
   # The list screens' base classes and their button walk, real, for a list screen to build on
-  # (GamesListActivity itself is entry 5's). Linked only when a suite references them.
+  # (GamesLauncherActivity itself is built by games_launcher.cmake). Linked only when a suite references them.
   ${REPO_ROOT}/src/activities/UiListActivity.cpp
   ${REPO_ROOT}/src/activities/UiTabListActivity.cpp
   ${REPO_ROOT}/src/util/ButtonNavigator.cpp

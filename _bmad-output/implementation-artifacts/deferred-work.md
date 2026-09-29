@@ -339,3 +339,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-resume-bin-and-resuming-a-solo-match-plan.md`
   summary: The per-move cost of the resume write on a device is unmeasured: every loop pass that finds a new snapshot writes `resume.bin` (an exists, a tmp write, a remove, and a rename) on the loop task, and the forced exit adds the store flush's write under RenderLock.
   evidence: R10 asks for a write after every committed snapshot, so there is no interval as `store.bin` has (5 s). The host's fake card has no latency, so `ResumeMatchTest` pins only the bound of the VM waits (about 1,030 ms). The device record of a move's write time and of the forced exit's total stays with the owner's device check (AI-3).
+
+## 4.8
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
+  summary: For entry 9 (the mode picker): `GamesLauncherActivity` starts only solo, so a game the host can start only in another mode (with `pass` or `nearby` on) shows "None of its modes work here" (`STR_GAMES_UNAVAILABLE_MODE`), which is false for it, and does not open; entry 9's mode step replaces `startable()` and that reason.
+  evidence: Cannot happen on today's host (`gameHostCaps()` has `pass` and `nearby` off); `AGameOnlyAnotherModeCanStartIsListedButDoesNotOpenYet` pins the interim behaviour with `pass` on and must change with entry 9.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
+  summary: `docs/crosshatch/formats.md` still says "the first Games list shows only games that can start" although the launcher lists every game with its reason.
+  evidence: `formats.md` (Install, step 1) and `docs/crosshatch/game-icons.md` (no `GameRowIcon` section) are outside this entry's `touches`.

@@ -276,9 +276,9 @@ TEST(ManifestTest, RejectsMalformedJson) {
   EXPECT_EQ(parse(R"({"hidden": tru})"), ManifestError::Syntax);
 }
 
-// Every fixture game's manifest.json passes what GamesListActivity::readManifest
-// requires to list it: it parses, its id is the folder's name, it passes
-// Manifest::check against this host, and it offers solo. Exactly the folders that
+// Every fixture game's manifest.json passes what GameRegistry requires to list a game,
+// and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
+// name, it passes Manifest::check against this host, and it offers solo. Exactly the folders that
 // are not games of their own (faults, modules, surface) have none, so a game
 // fixture that loses its manifest fails here.
 TEST(ManifestTest, EveryFixtureManifestIsListed) {
