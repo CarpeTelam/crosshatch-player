@@ -82,14 +82,15 @@ class ManifestSink final : public Print {
   GameCore::ManifestReader& reader;
 };
 
-// Writes a member to its file and into the package hash together.
-class MemberSink final : public Print {
+// Writes to a file, and into the package hash too when there is one, and notes any short write:
+// the converter ignores write results, so this is how a card fault is told from bad data.
+class FileSink final : public Print {
  public:
-  MemberSink(HalFile& file, GameHash& hash) : file(file), hash(hash) {}
+  FileSink(HalFile& file, GameHash* hash) : file(file), hash(hash) {}
   size_t write(const uint8_t byte) override { return write(&byte, 1); }
   size_t write(const uint8_t* buffer, const size_t size) override {
     const size_t written = file.write(buffer, size);
-    hash.update(buffer, written);
+    if (hash) hash->update(buffer, written);
     total += written;
     if (written != size) writeFailed = true;
     return written;
@@ -100,7 +101,7 @@ class MemberSink final : public Print {
 
  private:
   HalFile& file;
-  GameHash& hash;
+  GameHash* hash;
 };
 
 bool isStem(const std::string_view stem) {
@@ -148,19 +149,39 @@ void forEachInboxFile(F&& visit) {
   }
 }
 
+// A file no package can hold (it is off the member whitelist), made in /.games-tmp/<id> to see
+// whether /.games/<id> shows it: two folders on one cluster chain share their directory data.
+constexpr char PROBE_NAME[] = ".xlink";
+
+// True when /.games-tmp/<id> and /.games/<id> may share clusters: the probe file shows in both, or
+// could not be made, or would not go (the safe side when unsure).
+bool foldersShareClusters(const char* id) {
+  char tmpProbe[GamePaths::PATH_BYTES];
+  char finalProbe[GamePaths::PATH_BYTES];
+  snprintf(tmpProbe, sizeof(tmpProbe), "%s/%s/%s", GamePaths::TMP_DIR, id, PROBE_NAME);
+  snprintf(finalProbe, sizeof(finalProbe), "%s/%s/%s", GamePaths::GAMES_DIR, id, PROBE_NAME);
+  HalFile probe;
+  if (!Storage.openFileForWrite("GAME", tmpProbe, probe)) return true;
+  const bool made = probe.close();
+  const bool shown = Storage.exists(finalProbe);
+  const bool removed = Storage.remove(tmpProbe);
+  return shown || !made || !removed;
+}
+
 // SdFat moves a folder by making the new entry before it removes the old one, so a power loss
 // in between leaves /.games-tmp/<id> and /.games/<id> on one cluster chain, and freeing either
-// frees clusters the other uses. A /.games/<id> without a .pkg is what that looks like (the
-// .pkg is written after the move), so its scratch folder is left alone: the card is safe, and
-// an install of that id reports SdCard until a person clears both from a computer.
+// frees clusters the other uses. A /.games/<id> without a .pkg may be that (the .pkg is written
+// after the move) or the leftover of a removal that stopped partway, beside an independent
+// scratch folder; foldersShareClusters tells them apart. A shared one is left alone: the card is
+// safe, and an install of that id reports SdCard until a person clears both from a computer.
 bool mayRemoveTmp(const char* id) {
   char path[GamePaths::PATH_BYTES];
   snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
   if (!Storage.exists(path)) return true;
   snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
-  if (Storage.exists(path)) return true;
-  LOG_ERR("GAME", "Keeping %s/%s: %s/%s has no %s, and an interrupted move may share their clusters",
-          GamePaths::TMP_DIR, id, GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  if (Storage.exists(path) || !foldersShareClusters(id)) return true;
+  LOG_ERR("GAME", "Keeping %s/%s: it shares clusters with %s/%s, which has no %s", GamePaths::TMP_DIR, id,
+          GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
   return false;
 }
 
@@ -293,9 +314,10 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
 // 1-bit layout, deletes the PNG, and checks the result the way the game loader will: the
 // layout checkImageHeader accepts and, for images, the budget; for the icon, 64x64.
 // icon.png is scaled to 64x64 (so it must be square); any other image keeps its own size.
-// The converter answers only true or false and ignores failed writes, so a header it would
-// refuse is BadImage here, and after that a false, or an output cut short, is the card's or the
-// heap's (ConvertFailed, SdCard): the package stays for another try.
+// The converter answers only true or false and ignores failed writes, so the output goes through
+// a FileSink: a short write, or an output shorter than its own header says, is the card's fault
+// (SdCard, the package stays); any other failure is the image's (BadImage), which includes the
+// converter running out of memory, a case it cannot tell apart.
 Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
   {
     HalFile png;
@@ -316,14 +338,15 @@ Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
     if (!Storage.openFileForWrite("GAME", job.pathB, bmp)) return Error::SdCard;
     // Target 0 x 0 keeps the image's own size.
     const int target = isIcon ? GameCore::ICON_PIXELS : 0;
-    const bool converted = PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(png, bmp, target, target);
+    FileSink sink(bmp, nullptr);
+    const bool converted = PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(png, sink, target, target);
     png.close();
     const bool closed = bmp.close();
+    if (sink.writeFailed || !closed) return Error::SdCard;
     if (!converted) {
       LOG_ERR("GAME", "Cannot convert %s", job.pathA);
-      return Error::ConvertFailed;
+      return Error::BadImage;
     }
-    if (!closed) return Error::SdCard;
   }
   if (!Storage.remove(job.pathA)) return Error::SdCard;
 
@@ -365,7 +388,7 @@ Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES
     snprintf(job.pathA, sizeof(job.pathA), "%s/%s", job.tmpDir, name);
     HalFile out;
     if (!Storage.openFileForWrite("GAME", job.pathA, out)) return Error::SdCard;
-    MemberSink sink(out, hash);
+    FileSink sink(out, &hash);
     const bool streamed = zip.readFileToStream(name, sink, CHUNK_BYTES);
     const bool closed = out.close();
     if (!streamed || sink.total != size) return sink.writeFailed ? Error::SdCard : Error::NotAPackage;
@@ -448,10 +471,8 @@ Error install(Job& job, const char* fileName) {
   return Error::None;
 }
 
-// SdCard, OutOfMemory, and ConvertFailed are not known to be the package's fault: its file stays.
-bool packageIsInvalid(const Error error) {
-  return error != Error::SdCard && error != Error::OutOfMemory && error != Error::ConvertFailed;
-}
+// SdCard and OutOfMemory are not the package's fault: its file stays for the next try.
+bool packageIsInvalid(const Error error) { return error != Error::SdCard && error != Error::OutOfMemory; }
 
 // Renames the inbox file <name>.bad, replacing an earlier one; false when it would not move.
 bool markBad(Job& job) {
@@ -472,8 +493,6 @@ const char* describe(const Error error) {
       return "SD card error";
     case Error::OutOfMemory:
       return "out of memory";
-    case Error::ConvertFailed:
-      return "an image could not be converted";
     case Error::NotAPackage:
       return "not a readable zip";
     case Error::BadManifest:

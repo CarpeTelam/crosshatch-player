@@ -189,9 +189,9 @@ The installer converts every `.png` with `PngToBmpConverter` into the 1-bit layo
 scaled to 64 x 64. Any other `<name>.png` becomes `<name>.bmp` at its own size. A PNG whose header the converter
 refuses (not a PNG, interlaced, over 2,048 x 3,072, an impossible colour type or bit depth), a converted file
 `checkImageHeader` does not accept, or images over the budget make the package invalid. The converter answers only
-true or false, so if it fails on an image whose header is sound (memory ran out, or the data is damaged), or its
-output is cut short (a write to the card failed), the package is not judged: its file stays in the inbox and the
-reason shown is the image's.
+true or false and ignores failed writes, so its output goes through a wrapper that notes a short write: a short write,
+or an output shorter than its own header says, is the card's fault (the file stays in the inbox and the SD card reason
+is shown); any other failure, memory running out inside the converter included, makes the package invalid.
 
 ### Install
 
@@ -219,9 +219,13 @@ again, which the next visit to Games retries.
 
 `/.games-tmp/` is emptied whenever Games opens and after every run, folder by folder, with one exception. SdFat moves
 a folder by making the new entry before it removes the old one, so a power loss in between leaves
-`/.games-tmp/<id>` and `/.games/<id>` on one cluster chain, and freeing either frees clusters the other still uses. A
-`/.games/<id>` without a `.pkg` is what that looks like (the `.pkg` is written after the move), so its scratch folder is
-kept, and an install of that id fails with the SD card reason each visit until a person clears both from a computer.
+`/.games-tmp/<id>` and `/.games/<id>` on one cluster chain, and freeing either frees clusters the other still uses.
+Where `/.games/<id>` exists without a `.pkg` (which is that state, but is also what a removal of the old folder that
+stopped partway leaves, beside an independent scratch folder), the installer makes an empty `.xlink` file in
+`/.games-tmp/<id>` and looks for it in `/.games/<id>`: two folders on one chain share their directory data, so it
+shows in both. It removes the file either way. If it shows, or could not be made or removed, the scratch folder is
+kept, and an install of that id fails with the SD card reason each visit until a person clears both from a computer;
+if it does not show, the folders are independent and the scratch folder goes as usual, so the install proceeds.
 A file where `/.games-tmp` belongs is removed. At most 32 inbox files are installed per visit; the rest wait for the
 next.
 

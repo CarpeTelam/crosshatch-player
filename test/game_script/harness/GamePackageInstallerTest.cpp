@@ -335,17 +335,26 @@ TEST_F(InstallerTest, APngTheConverterRefusesEndsBad) {
   }
 }
 
-TEST_F(InstallerTest, ADamagedPngWithASoundHeaderStaysInTheInboxForAnotherTry) {
-  // The converter cannot say whether it ran out of memory or read damage, so the file is kept.
+TEST_F(InstallerTest, ADamagedPngWithASoundHeaderEndsBadAndIsShownOnce) {
+  Bytes png = solidPng(20, 20, 0);
+  png.resize(png.size() / 2);  // the header is whole, the pixel data is cut
+  const Bytes package = gamePackage("g", {{"pic.png", png}});
+  drop("g.cpgame", package);
+  expectRejected("g.cpgame", package, Error::BadImage);
+  EXPECT_TRUE(fakelog::any("Cannot convert"));
+  // Renamed, so the next visit does not judge it again.
+  EXPECT_FALSE(GamePackageInstaller::hasInbox());
+}
+
+TEST_F(InstallerTest, ADamagedPngOnAFailingCardIsTheCardsFault) {
+  // The card drops the converter's writes and then the decode fails: the short write decides.
   Bytes png = solidPng(20, 20, 0);
   png.resize(png.size() / 2);
   drop("g.cpgame", gamePackage("g", {{"pic.png", png}}));
-  const GamePackageInstaller::Report report = install();
-  EXPECT_EQ(report.firstError, Error::ConvertFailed);
+  fakesd::sim().failWrite.insert("/.games-tmp/g/pic.bmp");
+  EXPECT_EQ(install().firstError, Error::SdCard);
   EXPECT_TRUE(exists("/games/g.cpgame"));
   EXPECT_FALSE(exists("/games/g.cpgame.bad"));
-  EXPECT_FALSE(exists("/.games-tmp"));
-  EXPECT_TRUE(childrenOf("/.games").empty());
 }
 
 TEST_F(InstallerTest, AnImageWrittenShortIsTheCardsFaultNotThePackages) {
@@ -578,11 +587,17 @@ TEST_F(InstallerTest, AMarkerThatWillNotGoLeavesTheOldGameWhole) {
   EXPECT_EQ(listing.count, 1u);
 }
 
-TEST_F(InstallerTest, ScratchOfAGameWithoutAMarkerIsNeverRemoved) {
-  // /.games-tmp/g and /.games/g (no .pkg) are what an interrupted SdFat folder move leaves,
-  // sharing clusters: freeing either would free the other's.
+// The shared fake cannot alias two folders, so a cluster chain shared by /.games-tmp/g and /.games/g is
+// modelled the way the installer sees it: the probe file it makes in /.games-tmp/g is already in
+// /.games/g (installed there beforehand), which is what one directory's data on two paths shows.
+void shareClusters(const std::string& id) { fakesd::addFile("/.games/" + id + "/.xlink", std::string()); }
+
+TEST_F(InstallerTest, ScratchSharingClustersWithAGameWithoutAMarkerIsNeverRemoved) {
+  // /.games-tmp/g and /.games/g (no .pkg) after an interrupted SdFat folder move: freeing either
+  // would free the other's clusters.
   fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
   fakesd::addFile("/.games/g/main.lua", std::string("final"));
+  shareClusters("g");
   fakesd::addFile("/.games-tmp/other/main.lua", std::string("stale"));  // no /.games/other: safe to remove
   fakesd::addFile("/.games-tmp/done/main.lua", std::string("stale"));   // /.games/done has a .pkg: safe
   fakesd::addFile("/.games/done/.pkg", std::string("v1\n0530a15766e91bf1\n"));
@@ -595,13 +610,46 @@ TEST_F(InstallerTest, ScratchOfAGameWithoutAMarkerIsNeverRemoved) {
   EXPECT_TRUE(fakelog::any("Keeping /.games-tmp/g"));
   EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
-  EXPECT_TRUE(exists("/games/g.cpgame"));  // kept, not renamed .bad
+  EXPECT_FALSE(exists("/.games-tmp/g/.xlink"));  // the probe file is removed either way
+  EXPECT_TRUE(exists("/games/g.cpgame"));        // kept, not renamed .bad
   EXPECT_FALSE(exists("/.games-tmp/other"));
   EXPECT_FALSE(exists("/.games-tmp/done"));
   EXPECT_FALSE(exists("/.games-tmp/loose.txt"));
   // The same again next visit: no silent loop, nothing deleted.
   EXPECT_EQ(install().firstError, Error::SdCard);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+}
+
+TEST_F(InstallerTest, ScratchBesideAnIndependentHalfRemovedGameIsRemovedAndTheInstallGoesOn) {
+  // A stop during the removal of the old folder: /.games/g has lost its .pkg and some files, and
+  // /.games-tmp/g is whole and its own (the probe file does not show in /.games/g).
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/manifest.json", std::string("{}"));
+  drop("g.cpgame", gamePackage("g"));
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_FALSE(exists("/.games-tmp"));
+  EXPECT_FALSE(fakelog::any("Keeping"));
+}
+
+TEST_F(InstallerTest, ScratchIsKeptWhenTheProbeFileCannotBeMadeOrRemoved) {
+  for (const bool cannotMake : {true, false}) {
+    SetUp();
+    fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+    fakesd::addFile("/.games/g/main.lua", std::string("final"));
+    drop("g.cpgame", gamePackage("g"));
+    if (cannotMake) {
+      fakesd::sim().failOpenWrite.insert("/.games-tmp/g/.xlink");
+    } else {
+      fakesd::sim().failRemove.insert("/.games-tmp/g/.xlink");
+    }
+    SCOPED_TRACE(cannotMake ? "cannot make" : "cannot remove");
+    EXPECT_EQ(install().firstError, Error::SdCard);
+    EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+    EXPECT_TRUE(fakelog::any("Keeping /.games-tmp/g"));
+  }
 }
 
 TEST_F(InstallerTest, AFileWhereTheScratchFolderGoesIsRemoved) {

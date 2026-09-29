@@ -13,21 +13,19 @@
 // Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
 namespace GamePackageInstaller {
 
-// Why one inbox file was not installed. SdCard, OutOfMemory, and ConvertFailed are the card's
-// or the device's fault as far as the installer can tell, so the file stays in the inbox for
-// the next try; every other reason makes the package invalid and renames it .bad. (Not named
-// Storage: HalStorage.h defines that as a macro.)
+// Why one inbox file was not installed. SdCard and OutOfMemory are the card's or the device's
+// fault, so the file stays in the inbox for the next try; every other reason makes the package
+// invalid and renames it .bad. (Not named Storage: HalStorage.h defines that as a macro.)
 enum class Error : uint8_t {
   None,
-  SdCard,         // a read, write, rename, or delete on the SD card failed
-  OutOfMemory,    // a buffer for the install could not be allocated
-  ConvertFailed,  // PngToBmpConverter failed on an image whose header is sound: a damaged image, or no memory
-  NotAPackage,    // not a zip this device can read
-  BadManifest,    // manifest.json missing, malformed, or failing Manifest::check (Invalid)
-  BadMember,      // a member name off the whitelist, or the same name twice
-  NoMain,         // main.lua missing
+  SdCard,       // a read, write, rename, or delete on the SD card failed
+  OutOfMemory,  // a buffer for the install could not be allocated
+  NotAPackage,  // not a zip this device can read
+  BadManifest,  // manifest.json missing, malformed, or failing Manifest::check (Invalid)
+  BadMember,    // a member name off the whitelist, or the same name twice
+  NoMain,       // main.lua missing
   TooManyMembers,
-  BadImage,  // an image header the converter refuses, a non-square icon, or images over their budget
+  BadImage,  // an image the converter refuses or fails on, a non-square icon, or images over their budget
 };
 
 // The most inbox files one installAll takes; the rest wait for the next call.
