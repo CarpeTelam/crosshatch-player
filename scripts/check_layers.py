@@ -428,39 +428,46 @@ def logical_lines(text):
 
 
 def games_guarded_lines(text):
-    """The line numbers of text inside the games branch of an #if, #ifdef, #elif, or #elifdef, at any depth
-    (comments do not count as directives). Lines are spliced at each backslash-newline first and comments blanked
-    after, in C's order, so a directive is read from its whole logical line, and every physical line of a guarded
-    logical line is guarded. A conditional whose line opens a block comment that spans lines is never a games branch:
-    its condition may continue after the comment (`#if FREEINK_CAP_GAMES /*` then `*/ || 1`)."""
+    """(guarded, unread) for text: the line numbers inside the games branch of an #if, #ifdef, #elif, or #elifdef, at
+    any depth (comments do not count as directives), and the line numbers inside a branch that would be a games
+    branch but for a comment. Lines are spliced at each backslash-newline first and comments blanked after, in C's
+    order, so a directive is read from its whole logical line, and every physical line of a guarded logical line is
+    guarded. A conditional whose line opens a block comment that spans lines is never a games branch: its condition
+    may continue after the comment (`#if FREEINK_CAP_GAMES /*` then `*/ || 1`). Its lines are `unread`, so the
+    problem for an include there can say so (cross-story finding 13)."""
     logical = list(logical_lines(text))
     if not logical:
-        return set()
+        return set(), set()
     joined = '\n'.join(line for _, _, line in logical)
     # The logical lines (indexes into `logical`) on which a block comment spanning lines opens.
     spanning = {joined.count('\n', 0, found.start()) for found in COMMENT_OR_LITERAL.finditer(joined)
                 if found.group(0).startswith('/*') and '\n' in found.group(0)}
     guarded = set()
-    branches = []  # one per open conditional: whether its current branch is a games branch
+    unread = set()
+    # One per open conditional: (its current branch is a games branch, it would be but for a spanning comment).
+    branches = []
     # blank keeps line breaks, so its line i is logical line i.
     for index, line in enumerate(blank(joined, literals=False).split('\n')):
         first, last, _ = logical[index]
         match = CONDITIONAL.match(line)
         if not match:
-            if any(branches):
+            if any(games for games, _ in branches):
                 guarded.update(range(first, last + 1))
+            elif any(hidden for _, hidden in branches):
+                unread.update(range(first, last + 1))
             continue
         kind, rest = match.groups()
-        games = index not in spanning and games_branch(kind, rest)
+        would = games_branch(kind, rest)
+        branch = (would and index not in spanning, would and index in spanning)
         if kind in ('if', 'ifdef', 'ifndef'):
-            branches.append(games)
+            branches.append(branch)
         elif branches and kind in ('elif', 'elifdef', 'elifndef'):
-            branches[-1] = games
+            branches[-1] = branch
         elif branches and kind == 'else':
-            branches[-1] = False
+            branches[-1] = (False, False)
         elif branches and kind == 'endif':
             branches.pop()
-    return guarded
+    return guarded, unread
 
 
 def upstream_problems(root, index):
@@ -472,7 +479,7 @@ def upstream_problems(root, index):
             if is_game_or_unscanned(rel):
                 continue
             text = read_text(path)
-            guarded = None  # computed for the few files that include game code
+            guarded = unread = None  # computed for the few files that include game code
             for number, target, _ in includes(text):
                 if target is None:
                     continue
@@ -487,11 +494,14 @@ def upstream_problems(root, index):
                                     'in scripts/check_layers.py, the spine\'s "Upstream hooks" row)')
                 elif reached in COMPONENTS:
                     if guarded is None:
-                        guarded = games_guarded_lines(text)
+                        guarded, unread = games_guarded_lines(text)
                     if number not in guarded:
+                        why = ('; its #if line opens a block comment that spans lines, which is never read as a guard '
+                               '(the condition may continue after the comment): end the comment on that line'
+                               if number in unread else '')
                         problems.append(f'{rel}:{number}: upstream code includes {target.group(1)} ({reached}) '
-                                        f'outside an #if {fork_common.GAMES_MACRO} branch; AD-2 and its ledger row '
-                                        'guard every upstream include of game code')
+                                        f'outside an #if {fork_common.GAMES_MACRO} branch{why}; AD-2 and its ledger '
+                                        'row guard every upstream include of game code')
     return problems
 
 

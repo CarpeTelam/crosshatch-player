@@ -121,7 +121,7 @@ class RemoveListTest : public match::ScreenTest {
   }
   // A second launcher, as goToGames() builds one after a match ends or is left.
   void reopen() {
-    dropMatch();
+    match::letStartedMatchesGo([this] { dropMatch(); });
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
@@ -136,7 +136,8 @@ class RemoveListTest : public match::ScreenTest {
   }
   // One pass of the main loop, then the frame's input is over, and the screen is drawn again as the manager would.
   void frame() {
-    activity().loop();
+    // ActivityManager::loop's first act: the release that ends a fired long press is not for the screen.
+    if (!input->consumeSuppressedRelease()) activity().loop();
     input->clear();
     if (activityManager.updateRequested()) render();
   }
@@ -417,6 +418,49 @@ TEST_F(RemoveListTest, ALongPressThatFollowsATouchDownOpensAndRemovesCleanly) {
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-03"));
+}
+
+// Retro deferral 4.10: REMOVE_HOLD_MS is what the code asks the manager, so a hold one millisecond short of it opens
+// nothing and a hold at it opens the confirmation, once; the release that ends the hold is not the confirmation's.
+TEST_F(RemoveListTest, ConfirmHeldToRemoveHoldMsAsksOnceAndItsReleaseIsSwallowed) {
+  addGames(3);
+  open();
+  key(Button::NavNext);  // Game 02
+  input->hold(Button::Confirm, GamesLauncherActivity::REMOVE_HOLD_MS - 1);
+  frame();
+  EXPECT_FALSE(dialogUp()) << "one millisecond short of the hold";
+  input->hold(Button::Confirm, GamesLauncherActivity::REMOVE_HOLD_MS);
+  frame();
+  ASSERT_TRUE(dialogUp());
+  EXPECT_TRUE(ui().drewLine("Game 02"));
+  input->hold(Button::Confirm, GamesLauncherActivity::REMOVE_HOLD_MS + 500);  // still held: it fires once
+  frame();
+  EXPECT_TRUE(dialogUp());
+  // The finger lifts. That release must neither choose an option of the confirmation nor dismiss it.
+  input->release(Button::Confirm);
+  frame();
+  EXPECT_TRUE(dialogUp());
+  EXPECT_TRUE(removescript::script().ids.empty());
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  // A later press of Confirm is the dialog's own: its focused option is the safe one, Cancel, so the game stays.
+  key(Button::Confirm);
+  EXPECT_FALSE(dialogUp());
+  EXPECT_TRUE(removescript::script().ids.empty());
+  const std::vector<std::string> all{"Game 01", "Game 02", "Game 03"};
+  EXPECT_EQ(shown(3), all);
+}
+
+// An ordinary press of Confirm, held for less than the hold, is a click: it opens the selected game.
+TEST_F(RemoveListTest, ConfirmReleasedBeforeTheHoldOpensTheGameAndAsksNothing) {
+  addGames(3);
+  open();
+  input->hold(Button::Confirm, GamesLauncherActivity::REMOVE_HOLD_MS - 1);
+  input->release(Button::Confirm);
+  frame();
+  EXPECT_FALSE(dialogUp());
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-01"));
 }
 
 TEST_F(RemoveListTest, HoldingConfirmAsksAboutTheSelectedGame) {

@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "BlitClip.h"
+
 // A library icon as pixels, pure so it is host-tested: the bitmap and scale a
 // drawn size uses, and the icon's ink as horizontal runs clipped to a canvas.
 // drawGameIconAt (GameIconDraw.h) fills the runs, for ch.gfx.icon's replay and
@@ -75,11 +77,12 @@ void inkRuns(const Source& source, const int32_t left, const int32_t top, const 
   if (source.pixels % 8 != 0 || source.pixels / 8 > static_cast<int>(GameIcons::MAX_ROW_BYTES)) return;
   const int64_t side = static_cast<int64_t>(source.pixels) * source.scale;
   // The visible part, in drawn pixels from the icon's top-left.
-  const int64_t firstX = left < 0 ? -static_cast<int64_t>(left) : 0;
-  const int64_t firstY = top < 0 ? -static_cast<int64_t>(top) : 0;
-  const int64_t endX = static_cast<int64_t>(width) - left < side ? static_cast<int64_t>(width) - left : side;
-  const int64_t endY = static_cast<int64_t>(height) - top < side ? static_cast<int64_t>(height) - top : side;
-  if (endX <= firstX || endY <= firstY) return;
+  const BlitClip::Visible clip = BlitClip::visible(left, top, width, height, side, side);
+  if (clip.empty()) return;
+  const int64_t firstX = clip.firstX;
+  const int64_t firstY = clip.firstY;
+  const int64_t endX = clip.endX;
+  const int64_t endY = clip.endY;
   uint8_t row[GameIcons::MAX_ROW_BYTES];
   GameIcons::PackedReader reader(source.bitmap);
   const auto rowBytes = static_cast<size_t>(source.pixels / 8);

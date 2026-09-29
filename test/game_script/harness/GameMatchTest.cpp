@@ -1,6 +1,7 @@
 #include <I18n.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -10,6 +11,7 @@
 #include "ArenaSize.h"
 #include "GameAssets.h"
 #include "GameSaveStore.h"
+#include "GameViewIcons.h"
 #include "MatchSupport.h"
 #include "Session.h"
 #include "activities/games/GameMatchActivity.h"
@@ -474,6 +476,100 @@ TEST_F(MatchTest, AVmThatWillNotStopKeepsTheStoreSlotForTheTaskThatMayStillPostT
 
 // ---- the Play-again gap (## 3.7's render gate, ## e3r-2's gesture drop, ## e3r-x's skip) ----
 
+// Retro R8 (e) and R9 (g): each library icon in a view takes the ink its label beside it is drawn in, and the view's
+// own icon sits on the white panel in black. FreeInkApp's default theme draws a focused row in black too (its selected
+// state is the inverted one), so this pins the wiring, that the icon reads the label's resolved ink and not a constant;
+// `GameViewIconsTest` pins the rule for the inverted and dithered cases a theme can have.
+TEST_F(MatchTest, ThePauseViewsIconsTakeTheInkOfTheLabelsBesideThem) {
+  installFixture("tracer");
+  enter("tracer");
+  showFrame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderer->forgetAll();
+  renderView();
+  const screen::DrawnText* resume = nullptr;
+  const screen::DrawnText* leave = nullptr;
+  for (const screen::DrawnText& drawn : ui().drawn) {
+    if (drawn.text == tr(STR_GAMES_RESUME)) resume = &drawn;
+    if (drawn.text == tr(STR_GAMES_LEAVE)) leave = &drawn;
+  }
+  ASSERT_NE(resume, nullptr);
+  ASSERT_NE(leave, nullptr);
+  // The icons are runs of one-pixel-high fillRects (GameIconBlit); the canvas below them draws by fillRectDither.
+  std::vector<bool> resumeInk, leaveInk, otherInk;
+  for (const auto& call : renderer->calls) {
+    if (call.kind != GfxRenderer::Kind::FillRect || call.h != 1 || call.w > GameViewIcons::VIEW_PIXELS) continue;
+    const auto near = [&](const screen::DrawnText* label) {
+      const int mid = label->rect.y + label->rect.height / 2;
+      return call.x < label->rect.x && call.y >= mid - GameViewIcons::ROW_PIXELS &&
+             call.y <= mid + GameViewIcons::ROW_PIXELS;
+    };
+    (near(resume) ? resumeInk : near(leave) ? leaveInk : otherInk).push_back(call.black);
+  }
+  ASSERT_FALSE(resumeInk.empty());
+  ASSERT_FALSE(leaveInk.empty());
+  ASSERT_FALSE(otherInk.empty()) << "the view's own icon";
+  const auto same = [](const std::vector<bool>& inks, const bool expected) {
+    return std::all_of(inks.begin(), inks.end(), [&](const bool ink) { return ink == expected; });
+  };
+  EXPECT_TRUE(same(resumeInk, resume->color != freeink::ui::Color::White)) << "Resume's icon follows its label";
+  EXPECT_TRUE(same(leaveInk, leave->color != freeink::ui::Color::White)) << "Leave's icon follows its label";
+  EXPECT_TRUE(same(otherInk, true)) << "the view's icon is black on the white panel";
+}
+
+// The gate opens when displayBuffer has returned, not before it: a loop pass run inside displayBuffer (the render task
+// is in the panel driver, the loop task keeps going) still drops a tap. A store of roundsDisplayed ahead of the draw or
+// the display would let it through.
+TEST_F(MatchTest, ATapWhileDisplayBufferIsStillRunningIsDropped) {
+  installGame("gated", match::gatedGame(5));
+  enter("gated");
+  ASSERT_TRUE(pumpToRender());
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapCanvas(210, 310);
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  tapCanvas(150, 250);  // after the render: it reaches the game, and the VM takes events in order
+  frame();
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("tap\t150\t250") == 1u; }));
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u) << "the tap during displayBuffer reached the game";
+}
+
+// The same gate at the start of a match: the Games list is on screen until the first round's first frame is drawn, so a
+// tap before then (the one that opened the game, lifting late, or an impatient second one) is dropped.
+TEST_F(MatchTest, ATapBeforeTheFirstFrameIsDrawnIsDroppedAndOneAfterItReachesTheGame) {
+  installGame("gated", match::gatedGame(5));
+  enter("gated");
+  ASSERT_TRUE(pumpToRender());  // the first frame is published, and not yet drawn
+  tapCanvas(210, 310);
+  frame();
+  render();
+  tapCanvas(150, 250);
+  frame();
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("tap\t150\t250") == 1u; }));
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u) << "the tap before the first frame reached the game";
+}
+
+// A tap before the game has published anything is dropped as well.
+TEST_F(MatchTest, ATapBeforeAnyFrameIsPublishedNeverReachesTheGame) {
+  installGame("gated", match::gatedGame(5));
+  enter("gated");
+  tapCanvas(210, 310);
+  frame();  // the VM task may not have published yet; either way the first frame is not on the panel
+  ASSERT_TRUE(pumpToRender());
+  render();
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u);
+  tapCanvas(150, 250);
+  frame();
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("tap\t150\t250") == 1u; }));
+}
+
 // Round 1 ends with the first tap; a second tap is queued behind it, and the VM is held inside that
 // second step when the end-of-round menu's Play again is chosen. Then the step finishes and publishes
 // a frame of the last round, and the VM is held again at round 2's setup: the gap.
@@ -538,6 +634,24 @@ TEST_F(PlayAgainGapTest, ATapInTheGapIsDroppedAndNeverReachesTheNewRound) {
   ASSERT_TRUE(pump([&] { return state() == "Over"; }));
   EXPECT_EQ(fakelog::countLines("tap\t150\t250"), 1u);
   EXPECT_EQ(fakelog::countLines("tap\t200\t300"), 0u) << "the tap in the gap reached the new round";
+}
+
+// Retro deferral e3r-2: the gate opens when the new round's first frame has been drawn and handed to the panel, not
+// when it is published, so a tap in between (the panel still refreshing to it) is not aimed at that round either.
+TEST_F(PlayAgainGapTest, ATapBetweenTheNewRoundsFirstFramePublishingAndItsBeingDrawnIsDropped) {
+  playAgainByTouch();
+  enterTheGap();
+  fakertos::release();
+  ASSERT_TRUE(pumpToRender());  // round 2's first frame is published; no render has drawn it
+  tapCanvas(210, 310);
+  frame();
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u);
+  render();  // drawn and handed to the panel: the gate opens
+  tapCanvas(150, 250);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_EQ(fakelog::countLines("tap\t150\t250"), 1u);
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u) << "the tap during the refresh reached the new round";
 }
 
 TEST_F(PlayAgainGapTest, ARenderInTheGapDrawsNothingAndTheNewRoundsFirstFrameIsDrawnInFullOnAClearedScreen) {

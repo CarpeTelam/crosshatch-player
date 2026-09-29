@@ -36,13 +36,13 @@ the only place that changes state and runs what entering a state requires. Any e
 
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
-| Starting | the VM started | Playing | The first frame replaces the Games list. With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts. |
-| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. |
+| Starting | the VM started | Playing | The first frame replaces the Games list; gestures made before it is published and drawn are read and dropped, as after Play again (a tap that opened the game, lifted late, is not the game's first input). With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts. A save that is there but cannot be read, or that the VM refuses, does not start a new match over it: see the next row. |
+| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read or was refused by the VM ("The saved match could not be resumed"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
 | Playing | Back or Home | Paused | The pause menu (Resume, Leave) opens over the frame; the game gets no input or timers. |
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; `resume.bin` and its tmp are deleted (an over snapshot is never written, and one still pending deletes the file instead); the end-of-round menu (Play again, Leave) opens over the last frame. A round that ends while the pause menu is open deletes the file at once, from the pause menu's loop pass. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. The last round's board, which would take no taps, is never shown. |
 | Paused, Over | Leave | Leaving | See Leaving. |
-| Over | Play again | Playing | The new round's snapshots are written to `resume.bin` again. The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published are read and dropped (`GameMatchActivity::loopPlaying`); a tap during the e-ink refresh that then shows the frame still reaches the new round. |
+| Over | Play again | Playing | The new round's snapshots are written to `resume.bin` again. The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published, and then until the render task has drawn it and handed it to the panel (`displayBuffer` has returned, `GameMatchActivity::roundsDisplayed`), are read and dropped (`GameMatchActivity::loopPlaying`). |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
 | Error | Back | Leaving | See Leaving. |
 | any but Leaving | forced exit (sleep, any Replace) | Leaving | See the forced exit. |
@@ -137,3 +137,13 @@ memory inside `LuaGame::load` (its scratch or the Lua state) shows the `tr()` "N
 the game before its load (defensive; the VM never makes one) shows "The game did not load". "The game stopped with an
 error" is left for the script's own error, with Lua's message, and for a stuck call, which shows "It stopped responding:
 one step ran over 3 seconds", unless the VM ended on its own error meanwhile, whose message says more.
+
+Heap exhaustion after the game has started is the game's own error, in Lua's words. A `LUA_ERRMEM` or a heap-cap fault in a
+callback (`setup`, `status`, `apply`, `draw`, `input`) ends the round like any script error: "The game stopped with an
+error" and Lua's untranslated "not enough memory" (AD-14 allows Lua's message as it is), where the same condition in
+`load()`, before any game code has run, shows the `tr()` text under "The game could not start". The two are different
+things to say (a game that ran and used too much, against a device that had no room to begin), so the runtime does not
+map the first to the second; the game's heap is capped by the arena, and a game raises the error itself by allocating
+without bound (`error("not enough memory", 0)` stops it the same way, api-level-1.txt). A save that cannot be trusted
+because a callback ran out of memory is not deleted for the same reason: the error cannot tell a bug in the game from a
+transient fault (see the `resume.bin` section of formats.md).

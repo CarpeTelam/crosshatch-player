@@ -26,11 +26,6 @@ namespace {
 constexpr uint8_t NOTE_LINES = 4;
 // Air above and below a row's icon, so the row is the icon plus this.
 constexpr int16_t ROW_PADDING = 8;
-// How long Confirm is held to ask about removing the selected game (the long-press of a button-only device).
-constexpr unsigned long REMOVE_HOLD_MS = 1000;
-// The library's delete hold is 1000 ms; well under 500 would let an ordinary press of Confirm ask about removing, and
-// no host test can show it (the harness's input double ignores the threshold), so the value is pinned here.
-static_assert(REMOVE_HOLD_MS >= 500 && REMOVE_HOLD_MS <= 3000, "a Confirm hold that asks about removing a game");
 
 // The game the launcher last opened, as an FNV-1a hash of its id (0: none), so the next launcher can select it. Four
 // bytes of static RAM (AD-2 allows a mutable static up to 64 B, and this epic's share is 32 B); constinit, so it has
@@ -332,7 +327,12 @@ void GamesLauncherActivity::loadContinue() {
   for (size_t i = 0; i < listing.count; ++i) {
     const GameRegistry::Entry& game = listing.entries[i];
     if (!game.check.ok()) continue;  // a row that cannot open a match would not resume one
-    if (GameSaveStore::peek(game.manifest.id, game.pkgHash)) continueOf[continueCount++] = static_cast<uint16_t>(i);
+    // A save that could not be checked (Unreadable) still gets its row: hiding it would offer only the game's own row,
+    // which starts a new match over what may be a good save. Continue reads the file again when it is tapped, and a
+    // save it cannot read then is an error view, never a new match (GameMatchActivity::seedResume).
+    if (GameSaveStore::peek(game.manifest.id, game.pkgHash) != GameSaveStore::SaveState::None) {
+      continueOf[continueCount++] = static_cast<uint16_t>(i);
+    }
   }
   LOG_DBG("GAME", "%u Continue rows of %u games", static_cast<unsigned>(continueCount),
           static_cast<unsigned>(listing.count));

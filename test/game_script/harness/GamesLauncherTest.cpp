@@ -214,7 +214,7 @@ class ListTest : public match::ScreenTest {
   // A second visit: the list goes, the manager's record and the theme's start over, and the list opens again.
   // The script (InstallerScript.h) and the log are the test's to change before it calls this.
   void reopen() {
-    dropMatch();
+    match::letStartedMatchesGo([this] { dropMatch(); });
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
@@ -536,6 +536,106 @@ TEST_F(ListTest, PageKeysMoveTheSelectionPastTheFirstScreen) {
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-25"));
+}
+
+// Retro deferral 4.10: the held-button paths. A button held past ButtonNavigator's start (500 ms) steps by a whole page
+// every interval, and the release that ends the hold is not one more step.
+TEST_F(ListTest, ANextKeyHeldPagesTheListAndItsReleaseIsNotOneStepMore) {
+  std::vector<std::string> names;
+  for (int i = 1; i <= 25; ++i) {
+    char id[16];
+    std::snprintf(id, sizeof(id), "game-%02d", i);
+    char name[16];
+    std::snprintf(name, sizeof(name), "Game %02d", i);
+    names.push_back(name);
+    addGame(id, name);
+  }
+  open();
+  const size_t page = rows(names).size();
+  ASSERT_GT(page, 1u);
+  ASSERT_LT(page, names.size());
+  // Held for less than the start delay: nothing moves.
+  fakertos::advance(2000);
+  input->hold(Button::NavNext, 400);
+  frame();
+  render();
+  EXPECT_EQ(rows(names).front(), "Game 01");
+  // Held past it: a whole page down, and again only after the interval.
+  input->hold(Button::NavNext, 600);
+  frame();
+  render();
+  ASSERT_EQ(rows(names).front(), names[page]) << "one page down, to its first row";
+  input->hold(Button::NavNext, 700);
+  frame();
+  render();
+  EXPECT_EQ(rows(names).front(), names[page]) << "the interval has not passed";
+  fakertos::advance(600);
+  input->hold(Button::NavNext, 1300);
+  frame();
+  render();
+  EXPECT_EQ(rows(names).front(), names[std::min(names.size() - 1, 2 * page)]) << "a second page down";
+  // Let go: the release that ends a hold is not a single step.
+  input->release(Button::NavNext);
+  frame();
+  render();
+  EXPECT_EQ(rows(names).front(), names[std::min(names.size() - 1, 2 * page)]);
+  // Held until the last page, the key wraps to the first, and the selection is always a game.
+  for (int step = 0; step < 10; ++step) {
+    fakertos::advance(600);
+    input->hold(Button::NavNext, 600);
+    frame();
+    render();
+    if (rows(names).front() == "Game 01") break;
+  }
+  EXPECT_EQ(rows(names).front(), "Game 01");
+  input->release(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-01"));
+}
+
+// A list of two games: a held key steps through the games alone, wrapping from the last game to the first, and never
+// rests on a row past them, where Confirm would open nothing. (The launcher pads a list with blank rows to a whole
+// page; the harness draws as many rows as the page holds, so the padded count and the game count page alike here.)
+TEST_F(ListTest, AKeyHeldOverAShortListWrapsWithinTheGames) {
+  addGame("game-01", "Game 01");
+  addGame("game-02", "Game 02");
+  open();
+  // Two held steps go round the two games. Each is drawn before the next: a step moves the selection as the list is
+  // built, and a second step read before that would start from the old one.
+  for (int step = 0; step < 2; ++step) {
+    fakertos::advance(600);
+    input->hold(Button::NavNext, 600);
+    frame();
+    render();
+  }
+  input->release(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-01"));
+}
+
+TEST_F(ListTest, APreviousKeyHeldFromTheFirstGameWrapsToTheLastGame) {
+  addGame("game-01", "Game 01");
+  addGame("game-02", "Game 02");
+  open();
+  fakertos::advance(600);
+  input->hold(Button::NavPrevious, 600);
+  frame();
+  render();
+  input->release(Button::NavPrevious);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-02"));
 }
 
 // ---- the row icon (R7, AD-24): icon.bmp, else the manifest icon in its weight, else game-controller ----

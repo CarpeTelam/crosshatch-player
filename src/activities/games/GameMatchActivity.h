@@ -37,7 +37,8 @@
 class GameMatchActivity final : public Activity, private UiAppHost {
  public:
   // New starts a round with setup; Resume continues from the game's resume.bin when
-  // GameSaveStore can use it, and otherwise (logged) starts a new match.
+  // GameSaveStore can use it, starts a new match (logged) when there is no usable save, and stops in the error view,
+  // the save untouched, when there is one that cannot be read or that the VM refuses.
   enum class Start : uint8_t { New, Resume };
 
   // The forced exit's SD steps (the resume write, the resume.bin delete retry, the
@@ -114,9 +115,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // False, with one log line naming `what`, for an SD step of the forced exit that would
   // start past FORCED_EXIT_DEADLINE_MS; true for every step outside a forced exit.
   bool sdStepAllowed(const char* what);
-  // Start::Resume, before the VM starts: seeds it with the saved snapshot, or logs why
-  // it starts a new match.
-  void seedResume(GameVM& created);
+  // Start::Resume, before the VM starts: seeds it with the saved snapshot. True also when there
+  // is no usable save (logged: the match starts new, since nothing is lost). False when a save is
+  // there and cannot be used now, because it would not read or the VM refused it: the caller
+  // shows the error view and leaves the file, which a new match would replace.
+  bool seedResume(GameVM& created);
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
   // For a VM that did not join: abandons it (GameVM::abandon), writing its last snapshot
@@ -171,13 +174,18 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // GameVM::roundsEnded() when the match last entered Over (loop task).
   uint32_t roundsSeen = 0;
   uint32_t shownFrame = 0;  // loop task: the frameGen it last asked to render
-  // Play again's GameVM::roundsStarted() plus one (loop task writes). Until the
-  // count reaches it, the loop asks for no render, since every frame published
-  // meanwhile is the last round's, drops every gesture, since none was aimed at the
-  // new round, and renderCanvas draws nothing, so a Resume in the gap keeps the
-  // pause menu rather than a board whose taps are dropped (0 before any Play
-  // again, so never waits then). Atomic since render reads it.
-  std::atomic<uint32_t> roundsStartedAwaited{0};
+  // The GameVM::roundsStarted() the match waits for: 1 at first (the match's own first round), and Play again's
+  // roundsStarted() plus one after it (loop task writes). Until the count reaches it, the loop asks for no render,
+  // since every frame published meanwhile is the last round's (or, at first, there is none), drops every gesture,
+  // since none was aimed at the new round, and renderCanvas draws nothing, so a Resume in the gap keeps the pause menu
+  // rather than a board whose taps are dropped. Atomic since render reads it.
+  std::atomic<uint32_t> roundsStartedAwaited{1};
+  // Written by render: the roundsStarted() it saw when it last got through the gate and had drawn (and handed to the
+  // panel with displayBuffer) the frame. The loop drops gestures until this reaches roundsStartedAwaited, so a tap
+  // made while the panel is still refreshing to the round's first frame is not aimed at that round either.
+  // displayBuffer returns once the driver has the frame: how much of the panel's own refresh is behind that is the
+  // driver's, and unmeasured here.
+  std::atomic<uint32_t> roundsDisplayed{0};
   // Written by render: the frameGen its last render saw. The loop does not ask
   // again for a frame a render already took, so a render that sees no new frame
   // is always a repaint someone else asked for.

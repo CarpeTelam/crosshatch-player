@@ -22,7 +22,8 @@ licence file, and the generated header repeats the copyright line.
 `assets/game-icons/names.txt` lists each name twice, once per weight, with Phosphor's own file for it:
 `<name> regular phosphor/regular/<name>.svg` and `<name> fill phosphor/fill/<name>-fill.svg`.
 `python3 scripts/gen_game_icons.py` renders them into `lib/GameIcons/GameIcons.generated.h`, which is never edited by
-hand; the `Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
+hand, and opens with `// clang-format off` (`lib/GameIcons/GameIcons.h`, beside it, is formatted like any source); the
+`Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
 whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
 name in only one weight or in one weight twice.
 
@@ -82,7 +83,7 @@ because Home's cover-grid Games tab passes it to `drawIcon`. `ICONS` still holds
 computes it (`python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h`). Only the host
 tests include it: `GameIconBlitTest` decodes every icon at every size and weight and compares it, byte for byte and
 pixel for pixel, with the raw bitmap, and `gen_game_icons_test.py` checks the committed file against a fresh render.
-The `Icons up to date` job compares the firmware header only.
+The `Icons up to date` job regenerates both files and fails on a byte difference in either.
 
 ## Naming rules
 
@@ -183,6 +184,22 @@ Two screens draw library icons besides the games, both in the regular weight:
 - The cover-grid Home's Games tab (`src/components/CoverGridHomeUi.cpp`, ledger row 9 of
   [upstream-touches.md](upstream-touches.md)) draws `game-controller` directly, as the generated symbol
   `GameIcons::GAME_CONTROLLER_32` (regular) passed to `renderer.drawIcon`, beside upstream's own tab icons.
+
+### The launcher's row icons
+
+`GamesLauncherActivity` (`src/activities/games/`) shows one 64 x 64 icon at the left of each game's row, chosen by
+`GameRowIcon::choose` (`src/games/GameRowIcon.h`) in this order:
+
+1. the package's own `icon.bmp` (a 64 x 64 file in the converter's 1-bit layout, which the installer wrote from
+   `icon.png`), when the launcher read it;
+2. else the manifest's `icon` in the manifest's `icon_weight` (`regular` when absent), when the library has that name;
+3. else `game-controller` in the regular weight, the fallback for a game with neither (also for an `icon` the library
+   lacks, which the installer refuses but a hand-copied `/.games/<id>/` can name).
+
+A library icon is decoded into memory (`renderLibraryIcon`, from the same `GameIconBlit::inkRuns` runs a draw fills,
+so the pixels are the ones `drawGameIcon` would make) one row at a time into a single scratch bitmap, because the SDK's
+list draws bitmaps, not a `GfxRenderer`. The bitmap is FreeInkUI's `Mask1` (bit 0 = ink, MSB first), which is also how
+`icon.bmp` and the library store their pixels. `GameRowIconTest` and `GamesLauncherTest` pin the choice and the pixels.
 
 ### Left out
 

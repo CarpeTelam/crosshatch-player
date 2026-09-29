@@ -51,11 +51,21 @@ def manifest_text(**changes):
     return json.dumps({key: value for key, value in manifest.items() if value is not DROP}, ensure_ascii=False)
 
 
-def png(width, height, interlace=0, compression=0, signature=pg.PNG_SIGNATURE, bad_crc=False, depth=1, color=0):
-    """A PNG with only what the packer reads: the signature, IHDR, and IEND."""
-    body = b'IHDR' + struct.pack('>IIBBBBB', width, height, depth, color, compression, 0, interlace)
-    crc = zlib.crc32(body) ^ (1 if bad_crc else 0)
-    return signature + struct.pack('>I', 13) + body + struct.pack('>I', crc) + b'\x00\x00\x00\x00IEND\xaeB`\x82'
+def chunk(kind, payload, bad_crc=False):
+    crc = zlib.crc32(kind + payload) ^ (1 if bad_crc else 0)
+    return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', crc)
+
+
+def png(width, height, interlace=0, compression=0, signature=pg.PNG_SIGNATURE, bad_crc=False, depth=1, color=0,
+        idat=None, end=True):
+    """A PNG of blank pixels: the signature, IHDR, one IDAT that inflates to exactly the bytes the header calls for
+    (`idat` replaces its payload; a header the packer refuses gets one anyway), and IEND unless `end` is false."""
+    body = struct.pack('>IIBBBBB', width, height, depth, color, compression, 0, interlace)
+    if idat is None:
+        channels = pg.PNG_CHANNELS.get(color, 1)
+        idat = zlib.compress(bytes(height * ((width * channels * depth + 7) // 8 + 1)))
+    return (signature + chunk(b'IHDR', body, bad_crc) + chunk(b'IDAT', idat) +
+            (chunk(b'IEND', b'') if end else b''))
 
 
 def incompressible(size, seed=1):
@@ -271,10 +281,84 @@ class BadPackageTest(PackerTestCase):
             'too wide': (png(pg.MAX_IMAGE_WIDTH + 1, 1), 'empty or over'),
             'too tall': (png(1, pg.MAX_IMAGE_HEIGHT + 1), 'empty or over'),
         }
+        # Retro deferral 4.2: the chunks are walked, not only the IHDR.
+        good = png(8, 8)
+        idat = zlib.compress(bytes(8 * 2))  # the 16 bytes an 8 x 8 one-bit image holds
+        cases.update({
+            'no IEND': (png(8, 8, end=False), 'no IEND chunk'),
+            'chunk past the end': (good[:-14], 'runs past the end'),
+            'header cut short': (good[:-5], 'header runs past the end'),
+            'no IDAT': (good[:33] + chunk(b'IEND', b''), 'no IDAT chunk'),
+            'bad IDAT crc': (good[:33] + chunk(b'IDAT', idat, bad_crc=True) + chunk(b'IEND', b''), 'IDAT CRC mismatch'),
+            'not zlib': (png(8, 8, idat=b'not zlib data'), 'not a zlib stream'),
+            'too little data': (png(8, 8, idat=zlib.compress(bytes(15))), 'not the 16 bytes a 8x8 image holds'),
+            'too much data': (png(8, 8, idat=zlib.compress(bytes(17))), 'not the 16 bytes a 8x8 image holds'),
+            'cut zlib stream': (png(8, 8, idat=idat[:-4]), 'not the 16 bytes'),
+        })
         for label, (data, fragment) in cases.items():
             for name in ('badge.png', 'icon.png'):
                 with self.subTest(label, name=name):
                     self.assertRefused(self.project.game({name: data}), f'{name}: ', fragment)
+
+    def test_the_size_a_png_holds_is_the_pngs_own_formula_not_the_packers_table(self):
+        # The png() helper builds its data from the packer's own PNG_CHANNELS, so these sizes are written out: a row is
+        # a filter byte and ceil(width * bits per pixel / 8) bytes, for each colour type and depth.
+        cases = {  # (width, height, depth, color): the inflated bytes
+            (3, 2, 8, 0): 2 * (1 + 3),
+            (3, 2, 1, 0): 2 * (1 + 1),
+            (9, 2, 1, 0): 2 * (1 + 2),
+            (3, 2, 16, 0): 2 * (1 + 6),
+            (3, 2, 8, 2): 2 * (1 + 9),
+            (3, 2, 16, 2): 2 * (1 + 18),
+            (5, 2, 2, 3): 2 * (1 + 2),
+            (3, 2, 8, 4): 2 * (1 + 6),
+            (3, 2, 8, 6): 2 * (1 + 12),
+            (3, 2, 16, 6): 2 * (1 + 24),
+        }
+        for (width, height, depth, color), size in cases.items():
+            with self.subTest(width=width, height=height, depth=depth, color=color):
+                data = png(width, height, depth=depth, color=color, idat=zlib.compress(bytes(size)))
+                if color == 3:  # a palette image needs its PLTE before the data
+                    data = data[:33] + chunk(b'PLTE', bytes(3 * 2 ** depth)) + data[33:]
+                self.assertIsNone(pg.png_problem(data, width, height))
+                data = png(width, height, depth=depth, color=color, idat=zlib.compress(bytes(size + 1)))
+                if color == 3:
+                    data = data[:33] + chunk(b'PLTE', bytes(3 * 2 ** depth)) + data[33:]
+                self.assertIn('the image data is not', pg.png_problem(data, width, height))
+
+    def test_every_rows_filter_byte_is_0_to_4(self):
+        width, height = 3, 3
+        stride = 1 + 3
+
+        def rows(filters):
+            return b''.join(bytes([f]) + bytes(3) for f in filters)
+        for filters in ((0, 0, 0), (1, 2, 3), (4, 0, 4)):
+            with self.subTest(filters=filters):
+                data = png(width, height, depth=8, color=0, idat=zlib.compress(rows(filters)))
+                self.assertIsNone(pg.png_problem(data, width, height))
+        for filters in ((5, 0, 0), (0, 0, 9), (0, 255, 0)):
+            with self.subTest(filters=filters):
+                data = png(width, height, depth=8, color=0, idat=zlib.compress(rows(filters)))
+                self.assertIn('filter type over 4', pg.png_problem(data, width, height))
+        self.assertEqual(stride * height, len(rows((0, 0, 0))))
+
+    def test_a_palette_image_needs_its_plte_first(self):
+        idat = zlib.compress(bytes(2 * (1 + 2)))
+        good = png(5, 2, depth=2, color=3, idat=idat)
+        self.assertIn('no PLTE chunk', pg.png_problem(good, 5, 2))
+        with_palette = good[:33] + chunk(b'PLTE', bytes(12)) + good[33:]
+        self.assertIsNone(pg.png_problem(with_palette, 5, 2))
+        after_data = good[:33] + good[33:-12] + chunk(b'PLTE', bytes(12)) + good[-12:]
+        self.assertIn('no PLTE chunk', pg.png_problem(after_data, 5, 2))
+
+    def test_a_png_split_over_chunks_or_with_other_chunks_packs(self):
+        data = png(8, 8)
+        half = zlib.compress(bytes(16))
+        split = (data[:33] + chunk(b'tEXt', b'k\x00v') + chunk(b'IDAT', half[:5]) + chunk(b'IDAT', half[5:]) +
+                 chunk(b'IEND', b''))
+        for name in ('badge.png', 'icon.png'):
+            with self.subTest(name):
+                self.assertEqual(self.project.run(self.project.game({name: split}))[0], 0)
 
     def test_every_problem_is_reported(self):
         folder = self.project.game({'a.bmp': b'x', 'b.txt': b'x', 'c.png': b'x', 'main.lua': None},
@@ -706,6 +790,23 @@ class ReadManifestTest(unittest.TestCase):
         for good in ('regular', 'fill'):
             self.assertEqual(self.read(manifest_text(icon_weight=good)), [])
 
+    def test_a_manifest_nests_no_deeper_than_the_device_parser_reads(self):
+        # StreamingJsonParser::MAX_NESTING is 32: the root object and 31 more containers fit, the 33rd open bracket
+        # is an error (retro deferral 4.2).
+        def nested(levels):
+            return '{"tags": ' + '[' * (levels - 1) + ']' * (levels - 1) + ', "id": "demo"}'
+        fits = manifest_text(x=json.loads(nested(pg.MAX_NESTING - 1)))
+        over = manifest_text(x=json.loads(nested(pg.MAX_NESTING)))
+        # The constant is the device parser's own.
+        header = (REPO / 'lib' / 'JsonParser' / 'StreamingJsonParser.h').read_text()
+        self.assertRegex(header, rf'MAX_NESTING = {pg.MAX_NESTING};')
+        self.assertEqual(pg.json_nesting(fits), pg.MAX_NESTING)
+        self.assertEqual(self.read(fits), [])
+        self.refused(over, f'nests deeper than {pg.MAX_NESTING} levels')
+        # Brackets in strings do not count.
+        self.assertEqual(self.read(manifest_text(name='[[[[' * 10)), [])
+        self.assertEqual(pg.json_nesting('{"a": "\\"[[["}'), 1)
+
     def test_unknown_keys_are_ignored(self):
         self.assertEqual(self.read(manifest_text(color='red', tags=['a', 1, None], nested={'a': {'b': [1]}})), [])
 
@@ -826,6 +927,17 @@ class ReleaseAndFixtureTest(PackerTestCase):
         self.assertRegex(out.splitlines()[-1], HASH_LINE)
         with zipfile.ZipFile(self.project.out / 'counter.cpgame') as package:
             self.assertEqual(package.namelist(), ['main.lua', 'manifest.json'])
+
+    def test_the_timing_fixture_packs_with_its_real_png(self):
+        # gray.png is a PNG this suite did not write: 8-bit grayscale, 480 x 800, from Python's zlib at level 9.
+        data = (FIXTURES / 'timing' / 'gray.png').read_bytes()
+        self.assertEqual(pg.png_size(data), (480, 800))
+        self.assertIsNone(pg.png_problem(data, 480, 800))
+        code, out, err = self.run_real('timing', self.project.out)
+        self.assertEqual((code, err), (0, ''))
+        self.assertRegex(out.splitlines()[-1], HASH_LINE)
+        with zipfile.ZipFile(self.project.out / 'timing.cpgame') as package:
+            self.assertEqual(package.namelist(), ['gray.png', 'main.lua', 'manifest.json'])
 
     def test_the_images_fixture_is_refused_for_its_bmp_files(self):
         code, out, err = self.run_real('images', self.project.out)

@@ -450,6 +450,10 @@ class MainTest(unittest.TestCase):
         text = self.out.read_text()
         self.assertIn('enum class Weight : uint8_t { Regular, Fill };', text)
         self.assertIn('inline constexpr size_t WEIGHT_COUNT = 2;', text)
+        # The formatter is off for this file alone: lib/GameIcons has no .clang-format of its own, so the hand-written
+        # GameIcons.h beside it is formatted as any source (retro R8 b).
+        self.assertIn('\n// clang-format off\n#pragma once\n', text)
+        self.assertFalse((ggi.REPO / 'lib' / 'GameIcons' / '.clang-format').exists())
         for array in ('DICE_SIX_32_PB', 'DICE_SIX_64_PB', 'DICE_SIX_FILL_32_PB', 'DICE_SIX_FILL_64_PB', 'X_32_PB',
                       'X_FILL_64_PB'):
             # Each packed array's length is its stored size, the two length bytes and the runs.

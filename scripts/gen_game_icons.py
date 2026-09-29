@@ -581,6 +581,8 @@ def header_text(icons):
         '// bit 0 = ink, rotated 90 degrees counter-clockwise (stored (row, col) is drawn at (pixels - 1 - row, col)), as',
         '// GfxRenderer::drawIcon draws it.',
         LICENCE_NOTICE,
+        # The formatter leaves this file alone (lib/GameIcons/GameIcons.h, beside it, is formatted as any source).
+        '// clang-format off',
         '#pragma once',
         '',
         '#include <cstddef>',

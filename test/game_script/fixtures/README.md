@@ -17,7 +17,7 @@ cp /tmp/packs/counter.cpgame <sd>/games/                                    # fs
 
 `pack_game.py` prints the package hash on its last line and refuses a folder the installer would refuse. A fixture
 packs when it holds only `manifest.json`, `main.lua`, `<name>.lua` files, and `<name>.png` images: `counter/`,
-`gallery/`, `icons/`, `limits/`, `loop/`, `slow-restart/`, `timer/`, and `tracer/` do. Three fixtures are **host-only**
+`gallery/`, `icons/`, `limits/`, `loop/`, `slow-restart/`, `timer/`, `timing/`, and `tracer/` do. Three fixtures are **host-only**
 and cannot be packed as they are: `images/` and `bad-image/` hold `.bmp` files (a package carries `.png`, which the
 installer converts) and `solo/` holds a `screenshots/` folder (a package is flat). The host suites load those from
 here directly.
@@ -48,6 +48,7 @@ in small type), Back must return to Games, and the device must stay responsive.
 | `bad-image/` (host-only) | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
 | `loop/` | Runaway scripts, one band each (tap it); see below. |
 | `limits/` | The codec, status, and display-list limits, one band each (tap it); see below. |
+| `timing/` | Three frames at the top of what a frame may ask of the replay, one band each (tap it; tap the frame to go back): the game's own mid-gray `gray.png` (480 x 800), a frame at exactly 1,048,576 icon and image pixels (the whole `frame_icon_image_pixels` budget), and 2,048 filled rects that each cover the whole canvas (the whole command limit); see Timing run below. |
 
 `surface/` and `modules/` are host-suite scripts, not games.
 
@@ -72,6 +73,46 @@ Epic-script-runtime's closing run on an X4 Pro, in this order:
    and the device stays responsive.
 
 This checks Done-when 1 (steps 2 and 4), 2 (step 5), and 4 (steps 2 and 3).
+
+## Timing run
+
+`timing/` is the device run of `_bmad-output/implementation-artifacts/deferred-work.md`'s `## e3r-1` (the replay of a
+frame at the icon and image budget, under `RenderLock`, has been timed only on the host) and of the 2,048 full-canvas
+fills that entry left unbounded. It packs as above (`gray.png` becomes a 1-bit dithered `gray.bmp` at install:
+about half the pixels white, runs of one or two pixels, the worst case for the replay's fills). Run it on an X4 Pro:
+
+0. Note the firmware commit the device runs (`git rev-parse HEAD` of the build, or the version line the device shows in
+   Settings) and write it beside the results: a timing means nothing without the build it came from. Start the serial
+   log before opening the game and keep it for the whole run: `pio device monitor -e x4pro` (115200 baud; add
+   `--filter log2file` or redirect with `| tee timing.log`), or any terminal on the board's USB serial port. It carries
+   the `band 2 charges ...` line, a watchdog or reset banner if there is one, and the `GAME` line `VM stopped; arena
+   peak ...` that a normal Leave prints.
+1. Install `timing.cpgame`, open it from Home, Games. The menu is a cheap frame: the baseline.
+2. For each band in turn, tap it and record the time from the tap to the finished picture (a 60 fps phone video of the
+   screen, counted in frames, is enough; the serial log has no replay time), whether the device stays responsive
+   during it (the touch panel and the buttons answer once it is drawn), and the serial log for a watchdog or reset
+   line. Then tap the frame to go back and record the time to the menu again.
+3. Band 2's serial log line is `band 2 charges 1048576 pixels`. A refusal instead (`the frame's icons and images cover
+   over 1048576 pixels`) or a `frame is full` error is a finding: report it, do not change the limit.
+
+| Band | Frame | Commands |
+| --- | --- | --- |
+| 1 | `gray.png` once, at the canvas's top-left (373,512 canvas pixels on the 474 x 788 canvas) | 1 |
+| 2 | Two gray images, eighteen 128 px `circle` fill icons in white, and 15 one-row strips of the image at the bottom edge, 1,048,576 pixels in all on the 474 x 788 canvas (worked out from `ch.screen` on any other) | 36 (with the clear) |
+| 3 | 2,048 filled rects of the whole canvas, in `light`, `black`, `white`, `dark` in turn, the last `dark`; the screen ends dark gray | 2,048 |
+
+The simulator's frames for the three bands are in
+`_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-timing-screenshots/`; their few
+milliseconds of replay say nothing about the device.
+
+What to record for entry 14: the firmware commit, each band's tap-to-picture time and the menu's, a reset or watchdog line if any, the `VM stopped` line after Leave, and
+whether a Back press during a band's replay is answered once the picture is drawn. `GfxBindingsTest`'s
+`TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas` pins the frames on the host, and `GameHashTest` and the installer suite
+install the package.
+
+`GameHash`'s mbedTLS branch (the device build) has never run against `package_vectors.json`: the host tests use OpenSSL.
+While the installer is on the device, also install `test/game_core/package_vector.cpgame` and read
+`/.games/package-vector/.pkg` back: it must read `v1` on one line and `0530a15766e91bf1` on the next.
 
 ## Fault bands
 

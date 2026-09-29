@@ -164,16 +164,34 @@ touches Storage (AD-5). It sits beside `store.bin` and is written and read the s
 The snapshot runs to the end of the file. For the package hash `0530a15766e91bf1`, a save of ver 7 holding
 `{taps = 3}` is `43 48 52 53 01 01 05 30 a1 57 66 e9 1b f1 00 01 07 00 06 00 01 05 04 74 61 70 73 03 06`.
 
-**Usable** is what `GameSaveStore::peek(id, pkgHash)` says, and it is exactly what loading accepts, so a Continue row
-never leads to a new match: the header checks `ok`, the package hash is the installed package's, the mode is 0 and n is
-1, and the snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is
-refused before it is read. `peek` reads the whole file into a buffer allocated for the call (false, with a log line,
-when that fails). Anything else is not usable: `peek` is false, one `LOG_ERR` line names why (the header status,
-`cannot open`, `cannot read`, `other package`, `not a solo save`, `empty snapshot`, `truncated`, `too large`, or the codec's
-error), and the file stays, so a save of another package survives until the game's next match replaces it. The
-launcher's Continue row, a later entry of this epic, is the caller of `peek` and of `Start::Resume`; none exists yet.
-Loading, which the match does when it starts with `Start::Resume`, applies the same checks. Without a valid `.pkg`
-there is no hash, and the match neither reads nor writes `resume.bin` (entering Over still removes a stale file).
+**Usable** is what `GameSaveStore::peek(id, pkgHash)` answers `Valid` for, and it is exactly what loading accepts: the
+header checks `ok`, the package hash is the installed package's, the mode is 0 and n is 1, and the snapshot is 1 to
+1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is refused before it is read.
+`peek` reads the whole file into a buffer allocated for the call. It answers one of three things:
+
+- `Valid`: a Continue row is listed for the game (the launcher calls `peek` once per game when it builds its list);
+- `None`: no file, or one that was read and is not usable (the header status, `other package`, `not a solo save`,
+  `empty snapshot`, `truncated`, `too large`, or the codec's error). One log line names why, at `LOG_ERR`, except a save
+  of another package, which is `LOG_INF` because every launcher build asks again. The file stays, so a save of another
+  package survives until the game's next match replaces it;
+- `Unreadable`: a file is there and could not be checked, because it would not open (`cannot open`) or read
+  (`cannot read`) or the buffer could not be allocated. A card or heap fault may pass, so it is not `None`: the launcher
+  still lists the Continue row, so that a new match is not the only choice offered over a save that may be good.
+
+The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`). A save that is
+`None` then starts a new match, since nothing usable is lost. A save it cannot read (`Unreadable`), or that the VM
+refuses although `peek` accepted it, does not: the match shows the error view "The saved match could not be resumed",
+`resume.bin` is untouched, and Back returns to the list, where Continue can be tried again or the game's own row starts a
+new match on purpose. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
+`peek` already excludes, so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a
+valid `.pkg` there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known
+to be this package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view
+rather than play new.
+
+A game that fails on the resumed state (a script error at its first `status` or `draw`) does not delete the save either.
+The failure cannot tell a game that rejects the state, every time, from a transient fault (a callback that runs out of
+heap is a script error too), and deleting on the second would lose a good save. Continue shows the error view again on
+each try until a new match, started from the game's own row, replaces the file with its first snapshot.
 
 **Writing** is `store.bin`'s: the header and snapshot go to `resume.bin.tmp`, which is closed, then `resume.bin` is
 removed and the tmp renamed over it. A failed write removes the partial tmp and leaves `resume.bin` as it was, a stop
@@ -250,8 +268,8 @@ For each inbox file the installer:
 1. lists the members and checks them against the whitelist, reads `manifest.json` (`Manifest::parse`), and applies
    `Manifest::check` with this host's capabilities: `Invalid` makes the package invalid, as does an `icon` that is not in
    the game icon library (`GameIcons::find`; `Manifest::parse` cannot see the library), while `Unavailable` (an `api`
-   this firmware cannot run, for one) installs, and the registry lists it with that verdict for the launcher to mark
-   (the first Games list shows only games that can start);
+   this firmware cannot run, for one) installs, and the registry lists it with that verdict for the launcher, which
+   lists every installed game and gives the reason under one it cannot start;
 2. extracts the members, in name order, to `/.games-tmp/<id>/`, converting images as it goes, and hashes them;
 3. removes any `/.games/<id>/` (its `.pkg` first, so a removal that stops partway leaves no listed game), renames
    `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;

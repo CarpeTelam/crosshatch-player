@@ -25,12 +25,15 @@ inline bool failWrite = false;  // the second write of a file writes nothing
 inline bool failClose = false;
 inline bool failRemove = false;
 inline bool failRename = false;
+inline bool failOpenRead = false;  // opening an existing file for reading fails
+inline bool failRead = false;      // the next read returns -1, as an SD read error does
 
 inline void reset() {
   files.clear();
   directories.clear();
   ops.clear();
   failOpenWrite = failWrite = failClose = failRemove = failRename = false;
+  failOpenRead = failRead = false;
 }
 
 inline bool take(bool& flag) {
@@ -49,6 +52,7 @@ class HalFile {
   explicit operator bool() const { return open; }
   size_t fileSize() const { return fakesd::files[path].size(); }
   int read(void* out, const size_t count) {
+    if (fakesd::take(fakesd::failRead)) return -1;
     const std::vector<uint8_t>& bytes = fakesd::files[path];
     const size_t n = pos >= bytes.size() ? 0 : std::min(count, bytes.size() - pos);
     if (n > 0) std::memcpy(out, bytes.data() + pos, n);
@@ -102,7 +106,7 @@ class HalStorage {
     return true;
   }
   bool openFileForRead(const char*, const char* path, HalFile& file) {
-    if (fakesd::files.count(path) == 0) return false;
+    if (fakesd::files.count(path) == 0 || fakesd::take(fakesd::failOpenRead)) return false;
     file = HalFile(path);
     return true;
   }

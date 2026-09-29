@@ -51,17 +51,27 @@ static_assert(GameScript::Codec::SNAPSHOT_LIMIT == GameCore::SNAPSHOT_BYTES,
 static_assert(GameSaveStore::BUFFER_BYTES >= GameScript::Codec::SNAPSHOT_LIMIT,
               "the store's buffer holds a whole snapshot, which loadResume and flushResume copy through it");
 
+// Why readResume refuses a save of another package. The file stays: it is that package's, and a reinstall of this
+// game's package keeps its saved data (AD-16), so peek logs it quietly and the match logs it as it does any refusal.
+constexpr char OTHER_PACKAGE[] = "other package";
+
 // Reads the resume file at `path` for a match of the package `pkgHash`; null when it
-// can resume one, otherwise why it cannot. The snapshot (1 to Codec::SNAPSHOT_LIMIT
+// can resume one, otherwise why it cannot. `unreadable` (when given) says whether the
+// file could not be opened or read at all, a card or device fault that a later try may
+// not repeat, as against a file that was read and is not a usable save. The snapshot (1 to Codec::SNAPSHOT_LIMIT
 // bytes after the fixed part) is read into `out` and checked as a codec value, and
 // `length` is its length. `ver` is the file's once the fixed part was read.
 const char* readResume(const char* path, const uint8_t (&pkgHash)[GameSaveStore::PACKAGE_HASH_BYTES], uint16_t& ver,
-                       const std::span<uint8_t> out, size_t& length) {
+                       const std::span<uint8_t> out, size_t& length, bool* unreadable = nullptr) {
   using namespace GameScript;
   length = 0;
   ver = 0;
+  if (unreadable) *unreadable = false;
   HalFile file;
-  if (!Storage.openFileForRead("GAME", path, file)) return "cannot open";
+  if (!Storage.openFileForRead("GAME", path, file)) {
+    if (unreadable) *unreadable = true;
+    return "cannot open";
+  }
   const size_t size = file.fileSize();
   const bool tooLarge = size > RESUME_PREFIX_BYTES + std::min(out.size(), Codec::SNAPSHOT_LIMIT);
   uint8_t prefix[RESUME_PREFIX_BYTES] = {};
@@ -70,13 +80,16 @@ const char* readResume(const char* path, const uint8_t (&pkgHash)[GameSaveStore:
   const bool read = !tooLarge && readExactly(file, prefix, prefixBytes) && readExactly(file, out.data(), snapshotBytes);
   file.close();
   if (tooLarge) return "too large";
-  if (!read) return "cannot read";
+  if (!read) {
+    if (unreadable) *unreadable = true;
+    return "cannot read";
+  }
 
   const BlobHeaderStatus status = checkBlobHeader(prefix, std::min(prefixBytes, BLOB_HEADER_BYTES),
                                                   GameSaveStore::RESUME_MAGIC, GameSaveStore::RESUME_FILE_VERSION);
   if (status != BlobHeaderStatus::Ok) return blobHeaderStatusName(status);
   if (prefixBytes < RESUME_PREFIX_BYTES) return "truncated";
-  if (std::memcmp(prefix + RESUME_HASH_AT, pkgHash, GameSaveStore::PACKAGE_HASH_BYTES) != 0) return "other package";
+  if (std::memcmp(prefix + RESUME_HASH_AT, pkgHash, GameSaveStore::PACKAGE_HASH_BYTES) != 0) return OTHER_PACKAGE;
   if (prefix[RESUME_MODE_AT] != RESUME_MODE_SOLO || prefix[RESUME_SEATS_AT] != RESUME_SEATS_SOLO) {
     return "not a solo save";
   }
@@ -246,29 +259,38 @@ bool GameSaveStore::flush(GameScript::StoreSlot& slot, const uint32_t nowMs) {
   return false;
 }
 
-bool GameSaveStore::peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]) {
+GameSaveStore::SaveState GameSaveStore::peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]) {
   char path[GamePaths::DATA_PATH_BYTES];
   snprintf(path, sizeof(path), "%s/%s/resume.bin", GamePaths::GAMES_DATA_DIR, gameId);
   if (!Storage.exists(path)) {
     snprintf(path, sizeof(path), "%s/%s/resume.bin.tmp", GamePaths::GAMES_DATA_DIR, gameId);
-    if (!Storage.exists(path)) return false;
+    if (!Storage.exists(path)) return SaveState::None;
   }
   // A static call has no store buffer: one snapshot's worth, allocated for this call only
-  // (the launcher asks once per row it draws, never while a match runs).
+  // (the launcher asks once per startable game when it builds its listing, never while it draws or a match runs).
   std::unique_ptr<uint8_t[]> snapshot(new (std::nothrow) uint8_t[GameScript::Codec::SNAPSHOT_LIMIT]);
   if (!snapshot) {
+    // A file is there and could not be checked: not the same as no save, or the launcher would hide a good one.
     LOG_ERR("GAME", "%s: OOM: %u bytes to check %s", gameId, static_cast<unsigned>(GameScript::Codec::SNAPSHOT_LIMIT),
             path);
-    return false;
+    return SaveState::Unreadable;
   }
   uint16_t ver = 0;
   size_t length = 0;
+  bool unreadable = false;
   if (const char* problem =
-          readResume(path, pkgHash, ver, {snapshot.get(), GameScript::Codec::SNAPSHOT_LIMIT}, length)) {
-    LOG_ERR("GAME", "%s: discarded %s: %s", gameId, path, problem);
-    return false;
+          readResume(path, pkgHash, ver, {snapshot.get(), GameScript::Codec::SNAPSHOT_LIMIT}, length, &unreadable)) {
+    // Every launcher build asks again, so a save of another package (which stays) is not an error.
+    if (std::strcmp(problem, OTHER_PACKAGE) == 0) {
+      LOG_INF("GAME", "%s: %s is another package's save: %s", gameId, path, problem);
+    } else if (unreadable) {
+      LOG_ERR("GAME", "%s: could not check %s: %s; the file is kept", gameId, path, problem);
+    } else {
+      LOG_ERR("GAME", "%s: discarded %s: %s", gameId, path, problem);
+    }
+    return unreadable ? SaveState::Unreadable : SaveState::None;
   }
-  return true;
+  return SaveState::Valid;
 }
 
 void GameSaveStore::setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]) {
@@ -276,8 +298,9 @@ void GameSaveStore::setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]) {
   hasPackageHash = true;
 }
 
-std::span<const uint8_t> GameSaveStore::loadResume(uint16_t& ver) {
+std::span<const uint8_t> GameSaveStore::loadResume(uint16_t& ver, bool& unreadable) {
   ver = 0;
+  unreadable = false;
   if (!hasPackageHash) return {};
   const char* path = resumePath;
   if (!Storage.exists(resumePath)) {
@@ -287,9 +310,15 @@ std::span<const uint8_t> GameSaveStore::loadResume(uint16_t& ver) {
     path = resumeTmpPath;
   }
   size_t length = 0;
-  if (const char* problem = readResume(path, packageHash, ver, buffer, length)) {
-    LOG_ERR("GAME", "%s: discarded %s: %s", id, path, problem);
+  bool fault = false;
+  if (const char* problem = readResume(path, packageHash, ver, buffer, length, &fault)) {
+    if (fault) {
+      LOG_ERR("GAME", "%s: could not read %s: %s; the file is kept", id, path, problem);
+    } else {
+      LOG_ERR("GAME", "%s: discarded %s: %s", id, path, problem);
+    }
     ver = 0;
+    unreadable = fault;
     return {};
   }
   return {buffer.data(), length};
@@ -314,6 +343,10 @@ bool GameSaveStore::saveResume(const std::span<const uint8_t> snapshot, const ui
 }
 
 bool GameSaveStore::deleteResume() {
+  // Without the package hash this match neither read nor wrote a save (flushResume does nothing either), and a file
+  // there is not known to be this package's: a match that could not tell (its .pkg would not read) must not remove a
+  // save at Over that a Continue may still offer.
+  if (!hasPackageHash) return true;
   bool gone = true;
   for (const char* path : {resumeTmpPath, resumePath}) {
     if (!Storage.exists(path) || Storage.remove(path)) continue;
@@ -322,6 +355,8 @@ bool GameSaveStore::deleteResume() {
   }
   return gone;
 }
+
+void GameSaveStore::clearResumeBackoff() { resumeFailed = false; }
 
 bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) {
   if (!hasPackageHash || !mailbox.pending()) return true;

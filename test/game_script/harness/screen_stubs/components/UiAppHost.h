@@ -41,6 +41,7 @@ struct DrawnBitmap {
 struct DrawnText {
   std::string text;
   freeink::ui::Rect rect;
+  freeink::ui::Color color = freeink::ui::Color::Black;  // the ink the text was asked to be drawn in
 };
 
 class RecordingTarget final : public freeink::ui::DrawTarget {
@@ -79,8 +80,8 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   void line(freeink::ui::Point, freeink::ui::Point, uint8_t, freeink::ui::Paint) override {}
   void triangle(freeink::ui::Point, freeink::ui::Point, freeink::ui::Point, freeink::ui::Paint) override {}
   void text(freeink::ui::Rect rect, const char* text, freeink::ui::TextStyle style) override {
-    freeink::ui::layoutText(*this, rect, text, style, [this](const char* line, const freeink::ui::Rect where) {
-      drawn.push_back({line, where});
+    freeink::ui::layoutText(*this, rect, text, style, [this, &style](const char* line, const freeink::ui::Rect where) {
+      drawn.push_back({line, where, style.color});
     });
   }
   void bitmap(freeink::ui::Rect, freeink::ui::BitmapRef bitmap, freeink::ui::BitmapMode, freeink::ui::Paint,

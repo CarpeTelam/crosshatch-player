@@ -516,7 +516,8 @@ TEST_F(InstallerTest, ACardFailureInTheLastStepOfAReinstallIsRetried) {
 // The fixtures README says these pack with pack_game.py and install; a stored zip of the same
 // members (the folder's manifest.json and .lua files) stands in for the packer here.
 TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
-  const char* fixtures[] = {"counter", "gallery", "icons", "limits", "loop", "slow-restart", "timer", "tracer"};
+  const char* fixtures[] = {"counter",      "gallery", "icons",  "limits", "loop",
+                            "slow-restart", "timer",   "timing", "tracer"};
   for (const char* fixture : fixtures) {
     const std::string dir = std::string(GAME_FIXTURES_DIR) + "/" + fixture;
     std::vector<Member> members;
@@ -536,6 +537,24 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
       }
     }
     EXPECT_TRUE(found);
+    if (std::string(fixture) == "timing") {
+      // The timing fixture's gray.png is the worst case for runs only if the converter dithers it: about half the
+      // pixels of the converted 480 x 800 image are white, and neighbours differ.
+      const Bytes bmp = fakesd::bytesOf("/.games/timing/gray.bmp");
+      ASSERT_EQ(bmp.size(), 62u + 60u * 800u);
+      size_t white = 0;
+      size_t changes = 0;
+      for (size_t y = 0; y < 800; ++y) {
+        for (size_t x = 0; x < 480; ++x) {
+          const bool bit = (bmp[62 + y * 60 + x / 8] >> (7 - x % 8)) & 1;
+          white += bit;
+          if (x > 0) changes += bit != (((bmp[62 + y * 60 + (x - 1) / 8] >> (7 - (x - 1) % 8)) & 1) != 0);
+        }
+      }
+      EXPECT_GT(white, 480u * 800u * 4 / 10);
+      EXPECT_LT(white, 480u * 800u * 6 / 10);
+      EXPECT_GT(changes, 480u * 800u / 4) << "runs of about one or two pixels";
+    }
   }
 }
 
