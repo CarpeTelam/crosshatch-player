@@ -16,4 +16,4 @@ list(APPEND HARNESS_EXCLUDE_ACTIVITIES
      # The activity framework, UITheme, and the SDK's UI: the match and list screens on
      # the host are the next harness entries.
      GameMatchActivity.cpp
-     GamesListActivity.cpp)
+     GamesLauncherActivity.cpp)
