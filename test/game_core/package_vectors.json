@@ -1,0 +1,68 @@
+{
+  "limits": {
+    "package_bytes": {
+      "limit": 262144,
+      "at": 262144,
+      "over": 262145
+    },
+    "member_bytes": {
+      "limit": 131072,
+      "at": 131072,
+      "over": 131073
+    },
+    "members": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images_bytes": {
+      "limit": 131072,
+      "at": {
+        "images": [[2048, 511], [32, 33]],
+        "bytes": 131072
+      },
+      "over": {
+        "images": [[2048, 511], [32, 9], [32, 9]],
+        "bytes": 131074
+      }
+    },
+    "member_name_chars": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "image_width": {
+      "limit": 2048,
+      "at": 2048,
+      "over": 2049
+    },
+    "image_height": {
+      "limit": 3072,
+      "at": 3072,
+      "over": 3073
+    }
+  },
+  "image_formula": {
+    "header_bytes": 62,
+    "row_pixels_per_word": 32,
+    "word_bytes": 4,
+    "icon_excluded": "icon.png"
+  },
+  "hash_vector": {
+    "id": "package-vector",
+    "members": {
+      "manifest.json": "{\n  \"id\": \"package-vector\",\n  \"name\": \"Package Vector\",\n  \"version\": \"1.0.0\",\n  \"api\": 1,\n  \"seats\": { \"min\": 1, \"max\": 1 },\n  \"modes\": [\"solo\"]\n}\n",
+      "main.lua": "-- The golden package vector: main.lua is repetitive, so the packer deflates it.\nlocal util = require(\"util\")\n-- line 0: the same text again and again so that deflate shrinks it\n-- line 1: the same text again and again so that deflate shrinks it\n-- line 2: the same text again and again so that deflate shrinks it\n-- line 3: the same text again and again so that deflate shrinks it\nreturn util\n",
+      "util.lua": "return {}\n"
+    },
+    "sha256": "0530a15766e91bf145753a3676ac5d3a00ce6d8922f122a257eb25ba3b1072c5",
+    "package_hash": "0530a15766e91bf1",
+    "package": "package_vector.cpgame",
+    "package_bytes": 575
+  }
+}

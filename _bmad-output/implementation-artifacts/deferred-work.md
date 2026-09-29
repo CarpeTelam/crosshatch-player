@@ -229,3 +229,8 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e3r-x-cross-story-fixes.md`
   summary: A Resume in the Play-again gap now leaves the pause menu on screen but inert for up to the new round's setup time (routing is closed and `loopPlaying` drops every gesture; Back, hinted "Resume", pauses again), and an overlay closed in the gap stays until the round's first frame; a "starting the next round" view, or staying in Paused until `roundsStarted()` moves, would show the wait honestly.
   evidence: Review (blind hunter, edge-case hunter, verification gap, intent alignment), e3r-x. The orchestrator's fix keeps the current view until the round publishes; `game-canvas.md`'s Paused -> Playing row documents the inert menu. Either alternative adds match state or a view (a UX decision for the owner); the window is one `restart()` long (about 2 s with `slow-restart`, milliseconds for a typical game).
+## 4.2
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-pack-game-py-and-the-package-vectors-plan.md`
+  summary: `pack_game.py` checks a PNG through its IHDR fields only (not IDAT, IEND, or a full chunk walk; colour type and bit depth are checked) and does not limit manifest nesting depth (the C++ reader stops at 32), so a package can pack and then be refused at install.
+  evidence: Review (blind hunter, edge-case hunter), 4.2. The ticket asks for the image budget from each PNG's IHDR; a corrupt image or a 32-deep manifest in a game folder is unlikely. Entry 3's installer is the enforcer; a chunk walk and a depth check in the packer would close it if a release ever ships such a game.
