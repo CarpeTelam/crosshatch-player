@@ -34,7 +34,7 @@ cannot be.
 | 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys appended | append-only |
 | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
 | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |
-| 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping (the `GamesLauncher` and `GameMatch` activity names select Home's Games row), `goToGames()` opens `GamesLauncherActivity`; its include | yes |
+| 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping (the `GamesLauncher`, `GameMode`, and `GameMatch` activity names select Home's Games row), `goToGames()` opens `GamesLauncherActivity`; its include | yes |
 | 6 | `src/activities/home/HomeActivity.h` | Games in the index mapping after File Transfer and before Settings, one mapping for list and cover-grid Home; `onGamesOpen()`; no game header | yes |
 | 7 | `src/activities/home/HomeActivity.cpp` | Games in the item count in both Home modes, switch case, list-mode label; list mode reuses an existing `UIIcon`; no game header | yes |
 | 8 | `src/components/CoverGridHomeUi.h` | tab array size, one more for the Games tab; no game header | yes |

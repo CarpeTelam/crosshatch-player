@@ -13,7 +13,8 @@
 // list. A row's icon is the package's icon.bmp, else the manifest's library icon in its weight, else
 // `game-controller` (GameRowIcon). A game this host cannot start (Manifest::check) shows its reason
 // under the name and does not open. A file that failed to install is explained once, in a popup.
-// Opening a game replaces this screen with its match.
+// Opening a game replaces this screen with its match, or, for a game the host can start in two or more modes, opens
+// the mode picker (GameModeActivity) above it.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the

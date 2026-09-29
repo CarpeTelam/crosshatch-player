@@ -348,3 +348,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
   summary: `docs/crosshatch/formats.md` still says "the first Games list shows only games that can start" although the launcher lists every game with its reason.
   evidence: `formats.md` (Install, step 1) and `docs/crosshatch/game-icons.md` (no `GameRowIcon` section) are outside this entry's `touches`.
+
+## 4.9
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-mode-picker-plan.md`
+  summary: Resolved by entry 9: the `## 4.8` item on `startable()` and `STR_GAMES_UNAVAILABLE_MODE` (a game only another mode can start showed a false "None of its modes work here" and did not open). The launcher now opens every game whose check is Ok, to the match with one mode and to `GameModeActivity` with two or more, and `AGameOnlyAnotherModeCanStartIsListedButDoesNotOpenYet` became `AGameOnlyAnotherModeCanStartOpensItsMatchAndAGameWithTwoModesOpensThePicker`.
+  evidence: `GamesLauncherTest.cpp` and `ModePickerTest.cpp` (`ModePickerHarnessTest`) pass, with the scripted host's `pass` capability on.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-mode-picker-plan.md`
+  summary: For epic-pass-and-play: both the launcher's direct start of a game with no solo mode (logged "has no solo mode") and every row of `GameModeActivity` start `GameMatchActivity(renderer, mappedInput, manifest)`, so a pass or nearby game plays a solo match today (logged "the match plays solo until pass and play exists"); pass the picked mode into the match and add the seat choice to the picker.
+  evidence: Not reachable on today's host (`gameHostCaps()` has `pass` and `nearby` off, so `Manifest::check` leaves only `solo` and the picker never opens); reachable only in the harness with `hostcaps::script().pass` on.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-mode-picker-plan.md`
+  summary: No host test runs `ActivityManager::goHome`, so the `GameMode`, `GamesLauncher`, and `GameMatch` names selecting Home's Games row are checked by the shared `NAME` constants only.
+  evidence: The harness replaces `ActivityManager` with `screen_stubs/ActivityManager.h`; dropping a name from the mapping in `ActivityManager.cpp` fails no test. A test needs `goHome`'s name-to-item mapping in a pure function outside the upstream file (ledger row 5 allows only the mapping and `goToGames()`).

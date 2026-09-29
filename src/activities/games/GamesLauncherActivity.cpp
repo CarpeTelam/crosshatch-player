@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "GameMatchActivity.h"
+#include "GameModeActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GamePackageInstaller.h"
@@ -69,16 +70,9 @@ const char* reasonText(const GamePackageInstaller::Error error) {
   return "";
 }
 
-// Whether a row opens: the host can start the game, and in solo, the only mode until the mode picker exists
-// (epic-install-and-launcher entry 9). A game only another mode can start is not startable yet.
-bool startable(const GameCore::CheckResult& check) {
-  return check.ok() && (check.modes & GameCore::Manifest::MODE_SOLO) != 0;
-}
-
 // Why a game that is listed cannot start on this host, in a few words under its name.
 const char* unavailableText(const GameCore::CheckResult& check) {
   using GameCore::CheckReason;
-  if (check.ok()) return tr(STR_GAMES_UNAVAILABLE_MODE);  // Ok, but not in solo (startable)
   switch (check.reason) {
     case CheckReason::ApiTooNew:
       return tr(STR_GAMES_UNAVAILABLE_NEWER);
@@ -208,7 +202,7 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
   // The reason, not a dimmed row: a disabled state would hide the selection, which can rest on this row.
-  if (!startable(game.check)) item.subtitle = unavailableText(game.check);
+  if (!game.check.ok()) item.subtitle = unavailableText(game.check);
 
   // The package's icon is read already; a library icon is decoded into the one scratch, which the list draws from
   // (measure and draw share one provider call) before it asks for the next row.
@@ -270,13 +264,26 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
 void GamesLauncherActivity::activateIndex(const int index) {
   if (index < 0 || static_cast<size_t>(index) >= listing.count) return;
   const GameRegistry::Entry& game = listing.entries[index];
-  if (!startable(game.check)) {
-    LOG_INF("GAME", "Not starting %s: %s", game.manifest.id,
-            game.check.ok() ? "no solo mode on this host" : GameCore::describe(game.check.reason));
+  if (!game.check.ok()) {
+    LOG_INF("GAME", "Not starting %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
     requestUpdate();  // the tap moved the selection here; show it
     return;
   }
   app.clearTapFlash();  // the row leaves this screen
+  // A game the host can start in two or more modes asks which one. The picker is pushed, so its Back returns to this
+  // list as it is; the match replaces the picker, and with it the stack.
+  if (GameModeActivity::needed(game.check.modes)) {
+    auto picker = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game.manifest, game.check.modes);
+    if (!picker) {
+      LOG_ERR("GAME", "OOM: %u byte mode activity", static_cast<unsigned>(sizeof(GameModeActivity)));
+      return;
+    }
+    activityManager.pushActivity(std::move(picker));
+    return;
+  }
+  // The match runs solo only (epic-pass-and-play passes the mode in), so a game with no solo mode plays solo here too.
+  if ((game.check.modes & GameCore::Manifest::MODE_SOLO) == 0)
+    LOG_INF("GAME", "%s has no solo mode: the match plays solo until pass and play exists", game.manifest.id);
   auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
