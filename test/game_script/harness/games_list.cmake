@@ -1,0 +1,28 @@
+# The Games list on the host: GamesListActivity, built unchanged over the screen doubles and the
+# match's source library (match.cmake's game_match_src: the real Activity, UiListActivity,
+# ButtonNavigator, FreeInkUI, GameRegistry, and the match a row opens). Entry 5 of
+# epic-install-and-launcher; entries 8 to 12 copy GamesListTest.cpp for the launcher.
+#
+# The installer is scripted (list_stubs/): the list calls hasInbox and installAll and shows what
+# they report, and the installer over real packages has its own suites. Everything else is real.
+
+add_library(game_list_src STATIC
+  ${REPO_ROOT}/src/activities/games/GamesListActivity.cpp
+  ${HARNESS_DIR}/list_stubs/GamePackageInstallerDouble.cpp)
+target_include_directories(game_list_src PUBLIC ${HARNESS_DIR}/list_stubs)
+# What GameRegistry (in game_match_src) reads a manifest with. Its own library, listed after game_match_src,
+# so that it is linked whether or not the list screen itself refers to a symbol in it.
+add_library(game_list_manifest STATIC
+  ${REPO_ROOT}/lib/GameCore/Manifest.cpp
+  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp)
+target_link_libraries(game_list_manifest PUBLIC game_harness_doubles)
+target_link_libraries(game_list_src PUBLIC game_match_src game_list_manifest)
+
+add_executable(GamesListHarnessTest GamesListTest.cpp)
+target_compile_definitions(GamesListHarnessTest PRIVATE
+  # The fixture games (tracer, timer, counter) a row opens.
+  MATCH_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures")
+# GamesListTest lists every installer Error in a switch with no default: a new one must not compile until it is added.
+target_compile_options(GamesListHarnessTest PRIVATE -Werror=switch)
+target_link_libraries(GamesListHarnessTest PRIVATE game_list_src GTest::gtest_main)
+gtest_discover_tests(GamesListHarnessTest)
