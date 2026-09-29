@@ -3,7 +3,7 @@ title: 'Icon compression (PackBits)'
 type: 'feature'
 ticket: '15'
 created: '2026-09-29'
-status: 'built'
+status: done
 baseline_revision: '1a0b7f6d950e8c0b2089c5680a13769ec4df1055'
 route: 'full'
 route_source: 'auto'
