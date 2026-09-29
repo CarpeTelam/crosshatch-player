@@ -141,8 +141,17 @@ void GamesLauncherActivity::selectRemembered() {
   if (lastOpened == 0) return;
   for (size_t i = 0; i < listing.count; ++i) {
     if (fingerprintOf(listing.entries[i].manifest.id) == lastOpened) {
-      // The game's own row, below the Continue rows; the first build shows the whole page holding it.
-      activeNav().requestSelection(static_cast<int>(continueCount + i));
+      // The game's Continue row when it has one, else its own row below them; the first build shows the whole page
+      // holding it. Not the own row of a game with a save: one Confirm there starts a New match, which replaces the
+      // save the person has just left.
+      size_t row = continueCount + i;
+      for (size_t r = 0; r < continueCount; ++r) {
+        if (continueOf[r] == i) {
+          row = r;
+          break;
+        }
+      }
+      activeNav().requestSelection(static_cast<int>(row));
       return;
     }
   }

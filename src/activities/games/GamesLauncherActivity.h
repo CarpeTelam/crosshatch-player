@@ -26,7 +26,8 @@
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
 // repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
 // game it last opened (a fingerprint of its id), and the next launcher, built by ActivityManager::goToGames(), selects
-// that game's own row (also after a match started from its Continue row) and shows the page holding it.
+// that game's Continue row when it has one (a Confirm on its own row would start a New match over the save), else its
+// own row, and shows the page holding it.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
@@ -75,7 +76,7 @@ class GamesLauncherActivity final : public UiListActivity {
   // continueCount is not 0), else row - continueCount.
   size_t gameOfRow(size_t row) const { return row < continueCount ? continueOf[row] : row - continueCount; }
   size_t paddedCount() const;
-  // Selects the game the launcher last opened, when the listing still has it.
+  // Selects the game the launcher last opened, when the listing still has it: its Continue row, else its own row.
   void selectRemembered();
   // The remove confirmation: opened on a row, answered by Cancel (Back), or Remove.
   void openRemoveDialog(int row);

@@ -519,6 +519,28 @@ TEST_F(ContinueTest, ATapOnAContinueRowUnderTheConfirmationOrTheNoteStartsNothin
   EXPECT_TRUE(dialogUp());
 }
 
+// The install note is over the list: a long-press on a Continue row under it reaches the row-action guard (a tap would
+// only dismiss the note), and must move nothing.
+TEST_F(ContinueTest, ALongPressOnAContinueRowUnderTheNoteMovesNoSelectionAndOpensNothing) {
+  addGames(3);
+  save("game-01");
+  save("game-02");
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.firstError = GamePackageInstaller::Error::NotAPackage;
+  open();
+  ASSERT_EQ(findAll(tr(STR_GAMES_CONTINUE)).size(), 2u);
+  longPressAt(continueLine(1));
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_FALSE(dialogUp());
+  input->tap(240, 400);  // dismisses the note
+  frame();
+  key(Button::Confirm);  // the selection never left the first Continue row
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-01"));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+}
+
 // ---- paging and selection ----
 
 TEST_F(ContinueTest, ContinueRowsPageWithTheGamesAndNoRowRepeats) {
@@ -584,12 +606,21 @@ TEST_F(ContinueTest, AStepBackFromTheFirstRowWrapsToTheLastGameNotToABlankPaddin
   EXPECT_FALSE(logHas("Resuming"));
 }
 
-TEST_F(ContinueTest, LeavingAMatchStartedFromContinueReturnsToThePageHoldingThatGame) {
+TEST_F(ContinueTest, LeavingAMatchStartedFromContinueReturnsToItsContinueRowOnThePageHoldingIt) {
   addGames(25);
+  std::vector<Row> all;
+  for (int i = 1; i <= 10; ++i) {
+    save(idOf(i));
+    all.push_back({nameOf(i), true});
+  }
   save("game-20");
+  all.push_back({nameOf(20), true});
+  for (int i = 1; i <= 25; ++i) all.push_back({nameOf(i), false});
   open();
   const size_t page = rows(25).size();
   ASSERT_GT(page, 2u);
+  ASSERT_LT(page, 11u) << "the Continue row of Game 20 (row 10) is not on the first page";
+  key(Button::NavNext, 10);
   key(Button::Confirm);  // Continue Game 20
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
@@ -597,18 +628,67 @@ TEST_F(ContinueTest, LeavingAMatchStartedFromContinueReturnsToThePageHoldingThat
 
   reopen();  // Leave: goToGames() builds a fresh launcher
   fakelog::clearLines();
-  const size_t gameRow = 20;  // row 0 is Continue; game k is row k
-  const size_t first = gameRow / page * page;
+  const size_t first = 10 / page * page;
   const std::vector<Row> shownRows = rows(25);
   ASSERT_FALSE(shownRows.empty());
   ASSERT_GE(first, 1u);
-  EXPECT_EQ(shownRows.front(), (Row{nameOf(static_cast<int>(first)), false})) << "the whole page, from its first row";
-  EXPECT_TRUE(ui().drewLine("Game 20"));
-  key(Button::Confirm);  // the selection is on Game 20's own row
+  EXPECT_EQ(shownRows.front(), all[first]) << "the whole page holding the Continue row, from its first row";
+  EXPECT_EQ(shownRows.size(), page);
+  key(Button::Confirm);  // the selection is on Game 20's Continue row
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-20"));
-  EXPECT_FALSE(logHas("Resuming")) << "the game's row starts a new match";
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+}
+
+TEST_F(ContinueTest, OneConfirmAfterLeavingAContinueMatchResumesAgainAndLeavesTheSaveAlone) {
+  addGames(3);
+  save("game-01");
+  save("game-03");
+  open();  // Continue 01, Continue 03, Game 01, 02, 03
+  key(Button::NavNext);
+  key(Button::Confirm);  // Continue Game 03
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+
+  reopen();  // Leave
+  fakelog::clearLines();
+  key(Button::Confirm);  // a single press, with nothing chosen since
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-03"));
+  ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
+  EXPECT_TRUE(logHas("Resuming at ver 3"));
+  EXPECT_FALSE(logHas("setup ran")) << "not a New match";
+  for (int i = 0; i < 20; ++i) {
+    entered->loop();
+    input->clear();
+  }
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-03")), resumeBytes(2, 3)) << "the save is as it was";
+}
+
+TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
+  addGames(25);
+  save("game-01");  // one Continue row, so the game rows are one row further down
+  open();
+  const size_t page = rows(25).size();
+  ASSERT_GT(page, 2u);
+  key(Button::NavNext, 20);  // row 20 is Game 20's own row
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-20"));
+
+  reopen();
+  fakelog::clearLines();
+  const size_t first = 20 / page * page;
+  ASSERT_GE(first, 1u);
+  EXPECT_EQ(rows(25).front(), (Row{nameOf(static_cast<int>(first)), false}));
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-20"));
+  EXPECT_FALSE(logHas("Resuming"));
 }
 
 // ---- remove, and what the launcher asks the card ----
