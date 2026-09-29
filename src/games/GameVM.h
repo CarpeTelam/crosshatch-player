@@ -44,9 +44,12 @@ class GameVM {
   static constexpr uint32_t TASK_STACK_BYTES = GameScript::VM_STACK_BYTES;
   static constexpr int TASK_PRIORITY = 1;
   static constexpr int TASK_CORE = 1;
+  // How often join() and abandon() poll. A wait ends late by its last iteration: one poll,
+  // and in abandon() also deleteIfStuckInLua's settle of up to 10 ticks and its wait for
+  // taskMutex. The forced exit's recorded bound (docs/crosshatch/game-canvas.md) assumes 5.
+  static constexpr uint32_t STOP_POLL_MS = 5;
   // How long abandon() waits, counted in millis() from when it began, for the stuck
-  // task to be safely deletable. It ends late by at most one poll (STOP_POLL_MS in
-  // GameVM.cpp) plus, on the device, deleteIfStuckInLua's settle of up to 10 ticks.
+  // task to be safely deletable (late by its last iteration; see STOP_POLL_MS).
   static constexpr uint32_t ABANDON_WAIT_MS = 500;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
@@ -143,8 +146,9 @@ class GameVM {
   // event, and asks the task to quit. Returns at once.
   void cancel();
   // Waits for the task to end, polling every STOP_POLL_MS, until timeoutMs of millis()
-  // have passed since it began (so it returns within timeoutMs plus one poll, however
-  // long each poll took). True when it has ended (or never started).
+  // have passed since it began. It returns late by its last iteration (a poll), and
+  // so at most a poll after timeoutMs unless a poll itself is delayed by the scheduler.
+  // True when it has ended (or never started).
   bool join(uint32_t timeoutMs);
   // cancel(), then join(timeoutMs).
   bool stop(uint32_t timeoutMs);
@@ -157,8 +161,10 @@ class GameVM {
   // cannot stop a thread), all of it is leaked. Call from the loop task while the
   // render task is not reading frames (RenderLock held, as in onExit). Returns true
   // when the task is gone (ended or deleted); false when it may still run, and so
-  // still post to the store slot, which the caller must then leak too.
-  static bool abandon(std::unique_ptr<GameVM> vm);
+  // still post to the store slot, which the caller must then leak too. A task that ends
+  // within the wait may have published a last snapshot after the caller's own flush, so
+  // `beforeDelete(vm, user)`, if given, runs on it before it is deleted.
+  static bool abandon(std::unique_ptr<GameVM> vm, void (*beforeDelete)(GameVM&, void*) = nullptr, void* user = nullptr);
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,

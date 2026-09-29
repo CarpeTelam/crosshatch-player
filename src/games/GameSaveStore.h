@@ -77,13 +77,14 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   bool saveResume(std::span<const uint8_t> snapshot, uint32_t ver);
   // Removes resume.bin and its tmp; false when one is still there.
   bool deleteResume();
-  // Each loop pass in Playing and Paused, and once forced at the forced exit and
-  // Leave: takes the latest snapshot `mailbox` holds and writes it, or, when its
-  // status is over, deletes the save instead (a finished round never resumes). A
-  // failed write puts the snapshot back and is retried by the first pass
-  // FLUSH_INTERVAL_MS later, or at once by a forced call. Does nothing without a
-  // package hash or a pending snapshot. True unless a write was due and failed.
-  bool flushResume(SnapshotMailbox& mailbox, uint32_t nowMs, bool force);
+  // Each loop pass in Playing and Paused, and at Leave and the forced exit: takes the
+  // latest snapshot `mailbox` holds and writes it, or, when its status is over, deletes
+  // the save instead (a finished round never resumes). A failed write puts the snapshot
+  // back and no call retries it until FLUSH_INTERVAL_MS after the failure, Leave and the
+  // forced exit included (a card that just failed is not asked again while the device
+  // sleeps). Does nothing without a package hash or a pending snapshot. True unless a
+  // write was due and failed.
+  bool flushResume(SnapshotMailbox& mailbox, uint32_t nowMs);
 
  private:
   // Reads `path` into `out`; null with `length` set when it holds a valid store,

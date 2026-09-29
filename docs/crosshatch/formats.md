@@ -181,9 +181,9 @@ after the tmp is whole leaves the tmp as the copy that is read while `resume.bin
 that state renames the tmp first. The VM hands each snapshot it commits to the loop task through a latest-wins mailbox
 (`src/games/SnapshotMailbox.h`), and the loop task writes the newest one on its next pass, so a pass that finds two
 snapshots writes the later. A failed write keeps the snapshot pending: the loop retries `FLUSH_INTERVAL_MS` (5 s) after
-the failure, while the forced exit and Leave retry at once. The match writes only in Playing and Paused, only for a
+the failure, Leave and the forced exit included. The match writes only in Playing and Paused, only for a
 snapshot whose status is not over, and deletes `resume.bin` and its tmp instead when the latest snapshot is over or
-when it enters Over (a finished round never resumes; a delete the card refuses is retried on each loop pass in Over and Paused, and at Leave and the forced exit, until it succeeds). Leave keeps the file. The `ver` a resumed match continues from
+when it enters Over (a finished round never resumes; a delete the card refuses is retried at most every 5 s in Over and Paused, and at Leave and the forced exit regardless, until it succeeds; the forced exit's SD steps stop starting 1,500 ms after it began). Leave keeps the file. The `ver` a resumed match continues from
 is the file's, so a match that has passed 65,535 snapshots wraps in the file (the spine's `u16`) and only there.
 
 ## Game package (`.cpgame`)

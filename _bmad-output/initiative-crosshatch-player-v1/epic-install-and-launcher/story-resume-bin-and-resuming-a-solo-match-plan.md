@@ -80,6 +80,10 @@ Work only in the git worktree `/tmp/claude-0/-home-user-crosshatch-player/471327
 
 ## Plan Change Log
 
+- 2026-09-29, orchestrator's independent review (#24): the frozen matrix says the forced exit writes a failed resume write "at once". Changed by the orchestrator's decision: a write that failed less than `FLUSH_INTERVAL_MS` before is not retried at Leave or the forced exit, and the forced exit's SD steps start only inside a 1,500 ms deadline from the start of `onExit()`. Avoids: a card that just failed getting a full retry, and the store flush and delete retry, under `RenderLock` during sleep. KEEP: the resume write comes first among the SD steps, before an abandon frees the mailbox's memory.
+- Orchestrator-approved (reversible within the PR): `GameVM.*` beyond the waits (the snapshot hand-off, `setResume`, `committed()`, the `abandon` hook) and the new `src/games/SnapshotMailbox.h`.
+- Assumption for entry 14: the forced exit's SD work is bounded by a deadline of 1,500 ms from the start of `onExit()` (`GameMatchActivity::FORCED_EXIT_DEADLINE_MS`). The resume write, the `resume.bin` delete retry, and the `ch.store` flush each start only inside it; past it each is skipped and logged (`forced exit past 1500 ms; skipped ...`), so a slow card can lose the last move or the last `ch.store` write rather than hold `RenderLock`. Inside it the total is the VM waits (about 1,030 ms on a device whose polls run on time) plus the SD steps that started before the deadline, each one tmp write and rename at the card's speed. The owner confirms the figure on the device (AI-3).
+
 ## Review Triage Log
 
 Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, intent alignment) ran as context-free subagents over `git diff ba0c67be` and all returned; the implementation subagent was re-engaged for the patches. Counts: 0 high, 3 medium, 12 low, 6 false, 0 maybe-false. Nothing routed to intent_gap or bad_plan.
@@ -110,6 +114,20 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 | 22 | Intent alignment: the diff is the engine layer (R-A with R-D); the product path needs entry 12 (IA) | n/a | none | Descriptive, matches the ticket: "adds no string and changes no launcher file". |
 
 
+Pass 2, source: the orchestrator's independent review (adversarial, edge-case, and verification-gap lenses, run by the orchestrator over `ba0c67be..68ec417b`; file `scratchpad/4.11/review-all.md`). Counts: 0 high, 3 medium, 6 low, 0 false. All accepted as patches in one follow-up commit; the orchestrator also approved the two out-of-`touches` changes (`GameVM.*` beyond the waits, and the new `src/games/SnapshotMailbox.h`) and the change to the matrix's forced-write row (see the Plan Change Log).
+
+| # | Finding (lens) | Verdict | Route | Evidence / action |
+|---|---|---|---|---|
+| 23 | A Cancelled step is published though its status or draw never finished; `over` is the previous snapshot's (adversarial + edge 1) | medium | patch | Verified: `LuaGame` writes the status only on success. `Session::settledVer()`; Ok outcomes publish, Cancelled ones only when `settledVer == ver`. Tests A (cancel in status), B (cancel in draw), C (restart cancelled after setup). The deferred entry's claim is corrected. |
+| 24 | The forced exit's SD work is unbounded, and `force` retries a write that just failed (adversarial + edge 2) | medium | patch | Reverses #15 (rejected on R11 alone; AD-17's amendment and the epic decision say "within the forced exit's bounded time"). `FORCED_EXIT_DEADLINE_MS` 1,500; resume write first; no forced retry inside `FLUSH_INTERVAL_MS`. |
+| 25 | "Late by at most one poll" cannot fail: every tested timeout is a multiple of the poll (verification gap 1) | medium | patch | Mutation (poll 20, 100, 250) survived. `STOP_POLL_MS` public and `static_assert`ed; join tests with 503 and 507. |
+| 26 | A VM that finishes within abandon's wait is deleted with its last publish unflushed (edge 3) | low | patch | Defaulted `beforeDelete` hook on `GameVM::abandon`; test. |
+| 27 | A failed Over delete is never retried after a stuck VM takes the match to Error, on Leave or the forced exit (edge 4) | low | patch | Retry moved out of `stopVm` into `onExit` and `leave()`. |
+| 28 | The delete retry has no throttle (edge 5) | low | patch | Throttled to `FLUSH_INTERVAL_MS` in `loopView`; test counts removes. |
+| 29 | The documented bound reads "however slowly the polls run" (adversarial 6) | low | patch | Restated: 500 + 500 ms, each late by its last iteration, teardown uncounted. |
+| 30 | `peek`'s out-of-memory branch never runs (verification gap 2) | low | patch | A replaceable nothrow `operator new[]` in `GameSaveStoreTest`; test. |
+| 31 | No recorded evidence for `check_upstream_touches.py` and `clang-format-fix` (verification gap 3) | low | patch | Recorded under Verification. |
+
 ## Design Notes
 
 - **Scope beyond the ticket's `(the waits)`.** The ticket's verify needs the VM to publish committed snapshots and start from one, and no file in `touches` can do that without `GameVM.*`. The edit is confined to that hand-off; `SoloRounds`, `LuaGame`, and `MatchStore` stay untouched. `SnapshotMailbox.h` is a new fork-only file.
@@ -117,7 +135,7 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 - **Guards kept** (`git log -L`): `join`'s `if (!task) return true` (never started, nothing to wait for) and its finished-before-timeout order; `abandon`'s `if (!vm) return true`, the `finished()` check before any delete, `deleteIfStuckInLua`'s conditions, the SIMULATOR branch that waits nothing, and the leak; `stopVm`'s `if (!vm) return` (the VM is gone after a user exit). The waits keep `STOP_POLL_MS` polls and change only what ends them.
 - **The bound** (record in game-canvas.md): join ends `STOP_TIMEOUT_MS` (500) of `millis()` after it began, abandon `ABANDON_WAIT_MS` (500) after it began, each late by at most one iteration (5 ms delay, plus abandon's settle of up to 10 ticks). About 1,030 ms worst case for the VM, plus the store and resume writes, each one tmp write and rename on the card, whose time the code does not bound.
 - **Save policy.** The snapshot is written coalesced (latest wins) once per loop pass, so "after every committed snapshot" means every one a pass sees. Leave keeps the save (only Over deletes, per R10). A save is never written for a status-over snapshot; if one is the latest pending, the file is deleted instead, so a round that ended while Paused or at sleep does not resurrect. A failed resume start leaves the file (a transient out of memory must not delete a save). Mode is 0 and n is 1; `peek` and load refuse any other, so a Continue row always resumes. `ver` is the low 16 bits (the spine's `u16`).
-- **Order in `run()`**: publish before `logRound`, so a test waiting for "Round started" knows the snapshot is in the mailbox. A Cancelled step whose ver moved still publishes: the committed move is real. The resume seed shares the mailbox storage; it is read by `restore` before the first publish.
+- **Order in `run()`**: publish before `logRound`, so a test waiting for "Round started" knows the snapshot is in the mailbox. A Cancelled step publishes only when the status was computed for its ver (`Session::settledVer`); one cancelled during status is not published (review pass 2). The resume seed shares the mailbox storage; it is read by `restore` before the first publish.
 - **Tests shadow** `GameVmTest`/`GameMatchTest`: their fixtures sit in anonymous namespaces, so `ResumeMatchTest.cpp` carries its own small copy.
 
 ## Verification
@@ -136,3 +154,11 @@ Pass 1. All four lenses (blind hunter, edge-case hunter, verification gap, inten
 - `.claude/skills/run-crosshatch-player/sim.sh build x4pro` -- passed.
 - `python3 scripts/check_layers.py` -- passed. `python3 scripts/check_upstream_touches.py` -- see the commit.
 - The lenses ran as context-free subagents (Review Triage Log). No screenshots: the story changes no view.
+
+**Results after the orchestrator's review (follow-up commit)**, each run under the shared build lock, `.cache/` deleted under it afterwards:
+- Host suites, the same command as above -- 1133 of 1133 passed (`ResumeHarnessTest` 55, `GameSaveStoreTest` 41, `GameMatchHarnessTest` 64 unedited; `GameVmTest.cpp` and `GameMatchTest.cpp` not edited).
+- Mutation checks by the implementer, each failed the intended tests, then reverted: unsettled publish, no abandon hook, no deadline, no delete throttle, store flush before the resume write, `settled` always set.
+- `pio run -e x4pro`, `-e sticky`, `-e default` -- succeeded. `sim.sh build x4pro` -- passed.
+- `python3 scripts/check_layers.py` -- passed.
+- `./bin/clang-format-fix` twice -- exit 0 both times; `git status` after the second run showed only the intended changes (nothing new).
+- `python3 scripts/check_upstream_touches.py` -- run on the follow-up commit; PASS (the upstream-changed paths list is unchanged from the first commit; no file of this story is in `upstream/develop`).

@@ -70,6 +70,7 @@ Outcome Session::draw() { return rules.draw(snapshot(), localSeat); }
 
 Outcome Session::afterSnapshot() {
   const Outcome outcome = rules.status(snapshot(), seats, current);
+  if (outcome == Outcome::Ok) settled = version;
   if (outcome != Outcome::Ok || !current.over || overDelivered) return outcome;
   overDelivered = true;
   GameEvent over;

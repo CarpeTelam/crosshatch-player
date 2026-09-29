@@ -323,9 +323,9 @@ bool GameSaveStore::deleteResume() {
   return gone;
 }
 
-bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs, const bool force) {
+bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) {
   if (!hasPackageHash || !mailbox.pending()) return true;
-  if (!force && resumeFailed && nowMs - resumeFailedMs < FLUSH_INTERVAL_MS) return true;
+  if (resumeFailed && nowMs - resumeFailedMs < FLUSH_INTERVAL_MS) return true;
   SnapshotMailbox::Taken taken;
   if (!mailbox.take(buffer, taken)) return true;
   // A snapshot whose status is over is never saved: the round is finished, and a save

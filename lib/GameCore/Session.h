@@ -54,6 +54,10 @@ class Session {
   // Increases with every snapshot and never resets, rematches included (AD-13).
   uint32_t ver() const { return version; }
   const Status& status() const { return current; }
+  // The ver whose status the rules have computed (Ok): equal to ver() unless a call was
+  // cancelled or failed between committing a snapshot and finishing its status, when
+  // status() is still the previous snapshot's. A restored snapshot is settled by start().
+  uint32_t settledVer() const { return settled; }
   bool pending() const { return moveLength != 0; }
   std::span<const uint8_t> snapshot() const { return {state, stateLength}; }
   // Moves discarded so far (for tests and logs).
@@ -72,6 +76,7 @@ class Session {
   IGameRules& rules;
   uint8_t localSeat;
   uint32_t version = 0;
+  uint32_t settled = 0;
   Status current;
   bool overDelivered = false;
   bool restored = false;  // restore() ran and start() has not yet taken it

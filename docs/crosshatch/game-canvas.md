@@ -52,7 +52,8 @@ the only place that changes state and runs what entering a state requires. Any e
 A match with an installed package (`.pkg`) keeps `resume.bin` (docs/crosshatch/formats.md) so a solo match survives
 sleep. The VM hands each snapshot it commits to the loop task through a latest-wins mailbox (`GameVM::committed()`), and
 in Playing and Paused every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the forced
-exit write the last pending one, once more and at once, after the VM has stopped and before it is freed. Only Over
+exit write the last pending one, once more, after the VM has stopped and before it is freed (a write that failed less than
+5 s before is not retried then either). Only Over
 deletes the file; Leave and the forced exit keep it. Entering with `Start::Resume` restores it (`Session::restore`), so
 the match continues from the snapshot and does not write it again until a move commits. The VM task never touches the
 card (AD-5).
@@ -85,18 +86,32 @@ the flush waits at most one copy and saves every set made before the leak.
 ### The forced exit
 
 `onExit()` without a user exit (sleep, any Replace) runs under the `RenderLock` that `ActivityManager` already holds and
-never takes it again (pitfall 12cc816). The order is: cancel the VM and join it; then the pending snapshot is written as
-`resume.bin` (in Playing or Paused only, and forced: a write the loop failed and throttled is retried at once), before an
-abandon can free the memory the snapshot lives in; then abandon the VM if it did not join; then the `ch.store` flush.
-Those are the only SD writes in `onExit()` (AD-17).
+never takes it again (pitfall 12cc816). It notes `millis()` at its very start, and the order is:
+
+1. cancel the VM and join it (up to 500 ms);
+2. the pending snapshot is written as `resume.bin` (in Playing or Paused only), before an abandon can free the memory it
+   lives in;
+3. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
+   snapshot written before it is deleted;
+4. a `resume.bin` delete that Over could not finish is retried;
+5. the `ch.store` flush.
+
+Those are the only SD writes in `onExit()` (AD-17). Each of steps 2, 3's write, 4, and 5 starts only if less than
+`FORCED_EXIT_DEADLINE_MS` (1,500 ms) has passed since the start of `onExit()`; a step that would start later is skipped
+and logged with one `LOG_ERR` line naming it. A resume write that failed less than 5 s (`FLUSH_INTERVAL_MS`) before is not
+retried at the exit either. Leave has no deadline and follows the same order (its delete retry and store flush come after
+it releases `RenderLock`).
 
 **The bound.** The stop's two waits count `millis()`, not polls: the join ends 500 ms (`STOP_TIMEOUT_MS`) after it began
-and the abandon 500 ms (`GameVM::ABANDON_WAIT_MS`) after it began, each late by at most one iteration (a 5 ms poll, and
-in the abandon the settle of up to 10 ticks that follows a suspend, which is 10 ms at the firmware's 1 kHz tick). A VM that never stops, such as one held inside a
-locked binding, therefore costs about 1,030 ms of `RenderLock` at the worst, however slowly the polls run. The store
-write and the resume write that follow are each one tmp write and rename on the card, whose time the code does not
-bound. `ResumeMatchTest` pins the arithmetic on the host's fake clock, and counts elapsed time under a thread that
-advances it faster than the polls do.
+and the abandon 500 ms (`GameVM::ABANDON_WAIT_MS`) after it began. Each is late by its last iteration: a poll
+(`GameVM::STOP_POLL_MS`, 5 ms) and, in the abandon, the settle of up to 10 ticks that follows a suspend (10 ms at the
+firmware's 1 kHz tick) and the wait for `taskMutex` in `deleteIfStuckInLua`. Teardown (freeing the VM's memory) is not
+counted. So a VM that never stops, such as one held inside a locked binding, costs about 1,030 ms of `RenderLock`
+before the SD steps, on a device whose polls run on time; a starved poll makes it later by that much. The SD steps add
+only what starts before the deadline: each is one tmp write and rename, the card's time, and nothing starts after
+1,500 ms from the start of `onExit()`. `ResumeMatchTest` pins the arithmetic on the host's fake clock (a timeout no
+poll divides into, so a late poll shows), counts elapsed time under a thread that advances the clock faster than the
+polls do, and checks the order and the skipped steps.
 
 ## The views
 

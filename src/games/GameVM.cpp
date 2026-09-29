@@ -16,15 +16,17 @@
 
 namespace {
 
-constexpr uint32_t STOP_POLL_MS = 5;
-
-// VM task, after a start, restart, or step: hands the Session's snapshot to the loop
-// task when its ver moved since `published`, which it then holds. A step that ended
-// Cancelled still published a snapshot it committed before, so the caller does this
-// for Ok and Cancelled alike.
-void publishCommitted(SnapshotMailbox& mailbox, const GameCore::Session& session, uint32_t& published) {
+// VM task, after a start, restart, or step that ended `outcome`: hands the Session's snapshot
+// to the loop task when its ver moved since `published`, which it then holds. An Ok outcome
+// always publishes. A Cancelled one publishes only when the snapshot's status was computed
+// (Session::settledVer), since otherwise status().over is the previous snapshot's and the
+// snapshot may never have been accepted by the game; a ScriptError never does.
+void publishCommitted(SnapshotMailbox& mailbox, const GameCore::Session& session, uint32_t& published,
+                      const GameScript::Outcome outcome) {
   const uint32_t ver = session.ver();
   if (ver == published) return;
+  const bool settled = session.settledVer() == ver;
+  if (outcome == GameScript::Outcome::ScriptError || (outcome == GameScript::Outcome::Cancelled && !settled)) return;
   published = ver;
   mailbox.publish(session.snapshot(), ver, session.status().over);
 }
@@ -141,14 +143,14 @@ void GameVM::run() {
       }
     }
     outcome = rounds.start(*session);
-    if (outcome == Outcome::Ok || outcome == Outcome::Cancelled) publishCommitted(mailbox, *session, published);
+    publishCommitted(mailbox, *session, published, outcome);
     if (outcome == Outcome::Ok) logRound(*session, rounds, 0, true);
   }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
     const uint32_t endedBefore = rounds.roundsEnded();
     if (rounds.takePlayAgain()) {
       outcome = rounds.restart();
-      if (outcome == Outcome::Ok || outcome == Outcome::Cancelled) publishCommitted(mailbox, *session, published);
+      publishCommitted(mailbox, *session, published, outcome);
       if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, true);
       continue;
     }
@@ -158,7 +160,7 @@ void GameVM::run() {
       continue;
     }
     outcome = rounds.step(event);
-    if (outcome == Outcome::Ok || outcome == Outcome::Cancelled) publishCommitted(mailbox, *session, published);
+    publishCommitted(mailbox, *session, published, outcome);
     if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, false);
   }
   if (outcome == Outcome::ScriptError) {
@@ -244,7 +246,7 @@ bool GameVM::stop(const uint32_t timeoutMs) {
   return join(timeoutMs);
 }
 
-bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
+bool GameVM::abandon(std::unique_ptr<GameVM> vm, void (*beforeDelete)(GameVM&, void*), void* user) {
   if (!vm) return true;
   // Leaked from here on unless the task ends after all: it may hold this object's
   // mutexes (input queue, task mutex), and deleting a task releases nothing it holds.
@@ -253,6 +255,7 @@ bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
   // The shim has no vTaskSuspend, and its vTaskDelete only detaches the thread,
   // which would keep running in the arena; waiting cannot help.
   if (stuck->finished()) {
+    if (beforeDelete) beforeDelete(*stuck, user);
     delete stuck;
     return true;
   }
@@ -263,6 +266,8 @@ bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
   const uint32_t began = millis();
   while (millis() - began < ABANDON_WAIT_MS) {
     if (stuck->finished()) {
+      // It ended after the caller's last look, perhaps publishing a snapshot on the way out.
+      if (beforeDelete) beforeDelete(*stuck, user);
       delete stuck;
       return true;
     }

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
@@ -21,6 +23,21 @@
 // the tmp-then-rename write, and the flush interval; and resume.bin's layout, its
 // peek and load rules, the same write, and the flush a match makes from the VM's
 // mailbox.
+
+// peek allocates one snapshot's worth with new (std::nothrow); a test can make that one call fail.
+// Not-failing calls behave as the default (malloc-backed, as libstdc++'s is).
+namespace {
+bool failNextNothrowNew = false;
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+  if (failNextNothrowNew) {
+    failNextNothrowNew = false;
+    return nullptr;
+  }
+  return std::malloc(size ? size : 1);
+}
+void operator delete[](void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
 
 namespace {
 
@@ -529,6 +546,19 @@ TEST_F(GameSaveStoreTest, ASnapshotThatIsNotCanonicalCodecBytesIsDiscardedByPeek
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(cat(TAPS3, Bytes{0x00}))) << "and the file stays";
 }
 
+TEST_F(GameSaveStoreTest, PeekIsFalseWithALogLineWhenItCannotAllocateItsBufferAndTheFileStays) {
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  openResume();
+  ASSERT_TRUE(GameSaveStore::peek("counter", PKG)) << "the same save peeks true when memory is there";
+  fakelog::lines.clear();
+  failNextNothrowNew = true;
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+  failNextNothrowNew = false;
+  EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: OOM: 1400 bytes to check ") + RESUME));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3));
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG)) << "and the next call is fine";
+}
+
 TEST_F(GameSaveStoreTest, NoResumeIsNotAnError) {
   openResume();
   EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
@@ -630,22 +660,22 @@ TEST_F(GameSaveStoreTest, AFailedDeleteIsLoggedAndReported) {
 
 TEST_F(GameSaveStoreTest, FlushResumeWritesTheLatestPublishedSnapshotOnceAndAtOnce) {
   openResume(1000);
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1000, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1000));
   EXPECT_TRUE(fakesd::ops.empty()) << "nothing published, nothing written";
 
   ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));  // latest wins
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1001, false)) << "not held back by the store's 5 s interval";
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001)) << "not held back by the store's 5 s interval";
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
   EXPECT_FALSE(mailbox->pending());
 
   fakesd::ops.clear();
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1002, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
   EXPECT_TRUE(fakesd::ops.empty()) << "written once";
 
   // Successive successes are never throttled.
   ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1003, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1003));
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 7));
 }
 
@@ -654,45 +684,34 @@ TEST_F(GameSaveStoreTest, FlushResumeWritesNothingWithoutAPackageHash) {
   mailboxStorage.assign(GameCore::SNAPSHOT_BYTES, 0);
   SnapshotMailbox bare{std::span<uint8_t>(mailboxStorage)};
   ASSERT_TRUE(bare.publish(TAPS3, 5, false));
-  EXPECT_TRUE(saves->flushResume(bare, 1000, true));
+  EXPECT_TRUE(saves->flushResume(bare, 1000));
   EXPECT_TRUE(fakesd::ops.empty());
   EXPECT_TRUE(fakesd::files.empty());
 }
 
-TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedAfterTheIntervalOrAtOnceWhenForced) {
+TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedOnlyAfterTheInterval) {
   openResume(0);
   ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
   fakesd::failOpenWrite = true;
-  EXPECT_FALSE(saves->flushResume(*mailbox, 2000, false));
+  EXPECT_FALSE(saves->flushResume(*mailbox, 2000));
   EXPECT_TRUE(mailbox->pending());
 
   fakesd::ops.clear();
-  EXPECT_TRUE(saves->flushResume(*mailbox, 2001, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 6999, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 2001));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 6999));
   EXPECT_TRUE(fakesd::ops.empty()) << "held back until the interval has passed";
   EXPECT_TRUE(mailbox->pending());
 
   // A newer snapshot meanwhile is what the retry writes.
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 7000, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7000));
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
   EXPECT_FALSE(mailbox->pending());
 
   // The throttle is over once a write has succeeded.
   ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 7001, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7001));
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 7));
-}
-
-TEST_F(GameSaveStoreTest, AForcedFlushIgnoresTheRetryThrottle) {
-  openResume(0);
-  ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
-  fakesd::failOpenWrite = true;
-  EXPECT_FALSE(saves->flushResume(*mailbox, 2000, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 2001, false)) << "throttled";
-  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
-  EXPECT_TRUE(saves->flushResume(*mailbox, 2002, true));
-  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 5));
 }
 
 TEST_F(GameSaveStoreTest, ASnapshotWhoseStatusIsOverDeletesTheSaveInsteadOfBeingWritten) {
@@ -701,7 +720,7 @@ TEST_F(GameSaveStoreTest, ASnapshotWhoseStatusIsOverDeletesTheSaveInsteadOfBeing
   openResume();
   ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
   fakesd::ops.clear();
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1001, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001));
   EXPECT_EQ(fakesd::files.count(RESUME), 0u);
   EXPECT_EQ(fakesd::files.count(RESUME_TMP), 0u);
   EXPECT_EQ(opsStartingWith("open-write"), 0u) << "an over snapshot is never written";
@@ -714,22 +733,22 @@ TEST_F(GameSaveStoreTest, AFailedDeleteForAnOverSnapshotIsRetriedLikeAFailedWrit
   openResume(0);
   ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
   fakesd::failRemove = true;
-  EXPECT_FALSE(saves->flushResume(*mailbox, 2000, false));
+  EXPECT_FALSE(saves->flushResume(*mailbox, 2000));
   EXPECT_TRUE(mailbox->pending());
   EXPECT_EQ(fakesd::files.count(RESUME), 1u);
-  EXPECT_TRUE(saves->flushResume(*mailbox, 3000, false)) << "throttled";
+  EXPECT_TRUE(saves->flushResume(*mailbox, 3000)) << "throttled";
   EXPECT_EQ(fakesd::files.count(RESUME), 1u);
-  EXPECT_TRUE(saves->flushResume(*mailbox, 7000, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7000));
   EXPECT_EQ(fakesd::files.count(RESUME), 0u);
 }
 
 TEST_F(GameSaveStoreTest, ANewRoundsSnapshotIsWrittenAgainAfterAnOverOne) {
   openResume();
   ASSERT_TRUE(mailbox->publish(TAPS3, 5, true));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1001, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001));
   EXPECT_EQ(fakesd::files.count(RESUME), 0u);
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
-  EXPECT_TRUE(saves->flushResume(*mailbox, 1002, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
   EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
 }
 

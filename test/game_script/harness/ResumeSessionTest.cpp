@@ -26,12 +26,13 @@ class CounterRules : public IGameRules {
  public:
   Outcome setup(const GameContext&, std::span<const uint8_t>& state) override {
     calls.push_back("setup");
-    out[0] = 1;
+    out[0] = initial;
     state = {out, 1};
     return Outcome::Ok;
   }
   Outcome status(std::span<const uint8_t> state, const Roster&, Status& result) override {
     calls.push_back("status");
+    if (state[0] >= cancelStatusFrom) return Outcome::Cancelled;  // result untouched, as a cancelled call leaves it
     result = Status{};
     if (state[0] >= 10) {
       result.over = true;
@@ -72,6 +73,8 @@ class CounterRules : public IGameRules {
   }
 
   std::vector<std::string> calls;
+  uint8_t initial = 1;
+  uint8_t cancelStatusFrom = 255;
   uint8_t out[1] = {};
   uint8_t moveOut[1] = {};
   uint8_t drawn = 0;
@@ -164,6 +167,55 @@ TEST(ResumeSessionTest, ASnapshotAtTheLimitIsRestored) {
   // The rules read only the first byte; the whole copy is what the session holds.
   ASSERT_EQ(session.start(), Outcome::Ok);
   EXPECT_EQ(session.snapshot().size(), SNAPSHOT_BYTES);
+}
+
+TEST(ResumeSessionTest, SettledVerFollowsTheSnapshotsWhoseStatusWasComputed) {
+  CounterRules rules;
+  Session session(Roster::solo(), rules);
+  EXPECT_EQ(session.settledVer(), 0u);
+  ASSERT_EQ(session.start(), Outcome::Ok);
+  EXPECT_EQ(session.settledVer(), session.ver());
+  ASSERT_EQ(session.handle(tap()), Outcome::Ok);
+  ASSERT_EQ(session.applyPending(), Outcome::Ok);
+  EXPECT_EQ(session.ver(), 2u);
+  EXPECT_EQ(session.settledVer(), 2u);
+}
+
+TEST(ResumeSessionTest, ARestoredSnapshotIsSettledByStart) {
+  CounterRules rules;
+  Session session(Roster::solo(), rules);
+  const uint8_t saved[] = {5};
+  ASSERT_TRUE(session.restore(saved, 9));
+  ASSERT_EQ(session.start(), Outcome::Ok);
+  EXPECT_EQ(session.ver(), 9u);
+  EXPECT_EQ(session.settledVer(), 9u);
+}
+
+TEST(ResumeSessionTest, AMoveWhoseStatusIsCancelledIsCommittedButNotSettled) {
+  CounterRules rules;
+  Session session(Roster::solo(), rules);
+  ASSERT_EQ(session.start(), Outcome::Ok);
+  rules.cancelStatusFrom = 2;
+  ASSERT_EQ(session.handle(tap()), Outcome::Ok);
+  EXPECT_EQ(session.applyPending(), Outcome::Cancelled);
+  EXPECT_EQ(session.ver(), 2u) << "the move was committed";
+  EXPECT_EQ(session.settledVer(), 1u) << "but its status never was";
+  EXPECT_FALSE(session.status().over) << "and status() is still the previous snapshot's";
+}
+
+TEST(ResumeSessionTest, ARestartCancelledAfterSetupLeavesThePreviousStatusAndSettledVer) {
+  CounterRules rules;
+  Session session(Roster::solo(), rules);
+  const uint8_t saved[] = {10};
+  ASSERT_TRUE(session.restore(saved, 4));
+  ASSERT_EQ(session.start(), Outcome::Ok);
+  ASSERT_TRUE(session.status().over);
+  rules.initial = 3;
+  rules.cancelStatusFrom = 3;
+  EXPECT_EQ(session.start(), Outcome::Cancelled) << "Play again, cancelled after setup";
+  EXPECT_EQ(session.ver(), 5u);
+  EXPECT_EQ(session.settledVer(), 4u);
+  EXPECT_TRUE(session.status().over) << "the previous round's status, not the new round's";
 }
 
 // ---- the mailbox ----
