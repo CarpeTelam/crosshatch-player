@@ -191,7 +191,8 @@ Two screens draw library icons besides the games, both in the regular weight:
 `GameRowIcon::choose` (`src/games/GameRowIcon.h`) in this order:
 
 1. the package's own `icon.bmp` (a 64 x 64 file in the converter's 1-bit layout, which the installer wrote from
-   `icon.png`), when the launcher read it;
+   `icon.png`, a square image whose side the converter scales to exactly 64: 64 and every power of two do, while 41
+   and 279 other sides up to 2,048 come out at 63 and are refused, by `pack_game.py` too), when the launcher read it;
 2. else the manifest's `icon` in the manifest's `icon_weight` (`regular` when absent), when the library has that name;
 3. else `game-controller` in the regular weight, the fallback for a game with neither (also for an `icon` the library
    lacks, which the installer refuses but a hand-copied `/.games/<id>/` can name).

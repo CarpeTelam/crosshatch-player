@@ -78,8 +78,8 @@ class GamesLauncherActivity final : public UiListActivity {
 
   // Rows with a game behind them: the Continue rows, then one for each game in the listing.
   size_t rowCount() const { return continueCount + listing.count; }
-  // The listing index of the game row `row` (below rowCount()) opens: a Continue row's own (continueOf is set whenever
-  // continueCount is not 0), else row - continueCount.
+  // The listing index of the game row `row` (below rowCount()) opens: a Continue row's own (continueOf's first
+  // continueCount entries), else row - continueCount.
   size_t gameOfRow(size_t row) const { return row < continueCount ? continueOf[row] : row - continueCount; }
   size_t paddedCount() const;
   // Selects the game the launcher last opened, when the listing still has it: its Continue row, else its own row.
@@ -94,8 +94,10 @@ class GamesLauncherActivity final : public UiListActivity {
 
   // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
   GameRegistry::Listing listing;  // every installed game, by name
-  // The listing index of the game of each Continue row, in listing order; the first continueCount are filled.
-  std::unique_ptr<uint16_t[]> continueOf;
+  // The listing index of the game of each Continue row, in listing order; the first continueCount are filled. A member
+  // array (128 B, in the heap-allocated activity): a Continue row can always be listed, so the launcher never offers
+  // a game's own row, which starts a New match over its save, for want of an allocation.
+  uint16_t continueOf[GameRegistry::MAX_GAMES] = {};
   size_t continueCount = 0;
   // The bitmaps of the games that have an icon.bmp, GameRowIcon::BYTES each in slot order, and the slot of
   // each game (parallel to listing.entries; NO_SLOT for none). Both are read-only after onEnter().

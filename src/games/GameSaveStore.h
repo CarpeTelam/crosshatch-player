@@ -94,6 +94,9 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // Forgets the failed-write backoff above: Play again starts a round whose first snapshot should replace the
   // finished round's file at once, not FLUSH_INTERVAL_MS after a delete or write that failed for the last round.
   void clearResumeBackoff();
+  // How many snapshots flushResume has written as resume.bin so far (a delete or a failed try is not counted): a caller
+  // that must know whether a call wrote compares it before and after.
+  uint32_t resumeWrites() const { return resumeWriteCount; }
 
  private:
   // Reads `path` into `out`; null with `length` set when it holds a valid store,
@@ -113,4 +116,5 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // The last flushResume write failed, at resumeFailedMs.
   bool resumeFailed = false;
   uint32_t resumeFailedMs = 0;
+  uint32_t resumeWriteCount = 0;
 };

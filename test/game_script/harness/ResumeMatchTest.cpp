@@ -328,6 +328,16 @@ class ResumeMatchTest : public match::ScreenTest {
 
   size_t tmpOpens() const { return fakesd::countOps("open " + resumeTmpPath(gameId)); }
 
+  // Loops, moving the clock past the write backoff each pass, until a write of the game's resume.bin.tmp has failed.
+  // The over snapshot of the finished round can still be pending when Play again comes (its delete failed), and the
+  // failed delete arms the backoff again, so the rematch's snapshot is written on the first pass after the interval.
+  bool pumpUntilTheRematchsFirstWriteFails(const std::string& id) {
+    return pump([&] {
+      fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+      return logHas("cannot write " + resumeTmpPath(id));
+    });
+  }
+
   std::unique_ptr<GameMatchActivity> activity;
   std::string gameId;
   bool firstFramePending = false;  // enter() ran and no frame has been drawn since
@@ -871,6 +881,114 @@ TEST_F(ResumeMatchTest, PlayAgainAfterAFailedDeleteIsNotDeletedUnderTheNewRound)
   ASSERT_EQ(state(), "Paused");
   for (int i = 0; i < 20; ++i) frame();
   EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(0), 3))) << "the retry deleted the new round's save";
+}
+
+// Play again used to forget an Over delete that failed, before the new round had written anything. If that round's
+// first write also failed (or its setup errored) and the player left, the finished round's save stayed and Continue
+// offered it.
+TEST_F(ResumeMatchTest, ALeaveBeforeTheRematchsFirstWriteStillRemovesTheFinishedRoundsSave) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  ASSERT_TRUE(fakesd::has(resumePath("cnt"))) << "the finished round's save, which the card would not delete";
+
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("cnt"));  // and the rematch's writes fail too
+  input->click(Button::Confirm);                             // Play again
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpUntilTheRematchsFirstWriteFails("cnt")) << "the rematch's first write";
+  EXPECT_TRUE(fakesd::has(resumePath("cnt")));
+
+  fakesd::sim().failRemove.clear();  // the card can delete now; the write backoff has not passed, so no write is tried
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  input->press(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);  // Leave
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_FALSE(fakesd::has(resumePath("cnt"))) << "the finished round's save survived the Leave";
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::None) << "Continue would offer it";
+}
+
+TEST_F(ResumeMatchTest, ARematchWhoseSetupErrorsStillRemovesTheFinishedRoundsSaveAtLeave) {
+  // Round 1 ends normally; round 2's setup errors. The error view's Back is Leave.
+  installGame("erg", R"(
+local game = {}
+local rounds = 0
+function game.setup(ctx)
+  rounds = rounds + 1
+  if rounds > 1 then error("no second round") end
+  return { taps = 0 }
+end
+function game.status(state)
+  if state.taps >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(state, seat, move)
+  state.taps = state.taps + 1
+  return state
+end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+return game
+)");
+  installPkg("erg");
+  enter("erg");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("erg"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  ASSERT_TRUE(fakesd::has(resumePath("erg")));
+
+  input->click(Button::Confirm);  // Play again: round 2's setup errors
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Error"; }));
+  fakesd::sim().failRemove.clear();
+  input->click(Button::Back);  // the error view's one control
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_FALSE(fakesd::has(resumePath("erg")));
+}
+
+// The pending delete is not given up when the new round starts: it keeps retrying while the player plays, and stops
+// for good once the round's first snapshot is written (PlayAgainAfterAFailedDeleteIsNotDeletedUnderTheNewRound).
+TEST_F(ResumeMatchTest, TheOverDeleteKeepsRetryingInTheNewRoundUntilItsFirstWrite) {
+  installGame("cnt", countingGame(1));
+  installPkg("cnt");
+  enter("cnt");
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
+  fakesd::sim().failRemove.insert(resumePath("cnt"));
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("cnt"));
+  input->click(Button::Confirm);  // Play again, the card refusing the delete and the rematch's writes
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpUntilTheRematchsFirstWriteFails("cnt"));
+
+  fakesd::sim().failRemove.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the retry waits this long after a failed try
+  ASSERT_TRUE(pump([&] { return !fakesd::has(resumePath("cnt")); })) << "no retry in Playing";
+
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // and the write backoff passes
+  ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 3))) << "the rematch's first snapshot";
+  const size_t removes = fakesd::countOps("remove " + resumePath("cnt"));
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_EQ(fakesd::countOps("remove " + resumePath("cnt")), removes) << "no delete once the round has written";
+  EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(0), 3)));
 }
 
 // The Error view: a game commits a move (its write fails, so the snapshot is pending) and then errors.

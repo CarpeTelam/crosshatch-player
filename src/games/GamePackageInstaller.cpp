@@ -22,6 +22,7 @@
 #include "GameHash.h"
 #include "GameHostCaps.h"
 #include "GamePaths.h"
+#include "GameRegistry.h"
 #include "MemberGuard.h"
 #include "ZipDirectory.h"
 
@@ -72,7 +73,7 @@ struct Job {
   char finalDir[DIR_BYTES];  // /.games/<id>
   char pathA[FILE_PATH_BYTES];
   char pathB[FILE_PATH_BYTES];
-  char badPath[GamePaths::INBOX_PATH_BYTES + sizeof(".bad")];
+  char asidePath[GamePaths::INBOX_PATH_BYTES + sizeof(".installed")];  // the inbox file renamed out of the inbox
   uint8_t header[GameCore::IMAGE_HEADER_BYTES];
 };
 
@@ -525,6 +526,44 @@ Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
   return written == sizeof(pkg) && closed ? Error::None : Error::SdCard;
 }
 
+// The suffix of an inbox file that installed but would not delete. Neither it nor ".bad" ends in ".cpgame", so the
+// inbox scan skips both.
+constexpr char INSTALLED_SUFFIX[] = ".installed";
+
+// Renames the inbox file to <name><suffix>, replacing an earlier one; false when it would not move.
+bool moveAside(Job& job, const char* suffix) {
+  snprintf(job.asidePath, sizeof(job.asidePath), "%s%s", job.inboxPath, suffix);
+  if (Storage.exists(job.asidePath) && !Storage.remove(job.asidePath))
+    LOG_ERR("GAME", "Cannot remove %s", job.asidePath);
+  if (Storage.rename(job.inboxPath, job.asidePath)) return true;
+  LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.asidePath);
+  return false;
+}
+
+// True when installing `id` would make more than GameRegistry::MAX_GAMES games: the registry lists that many, in
+// directory order, so a game past them would be installed and not shown, and could not be removed. Counts the
+// folders with a valid .pkg (the first test GameRegistry::load applies) other than `id`'s own, which an install
+// replaces. A folder whose manifest the registry then skips still counts: the count can only be high, never let a
+// hidden game through. A card that cannot list /.games counts as none: the install then fails on its own card fault,
+// if it is one.
+bool wouldBeOverTheLimit(const char* id) {
+  auto dir = Storage.open(GamePaths::GAMES_DIR);
+  if (!dir || !dir.isDirectory()) return false;
+  char name[GamePaths::INBOX_NAME_BYTES];
+  uint8_t hash[GamePkg::HASH_BYTES];
+  size_t others = 0;
+  dir.rewindDirectory();
+  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const size_t length = entry.getName(name, sizeof(name));
+    const bool isFolder = entry.isDirectory();
+    entry.close();
+    if (!isFolder || length == 0 || length >= sizeof(name) - 1 || name[0] == '.' || std::strcmp(name, id) == 0)
+      continue;
+    if (GameRegistry::readPackageHash(name, hash) && ++others >= GameRegistry::MAX_GAMES) return true;
+  }
+  return false;
+}
+
 Error install(Job& job, const char* fileName) {
   job.tmpDir[0] = '\0';
   job.renameTried = false;
@@ -536,6 +575,12 @@ Error install(Job& job, const char* fileName) {
   ZipFile zip(zipPath);
   error = readManifest(job, zip);
   if (error != Error::None) return error;
+
+  if (wouldBeOverTheLimit(job.manifest.id)) {
+    LOG_ERR("GAME", "Not installing %s: %u games are installed already", job.manifest.id,
+            static_cast<unsigned>(GameRegistry::MAX_GAMES));
+    return Error::TooManyGames;
+  }
 
   snprintf(job.tmpDir, sizeof(job.tmpDir), "%s/%s", GamePaths::TMP_DIR, job.manifest.id);
   snprintf(job.finalDir, sizeof(job.finalDir), "%s/%s", GamePaths::GAMES_DIR, job.manifest.id);
@@ -553,25 +598,22 @@ Error install(Job& job, const char* fileName) {
   if (error != Error::None) return error;
 
   LOG_INF("GAME", "Installed %s from %s", job.manifest.id, fileName);
-  // The game is installed, but a file that stays reinstalls it on every visit, so that is a failure to report.
-  if (!Storage.remove(job.inboxPath)) {
-    LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
-    return Error::SdCard;
-  }
-  return Error::None;
+  if (Storage.remove(job.inboxPath)) return Error::None;
+  LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
+  // The game is installed, but a file that stays reinstalls it on every visit, which would undo a Remove. Moving it
+  // out of the inbox (the scan ignores the new name) does the same as deleting it; a file that will not move either
+  // is a failure to report.
+  return moveAside(job, INSTALLED_SUFFIX) ? Error::None : Error::SdCard;
 }
 
-// SdCard and OutOfMemory are not the package's fault: its file stays for the next try.
-bool packageIsInvalid(const Error error) { return error != Error::SdCard && error != Error::OutOfMemory; }
+// SdCard, OutOfMemory, and TooManyGames are not the package's fault: its file stays for the next try (a game removed
+// meanwhile makes room).
+bool packageIsInvalid(const Error error) {
+  return error != Error::SdCard && error != Error::OutOfMemory && error != Error::TooManyGames;
+}
 
 // Renames the inbox file <name>.bad, replacing an earlier one; false when it would not move.
-bool markBad(Job& job) {
-  snprintf(job.badPath, sizeof(job.badPath), "%s.bad", job.inboxPath);
-  if (Storage.exists(job.badPath) && !Storage.remove(job.badPath)) LOG_ERR("GAME", "Cannot remove %s", job.badPath);
-  if (Storage.rename(job.inboxPath, job.badPath)) return true;
-  LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.badPath);
-  return false;
-}
+bool markBad(Job& job) { return moveAside(job, ".bad"); }
 
 }  // namespace
 
@@ -615,6 +657,8 @@ const char* describe(const Error error) {
       return "the Lua members are over their size limit together";
     case Error::UnknownIcon:
       return "the manifest's icon is not in the game icon library";
+    case Error::TooManyGames:
+      return "the maximum number of games is installed already";
   }
   return "unknown error";
 }
@@ -689,29 +733,35 @@ Error remove(const char* id) {
       return Error::SdCard;
     }
   }
-  char dir[GamePaths::PATH_BYTES];
-  char pkg[GamePaths::PATH_BYTES];
-  char tmp[GamePaths::PATH_BYTES];
-  snprintf(dir, sizeof(dir), "%s/%s", GamePaths::GAMES_DIR, id);
-  snprintf(pkg, sizeof(pkg), "%s/%s", dir, GamePaths::PKG_NAME);
-  snprintf(tmp, sizeof(tmp), "%s/%s", GamePaths::TMP_DIR, id);
-  if (!Storage.exists(dir)) return Error::None;
-  const bool marked = Storage.exists(pkg);
+  // One buffer, used in turn for the folder, its .pkg, and /.games-tmp/<id> (three of them would be 288 B of locals).
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.exists(path)) return Error::None;
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  const bool marked = Storage.exists(path);
   // A folder without a .pkg beside a /.games-tmp/<id> may be the two halves of an interrupted folder move, on one
   // cluster chain; removing one would free clusters the other uses. The installer's probe tells them apart, and a
   // shared pair is left alone (as removeTmp leaves it).
-  if (!marked && Storage.exists(tmp) && foldersShareClusters(id)) {
-    LOG_ERR("GAME", "Keeping %s: it may share clusters with %s, which has no %s", dir, tmp, GamePaths::PKG_NAME);
-    return Error::SdCard;
+  if (!marked) {
+    snprintf(path, sizeof(path), "%s/%s", GamePaths::TMP_DIR, id);
+    if (Storage.exists(path) && foldersShareClusters(id)) {
+      LOG_ERR("GAME", "Keeping %s/%s: it may share clusters with %s, which has no %s", GamePaths::GAMES_DIR, id, path,
+              GamePaths::PKG_NAME);
+      return Error::SdCard;
+    }
   }
   // The marker first, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a
   // listed game with files missing.
-  if (marked && !Storage.remove(pkg)) {
-    LOG_ERR("GAME", "Cannot remove %s", pkg);
-    return Error::SdCard;
+  if (marked) {
+    snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+    if (!Storage.remove(path)) {
+      LOG_ERR("GAME", "Cannot remove %s", path);
+      return Error::SdCard;
+    }
   }
-  if (!Storage.removeDir(dir)) {
-    LOG_ERR("GAME", "Cannot remove %s", dir);
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.removeDir(path)) {
+    LOG_ERR("GAME", "Cannot remove %s", path);
     return Error::SdCard;
   }
   LOG_INF("GAME", "Removed %s", id);

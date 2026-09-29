@@ -159,7 +159,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // (loop task; handle() keeps it).
   bool resumeWritable = false;
   // Entering Over could not delete resume.bin (the card refused): the loop retries until it
-  // can, so a finished round's save does not survive one failed remove. Loop task.
+  // can, so a finished round's save does not survive one failed remove. Play again keeps it pending until the new
+  // round's first snapshot is written over the file (flushResumeOf), so a Leave before that still removes the finished
+  // round's save. Loop task.
   bool resumeDeletePending = false;
   uint32_t resumeDeleteTriedMs = 0;  // millis() of the last failed delete
   // onExit() is running (a forced exit), from millis() forcedExitBeganMs.

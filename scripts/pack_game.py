@@ -11,7 +11,8 @@ release workflow reads (`fork_release.py` `pack_one`). This is the only Python r
 `lib/GameCore/ApiLevel.h`. It refuses what it can see in the folder that the installer would refuse; it does not
 decode: a PNG is checked through its IHDR and then chunk by chunk (every chunk's length and CRC, an IEND, and image
 data that inflates to exactly the bytes its IHDR's size, colour type, and bit depth call for; the pixels are left to the
-installer's converter), `icon.png` must be square, the `.lua` members' bytes together stay within
+installer's converter), `icon.png` must be square and of a side the converter scales to exactly 64
+(`icon_scaled_side`; 41 is scaled to 63 and would install as `.bad`), the `.lua` members' bytes together stay within
 `GameCore::LUA_SOURCES_BYTES`, a Lua file is checked only for a leading binary-chunk signature, and a manifest nests no
 deeper than the device's JSON parser reads (`MAX_NESTING`, 32). The `icon` grammar and the
 `icon_weight` values are R9's (the spine's AD-15 amendment) and `Manifest.cpp`'s `validIcon` and `parseIconWeight` apply
@@ -65,6 +66,7 @@ MAX_IMAGES = 32  # GameCore::MAX_IMAGES
 IMAGE_HEADER_BYTES = 62  # the converter's 1-bit BMP header (GameCore::IMAGE_HEADER_BYTES)
 MAX_IMAGE_WIDTH = 2048  # PngToBmpConverter's safety limits
 MAX_IMAGE_HEIGHT = 3072
+ICON_PIXELS = 64  # GameCore::ICON_PIXELS: the side the installer scales icon.png to, and requires of the result
 
 # Manifest::parse's text caps.
 MAX_NAME_BYTES = 64
@@ -86,7 +88,8 @@ UNICODE_ESCAPE = re.compile(r'(?<!\\)(?:\\\\)*\\u')
 # The PNG colour types the converter accepts, each with the bit depths the PNG format allows for it.
 PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
 PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}  # samples a pixel holds, by colour type
-# StreamingJsonParser::MAX_NESTING: the device's parser refuses a manifest with a 33rd open `{` or `[`.
+# StreamingJsonParser::MAX_NESTING: the device's parser refuses a manifest with a 33rd open `{` or `[`. A copy, pinned
+# by the `nesting` case of test/game_core/package_vectors.json, which the sidecar test and PackageLimitsTest both check.
 MAX_NESTING = 32
 MANIFEST_MEMBER = 'manifest.json'
 MAIN_MEMBER = 'main.lua'
@@ -351,6 +354,34 @@ def png_problem(data, width, height):
     return None
 
 
+def f32(value):
+    """`value` rounded to an IEEE single, as a C++ float holds it."""
+    return struct.unpack('f', struct.pack('f', value))[0]
+
+
+def icon_scaled_side(side):
+    """The side PngToBmpConverter gives a square icon.png of `side` when the installer asks for ICON_PIXELS.
+
+    The converter (lib/PngToBmpConverter, an upstream file this fork does not change) sizes the result as
+    `static_cast<int>(width * scale)` with `scale = static_cast<float>(64) / width`, both in float32, so a side whose
+    float product falls just under 64 comes out at 63 (41 does; 280 of the sides 1 to 2,048 do), and the installer
+    refuses a result that is not 64x64. Each float operation below is one rounding to single, which is what the C++
+    does: both operands of a float division or product are exact singles, so rounding the exact double result once
+    gives the single one. A side of 64 is not scaled."""
+    if side == ICON_PIXELS:
+        return side
+    scale = f32(f32(ICON_PIXELS) / f32(side))
+    return max(1, int(f32(f32(side) * scale)))
+
+
+def icon_side_hint(side):
+    """The sides worth suggesting for a square icon that does not scale to 64: the nearest either side that does, and
+    64 and 128 (which always do)."""
+    lower = next((n for n in range(side - 1, 0, -1) if icon_scaled_side(n) == ICON_PIXELS), None)
+    upper = next((n for n in range(side + 1, MAX_IMAGE_WIDTH + 1) if icon_scaled_side(n) == ICON_PIXELS), None)
+    return sorted({n for n in (lower, upper, ICON_PIXELS, 2 * ICON_PIXELS) if n is not None})
+
+
 def image_bytes(width, height):
     """The bytes of the .bmp the installer writes for a width x height image: a header and rows padded to 4 bytes."""
     return IMAGE_HEADER_BYTES + -(-width // 32) * 4 * height
@@ -462,6 +493,12 @@ def check_members(members, dir_name, api_range, load_icons):
             # The installer scales the icon to a square and refuses a rectangle rather than crop it.
             if size[0] != size[1]:
                 problems.append(f'{name}: is {size[0]}x{size[1]}; the icon must be square')
+            elif icon_scaled_side(size[0]) != ICON_PIXELS:
+                scaled = icon_scaled_side(size[0])
+                hint = ', '.join(str(n) for n in icon_side_hint(size[0]))
+                problems.append(f'{name}: is {size[0]}x{size[0]}, which the installer\'s converter scales to '
+                                f'{scaled}x{scaled}, not {ICON_PIXELS}x{ICON_PIXELS}; use a side that scales to '
+                                f'exactly {ICON_PIXELS}, such as {hint}')
         else:
             sizes.append(size)
     problems += check_images(sizes)

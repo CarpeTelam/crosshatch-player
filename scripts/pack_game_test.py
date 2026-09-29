@@ -467,6 +467,60 @@ class LimitTest(PackerTestCase):
         # Any other image keeps its own size, whatever its shape.
         self.assertEqual(self.project.run(self.project.game({'badge.png': png(100, 50)}))[0], 0)
 
+    # The sides PngToBmpConverter scales to 63 (the float32 product of a side and 64/side falls just under 64), which
+    # the installer refuses as BadImage. They are the `icon_scaling` vector of package_vectors.json, which
+    # GamePackageInstallerTest sweeps through the real converter for every side 1 to 2,048, so the packer's arithmetic
+    # and the converter's are compared side by side and not only at the few sides a test names.
+    ICON_SCALING = VECTORS['icon_scaling']
+    ICON_SIDES_THAT_SCALE_TO_63 = tuple(ICON_SCALING['scaled_to_63'][:8])  # 41, 47, 55, 61, 82, 83, 94, 97
+    ICON_SIDES_THAT_SCALE_TO_64 = (1, 2, 3, 5, 7, 10, 13, 31, 32, 33, 48, 63, 64, 65, 96, 100, 127, 128, 200)
+
+    def test_icon_scaled_side_is_the_shared_vector_for_every_side(self):
+        case = self.ICON_SCALING
+        self.assertEqual((case['target'], case['first_side'], case['last_side']),
+                         (pg.ICON_PIXELS, 1, pg.MAX_IMAGE_WIDTH))
+        refused = [side for side in range(case['first_side'], case['last_side'] + 1)
+                   if pg.icon_scaled_side(side) != pg.ICON_PIXELS]
+        self.assertEqual(refused, case['scaled_to_63'])
+        self.assertEqual(len(refused), 280)
+        self.assertEqual({pg.icon_scaled_side(side) for side in refused}, {63})
+        self.assertEqual(self.ICON_SIDES_THAT_SCALE_TO_63[:2], (41, 47))
+
+    def test_icon_scaled_side_mirrors_the_converters_float_arithmetic(self):
+        for side in self.ICON_SIDES_THAT_SCALE_TO_64:
+            self.assertEqual(pg.icon_scaled_side(side), pg.ICON_PIXELS, side)
+        # Every power-of-two multiple of 64 and every half of it scales exactly.
+        for side in (64, 128, 256, 512, 1024, 2048, 32, 16, 8, 4, 2, 1):
+            self.assertEqual(pg.icon_scaled_side(side), pg.ICON_PIXELS, side)
+        # Rounded to a single: the double product of 41 and 64/41 is a hair over 64, the single one is not.
+        self.assertGreaterEqual(41 * (64 / 41), 64.0)
+        self.assertEqual(pg.f32(pg.f32(41) * pg.f32(pg.f32(64) / pg.f32(41))), 63.999996185302734)
+        self.assertEqual(pg.f32(0.1), 0.10000000149011612)
+
+    def test_a_square_icon_that_scales_to_63_is_refused_with_a_side_that_works(self):
+        for side in self.ICON_SIDES_THAT_SCALE_TO_63:
+            with self.subTest(side=side):
+                code, _, err = self.project.run(self.project.game({'icon.png': png(side, side)}))
+                self.assertEqual(code, 1)
+                self.assertIn(f'icon.png: is {side}x{side}, which the installer\'s converter scales to 63x63, '
+                              'not 64x64', err)
+                self.assertIn('such as ', err)
+                self.assertTrue(self.project.nothing_written())
+        # The suggestions are sides that do scale to 64: 41 gets its neighbours and the round ones.
+        self.assertEqual(pg.icon_side_hint(41), [40, 42, 64, 128])
+        for side in self.ICON_SIDES_THAT_SCALE_TO_63:
+            for hint in pg.icon_side_hint(side):
+                self.assertEqual(pg.icon_scaled_side(hint), pg.ICON_PIXELS, (side, hint))
+        # Every side the installer accepts packs.
+        for side in self.ICON_SIDES_THAT_SCALE_TO_64:
+            with self.subTest(side=side):
+                self.assertEqual(self.project.run(self.project.game({'icon.png': png(side, side)}))[0], 0)
+                shutil.rmtree(self.project.out)
+
+    def test_only_icon_png_is_held_to_the_scaling_rule(self):
+        # Any other image keeps its own size, so a 41x41 badge packs.
+        self.assertEqual(self.project.run(self.project.game({'badge.png': png(41, 41)}))[0], 0)
+
     def test_icon_png_is_not_in_the_image_budget(self):
         files = self.images_files(LIMITS['images_bytes']['at']['images'])
         files['icon.png'] = png(64, 64)
@@ -806,6 +860,20 @@ class ReadManifestTest(unittest.TestCase):
         # Brackets in strings do not count.
         self.assertEqual(self.read(manifest_text(name='[[[[' * 10)), [])
         self.assertEqual(pg.json_nesting('{"a": "\\"[[["}'), 1)
+
+    def test_the_nesting_limit_is_the_shared_vectors(self):
+        # test/game_core/package_vectors.json holds the limit and a manifest at it and one over; PackageLimitsTest reads
+        # the same strings through Manifest::parse, so the packer's copy of StreamingJsonParser.h's limit cannot drift.
+        case = VECTORS['nesting']
+        self.assertEqual(case['limit'], pg.MAX_NESTING)
+        for label in ('at', 'over'):
+            # The vectors are read by StreamingJsonParser, which drops a string over TOKEN_BUF_SIZE - 1 = 511 bytes.
+            self.assertLessEqual(len(json.dumps(case[label])) - 2, 511, label)
+            self.assertNotIn('\\u', json.dumps(case[label]))
+        self.assertEqual(pg.json_nesting(case['at']), case['limit'])
+        self.assertEqual(pg.json_nesting(case['over']), case['limit'] + 1)
+        self.assertEqual(self.read(case['at'], levels=(1, 3)), [])
+        self.refused(case['over'], f'nests deeper than {pg.MAX_NESTING} levels', levels=(1, 3))
 
     def test_unknown_keys_are_ignored(self):
         self.assertEqual(self.read(manifest_text(color='red', tags=['a', 1, None], nested={'a': {'b': [1]}})), [])

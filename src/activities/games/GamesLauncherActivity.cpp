@@ -78,6 +78,8 @@ const char* reasonText(const GamePackageInstaller::Error error) {
       return tr(STR_GAMES_SOURCES_TOO_LARGE);
     case Error::UnknownIcon:
       return tr(STR_GAMES_INSTALL_UNKNOWN_ICON);
+    case Error::TooManyGames:
+      return tr(STR_GAMES_INSTALL_TOO_MANY_GAMES);
     case Error::None:
       break;
   }
@@ -316,15 +318,10 @@ void GamesLauncherActivity::loadGames() {
 }
 
 void GamesLauncherActivity::loadContinue() {
-  continueOf.reset();
   continueCount = 0;
-  if (listing.count == 0) return;
-  continueOf = makeUniqueNoThrow<uint16_t[]>(listing.count);
-  if (!continueOf) {
-    LOG_ERR("GAME", "OOM: %u Continue slots", static_cast<unsigned>(listing.count * sizeof(uint16_t)));
-    return;
-  }
-  for (size_t i = 0; i < listing.count; ++i) {
+  // GameRegistry::load lists at most MAX_GAMES games, the size of continueOf; the bound is repeated here because an
+  // overrun would write past the array.
+  for (size_t i = 0; i < listing.count && i < GameRegistry::MAX_GAMES; ++i) {
     const GameRegistry::Entry& game = listing.entries[i];
     if (!game.check.ok()) continue;  // a row that cannot open a match would not resume one
     // A save that could not be checked (Unreadable) still gets its row: hiding it would offer only the game's own row,

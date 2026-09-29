@@ -224,8 +224,8 @@ void GameMatchActivity::handle(const MatchEvent event) {
   switch (to) {
     case MatchState::Playing:
       resumeWritable = true;
-      // The new round's snapshots replace a save Over could not delete.
-      resumeDeletePending = false;
+      // A save Over could not delete stays pending: it is the finished round's, which must not survive a Leave, and
+      // flushResumeOf clears the pending delete once the new round's first snapshot has replaced the file.
       if (event == MatchEvent::PlayAgain) {
         // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
         store.saves().clearResumeBackoff();
@@ -323,7 +323,12 @@ void GameMatchActivity::flushResume() {
 void GameMatchActivity::flushResumeOf(GameVM& from) {
   if (!resumeWritable || !store.ready() || !from.committed().pending()) return;
   if (!sdStepAllowed("the resume write")) return;
+  const uint32_t writesBefore = store.saves().resumeWrites();
   store.saves().flushResume(from.committed(), millis());
+  // A snapshot written now replaced the finished round's resume.bin (the write renames over it), so an Over delete
+  // that failed has nothing left to remove, and a retry from here on would delete this round's save. Until one is
+  // written, the delete keeps retrying (loopPlaying, loopView, Leave, the forced exit).
+  if (store.saves().resumeWrites() != writesBefore) resumeDeletePending = false;
 }
 
 void GameMatchActivity::flushStore() {
@@ -431,6 +436,7 @@ void GameMatchActivity::loopPlaying() {
   vm->pollTimer();
   store.flushIfDue(millis());
   flushResume();
+  retryResumeDelete(false);  // pending only after a Play again over an Over delete that failed
 
   // Any frame before the new round's first is the last round's; once the count
   // moves, coalescing shows the newest frame.

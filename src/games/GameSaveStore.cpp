@@ -369,6 +369,7 @@ bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) 
   if (done) {
     resumeFailed = false;
     if (!taken.over) {
+      ++resumeWriteCount;
       LOG_DBG("GAME", "%s: saved resume.bin (%u bytes, ver %u)", id, static_cast<unsigned>(taken.length),
               static_cast<unsigned>(taken.ver));
     }
