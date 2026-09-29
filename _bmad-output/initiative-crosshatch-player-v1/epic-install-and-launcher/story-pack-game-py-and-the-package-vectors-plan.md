@@ -3,7 +3,7 @@ title: 'pack_game.py and the package vectors'
 type: 'feature'
 ticket: '2'
 created: '2026-09-28'
-status: 'built'
+status: done
 baseline_revision: '8f389a52e74a00fb26591e4c94067f6a7c2d6b47'
 route: 'full'
 route_source: 'auto'
