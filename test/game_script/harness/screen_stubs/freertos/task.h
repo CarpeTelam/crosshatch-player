@@ -64,17 +64,24 @@ inline void vTaskDelete(TaskHandle_t handle) {
 
 inline BaseType_t xTaskNotify(TaskHandle_t handle, uint32_t /*value*/, eNotifyAction action) {
   fakertos::State& s = fakertos::S();
-  std::lock_guard<std::mutex> lock(s.m);
-  if (!handle || !handle->alive) {
-    ++s.deadNotifies;
-    return pdFAIL;
+  std::function<void()> observer;
+  {
+    std::lock_guard<std::mutex> lock(s.m);
+    if (!handle || !handle->alive) {
+      ++s.deadNotifies;
+      return pdFAIL;
+    }
+    if (action == eIncrement) ++handle->notifyCount;
+    s.cv.notify_all();
+    if (!fakertos::current) observer = s.onLoopNotify;
   }
-  if (action == eIncrement) ++handle->notifyCount;
-  s.cv.notify_all();
+  if (observer) observer();
   return pdPASS;
 }
 
-// Waits for a notification count (portMAX_DELAY, or `wait` ticks); pdTRUE clears it.
+// Waits for a notification count (portMAX_DELAY, or `wait` ticks); pdTRUE clears it. A wait that
+// times out moves the fake clock by the ticks it waited, so code that counts elapsed time with
+// millis() sees the wait it made.
 inline uint32_t ulTaskNotifyTake(const BaseType_t clearOnExit, const TickType_t wait) {
   fakertos::State& s = fakertos::S();
   fakertos::Task* task = fakertos::current;
@@ -91,18 +98,35 @@ inline uint32_t ulTaskNotifyTake(const BaseType_t clearOnExit, const TickType_t 
     if (wait == portMAX_DELAY) {
       s.cv.wait(lock);
     } else if (s.cv.wait_until(lock, end) == std::cv_status::timeout) {
+      s.nowMs += wait;
       return 0;
     }
   }
 }
 
+// The count form of the notification wait GameVM does not use but a later task may: pdTRUE with the
+// count in `*value` when notified, pdFALSE (the clock moved by `wait`) when not.
+inline BaseType_t xTaskNotifyWait(uint32_t /*clearOnEntry*/, uint32_t /*clearOnExit*/, uint32_t* value,
+                                  const TickType_t wait) {
+  const uint32_t count = ulTaskNotifyTake(pdTRUE, wait);
+  if (value) *value = count;
+  return count > 0 ? pdTRUE : pdFALSE;
+}
+
+// A delay really sleeps (other threads run meanwhile) and moves the fake clock by the ticks it
+// waited, so a wait that counts millis() (GameVM::join's and abandon's, once they do) ends after
+// the time it says. The clock moves only on the delay, never with the sleep alone.
 inline void vTaskDelay(const TickType_t ticks) {
   if (fakertos::current) {
     std::unique_lock<std::mutex> lock(fakertos::S().m);
     fakertos::holdIfNeeded(lock, fakertos::current, -1);
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(ticks));
+  fakertos::advance(ticks);
 }
+
+// FreeRTOS's tick count (1 tick = 1 ms): the fake clock, read as any clock read is.
+inline TickType_t xTaskGetTickCount() { return static_cast<TickType_t>(fakertos::millis()); }
 
 inline void vTaskSuspend(TaskHandle_t handle) {
   std::lock_guard<std::mutex> lock(fakertos::S().m);

@@ -17,3 +17,4 @@ using StackType_t = uint8_t;
 #define tskNO_AFFINITY 0x7FFFFFFF
 // One tick is one millisecond.
 #define pdMS_TO_TICKS(ms) (static_cast<TickType_t>(ms))
+#define portTICK_PERIOD_MS 1

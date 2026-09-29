@@ -76,6 +76,22 @@ end
 return game
 )";
 
+// A game whose tap handler spins in Lua, reading the clock each pass (so a suspended task parks
+// there at once): a call that is busy in Lua and never returns until cancelled.
+inline const char* const SPIN_GAME = R"(
+local game = {}
+function game.setup(ctx) return {} end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    while true do ch.time.ms() end
+  end
+end
+return game
+)";
+
 // A game that logs every tap, long press, and swipe it is given, with the canvas point and the
 // swipe's direction ("-" for the others): what readGesture and GameTouch made of the input.
 inline const char* const EVENTS_GAME = R"(
@@ -183,6 +199,10 @@ return game
 )";
 }
 
+// True once the VM has logged that its first round started (it logs after publishing the first
+// frame, so a gate armed earlier can be met by that line instead of the one a test means).
+inline bool roundStarted() { return fakelog::anyLine("Round started"); }
+
 // Polls `done` (sleeping 1 ms between) until it is true or the timeout passes.
 inline bool waitFor(const std::function<bool()>& done, const int timeoutMs = 10000) {
   const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
@@ -230,7 +250,8 @@ class ScreenTest : public harness::HarnessTest {
     fakertos::reset();
     fakelog::hook() = nullptr;
     activityManager.reset();
-    UITheme::getInstance().getTheme().hints.clear();
+    UITheme::getInstance().getTheme().reset();
+    UITheme::getInstance().coverGridHome = false;
     gpio.swipe = HalGPIO::Swipe{};
     renderer = std::make_unique<GfxRenderer>(480, 800);
     addFonts(*renderer);

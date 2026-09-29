@@ -5,6 +5,9 @@
 // A test scripts one swipe with `gpio.swipe`; MappedInputManager::clear() forgets it, as
 // the next frame does.
 
+// Like the real header, it brings in Arduino.h (millis), which screens use without including it.
+#include <Arduino.h>
+
 class HalGPIO {
  public:
   struct Swipe {

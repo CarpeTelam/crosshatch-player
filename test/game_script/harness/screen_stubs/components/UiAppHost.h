@@ -7,6 +7,9 @@
 // screen draws through the app lands in `uiTarget`: every text line drawn, as the wrapped
 // lines a real target would draw, with the rectangle each sits in.
 //
+// resetUi() does not rebind the shared theme tokens as the real one does (applySharedUiTheme reads
+// the settings and the uiScale fonts), so the screens lay out with FreeInkApp's default theme.
+//
 // The target measures a glyph as 10 px and a line as 20 px whatever the font, so wrapping
 // and layout are the host's, not the panel's: a test pins which text is shown, and what it
 // says, never where it sits on the real panel.

@@ -15,6 +15,10 @@ class GfxRenderer : public GfxRendererRecorder {
  public:
   using GfxRendererRecorder::GfxRendererRecorder;
 
+  // As lib/GfxRenderer: the harness screen is always portrait.
+  enum class Orientation { Portrait, LandscapeClockwise, PortraitInverted, LandscapeCounterClockwise };
+  Orientation getOrientation() const { return Orientation::Portrait; }
+
   // One displayBuffer call: the refresh mode, and how many renderer calls came before it.
   struct Shown {
     HalDisplay::RefreshMode mode;

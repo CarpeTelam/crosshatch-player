@@ -58,27 +58,95 @@ void RenderLock::unlock() {
 
 bool RenderLock::peek() { return lockHeld.load(); }
 
+ActivityManager::ActivityManager() = default;
+ActivityManager::~ActivityManager() = default;
+
 void ActivityManager::requestUpdate(const bool immediate) {
+  calls.push_back("requestUpdate");
   if (immediate) {
     ++asks.immediateUpdates;
   } else {
     ++asks.updates;
   }
 }
-void ActivityManager::requestUpdateAndWait() { ++asks.immediateUpdates; }
+void ActivityManager::requestUpdateAndWait() {
+  calls.push_back("requestUpdateAndWait");
+  ++asks.immediateUpdates;
+}
+void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
+  calls.push_back("replaceActivity");
+  ++asks.replaced;
+  replacements.push_back(std::move(newActivity));
+}
+void ActivityManager::goToFileTransfer() {
+  calls.push_back("goToFileTransfer");
+  ++asks.goToFileTransfer;
+}
+void ActivityManager::goToUsbDrive() {
+  calls.push_back("goToUsbDrive");
+  ++asks.goToUsbDrive;
+}
+void ActivityManager::goToSettings() {
+  calls.push_back("goToSettings");
+  ++asks.goToSettings;
+}
+void ActivityManager::goToFileBrowser(std::string path) {
+  calls.push_back("goToFileBrowser");
+  ++asks.goToFileBrowser;
+  lastPath = std::move(path);
+}
+void ActivityManager::goToLibrary() {
+  calls.push_back("goToLibrary");
+  ++asks.goToLibrary;
+}
+void ActivityManager::goToBrowser() {
+  calls.push_back("goToBrowser");
+  ++asks.goToBrowser;
+}
+void ActivityManager::goToReader(std::string path, bool) {
+  calls.push_back("goToReader");
+  ++asks.goToReader;
+  lastPath = std::move(path);
+}
+void ActivityManager::goToSleep(bool) {
+  calls.push_back("goToSleep");
+  ++asks.goToSleep;
+}
+void ActivityManager::goToBoot() {
+  calls.push_back("goToBoot");
+  ++asks.goToBoot;
+}
+void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::Style) {
+  calls.push_back("goToFullScreenMessage");
+  ++asks.goToFullScreenMessage;
+  lastMessage = std::move(message);
+}
+void ActivityManager::goToCrashReport() {
+  calls.push_back("goToCrashReport");
+  ++asks.goToCrashReport;
+}
 #if FREEINK_CAP_GAMES
 void ActivityManager::goToGames() {
+  calls.push_back("goToGames");
   ++asks.goToGames;
   if (onGoToGames) onGoToGames();
 }
 #endif
-void ActivityManager::goHome(HomeMenuItem, bool) { ++asks.goHome; }
-void ActivityManager::goToReader(std::string, bool) { ++asks.goToReader; }
+void ActivityManager::goHome(HomeMenuItem item, bool cleanInitialRefresh) {
+  calls.push_back("goHome");
+  ++asks.goHome;
+  lastHomeItem = item;
+  lastCleanInitialRefresh = cleanInitialRefresh;
+}
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
+  calls.push_back("pushActivity");
   ++asks.pushed;
   pushedActivities.push_back(std::move(activity));
 }
-void ActivityManager::popActivity() { ++asks.popped; }
+void ActivityManager::popActivity() {
+  calls.push_back("popActivity");
+  ++asks.popped;
+}
 
 void ActivityManager::exitHolding(Activity& activity) {
   RenderLock lock;
@@ -87,22 +155,14 @@ void ActivityManager::exitHolding(Activity& activity) {
 
 void ActivityManager::reset() {
   asks = Asks{};
+  calls.clear();
+  lastPath.clear();
+  lastMessage.clear();
+  lastHomeItem = HomeMenuItem::NONE;
+  lastCleanInitialRefresh = false;
+  replacements.clear();
   pushedActivities.clear();
   onGoToGames = nullptr;
   seenUpdates = 0;
   fakelock::reset();
 }
-
-// Activity's members, as src/activities/Activity.cpp has them.
-void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
-void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }
-void Activity::requestUpdate(bool immediate) { activityManager.requestUpdate(immediate); }
-void Activity::requestUpdateAndWait() { activityManager.requestUpdateAndWait(); }
-void Activity::onGoHome(HomeMenuItem item) { activityManager.goHome(item); }
-void Activity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
-void Activity::startActivityForResult(std::unique_ptr<Activity>&& activity, ActivityResultHandler handler) {
-  this->resultHandler = std::move(handler);
-  activityManager.pushActivity(std::move(activity));
-}
-void Activity::setResult(ActivityResult&& value) { this->result = std::move(value); }
-void Activity::finish() { activityManager.popActivity(); }

@@ -258,6 +258,7 @@ TEST_F(GameVmTest, AbandonLeavesAVmStuckInsideALockedBindingAndSaysSo) {
   installGame("logger", match::LOGGING_GAME);
   ASSERT_TRUE(prepare("logger"));
   ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
   expectCleanPsram = false;          // the leak is the point: the VM keeps its arena, and the match keeps the slot
   fakertos::arm(fakertos::At::Log);  // ch.log writes its line inside a locked binding: held there
   vm->postInput(tapAt(100, 200));
@@ -273,6 +274,35 @@ TEST_F(GameVmTest, AbandonLeavesAVmStuckInsideALockedBindingAndSaysSo) {
   // The leaked task finishes once its call returns: the cancel flag ends it at the next hook.
   fakertos::release();
   EXPECT_TRUE(fakertos::waitNoTasks());
+}
+
+TEST_F(GameVmTest, AbandonDeletesAVmSpinningInLuaThatNeverReturns) {
+  installGame("spin", match::SPIN_GAME);
+  ASSERT_TRUE(prepare("spin"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  vm->postInput(tapAt(100, 200));  // the call spins: 2M Lua instructions of budget, each pass reading the clock
+  ASSERT_TRUE(waitFor([&] { return vm->busy(); }));
+  // No cancel: the suspend has to find a task that is running, and stop it at its next clock read.
+  EXPECT_TRUE(GameVM::abandon(std::move(vm)));
+  EXPECT_TRUE(logHas("Abandoned the stuck VM")) << "the task ended on its own instead";
+  EXPECT_EQ(fakepsram::liveBlocks, 1u);
+}
+
+TEST_F(GameVmTest, AbandonLeavesAnIdleVmAloneForItIsNotInsideLua) {
+  installFixture("tracer");
+  ASSERT_TRUE(prepare("tracer"));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor([&] { return !vm->busy(); }));
+  GameVM* raw = vm.get();
+  // A VM waiting for input is suspended cleanly, but a task outside Lua is not deleted: it may be
+  // between a lock and its release. Abandon gives up after its wait.
+  EXPECT_FALSE(GameVM::abandon(std::move(vm)));
+  EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
+  // The test knows it is only idle: it stops it and frees it.
+  raw->cancel();
+  ASSERT_TRUE(raw->join(5000));
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  delete raw;
 }
 
 TEST_F(GameVmTest, AbandonOfAVmThatEndedAfterAllDeletesItAndFreesEverything) {
@@ -363,6 +393,17 @@ return game
   // 474 x 788 of the 480 x 800 screen (width first), and 3 glyphs of the double's advances.
   EXPECT_TRUE(logHas("screen\t474\t788\tabc small\t" + std::to_string(3 * match::SMALL_ADVANCE) + "\tabc large\t" +
                      std::to_string(3 * match::LARGE_ADVANCE)));
+}
+
+// ---- the fake clock moves with the waits the firmware makes (screen_stubs/FakeRtos.h) ----
+
+TEST_F(GameVmTest, ADelayMovesTheFakeClockByWhatItWaited) {
+  const uint64_t start = fakertos::S().nowMs.load();
+  vTaskDelay(pdMS_TO_TICKS(7));
+  EXPECT_EQ(fakertos::S().nowMs.load(), start + 7);
+  EXPECT_EQ(xTaskGetTickCount(), static_cast<TickType_t>(start + 7));
+  delay(3);
+  EXPECT_EQ(millis(), static_cast<unsigned long>(start + 10));
 }
 
 }  // namespace

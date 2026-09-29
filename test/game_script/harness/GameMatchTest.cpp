@@ -1,8 +1,11 @@
 #include <I18n.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "ArenaSize.h"
 #include "GameAssets.h"
@@ -255,14 +258,21 @@ TEST_F(MatchTest, LeavingStopsTheVmAndWritesTheStoreBeforeItGoesToGames) {
   int tasksThen = -1;
   bool storeThen = false;
   activityManager.onGoToGames = [&] {
-    tasksThen = fakertos::S().liveTasks.load();
+    // The VM has been joined, so its thread is about to return; give it that moment.
+    tasksThen = fakertos::waitNoTasks(1000) ? 0 : 1;
     storeThen = fakesd::has(storePath("counter"));
   };
+  // The stop wakes the VM from the loop task: the RenderLock must be held then (the render task may
+  // be inside renderCanvas, reading the frames the stop may free).
+  std::vector<bool> lockHeld;
+  fakertos::S().onLoopNotify = [&] { lockHeld.push_back(fakelock::held()); };
   tapOption(tr(STR_GAMES_LEAVE));
   EXPECT_EQ(state(), "Leaving");
   EXPECT_EQ(activityManager.asks.goToGames, 1);
   EXPECT_EQ(tasksThen, 0) << "goToGames was asked with the VM still running";
   EXPECT_TRUE(storeThen) << "goToGames was asked before ch.store was written";
+  ASSERT_FALSE(lockHeld.empty());
+  for (const bool held : lockHeld) EXPECT_TRUE(held) << "Leave stopped the VM without the RenderLock";
   // The exit that follows finds the VM gone and the store clean: it writes nothing more.
   const size_t writes = fakesd::countOps("rename");
   exited = true;
@@ -282,7 +292,7 @@ TEST_F(MatchTest, AForcedExitStopsTheVmAndWritesTheStoreWithoutTakingTheRenderLo
   activityManager.exitHolding(*activity);  // the manager holds the lock, as it does when a screen is replaced
   EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit took the RenderLock the manager holds (12cc816)";
   EXPECT_EQ(state(), "Leaving");
-  EXPECT_EQ(fakertos::S().liveTasks.load(), 0);
+  EXPECT_TRUE(fakertos::waitNoTasks(1000));
   EXPECT_TRUE(fakesd::has(storePath("counter")));
   EXPECT_EQ(activityManager.asks.goToGames, 0);  // a forced exit does not navigate
 }
@@ -310,7 +320,7 @@ TEST_F(MatchTest, BackFromTheErrorViewLeaves) {
   frame();
   EXPECT_EQ(state(), "Leaving");
   EXPECT_EQ(activityManager.asks.goToGames, 1);
-  EXPECT_EQ(fakertos::S().liveTasks.load(), 0);
+  EXPECT_TRUE(fakertos::waitNoTasks(1000));
 }
 
 // ---- the load-failure mapping (## 3.2: BadImage to STR_GAMES_BAD_IMAGE, and every other LoadResult) ----
@@ -423,9 +433,13 @@ TEST_F(MatchTest, ACallRunningPastThreeSecondsIsStoppedAndAbandonedIntoTheErrorV
   frame();
   EXPECT_EQ(state(), "Playing") << "a call at exactly the limit is not yet stuck";
   fakertos::advance(1);
+  // The stop and the abandon that follow run under the RenderLock, as render reads what they free.
+  std::vector<bool> lockHeld;
+  fakertos::S().onLoopNotify = [&] { lockHeld.push_back(fakelock::held()); };
   frame();
   EXPECT_EQ(state(), "Error");
-  EXPECT_GT(fakelock::acquisitions.load(), 0);  // the stop and abandon ran under the RenderLock
+  ASSERT_FALSE(lockHeld.empty());
+  for (const bool held : lockHeld) EXPECT_TRUE(held) << "the watchdog stopped the VM without the RenderLock";
   expectErrorView(tr(STR_GAMES_ERROR), tr(STR_GAMES_NOT_RESPONDING));
   EXPECT_TRUE(logHas("Abandoned the stuck VM"));
   EXPECT_EQ(fakepsram::liveBlocks, 1u);  // the VM's blocks are gone; the store slot is the match's
@@ -436,7 +450,8 @@ TEST_F(MatchTest, AVmThatWillNotStopKeepsTheStoreSlotForTheTaskThatMayStillPostT
   installGame("logger", match::LOGGING_GAME);
   enter("logger");
   showFrame();
-  expectCleanPsram = false;  // the VM, and the slot it may post to, are leaked on purpose
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  expectCleanPsram = false;                   // the VM, and the slot it may post to, are leaked on purpose
   fakertos::arm(fakertos::At::Log);
   tapCanvas(100, 200);
   frame();
@@ -578,6 +593,60 @@ TEST_F(PlayAgainGapTest, AGapRenderMarksTheScreenAsNotHoldingTheCanvasEvenWhenNo
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
 }
 
+// The render task runs beside the loop task on the device; the tests above render between loop
+// passes. This one renders from a second thread, continuously, while Play again is chosen and the gap
+// is held open, to see that the gap draws nothing whichever way the two interleave. A render that
+// began before the choice is over by the time the RenderLock is had, so what is counted after that is
+// what the gap drew. It is a smoke test: it cannot pin the order of the two stores in `handle`
+// (M7b), which a render sees differently only in a window of a few instructions.
+TEST_F(PlayAgainGapTest, TheGapDrawsNothingWhileTheRenderTaskRendersBesideTheLoop) {
+  renderView();  // the end-of-round menu, drawn here once so its option's rectangle is known
+  int x = -1;
+  int y = -1;
+  for (const screen::DrawnText& drawn : ui().drawn) {
+    if (drawn.text != tr(STR_GAMES_PLAY_AGAIN)) continue;
+    x = drawn.rect.x + drawn.rect.width / 2;
+    y = drawn.rect.y + drawn.rect.height / 2;
+  }
+  ASSERT_GE(x, 0);
+  std::atomic<bool> stop{false};
+  std::thread renderTask([&] {
+    while (!stop.load()) {
+      activity->render(RenderLock(*activity));
+      std::this_thread::yield();
+    }
+  });
+  struct Joiner {
+    std::atomic<bool>& stop;
+    std::thread& thread;
+    ~Joiner() {
+      stop = true;
+      thread.join();
+    }
+  } joiner{stop, renderTask};
+
+  input->tap(x, y);
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  enterTheGap();
+  size_t drawn = 0;
+  {
+    RenderLock lock(*activity);
+    drawn = renderer->shown.size();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  {
+    RenderLock lock(*activity);
+    EXPECT_EQ(renderer->shown.size(), drawn) << "a render beside the loop drew in the Play-again gap";
+  }
+  fakertos::release();
+  EXPECT_TRUE(waitFor([&] {
+    frame();
+    RenderLock lock(*activity);
+    return renderer->shown.size() > drawn;
+  })) << "the new round's first frame was never drawn";
+}
+
 // ---- the other gestures on the canvas (readGesture, and GameTouch's edge rule) ----
 
 TEST_F(MatchTest, ALongPressOnTheCanvasReachesTheGameAsALongPressAtTheCanvasPoint) {
@@ -657,7 +726,7 @@ TEST_F(WatchdogStopTest, ACallThatReturnsWhenTheStopIsAskedIsStoppedWithoutAnAba
   EXPECT_EQ(state(), "Error");
   EXPECT_FALSE(logHas("did not stop within")) << "the VM was abandoned though it stopped";
   EXPECT_FALSE(logHas("Abandoned the stuck VM"));
-  EXPECT_EQ(fakertos::S().liveTasks.load(), 0);
+  EXPECT_TRUE(fakertos::waitNoTasks(1000));
   expectErrorView(tr(STR_GAMES_ERROR), tr(STR_GAMES_NOT_RESPONDING));
 }
 
@@ -673,6 +742,36 @@ TEST_F(WatchdogStopTest, ACallThatEndsInALuaErrorMeanwhileShowsThatErrorNotTheWa
   std::string flat = ui().joined();
   EXPECT_NE(flat.find("late boom"), std::string::npos) << flat;
   EXPECT_EQ(flat.find(tr(STR_GAMES_NOT_RESPONDING)), std::string::npos);
+}
+
+// ---- the timer poll, and the watchdog in a menu (the loop's own calls) ----
+
+TEST_F(MatchTest, ADueTimerIsPolledByTheLoopAndDeliveredToTheGame) {
+  installFixture("timer");
+  enter("timer");
+  showFrame();  // setup armed a 3000 ms timer at 1000 ms
+  fakertos::advance(3000);
+  frame();  // loopPlaying polls the timer: due now
+  ASSERT_TRUE(waitFor([&] { return logHas("tick at"); })) << "the loop never polled the timer";
+}
+
+TEST_F(MatchTest, AVmThatHangsWhilePausedIsFoundByTheWatchdogInTheMenu) {
+  installFixture("timer");
+  enter("timer");
+  showFrame();
+  fakertos::arm();  // the tap's ch.timer.after reads the clock: held there, inside Lua
+  tapCanvas(100, 200);
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  frame();  // the first poll that sees the call starts its clock
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(3001);
+  frame();  // loopView: the VM may hang, fail, or set ch.store while a menu is up
+  EXPECT_EQ(state(), "Error");
+  expectErrorView(tr(STR_GAMES_ERROR), tr(STR_GAMES_NOT_RESPONDING));
+  fakertos::release();
 }
 
 // ---- the render task's side of a frame (the framereplay item's device-side wiring) ----

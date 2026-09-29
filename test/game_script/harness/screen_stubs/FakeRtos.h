@@ -31,12 +31,15 @@
 //     the task there); a log line from ch.log is inside one (it may not). pass() lets the
 //     held task by that one point with the gate still armed (so the next read holds it
 //     again); release() disarms it.
-// vTaskDelay really sleeps (1 tick = 1 ms), so a join loop's timeout is real time.
+// vTaskDelay, delay(), and a notify wait that times out really wait (1 tick = 1 ms) and also move
+// the clock by what they waited, so a wait that counts elapsed millis() ends, and a test that
+// advances the clock by hand adds to what the code's own waits have advanced.
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -63,6 +66,10 @@ struct State {
   std::atomic<int> deadNotifies{0};
   std::atomic<int> tasksCreated{0};
   std::atomic<bool> failNextCreate{false};
+  // Called (outside the lock) on each xTaskNotify from a thread that is not a task: what the loop
+  // task does to wake the VM (postInput, cancel, playAgain). Lets a test read the state of the
+  // loop task's world at that moment, such as whether the RenderLock is held.
+  std::function<void()> onLoopNotify;
   std::vector<std::unique_ptr<Task>>
       tasks;  // every task ever created, kept so a late notify still lands on a live object
   bool gateArmed = false;
@@ -195,6 +202,7 @@ inline void reset() {
   s.failNextCreate = false;
   s.gateArmed = false;
   s.gateSkip = 0;
+  s.onLoopNotify = nullptr;
   s.cv.notify_all();
 }
 
