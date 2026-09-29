@@ -3,7 +3,7 @@ title: 'Package hardening'
 type: 'feature'
 ticket: '6'
 created: '2026-09-29'
-status: built
+status: done
 baseline_revision: '34fae3ff7b29a0ea12050626b02803e6efaea957'
 route: 'full'
 route_source: 'auto'
