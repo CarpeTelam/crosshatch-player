@@ -3,7 +3,7 @@ title: 'The paged launcher (GamesLauncherActivity)'
 type: 'feature'
 ticket: '8'
 created: '2026-09-29'
-status: 'built'
+status: done
 baseline_revision: '0880c7463b77ac7d4b9a59d6ef8211a80143e357'
 route: 'full'
 route_source: 'auto'
