@@ -16,6 +16,7 @@
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
 #include "games/GameIconDraw.h"
+#include "games/GameRegistry.h"
 #include "games/GameVM.h"
 #include "games/GameViewIcons.h"
 
@@ -82,9 +83,13 @@ StrId optionLabel(const MatchEvent event) {
 
 }  // namespace
 
+static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
+static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
+              "resume.bin records the package hash .pkg holds (GameSaveStore builds without GameHash.h)");
+
 GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                     const GameCore::Manifest& manifest)
-    : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest) {}
+                                     const GameCore::Manifest& manifest, const Start start)
+    : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest), start(start) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -104,6 +109,14 @@ void GameMatchActivity::onEnter() {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
     return;
   }
+  // resume.bin is saved and read only for an installed package: its hash says whether the
+  // save is this package's (AD-16). A game without a valid .pkg plays without one.
+  uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
+  if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
+    store.saves().setPackageHash(pkgHash);
+  } else {
+    LOG_INF("GAME", "%s: no valid .pkg; no resume.bin", manifest.id);
+  }
   GameAssets assets;
   // GameAssets restores store.bin into the slot.
   const GameAssets::LoadResult loaded = assets.load(manifest.id, store.saves(), store.slot());
@@ -113,6 +126,7 @@ void GameMatchActivity::onEnter() {
   }
   replay.loadFonts(renderer);
   auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot());
+  if (created && start == Start::Resume) seedResume(*created);
   // Both failures are logged with their cause; each is memory (PSRAM, or the task's stack).
   if (!created || !created->start()) {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
@@ -127,14 +141,33 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
+void GameMatchActivity::seedResume(GameVM& created) {
+  uint16_t ver = 0;
+  const std::span<const uint8_t> snapshot = store.saves().loadResume(ver);
+  if (snapshot.empty()) {
+    LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
+    return;
+  }
+  if (!created.setResume(snapshot, ver)) {
+    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; starting a new match", manifest.id,
+            static_cast<unsigned>(snapshot.size()));
+  }
+}
+
 void GameMatchActivity::onExit() {
+  forcedExitBeganMs = millis();
+  forcedExit = true;
   Activity::onExit();
   // ActivityManager holds RenderLock here: never take it again (12cc816). The VM
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
-  // and the VM is gone; the store is flushed again only if a set landed since.
+  // and the VM is gone; the store is flushed again only if a set landed since. The
+  // order: cancel and join, the last snapshot written while the VM that holds it still
+  // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
+  // finish, then the store. The SD steps stop starting once the deadline has passed.
   handle(MatchEvent::ForcedExit);
   stopVm();
+  retryResumeDelete(true);
   flushStore();
 }
 
@@ -162,6 +195,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
+      resumeWritable = true;
+      // The new round's snapshots replace a save Over could not delete.
+      resumeDeletePending = false;
       if (event == MatchEvent::PlayAgain) {
         // Frames the last round drew after it ended are never shown, one from a
         // step still running when Play again came included: the loop asks for no
@@ -176,15 +212,24 @@ void GameMatchActivity::handle(const MatchEvent event) {
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
       break;
     case MatchState::Over:
+      resumeWritable = false;
       flushStore();
+      // A finished round never resumes. A snapshot with `over` set is never written, and
+      // one still pending is dropped by the next flushResume.
+      resumeDeletePending = !store.saves().deleteResume();
+      resumeDeleteTriedMs = millis();
       break;
     case MatchState::Leaving:
       // onExit() stops and flushes itself after a forced exit.
       if (event != MatchEvent::ForcedExit) leave();
       return;
-    case MatchState::Starting:
     case MatchState::Paused:
+      resumeWritable = true;
+      break;
     case MatchState::Error:
+      resumeWritable = false;
+      break;
+    case MatchState::Starting:
       break;
   }
   requestUpdate();
@@ -203,21 +248,57 @@ void GameMatchActivity::leave() {
     RenderLock lock(*this);
     stopVm();
   }
+  // Also when a stuck VM took the match to Error first and vm is gone.
+  retryResumeDelete(true);
   flushStore();
   activityManager.goToGames();
 }
 
 void GameMatchActivity::stopVm() {
   if (!vm) return;
-  if (vm->stop(STOP_TIMEOUT_MS)) {
+  const bool joined = vm->stop(STOP_TIMEOUT_MS);
+  // After the wait, before the VM is freed or abandoned (the snapshot is in its memory).
+  // A task that did not join may still publish one on its way out; abandonVm looks again.
+  flushResume();
+  if (joined) {
     vm.reset();
     return;
   }
   abandonVm();
 }
 
+bool GameMatchActivity::sdStepAllowed(const char* what) {
+  if (!forcedExit || millis() - forcedExitBeganMs < FORCED_EXIT_DEADLINE_MS) return true;
+  LOG_ERR("GAME", "%s: forced exit past %u ms; skipped %s", manifest.id, static_cast<unsigned>(FORCED_EXIT_DEADLINE_MS),
+          what);
+  return false;
+}
+
+void GameMatchActivity::retryResumeDelete(const bool forced) {
+  if (!resumeDeletePending || !store.ready()) return;
+  const uint32_t now = millis();
+  if (!forced && now - resumeDeleteTriedMs < GameSaveStore::FLUSH_INTERVAL_MS) return;
+  if (!sdStepAllowed("the resume.bin delete")) return;
+  if (store.saves().deleteResume()) {
+    resumeDeletePending = false;
+  } else {
+    resumeDeleteTriedMs = now;
+  }
+}
+
+void GameMatchActivity::flushResume() {
+  if (vm) flushResumeOf(*vm);
+}
+
+void GameMatchActivity::flushResumeOf(GameVM& from) {
+  if (!resumeWritable || !store.ready() || !from.committed().pending()) return;
+  if (!sdStepAllowed("the resume write")) return;
+  store.saves().flushResume(from.committed(), millis());
+}
+
 void GameMatchActivity::flushStore() {
   if (!store.ready()) return;  // the match never got that far
+  if (!store.slot().dirty() || !sdStepAllowed("the ch.store flush")) return;
   // Safe with a leaked task too: the slot's mutex is held only for a copy inside
   // a locked binding, which an abandon never deletes nor leaves suspended, so the
   // flush waits at most one copy, and it saves every set until the leak.
@@ -226,7 +307,8 @@ void GameMatchActivity::flushStore() {
 
 void GameMatchActivity::abandonVm() {
   LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
-  if (GameVM::abandon(std::move(vm))) return;
+  const auto writeLast = [](GameVM& ended, void* self) { static_cast<GameMatchActivity*>(self)->flushResumeOf(ended); };
+  if (GameVM::abandon(std::move(vm), writeLast, this)) return;
   // The leaked task may still call ch.store.set; the destructor leaks the slot.
   slotLeaked = true;
   LOG_ERR("GAME", "The ch.store slot stays with the leaked VM");
@@ -237,6 +319,7 @@ void GameMatchActivity::stopStuckVm() {
   LOG_ERR("GAME", "%s: a call ran over %u ms; stopping the VM", manifest.id, static_cast<unsigned>(WATCHDOG_MS));
   char detail[GameVM::ERROR_CAPACITY];
   snprintf(detail, sizeof(detail), "%s", tr(STR_GAMES_NOT_RESPONDING));
+  resumeWritable = false;  // the match is going to Error, which never writes resume.bin
   {
     // render() reads vm and the frames abandon may free.
     RenderLock lock(*this);
@@ -312,6 +395,7 @@ void GameMatchActivity::loopPlaying() {
   }
   vm->pollTimer();
   store.flushIfDue(millis());
+  flushResume();
 
   // Any frame before the new round's first is the last round's; once the count
   // moves, coalescing shows the newest frame.
@@ -330,6 +414,8 @@ void GameMatchActivity::loopView() {
   if (state != MatchState::Error) {
     if (!vmHealthy()) return;
     store.flushIfDue(millis());
+    flushResume();
+    retryResumeDelete(false);
   }
   // Back resumes from the pause menu, leaves from the error view, and does
   // nothing in the end-of-round menu (MatchLifecycle).

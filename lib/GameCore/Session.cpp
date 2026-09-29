@@ -7,9 +7,23 @@ namespace GameCore {
 Session::Session(const Roster& roster, IGameRules& rules)
     : seats(roster), rules(rules), localSeat(roster.firstLocalSeat()) {}
 
+bool Session::restore(const std::span<const uint8_t> snapshot, const uint32_t ver) {
+  if (snapshot.empty() || snapshot.size() > SNAPSHOT_BYTES) return false;
+  std::memcpy(state, snapshot.data(), snapshot.size());
+  stateLength = snapshot.size();
+  version = ver;
+  restored = true;
+  return true;
+}
+
 Outcome Session::start() {
   moveLength = 0;
   overDelivered = false;
+  if (restored) {
+    // Once: a rematch (Play again) calls start() again and runs setup.
+    restored = false;
+    return afterSnapshot();
+  }
   const GameContext ctx{seats.seats, seats.mode, seats.api};
   std::span<const uint8_t> initial;
   const Outcome outcome = rules.setup(ctx, initial);
@@ -56,6 +70,7 @@ Outcome Session::draw() { return rules.draw(snapshot(), localSeat); }
 
 Outcome Session::afterSnapshot() {
   const Outcome outcome = rules.status(snapshot(), seats, current);
+  if (outcome == Outcome::Ok) settled = version;
   if (outcome != Outcome::Ok || !current.over || overDelivered) return outcome;
   overDelivered = true;
   GameEvent over;

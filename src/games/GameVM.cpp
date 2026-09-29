@@ -7,6 +7,7 @@
 #include <Logging.h>
 #include <Session.h>
 
+#include <cstring>
 #include <new>
 #include <utility>
 
@@ -15,7 +16,20 @@
 
 namespace {
 
-constexpr uint32_t STOP_POLL_MS = 5;
+// VM task, after a start, restart, or step that ended `outcome`: hands the Session's snapshot
+// to the loop task when its ver moved since `published`, which it then holds. An Ok outcome
+// always publishes. A Cancelled one publishes only when the snapshot's status was computed
+// (Session::settledVer), since otherwise status().over is the previous snapshot's and the
+// snapshot may never have been accepted by the game; a ScriptError never does.
+void publishCommitted(SnapshotMailbox& mailbox, const GameCore::Session& session, uint32_t& published,
+                      const GameScript::Outcome outcome) {
+  const uint32_t ver = session.ver();
+  if (ver == published) return;
+  const bool settled = session.settledVer() == ver;
+  if (outcome == GameScript::Outcome::ScriptError || (outcome == GameScript::Outcome::Cancelled && !settled)) return;
+  published = ver;
+  mailbox.publish(session.snapshot(), ver, session.status().over);
+}
 
 // VM task, after a round started (`started`) or an event: logs the start, and an
 // end counted since `endedBefore`.
@@ -34,10 +48,13 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
                                        const char* gameId, GameScript::StoreSlot& store) {
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
-  constexpr size_t frameBytes = 2 * GameScript::MAX_BYTES;
+  // The two frames, then the mailbox's one snapshot: one block, since the mailbox lives
+  // as long as the frames and a second PSRAM block would only fragment.
+  constexpr size_t frameBytes = 2 * GameScript::MAX_BYTES + GameCore::SNAPSHOT_BYTES;
   auto frameStorage = HalMemory::allocatePsram(frameBytes);
   if (!frameStorage) {
-    LOG_ERR("GAME", "OOM: %u bytes of PSRAM for frame buffers", static_cast<unsigned>(frameBytes));
+    LOG_ERR("GAME", "OOM: %u bytes of PSRAM for frame buffers and the snapshot mailbox",
+            static_cast<unsigned>(frameBytes));
     return nullptr;
   }
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
@@ -57,6 +74,7 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
     : assets(std::move(loaded)),
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
+      mailbox({frameStorage.get() + 2 * GameScript::MAX_BYTES, GameCore::SNAPSHOT_BYTES}),
       log(gameId),
       game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store}, canvas,
            assets.images()) {}
@@ -73,6 +91,14 @@ bool GameVM::start() {
     LOG_ERR("GAME", "Cannot create the GameVM task (%u byte stack)", static_cast<unsigned>(TASK_STACK_BYTES));
     return false;
   }
+  return true;
+}
+
+bool GameVM::setResume(const std::span<const uint8_t> snapshot, const uint16_t ver) {
+  if (snapshot.empty() || snapshot.size() > GameCore::SNAPSHOT_BYTES) return false;
+  std::memcpy(mailbox.storage().data(), snapshot.data(), snapshot.size());
+  resumeLength = snapshot.size();
+  resumeVer = ver;
   return true;
 }
 
@@ -103,14 +129,28 @@ void GameVM::run() {
   } else {
     sessionOutOfMemory = true;
   }
+  // The ver last handed to the loop task: a restored one was saved already.
+  uint32_t published = 0;
   if (outcome == Outcome::Ok) {
+    if (resumeLength != 0) {
+      // The seed sits in the mailbox's storage; it is read here, before the first publish.
+      const std::span<const uint8_t> seed = mailbox.storage().first(resumeLength);
+      if (session->restore(seed, resumeVer)) {
+        published = session->ver();
+        LOG_INF("GAME", "Resuming at ver %u", static_cast<unsigned>(published));
+      } else {
+        LOG_ERR("GAME", "Cannot restore a %u-byte snapshot; starting a new round", static_cast<unsigned>(resumeLength));
+      }
+    }
     outcome = rounds.start(*session);
+    publishCommitted(mailbox, *session, published, outcome);
     if (outcome == Outcome::Ok) logRound(*session, rounds, 0, true);
   }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
     const uint32_t endedBefore = rounds.roundsEnded();
     if (rounds.takePlayAgain()) {
       outcome = rounds.restart();
+      publishCommitted(mailbox, *session, published, outcome);
       if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, true);
       continue;
     }
@@ -120,6 +160,7 @@ void GameVM::run() {
       continue;
     }
     outcome = rounds.step(event);
+    publishCommitted(mailbox, *session, published, outcome);
     if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, false);
   }
   if (outcome == Outcome::ScriptError) {
@@ -190,8 +231,11 @@ void GameVM::cancel() {
 
 bool GameVM::join(const uint32_t timeoutMs) {
   if (!task) return true;
-  for (uint32_t waited = 0; !finished(); waited += STOP_POLL_MS) {
-    if (waited >= timeoutMs) return false;
+  // The time is the clock's, not the polls': a poll can take longer than STOP_POLL_MS (a
+  // busy core, a tick coarser than the poll), and sleep waits for this under RenderLock.
+  const uint32_t began = millis();
+  while (!finished()) {
+    if (millis() - began >= timeoutMs) return false;
     vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
   }
   return true;
@@ -202,7 +246,7 @@ bool GameVM::stop(const uint32_t timeoutMs) {
   return join(timeoutMs);
 }
 
-bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
+bool GameVM::abandon(std::unique_ptr<GameVM> vm, void (*beforeDelete)(GameVM&, void*), void* user) {
   if (!vm) return true;
   // Leaked from here on unless the task ends after all: it may hold this object's
   // mutexes (input queue, task mutex), and deleting a task releases nothing it holds.
@@ -211,14 +255,19 @@ bool GameVM::abandon(std::unique_ptr<GameVM> vm) {
   // The shim has no vTaskSuspend, and its vTaskDelete only detaches the thread,
   // which would keep running in the arena; waiting cannot help.
   if (stuck->finished()) {
+    if (beforeDelete) beforeDelete(*stuck, user);
     delete stuck;
     return true;
   }
   LOG_ERR("GAME", "VM stuck; the simulator cannot stop its thread, so all of it is leaked");
   return false;
 #else
-  for (uint32_t waited = 0; waited < ABANDON_WAIT_MS; waited += STOP_POLL_MS) {
+  // Counted in millis(), as join is: an iteration is a poll plus deleteIfStuckInLua's settle.
+  const uint32_t began = millis();
+  while (millis() - began < ABANDON_WAIT_MS) {
     if (stuck->finished()) {
+      // It ended after the caller's last look, perhaps publishing a snapshot on the way out.
+      if (beforeDelete) beforeDelete(*stuck, user);
       delete stuck;
       return true;
     }

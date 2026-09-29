@@ -13,12 +13,14 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 
 #include "GameArena.h"
 #include "GameAssets.h"
 #include "GameClock.h"
 #include "GameLog.h"
 #include "GameRandom.h"
+#include "SnapshotMailbox.h"
 
 namespace GameScript {
 class StoreSlot;
@@ -34,22 +36,29 @@ class GfxRenderer;
 // ch.store slot is the match's, borrowed. The task alone calls into Lua; it never
 // takes RenderLock, calls ActivityManager, or touches Storage. The match posts
 // input and reads frames, and destroys this object only after join() returns true
-// (or before start()); otherwise it hands it to abandon().
+// (or before start()); otherwise it hands it to abandon(). Each snapshot the Session
+// commits goes to the loop task through committed() (latest wins), which writes
+// resume.bin; setResume() starts the Session from a saved one instead of setup.
 class GameVM {
  public:
   static constexpr uint32_t TASK_STACK_BYTES = GameScript::VM_STACK_BYTES;
   static constexpr int TASK_PRIORITY = 1;
   static constexpr int TASK_CORE = 1;
-  // How long abandon() waits for the stuck task to be safely deletable.
+  // How often join() and abandon() poll. A wait ends late by its last iteration: one poll,
+  // and in abandon() also deleteIfStuckInLua's settle of up to 10 ticks and its wait for
+  // taskMutex. The forced exit's recorded bound (docs/crosshatch/game-canvas.md) assumes 5.
+  static constexpr uint32_t STOP_POLL_MS = 5;
+  // How long abandon() waits, counted in millis() from when it began, for the stuck
+  // task to be safely deletable (late by its last iteration; see STOP_POLL_MS).
   static constexpr uint32_t ABANDON_WAIT_MS = 500;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
-  // Takes the loaded sources and allocates the arena and both frame buffers in
-  // PSRAM. The game sees `viewport`'s canvas size as ch.screen and measures
-  // ch.text_width with `replay`'s text metrics (after FrameReplay::loadFonts);
-  // `gameId` tags its log lines, and `store` (which must outlive the task, see
-  // MatchStore) backs ch.store. Null (logged) when memory runs out.
+  // Takes the loaded sources and allocates the arena and both frame buffers (and the
+  // snapshot mailbox's storage after them) in PSRAM. The game sees `viewport`'s canvas
+  // size as ch.screen and measures ch.text_width with `replay`'s text metrics (after
+  // FrameReplay::loadFonts); `gameId` tags its log lines, and `store` (which must
+  // outlive the task, see MatchStore) backs ch.store. Null (logged) when memory runs out.
   static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                         const char* gameId, GameScript::StoreSlot& store);
 
@@ -59,6 +68,17 @@ class GameVM {
   // Starts the task, which runs setup and the first draw. False (logged) when the
   // task cannot be created.
   bool start();
+  // Before start(): the saved snapshot (a saved match's, `ver` its u16) the Session
+  // restores in place of setup (GameCore::Session::restore), kept in the mailbox's
+  // storage until the task reads it. False (nothing changes) when it is empty or larger
+  // than GameCore::SNAPSHOT_BYTES.
+  bool setResume(std::span<const uint8_t> snapshot, uint16_t ver);
+  // The snapshots the VM has committed, latest wins, for the loop task to save (loop
+  // task: SnapshotMailbox::take, through GameSaveStore::flushResume). The VM publishes
+  // each new ver once, before it logs the round, and none for a restored start. Lives
+  // as long as this object: the match saves what is pending before it frees or abandons
+  // the VM.
+  SnapshotMailbox& committed() { return mailbox; }
   // Queues an event for input(): a touch event (GameTouch.h), or pollTimer's Timer
   // event. A full queue drops its oldest event that is not a Timer (InputQueue),
   // with a log line.
@@ -125,7 +145,10 @@ class GameVM {
   // Sets the cancel flag, which the hook turns into Cancelled at the next hook
   // event, and asks the task to quit. Returns at once.
   void cancel();
-  // Waits up to timeoutMs for the task to end. True when it has (or never started).
+  // Waits for the task to end, polling every STOP_POLL_MS, until timeoutMs of millis()
+  // have passed since it began. It returns late by its last iteration (a poll), and
+  // so at most a poll after timeoutMs unless a poll itself is delayed by the scheduler.
+  // True when it has ended (or never started).
   bool join(uint32_t timeoutMs);
   // cancel(), then join(timeoutMs).
   bool stop(uint32_t timeoutMs);
@@ -134,12 +157,14 @@ class GameVM {
   // the task is suspended inside Lua, outside a locked binding (enterLockedSection),
   // with inSwap clear, it is deleted and the arena, frame storage, and sources are
   // freed; the GameVM object itself is leaked, since the task may hold its mutexes.
-  // If that never happens within ABANDON_WAIT_MS, or in the simulator (which
+  // If that never happens within ABANDON_WAIT_MS of millis(), or in the simulator (which
   // cannot stop a thread), all of it is leaked. Call from the loop task while the
   // render task is not reading frames (RenderLock held, as in onExit). Returns true
   // when the task is gone (ended or deleted); false when it may still run, and so
-  // still post to the store slot, which the caller must then leak too.
-  static bool abandon(std::unique_ptr<GameVM> vm);
+  // still post to the store slot, which the caller must then leak too. A task that ends
+  // within the wait may have published a last snapshot after the caller's own flush, so
+  // `beforeDelete(vm, user)`, if given, runs on it before it is deleted.
+  static bool abandon(std::unique_ptr<GameVM> vm, void (*beforeDelete)(GameVM&, void*) = nullptr, void* user = nullptr);
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
@@ -161,6 +186,8 @@ class GameVM {
   GameArena arena;
   HalMemory::PsramBuffer frameStorage;
   GameScript::FrameBuffers frameBuffers;
+  // Over the last SNAPSHOT_BYTES of frameStorage, after the two frames.
+  SnapshotMailbox mailbox;
   GameRandom random;
   GameClock clock;
   GameLog log;
@@ -173,6 +200,10 @@ class GameVM {
   std::atomic<bool> quitRequested{false};
   std::atomic<bool> done{false};
   std::atomic<bool> scriptFailed{false};
+  // setResume's snapshot, in the mailbox's storage: written before the task starts
+  // and read by it before its first publish.
+  size_t resumeLength = 0;
+  uint16_t resumeVer = 0;
   // Set by the task before `done` when the Session did not fit in the arena.
   bool sessionOutOfMemory = false;
   // runningForMs's view of the current call (loop task only).

@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <memory>
+#include <new>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -9,11 +14,30 @@
 #include "GameSaveStore.h"
 #include "HalStorage.h"
 #include "Logging.h"
+#include "Session.h"
+#include "SnapshotMailbox.h"
 #include "StoreSlot.h"
 
 // GameSaveStore over a fake SD card (save_store_stubs/): store.bin's layout, the
 // restore rules (a valid header and a table payload within 4,096 B, or nothing),
-// the tmp-then-rename write, and the flush interval.
+// the tmp-then-rename write, and the flush interval; and resume.bin's layout, its
+// peek and load rules, the same write, and the flush a match makes from the VM's
+// mailbox.
+
+// peek allocates one snapshot's worth with new (std::nothrow); a test can make that one call fail.
+// Not-failing calls behave as the default (malloc-backed, as libstdc++'s is).
+namespace {
+bool failNextNothrowNew = false;
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+  if (failNextNothrowNew) {
+    failNextNothrowNew = false;
+    return nullptr;
+  }
+  return std::malloc(size ? size : 1);
+}
+void operator delete[](void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
 
 namespace {
 
@@ -48,6 +72,33 @@ Bytes bigTable(const size_t n) {
   return out;
 }
 
+constexpr const char* RESUME = "/.games-data/counter/resume.bin";
+constexpr const char* RESUME_TMP = "/.games-data/counter/resume.bin.tmp";
+using PkgHash = uint8_t[GameSaveStore::PACKAGE_HASH_BYTES];
+constexpr PkgHash PKG = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1};
+constexpr PkgHash OTHER_PKG = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf2};
+
+// resume.bin's bytes: the blob header, the package hash, mode, seat count, ver (u16 LE), the snapshot.
+Bytes resumeFile(const Bytes& snapshot, const uint16_t ver = 7, const PkgHash& hash = PKG, const uint8_t mode = 0,
+                 const uint8_t seats = 1, const char* magic = "CHRS", const uint8_t fileVersion = 1,
+                 const uint8_t codecVersion = 1) {
+  Bytes out = header(magic, fileVersion, codecVersion);
+  out.insert(out.end(), hash, hash + sizeof(PkgHash));
+  out.push_back(mode);
+  out.push_back(seats);
+  out.push_back(static_cast<uint8_t>(ver & 0xFF));
+  out.push_back(static_cast<uint8_t>(ver >> 8));
+  return cat(out, snapshot);
+}
+
+Bytes firstBytes(const Bytes& file, const size_t count) { return Bytes(file.begin(), file.begin() + count); }
+
+size_t opsStartingWith(const std::string& prefix) {
+  size_t n = 0;
+  for (const std::string& op : fakesd::ops) n += op.compare(0, prefix.size(), prefix) == 0;
+  return n;
+}
+
 class GameSaveStoreTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -70,10 +121,25 @@ class GameSaveStoreTest : public ::testing::Test {
     return out;
   }
 
+  // A fresh match of the package PKG, with a mailbox of its own.
+  void openResume(const uint32_t startMs = 1000) {
+    open(startMs);
+    saves->setPackageHash(PKG);
+    mailboxStorage.assign(GameCore::SNAPSHOT_BYTES, 0);
+    mailbox = std::make_unique<SnapshotMailbox>(std::span<uint8_t>(mailboxStorage));
+  }
+
+  Bytes loaded(uint16_t& ver) {
+    const std::span<const uint8_t> snapshot = saves->loadResume(ver);
+    return Bytes(snapshot.begin(), snapshot.end());
+  }
+
   Bytes slotStorage;
   Bytes buffer;
+  Bytes mailboxStorage;
   std::unique_ptr<StoreSlot> slot;
   std::unique_ptr<GameSaveStore> saves;
+  std::unique_ptr<SnapshotMailbox> mailbox;
 };
 
 TEST_F(GameSaveStoreTest, TheBlobHeaderIsTheSharedOne) {
@@ -346,6 +412,344 @@ TEST_F(GameSaveStoreTest, SaveStoreRefusesAnEmptyOrOversizedStore) {
   const Bytes over(GameScript::Codec::STORE_LIMIT + 1, 0);
   EXPECT_FALSE(saves->saveStore(over));
   EXPECT_TRUE(fakesd::ops.empty());
+}
+
+// ---- resume.bin ----
+
+TEST_F(GameSaveStoreTest, TheResumeBlobHeaderIsTheSharedOne) {
+  Bytes written(GameScript::BLOB_HEADER_BYTES);
+  GameScript::writeBlobHeader(written.data(), GameSaveStore::RESUME_MAGIC, GameSaveStore::RESUME_FILE_VERSION);
+  EXPECT_EQ(written, header("CHRS"));
+  EXPECT_EQ(GameSaveStore::PACKAGE_HASH_BYTES, 8u);
+}
+
+TEST_F(GameSaveStoreTest, AResumeRoundTripWritesTheExactBytesAndPeekLoadAgree) {
+  openResume();
+  ASSERT_TRUE(saves->saveResume(TAPS3, 7));
+  const Bytes expected = {'C',  'H',  'R',  'S',  1,    1,                 // blob header
+                          0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1,  // package hash
+                          0,    1,    7,    0,                             // mode, seats, ver (u16 LE)
+                          0x06, 0x00, 0x01, 0x05, 0x04, 't',  'a',  'p',  's', 0x03, 0x06};
+  EXPECT_EQ(fakesd::files[RESUME], expected);
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3));
+  EXPECT_EQ(fakesd::files.count(RESUME_TMP), 0u);
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG));
+  uint16_t ver = 99;
+  EXPECT_EQ(loaded(ver), TAPS3);
+  EXPECT_EQ(ver, 7u);
+  EXPECT_FALSE(fakelog::any("ERR"));
+}
+
+TEST_F(GameSaveStoreTest, AResumeWriteGoesThroughTheTmpThenARename) {
+  fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+  openResume();
+  fakesd::ops.clear();
+  ASSERT_TRUE(saves->saveResume(TAPS4, 2));
+  const std::vector<std::string> expected = {
+      std::string("open-write ") + RESUME_TMP,
+      std::string("close ") + RESUME_TMP,
+      std::string("remove ") + RESUME,
+      std::string("rename ") + RESUME_TMP + " " + RESUME,
+  };
+  EXPECT_EQ(fakesd::ops, expected);
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 2));
+}
+
+TEST_F(GameSaveStoreTest, VerIsKeptToItsLow16Bits) {
+  openResume();
+  ASSERT_TRUE(saves->saveResume(TAPS3, 0x12345));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 0x2345));
+  uint16_t ver = 0;
+  EXPECT_EQ(loaded(ver), TAPS3);
+  EXPECT_EQ(ver, 0x2345u);
+
+  ASSERT_TRUE(saves->saveResume(TAPS3, 65536));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 0));
+  EXPECT_EQ(loaded(ver), TAPS3);
+  EXPECT_EQ(ver, 0u);
+}
+
+TEST_F(GameSaveStoreTest, ASnapshotAtTheLimitIsKeptAndOneOverIsRefused) {
+  openResume();
+  const Bytes atLimit = bigTable(GameCore::SNAPSHOT_BYTES - 9);
+  ASSERT_EQ(atLimit.size(), GameCore::SNAPSHOT_BYTES);
+  ASSERT_TRUE(saves->saveResume(atLimit, 3));
+  uint16_t ver = 0;
+  EXPECT_EQ(loaded(ver), atLimit);
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG));
+
+  fakesd::ops.clear();
+  EXPECT_FALSE(saves->saveResume(bigTable(GameCore::SNAPSHOT_BYTES - 8), 4));
+  EXPECT_FALSE(saves->saveResume({}, 4));
+  EXPECT_TRUE(fakesd::ops.empty());
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(atLimit, 3));
+}
+
+TEST_F(GameSaveStoreTest, NothingIsSavedOrLoadedBeforeThePackageHashIsKnown) {
+  open();
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  fakesd::ops.clear();
+  EXPECT_FALSE(saves->saveResume(TAPS4, 8));
+  uint16_t ver = 5;
+  EXPECT_TRUE(loaded(ver).empty());
+  EXPECT_EQ(ver, 0u);
+  EXPECT_TRUE(fakesd::ops.empty());
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3));
+}
+
+TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAndKept) {
+  const Bytes big = bigTable(GameCore::SNAPSHOT_BYTES - 8);  // 1,401 bytes
+  const struct {
+    Bytes file;
+    const char* reason;
+  } cases[] = {
+      {Bytes{'C', 'H', 'R'}, "truncated"},
+      {firstBytes(resumeFile(TAPS3), 12), "truncated"},
+      {firstBytes(resumeFile(TAPS3), 17), "truncated"},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX"), "bad_magic"},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "unknown_file_version"},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "unknown_codec_version"},
+      {resumeFile(TAPS3, 7, OTHER_PKG), "other package"},
+      {resumeFile(TAPS3, 7, PKG, 1), "not a solo save"},
+      {resumeFile(TAPS3, 7, PKG, 0, 2), "not a solo save"},
+      {resumeFile(TAPS3, 7, PKG, 0, 0), "not a solo save"},
+      {resumeFile(Bytes{}), "empty snapshot"},
+      {resumeFile(big), "too large"},
+  };
+  for (const auto& c : cases) {
+    SetUp();
+    fakesd::files[RESUME] = c.file;
+    openResume();
+    EXPECT_FALSE(GameSaveStore::peek("counter", PKG)) << c.reason;
+    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason)) << c.reason;
+    EXPECT_EQ(std::count_if(fakelog::lines.begin(), fakelog::lines.end(),
+                            [](const std::string& line) { return line.find("discarded") != std::string::npos; }),
+              1)
+        << c.reason << ": one log line";
+    fakelog::lines.clear();
+    uint16_t ver = 0;
+    EXPECT_TRUE(loaded(ver).empty()) << c.reason;
+    EXPECT_TRUE(fakelog::any(std::string("discarded ") + RESUME + ": " + c.reason)) << c.reason;
+    EXPECT_EQ(fakesd::files[RESUME], c.file) << c.reason << ": a discarded save is never deleted";
+  }
+}
+
+TEST_F(GameSaveStoreTest, ASnapshotThatIsNotCanonicalCodecBytesIsDiscardedByPeekAndLoadAlike) {
+  fakesd::files[RESUME] = resumeFile(cat(TAPS3, Bytes{0x00}));
+  openResume();
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG)) << "Continue is offered only for a save that resumes";
+  EXPECT_TRUE(fakelog::any(std::string("discarded ") + RESUME + ": trailing"));
+  fakelog::lines.clear();
+  uint16_t ver = 0;
+  EXPECT_TRUE(loaded(ver).empty());
+  EXPECT_TRUE(fakelog::any(std::string("discarded ") + RESUME + ": trailing"));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(cat(TAPS3, Bytes{0x00}))) << "and the file stays";
+}
+
+TEST_F(GameSaveStoreTest, PeekIsFalseWithALogLineWhenItCannotAllocateItsBufferAndTheFileStays) {
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  openResume();
+  ASSERT_TRUE(GameSaveStore::peek("counter", PKG)) << "the same save peeks true when memory is there";
+  fakelog::lines.clear();
+  failNextNothrowNew = true;
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+  failNextNothrowNew = false;
+  EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: OOM: 1400 bytes to check ") + RESUME));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3));
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG)) << "and the next call is fine";
+}
+
+TEST_F(GameSaveStoreTest, NoResumeIsNotAnError) {
+  openResume();
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+  uint16_t ver = 0;
+  EXPECT_TRUE(loaded(ver).empty());
+  EXPECT_TRUE(fakelog::lines.empty());
+}
+
+TEST_F(GameSaveStoreTest, AWholeResumeTmpIsReadWhenResumeBinIsMissing) {
+  fakesd::files[RESUME_TMP] = resumeFile(TAPS3, 9);
+  openResume();
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG));
+  uint16_t ver = 0;
+  EXPECT_EQ(loaded(ver), TAPS3);
+  EXPECT_EQ(ver, 9u);
+  EXPECT_TRUE(fakelog::any(std::string("no resume.bin; reading ") + RESUME_TMP));
+}
+
+TEST_F(GameSaveStoreTest, ATornResumeTmpIsDiscardedAndIgnoredBesideResumeBin) {
+  const Bytes torn = firstBytes(resumeFile(TAPS4), 9);
+  fakesd::files[RESUME_TMP] = torn;
+  openResume();
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+  uint16_t ver = 0;
+  EXPECT_TRUE(loaded(ver).empty());
+
+  SetUp();
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  fakesd::files[RESUME_TMP] = torn;
+  openResume();
+  EXPECT_TRUE(GameSaveStore::peek("counter", PKG));
+  EXPECT_EQ(loaded(ver), TAPS3);
+  EXPECT_FALSE(fakelog::any("discarded"));
+}
+
+TEST_F(GameSaveStoreTest, AFailedResumeWriteKeepsThePreviousSaveAndLeavesNoTmp) {
+  for (bool* failure : {&fakesd::failOpenWrite, &fakesd::failWrite, &fakesd::failClose}) {
+    SetUp();
+    fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+    openResume();
+    *failure = true;
+    EXPECT_FALSE(saves->saveResume(TAPS4, 2));
+    EXPECT_EQ(fakesd::files.count(RESUME_TMP), 0u);
+    EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 1)) << "the previous save stays";
+    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: cannot write ") + RESUME_TMP));
+  }
+}
+
+TEST_F(GameSaveStoreTest, AFailedResumeRenameKeepsTheWholeTmpAsTheOnlyCopy) {
+  fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+  openResume();
+  fakesd::failRename = true;
+  EXPECT_FALSE(saves->saveResume(TAPS4, 2));
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+  EXPECT_EQ(fakesd::files[RESUME_TMP], resumeFile(TAPS4, 2));
+
+  // A second failure does not truncate it: it is promoted before the write.
+  for (bool* failure : {&fakesd::failOpenWrite, &fakesd::failWrite, &fakesd::failClose}) {
+    fakesd::ops.clear();
+    *failure = true;
+    EXPECT_FALSE(saves->saveResume(TAPS3, 3));
+    EXPECT_EQ(fakesd::ops.front(), std::string("rename ") + RESUME_TMP + " " + RESUME);
+    EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 2));
+    // Put it back as a lone tmp for the next failure.
+    fakesd::files[RESUME_TMP] = fakesd::files[RESUME];
+    fakesd::files.erase(RESUME);
+  }
+  uint16_t ver = 0;
+  EXPECT_EQ(loaded(ver), TAPS4);
+  EXPECT_EQ(ver, 2u);
+}
+
+TEST_F(GameSaveStoreTest, DeleteResumeRemovesTheFileAndItsTmp) {
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  fakesd::files[RESUME_TMP] = resumeFile(TAPS4);
+  fakesd::files["/.games-data/counter/store.bin"] = cat(header(), TAPS3);
+  openResume();
+  EXPECT_TRUE(saves->deleteResume());
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+  EXPECT_EQ(fakesd::files.count(RESUME_TMP), 0u);
+  EXPECT_EQ(fakesd::files.count("/.games-data/counter/store.bin"), 1u) << "store.bin is not resume.bin";
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->deleteResume()) << "nothing to delete is done";
+  EXPECT_TRUE(fakesd::ops.empty());
+}
+
+TEST_F(GameSaveStoreTest, AFailedDeleteIsLoggedAndReported) {
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  openResume();
+  fakesd::failRemove = true;
+  EXPECT_FALSE(saves->deleteResume());
+  EXPECT_EQ(fakesd::files.count(RESUME), 1u);
+  EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: cannot delete ") + RESUME));
+}
+
+// ---- flushResume: what a match writes from the VM's mailbox ----
+
+TEST_F(GameSaveStoreTest, FlushResumeWritesTheLatestPublishedSnapshotOnceAndAtOnce) {
+  openResume(1000);
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1000));
+  EXPECT_TRUE(fakesd::ops.empty()) << "nothing published, nothing written";
+
+  ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
+  ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));  // latest wins
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001)) << "not held back by the store's 5 s interval";
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
+  EXPECT_FALSE(mailbox->pending());
+
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
+  EXPECT_TRUE(fakesd::ops.empty()) << "written once";
+
+  // Successive successes are never throttled.
+  ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1003));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 7));
+}
+
+TEST_F(GameSaveStoreTest, FlushResumeWritesNothingWithoutAPackageHash) {
+  open();
+  mailboxStorage.assign(GameCore::SNAPSHOT_BYTES, 0);
+  SnapshotMailbox bare{std::span<uint8_t>(mailboxStorage)};
+  ASSERT_TRUE(bare.publish(TAPS3, 5, false));
+  EXPECT_TRUE(saves->flushResume(bare, 1000));
+  EXPECT_TRUE(fakesd::ops.empty());
+  EXPECT_TRUE(fakesd::files.empty());
+}
+
+TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedOnlyAfterTheInterval) {
+  openResume(0);
+  ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
+  fakesd::failOpenWrite = true;
+  EXPECT_FALSE(saves->flushResume(*mailbox, 2000));
+  EXPECT_TRUE(mailbox->pending());
+
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->flushResume(*mailbox, 2001));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 6999));
+  EXPECT_TRUE(fakesd::ops.empty()) << "held back until the interval has passed";
+  EXPECT_TRUE(mailbox->pending());
+
+  // A newer snapshot meanwhile is what the retry writes.
+  ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7000));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
+  EXPECT_FALSE(mailbox->pending());
+
+  // The throttle is over once a write has succeeded.
+  ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7001));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 7));
+}
+
+TEST_F(GameSaveStoreTest, ASnapshotWhoseStatusIsOverDeletesTheSaveInsteadOfBeingWritten) {
+  fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+  fakesd::files[RESUME_TMP] = resumeFile(TAPS3, 1);
+  openResume();
+  ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001));
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+  EXPECT_EQ(fakesd::files.count(RESUME_TMP), 0u);
+  EXPECT_EQ(opsStartingWith("open-write"), 0u) << "an over snapshot is never written";
+  EXPECT_FALSE(mailbox->pending());
+  EXPECT_FALSE(GameSaveStore::peek("counter", PKG));
+}
+
+TEST_F(GameSaveStoreTest, AFailedDeleteForAnOverSnapshotIsRetriedLikeAFailedWrite) {
+  fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+  openResume(0);
+  ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
+  fakesd::failRemove = true;
+  EXPECT_FALSE(saves->flushResume(*mailbox, 2000));
+  EXPECT_TRUE(mailbox->pending());
+  EXPECT_EQ(fakesd::files.count(RESUME), 1u);
+  EXPECT_TRUE(saves->flushResume(*mailbox, 3000)) << "throttled";
+  EXPECT_EQ(fakesd::files.count(RESUME), 1u);
+  EXPECT_TRUE(saves->flushResume(*mailbox, 7000));
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+}
+
+TEST_F(GameSaveStoreTest, ANewRoundsSnapshotIsWrittenAgainAfterAnOverOne) {
+  openResume();
+  ASSERT_TRUE(mailbox->publish(TAPS3, 5, true));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1001));
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+  ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
+  EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS4, 6));
 }
 
 }  // namespace
