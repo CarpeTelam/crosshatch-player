@@ -150,7 +150,7 @@ writes it at once, for round end and the match's `onExit()` (AD-17).
 
 A game ships as one `.cpgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
 only code that installs one (AD-16). Opening Games installs every `/games/*.cpgame` (any letter case for the
-extension), so a person puts packages there with the web file manager or USB. The name of the file means nothing:
+extension; a name that starts with `.`, such as a Mac's `._name.cpgame` sidecar, is skipped), so a person puts packages there with the web file manager or USB. The name of the file means nothing:
 the manifest's `id` names the game.
 
 ### Package
@@ -186,9 +186,12 @@ members' CRCs; `pack_game.py` refuses a package over any limit.
 The installer converts every `.png` with `PngToBmpConverter` into the 1-bit layout `GameCore::checkImageHeader` reads
 (a 62-byte header, top-down rows padded to 4 bytes, most significant bit first, bit 1 white) and deletes the `.png`.
 `icon.png` becomes a 64 x 64 `icon.bmp`, so it must be square (a non-square icon makes the package invalid); it is
-scaled to 64 x 64. Any other `<name>.png` becomes `<name>.bmp` at its own size. A PNG the converter refuses
-(interlaced, over 2,048 x 3,072, damaged), a converted file `checkImageHeader` does not accept, or images over the
-budget make the package invalid.
+scaled to 64 x 64. Any other `<name>.png` becomes `<name>.bmp` at its own size. A PNG whose header the converter
+refuses (not a PNG, interlaced, over 2,048 x 3,072, an impossible colour type or bit depth), a converted file
+`checkImageHeader` does not accept, or images over the budget make the package invalid. The converter answers only
+true or false, so if it fails on an image whose header is sound (memory ran out, or the data is damaged), or its
+output is cut short (a write to the card failed), the package is not judged: its file stays in the inbox and the
+reason shown is the image's.
 
 ### Install
 
@@ -199,16 +202,28 @@ For each inbox file the installer:
    this firmware cannot run, for one) installs, and the registry lists it with that verdict for the launcher to mark
    (the first Games list shows only games that can start);
 2. extracts the members, in name order, to `/.games-tmp/<id>/`, converting images as it goes, and hashes them;
-3. removes any `/.games/<id>/`, renames `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;
+3. removes any `/.games/<id>/` (its `.pkg` first, so a removal that stops partway leaves no listed game), renames
+   `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;
 4. deletes the inbox file.
 
-`/.games-data/<id>/` is never touched, so a reinstall keeps a game's saved data. A package whose `id` is already installed replaces it whatever the `version`, and of two inbox files with one `id` the last installed wins. A package that is invalid is renamed
-`<name>.cpgame.bad` (replacing an earlier `.bad` of that name) and its reason is shown once. A failure that is the
-card's or the device's (a write error, out of memory) leaves the file in the inbox for the next try. A package that fails
-before the last step never changes `/.games/<id>/`: the old folder is removed only once the new one is whole and
-extracted. A card failure inside that last step (removing the old folder, the rename, or writing `.pkg`) can leave
-the game unlisted until the file installs again, which the next visit to Games retries. `/.games-tmp/` is deleted
-whenever Games opens and after every run. At most 32 inbox files are installed per visit; the rest wait for the next.
+`/.games-data/<id>/` is never touched, so a reinstall keeps a game's saved data. A package whose `id` is already
+installed replaces it whatever the `version`, and of two inbox files with one `id` the last installed wins.
+
+A package that is invalid is renamed `<name>.cpgame.bad` (replacing an earlier `.bad` of that name) and its reason is
+shown once. A failure that is the card's or the device's (a write, rename, or delete error, out of memory) leaves the
+file in the inbox for the next try, and so does an inbox file that will not delete after its game installed, or an
+invalid one that will not rename: each is reported as an SD card failure, so a stuck file shows its reason on every
+visit and is not silent. A package that fails before the last step never changes `/.games/<id>/`; a card failure
+inside it (removing the old folder, the rename, or writing `.pkg`) can leave the game unlisted until the file installs
+again, which the next visit to Games retries.
+
+`/.games-tmp/` is emptied whenever Games opens and after every run, folder by folder, with one exception. SdFat moves
+a folder by making the new entry before it removes the old one, so a power loss in between leaves
+`/.games-tmp/<id>` and `/.games/<id>` on one cluster chain, and freeing either frees clusters the other still uses. A
+`/.games/<id>` without a `.pkg` is what that looks like (the `.pkg` is written after the move), so its scratch folder is
+kept, and an install of that id fails with the SD card reason each visit until a person clears both from a computer.
+A file where `/.games-tmp` belongs is removed. At most 32 inbox files are installed per visit; the rest wait for the
+next.
 
 An installed game is `/.games/<id>/` holding `manifest.json`, `main.lua`, each `<name>.lua`, each `<name>.bmp`,
 `icon.bmp` when the package had an `icon.png`, and `.pkg`.

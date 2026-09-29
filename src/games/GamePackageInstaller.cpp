@@ -28,7 +28,6 @@ namespace {
 
 // Read and inflate buffers of ZipFile::readFileToStream (it allocates two of them).
 constexpr size_t CHUNK_BYTES = 1024;
-constexpr size_t PNG_SIGNATURE_AND_IHDR_HEADER_BYTES = 16;  // 8-byte signature, IHDR's length and type
 
 // A game's folder, /.games-tmp/<id> or /.games/<id>, and a path inside it (the member's name, or
 // ".pkg", after a "/"), each sized for the longest id and name so no path is ever cut short.
@@ -60,7 +59,8 @@ struct Job {
   MemberName members[GameCore::PACKAGE_MEMBERS];
   size_t memberCount = 0;
   char inboxPath[GamePaths::INBOX_PATH_BYTES];
-  char tmpDir[DIR_BYTES];    // /.games-tmp/<id>, empty until the manifest names the id
+  bool renameTried = false;  // commit reached the folder rename: /.games-tmp/<id> may share clusters with /.games/<id>
+  char tmpDir[DIR_BYTES];    // /.games-tmp/<id> once this install has made it, else empty
   char finalDir[DIR_BYTES];  // /.games/<id>
   char pathA[FILE_PATH_BYTES];
   char pathB[FILE_PATH_BYTES];
@@ -141,16 +141,53 @@ void forEachInboxFile(F&& visit) {
     entry.close();
     if (isFile && !fits) {
       LOG_INF("GAME", "Skipping an inbox file with a name over %u bytes", static_cast<unsigned>(sizeof(name) - 2));
-    } else if (isFile && hasPackageExtension(name, length) && !visit(name)) {
+    } else if (isFile && name[0] != '.' && hasPackageExtension(name, length) && !visit(name)) {
+      // (A name that starts with "." is a file manager's hidden or AppleDouble sidecar, never a package.)
       return;
     }
   }
 }
 
+// SdFat moves a folder by making the new entry before it removes the old one, so a power loss
+// in between leaves /.games-tmp/<id> and /.games/<id> on one cluster chain, and freeing either
+// frees clusters the other uses. A /.games/<id> without a .pkg is what that looks like (the
+// .pkg is written after the move), so its scratch folder is left alone: the card is safe, and
+// an install of that id reports SdCard until a person clears both from a computer.
+bool mayRemoveTmp(const char* id) {
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.exists(path)) return true;
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  if (Storage.exists(path)) return true;
+  LOG_ERR("GAME", "Keeping %s/%s: %s/%s has no %s, and an interrupted move may share their clusters",
+          GamePaths::TMP_DIR, id, GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  return false;
+}
+
+// Deletes what an install that never finished left in /.games-tmp, except what mayRemoveTmp keeps.
 void removeTmp() {
-  if (Storage.exists(GamePaths::TMP_DIR) && !Storage.removeDir(GamePaths::TMP_DIR)) {
-    LOG_ERR("GAME", "Cannot remove %s", GamePaths::TMP_DIR);
+  {
+    auto dir = Storage.open(GamePaths::TMP_DIR);
+    if (!dir) return;
+    if (!dir.isDirectory()) {  // a file in its place would stop every mkdir under it
+      dir.close();
+      if (!Storage.remove(GamePaths::TMP_DIR)) LOG_ERR("GAME", "Cannot remove %s", GamePaths::TMP_DIR);
+      return;
+    }
+    char name[GamePaths::INBOX_NAME_BYTES];
+    char path[GamePaths::PATH_BYTES];
+    dir.rewindDirectory();
+    for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+      const size_t length = entry.getName(name, sizeof(name));
+      const bool isFolder = entry.isDirectory();
+      entry.close();
+      if (length == 0 || length >= sizeof(name) - 1) continue;  // too long to be a game's id
+      snprintf(path, sizeof(path), "%s/%s", GamePaths::TMP_DIR, name);
+      if (isFolder && !mayRemoveTmp(name)) continue;
+      if (!(isFolder ? Storage.removeDir(path) : Storage.remove(path))) LOG_ERR("GAME", "Cannot remove %s", path);
+    }
   }
+  Storage.rmdir(GamePaths::TMP_DIR);  // only an empty folder goes, so a kept one stays
 }
 
 // Lists the members, checks each name against the whitelist, sorts them by name (the order
@@ -220,38 +257,61 @@ Error readManifest(Job& job, ZipFile& zip) {
   return Error::None;
 }
 
-// Reads icon.png's IHDR from the extracted file and requires a square image (the converter
-// keeps a shape, so only a square comes out at 64x64). Leaves the file at its start.
-Error checkIconIsSquare(HalFile& png) {
-  uint8_t dimensions[8];
-  if (!png.seek(PNG_SIGNATURE_AND_IHDR_HEADER_BYTES) ||
-      png.read(dimensions, sizeof(dimensions)) != sizeof(dimensions)) {
-    return Error::BadImage;
+uint32_t bigEndian(const uint8_t* bytes) {
+  return static_cast<uint32_t>(bytes[0]) << 24 | static_cast<uint32_t>(bytes[1]) << 16 |
+         static_cast<uint32_t>(bytes[2]) << 8 | bytes[3];
+}
+
+// Reads a PNG's header by the rules of scripts/pack_game.py's png_size (less the IHDR CRC, which
+// the converter skips): true when PngToBmpConverter can start on it, with its size in
+// `width` and `height`. The file is left after the header.
+bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
+  constexpr size_t HEADER_BYTES = 8 + 8 + 13;  // signature, IHDR's length and type, IHDR's data
+  constexpr uint8_t SIGNATURE[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  constexpr uint32_t MAX_WIDTH = 2048;  // the converter's own limits
+  constexpr uint32_t MAX_HEIGHT = 3072;
+  uint8_t h[HEADER_BYTES];
+  if (png.read(h, sizeof(h)) != static_cast<int>(sizeof(h)) || std::memcmp(h, SIGNATURE, sizeof(SIGNATURE)) != 0 ||
+      bigEndian(h + 8) != 13 || std::memcmp(h + 12, "IHDR", 4) != 0) {
+    return false;
   }
-  const auto bigEndian = [](const uint8_t* bytes) {
-    return static_cast<uint32_t>(bytes[0]) << 24 | static_cast<uint32_t>(bytes[1]) << 16 |
-           static_cast<uint32_t>(bytes[2]) << 8 | bytes[3];
-  };
-  if (bigEndian(dimensions) != bigEndian(dimensions + 4)) {
-    LOG_ERR("GAME", "icon.png is %ux%u: the icon must be square", static_cast<unsigned>(bigEndian(dimensions)),
-            static_cast<unsigned>(bigEndian(dimensions + 4)));
-    return Error::BadImage;
-  }
-  return png.seek(0) ? Error::None : Error::SdCard;
+  width = bigEndian(h + 16);
+  height = bigEndian(h + 20);
+  const uint8_t depth = h[24];
+  const uint8_t colour = h[25];
+  // The bit depths PNG allows for each colour type: greyscale 1 2 4 8 16, RGB 8 16, palette 1 2 4 8,
+  // grey+alpha 8 16, RGBA 8 16 (one bit per depth value, so a depth that is not a power of two has none).
+  const uint8_t allowed = colour == 0                                   ? 0x1F
+                          : colour == 3                                 ? 0x0F
+                          : (colour == 2 || colour == 4 || colour == 6) ? 0x18
+                                                                        : 0;
+  return (depth & (depth - 1)) == 0 && (allowed & depth) != 0 && h[26] == 0 && h[27] == 0 && h[28] == 0 && width > 0 &&
+         width <= MAX_WIDTH && height > 0 && height <= MAX_HEIGHT;
 }
 
 // Converts the extracted job.pathA (<name>.png) to job.pathB (<name>.bmp) in the converter's
 // 1-bit layout, deletes the PNG, and checks the result the way the game loader will: the
 // layout checkImageHeader accepts and, for images, the budget; for the icon, 64x64.
-// icon.png is scaled to 64x64; any other image keeps its own size.
+// icon.png is scaled to 64x64 (so it must be square); any other image keeps its own size.
+// The converter answers only true or false and ignores failed writes, so a header it would
+// refuse is BadImage here, and after that a false, or an output cut short, is the card's or the
+// heap's (ConvertFailed, SdCard): the package stays for another try.
 Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
   {
     HalFile png;
     if (!Storage.openFileForRead("GAME", job.pathA, png)) return Error::SdCard;
-    if (isIcon) {
-      const Error square = checkIconIsSquare(png);
-      if (square != Error::None) return square;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    if (!readPngSize(png, width, height)) {
+      LOG_ERR("GAME", "%s is not a PNG this device can convert", job.pathA);
+      return Error::BadImage;
     }
+    if (isIcon && width != height) {
+      LOG_ERR("GAME", "icon.png is %ux%u: the icon must be square", static_cast<unsigned>(width),
+              static_cast<unsigned>(height));
+      return Error::BadImage;
+    }
+    if (!png.seek(0)) return Error::SdCard;
     HalFile bmp;
     if (!Storage.openFileForWrite("GAME", job.pathB, bmp)) return Error::SdCard;
     // Target 0 x 0 keeps the image's own size.
@@ -261,7 +321,7 @@ Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
     const bool closed = bmp.close();
     if (!converted) {
       LOG_ERR("GAME", "Cannot convert %s", job.pathA);
-      return Error::BadImage;
+      return Error::ConvertFailed;
     }
     if (!closed) return Error::SdCard;
   }
@@ -279,7 +339,8 @@ Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
              : budget.add(job.header, static_cast<size_t>(headerBytes), fileBytes, header);
   if (check != GameCore::ImageCheck::Ok) {
     LOG_ERR("GAME", "%s: %s", job.pathB, GameCore::imageCheckName(check));
-    return Error::BadImage;
+    // The converter writes a whole file, so a short one lost a write to the card.
+    return check == GameCore::ImageCheck::Truncated ? Error::SdCard : Error::BadImage;
   }
   if (isIcon && (header.width != GameCore::ICON_PIXELS || header.height != GameCore::ICON_PIXELS)) {
     LOG_ERR("GAME", "icon.bmp came out %ux%u, not %dx%d", static_cast<unsigned>(header.width),
@@ -329,7 +390,15 @@ Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES
 // a folder without one is not a game, so a failure before it leaves no phantom in the registry.
 Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
   if (!Storage.ensureDirectoryExists(GamePaths::GAMES_DIR)) return Error::SdCard;
-  if (Storage.exists(job.finalDir) && !Storage.removeDir(job.finalDir)) return Error::SdCard;
+  if (Storage.exists(job.finalDir)) {
+    // removeDir deletes in directory order, so the .pkg (written last) would go last and a stop
+    // partway would leave a listed game with files missing. Take the marker away first: a folder
+    // without one is not a game.
+    snprintf(job.pathA, sizeof(job.pathA), "%s/%s", job.finalDir, GamePaths::PKG_NAME);
+    if (Storage.exists(job.pathA) && !Storage.remove(job.pathA)) return Error::SdCard;
+    if (!Storage.removeDir(job.finalDir)) return Error::SdCard;
+  }
+  job.renameTried = true;
   if (!Storage.rename(job.tmpDir, job.finalDir)) return Error::SdCard;
 
   snprintf(job.pathA, sizeof(job.pathA), "%s/%s", job.finalDir, GamePaths::PKG_NAME);
@@ -344,6 +413,7 @@ Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
 
 Error install(Job& job, const char* fileName) {
   job.tmpDir[0] = '\0';
+  job.renameTried = false;
   snprintf(job.inboxPath, sizeof(job.inboxPath), "%s/%s", GamePaths::INBOX_DIR, fileName);
   // ZipFile keeps a reference to its path.
   const std::string zipPath(job.inboxPath);
@@ -356,7 +426,12 @@ Error install(Job& job, const char* fileName) {
 
   snprintf(job.tmpDir, sizeof(job.tmpDir), "%s/%s", GamePaths::TMP_DIR, job.manifest.id);
   snprintf(job.finalDir, sizeof(job.finalDir), "%s/%s", GamePaths::GAMES_DIR, job.manifest.id);
-  if (!Storage.mkdir(job.tmpDir)) return Error::SdCard;
+  if (!Storage.mkdir(job.tmpDir)) {
+    // Not made here, so not ours to delete: it may be a kept folder (see mayRemoveTmp).
+    LOG_ERR("GAME", "Cannot make %s", job.tmpDir);
+    job.tmpDir[0] = '\0';
+    return Error::SdCard;
+  }
 
   uint8_t packageHash[GamePkg::HASH_BYTES];
   error = extract(job, zip, packageHash);
@@ -364,22 +439,27 @@ Error install(Job& job, const char* fileName) {
   error = commit(job, packageHash);
   if (error != Error::None) return error;
 
-  // The game is installed; a file that stays would only reinstall the same package.
-  if (!Storage.remove(job.inboxPath)) LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
   LOG_INF("GAME", "Installed %s from %s", job.manifest.id, fileName);
+  // The game is installed, but a file that stays reinstalls it on every visit, so that is a failure to report.
+  if (!Storage.remove(job.inboxPath)) {
+    LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
+    return Error::SdCard;
+  }
   return Error::None;
 }
 
-// SdCard and OutOfMemory are not the package's fault: its file stays for the next try.
-bool packageIsInvalid(const Error error) { return error != Error::SdCard && error != Error::OutOfMemory; }
+// SdCard, OutOfMemory, and ConvertFailed are not known to be the package's fault: its file stays.
+bool packageIsInvalid(const Error error) {
+  return error != Error::SdCard && error != Error::OutOfMemory && error != Error::ConvertFailed;
+}
 
-void markBad(Job& job) {
+// Renames the inbox file <name>.bad, replacing an earlier one; false when it would not move.
+bool markBad(Job& job) {
   snprintf(job.badPath, sizeof(job.badPath), "%s.bad", job.inboxPath);
-  // An earlier .bad of the same name is replaced.
   if (Storage.exists(job.badPath) && !Storage.remove(job.badPath)) LOG_ERR("GAME", "Cannot remove %s", job.badPath);
-  if (!Storage.rename(job.inboxPath, job.badPath)) {
-    LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.badPath);
-  }
+  if (Storage.rename(job.inboxPath, job.badPath)) return true;
+  LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.badPath);
+  return false;
 }
 
 }  // namespace
@@ -392,6 +472,8 @@ const char* describe(const Error error) {
       return "SD card error";
     case Error::OutOfMemory:
       return "out of memory";
+    case Error::ConvertFailed:
+      return "an image could not be converted";
     case Error::NotAPackage:
       return "not a readable zip";
     case Error::BadManifest:
@@ -437,18 +519,23 @@ Report installAll() {
   });
 
   for (size_t i = 0; i < count; ++i) {
-    const Error error = install(*job, names[i].text);
+    Error error = install(*job, names[i].text);
     if (error == Error::None) {
       ++report.installed;
       continue;
     }
     LOG_ERR("GAME", "%s not installed: %s", names[i].text, describe(error));
+    // Until the folder rename has been tried, /.games-tmp/<id> is ours alone; after it, mayRemoveTmp decides.
+    if (job->tmpDir[0] != '\0' && Storage.exists(job->tmpDir) &&
+        (!job->renameTried || mayRemoveTmp(job->manifest.id))) {
+      Storage.removeDir(job->tmpDir);
+    }
+    // A package that will not move aside would be judged again, and its reason shown, on every visit.
+    if (packageIsInvalid(error) && !markBad(*job)) error = Error::SdCard;
     if (report.failed++ == 0) {
       report.firstError = error;
       snprintf(report.firstFile, sizeof(report.firstFile), "%s", names[i].text);
     }
-    if (job->tmpDir[0] != '\0') Storage.removeDir(job->tmpDir);
-    if (packageIsInvalid(error)) markBad(*job);
   }
   removeTmp();
   return report;

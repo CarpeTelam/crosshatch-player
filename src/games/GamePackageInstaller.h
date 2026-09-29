@@ -13,20 +13,21 @@
 // Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
 namespace GamePackageInstaller {
 
-// Why one inbox file was not installed. SdCard and OutOfMemory are the card's or the
-// device's fault, so the file stays in the inbox for the next try; every other reason
-// makes the package invalid and renames it .bad. (Not named Storage: HalStorage.h
-// defines that as a macro.)
+// Why one inbox file was not installed. SdCard, OutOfMemory, and ConvertFailed are the card's
+// or the device's fault as far as the installer can tell, so the file stays in the inbox for
+// the next try; every other reason makes the package invalid and renames it .bad. (Not named
+// Storage: HalStorage.h defines that as a macro.)
 enum class Error : uint8_t {
   None,
-  SdCard,       // a read, write, or rename on the SD card failed
-  OutOfMemory,  // a buffer for the install could not be allocated
-  NotAPackage,  // not a zip this device can read
-  BadManifest,  // manifest.json missing, malformed, or failing Manifest::check (Invalid)
-  BadMember,    // a member name off the whitelist, or the same name twice
-  NoMain,       // main.lua missing
+  SdCard,         // a read, write, rename, or delete on the SD card failed
+  OutOfMemory,    // a buffer for the install could not be allocated
+  ConvertFailed,  // PngToBmpConverter failed on an image whose header is sound: a damaged image, or no memory
+  NotAPackage,    // not a zip this device can read
+  BadManifest,    // manifest.json missing, malformed, or failing Manifest::check (Invalid)
+  BadMember,      // a member name off the whitelist, or the same name twice
+  NoMain,         // main.lua missing
   TooManyMembers,
-  BadImage,  // an image did not convert, the icon is not square, or the images are over their budget
+  BadImage,  // an image header the converter refuses, a non-square icon, or images over their budget
 };
 
 // The most inbox files one installAll takes; the rest wait for the next call.
@@ -36,7 +37,8 @@ inline constexpr size_t MAX_PER_RUN = 32;
 struct Report {
   uint8_t installed = 0;
   uint8_t failed = 0;
-  // The first failure, for the one-time notice.
+  // The first failure, for the one-time notice. A package that installed but whose inbox file
+  // would not delete, or an invalid one that would not rename to .bad, is a failure (SdCard).
   Error firstError = Error::None;
   char firstFile[GamePaths::INBOX_NAME_BYTES] = {};
 };

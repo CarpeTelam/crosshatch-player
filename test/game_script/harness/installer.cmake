@@ -1,30 +1,7 @@
 # GamePackageInstaller, GameRegistry, GameHash, and the package hash over the fake SD card,
 # with the real ZipFile, PngToBmpConverter, and InflateStream: entry 3 of
-# epic-install-and-launcher. A standalone suite: it links none of the shared libraries, since
-# the real ZipFile seeks relative (HalFile::seekCur) and the shared fake card does not.
-#
-# The card is the shared fake (stubs/HalStorage.h) plus that one method, added to a copy of
-# the header made here at configure time; the configure stops if the header no longer holds
-# the line the method goes after. Move seekCur into the shared fake and this copy can go.
-set(INSTALLER_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/installer_generated)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${HARNESS_DIR}/stubs/HalStorage.h)
-file(READ ${HARNESS_DIR}/stubs/HalStorage.h INSTALLER_FAKE_CARD)
-set(INSTALLER_SEEK_ANCHOR "  bool seekSet(const size_t to) { return seek(to); }\n")
-string(FIND "${INSTALLER_FAKE_CARD}" "${INSTALLER_SEEK_ANCHOR}" INSTALLER_ANCHOR_AT)
-if(INSTALLER_ANCHOR_AT EQUAL -1)
-  message(FATAL_ERROR "stubs/HalStorage.h no longer has `bool seekSet(...)`, where installer.cmake adds seekCur")
-endif()
-string(REPLACE "${INSTALLER_SEEK_ANCHOR}"
-       "${INSTALLER_SEEK_ANCHOR}  bool seekCur(const int64_t offset) { return seek(static_cast<size_t>(static_cast<int64_t>(pos) + offset)); }\n"
-       INSTALLER_FAKE_CARD "${INSTALLER_FAKE_CARD}")
-set(INSTALLER_CARD_HEADER ${INSTALLER_GENERATED}/HalStorage.h)
-set(INSTALLER_CARD_OLD "")
-if(EXISTS ${INSTALLER_CARD_HEADER})
-  file(READ ${INSTALLER_CARD_HEADER} INSTALLER_CARD_OLD)
-endif()
-if(NOT INSTALLER_CARD_OLD STREQUAL INSTALLER_FAKE_CARD)
-  file(WRITE ${INSTALLER_CARD_HEADER} "${INSTALLER_FAKE_CARD}")
-endif()
+# epic-install-and-launcher. A standalone suite: it builds the sources it needs itself (the
+# converter wants a panel size and vTaskDelay, from installer_stubs/) over the shared fake card.
 
 add_library(game_installer_src STATIC
   ${REPO_ROOT}/src/games/GamePackageInstaller.cpp
@@ -43,8 +20,7 @@ add_library(game_installer_src STATIC
   ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp)
 target_compile_definitions(game_installer_src PUBLIC FREEINK_CAP_GAMES=1 GAME_HASH_OPENSSL=1)
 target_include_directories(game_installer_src PUBLIC
-  # The card first, then the panel and FreeRTOS the converter includes, then the rest of the doubles.
-  ${INSTALLER_GENERATED}
+  # The panel and FreeRTOS the converter includes, then the shared doubles (the fake card).
   ${HARNESS_DIR}/installer_stubs
   ${HARNESS_DIR}/stubs
   ${REPO_ROOT}/lib/GameCore

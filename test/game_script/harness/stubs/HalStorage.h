@@ -222,6 +222,13 @@ class HalFile : public Print {
     return true;
   }
   bool seekSet(const size_t to) { return seek(to); }
+  // As lib/hal's HalFile::seekCur: relative to the current position; a move before the start fails.
+  bool seekCur(const int64_t offset) {
+    const int64_t target = static_cast<int64_t>(pos) + offset;
+    if (target < 0) return false;
+    pos = static_cast<size_t>(target);
+    return true;
+  }
   int available() const {
     const fakesd::Entry* const entry = fakesd::find(path);
     return entry && pos < entry->bytes.size() ? static_cast<int>(entry->bytes.size() - pos) : 0;

@@ -40,6 +40,7 @@ const char* reasonText(const GamePackageInstaller::Error error) {
     case Error::TooManyMembers:
       return tr(STR_GAMES_INSTALL_TOO_MANY);
     case Error::BadImage:
+    case Error::ConvertFailed:
       return tr(STR_GAMES_BAD_IMAGE);
     case Error::None:
       break;
