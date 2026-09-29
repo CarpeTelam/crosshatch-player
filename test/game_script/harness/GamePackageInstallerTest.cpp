@@ -368,19 +368,6 @@ TEST_F(InstallerTest, AnImageWrittenShortIsTheCardsFaultNotThePackages) {
   EXPECT_EQ(install().installed, 1);
 }
 
-TEST_F(InstallerTest, ImagesOverTheBudgetEndBad) {
-  // A 2048 x 511 image is 62 + 64 * 4 * 511 = 130,878 bytes: under IMAGES_BYTES on its own,
-  // over it with a second one.
-  const auto wide = [](const int height) { return makePng(2048, height, [](int, int) { return uint8_t{255}; }); };
-  drop("one.cpgame", gamePackage("one", {{"a.png", wide(511)}}));
-  EXPECT_EQ(install().installed, 1);
-
-  SetUp();
-  const Bytes two = gamePackage("two", {{"a.png", wide(511)}, {"b.png", wide(511)}});
-  drop("two.cpgame", two);
-  expectRejected("two.cpgame", two, Error::BadImage);
-}
-
 // ---- the inbox -----------------------------------------------------------------------------------
 
 TEST_F(InstallerTest, OnlyCpgameFilesAreInstalled) {

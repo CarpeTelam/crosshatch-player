@@ -33,11 +33,13 @@ companions:
 | Icon data | `lib/GameIcons/` | nothing (generated data, and `GameIcons.h`'s hand-written lookup over it) |
 | Script adapter | `lib/GameScript/` | `GameCore`, `GameIcons` (names), `lib/lua`, `lib/Utf8` (`TextMetrics`) |
 | Engine (vendored) | `lib/lua/` | C standard library |
-| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/Utf8`; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); the SDK's `FreeInkUICore.h` (`GameTouch.h`'s touch types, AD-20); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
+| Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `lib/miniz` (`mz_crc32`, for the installer's CRC check), `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/Utf8`; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); the SDK's `FreeInkUICore.h` (`GameTouch.h`'s touch types, AD-20); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
 | Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
 | Upstream hooks (AD-3 ledger rows) | `src/activities/ActivityManager.cpp` (row 5), `src/components/CoverGridHomeUi.cpp` (row 9), `src/network/OtaUpdater.cpp` (row 10) | row 5: `src/activities/games/` (the Games launcher and mode picker); row 9: `lib/GameIcons` (`GAME_CONTROLLER_32` for Home's cover-grid Games tab); row 10: `GameCore` (`ForkRelease.h`), `src/games/` (`ForkReleaseProbe.h`); never `GameScript` or `lib/lua`. No other upstream file includes game code. |
 
 **Amended 2026-09-28 (owner):** the `lib/Utf8` edges (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`, and `src/games/FrameReplay.cpp`), the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`), and the SDK `FreeInkUICore.h` edge (`src/games/GameTouch.h`) are as built and reviewed (epic-script-runtime retro A1); the diagram below shows them. The rule for Screens is unchanged: they reach `GameScript` only through `src/games` (retro AI-5 restores the code to it).
+
+**Amended 2026-09-29 (epic-install-and-launcher entry 6, as the entry's description states):** the `lib/miniz` edge for `src/games` (`mz_crc32`, the installer's CRC check over the streamed output, AD-15); `scripts/check_layers.py`'s `TABLE` and the diagram below carry it.
 
 **Amended 2026-09-28 (owner):** the Upstream hooks row. Its `src/components/CoverGridHomeUi.cpp` → `lib/GameIcons` edge is new (epic icon-library R9: the cover-grid Home's Games tab draws `GAME_CONTROLLER_32` with `renderer.drawIcon`); the `ActivityManager.cpp` (row 5) and `OtaUpdater.cpp` (row 10) edges are as built in epic 2. `scripts/check_layers.py` holds the row as `UPSTREAM_EDGES` and fails any other upstream include of game code; the diagram below shows rows 9 and 10.
 
@@ -56,6 +58,8 @@ flowchart TD
   SCR --> LUA["lib/lua<br/>(Lua 5.5.1, unmodified)"]
   CORE --> STD["lib/Memory, lib/JsonParser"]
   ADP --> HAL["upstream: HAL, Storage, ZipFile, PngToBmpConverter, GfxRenderer"]
+  %% Amended 2026-09-29 (epic-install-and-launcher entry 6): the installer's CRC check.
+  ADP --> MZ["upstream: lib/miniz<br/>(mz_crc32)"]
   ACT --> HAL
   OTA["upstream: network/OtaUpdater.cpp<br/>(ledger row 10, guarded)"] --> CORE
   OTA --> ADP

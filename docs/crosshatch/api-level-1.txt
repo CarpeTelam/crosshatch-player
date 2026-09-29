@@ -358,6 +358,17 @@ limit timers_pending_count 1
 # image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
 limit images_bytes 131072
 limit images_count 32
+# A .cpgame package (docs/crosshatch/formats.md): the file's bytes, its members (folders
+# included), one member's bytes uncompressed, and the stem of a .lua or .png member's name
+# ([a-z0-9_]{1,32}). The installer rejects a package over any of them, and scripts/pack_game.py
+# refuses to make one.
+limit package_bytes 262144
+limit package_members_count 32
+limit member_bytes 131072
+limit member_stem_bytes 32
+# A .png member's largest width and height in pixels (icon.png is scaled to 64 x 64).
+limit image_width_pixels 2048
+limit image_height_pixels 3072
 # An image's name, which ch.gfx.image takes, is its file name without ".bmp".
 # Unlike icon names, it takes no "-": a file named otherwise is skipped with a log
 # line, and drawing it stops the game as an unknown image. icon.bmp is the

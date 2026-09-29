@@ -41,6 +41,22 @@ const char* reasonText(const GamePackageInstaller::Error error) {
       return tr(STR_GAMES_INSTALL_TOO_MANY);
     case Error::BadImage:
       return tr(STR_GAMES_BAD_IMAGE);
+    case Error::PackageTooBig:
+      return tr(STR_GAMES_INSTALL_PACKAGE_TOO_BIG);
+    case Error::MemberTooBig:
+      return tr(STR_GAMES_INSTALL_MEMBER_TOO_BIG);
+    case Error::ImagesTooBig:
+      return tr(STR_GAMES_INSTALL_IMAGES_TOO_BIG);
+    case Error::BadSize:
+      return tr(STR_GAMES_INSTALL_BAD_SIZE);
+    case Error::BadCrc:
+      return tr(STR_GAMES_INSTALL_BAD_CRC);
+    case Error::BinaryLua:
+      return tr(STR_GAMES_INSTALL_BINARY_LUA);
+    case Error::Unsupported:
+      return tr(STR_GAMES_INSTALL_UNSUPPORTED);
+    case Error::BadDirectory:
+      return tr(STR_GAMES_INSTALL_BAD_LIST);
     case Error::None:
       break;
   }

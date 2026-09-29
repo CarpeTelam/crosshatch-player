@@ -13,7 +13,9 @@
 
 #include "ApiLevel.h"
 #include "ApiLevelList.h"
+#include "GameImages.h"
 #include "Manifest.h"
+#include "PackageLimits.h"
 #include "Session.h"
 
 // Checks docs/crosshatch/api-level-<n>.txt against its own grammar and against
@@ -89,6 +91,22 @@ TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
   EXPECT_EQ(limits["manifest_name_bytes"], std::to_string(GameCore::Manifest::MAX_NAME_BYTES));
   EXPECT_EQ(limits["manifest_version_bytes"], std::to_string(GameCore::Manifest::MAX_VERSION_BYTES));
   EXPECT_EQ(limits["manifest_icon_bytes"], std::to_string(GameCore::Manifest::MAX_ICON_BYTES));
+}
+
+// The package limits the installer enforces and pack_game.py mirrors (PackageLimits.h, GameImages.h) are the
+// ones the list gives authors.
+TEST(ApiLevelTest, PackageLimitsMatchTheList) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::map<std::string, std::string> limits = surface.limits();
+  EXPECT_EQ(limits["package_bytes"], std::to_string(GameCore::PACKAGE_BYTES));
+  EXPECT_EQ(limits["package_members_count"], std::to_string(GameCore::PACKAGE_MEMBERS));
+  EXPECT_EQ(limits["member_bytes"], std::to_string(GameCore::MEMBER_BYTES));
+  EXPECT_EQ(limits["member_stem_bytes"], std::to_string(GameCore::MEMBER_STEM_BYTES));
+  EXPECT_EQ(limits["image_width_pixels"], std::to_string(GameCore::IMAGE_MAX_WIDTH));
+  EXPECT_EQ(limits["image_height_pixels"], std::to_string(GameCore::IMAGE_MAX_HEIGHT));
+  EXPECT_EQ(limits["images_bytes"], std::to_string(GameCore::IMAGES_BYTES));
+  EXPECT_EQ(limits["images_count"], std::to_string(GameCore::MAX_IMAGES));
 }
 
 // The list's manifest keys are the ones the parser reads (GameCore::MANIFEST_KEYS),
