@@ -660,6 +660,25 @@ TEST_F(GameSaveStoreTest, AFailedResumeWriteKeepsThePreviousSaveAndLeavesNoTmp) 
   }
 }
 
+// GameMatchActivity clears a pending Over delete when this moves: the finished round's file is gone (or replaced), so a
+// delete from then on could only take the new round's save.
+TEST_F(GameSaveStoreTest, TheReplacementCounterMovesWhenTheOldResumeFileIsGoneAndNotWhenItStays) {
+  fakesd::files[RESUME] = resumeFile(TAPS3, 1);
+  openResume();
+  EXPECT_EQ(saves->resumeReplacements(), 0u);
+  fakesd::failOpenWrite = true;
+  EXPECT_FALSE(saves->saveResume(TAPS4, 2));
+  EXPECT_EQ(saves->resumeReplacements(), 0u) << "the previous save stayed";
+  fakesd::failOpenWrite = false;
+  fakesd::failRename = true;
+  EXPECT_FALSE(saves->saveResume(TAPS4, 2));
+  EXPECT_EQ(fakesd::files.count(RESUME), 0u);
+  EXPECT_EQ(saves->resumeReplacements(), 1u) << "the write removed the old file before its rename failed";
+  fakesd::failRename = false;
+  EXPECT_TRUE(saves->saveResume(TAPS4, 3));
+  EXPECT_EQ(saves->resumeReplacements(), 2u);
+}
+
 TEST_F(GameSaveStoreTest, AFailedResumeRenameKeepsTheWholeTmpAsTheOnlyCopy) {
   fakesd::files[RESUME] = resumeFile(TAPS3, 1);
   openResume();

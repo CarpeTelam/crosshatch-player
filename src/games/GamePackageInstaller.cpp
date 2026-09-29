@@ -22,6 +22,7 @@
 #include "GameHash.h"
 #include "GameHostCaps.h"
 #include "GamePaths.h"
+#include "GameRegistry.h"
 #include "MemberGuard.h"
 #include "ZipDirectory.h"
 
@@ -43,7 +44,13 @@ static_assert(FILE_PATH_BYTES <= GamePaths::PATH_BYTES, "an extracted member's p
 static_assert(std::char_traits<char>::length(GamePaths::INBOX_DIR) + 1 + GamePaths::INBOX_NAME_BYTES <=
                   GamePaths::INBOX_PATH_BYTES,
               "an inbox path fits GamePaths::INBOX_PATH_BYTES");
-static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs and failures in a byte");
+static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs in a byte");
+static_assert(GamePaths::INBOX_PATH_BYTES <= FILE_PATH_BYTES, "installAll builds an inbox path in Job::pathA");
+
+// How many names moveAside tries: <name><suffix>, then <name><suffix>.2 and on. One digit, which Job::asidePath has
+// room for.
+constexpr unsigned ASIDE_NAMES = 5;
+static_assert(ASIDE_NAMES <= 9, "Job::asidePath has room for a one-digit number after the suffix");
 
 enum class MemberKind : uint8_t { Invalid, Manifest, Lua, Png };
 
@@ -72,8 +79,21 @@ struct Job {
   char finalDir[DIR_BYTES];  // /.games/<id>
   char pathA[FILE_PATH_BYTES];
   char pathB[FILE_PATH_BYTES];
-  char badPath[GamePaths::INBOX_PATH_BYTES + sizeof(".bad")];
+  char asidePath[GamePaths::INBOX_PATH_BYTES + sizeof(".installed.9")];  // the inbox file renamed out of the inbox
+  bool gamesCounted = false;  // installedGames is read (once a call, when the first package needs it)
+  bool addsGame = false;      // the package being installed is a game whose id is not installed yet
+  size_t installedGames = 0;  // folders with a valid .pkg, stopping at GameRegistry::MAX_GAMES
   uint8_t header[GameCore::IMAGE_HEADER_BYTES];
+};
+
+// A zip reader and the path it reads, on the heap: ZipFile keeps a reference to its path, and with its cache it is
+// over 100 B, which would put install() past the 256 B rule for locals.
+struct ZipScratch {
+  explicit ZipScratch(const char* zipPath) : path(zipPath), file(path) {}
+  ZipScratch(const ZipScratch&) = delete;
+  ZipScratch& operator=(const ZipScratch&) = delete;
+  std::string path;
+  ZipFile file;
 };
 
 // Writes into ManifestReader, so manifest.json is parsed as it streams out of the zip.
@@ -234,77 +254,9 @@ class FileReader {
   HalFile& file;
 };
 
-// Reads the zip's directory (ZipDirectory), checks each name against the whitelist and each declared
-// size against the member limit, sorts the members by name (the order the package hash takes), and
-// requires manifest.json and main.lua. Nothing is extracted yet, so a rejection here has touched no card
-// folder. A file of the wrong size is judged before its directory is read.
-Error listMembers(Job& job) {
-  HalFile file;
-  if (!Storage.openFileForRead("GAME", job.inboxPath, file)) return Error::SdCard;
-  const size_t fileBytes = file.size();
-  if (fileBytes > GameCore::PACKAGE_BYTES) return Error::PackageTooBig;
-
-  job.memberCount = 0;
-  bool hasManifest = false;
-  bool hasMain = false;
-  uint32_t luaBytes = 0;
-  Error error = Error::None;
-  FileReader reader(file);
-  const ZipDirectory::Status status =
-      ZipDirectory::read(reader, static_cast<uint32_t>(fileBytes), [&](const ZipDirectory::Entry& entry) {
-        const MemberKind kind = entry.nameUsable ? classify(entry.name) : MemberKind::Invalid;
-        if (kind == MemberKind::Invalid) {
-          LOG_ERR("GAME", "Member \"%s\" is not allowed in a package", entry.name);
-          error = Error::BadMember;
-        } else if (job.memberCount >= GameCore::PACKAGE_MEMBERS) {
-          error = Error::TooManyMembers;
-        } else if (entry.uncompressedSize > GameCore::MEMBER_BYTES) {
-          LOG_ERR("GAME", "Member \"%s\" declares %lu bytes", entry.name,
-                  static_cast<unsigned long>(entry.uncompressedSize));
-          error = Error::MemberTooBig;
-        }
-        // Two members on the same bytes would extract far more than the package holds.
-        for (size_t i = 0; i < job.memberCount && error == Error::None; ++i) {
-          if (entry.localAt < job.members[i].dataEnd && job.members[i].localAt < entry.dataEnd) {
-            LOG_ERR("GAME", "Members \"%s\" and \"%s\" overlap", job.members[i].name, entry.name);
-            error = Error::BadDirectory;
-          }
-        }
-        // Each member is at most MEMBER_BYTES, so the total cannot wrap.
-        if (kind == MemberKind::Lua) luaBytes += entry.uncompressedSize;
-        if (error == Error::None && luaBytes > GameCore::LUA_SOURCES_BYTES) error = Error::SourcesTooBig;
-        if (error != Error::None) return false;
-        // classify() bounded the name by MEMBER_NAME_BYTES - 1.
-        Member& member = job.members[job.memberCount++];
-        std::memcpy(member.name, entry.name, std::strlen(entry.name) + 1);
-        member.crc = entry.crc;
-        member.size = entry.uncompressedSize;
-        member.localAt = entry.localAt;
-        member.dataEnd = entry.dataEnd;
-        hasManifest = hasManifest || kind == MemberKind::Manifest;
-        hasMain = hasMain || std::strcmp(entry.name, "main.lua") == 0;
-        return true;
-      });
-  file.close();
-  switch (status) {
-    case ZipDirectory::Status::Ok:
-      break;
-    case ZipDirectory::Status::Stopped:
-      return error;
-    case ZipDirectory::Status::ReadError:
-      return Error::SdCard;
-    case ZipDirectory::Status::Unsupported:
-      return Error::Unsupported;
-    case ZipDirectory::Status::CountMismatch:
-      return Error::BadDirectory;
-    case ZipDirectory::Status::TooMany:
-      return Error::TooManyMembers;
-    case ZipDirectory::Status::BadSize:
-      return Error::BadSize;
-    case ZipDirectory::Status::Malformed:
-      return Error::NotAPackage;
-  }
-
+// Sorts the members by name (the order the package hash takes), and refuses a name that appears twice. Its own function
+// because the Member copy it moves through, in listMembers' frame, took that past 256 B.
+[[gnu::noinline]] Error sortMembers(Job& job) {
   // Insertion sort: at most 32 names, and std::sort would cost about 1 KB of flash for them.
   for (size_t i = 1; i < job.memberCount; ++i) {
     const Member moving = job.members[i];
@@ -319,8 +271,95 @@ Error listMembers(Job& job) {
       return Error::BadMember;
     }
   }
-  if (!hasManifest) return Error::BadManifest;
-  if (!hasMain) return Error::NoMain;
+  return Error::None;
+}
+
+// What one pass over the zip's directory found.
+struct DirectoryScan {
+  bool hasManifest = false;
+  bool hasMain = false;
+  uint32_t luaBytes = 0;
+  Error error = Error::None;  // why the pass stopped, when it did
+};
+
+// Reads the directory through ZipDirectory, filling job.members. Its own function because ZipDirectory::read carries
+// its header buffers in its frame, which in listMembers' took that past 256 B.
+[[gnu::noinline]] ZipDirectory::Status readDirectory(Job& job, HalFile& file, const size_t fileBytes,
+                                                     DirectoryScan& scan) {
+  FileReader reader(file);
+  return ZipDirectory::read(reader, static_cast<uint32_t>(fileBytes), [&](const ZipDirectory::Entry& entry) {
+    const MemberKind kind = entry.nameUsable ? classify(entry.name) : MemberKind::Invalid;
+    if (kind == MemberKind::Invalid) {
+      LOG_ERR("GAME", "Member \"%s\" is not allowed in a package", entry.name);
+      scan.error = Error::BadMember;
+    } else if (job.memberCount >= GameCore::PACKAGE_MEMBERS) {
+      scan.error = Error::TooManyMembers;
+    } else if (entry.uncompressedSize > GameCore::MEMBER_BYTES) {
+      LOG_ERR("GAME", "Member \"%s\" declares %lu bytes", entry.name,
+              static_cast<unsigned long>(entry.uncompressedSize));
+      scan.error = Error::MemberTooBig;
+    }
+    // Two members on the same bytes would extract far more than the package holds.
+    for (size_t i = 0; i < job.memberCount && scan.error == Error::None; ++i) {
+      if (entry.localAt < job.members[i].dataEnd && job.members[i].localAt < entry.dataEnd) {
+        LOG_ERR("GAME", "Members \"%s\" and \"%s\" overlap", job.members[i].name, entry.name);
+        scan.error = Error::BadDirectory;
+      }
+    }
+    // Each member is at most MEMBER_BYTES, so the total cannot wrap.
+    if (kind == MemberKind::Lua) scan.luaBytes += entry.uncompressedSize;
+    if (scan.error == Error::None && scan.luaBytes > GameCore::LUA_SOURCES_BYTES) scan.error = Error::SourcesTooBig;
+    if (scan.error != Error::None) return false;
+    // classify() bounded the name by MEMBER_NAME_BYTES - 1.
+    Member& member = job.members[job.memberCount++];
+    std::memcpy(member.name, entry.name, std::strlen(entry.name) + 1);
+    member.crc = entry.crc;
+    member.size = entry.uncompressedSize;
+    member.localAt = entry.localAt;
+    member.dataEnd = entry.dataEnd;
+    scan.hasManifest = scan.hasManifest || kind == MemberKind::Manifest;
+    scan.hasMain = scan.hasMain || std::strcmp(entry.name, "main.lua") == 0;
+    return true;
+  });
+}
+
+// Reads the zip's directory (ZipDirectory), checks each name against the whitelist and each declared
+// size against the member limit, sorts the members by name (the order the package hash takes), and
+// requires manifest.json and main.lua. Nothing is extracted yet, so a rejection here has touched no card
+// folder. A file of the wrong size is judged before its directory is read.
+[[gnu::noinline]] Error listMembers(Job& job) {
+  HalFile file;
+  if (!Storage.openFileForRead("GAME", job.inboxPath, file)) return Error::SdCard;
+  const size_t fileBytes = file.size();
+  if (fileBytes > GameCore::PACKAGE_BYTES) return Error::PackageTooBig;
+
+  job.memberCount = 0;
+  DirectoryScan scan;
+  const ZipDirectory::Status status = readDirectory(job, file, fileBytes, scan);
+  file.close();
+  switch (status) {
+    case ZipDirectory::Status::Ok:
+      break;
+    case ZipDirectory::Status::Stopped:
+      return scan.error;
+    case ZipDirectory::Status::ReadError:
+      return Error::SdCard;
+    case ZipDirectory::Status::Unsupported:
+      return Error::Unsupported;
+    case ZipDirectory::Status::CountMismatch:
+      return Error::BadDirectory;
+    case ZipDirectory::Status::TooMany:
+      return Error::TooManyMembers;
+    case ZipDirectory::Status::BadSize:
+      return Error::BadSize;
+    case ZipDirectory::Status::Malformed:
+      return Error::NotAPackage;
+  }
+
+  const Error sorted = sortMembers(job);
+  if (sorted != Error::None) return sorted;
+  if (!scan.hasManifest) return Error::BadManifest;
+  if (!scan.hasMain) return Error::NoMain;
   return Error::None;
 }
 
@@ -337,7 +376,7 @@ Error judge(const MemberGuard& guard, const Member& member, const bool streamed,
 
 // Parses manifest.json as it streams out of the zip, and applies Manifest::check. An
 // Unavailable game is installed: the launcher marks it.
-Error readManifest(Job& job, ZipFile& zip) {
+[[gnu::noinline]] Error readManifest(Job& job, ZipFile& zip) {
   const Member* member = nullptr;
   for (size_t i = 0; i < job.memberCount && !member; ++i) {
     if (std::strcmp(job.members[i].name, "manifest.json") == 0) member = &job.members[i];
@@ -406,7 +445,7 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
 // a FileSink: a short write, or an output shorter than its own header says, is the card's fault
 // (SdCard, the package stays); any other failure is the image's (BadImage), which includes the
 // converter running out of memory, a case it cannot tell apart.
-Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
+[[gnu::noinline]] Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
   {
     HalFile png;
     if (!Storage.openFileForRead("GAME", job.pathA, png)) return Error::SdCard;
@@ -465,20 +504,21 @@ Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
 
 // Extracts every member, in name order, to job.tmpDir, hashing it as it goes, and converts
 // each .png to a .bmp.
-Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
-  GameHash hash;
-  if (!hash.ok()) return Error::OutOfMemory;
+[[gnu::noinline]] Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
+  // On the heap: the SHA-256 context is over 100 B, which with the rest of this frame passes the 256 B rule.
+  auto hash = makeUniqueNoThrow<GameHash>();
+  if (!hash || !hash->ok()) return Error::OutOfMemory;
   GameCore::ImageBudget budget;
   for (size_t i = 0; i < job.memberCount; ++i) {
     const Member& member = job.members[i];
     const char* name = member.name;
-    GamePkg::hashMemberStart(hash, name, member.size);
+    GamePkg::hashMemberStart(*hash, name, member.size);
 
     snprintf(job.pathA, sizeof(job.pathA), "%s/%s", job.tmpDir, name);
     HalFile out;
     if (!Storage.openFileForWrite("GAME", job.pathA, out)) return Error::SdCard;
     MemberGuard guard(member.size, classify(name) == MemberKind::Lua);
-    FileSink sink(out, &hash, &guard);
+    FileSink sink(out, hash.get(), &guard);
     const bool streamed = zip.readFileToStream(name, sink, CHUNK_BYTES);
     const bool closed = out.close();
     const Error judged = judge(guard, member, streamed, sink.writeFailed);
@@ -495,14 +535,14 @@ Error extract(Job& job, ZipFile& zip, uint8_t (&packageHash)[GamePkg::HASH_BYTES
     }
   }
   uint8_t digest[GameHash::DIGEST_BYTES];
-  if (!hash.finish(digest)) return Error::OutOfMemory;
+  if (!hash->finish(digest)) return Error::OutOfMemory;
   GamePkg::packageHash(digest, packageHash);
   return Error::None;
 }
 
 // Replaces /.games/<id>/ with the extracted folder and writes .pkg last, as the commit marker:
 // a folder without one is not a game, so a failure before it leaves no phantom in the registry.
-Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
+[[gnu::noinline]] Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
   if (!Storage.ensureDirectoryExists(GamePaths::GAMES_DIR)) return Error::SdCard;
   if (Storage.exists(job.finalDir)) {
     // removeDir deletes in directory order, so the .pkg (written last) would go last and a stop
@@ -525,17 +565,90 @@ Error commit(Job& job, const uint8_t (&packageHash)[GamePkg::HASH_BYTES]) {
   return written == sizeof(pkg) && closed ? Error::None : Error::SdCard;
 }
 
-Error install(Job& job, const char* fileName) {
+// The suffix of an inbox file that installed but would not delete. Neither it nor ".bad" ends in ".cpgame", so the
+// inbox scan skips both.
+constexpr char INSTALLED_SUFFIX[] = ".installed";
+
+// Renames the inbox file to <name><suffix>, replacing an earlier copy. A copy that will not go (a file the card marks
+// read-only keeps that mark when it is renamed, and SdFat's rename will not replace a name) leaves the next name, so
+// an update of the same file cannot be stuck behind it; false when no name is free or the rename itself fails.
+bool moveAside(Job& job, const char* suffix) {
+  for (unsigned n = 1; n <= ASIDE_NAMES; ++n) {
+    if (n == 1) {
+      snprintf(job.asidePath, sizeof(job.asidePath), "%s%s", job.inboxPath, suffix);
+    } else {
+      snprintf(job.asidePath, sizeof(job.asidePath), "%s%s.%u", job.inboxPath, suffix, n);
+    }
+    if (Storage.exists(job.asidePath) && !Storage.remove(job.asidePath)) {
+      LOG_ERR("GAME", "Cannot remove %s", job.asidePath);
+      continue;
+    }
+    if (Storage.rename(job.inboxPath, job.asidePath)) return true;
+    LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.asidePath);
+    return false;  // the name was free, so this is the card's fault and another name would not help
+  }
+  LOG_ERR("GAME", "No free name for %s%s", job.inboxPath, suffix);
+  return false;
+}
+
+// The folders of /.games with a valid .pkg (the first test GameRegistry::load applies), counted up to
+// GameRegistry::MAX_GAMES. A folder whose manifest the registry then skips still counts: the count can only be high,
+// never let a hidden game through. A card that cannot list /.games counts as none: the install then fails on its own
+// card fault, if it is one.
+size_t countInstalledGames() {
+  auto dir = Storage.open(GamePaths::GAMES_DIR);
+  if (!dir || !dir.isDirectory()) return 0;
+  char name[GamePaths::INBOX_NAME_BYTES];
+  uint8_t hash[GamePkg::HASH_BYTES];
+  size_t games = 0;
+  dir.rewindDirectory();
+  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const size_t length = entry.getName(name, sizeof(name));
+    const bool isFolder = entry.isDirectory();
+    entry.close();
+    if (!isFolder || length == 0 || length >= sizeof(name) - 1 || name[0] == '.') continue;
+    if (GameRegistry::readPackageHash(name, hash) && ++games >= GameRegistry::MAX_GAMES) break;
+  }
+  return games;
+}
+
+// True when installing job.manifest.id would make more than GameRegistry::MAX_GAMES games: the registry lists that
+// many, in directory order, so a game past them would be installed and not shown, and could not be removed. A package
+// that replaces an installed id is always allowed. The folders are counted once a call (the first package that is not
+// a replacement), and installAll keeps the count as installs land.
+bool wouldBeOverTheLimit(Job& job) {
+  uint8_t hash[GamePkg::HASH_BYTES];
+  job.addsGame = !GameRegistry::readPackageHash(job.manifest.id, hash);
+  if (!job.addsGame) return false;
+  if (!job.gamesCounted) {
+    job.installedGames = countInstalledGames();
+    job.gamesCounted = true;
+  }
+  return job.installedGames >= GameRegistry::MAX_GAMES;
+}
+
+[[gnu::noinline]] Error install(Job& job, const char* fileName) {
   job.tmpDir[0] = '\0';
   job.renameTried = false;
   snprintf(job.inboxPath, sizeof(job.inboxPath), "%s/%s", GamePaths::INBOX_DIR, fileName);
   Error error = listMembers(job);
   if (error != Error::None) return error;
-  // ZipFile keeps a reference to its path.
-  const std::string zipPath(job.inboxPath);
-  ZipFile zip(zipPath);
-  error = readManifest(job, zip);
+  auto zip = makeUniqueNoThrow<ZipScratch>(job.inboxPath);
+  if (!zip) {
+    LOG_ERR("GAME", "OOM: zip reader for %s", job.inboxPath);
+    return Error::OutOfMemory;
+  }
+  error = readManifest(job, zip->file);
   if (error != Error::None) return error;
+
+  // Right after the manifest and before anything is written: a package that waits for room is read again on every
+  // visit, so its cost is the zip's directory and manifest, not an extraction. (An invalid package at the limit
+  // says "too many" until a game is removed, and then gets its own reason.)
+  if (wouldBeOverTheLimit(job)) {
+    LOG_ERR("GAME", "Not installing %s: %u games are installed already", job.manifest.id,
+            static_cast<unsigned>(GameRegistry::MAX_GAMES));
+    return Error::TooManyGames;
+  }
 
   snprintf(job.tmpDir, sizeof(job.tmpDir), "%s/%s", GamePaths::TMP_DIR, job.manifest.id);
   snprintf(job.finalDir, sizeof(job.finalDir), "%s/%s", GamePaths::GAMES_DIR, job.manifest.id);
@@ -547,31 +660,34 @@ Error install(Job& job, const char* fileName) {
   }
 
   uint8_t packageHash[GamePkg::HASH_BYTES];
-  error = extract(job, zip, packageHash);
+  error = extract(job, zip->file, packageHash);
   if (error != Error::None) return error;
   error = commit(job, packageHash);
-  if (error != Error::None) return error;
+  if (error != Error::None) {
+    // A commit that failed after the folder moved can still have left a valid .pkg (its close failing, say): a game
+    // this call has not counted. Count again for the next package.
+    if (job.renameTried) job.gamesCounted = false;
+    return error;
+  }
+  if (job.gamesCounted && job.addsGame) ++job.installedGames;
 
   LOG_INF("GAME", "Installed %s from %s", job.manifest.id, fileName);
-  // The game is installed, but a file that stays reinstalls it on every visit, so that is a failure to report.
-  if (!Storage.remove(job.inboxPath)) {
-    LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
-    return Error::SdCard;
-  }
-  return Error::None;
+  if (Storage.remove(job.inboxPath)) return Error::None;
+  LOG_ERR("GAME", "Cannot delete %s", job.inboxPath);
+  // The game is installed, but a file that stays reinstalls it on every visit, which would undo a Remove. Moving it
+  // out of the inbox (the scan ignores the new name) does the same as deleting it; a file that will not move either
+  // is a failure to report.
+  return moveAside(job, INSTALLED_SUFFIX) ? Error::None : Error::SdCard;
 }
 
-// SdCard and OutOfMemory are not the package's fault: its file stays for the next try.
-bool packageIsInvalid(const Error error) { return error != Error::SdCard && error != Error::OutOfMemory; }
+// SdCard, OutOfMemory, and TooManyGames are not the package's fault: its file stays for the next try (a game removed
+// meanwhile makes room).
+bool packageIsInvalid(const Error error) {
+  return error != Error::SdCard && error != Error::OutOfMemory && error != Error::TooManyGames;
+}
 
 // Renames the inbox file <name>.bad, replacing an earlier one; false when it would not move.
-bool markBad(Job& job) {
-  snprintf(job.badPath, sizeof(job.badPath), "%s.bad", job.inboxPath);
-  if (Storage.exists(job.badPath) && !Storage.remove(job.badPath)) LOG_ERR("GAME", "Cannot remove %s", job.badPath);
-  if (Storage.rename(job.inboxPath, job.badPath)) return true;
-  LOG_ERR("GAME", "Cannot rename %s to %s", job.inboxPath, job.badPath);
-  return false;
-}
+bool markBad(Job& job) { return moveAside(job, ".bad"); }
 
 }  // namespace
 
@@ -615,6 +731,8 @@ const char* describe(const Error error) {
       return "the Lua members are over their size limit together";
     case Error::UnknownIcon:
       return "the manifest's icon is not in the game icon library";
+    case Error::TooManyGames:
+      return "the maximum number of games is installed already";
   }
   return "unknown error";
 }
@@ -641,29 +759,49 @@ Report installAll() {
     report.firstError = Error::OutOfMemory;
     return report;
   }
-  size_t count = 0;
-  forEachInboxFile([&](const char* name) {
-    snprintf(names[count].text, sizeof(names[count].text), "%s", name);
-    return ++count < MAX_PER_RUN;
-  });
+  // Files are taken in batches of the cap that is left. A file that stays in the inbox (a card fault, or a package
+  // that waits for room) is skipped by the next batch and does not count against the cap when it waits for room, so
+  // a package behind 32 or more that wait, an update of an installed game especially, is still reached.
+  size_t judged = 0;  // files that used the cap: everything but the ones that wait for room
+  size_t stayed = 0;  // files judged this call that are still in the inbox
+  while (judged < MAX_PER_RUN) {
+    const size_t room = MAX_PER_RUN - judged;
+    size_t count = 0;
+    size_t seen = 0;
+    forEachInboxFile([&](const char* name) {
+      if (seen++ < stayed) return true;
+      snprintf(names[count].text, sizeof(names[count].text), "%s", name);
+      return ++count < room;
+    });
+    if (count == 0) break;
 
-  for (size_t i = 0; i < count; ++i) {
-    Error error = install(*job, names[i].text);
-    if (error == Error::None) {
-      ++report.installed;
-      continue;
+    for (size_t i = 0; i < count; ++i) {
+      Error error = install(*job, names[i].text);
+      if (error == Error::None) {
+        ++report.installed;
+        ++judged;
+        continue;
+      }
+      LOG_ERR("GAME", "%s not installed: %s", names[i].text, describe(error));
+      // Until the folder rename has been tried, /.games-tmp/<id> is ours alone; after it, mayRemoveTmp decides.
+      if (job->tmpDir[0] != '\0' && Storage.exists(job->tmpDir) &&
+          (!job->renameTried || mayRemoveTmp(job->manifest.id))) {
+        Storage.removeDir(job->tmpDir);
+      }
+      // A package that will not move aside would be judged again, and its reason shown, on every visit.
+      if (packageIsInvalid(error) && !markBad(*job)) error = Error::SdCard;
+      if (report.failed == 0) {
+        report.firstError = error;
+        snprintf(report.firstFile, sizeof(report.firstFile), "%s", names[i].text);
+      }
+      if (report.failed < UINT8_MAX) ++report.failed;  // a saturated count is still a failure
+      if (error != Error::TooManyGames) ++judged;
     }
-    LOG_ERR("GAME", "%s not installed: %s", names[i].text, describe(error));
-    // Until the folder rename has been tried, /.games-tmp/<id> is ours alone; after it, mayRemoveTmp decides.
-    if (job->tmpDir[0] != '\0' && Storage.exists(job->tmpDir) &&
-        (!job->renameTried || mayRemoveTmp(job->manifest.id))) {
-      Storage.removeDir(job->tmpDir);
-    }
-    // A package that will not move aside would be judged again, and its reason shown, on every visit.
-    if (packageIsInvalid(error) && !markBad(*job)) error = Error::SdCard;
-    if (report.failed++ == 0) {
-      report.firstError = error;
-      snprintf(report.firstFile, sizeof(report.firstFile), "%s", names[i].text);
+    // The renames and deletes above take files out of the inbox and leave the others in their order, so the ones
+    // that are still there are the first `stayed` of the next scan.
+    for (size_t i = 0; i < count; ++i) {
+      snprintf(job->pathA, sizeof(job->pathA), "%s/%s", GamePaths::INBOX_DIR, names[i].text);
+      if (Storage.exists(job->pathA)) ++stayed;
     }
   }
   removeTmp();
@@ -689,29 +827,35 @@ Error remove(const char* id) {
       return Error::SdCard;
     }
   }
-  char dir[GamePaths::PATH_BYTES];
-  char pkg[GamePaths::PATH_BYTES];
-  char tmp[GamePaths::PATH_BYTES];
-  snprintf(dir, sizeof(dir), "%s/%s", GamePaths::GAMES_DIR, id);
-  snprintf(pkg, sizeof(pkg), "%s/%s", dir, GamePaths::PKG_NAME);
-  snprintf(tmp, sizeof(tmp), "%s/%s", GamePaths::TMP_DIR, id);
-  if (!Storage.exists(dir)) return Error::None;
-  const bool marked = Storage.exists(pkg);
+  // One buffer, used in turn for the folder, its .pkg, and /.games-tmp/<id> (three of them would be 288 B of locals).
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.exists(path)) return Error::None;
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  const bool marked = Storage.exists(path);
   // A folder without a .pkg beside a /.games-tmp/<id> may be the two halves of an interrupted folder move, on one
   // cluster chain; removing one would free clusters the other uses. The installer's probe tells them apart, and a
   // shared pair is left alone (as removeTmp leaves it).
-  if (!marked && Storage.exists(tmp) && foldersShareClusters(id)) {
-    LOG_ERR("GAME", "Keeping %s: it may share clusters with %s, which has no %s", dir, tmp, GamePaths::PKG_NAME);
-    return Error::SdCard;
+  if (!marked) {
+    snprintf(path, sizeof(path), "%s/%s", GamePaths::TMP_DIR, id);
+    if (Storage.exists(path) && foldersShareClusters(id)) {
+      LOG_ERR("GAME", "Keeping %s/%s: it may share clusters with %s, which has no %s", GamePaths::GAMES_DIR, id, path,
+              GamePaths::PKG_NAME);
+      return Error::SdCard;
+    }
   }
   // The marker first, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a
   // listed game with files missing.
-  if (marked && !Storage.remove(pkg)) {
-    LOG_ERR("GAME", "Cannot remove %s", pkg);
-    return Error::SdCard;
+  if (marked) {
+    snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+    if (!Storage.remove(path)) {
+      LOG_ERR("GAME", "Cannot remove %s", path);
+      return Error::SdCard;
+    }
   }
-  if (!Storage.removeDir(dir)) {
-    LOG_ERR("GAME", "Cannot remove %s", dir);
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.removeDir(path)) {
+    LOG_ERR("GAME", "Cannot remove %s", path);
     return Error::SdCard;
   }
   LOG_INF("GAME", "Removed %s", id);

@@ -196,7 +196,7 @@ TEST_F(HardeningTest, EveryErrorHasItsOwnDescription) {
        {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember, Error::NoMain,
         Error::TooManyMembers, Error::BadImage, Error::PackageTooBig, Error::MemberTooBig, Error::ImagesTooBig,
         Error::SourcesTooBig, Error::BadSize, Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory,
-        Error::UnknownIcon}) {
+        Error::UnknownIcon, Error::TooManyGames}) {
     const std::string text = GamePackageInstaller::describe(error);
     EXPECT_NE(text, "unknown error");
     EXPECT_TRUE(texts.insert(text).second) << "two errors describe themselves as: " << text;

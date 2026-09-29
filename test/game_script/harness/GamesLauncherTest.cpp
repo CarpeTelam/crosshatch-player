@@ -131,6 +131,8 @@ const char* expectedText(const Error error) {
       return tr(STR_GAMES_SOURCES_TOO_LARGE);
     case Error::UnknownIcon:
       return tr(STR_GAMES_INSTALL_UNKNOWN_ICON);
+    case Error::TooManyGames:
+      return tr(STR_GAMES_INSTALL_TOO_MANY_GAMES);
   }
   return nullptr;
 }
@@ -214,7 +216,7 @@ class ListTest : public match::ScreenTest {
   // A second visit: the list goes, the manager's record and the theme's start over, and the list opens again.
   // The script (InstallerScript.h) and the log are the test's to change before it calls this.
   void reopen() {
-    match::letStartedMatchesGo([this] { dropMatch(); });
+    match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Discard);
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
@@ -888,7 +890,7 @@ TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
   std::vector<int> withText;
   for (int value = 0; value < 256; ++value)
     if (expectedText(static_cast<Error>(value))) withText.push_back(value);
-  ASSERT_GE(withText.size(), 18u) << "the eighteen reasons that exist today";
+  ASSERT_GE(withText.size(), 19u) << "the nineteen reasons that exist today";
 
   // Two reasons that read alike would let a swap through.
   for (size_t i = 0; i < withText.size(); ++i)

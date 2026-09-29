@@ -66,24 +66,31 @@ Status read(Reader& reader, const uint32_t fileBytes, Visit&& visit) {
   using namespace detail;
   if (fileBytes < EOCD_BYTES) return Status::Malformed;
   const uint32_t eocdAt = fileBytes - EOCD_BYTES;
-  uint8_t eocd[EOCD_BYTES];
-  if (!reader.read(eocdAt, eocd, sizeof(eocd))) return Status::ReadError;
-  if (le32(eocd) != EOCD_SIGNATURE) return Status::Malformed;
+  uint16_t total = 0;
+  uint32_t directoryAt = 0;
+  {
+    // In a block of its own, so that the buffers below can share its stack: this template is instantiated in a frame
+    // that has to stay under the 256 B rule for locals.
+    uint8_t eocd[EOCD_BYTES];
+    if (!reader.read(eocdAt, eocd, sizeof(eocd))) return Status::ReadError;
+    if (le32(eocd) != EOCD_SIGNATURE) return Status::Malformed;
 
-  // ZIP64 puts a locator right before the EOCD, and sentinels in the EOCD's fields.
-  if (eocdAt >= ZIP64_LOCATOR_BYTES) {
-    uint8_t locator[4];
-    if (!reader.read(eocdAt - ZIP64_LOCATOR_BYTES, locator, sizeof(locator))) return Status::ReadError;
-    if (le32(locator) == ZIP64_LOCATOR_SIGNATURE) return Status::Unsupported;
+    // ZIP64 puts a locator right before the EOCD, and sentinels in the EOCD's fields.
+    if (eocdAt >= ZIP64_LOCATOR_BYTES) {
+      uint8_t locator[4];
+      if (!reader.read(eocdAt - ZIP64_LOCATOR_BYTES, locator, sizeof(locator))) return Status::ReadError;
+      if (le32(locator) == ZIP64_LOCATOR_SIGNATURE) return Status::Unsupported;
+    }
+    total = le16(eocd + 10);
+    const uint32_t directoryBytes = le32(eocd + 12);
+    directoryAt = le32(eocd + 16);
+    if (total == 0xFFFF || directoryBytes == ZIP64_SENTINEL || directoryAt == ZIP64_SENTINEL)
+      return Status::Unsupported;
+
+    if (le16(eocd + 4) != 0 || le16(eocd + 6) != 0 || le16(eocd + 20) != 0) return Status::Malformed;
+    if (le16(eocd + 8) != total) return Status::CountMismatch;
+    if (static_cast<uint64_t>(directoryAt) + directoryBytes != eocdAt) return Status::Malformed;
   }
-  const uint16_t total = le16(eocd + 10);
-  const uint32_t directoryBytes = le32(eocd + 12);
-  const uint32_t directoryAt = le32(eocd + 16);
-  if (total == 0xFFFF || directoryBytes == ZIP64_SENTINEL || directoryAt == ZIP64_SENTINEL) return Status::Unsupported;
-
-  if (le16(eocd + 4) != 0 || le16(eocd + 6) != 0 || le16(eocd + 20) != 0) return Status::Malformed;
-  if (le16(eocd + 8) != total) return Status::CountMismatch;
-  if (static_cast<uint64_t>(directoryAt) + directoryBytes != eocdAt) return Status::Malformed;
 
   uint32_t seen = 0;
   uint32_t at = directoryAt;
@@ -98,6 +105,7 @@ Status read(Reader& reader, const uint32_t fileBytes, Visit&& visit) {
     const uint32_t uncompressedSize = le32(central + 24);
     const uint16_t nameBytes = le16(central + 28);
     const uint32_t localAt = le32(central + 42);
+    const uint32_t crc = le32(central + 16);
     const uint64_t next =
         static_cast<uint64_t>(at) + CENTRAL_BYTES + nameBytes + le16(central + 30) + le16(central + 32);
     if (next > eocdAt) return Status::Malformed;
@@ -112,10 +120,13 @@ Status read(Reader& reader, const uint32_t fileBytes, Visit&& visit) {
 
     // Where the member's data sits: its local header, then the name and extra field it states.
     if (static_cast<uint64_t>(localAt) + LOCAL_BYTES > directoryAt) return Status::Malformed;
-    uint8_t local[LOCAL_BYTES];
-    if (!reader.read(localAt, local, sizeof(local))) return Status::ReadError;
-    if (le32(local) != LOCAL_SIGNATURE) return Status::Malformed;
-    const uint64_t dataAt = static_cast<uint64_t>(localAt) + LOCAL_BYTES + le16(local + 26) + le16(local + 28);
+    uint64_t dataAt = 0;
+    {
+      uint8_t local[LOCAL_BYTES];
+      if (!reader.read(localAt, local, sizeof(local))) return Status::ReadError;
+      if (le32(local) != LOCAL_SIGNATURE) return Status::Malformed;
+      dataAt = static_cast<uint64_t>(localAt) + LOCAL_BYTES + le16(local + 26) + le16(local + 28);
+    }
     if (dataAt + compressedSize > directoryAt) return Status::Malformed;
 
     Entry entry;
@@ -123,7 +134,7 @@ Status read(Reader& reader, const uint32_t fileBytes, Visit&& visit) {
     if (kept > 0 && !reader.read(at + CENTRAL_BYTES, entry.name, kept)) return Status::ReadError;
     entry.name[kept] = '\0';
     entry.nameUsable = nameBytes < sizeof(entry.name) && std::strlen(entry.name) == nameBytes;
-    entry.crc = le32(central + 16);
+    entry.crc = crc;
     entry.uncompressedSize = uncompressedSize;
     entry.localAt = localAt;
     entry.dataEnd = static_cast<uint32_t>(dataAt + compressedSize);

@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <new>
 #include <set>
 #include <string>
 #include <vector>
@@ -30,19 +29,6 @@
 // GameRegistry, GameSaveStore::peek, and GameMatchActivity over the screen doubles and the fake card, the installer
 // scripted (InstallerScript.h, RemoveScript.h) as GameRemoveLauncherTest does. A save is placed on the card as
 // GameSaveStore lays it out (ResumeMatchTest's helper, copied: that file keeps its own in an anonymous namespace).
-
-// The next nothrow array allocation of exactly this many bytes fails, once: how a test makes the launcher's
-// makeUniqueNoThrow<T[]> return null (GamesLauncherTest does the same for the icon cache). Everything else is malloc.
-namespace oom {
-std::size_t failSize = 0;
-}
-void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
-  if (oom::failSize != 0 && size == oom::failSize) {
-    oom::failSize = 0;
-    return nullptr;
-  }
-  return std::malloc(size);
-}
 
 namespace {
 
@@ -66,6 +52,10 @@ std::vector<uint8_t> libraryRows(const char* name, const bool fill) {
 
 using Button = MappedInputManager::Button;
 using harness::Bytes;
+
+// Where the match draws its canvas on the 480 x 800 screen double (ResumeMatchTest's constants).
+constexpr int CANVAS_X = 3;
+constexpr int CANVAS_Y = 6;
 
 // The package hash "v1\n0530a15766e91bf1\n" holds, and one that differs from it in the last byte.
 const std::string PKG_A = "v1\n0530a15766e91bf1\n";
@@ -151,7 +141,6 @@ class ContinueTest : public match::ScreenTest {
  protected:
   void SetUp() override {
     ScreenTest::SetUp();
-    oom::failSize = 0;
     installerscript::reset();
     removescript::reset();
     hostcaps::reset();
@@ -199,6 +188,11 @@ class ContinueTest : public match::ScreenTest {
                    const uint8_t (&hash)[GamePkg::HASH_BYTES] = HASH_A) {
     fakesd::addFile(resumePath(id), resumeBytes(taps, ver, hash));
   }
+  // The card refuses to write the game's save, so a match of it that is left mid-round leaves no resume.bin: a game
+  // with no save, reached the way a device can reach it (a full or failing card), not by taking the file away.
+  static void cardRefusesTheSaveOf(const std::string& id) {
+    fakesd::sim().failOpenWrite.insert(resumePath(id) + ".tmp");
+  }
   static void takeGameOffTheCard(const std::string& id) {
     fakesd::removeEntry("/.games/" + id + "/.pkg");
     for (const char* file : {"manifest.json", "main.lua"}) fakesd::removeEntry("/.games/" + id + "/" + file);
@@ -220,9 +214,13 @@ class ContinueTest : public match::ScreenTest {
     activity().onEnter();
     render();
   }
-  // A second launcher, as goToGames() builds one after a match ends or is left.
-  void reopen() {
-    match::letStartedMatchesGo([this] { dropMatch(); });
+  // A second launcher, as goToGames() builds one after a match ends or is left. The match's forced exit writes its
+  // last snapshot as resume.bin, and `saves` says whether that save stays on the card (Keep: a game left mid-round has
+  // a Continue row, as on a device) or is taken away (Discard: the state of a game whose match wrote nothing, or of a
+  // test with no match). Every call says which. (Discard takes away only the files the exit itself created, so a save
+  // the test placed, or one the match's own loop wrote, stays.)
+  void reopen(const match::Saves saves) {
+    match::letStartedMatchesGo([this] { dropMatch(); }, saves);
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
@@ -367,7 +365,7 @@ TEST_F(ContinueTest, ASaveOfAChangedPackageShowsNoRowAndIsLeftOnTheCard) {
 
   // The installer replaces game-01 with a build whose package hash differs: the launcher built next has no row for it.
   fakesd::addFile("/.games/game-01/.pkg", PKG_B);
-  reopen();
+  reopen(match::Saves::Discard);  // no match ran, so there is no save to keep or take away
   const std::vector<Row> after{{"Game 01", false}, {"Game 02", false}};
   EXPECT_EQ(rows(2), after);
   EXPECT_TRUE(fakesd::has(resumePath("game-01")));
@@ -470,7 +468,7 @@ TEST_F(ContinueTest, TheGamesOwnRowStillStartsANewMatchAndTwoModesStillAskWhichO
   EXPECT_FALSE(logHas("Resuming"));
   ASSERT_TRUE(pumpMatchTo("setup ran"));
 
-  reopen();
+  reopen(match::Saves::Discard);  // Alpha's New match left mid-round; its save is not what this test is about
   tapAt(gameRowOf("Beta"));
   EXPECT_EQ(activityManager.asks.pushed, 1) << "a game row of a game with two modes asks";
   EXPECT_TRUE(activityManager.replacements.empty());
@@ -592,10 +590,13 @@ TEST_F(ContinueTest, ContinueRowsPageWithTheGamesAndNoRowRepeats) {
   EXPECT_EQ(seen, expected);
 }
 
+// Save state: Game 01's match cannot write its save (cardRefusesTheSaveOf), so leaving it leaves Game 01 with none, and
+// the walk starts on its own row; ANewMatchLeftAfterAMove... is the same walk with the save written.
 TEST_F(ContinueTest, TheKeysWalkContinueRowsThenGamesAndWrap) {
   addGames(3);
   save("game-02");
   save("game-03");
+  cardRefusesTheSaveOf("game-01");
   open();  // rows: Continue 02, Continue 03, Game 01, 02, 03
   key(Button::NavNext, 2);
   key(Button::Confirm);  // Game 01's own row
@@ -604,7 +605,8 @@ TEST_F(ContinueTest, TheKeysWalkContinueRowsThenGamesAndWrap) {
   EXPECT_TRUE(logHas("Started game-01"));
   EXPECT_FALSE(logHas("Resuming"));
 
-  reopen();
+  reopen(match::Saves::Keep);
+  EXPECT_FALSE(fakesd::has(resumePath("game-01"))) << "Game 01's match wrote no save";
   // The game opened last (Game 01) is selected again, on its own row: one step back is Continue 03, another Continue
   // 02, and a third wraps to the last game.
   fakelog::clearLines();
@@ -650,7 +652,7 @@ TEST_F(ContinueTest, LeavingAMatchStartedFromContinueReturnsToItsContinueRowOnTh
   ASSERT_NE(enterReplacement(), nullptr);
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
 
-  reopen();  // Leave: goToGames() builds a fresh launcher
+  reopen(match::Saves::Keep);  // Leave: goToGames() builds a fresh launcher; Game 20's save is on the card, as it was
   fakelog::clearLines();
   const size_t first = 10 / page * page;
   const std::vector<Row> shownRows = rows(25);
@@ -675,7 +677,7 @@ TEST_F(ContinueTest, OneConfirmAfterLeavingAContinueMatchResumesAgainAndLeavesTh
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
 
-  reopen();  // Leave
+  reopen(match::Saves::Keep);  // Leave: Game 03's save stays, rewritten by the forced exit
   fakelog::clearLines();
   key(Button::Confirm);  // a single press, with nothing chosen since
   ASSERT_EQ(activityManager.replacements.size(), 1u);
@@ -691,9 +693,12 @@ TEST_F(ContinueTest, OneConfirmAfterLeavingAContinueMatchResumesAgainAndLeavesTh
   EXPECT_EQ(fakesd::bytesOf(resumePath("game-03")), resumeBytes(2, 3)) << "the save is as it was";
 }
 
+// Save state: Game 20's match cannot write its save (cardRefusesTheSaveOf), so it has no Continue row and its own row
+// is the one selected; a game whose match did write one gets its Continue row (ANewMatchLeftAfterAMove...).
 TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
   addGames(25);
   save("game-01");  // one Continue row, so the game rows are one row further down
+  cardRefusesTheSaveOf("game-20");
   open();
   const size_t page = rows(25).size();
   ASSERT_GT(page, 2u);
@@ -703,7 +708,8 @@ TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-20"));
 
-  reopen();
+  reopen(match::Saves::Keep);
+  EXPECT_FALSE(fakesd::has(resumePath("game-20"))) << "Game 20's match wrote no save";
   fakelog::clearLines();
   const size_t first = 20 / page * page;
   ASSERT_GE(first, 1u);
@@ -713,6 +719,47 @@ TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-20"));
   EXPECT_FALSE(logHas("Resuming"));
+}
+
+// The everyday path: a New match, one move, Leave. The forced exit writes resume.bin, so
+// the launcher built next lists a Continue row for the game, selects it on its page, and one Confirm resumes the saved
+// move; the tests above that reopen with no save are the states a full or failing card leaves.
+TEST_F(ContinueTest, ANewMatchLeftAfterAMoveHasAContinueRowSelectedAndConfirmResumesItsMove) {
+  addGames(3);
+  open();  // no saves: Game 01, 02, 03
+  key(Button::NavNext);
+  key(Button::Confirm);  // Game 02's own row: a New match
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("setup ran"));
+  // The match drops a tap until its first frame is on the panel (as a finger cannot be aimed at one that is not).
+  ASSERT_TRUE(match::waitFor([&] {
+    entered->loop();
+    input->clear();
+    return activityManager.updateRequested();
+  }));
+  entered->render(RenderLock(*entered));
+  activityManager.markRendered();
+  input->tap(CANVAS_X + 50, CANVAS_Y + 50);
+  ASSERT_TRUE(pumpMatchTo("draw\t1")) << "the tap was applied and drawn";
+
+  // Leave: the forced exit writes the save of the round in progress, one move in, and it stays.
+  reopen(match::Saves::Keep);
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), resumeBytes(1, 2)) << "the round's last snapshot: one tap, ver 2";
+  const std::vector<Row> expected{{"Game 02", true}, {"Game 01", false}, {"Game 02", false}, {"Game 03", false}};
+  EXPECT_EQ(rows(3), expected) << "the new Continue row is first";
+
+  // The selection is on the Continue row, not on Game 02's own row (whose Confirm would start a New match over the
+  // save).
+  fakelog::clearLines();
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-02"));
+  ASSERT_TRUE(pumpMatchTo("Round started at ver 2"));
+  EXPECT_TRUE(logHas("Resuming at ver 2"));
+  EXPECT_TRUE(logHas("draw\t1")) << "the saved move is what is drawn";
+  EXPECT_FALSE(logHas("setup ran")) << "not a New match";
 }
 
 // ---- remove, and what the launcher asks the card ----
@@ -760,7 +807,7 @@ TEST_F(ContinueTest, NoGamesAndNoSavesAreAsBefore) {
   open();
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_EMPTY)));
   fakesd::addFile(resumePath("ghost"), resumeBytes(2, 3));  // a save whose game is not installed has no row
-  reopen();
+  reopen(match::Saves::Discard);                            // no match ran
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_EMPTY)));
   EXPECT_TRUE(findAll(tr(STR_GAMES_CONTINUE)).empty());
 }
@@ -809,6 +856,23 @@ TEST_F(ContinueTest, RemovingTheOnlyGameLeavesTheEmptyListWithoutItsContinueRow)
   EXPECT_TRUE(activityManager.replacements.empty());
 }
 
+// The Continue list is a member array of GameRegistry::MAX_GAMES entries, so it cannot fail to allocate (the test that
+// made its allocation fail is gone with the allocation): a card at the registry's limit with a save for every game
+// lists all 64 Continue rows, the last one included.
+TEST_F(ContinueTest, TheContinueListHoldsASaveForEveryGameTheRegistryLists) {
+  constexpr int GAMES = static_cast<int>(GameRegistry::MAX_GAMES);
+  addGames(GAMES);
+  for (int i = 1; i <= GAMES; ++i) save(idOf(i));
+  open();
+  key(Button::NavNext, GAMES - 1);  // rows 0 to 63 are the Continue rows: this is the last of them, Game 64's
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started " + idOf(GAMES)));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+  EXPECT_FALSE(logHas("setup ran"));
+}
+
 TEST_F(ContinueTest, AContinueRowDrawsItsOwnGamesIcon) {
   addGame("a-pkg", "A Pkg", "\"solo\"", 1, 1, PKG_A, ",\"icon\":\"boat\"");
   fakesd::addFile("/.games/a-pkg/icon.bmp",
@@ -831,22 +895,4 @@ TEST_F(ContinueTest, AContinueRowDrawsItsOwnGamesIcon) {
   EXPECT_EQ(drawn[2].data, pkg);
   EXPECT_EQ(drawn[3].data, libraryRows("dice-six", true));
   EXPECT_EQ(drawn[4].data, libraryRows("game-controller", false));
-}
-
-TEST_F(ContinueTest, WhenTheContinueListCannotBeAllocatedTheGamesAreListedAndRemoveStillWorks) {
-  addGames(3);
-  save("game-02");
-  oom::failSize = 3 * sizeof(uint16_t);  // loadContinue's array, the first allocation of this size
-  open();
-  EXPECT_TRUE(logHas("OOM: 6 Continue slots"));
-  const std::vector<Row> expected{{"Game 01", false}, {"Game 02", false}, {"Game 03", false}};
-  EXPECT_EQ(rows(3), expected);
-  key(Button::Confirm);  // a game row, since there are no Continue rows
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_FALSE(logHas("Resuming"));
-
-  reopen();  // the next visit is allocated again
-  ASSERT_EQ(rows(3).size(), 4u);
-  EXPECT_TRUE(rows(3).front().isContinue);
 }
