@@ -5,10 +5,9 @@
 #include <string>
 #include <vector>
 
-#include "GameIconBlit.h"
 #include "GameIcons.h"
-#include "GameImageBlit.h"
 #include "LuaGameFixture.h"
+#include "ReplayFills.h"
 
 using namespace GameScript;
 using GameScriptTestSupport::DirectGame;
@@ -136,28 +135,17 @@ class GfxBindingsTest : public LuaGameTest {
     images.pixels = imagePixels.data();
   }
 
-  // The fills the replay makes for the front frame's icons and images: each run
-  // GameIconBlit::inkRuns and GameImageBlit::runs give on the canvas, as
-  // FrameReplay draws them.
+  // The fills the real FrameReplay::draw makes for the front frame, counted on the src/games
+  // harness's recording renderer (test/game_script/harness/ReplayFills.h): each fillRect it
+  // asks for, which only icons and images make. A frame drawn with an error logged (an icon
+  // or image it could not draw) is a failure, not a cheap frame.
   uint64_t frontBlitFills() {
-    uint64_t fills = 0;
-    const auto count = [&](auto...) { ++fills; };
-    for (const DrawCommand& c : frontCommands()) {
-      if (c.op == Op::Icon) {
-        GameIconBlit::Source source;
-        if (!GameIconBlit::sourceFor(c.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(c.size)],
-                                     static_cast<GameIcons::Weight>(c.weight), source)) {
-          ADD_FAILURE() << "no bitmap for icon " << c.icon;
-          continue;
-        }
-        GameIconBlit::inkRuns(source, c.x, c.y, canvas.width, canvas.height, count);
-      } else if (c.op == Op::Image) {
-        const GameCore::ImageSpan& span = images.spans[c.image];
-        GameImageBlit::runs(span, images.pixelsOf(span), c.x, c.y, canvas.width, canvas.height, c.color == Color::Black,
-                            count);
-      }
-    }
-    return fills;
+    harness::ReplayResult result;
+    frames.readFront(
+        [&](const DisplayList& list) { result = harness::replayFills(list, images, canvas.width, canvas.height); });
+    EXPECT_TRUE(result.drawn);
+    for (const std::string& line : result.errors) ADD_FAILURE() << line;
+    return result.fills;
   }
 };
 
