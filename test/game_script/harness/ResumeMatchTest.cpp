@@ -383,13 +383,36 @@ TEST_F(ResumeMatchTest, WithoutAPkgTheMatchPlaysAndWritesNothing) {
   EXPECT_EQ(tmpOpens(), 0u);
 }
 
-TEST_F(ResumeMatchTest, AnOtherwiseValidSaveIsNotResumedWithoutAPkg) {
-  installGame("cnt", countingGame(5));
-  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
+// Retro deferral 4.12 (ADV1 of the independent review): Continue was offered for this package's save, so a .pkg that
+// will not read at match entry is a fault, not "an unpackaged game". The match must stop, not play new: a new match
+// without the package hash cannot tell the save from any file, and used to delete it at Over.
+TEST_F(ResumeMatchTest, AContinueWhosePkgWillNotReadStopsInTheErrorViewAndKeepsTheSave) {
+  installGame("cnt", countingGame(1));
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(0), 3));
   enter("cnt", GameMatchActivity::Start::Resume);
-  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
-  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
-  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(2), 3)) << "and it is not overwritten either";
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("cannot read .pkg; not starting a new match over a save"));
+  EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
+  for (int i = 0; i < 30; ++i) frame();
+  EXPECT_FALSE(logHas("setup ran")) << "no game ran";
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(0), 3));
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(0), 3)) << "and the forced exit keeps it";
+}
+
+// A new match of a game without a valid .pkg plays and writes nothing, and at Over it deletes nothing either: a file
+// there is not known to be this package's.
+TEST_F(ResumeMatchTest, ANewMatchWithoutAPkgLeavesAResumeBinAloneAtOver) {
+  installGame("cnt", countingGame(1));
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(0), 3));
+  enter("cnt");
+  tapCanvas(50, 50);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(0), 3));
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(0), 3));
 }
 
 TEST_F(ResumeMatchTest, TheEndOfARoundDeletesTheSaveAndNoOverSnapshotIsEverWritten) {
@@ -749,7 +772,7 @@ TEST_F(ResumeMatchTest, AnUnreadableSaveStopsInTheErrorViewAndIsNeverOverwritten
   fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
   fakesd::sim().failReadAt[resumePath("cnt")] = 0;
   enter("cnt", GameMatchActivity::Start::Resume);
-  EXPECT_TRUE(logHas("discarded " + resumePath("cnt") + ": cannot read"));
+  EXPECT_TRUE(logHas("could not read " + resumePath("cnt") + ": cannot read; the file is kept"));
   EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
   EXPECT_EQ(state(), "Error");
   EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
@@ -837,6 +860,8 @@ TEST_F(ResumeMatchTest, PlayAgainAfterAFailedDeleteIsNotDeletedUnderTheNewRound)
   frame();
   ASSERT_EQ(state(), "Playing");
   fakesd::sim().failRemove.clear();
+  // The failed delete armed the write backoff (FLUSH_INTERVAL_MS) and the host clock does not move by itself: Play
+  // again forgets it, so the new round's first snapshot is written at once.
   ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 3)));
   for (int i = 0; i < 20; ++i) frame();
   // The pause menu's loop passes are where a pending delete would retry.

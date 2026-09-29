@@ -571,7 +571,8 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
     openResume();
     *failure = true;
     EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unreadable);
-    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": cannot "));
+    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: could not check ") + RESUME + ": cannot "));
+    EXPECT_TRUE(fakelog::any("the file is kept"));
     EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid) << "and the next try reads it";
 
     *failure = true;
@@ -699,6 +700,17 @@ TEST_F(GameSaveStoreTest, DeleteResumeRemovesTheFileAndItsTmp) {
   EXPECT_TRUE(fakesd::ops.empty());
 }
 
+TEST_F(GameSaveStoreTest, DeleteResumeDoesNothingWithoutThePackageHash) {
+  fakesd::files[RESUME] = resumeFile(TAPS3);
+  fakesd::files[RESUME_TMP] = resumeFile(TAPS4);
+  open();  // no setPackageHash: this match could not tell whose save it is
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->deleteResume());
+  EXPECT_TRUE(fakesd::ops.empty());
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3));
+  EXPECT_EQ(fakesd::files[RESUME_TMP], resumeFile(TAPS4));
+}
+
 TEST_F(GameSaveStoreTest, AFailedDeleteIsLoggedAndReported) {
   fakesd::files[RESUME] = resumeFile(TAPS3);
   openResume();
@@ -739,6 +751,20 @@ TEST_F(GameSaveStoreTest, FlushResumeWritesNothingWithoutAPackageHash) {
   EXPECT_TRUE(saves->flushResume(bare, 1000));
   EXPECT_TRUE(fakesd::ops.empty());
   EXPECT_TRUE(fakesd::files.empty());
+}
+
+// Play again forgets the backoff a failed write or delete of the finished round armed, so the new round's first
+// snapshot is not held back for the interval.
+TEST_F(GameSaveStoreTest, ClearingTheBackoffLetsTheNextSnapshotThroughAtOnce) {
+  openResume(0);
+  ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
+  fakesd::failOpenWrite = true;
+  EXPECT_FALSE(saves->flushResume(*mailbox, 2000));
+  saves->clearResumeBackoff();
+  fakesd::ops.clear();
+  EXPECT_TRUE(saves->flushResume(*mailbox, 2001));
+  EXPECT_FALSE(mailbox->pending());
+  EXPECT_EQ(fakesd::files[RESUME], resumeFile(TAPS3, 5));
 }
 
 TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedOnlyAfterTheInterval) {

@@ -184,8 +184,9 @@ refuses although `peek` accepted it, does not: the match shows the error view "T
 `resume.bin` is untouched, and Back returns to the list, where Continue can be tried again or the game's own row starts a
 new match on purpose. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
 `peek` already excludes, so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a
-valid `.pkg` there is no hash, and the match neither reads nor writes `resume.bin` (entering Over still removes a stale
-file).
+valid `.pkg` there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known
+to be this package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view
+rather than play new.
 
 A game that fails on the resumed state (a script error at its first `status` or `draw`) does not delete the save either.
 The failure cannot tell a game that rejects the state, every time, from a transient fault (a callback that runs out of

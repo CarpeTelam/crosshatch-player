@@ -176,15 +176,16 @@ size_t utf8SequenceLength(const char* text, const size_t at, const size_t end) {
 
 // An unknown icon or image name stops the game through the guard, as a full frame
 // does, so a script's pcall cannot carry on drawing without it. The message shows
-// at most NAME_SHOWN_BYTES of the name (cut at a UTF-8 boundary), with each control
-// byte, '"', and each byte that is not part of a well-formed UTF-8 sequence (a game's
-// name is any bytes) as '?', so it stays one readable line and valid UTF-8: "ch.gfx.<kind>:
-// unknown <kind> \"<name>\"" (the function is named for what it draws).
+// at most NAME_SHOWN_BYTES bytes of the name, with each control byte, '"', and each
+// byte that is not part of a well-formed UTF-8 sequence as '?' (a game's name is any
+// bytes, and a sequence the cut splits is not well-formed), so it stays one readable
+// line and valid UTF-8: "ch.gfx.<kind>: unknown <kind> \"<name>\"" (the function is
+// named for what it draws).
 constexpr size_t NAME_SHOWN_BYTES = 32;
 
 int unknownName(lua_State* L, const char* kind, const char* name, const size_t length) {
   char shown[NAME_SHOWN_BYTES + 1];
-  const size_t kept = utf8Cut(name, length, NAME_SHOWN_BYTES);
+  const size_t kept = length < NAME_SHOWN_BYTES ? length : NAME_SHOWN_BYTES;
   size_t out = 0;
   for (size_t i = 0; i < kept;) {
     const auto byte = static_cast<uint8_t>(name[i]);

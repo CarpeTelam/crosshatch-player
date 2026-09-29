@@ -306,7 +306,9 @@ def png_problem(data, width, height):
     """None, or why the chunks of a PNG whose IHDR passed png_size (`width` x `height`) do not make a whole image: a
     chunk running past the end or with a wrong CRC, no IEND, no IDAT, a palette image with no PLTE before its data, or
     image data that does not inflate to exactly the bytes the IHDR calls for (a filter byte and the packed samples for
-    each row, not interlaced). Not checked: bytes after IEND (decoders ignore them), the order of the other chunks, and
+    each row, not interlaced) and a filter byte of 0 to 4 at the start of each row. This is stricter than the installer's
+    converter, which does not check CRCs, the IEND chunk, or the end of the zlib stream: a package that fails here could
+    have installed, and the packer says why now rather than have a decoder stumble on it. Not checked: bytes after IEND (decoders ignore them), the order of the other chunks, and
     the pixels themselves, which the installer's converter reads."""
     depth, color = data[24], data[25]
     position = len(PNG_SIGNATURE)
@@ -343,6 +345,9 @@ def png_problem(data, width, height):
         return 'malformed PNG (the image data is not a zlib stream)'
     if len(raw) != expected or not inflater.eof:
         return f'malformed PNG (the image data is not the {expected:,} bytes a {width}x{height} image holds)'
+    stride = (width * PNG_CHANNELS[color] * depth + 7) // 8 + 1
+    if any(raw[row * stride] > 4 for row in range(height)):
+        return 'malformed PNG (a row has a filter type over 4)'
     return None
 
 

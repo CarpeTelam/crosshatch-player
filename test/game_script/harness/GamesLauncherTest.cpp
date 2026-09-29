@@ -214,7 +214,7 @@ class ListTest : public match::ScreenTest {
   // A second visit: the list goes, the manager's record and the theme's start over, and the list opens again.
   // The script (InstallerScript.h) and the log are the test's to change before it calls this.
   void reopen() {
-    dropMatch();
+    match::letStartedMatchesGo([this] { dropMatch(); });
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();

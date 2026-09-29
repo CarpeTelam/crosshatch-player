@@ -519,6 +519,28 @@ TEST_F(MatchTest, ThePauseViewsIconsTakeTheInkOfTheLabelsBesideThem) {
   EXPECT_TRUE(same(otherInk, true)) << "the view's icon is black on the white panel";
 }
 
+// The gate opens when displayBuffer has returned, not before it: a loop pass run inside displayBuffer (the render task
+// is in the panel driver, the loop task keeps going) still drops a tap. A store of roundsDisplayed ahead of the draw or
+// the display would let it through.
+TEST_F(MatchTest, ATapWhileDisplayBufferIsStillRunningIsDropped) {
+  installGame("gated", match::gatedGame(5));
+  enter("gated");
+  ASSERT_TRUE(pumpToRender());
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapCanvas(210, 310);
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  tapCanvas(150, 250);  // after the render: it reaches the game, and the VM takes events in order
+  frame();
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("tap\t150\t250") == 1u; }));
+  EXPECT_EQ(fakelog::countLines("tap\t210\t310"), 0u) << "the tap during displayBuffer reached the game";
+}
+
 // The same gate at the start of a match: the Games list is on screen until the first round's first frame is drawn, so a
 // tap before then (the one that opened the game, lifting late, or an impatient second one) is dropped.
 TEST_F(MatchTest, ATapBeforeTheFirstFrameIsDrawnIsDroppedAndOneAfterItReachesTheGame) {

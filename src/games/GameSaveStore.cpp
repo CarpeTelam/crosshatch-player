@@ -283,6 +283,8 @@ GameSaveStore::SaveState GameSaveStore::peek(const char* gameId, const uint8_t (
     // Every launcher build asks again, so a save of another package (which stays) is not an error.
     if (std::strcmp(problem, OTHER_PACKAGE) == 0) {
       LOG_INF("GAME", "%s: %s is another package's save: %s", gameId, path, problem);
+    } else if (unreadable) {
+      LOG_ERR("GAME", "%s: could not check %s: %s; the file is kept", gameId, path, problem);
     } else {
       LOG_ERR("GAME", "%s: discarded %s: %s", gameId, path, problem);
     }
@@ -310,7 +312,11 @@ std::span<const uint8_t> GameSaveStore::loadResume(uint16_t& ver, bool& unreadab
   size_t length = 0;
   bool fault = false;
   if (const char* problem = readResume(path, packageHash, ver, buffer, length, &fault)) {
-    LOG_ERR("GAME", "%s: discarded %s: %s", id, path, problem);
+    if (fault) {
+      LOG_ERR("GAME", "%s: could not read %s: %s; the file is kept", id, path, problem);
+    } else {
+      LOG_ERR("GAME", "%s: discarded %s: %s", id, path, problem);
+    }
     ver = 0;
     unreadable = fault;
     return {};
@@ -337,6 +343,10 @@ bool GameSaveStore::saveResume(const std::span<const uint8_t> snapshot, const ui
 }
 
 bool GameSaveStore::deleteResume() {
+  // Without the package hash this match neither read nor wrote a save (flushResume does nothing either), and a file
+  // there is not known to be this package's: a match that could not tell (its .pkg would not read) must not remove a
+  // save at Over that a Continue may still offer.
+  if (!hasPackageHash) return true;
   bool gone = true;
   for (const char* path : {resumeTmpPath, resumePath}) {
     if (!Storage.exists(path) || Storage.remove(path)) continue;
@@ -345,6 +355,8 @@ bool GameSaveStore::deleteResume() {
   }
   return gone;
 }
+
+void GameSaveStore::clearResumeBackoff() { resumeFailed = false; }
 
 bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) {
   if (!hasPackageHash || !mailbox.pending()) return true;

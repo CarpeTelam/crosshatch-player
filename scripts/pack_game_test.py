@@ -326,6 +326,22 @@ class BadPackageTest(PackerTestCase):
                     data = data[:33] + chunk(b'PLTE', bytes(3 * 2 ** depth)) + data[33:]
                 self.assertIn('the image data is not', pg.png_problem(data, width, height))
 
+    def test_every_rows_filter_byte_is_0_to_4(self):
+        width, height = 3, 3
+        stride = 1 + 3
+
+        def rows(filters):
+            return b''.join(bytes([f]) + bytes(3) for f in filters)
+        for filters in ((0, 0, 0), (1, 2, 3), (4, 0, 4)):
+            with self.subTest(filters=filters):
+                data = png(width, height, depth=8, color=0, idat=zlib.compress(rows(filters)))
+                self.assertIsNone(pg.png_problem(data, width, height))
+        for filters in ((5, 0, 0), (0, 0, 9), (0, 255, 0)):
+            with self.subTest(filters=filters):
+                data = png(width, height, depth=8, color=0, idat=zlib.compress(rows(filters)))
+                self.assertIn('filter type over 4', pg.png_problem(data, width, height))
+        self.assertEqual(stride * height, len(rows((0, 0, 0))))
+
     def test_a_palette_image_needs_its_plte_first(self):
         idat = zlib.compress(bytes(2 * (1 + 2)))
         good = png(5, 2, depth=2, color=3, idat=idat)

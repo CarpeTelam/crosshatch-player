@@ -54,7 +54,7 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
 // Whether an icon beside a label drawn over `paint` in `text` is black (GameViewIcons::labelIsBlack has the rule).
 bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
   return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
-                                     text.color == fui::Color::White);
+                                     GameViewIcons::textInkIsWhite(text.color == fui::Color::White, text.inverted));
 }
 
 // The error view's detail for a failed VM: tr() text for the host's own failures,
@@ -120,6 +120,12 @@ void GameMatchActivity::onEnter() {
   uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
   if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
     store.saves().setPackageHash(pkgHash);
+  } else if (start == Start::Resume) {
+    // Continue was offered for a save of this package, so its .pkg was readable a moment ago. A match started new here
+    // would play without a hash, and could not tell the save from any other file: stop, and leave the save alone.
+    LOG_ERR("GAME", "%s: cannot read .pkg; not starting a new match over a save", manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    return;
   } else {
     LOG_INF("GAME", "%s: no valid .pkg; no resume.bin", manifest.id);
   }
@@ -221,6 +227,8 @@ void GameMatchActivity::handle(const MatchEvent event) {
       // The new round's snapshots replace a save Over could not delete.
       resumeDeletePending = false;
       if (event == MatchEvent::PlayAgain) {
+        // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
+        store.saves().clearResumeBackoff();
         // Frames the last round drew after it ended are never shown, one from a
         // step still running when Play again came included: the loop asks for no
         // render until the new round's first frame is published.
@@ -664,8 +672,9 @@ void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, co
   const fui::OptionDialogProps& props = dialogProps;
   const char* viewIcon = GameViewIcons::forView(state);
   if (viewIcon) {
-    // On the panel's own background, which buildView sets white with a solid black foreground, so the ink follows that
-    // foreground (the headline's style beside it, were it not solid) as the rows' ink follows theirs.
+    // The icon sits on the panel's own background, not on a button. buildView sets that panel white with a solid black
+    // foreground, so this reads black; it is the panel's foreground that decides, as a row's button style decides its
+    // icon, and the headline's text style stands in only for a foreground that is not solid (none is today).
     drawGameIcon(renderer, viewIcon, band.x + (band.width - GameViewIcons::VIEW_PIXELS) / 2, band.y,
                  GameViewIcons::VIEW_PIXELS, labelIsBlack(props.styles.normal.foreground, props.headlineText));
   }

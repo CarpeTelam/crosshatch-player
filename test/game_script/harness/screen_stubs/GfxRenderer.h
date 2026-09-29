@@ -7,6 +7,8 @@
 // so it stays as it is; every source of a suite that includes this header is built with it
 // (a source built against the shared double has another GfxRenderer layout).
 
+#include <functional>
+
 #define GfxRenderer GfxRendererRecorder
 #include "../stubs/GfxRenderer.h"
 #undef GfxRenderer
@@ -27,6 +29,9 @@ class GfxRenderer : public GfxRendererRecorder {
 
   void displayBuffer(const HalDisplay::RefreshMode mode = HalDisplay::FAST_REFRESH, const bool = false) const {
     shown.push_back({mode, calls.size()});
+    // What a test does while the panel is being refreshed (retro deferral e3r-2): the frame is drawn and this call has
+    // not returned, so the match must still be dropping gestures.
+    if (onDisplay) onDisplay();
   }
   void tapToLogical(const float x, const float y, int& logicalX, int& logicalY) const {
     logicalX = static_cast<int>(x);
@@ -55,6 +60,8 @@ class GfxRenderer : public GfxRendererRecorder {
     icons.clear();
   }
 
+  // Runs inside every displayBuffer call, after it is recorded; empty by default.
+  mutable std::function<void()> onDisplay;
   mutable std::vector<Shown> shown;
   mutable std::vector<IconDrawn> icons;
 };

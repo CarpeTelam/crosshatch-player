@@ -516,11 +516,13 @@ TEST_F(GfxBindingsTest, AnUnknownIconsNameIsShownShortAndPrintable) {
     std::string shown;
   };
   std::string cut = "a";
-  for (int i = 0; i < 15; ++i) cut += "\xC3\xA9";  // 31 bytes: the 32nd would split an e-acute
+  for (int i = 0; i < 15; ++i) cut += "\xC3\xA9";  // 31 bytes; the 32nd byte, the lead of the next e-acute, is cut off
+  cut += "?";
   const Case cases[] = {
       {"string.rep('a', 40)", std::string(32, 'a')},
       {"string.rep('b', 32)", std::string(32, 'b')},
-      {"'a' .. string.rep('\\u{e9}', 20)", cut},
+      {"'a' .. string.rep('\\u{e9}', 20)", cut},          // the cut splits the 16th e-acute: its lead byte is '?'
+      {"string.rep('\\x80', 40)", std::string(32, '?')},  // continuation bytes only: 32 marks, not an empty name
       {"'x\\ny\"z\\0w\\127v\\tu'", "x?y?z?w?v?u"},
       {"''", ""},
       {"42", "42"},  // a number is a string to Lua's string checks

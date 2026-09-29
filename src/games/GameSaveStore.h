@@ -81,7 +81,7 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // Writes `snapshot` at `ver` (its low 16 bits) as resume.bin. False when it could not
   // be written; resume.bin is then as it was.
   bool saveResume(std::span<const uint8_t> snapshot, uint32_t ver);
-  // Removes resume.bin and its tmp; false when one is still there.
+  // Removes resume.bin and its tmp; false when one is still there. Does nothing (true) without the package hash.
   bool deleteResume();
   // Each loop pass in Playing and Paused, and at Leave and the forced exit: takes the
   // latest snapshot `mailbox` holds and writes it, or, when its status is over, deletes
@@ -91,6 +91,9 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // sleeps). Does nothing without a package hash or a pending snapshot. True unless a
   // write was due and failed.
   bool flushResume(SnapshotMailbox& mailbox, uint32_t nowMs);
+  // Forgets the failed-write backoff above: Play again starts a round whose first snapshot should replace the
+  // finished round's file at once, not FLUSH_INTERVAL_MS after a delete or write that failed for the last round.
+  void clearResumeBackoff();
 
  private:
   // Reads `path` into `out`; null with `length` set when it holds a valid store,

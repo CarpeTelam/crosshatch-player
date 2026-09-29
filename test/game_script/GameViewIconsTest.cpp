@@ -184,3 +184,16 @@ TEST(GameViewIconsTest, AnIconTakesTheInkItsLabelDrawsIn) {
   EXPECT_TRUE(GameViewIcons::labelIsBlack(false, false, false));
   EXPECT_FALSE(GameViewIcons::labelIsBlack(false, true, true));
 }
+
+// An inverted text style draws in the opposite ink, so a non-solid paint's label that is inverted white text is black.
+TEST(GameViewIconsTest, AnInvertedTextStyleFlipsTheInkTheIconFollows) {
+  EXPECT_FALSE(GameViewIcons::textInkIsWhite(false, false));
+  EXPECT_TRUE(GameViewIcons::textInkIsWhite(true, false));
+  EXPECT_TRUE(GameViewIcons::textInkIsWhite(false, true));  // black text, inverted: white
+  EXPECT_FALSE(GameViewIcons::textInkIsWhite(true, true));  // white text, inverted: black
+  // Through the rule: under a dither, the icon beside inverted black text is white.
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(false, false, GameViewIcons::textInkIsWhite(false, true)));
+  EXPECT_TRUE(GameViewIcons::labelIsBlack(false, true, GameViewIcons::textInkIsWhite(true, true)));
+  // A solid paint colours the text whatever the style says: `inverted` is cleared for it, so it is not read.
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(true, true, GameViewIcons::textInkIsWhite(false, false)));
+}

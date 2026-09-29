@@ -75,6 +75,10 @@ constexpr bool rowIconFits(const int rowWidth, const int rowHeight, const int la
 // colour into the text (`solid`, `paintWhite`) and leaves the text style's own colour (`textWhite`) under any other
 // paint, a dither or a bitmap, which has no single colour. An icon follows the same rule: reading the paint's colour
 // alone would call every non-solid paint black whatever its label does (epic-icon-library retro R8 e, R9 g).
+// The ink a text style draws in when a paint gives it no colour: its own colour, flipped by `inverted` (DisplayTarget
+// draws inverted text in the opposite ink).
+constexpr bool textInkIsWhite(const bool colorWhite, const bool inverted) { return colorWhite != inverted; }
+
 constexpr bool labelIsBlack(const bool solid, const bool paintWhite, const bool textWhite) {
   return !(solid ? paintWhite : textWhite);
 }

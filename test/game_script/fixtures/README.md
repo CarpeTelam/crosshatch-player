@@ -81,6 +81,12 @@ frame at the icon and image budget, under `RenderLock`, has been timed only on t
 fills that entry left unbounded. It packs as above (`gray.png` becomes a 1-bit dithered `gray.bmp` at install:
 about half the pixels white, runs of one or two pixels, the worst case for the replay's fills). Run it on an X4 Pro:
 
+0. Note the firmware commit the device runs (`git rev-parse HEAD` of the build, or the version line the device shows in
+   Settings) and write it beside the results: a timing means nothing without the build it came from. Start the serial
+   log before opening the game and keep it for the whole run: `pio device monitor -e x4pro` (115200 baud; add
+   `--filter log2file` or redirect with `| tee timing.log`), or any terminal on the board's USB serial port. It carries
+   the `band 2 charges ...` line, a watchdog or reset banner if there is one, and the `GAME` line `VM stopped; arena
+   peak ...` that a normal Leave prints.
 1. Install `timing.cpgame`, open it from Home, Games. The menu is a cheap frame: the baseline.
 2. For each band in turn, tap it and record the time from the tap to the finished picture (a 60 fps phone video of the
    screen, counted in frames, is enough; the serial log has no replay time), whether the device stays responsive
@@ -99,7 +105,7 @@ The simulator's frames for the three bands are in
 `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-timing-screenshots/`; their few
 milliseconds of replay say nothing about the device.
 
-What to record for entry 14: each band's tap-to-picture time and the menu's, a reset or watchdog line if any, and
+What to record for entry 14: the firmware commit, each band's tap-to-picture time and the menu's, a reset or watchdog line if any, the `VM stopped` line after Leave, and
 whether a Back press during a band's replay is answered once the picture is drawn. `GfxBindingsTest`'s
 `TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas` pins the frames on the host, and `GameHashTest` and the installer suite
 install the package.

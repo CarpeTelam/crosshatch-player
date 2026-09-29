@@ -121,7 +121,7 @@ class RemoveListTest : public match::ScreenTest {
   }
   // A second launcher, as goToGames() builds one after a match ends or is left.
   void reopen() {
-    dropMatch();
+    match::letStartedMatchesGo([this] { dropMatch(); });
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();

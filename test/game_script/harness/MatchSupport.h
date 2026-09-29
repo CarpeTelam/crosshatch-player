@@ -14,6 +14,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -211,6 +212,33 @@ inline bool waitFor(const std::function<bool()>& done, const int timeoutMs = 100
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return true;
+}
+
+// The resume.bin files on the fake card now.
+inline std::set<std::string> resumeFilesOnCard() {
+  std::set<std::string> found;
+  for (const auto& entry : fakesd::sim().entries) {
+    const std::string suffix = "/resume.bin";
+    if (!entry.dead && !entry.isDir && entry.path.size() > suffix.size() &&
+        entry.path.compare(entry.path.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      found.insert(entry.path);
+    }
+  }
+  return found;
+}
+
+// Lets go of the matches a launcher test started (`drop` does it, as the manager would), the same way every run.
+// A match's VM publishes its first snapshot a moment after it logs "Started <id>", and the match writes its last
+// snapshot as resume.bin on the way out, so a test that dropped it at once got a save on some runs and none on others,
+// and the launcher opened next listed a Continue row or not. This waits until every match that started has logged its
+// first round, then drops, then takes away the saves that appeared: a test that means a save puts it there before.
+inline void letStartedMatchesGo(const std::function<void()>& drop) {
+  waitFor([] { return fakelog::countLines("GAME: Started ") <= fakelog::countLines("Round started"); }, 3000);
+  const std::set<std::string> before = resumeFilesOnCard();
+  drop();
+  for (const std::string& path : resumeFilesOnCard()) {
+    if (before.count(path) == 0) fakesd::removeEntry(path);
+  }
 }
 
 // The manifest of a game the fixtures hold (what the launcher passes the match).
