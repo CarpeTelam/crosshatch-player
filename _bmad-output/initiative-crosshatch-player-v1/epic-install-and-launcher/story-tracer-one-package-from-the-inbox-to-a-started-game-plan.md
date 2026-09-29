@@ -3,7 +3,7 @@ title: 'Tracer: one package from the inbox to a started game'
 type: 'feature'
 ticket: '3'
 created: '2026-09-29'
-status: built
+status: done
 baseline_revision: '4db0787ecacba1a3af00d48f3fdd79f7013af095'
 route: 'full'
 route_source: 'auto'
