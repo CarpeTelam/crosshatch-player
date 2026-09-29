@@ -212,4 +212,32 @@ TEST(ApiLevelTest, ManifestIconMatchesTheParser) {
   EXPECT_EQ(exceptions, std::set<std::string>{});
 }
 
+// The list's `enum icon_weight` values are the ones Manifest::parse accepts, both ways: each listed value parses
+// (regular as ICON_REGULAR, fill as ICON_FILL), and any other value is BadIconWeight. scripts/pack_game_test.py
+// reads the same lines for the packer.
+TEST(ApiLevelTest, IconWeightsMatchTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::set<std::string> listed;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "enum" && entry.body.rfind("icon_weight ", 0) == 0) listed.insert(entry.body.substr(12));
+  }
+  EXPECT_EQ(listed, (std::set<std::string>{"fill", "regular"}));
+  const std::string head =
+      R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"], )";
+  for (const std::string& weight : listed) {
+    GameCore::Manifest m;
+    ASSERT_EQ(GameCore::Manifest::parse(head + "\"icon_weight\": \"" + weight + "\"}", m),
+              GameCore::ManifestError::None)
+        << weight;
+    EXPECT_EQ(m.iconWeight, weight == "fill" ? GameCore::Manifest::ICON_FILL : GameCore::Manifest::ICON_REGULAR);
+  }
+  for (const std::string weight : {"bold", "Regular", "FILL", "", "regular ", "duotone"}) {
+    GameCore::Manifest m;
+    EXPECT_EQ(GameCore::Manifest::parse(head + "\"icon_weight\": \"" + weight + "\"}", m),
+              GameCore::ManifestError::BadIconWeight)
+        << weight;
+  }
+}
+
 }  // namespace

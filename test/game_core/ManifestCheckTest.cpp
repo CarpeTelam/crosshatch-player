@@ -150,6 +150,11 @@ TEST(ManifestCheckTest, BrokenFieldsAreInvalid) {
   Manifest unterminated = solo();
   std::memset(unterminated.version, 'v', sizeof(unterminated.version));
   expectVerdict(unterminated.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  // An icon with no terminator: only the length cap in validIcon refuses it, and the installer's strlen
+  // of the icon would otherwise read past the field.
+  Manifest unterminatedIcon = solo();
+  std::memset(unterminatedIcon.icon, 'x', sizeof(unterminatedIcon.icon));
+  expectVerdict(unterminatedIcon.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
 }
 
 TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {

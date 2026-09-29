@@ -92,13 +92,27 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 | 12 | gap | No verification gaps found | n/a | n/a | Lens returned none. |
 | 13 | intent | Readings R-A to R-D; diff implements the package-flow reading; launcher use of `iconWeight` and hand-copied folders are outside it | n/a | defer | Recorded under `## 4.7` in `deferred-work.md` (launcher entries 8 and 9). |
 
+Pass 2 (source: the orchestrator's independent review, adversarial, edge-case, and verification-gap lenses; a finding two lenses made appears once).
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|------|---------|---------|-------|-------------------|
+| 14 | vg 1, adversarial 3 | Packer's `ICON_NAME`, `MAX_ICON_BYTES`, `ICON_WEIGHTS` are a hand copy; no test ties them to the API list; weights have no anchor | medium | patch | `test_the_api_list_holds_the_packers_manifest_rules` reads `api-level-1.txt` (pattern, cap, manifest keys, weights) and sweeps edge names; new `enum icon_weight regular` and `fill` lines (CRC changed) with `ApiLevelTest.IconWeightsMatchTheParser` on the C++ side. |
+| 15 | vg 2 | Unterminated 33-byte `icon` in `BrokenFieldsAreInvalid` missing | low | patch | Case added (`unterminatedIcon`). |
+| 16 | edge 2 | `UnknownIcon` missing from `PackageHardeningTest`'s lists; no upgrade-over-installed case | low | patch | Added to both lists (and `icon-not-in-library` to `gen_hardening_packages.py`, which the first list requires; its stale `lua_sources_bytes` fallback went too); `InstallerIconTest.AnUpgradeWithAnUnknownIconLeavesTheInstalledGameAndItsDataAlone` snapshots `/.games` and `/.games-data`. |
+| 17 | edge 4 | `circle-fill` gives no hint | low | patch | The packer says to use the stem with `icon_weight` `fill` when the stem is in the library; test `test_a_fill_name_points_to_icon_weight`. The device text is unchanged. |
+| 18 | adversarial 5, vg 4 | Design Notes and `installer_icons.cmake` say `installer.cmake` is untouched; `formats.md` Install step 1 omits the library check; the `icon_weight` comment commits to "no effect" | low | patch | Design Notes and the cmake comment corrected; `formats.md` step 1 names the check; the API-list comment is neutral about a game without an icon. |
+| 19 | adversarial 1 | The registry lists a hand-copied folder whose icon the library lacks | low | defer | Belongs to entry 8; kept under `## 4.7` in `deferred-work.md`. |
+| 20 | vg 3 | `UnknownIcon` reason text untested | low | defer | Same as every reason; already under `## 4.6` (entry 5 or 8 pins the map). |
+
 ## Design Notes
 
 `git log -L` on the rewritten functions. `validIcon` (9197d046, 97dcf52f): guards are the empty and length checks, kept; its accept-`_` rule is the one the decision reverses. `Manifest::check` (3d4aec97, 97dcf52f, ...): Invalid verdicts (`BadFields`, solo seats, nearby seats) come before Unavailable, so a broken package is rejected at install before its host fit is judged; kept unchanged. Only the `startable` line changes: pass is offered only when `host.pass`. `fieldsValid` also rejects an out-of-range `iconWeight` for a Manifest that did not come from `parse`.
 
-The `name manifest_icon` pattern in `api-level-1.txt` is the grammar; the 32-byte cap is the existing `limit manifest_icon_bytes`. `ApiLevelTest.ManifestIconMatchesTheParser` runs both over edge names against `Manifest::parse`. The installer suite is a new file, `installer_icons.cmake`, which also adds `lib/GameIcons` to `game_installer_src`'s include path (entry 3's `installer.cmake` stays untouched).
+The `name manifest_icon` pattern in `api-level-1.txt` is the grammar; the 32-byte cap is the existing `limit manifest_icon_bytes`. `ApiLevelTest.ManifestIconMatchesTheParser` runs both over edge names against `Manifest::parse`. The installer suite is a new file, `installer_icons.cmake`; `installer.cmake` (entry 3's file, on this lane's path) gains the one `lib/GameIcons` include folder `GamePackageInstaller.cpp` now needs. The follow-up commit anchors the packer to the API list: `pack_game_test.py` reads `api-level-1.txt` for the icon pattern, the byte cap, the manifest keys, and the new `enum icon_weight` lines, which `ApiLevelTest.IconWeightsMatchTheParser` ties to `Manifest::parse`.
 
 ## Verification
+
+Follow-up commit (independent review): host suites 987 of 987 pass with `API_SURFACE_CRC` 0xF512998F (Python `zlib.crc32` agrees); every `scripts/*_test.py` OK (`pack_game_test.py` with the new API-list anchor); `check_layers.py` and `check_api_freeze.py` pass; `pio run -e x4pro` and `-e default` SUCCESS. The first-commit runs below stand for the rest.
 
 **Commands** (host suites and the two firmware builds ran under `build.lock`, the tree at this commit's sources):
 - `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j` -- 984 of 984 pass (966 on the base, plus the new ones): `ManifestTest.AcceptsLibraryIconNames`, `RejectsIconNamesOutsideTheGrammar`, `ParsesIconWeight`, `RejectsMalformedIconWeight`; `ManifestCheckTest.AHostWithoutPassOffersOnlySolo`, `PassOnlyOnAHostWithoutPassIsUnavailable`; `GameHostCapsTest.PassIsOffUntilPassAndPlay`; `ApiLevelTest.ManifestIconMatchesTheParser`; ten `InstallerIconTest` cases, including `AnIconTheLibraryLacksEndsBad` (`.bad`, `UnknownIcon`); the level-1 tests (`SurfaceCrcMatchesTheLists`, `ManifestKeysMatchTheParser`, `ApiSurfaceTest.ListLoadsAndMatchesItsCrc`) with `API_SURFACE_CRC` 0x9C54B7D6 (also computed with Python's `zlib.crc32` over the entry lines).

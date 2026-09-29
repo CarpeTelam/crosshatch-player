@@ -208,7 +208,8 @@ is shown); any other failure, memory running out inside the converter included, 
 For each inbox file the installer:
 
 1. lists the members and checks them against the whitelist, reads `manifest.json` (`Manifest::parse`), and applies
-   `Manifest::check` with this host's capabilities: `Invalid` makes the package invalid, while `Unavailable` (an `api`
+   `Manifest::check` with this host's capabilities: `Invalid` makes the package invalid, as does an `icon` that is not in
+   the game icon library (`GameIcons::find`; `Manifest::parse` cannot see the library), while `Unavailable` (an `api`
    this firmware cannot run, for one) installs, and the registry lists it with that verdict for the launcher to mark
    (the first Games list shows only games that can start);
 2. extracts the members, in name order, to `/.games-tmp/<id>/`, converting images as it goes, and hashes them;

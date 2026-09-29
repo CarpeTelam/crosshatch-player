@@ -8,7 +8,9 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <map>
 #include <string>
+#include <utility>
 
 #include "GamePackageInstaller.h"
 #include "GameRegistry.h"
@@ -30,6 +32,20 @@ std::string withMembers(const std::string& extra, const std::string& modes = R"(
   std::string json = manifestJson("g", "Test Game", 1, seats, modes);
   json.pop_back();
   return json + ", " + extra + "}";
+}
+
+// Every file and folder under /.games and /.games-data, with its bytes.
+using Snapshot = std::map<std::string, std::pair<bool, Bytes>>;
+
+Snapshot snapshotOfGames() {
+  Snapshot snapshot;
+  for (const auto& entry : fakesd::sim().entries) {
+    if (entry.dead) continue;
+    if (fakesd::inSubtree(entry.path, "/.games") || fakesd::inSubtree(entry.path, "/.games-data")) {
+      snapshot[entry.path] = {entry.isDir, entry.bytes};
+    }
+  }
+  return snapshot;
 }
 
 class InstallerIconTest : public ::testing::Test {
@@ -161,4 +177,21 @@ TEST_F(InstallerIconTest, AFolderWithAnUnderscoreIconIsNotListed) {
   ASSERT_TRUE(GameRegistry::load(listing));
   EXPECT_EQ(listing.count, 0u);
   EXPECT_TRUE(fakelog::any("invalid icon"));
+}
+
+// An upgrade whose icon the library lacks is rejected before anything is removed: the installed game and its
+// data are byte for byte what they were.
+TEST_F(InstallerIconTest, AnUpgradeWithAnUnknownIconLeavesTheInstalledGameAndItsDataAlone) {
+  ASSERT_EQ(install(withMembers(R"("icon": "x")")).installed, 1);
+  fakesd::addFile("/.games-data/g/store.bin", std::string("saved"));
+  fakesd::addFile("/.games-data/g/resume.bin", std::string("resume"));
+  const Snapshot before = snapshotOfGames();
+  ASSERT_FALSE(before.empty());
+
+  const GamePackageInstaller::Report report = install(withMembers(R"("icon": "no-such-icon")"));
+  EXPECT_EQ(report.firstError, Error::UnknownIcon);
+  EXPECT_EQ(report.installed, 0);
+  EXPECT_TRUE(exists(INBOX + "g.cpgame.bad"));
+  EXPECT_TRUE(snapshotOfGames() == before) << "/.games or /.games-data changed";
+  EXPECT_FALSE(exists("/.games-tmp"));
 }

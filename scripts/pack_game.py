@@ -223,8 +223,13 @@ def read_manifest(data, dir_name, api_range, load_icons):
         value = manifest['icon']
         if not isinstance(value, str) or not is_text(value, MAX_ICON_BYTES) or not ICON_NAME.fullmatch(value):
             bad(f'icon must be a library icon name, [a-z][a-z0-9]*(-[a-z0-9]+)* of at most {MAX_ICON_BYTES} bytes')
-        elif value not in load_icons():
-            bad(f'icon {value!r} is not in the game icon library')
+        else:
+            icons = load_icons()
+            if value not in icons:
+                hint = ''
+                if value.endswith('-fill') and value[: -len('-fill')] in icons:
+                    hint = f'; use icon {value[: -len("-fill")]!r} with icon_weight \'fill\''
+                bad(f'icon {value!r} is not in the game icon library{hint}')
     if 'icon_weight' in manifest and manifest['icon_weight'] not in ICON_WEIGHTS:
         bad(f'icon_weight must be {" or ".join(repr(w) for w in ICON_WEIGHTS)}')
     return manifest, problems

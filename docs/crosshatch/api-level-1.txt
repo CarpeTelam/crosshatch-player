@@ -258,9 +258,12 @@ manifest icon_weight string?
 # accepted) and takes at most manifest_icon_bytes bytes, and a name the library
 # lacks makes the package invalid (the installer and scripts/pack_game.py check
 # it; Manifest::parse cannot see the library). icon_weight is "regular" (when absent) or
-# "fill", ch.gfx.icon's weights; any other value makes the package invalid. It
-# needs no icon (without one it has no effect).
+# "fill", ch.gfx.icon's weights (the enum icon_weight entries below); any other
+# value makes the package invalid. What a game without an icon shows is up to the
+# launcher.
 name manifest_icon [a-z][a-z0-9]*(-[a-z0-9]+)*
+enum icon_weight regular
+enum icon_weight fill
 
 # Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
 # Marks

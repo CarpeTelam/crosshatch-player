@@ -26,6 +26,8 @@ MANIFEST = json.dumps({
     'id': 'hardening', 'name': 'Hardening', 'version': '1', 'api': 1,
     'seats': {'min': 1, 'max': 1}, 'modes': ['solo'],
 }).encode()
+# The same game with an icon that is well formed but not in the library (R9: the installer's check).
+MANIFEST_UNKNOWN_ICON = json.dumps({**json.loads(MANIFEST), 'icon': 'no-such-icon'}).encode()
 MAIN = b'return {}\n'
 BYTECODE = b'\x1bLua\x54\x00\x19\x93\r\n\x1a\n'  # the start of a precompiled chunk
 
@@ -178,8 +180,8 @@ def cases(vectors):
     add('deflated-size-overstated', 'BadSize', zip_of(game(Member('a.lua', b'-- a\n' * 20, usize=200))))
     add('stored-size-mismatch', 'BadSize', zip_of(game(stored('a.lua', b'-- hi\n', usize=10))))
 
-    # ---- the .lua members together (GameAssets::load's limit; entry 7 moves it into the vectors) ----
-    sources = limits.get('lua_sources_bytes', {'limit': 262144, 'at': 262144, 'over': 262145})
+    # ---- the .lua members together (GameAssets::load's limit; package_vectors.json holds it) ----
+    sources = limits['lua_sources_bytes']
     for label, total in (('at', sources['at']), ('over', sources['over'])):
         rest = total - len(MAIN) - member['limit']
         add(f'{label}-lua-sources', 'Ok' if label == 'at' else 'SourcesTooBig',
@@ -234,6 +236,9 @@ def cases(vectors):
     add('count-disk-differs', 'BadDirectory', zip_of(four, disk_total=3))
     add('count-only-total-differs', 'BadDirectory', zip_of(four, total=5))
     add('count-above-the-limit', 'BadDirectory', zip_of(four, total=40, disk_total=40))
+
+    # ---- the manifest's icon ----
+    add('icon-not-in-library', 'UnknownIcon', zip_of(game(manifest=MANIFEST_UNKNOWN_ICON)))
 
     # ---- CRCs ----
     add('crc-deflated', 'BadCrc', zip_of(game(Member('a.lua', b'-- a\n', crc=0x12345678))))

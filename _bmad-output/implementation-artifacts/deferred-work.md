@@ -294,6 +294,3 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-manifest-icon-grammar-library-check-and-the-pass-capability-plan.md`
   summary: Nothing yet reads `Manifest::iconWeight`: the launcher rows (entries 8 and 9) should pass it to `drawGameIcon` as the weight, and the launcher's icon draw should fall back to the default glyph for an icon the library lacks.
   evidence: Entry 7 parses and checks `icon_weight` and rejects an unknown `icon` at install, but `GameRegistry` lists any folder under `/.games/`, including one copied there by hand or by the simulator, so a name the library lacks can still reach a row; `drawGameIcon` refuses it by name.
-- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-manifest-icon-grammar-library-check-and-the-pass-capability-plan.md`
-  summary: `test/game_script/harness/gen_hardening_packages.py` still says "entry 7 moves it into the vectors" above its `lua_sources_bytes` fallback; the vector exists now, so the fallback and the comment can go.
-  evidence: The file is entry 6's harness file, outside entry 7's `touches`; `limits.get('lua_sources_bytes', {...})` returns the vector's numbers now, and both agree (262,144 at, 262,145 over).

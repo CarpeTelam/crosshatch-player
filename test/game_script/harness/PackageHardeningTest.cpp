@@ -64,6 +64,7 @@ const std::map<std::string, Error>& errorsByName() {
       {"SourcesTooBig", Error::SourcesTooBig},
       {"Unsupported", Error::Unsupported},
       {"BadDirectory", Error::BadDirectory},
+      {"UnknownIcon", Error::UnknownIcon},
   };
   return names;
 }
@@ -180,7 +181,7 @@ TEST_F(HardeningTest, TheGeneratorMadeOnePackageForEachRejection) {
   for (const Case& crafted : cases) expected.insert(crafted.expected);
   for (const char* name :
        {"Ok", "PackageTooBig", "MemberTooBig", "ImagesTooBig", "SourcesTooBig", "TooManyMembers", "BadMember",
-        "BadImage", "BadSize", "BadCrc", "BinaryLua", "Unsupported", "BadDirectory", "NotAPackage"}) {
+        "BadImage", "BadSize", "BadCrc", "BinaryLua", "Unsupported", "BadDirectory", "NotAPackage", "UnknownIcon"}) {
     EXPECT_EQ(expected.count(name), 1u) << "no crafted package for " << name;
   }
   // Each name in cases.txt is one the installer knows, and none of the card-fault errors (those keep the file).
@@ -191,10 +192,11 @@ TEST_F(HardeningTest, TheGeneratorMadeOnePackageForEachRejection) {
 
 TEST_F(HardeningTest, EveryErrorHasItsOwnDescription) {
   std::set<std::string> texts;
-  for (const Error error : {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember,
-                            Error::NoMain, Error::TooManyMembers, Error::BadImage, Error::PackageTooBig,
-                            Error::MemberTooBig, Error::ImagesTooBig, Error::SourcesTooBig, Error::BadSize,
-                            Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory}) {
+  for (const Error error :
+       {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember, Error::NoMain,
+        Error::TooManyMembers, Error::BadImage, Error::PackageTooBig, Error::MemberTooBig, Error::ImagesTooBig,
+        Error::SourcesTooBig, Error::BadSize, Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory,
+        Error::UnknownIcon}) {
     const std::string text = GamePackageInstaller::describe(error);
     EXPECT_NE(text, "unknown error");
     EXPECT_TRUE(texts.insert(text).second) << "two errors describe themselves as: " << text;

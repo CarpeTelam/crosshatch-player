@@ -659,6 +659,13 @@ class ReadManifestTest(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.refused(manifest_text(icon=bad), 'icon must be', icons={bad} if isinstance(bad, str) else set())
 
+    def test_a_fill_name_points_to_icon_weight(self):
+        self.refused(manifest_text(icon='x-fill'), "use icon 'x' with icon_weight 'fill'", icons={'x'})
+        # No hint when the stem is not a library icon either.
+        err = self.read(manifest_text(icon='nope-fill'), icons={'x'})
+        self.assertEqual(len(err), 1)
+        self.assertNotIn('icon_weight', err[0])
+
     def test_icon_must_be_in_the_library(self):
         self.refused(manifest_text(icon='no-such-icon'), "icon 'no-such-icon' is not in the game icon library")
         self.assertEqual(self.read(manifest_text(icon='dot-outline')), [])
@@ -669,6 +676,28 @@ class ReadManifestTest(unittest.TestCase):
 
         self.assertEqual(pg.read_manifest(manifest_text().encode(), 'demo', LEVELS, fail)[1], [])
         pg.read_manifest(manifest_text(icon='Bad').encode(), 'demo', LEVELS, fail)
+
+    def test_the_api_list_holds_the_packers_manifest_rules(self):
+        # docs/crosshatch/api-level-1.txt is what ApiLevelTest ties to Manifest::parse, so tying the packer
+        # to the same lines ties the two readers together.
+        entries = [line.split(' ', 1) for line in (REPO / 'docs' / 'crosshatch' / 'api-level-1.txt').read_text(
+            encoding='utf-8').splitlines() if line and not line.startswith('#')]
+        names = {body.split(' ', 1)[0]: body.split(' ', 1)[1] for kind, body in entries if kind == 'name'}
+        limits = {body.split(' ', 1)[0]: int(body.split(' ', 1)[1]) for kind, body in entries if kind == 'limit'}
+        weights = {body.split(' ', 1)[1] for kind, body in entries if kind == 'enum' and body.startswith('icon_weight ')}
+        manifest_keys = {body.split(' ', 1)[0].split('.')[0] for kind, body in entries if kind == 'manifest'}
+        self.assertEqual(pg.ICON_NAME.pattern, names['manifest_icon'])
+        self.assertEqual(pg.MAX_ICON_BYTES, limits['manifest_icon_bytes'])
+        self.assertEqual(weights, set(pg.ICON_WEIGHTS))
+        self.assertEqual(manifest_keys, set(pg.KNOWN_KEYS))
+        # The listed pattern and cap decide the same names as the packer, over the edge names.
+        pattern = re.compile(names['manifest_icon'])
+        edge = ['', '-', 'a', 'a-', '-a', 'a--b', 'a-b', 'a_b', '_', '1', '1a', 'a1', 'A', 'aB', 'a b', 'a.b', 'a-1',
+                'a-b-c', 'old_name', 'é', 'x' * 32, 'x' * 33, 'x' * 30 + '-b', 'x' * 31 + '-b']
+        for name in edge:
+            with self.subTest(name=name):
+                listed = len(name) <= limits['manifest_icon_bytes'] and bool(pattern.fullmatch(name))
+                self.assertEqual(listed, self.read(manifest_text(icon=name), icons={name}) == [])
 
     def test_icon_weight(self):
         for bad in ('bold', 'Regular', '', 'thin', 1, None, True, ['fill']):
