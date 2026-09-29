@@ -166,3 +166,7 @@ target_link_libraries(GameSaveStoreTest PRIVATE
 )
 
 gtest_discover_tests(GameSaveStoreTest)
+
+# The src/games host harness (doubles for storage, PSRAM, and the renderer; its suites are
+# harness/*.cmake).
+add_subdirectory(harness)
