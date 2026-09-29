@@ -16,11 +16,17 @@
 // under the name and does not open. A file that failed to install is explained once, in a popup.
 // Opening a game replaces this screen with its match, or, for a game the host can start in two or more modes, opens
 // the mode picker (GameModeActivity) above it.
+// Above the game rows the list has one "Continue" row (the game's name and icon, "Continue" under it) for each game
+// whose GameSaveStore::peek() finds a valid resume.bin for the installed package, in the games' name order. A tap
+// replaces this screen with the match resumed from the save, with no mode step. A save of a changed package is not
+// valid, so it has no row. The rows are found when the listing is built (onEnter, and after a remove), never while a
+// row is drawn. A long-press on a Continue row does nothing: removing is on the game's own row.
 // A long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
 // (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup.
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
-// repeat rows of the one before it. The launcher remembers the game it last opened (a fingerprint of its id), and the
-// next launcher, built by ActivityManager::goToGames(), selects it and shows the page holding it.
+// repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
+// game it last opened (a fingerprint of its id), and the next launcher, built by ActivityManager::goToGames(), selects
+// that game's own row (also after a match started from its Continue row) and shows the page holding it.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
@@ -39,7 +45,7 @@ class GamesLauncherActivity final : public UiListActivity {
   const char* headerTitle() const override;
   void onEnter() override;
   void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
+  void activateIndex(int row) override;
   void onBackButton() override;
   bool handleCustomInput() override;
   bool handleButtons() override;
@@ -50,6 +56,9 @@ class GamesLauncherActivity final : public UiListActivity {
   // Installs the inbox, showing "Installing" while it works, and keeps the first failure for the popup.
   void installInbox();
   void loadGames();
+  // Finds the Continue rows for the loaded listing: one GameSaveStore::peek() for each game that can start, so a card
+  // with no save costs two existence checks a game and each save one whole-file read.
+  void loadContinue();
   // Reads each game's icon.bmp once, and says where every row's icon comes from.
   void loadIcons();
   // Where row `index`'s icon comes from: what provideRow draws and loadIcons logs.
@@ -60,11 +69,16 @@ class GamesLauncherActivity final : public UiListActivity {
   static constexpr int16_t NO_SLOT = -1;
   static constexpr freeink::ui::ActionId ACTION_REMOVE_CHOICE = ACTION_USER;
 
+  // Rows with a game behind them: the Continue rows, then one for each game in the listing.
+  size_t rowCount() const { return continueCount + listing.count; }
+  // The listing index of the game row `row` (below rowCount()) opens: a Continue row's own (continueOf is set whenever
+  // continueCount is not 0), else row - continueCount.
+  size_t gameOfRow(size_t row) const { return row < continueCount ? continueOf[row] : row - continueCount; }
   size_t paddedCount() const;
   // Selects the game the launcher last opened, when the listing still has it.
   void selectRemembered();
   // The remove confirmation: opened on a row, answered by Cancel (Back), or Remove.
-  void openRemoveDialog(int index);
+  void openRemoveDialog(int row);
   void closeRemoveDialog();
   void confirmRemove();
   bool handleRemoveInput();
@@ -73,6 +87,9 @@ class GamesLauncherActivity final : public UiListActivity {
 
   // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
   GameRegistry::Listing listing;  // every installed game, by name
+  // The listing index of the game of each Continue row, in listing order; the first continueCount are filled.
+  std::unique_ptr<uint16_t[]> continueOf;
+  size_t continueCount = 0;
   // The bitmaps of the games that have an icon.bmp, GameRowIcon::BYTES each in slot order, and the slot of
   // each game (parallel to listing.entries; NO_SLOT for none). Both are read-only after onEnter().
   std::unique_ptr<uint8_t[]> packageIcons;
@@ -85,7 +102,8 @@ class GamesLauncherActivity final : public UiListActivity {
   bool noteVisible = false;
   // Rows a page holds, as the last build measured them (1 until the first build); listCount() pads to it.
   std::atomic<uint16_t> pageRows{1};
-  // The listing index the open remove confirmation asks about (-1: none), and its focused button (0 Cancel, 1 Remove).
+  // The listing index (not a row) the open remove confirmation asks about (-1: none), and its focused button (0 Cancel,
+  // 1 Remove).
   int removeIndex = -1;
   uint8_t removeFocus = 0;
   // The confirmation's props, filled by each buildRemoveDialog (about 700 B: too big for the render task's stack).

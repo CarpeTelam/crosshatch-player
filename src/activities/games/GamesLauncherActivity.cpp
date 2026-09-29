@@ -17,6 +17,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GamePackageInstaller.h"
+#include "games/GameSaveStore.h"
 
 namespace fui = freeink::ui;
 
@@ -124,21 +125,24 @@ void GamesLauncherActivity::onEnter() {
   removeIndex = -1;
   installInbox();
   loadGames();
+  loadContinue();
   loadIcons();
   selectRemembered();
 }
 
 size_t GamesLauncherActivity::paddedCount() const {
+  const size_t rows = rowCount();
   const size_t page = pageRows.load();
-  if (page <= 1 || listing.count <= page) return listing.count;
-  return (listing.count + page - 1) / page * page;
+  if (page <= 1 || rows <= page) return rows;
+  return (rows + page - 1) / page * page;
 }
 
 void GamesLauncherActivity::selectRemembered() {
   if (lastOpened == 0) return;
   for (size_t i = 0; i < listing.count; ++i) {
     if (fingerprintOf(listing.entries[i].manifest.id) == lastOpened) {
-      activeNav().requestSelection(static_cast<int>(i));  // the first build shows the whole page holding it
+      // The game's own row, below the Continue rows; the first build shows the whole page holding it.
+      activeNav().requestSelection(static_cast<int>(continueCount + i));
       return;
     }
   }
@@ -185,7 +189,7 @@ bool GamesLauncherActivity::handleButtons() {
 
 // The base walks listCount(), which includes the blank rows that pad the last page; the selection must stay on games.
 void GamesLauncherActivity::navigateButtons() {
-  const int count = static_cast<int>(listing.count);
+  const int count = static_cast<int>(rowCount());
   auto& n = activeNav();
   buttonNavigator.onNextRelease([this, count, &n] { moveSelectionTo(ButtonNavigator::nextIndex(n.selected, count)); });
   buttonNavigator.onPreviousRelease(
@@ -205,11 +209,16 @@ void GamesLauncherActivity::onRowAction(const fui::ActionEvent& event) {
   UiListActivity::onRowAction(event);
 }
 
-void GamesLauncherActivity::openRemoveDialog(const int index) {
+void GamesLauncherActivity::openRemoveDialog(const int row) {
   // A blank padding row, an empty list, or the note over the list is not a game to ask about.
-  if (index < 0 || static_cast<size_t>(index) >= listing.count || noteVisible) return;
+  if (row < 0 || static_cast<size_t>(row) >= rowCount() || noteVisible) return;
   app.clearTapFlash();
-  removeIndex = index;
+  if (static_cast<size_t>(row) < continueCount) {
+    // A Continue row opens a save; the game's own row is where a game is removed. The press did its job: clear it.
+    requestUpdate();
+    return;
+  }
+  removeIndex = static_cast<int>(gameOfRow(static_cast<size_t>(row)));
   removeFocus = 0;  // Cancel: a stray Confirm keeps the game
   requestUpdate();
 }
@@ -270,7 +279,7 @@ void GamesLauncherActivity::confirmRemove() {
   snprintf(id, sizeof(id), "%s", listing.entries[index].manifest.id);
   snprintf(name, sizeof(name), "%s", listing.entries[index].manifest.name);
 
-  // The render task reads the listing and the icon cache, which the reload below replaces.
+  // The render task reads the listing, the Continue rows, and the icon cache, which the reload below replaces.
   RenderLock lock(*this);
   GUI.drawPopup(renderer, tr(STR_GAMES_REMOVING));
   const GamePackageInstaller::Error error = GamePackageInstaller::remove(id);
@@ -278,9 +287,11 @@ void GamesLauncherActivity::confirmRemove() {
   if (error == GamePackageInstaller::Error::None && lastOpened == fingerprintOf(id)) lastOpened = 0;
   // The registry is the truth after a failure too: a game whose .pkg went is no longer listed.
   loadGames();
+  loadContinue();
   loadIcons();
   const int count = static_cast<int>(listing.count);
-  activeNav().requestSelection(count > 0 ? std::min(index, count - 1) : 0);  // the next game takes its place
+  // The next game takes its place, on its own row below the Continue rows.
+  activeNav().requestSelection(count > 0 ? static_cast<int>(continueCount) + std::min(index, count - 1) : 0);
   if (error != GamePackageInstaller::Error::None) {
     LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go
     snprintf(note, sizeof(note), "%s: %s", name, tr(STR_GAMES_REMOVE_FAILED));
@@ -298,6 +309,24 @@ void GamesLauncherActivity::loadGames() {
     if (!game.check.ok())
       LOG_INF("GAME", "Unavailable %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
   }
+}
+
+void GamesLauncherActivity::loadContinue() {
+  continueOf.reset();
+  continueCount = 0;
+  if (listing.count == 0) return;
+  continueOf = makeUniqueNoThrow<uint16_t[]>(listing.count);
+  if (!continueOf) {
+    LOG_ERR("GAME", "OOM: %u Continue slots", static_cast<unsigned>(listing.count * sizeof(uint16_t)));
+    return;
+  }
+  for (size_t i = 0; i < listing.count; ++i) {
+    const GameRegistry::Entry& game = listing.entries[i];
+    if (!game.check.ok()) continue;  // a row that cannot open a match would not resume one
+    if (GameSaveStore::peek(game.manifest.id, game.pkgHash)) continueOf[continueCount++] = static_cast<uint16_t>(i);
+  }
+  LOG_DBG("GAME", "%u Continue rows of %u games", static_cast<unsigned>(continueCount),
+          static_cast<unsigned>(listing.count));
 }
 
 void GamesLauncherActivity::loadIcons() {
@@ -355,24 +384,30 @@ GameRowIcon::Choice GamesLauncherActivity::choiceOf(const size_t index) const {
 
 void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::ListItem& item) {
   auto* self = static_cast<GamesLauncherActivity*>(ctx);
-  if (index >= self->listing.count) {
+  if (index >= self->rowCount()) {
     // A padding row (listCount()): blank, and disabled so it registers no touch.
     item.label = "";
     item.enabled = false;
     return;
   }
-  const GameRegistry::Entry& game = self->listing.entries[index];
+  const size_t gameIndex = self->gameOfRow(index);
+  const GameRegistry::Entry& game = self->listing.entries[gameIndex];
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
-  // The reason, not a dimmed row: a disabled state would hide the selection, which can rest on this row.
-  if (!game.check.ok()) item.subtitle = unavailableText(game.check);
+  // A Continue row says so under the name. The other rows give the reason, not a dimmed row: a disabled state would
+  // hide the selection, which can rest on this row.
+  if (index < self->continueCount) {
+    item.subtitle = tr(STR_GAMES_CONTINUE);
+  } else if (!game.check.ok()) {
+    item.subtitle = unavailableText(game.check);
+  }
 
   // The package's icon is read already; a library icon is decoded into the one scratch, which the list draws from
   // (measure and draw share one provider call) before it asks for the next row.
   const uint8_t* bits = self->libraryIcon;
-  const GameRowIcon::Choice choice = self->choiceOf(index);
+  const GameRowIcon::Choice choice = self->choiceOf(gameIndex);
   if (choice.source == GameRowIcon::Source::PackageBmp) {
-    bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[index]) * GameRowIcon::BYTES;
+    bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[gameIndex]) * GameRowIcon::BYTES;
   } else {
     // A name choose() found in the library; the row is blank only if the library itself lost game-controller.
     GameRowIcon::renderLibraryIcon(choice.name, choice.fill, self->libraryIcon);
@@ -405,7 +440,7 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     fui::ListProps props;
     props.rowProvider = &GamesLauncherActivity::provideRow;
     props.rowProviderCtx = this;
-    props.count = static_cast<uint16_t>(listing.count);
+    props.count = static_cast<uint16_t>(rowCount());
     props.iconSize = GameRowIcon::SIDE;
     // Icon and air, so the fixed-height page estimate is the rows' real height and paging lands on whole rows.
     props.rowHeight = static_cast<int16_t>(GameRowIcon::SIDE + 2 * ROW_PADDING);
@@ -441,9 +476,10 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
   }
 }
 
-void GamesLauncherActivity::activateIndex(const int index) {
-  if (index < 0 || static_cast<size_t>(index) >= listing.count) return;
-  const GameRegistry::Entry& game = listing.entries[index];
+void GamesLauncherActivity::activateIndex(const int row) {
+  if (row < 0 || static_cast<size_t>(row) >= rowCount()) return;
+  const bool resume = static_cast<size_t>(row) < continueCount;  // a Continue row
+  const GameRegistry::Entry& game = listing.entries[gameOfRow(static_cast<size_t>(row))];
   if (!game.check.ok()) {
     LOG_INF("GAME", "Not starting %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
     requestUpdate();  // the tap moved the selection here; show it
@@ -451,9 +487,10 @@ void GamesLauncherActivity::activateIndex(const int index) {
   }
   app.clearTapFlash();                           // the row leaves this screen
   lastOpened = fingerprintOf(game.manifest.id);  // the next launcher opens on this game's page
-  // A game the host can start in two or more modes asks which one. The picker is pushed, so its Back returns to this
-  // list as it is; the match replaces the picker, and with it the stack.
-  if (GameModeActivity::needed(game.check.modes)) {
+  // A Continue row resumes the solo match its save holds, so there is no mode to ask. A game the host can start in two
+  // or more modes otherwise asks which one. The picker is pushed, so its Back returns to this list as it is; the match
+  // replaces the picker, and with it the stack.
+  if (!resume && GameModeActivity::needed(game.check.modes)) {
     auto picker = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game.manifest, game.check.modes);
     if (!picker) {
       LOG_ERR("GAME", "OOM: %u byte mode activity", static_cast<unsigned>(sizeof(GameModeActivity)));
@@ -465,11 +502,12 @@ void GamesLauncherActivity::activateIndex(const int index) {
   }
   // The match runs solo only (epic-pass-and-play and epic-play-nearby pass the mode in), so a game with no solo mode
   // plays solo here too.
-  if ((game.check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
+  if (!resume && (game.check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
     const char* only = (game.check.modes & GameCore::Manifest::MODE_PASS) != 0 ? "pass" : "nearby";
     LOG_INF("GAME", "%s offers only %s: the match plays solo until it can run %s", game.manifest.id, only, only);
   }
-  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest);
+  auto match = makeUniqueNoThrow<GameMatchActivity>(
+      renderer, mappedInput, game.manifest, resume ? GameMatchActivity::Start::Resume : GameMatchActivity::Start::New);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame

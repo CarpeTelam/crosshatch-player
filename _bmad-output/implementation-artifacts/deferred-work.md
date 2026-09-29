@@ -376,3 +376,21 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-remove-a-game-from-the-launcher-plan.md`
   summary: Whole-page paging assumes every launcher row is one fixed height (`GameRowIcon::SIDE` plus 16); a theme whose row grows past it would draw fewer rows than `ListNav::visibleRows` counts, and the padded pages would misalign; a second tap on Remove that arrives during the blocking delete could land on the refreshed list.
   evidence: `GamesLauncherActivity::buildScreen` pads to `n.visibleRows`; `confirmRemove` blocks on the card under the render lock. Neither is shown to occur at the shipped fonts; the harness cannot stage a queued tap.
+
+## 4.12
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-continue-in-the-launcher-plan.md`
+  summary: Resolved by entry 12: the `## 4.11` item "Nothing in `src/` calls `GameSaveStore::peek` or constructs `GameMatchActivity` with `Start::Resume`; entry 12's Continue row is the caller, and until it lands the save is written but never offered." `GamesLauncherActivity::loadContinue` calls `peek(entry.manifest.id, entry.pkgHash)` for each startable game when the listing is built, and a Continue row starts `GameMatchActivity(renderer, mappedInput, entry.manifest, GameMatchActivity::Start::Resume)`; a game's own row still starts a New match, which replaces the save with its first snapshot.
+  evidence: `ContinueLauncherTest.cpp` (`continue_launcher.cmake`): `ATapOnContinueResumesTheSavedMatchWithNoModeStep`, `ASaveOfAChangedPackageShowsNoRowAndIsLeftOnTheCard`, `TheGamesOwnRowStillStartsANewMatchAndTwoModesStillAskWhichOne`.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-continue-in-the-launcher-plan.md`
+  summary: The comment above the snapshot allocation in `GameSaveStore::peek` (`src/games/GameSaveStore.cpp`) says "the launcher asks once per row it draws"; the launcher asks once per startable game when it builds its listing (on entry, and after a remove), never while drawing.
+  evidence: `GamesLauncherActivity::loadContinue` is the only caller; `ACardWithTwentyFiveGamesCostsOneReadPerSaveAndNoneWhileTheListIsDrawnOrScrolled` shows a swipe and a re-render add no `open`. The file is entry 12's `stays_out` (read only), so the comment was not edited.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-continue-in-the-launcher-plan.md`
+  summary: The time the launcher's entry (and the rebuild after a remove) spends on `peek` is unmeasured on a device: each startable game costs two `Storage.exists` calls, and each save one whole-file read into a 1,400 B transient buffer, all before the first frame.
+  evidence: The fake card has no latency, so the suite pins only the number of card calls (25 games with 3 saves: 3 whole-file reads). The device record stays with the owner's device check (AI-3); if it is slow, `loadContinue` could run before `installInbox`'s popup clears, or `peek` could be limited to a header read.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-continue-in-the-launcher-plan.md`
+  summary: A Continue row whose save becomes unreadable between the listing and the tap starts a New match (the match logs "no usable resume.bin; starting a new match") and the launcher, replaced by that match, is not rebuilt with the row gone until the person returns to it.
+  evidence: `ASaveThatWentBadBetweenTheListingAndTheTapStartsANewMatch`. Nothing but a card swap changes a save while the launcher is open (the only writers are matches, and none runs), so the tap re-reads nothing; a re-`peek` in `activateIndex` would show the row's absence instead.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-continue-in-the-launcher-plan.md`
+  summary: For epic-pass-and-play: Continue rows list solo saves only (`peek` is true only for a mode-0, one-seat `resume.bin`), so a pass-and-play match, once it saves, needs its own decision on whether and how the launcher offers it.
+  evidence: `GameSaveStore::peek` requires `RESUME_MODE_SOLO` and `RESUME_SEATS_SOLO`; the Continue start passes `Start::Resume` with no mode.
