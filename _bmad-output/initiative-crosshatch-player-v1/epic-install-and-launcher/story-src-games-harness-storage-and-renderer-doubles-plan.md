@@ -3,7 +3,7 @@ title: 'src/games harness: storage and renderer doubles'
 type: 'chore'
 ticket: '1'
 created: '2026-09-28'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 review: 'thorough'
