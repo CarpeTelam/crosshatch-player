@@ -9,6 +9,8 @@
 
 add_library(game_launcher_src STATIC
   ${REPO_ROOT}/src/activities/games/GamesLauncherActivity.cpp
+  # The launcher opens the mode picker, which mode_picker.cmake tests.
+  ${REPO_ROOT}/src/activities/games/GameModeActivity.cpp
   ${HARNESS_DIR}/list_stubs/GamePackageInstallerDouble.cpp)
 target_include_directories(game_launcher_src PUBLIC ${HARNESS_DIR}/list_stubs)
 # What GameRegistry (in game_match_src) reads a manifest with. Its own library, listed after game_match_src,

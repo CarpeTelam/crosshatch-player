@@ -446,25 +446,28 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
   EXPECT_TRUE(logHas("Started alpha"));
 }
 
-// Solo is the only start until the mode picker (entry 9): with pass on, a pass-only game is Ok and is listed, and it
-// still does not open, while a game that also offers solo does.
-TEST_F(ListTest, AGameOnlyAnotherModeCanStartIsListedButDoesNotOpenYet) {
+// ## 4.8 (the mode-step item), resolved by entry 9: a game whose check is Ok has a mode to start, so with `pass` on a
+// pass-only game is listed without a reason and opens (straight to the match: one mode), and a game that offers solo
+// and pass opens the mode picker. ModePickerTest.cpp tests the picker itself.
+TEST_F(ListTest, AGameOnlyAnotherModeCanStartOpensItsMatchAndAGameWithTwoModesOpensThePicker) {
   hostcaps::script().pass = true;
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);
   addGame("solo-and-pass", "SoloAndPass", "\"solo\",\"pass\"", 1, 1, 2);
   open();
   const std::vector<std::string> expected{"PassOnly", "SoloAndPass"};
   EXPECT_EQ(rows({"PassOnly", "SoloAndPass"}), expected);
-  // The host can start it, but not in a mode a row starts yet: the row says so rather than ignore a tap in silence.
-  EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_UNAVAILABLE_MODE));
-  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "") << "the game that opens has no reason";
+  EXPECT_EQ(lineAfter(ui(), "PassOnly"), "SoloAndPass") << "a game the host can start has no reason under it";
+  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "");
   tapRow("PassOnly");
-  EXPECT_TRUE(activityManager.replacements.empty());
-  EXPECT_TRUE(logHas("Not starting pass-only: no solo mode on this host"));
-  tapRow("SoloAndPass");
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_EQ(activityManager.replacements.size(), 1u) << "one mode: the match, without a picker";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started solo-and-pass"));
+  EXPECT_TRUE(logHas("Started pass-only"));
+  reopen();
+  tapRow("SoloAndPass");
+  EXPECT_TRUE(activityManager.replacements.empty()) << "two modes: the picker first";
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_FALSE(logHas("Started solo-and-pass"));
 }
 
 // ---- paging (R7): the list pages past one screen ----
