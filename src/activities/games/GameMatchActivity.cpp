@@ -51,6 +51,12 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
   return StrId::STR_GAMES_START_FAILED;
 }
 
+// Whether an icon beside a label drawn over `paint` in `text` is black (GameViewIcons::labelIsBlack has the rule).
+bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
+  return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
+                                     text.color == fui::Color::White);
+}
+
 // The error view's detail for a failed VM: tr() text for the host's own failures,
 // Lua's message for the script's (AD-14).
 const char* vmFailureText(const GameVM& vm) {
@@ -126,7 +132,12 @@ void GameMatchActivity::onEnter() {
   }
   replay.loadFonts(renderer);
   auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot());
-  if (created && start == Start::Resume) seedResume(*created);
+  if (created && start == Start::Resume && !seedResume(*created)) {
+    // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
+    // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    return;
+  }
   // Both failures are logged with their cause; each is memory (PSRAM, or the task's stack).
   if (!created || !created->start()) {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
@@ -141,17 +152,28 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
-void GameMatchActivity::seedResume(GameVM& created) {
+bool GameMatchActivity::seedResume(GameVM& created) {
   uint16_t ver = 0;
-  const std::span<const uint8_t> snapshot = store.saves().loadResume(ver);
+  bool unreadable = false;
+  const std::span<const uint8_t> snapshot = store.saves().loadResume(ver, unreadable);
   if (snapshot.empty()) {
+    if (unreadable) {
+      // A save is there and would not read, a fault that may pass (the launcher offered Continue for it).
+      LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
+      return false;
+    }
+    // No file, or one that was read and is no save (logged with its reason): nothing to lose.
     LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
-    return;
+    return true;
   }
   if (!created.setResume(snapshot, ver)) {
-    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; starting a new match", manifest.id,
+    // GameVM::setResume refuses only an empty or oversized snapshot, which GameSaveStore's checks already exclude, so
+    // this is not reachable today; if it ever is, the first snapshot of a new match would replace the save.
+    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; not starting a new match over it", manifest.id,
             static_cast<unsigned>(snapshot.size()));
+    return false;
   }
+  return true;
 }
 
 void GameMatchActivity::onExit() {
@@ -380,16 +402,21 @@ void GameMatchActivity::loopPlaying() {
     return;
   }
 
-  // After Play again, until the new round's first frame is published, the screen
-  // still shows the end-of-round menu or the last round's frame: a tap there is not
-  // aimed at the new round, so it is read (which consumes the contact) and dropped.
-  const bool awaitingRound = vm->roundsStarted() < roundsStartedAwaited.load();
+  // Until a round's first frame is published, and after that until the render task has handed
+  // it to the panel (roundsDisplayed), the screen still shows what came before: the Games list
+  // before the match's first round, the end-of-round menu or the last round's frame after Play
+  // again. A tap there is not aimed at the round, so it is read (which consumes the contact)
+  // and dropped. Only the first of the two also holds the frame back: once the count has moved,
+  // the frame is asked for and drawn.
+  const uint32_t awaited = roundsStartedAwaited.load();
+  const bool awaitingRound = vm->roundsStarted() < awaited;
+  const bool awaitingDisplay = awaitingRound || roundsDisplayed.load(std::memory_order_acquire) < awaited;
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
   const GameTouch::Gesture gesture = readGesture();
   GameCore::GameEvent event;
-  if (!awaitingRound &&
+  if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
     vm->postInput(event);
   }
@@ -498,7 +525,9 @@ void GameMatchActivity::renderCanvas() {
   // tap: the view (or an overlay's pixels) stays on screen, and the new round's
   // first frame, which is no repaint, is drawn on a cleared screen. Nothing else
   // here runs, so the skip changes no replay state.
-  if (vm->roundsStarted() < roundsStartedAwaited.load()) {
+  // `started` is read once, before anything is drawn: the frame drawn below is that round's or a later one's.
+  const uint32_t started = vm->roundsStarted();
+  if (started < roundsStartedAwaited.load()) {
     viewOnScreen = true;
     return;
   }
@@ -516,8 +545,12 @@ void GameMatchActivity::renderCanvas() {
   renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
-  if (!vm->drawFront(renderer, viewport, replay)) return;
-  renderer.displayBuffer(replay.refreshMode());
+  if (vm->drawFront(renderer, viewport, replay)) renderer.displayBuffer(replay.refreshMode());
+  // Every way out of here past the gate stores it, a frame replay skipped as identical to the one on screen included
+  // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so
+  // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
+  // that acquires it.
+  roundsDisplayed.store(started, std::memory_order_release);
 }
 
 void GameMatchActivity::renderView(const MatchState state) {
@@ -631,8 +664,10 @@ void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, co
   const fui::OptionDialogProps& props = dialogProps;
   const char* viewIcon = GameViewIcons::forView(state);
   if (viewIcon) {
+    // On the panel's own background, which buildView sets white with a solid black foreground, so the ink follows that
+    // foreground (the headline's style beside it, were it not solid) as the rows' ink follows theirs.
     drawGameIcon(renderer, viewIcon, band.x + (band.width - GameViewIcons::VIEW_PIXELS) / 2, band.y,
-                 GameViewIcons::VIEW_PIXELS, true);
+                 GameViewIcons::VIEW_PIXELS, labelIsBlack(props.styles.normal.foreground, props.headlineText));
   }
   // optionDialog stacks the rows directly below the band (verticalOptions).
   const int inset = GameViewIcons::rowIconInset(props.buttonHeight);
@@ -644,7 +679,7 @@ void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, co
     if (!GameViewIcons::rowIconFits(band.width, props.buttonHeight, labelWidth, props.gap)) continue;
     const int rowY = GameViewIcons::rowTop(band.bottom(), i, props.buttonHeight, props.gap);
     const fui::State rowState = screen.frame().stateFor(ACTION_OPTION, static_cast<int16_t>(i), props.options[i].state);
-    const bool black = props.buttonStyles.resolve(rowState).foreground.color != fui::Color::White;
+    const bool black = labelIsBlack(props.buttonStyles.resolve(rowState).foreground, props.buttonText);
     drawGameIcon(renderer, rowIcon, band.x + inset, rowY + inset, GameViewIcons::ROW_PIXELS, black);
   }
 }

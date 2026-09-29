@@ -76,6 +76,7 @@ add_executable(GameScriptTest
   ApiSurfaceTest.cpp
   ArenaAllocatorTest.cpp
   CallGuardTest.cpp
+  BlitClipTest.cpp
   CanvasClipTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp

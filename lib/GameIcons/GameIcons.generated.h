@@ -11,6 +11,7 @@
 // bit 0 = ink, rotated 90 degrees counter-clockwise (stored (row, col) is drawn at (pixels - 1 - row, col)), as
 // GfxRenderer::drawIcon draws it.
 // Phosphor Icons: Copyright (c) 2023 Phosphor Icons, MIT licence; see assets/game-icons/phosphor/LICENSE.
+// clang-format off
 #pragma once
 
 #include <cstddef>

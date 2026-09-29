@@ -396,6 +396,30 @@ TEST_F(ContinueTest, ASaveThatIsNotAValidResumeShowsNoRow) {
   EXPECT_EQ(rows(3), expected);
 }
 
+// Retro deferral 4.12 (ADV2): a save that would not open or read may be a good one, so its Continue row stays; hiding
+// it would leave only the game's own row, which starts a new match over the save.
+TEST_F(ContinueTest, ASaveTheCardWillNotReadKeepsItsRowAndIsLeftAlone) {
+  addGames(3);
+  save("game-01");
+  save("game-02");
+  fakesd::sim().failReadAt[resumePath("game-01")] = 0;
+  fakesd::sim().failOpen.insert(resumePath("game-02"));
+  open();
+  const std::vector<Row> expected{
+      {"Game 01", true}, {"Game 02", true}, {"Game 01", false}, {"Game 02", false}, {"Game 03", false}};
+  EXPECT_EQ(rows(3), expected);
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-01")), resumeBytes(2, 3));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), resumeBytes(2, 3));
+
+  // Tapping the row of a save that still will not read stops in the error view and starts nothing new.
+  tapAt(continueLine());
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
+  EXPECT_FALSE(logHas("setup ran"));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-01")), resumeBytes(2, 3));
+}
+
 TEST_F(ContinueTest, ASaveWhoseRenameWasInterruptedStillOffersContinue) {
   addGames(1);
   fakesd::addFile(resumePath("game-01") + ".tmp", resumeBytes(2, 3));  // resume.bin.tmp alone: peek accepts it

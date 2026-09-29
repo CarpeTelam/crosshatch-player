@@ -169,3 +169,18 @@ TEST(GameViewIconsTest, RowTopMatchesOptionDialogsRows) {
     EXPECT_EQ(row.height, ROW_H) << "row " << i;
   }
 }
+
+// Retro R8 e and R9 g: an icon takes the ink of the label beside it. A solid paint carries its colour into the text;
+// under any other paint (a dither, a bitmap, none) the label keeps its own style's colour, so the icon follows that.
+TEST(GameViewIconsTest, AnIconTakesTheInkItsLabelDrawsIn) {
+  // (solid, paintWhite, textWhite) -> black
+  EXPECT_TRUE(GameViewIcons::labelIsBlack(true, false, false));  // a solid black paint
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(true, true, false));  // a solid white paint (an inverted, selected row)
+  EXPECT_TRUE(GameViewIcons::labelIsBlack(true, false, true));   // the text style's colour is beside the point
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(true, true, true));
+  // A dithered focused row: the paint's colour is what it dithers, not what the label is drawn in.
+  EXPECT_TRUE(GameViewIcons::labelIsBlack(false, true, false));   // a white-dither paint, a black label
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(false, false, true));  // a black-dither paint, a white label
+  EXPECT_TRUE(GameViewIcons::labelIsBlack(false, false, false));
+  EXPECT_FALSE(GameViewIcons::labelIsBlack(false, true, true));
+}

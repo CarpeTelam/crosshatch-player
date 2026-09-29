@@ -71,4 +71,12 @@ constexpr bool rowIconFits(const int rowWidth, const int rowHeight, const int la
   return labelLeft >= rowIconInset(rowHeight) + ROW_PIXELS + gap;
 }
 
+// Whether an icon beside a label is black, the ink the label's paint gives it. FreeInkUI carries a solid paint's
+// colour into the text (`solid`, `paintWhite`) and leaves the text style's own colour (`textWhite`) under any other
+// paint, a dither or a bitmap, which has no single colour. An icon follows the same rule: reading the paint's colour
+// alone would call every non-solid paint black whatever its label does (epic-icon-library retro R8 e, R9 g).
+constexpr bool labelIsBlack(const bool solid, const bool paintWhite, const bool textWhite) {
+  return !(solid ? paintWhite : textWhite);
+}
+
 }  // namespace GameViewIcons

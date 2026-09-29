@@ -265,6 +265,7 @@ class ResumeMatchTest : public match::ScreenTest {
     gameId = id;
     exited = false;
     activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id), start);
+    firstFramePending = true;
     activity->onEnter();
   }
 
@@ -292,8 +293,19 @@ class ResumeMatchTest : public match::ScreenTest {
     ASSERT_TRUE(pump([&] { return activityManager.updateRequested(); }));
     activity->render(RenderLock(*activity));
     activityManager.markRendered();
+    firstFramePending = false;
   }
-  void tapCanvas(const int x, const int y) { input->tap(CANVAS_X + x, CANVAS_Y + y); }
+  // A tap at canvas point (x, y). The match drops taps until the round's first frame is drawn (retro deferral e3r-2),
+  // as a finger cannot be aimed at a frame that is not on the panel: so the first tap after enter() waits for the
+  // frame the match asks for (the VM publishes it on its own task, and the loop asks a pass after) and draws it, as the
+  // render task would. showFrame() does the same on request and clears the wait.
+  void tapCanvas(const int x, const int y) {
+    if (firstFramePending) {
+      pump([&] { return activityManager.updateRequested(); }, 5000);
+      showFrame();
+    }
+    input->tap(CANVAS_X + x, CANVAS_Y + y);
+  }
 
   bool fileIs(const Bytes& expected) const { return fakesd::bytesOf(resumePath(gameId)) == expected; }
   // Loops until resume.bin holds `expected`.
@@ -318,6 +330,7 @@ class ResumeMatchTest : public match::ScreenTest {
 
   std::unique_ptr<GameMatchActivity> activity;
   std::string gameId;
+  bool firstFramePending = false;  // enter() ran and no frame has been drawn since
   bool exited = false;
 };
 
@@ -327,7 +340,7 @@ TEST_F(ResumeMatchTest, EachCommittedSnapshotIsWrittenOnTheNextLoopPass) {
   enter("cnt");
   ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1)));
   EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
-  EXPECT_TRUE(GameSaveStore::peek("cnt", HASH_A));
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::Valid);
 
   tapCanvas(50, 50);
   frame();
@@ -404,7 +417,7 @@ TEST_F(ResumeMatchTest, TheEndOfARoundDeletesTheSaveAndNoOverSnapshotIsEverWritt
   watch();
   EXPECT_FALSE(fakesd::has(resumePath("cnt")));
   EXPECT_FALSE(fakesd::has(resumeTmpPath("cnt")));
-  EXPECT_FALSE(GameSaveStore::peek("cnt", HASH_A));
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::None);
   for (int i = 0; i < 20; ++i) {
     frame();
     watch();
@@ -485,7 +498,7 @@ TEST_F(ResumeMatchTest, LeavingWritesTheLastSnapshotAndKeepsIt) {
   EXPECT_EQ(state(), "Leaving");
   EXPECT_EQ(activityManager.asks.goToGames, 1);
   EXPECT_TRUE(fileIs(resumeBytes(snapshotOf(1), 2))) << "Leave writes what the loop could not";
-  EXPECT_TRUE(GameSaveStore::peek("cnt", HASH_A)) << "and Leave keeps the save";
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::Valid) << "and Leave keeps the save";
 }
 
 TEST_F(ResumeMatchTest, TheForcedExitWritesTheSnapshotALoopWriteFailedOnceTheIntervalHasPassed) {
@@ -727,15 +740,46 @@ TEST_F(ResumeMatchTest, ASaveOfAnotherPackageIsNotResumedAndANewMatchStarts) {
   ASSERT_TRUE(pumpToFile(resumeBytes(snapshotOf(0), 1, HASH_B)));
 }
 
-TEST_F(ResumeMatchTest, AnUnreadableSaveStartsANewMatch) {
+// Retro deferral 4.12 (ADV2): a save the card would not read may be a good one, so a new match must not start over
+// it (its first snapshot would replace the file). The match stops in the error view, the file untouched, and Continue
+// works again once the card reads.
+TEST_F(ResumeMatchTest, AnUnreadableSaveStopsInTheErrorViewAndIsNeverOverwritten) {
   installGame("cnt", countingGame(5));
   installPkg("cnt");
   fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
   fakesd::sim().failReadAt[resumePath("cnt")] = 0;
   enter("cnt", GameMatchActivity::Start::Resume);
   EXPECT_TRUE(logHas("discarded " + resumePath("cnt") + ": cannot read"));
-  ASSERT_TRUE(pump([&] { return logHas("setup ran"); }));
+  EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
+  for (int i = 0; i < 30; ++i) frame();
+  EXPECT_FALSE(logHas("setup ran")) << "no game ran";
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(2), 3)) << "the save is as it was";
+  EXPECT_EQ(tmpOpens(), 0u) << "and nothing was written beside it";
+
+  // Back leaves; the save is still there, and with the card reading again Continue resumes it.
+  input->click(Button::Back);
+  frame();
+  sleep();
+  fakesd::sim().failReadAt.clear();
+  fakelog::clearLines();
+  enter("cnt", GameMatchActivity::Start::Resume);
+  ASSERT_TRUE(pump([&] { return logHas("draw\t2"); }));
+  EXPECT_FALSE(logHas("setup ran"));
   EXPECT_EQ(state(), "Playing");
+}
+
+TEST_F(ResumeMatchTest, ASaveThatCannotBeOpenedIsKeptAndItsMatchStopsInTheErrorView) {
+  installGame("cnt", countingGame(5));
+  installPkg("cnt");
+  fakesd::addFile(resumePath("cnt"), resumeBytes(snapshotOf(2), 3));
+  fakesd::sim().failOpen.insert(resumePath("cnt"));
+  enter("cnt", GameMatchActivity::Start::Resume);
+  EXPECT_EQ(state(), "Error");
+  EXPECT_FALSE(logHas("setup ran"));
+  fakesd::sim().failOpen.clear();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("cnt")), resumeBytes(snapshotOf(2), 3));
 }
 
 TEST_F(ResumeMatchTest, StartResumeWithNoSaveStartsANewMatch) {
@@ -761,7 +805,7 @@ TEST_F(ResumeMatchTest, ADeleteTheCardRefusesAtOverIsRetriedUntilTheFileIsGone) 
   fakesd::sim().failRemove.clear();
   fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the retry waits this long after a failed try
   ASSERT_TRUE(pump([&] { return !fakesd::has(resumePath("cnt")); })) << "the retry never came";
-  EXPECT_FALSE(GameSaveStore::peek("cnt", HASH_A));
+  EXPECT_EQ(GameSaveStore::peek("cnt", HASH_A), GameSaveStore::SaveState::None);
 }
 
 TEST_F(ResumeMatchTest, ADeleteTheCardRefusedAtOverIsRetriedAtTheForcedExit) {
@@ -858,6 +902,7 @@ TEST_F(ResumeMatchTest, TheForcedExitOfAVmStuckInALockedBindingEndsWithinTheBoun
   fakesd::sim().failOpenWrite.insert(resumeTmpPath("logger"));
   enter("logger");
   ASSERT_TRUE(waitFor(match::roundStarted));
+  showFrame();               // the tap below is dropped until the first frame is on the panel
   expectCleanPsram = false;  // the abandon leaks the VM and the store slot on purpose
   fakertos::arm(fakertos::At::Log);
   input->tap(CANVAS_X + 100, CANVAS_Y + 200);

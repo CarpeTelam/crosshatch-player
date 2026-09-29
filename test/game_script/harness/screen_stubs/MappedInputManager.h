@@ -10,6 +10,13 @@
 // mapDirectionalLabels return their arguments in the real front-button order, with no remapping:
 // what the real mapper does to a label (AGENTS.md: users remap the front buttons) is not
 // exercised. isPressed is wasPressed (no held-versus-edge distinction).
+//
+// Held buttons (`hold`): getHeldTime() is what a test set with `hold(button, ms)` (one time for every button, as the
+// real manager's is for the button held: a test holds one at a time), and wasLongPressed(button,
+// thresholdMs) is the real one's rule: true once per hold, when the button is pressed and has been held for at least
+// thresholdMs, after which the button's release is suppressed (consumeSuppressedRelease, which ActivityManager::loop
+// calls and a test that drives an activity's loop() calls itself). `holdLong` is the older shortcut: a hold that
+// crosses any threshold, with no suppression.
 
 #include <HalGPIO.h>
 
@@ -53,8 +60,30 @@ class MappedInputManager {
   void update(bool = false) const {}
   bool wasPressed(const Button button) const { return pressed.count(button) != 0; }
   bool wasReleased(const Button button) const { return released.count(button) != 0; }
-  bool wasLongPressed(const Button button, unsigned long) const { return longPressed.count(button) != 0; }
-  bool consumeSuppressedRelease() const { return false; }
+  bool wasLongPressed(const Button button, const unsigned long thresholdMs) const {
+    if (longPressed.count(button) != 0) return true;
+    if (pressed.count(button) == 0) {
+      firedLongPress.erase(button);  // let go: the next hold can fire again
+      return false;
+    }
+    if (firedLongPress.count(button) != 0 || heldMs < thresholdMs) return false;
+    firedLongPress.insert(button);
+    suppressedRelease.insert(button);
+    return true;
+  }
+  // True when a button whose long press fired has been released: the release is not for the screen.
+  bool consumeSuppressedRelease() const {
+    bool consumed = false;
+    for (auto it = suppressedRelease.begin(); it != suppressedRelease.end();) {
+      if (released.count(*it) != 0) {
+        it = suppressedRelease.erase(it);
+        consumed = true;
+      } else {
+        ++it;
+      }
+    }
+    return consumed;
+  }
   bool isPressed(const Button button) const { return pressed.count(button) != 0; }
   bool hasTouch() const { return true; }
 
@@ -101,7 +130,7 @@ class MappedInputManager {
   bool wasLightPanelGesture() const { return false; }
   bool wasAnyPressed() const { return !pressed.empty(); }
   bool wasAnyReleased() const { return !released.empty(); }
-  unsigned long getHeldTime() const { return 0; }
+  unsigned long getHeldTime() const { return heldMs; }
   const GfxRenderer& getRenderer() const { return *renderer; }
   Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const {
     return {back, confirm, previous, next};
@@ -132,6 +161,16 @@ class MappedInputManager {
     released.insert(button);
   }
   void holdLong(const Button button) { longPressed.insert(button); }
+  // A button held down for `ms` so far, this frame: pressed (isPressed), and getHeldTime() is `ms`.
+  void hold(const Button button, const unsigned long ms) {
+    pressed.insert(button);
+    heldMs = ms;
+  }
+  // The button is let go: its release edge this frame, and it is no longer held.
+  void release(const Button button) {
+    released.insert(button);
+    firedLongPress.erase(button);
+  }
   // A tap at (x, y): the down edge, then the release with its position.
   void tap(const int x, const int y) {
     touch.tapped = touch.released = touch.down = true;
@@ -162,6 +201,7 @@ class MappedInputManager {
     pressed.clear();
     released.clear();
     longPressed.clear();
+    heldMs = 0;
     touch = Touch{};
     swipeDir = SwipeDir::None;
     backGesture = homeGesture = menuGesture = false;
@@ -171,6 +211,7 @@ class MappedInputManager {
   std::set<Button> pressed;
   std::set<Button> released;
   std::set<Button> longPressed;
+  unsigned long heldMs = 0;
   Touch touch;
   SwipeDir swipeDir = SwipeDir::None;
   bool backGesture = false;
@@ -183,6 +224,11 @@ class MappedInputManager {
     y = touch.y;
     return true;
   }
+
+  // Buttons whose long press has fired in this hold, and whose release is suppressed (the real manager's
+  // longPressFiredButtons and suppressedReleaseButtons); a const method sets them, as the real one does.
+  mutable std::set<Button> firedLongPress;
+  mutable std::set<Button> suppressedRelease;
 
   HalGPIO& gpio;
   const GfxRenderer* renderer;

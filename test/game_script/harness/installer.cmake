@@ -39,6 +39,7 @@ target_include_directories(game_installer_src PUBLIC
 target_link_libraries(game_installer_src PUBLIC crosspoint_test_common OpenSSL::Crypto)
 
 add_executable(GameInstallerTest
+  ConverterLayoutTest.cpp
   GameHashTest.cpp
   GameRegistryTest.cpp
   GamePackageInstallerTest.cpp)
@@ -46,5 +47,7 @@ target_compile_definitions(GameInstallerTest PRIVATE
   PACKAGE_VECTOR_DIR="${REPO_ROOT}/test/game_core"
   # The fixture games the fixtures README says pack and install.
   GAME_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures")
+# ConverterLayoutTest checks test/game_core/ConverterBmpLayout.h, the image tests' mirror, against the converter.
+target_include_directories(GameInstallerTest PRIVATE ${REPO_ROOT}/test/game_core)
 target_link_libraries(GameInstallerTest PRIVATE game_installer_src GTest::gtest_main)
 gtest_discover_tests(GameInstallerTest)

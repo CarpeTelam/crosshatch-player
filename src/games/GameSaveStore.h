@@ -57,21 +57,27 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // flush retries.
   bool flush(GameScript::StoreSlot& slot, uint32_t nowMs);
 
-  // Whether /.games-data/<gameId>/resume.bin (or a whole resume.bin.tmp, when it is
-  // missing) can resume a match of the package with `pkgHash`: exactly what loadResume
-  // accepts. Its header names this file, file version, codec version, and package, it
-  // is a solo save (mode 0, one seat), and its snapshot is 1 to Codec::SNAPSHOT_LIMIT
-  // bytes of canonical codec. Anything else is false with one log line, and the file
-  // stays. Reads the whole file into a buffer of its own for the call (false with a
-  // log line when that cannot be allocated).
-  static bool peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]);
+  // What /.games-data/<gameId>/resume.bin (or a whole resume.bin.tmp, when it is missing) holds for a
+  // match of the package with `pkgHash`. Valid: exactly what loadResume accepts. Its header names this
+  // file, file version, codec version, and package, it is a solo save (mode 0, one seat), and its
+  // snapshot is 1 to Codec::SNAPSHOT_LIMIT bytes of canonical codec. None: no file, or one that was
+  // read and is not that (one line logged, and the file stays). Unreadable: a file is there and
+  // could not be checked, because it would not open or read or the buffer below could not be
+  // allocated (logged): a card or heap fault that may pass, so the caller must not take it for
+  // "no save" and offer a new match over what may be a good one. Reads the whole file into a buffer of its own for
+  // the call.
+  enum class SaveState : uint8_t { None, Valid, Unreadable };
+  static SaveState peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]);
   // Before saveResume, flushResume, or loadResume: the hash of the installed package
   // (.pkg). Until it is set, resume.bin is neither read nor written.
   void setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]);
   // Before the VM starts: the saved snapshot, and its ver (the file's u16), in the
   // buffer this store owns; valid until this store's next call. Empty when there is no
-  // usable save (the reason is logged, and the file stays).
-  std::span<const uint8_t> loadResume(uint16_t& ver);
+  // usable save (the reason is logged, and the file stays); `unreadable` is then true if the
+  // file was there and could not be opened or read (peek's Unreadable) and false for a file
+  // that was read and refused or no file. It is required: a caller that ignored the difference
+  // would start a new match over a save that only failed to read.
+  std::span<const uint8_t> loadResume(uint16_t& ver, bool& unreadable);
   // Writes `snapshot` at `ver` (its low 16 bits) as resume.bin. False when it could not
   // be written; resume.bin is then as it was.
   bool saveResume(std::span<const uint8_t> snapshot, uint32_t ver);

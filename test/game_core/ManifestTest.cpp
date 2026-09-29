@@ -310,6 +310,7 @@ TEST(ManifestTest, EveryFixtureManifestIsListed) {
   }
   EXPECT_EQ(withoutManifest, (std::set<std::string>{"faults", "modules", "surface"}));
   EXPECT_TRUE(listed.count("slow-restart")) << "slow-restart's manifest was not found";
+  EXPECT_TRUE(listed.count("timing")) << "timing's manifest was not found";
   EXPECT_TRUE(listed.count("tracer")) << "tracer's manifest was not found";
 }
 

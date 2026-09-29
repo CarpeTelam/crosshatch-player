@@ -17,11 +17,12 @@
 // Opening a game replaces this screen with its match, or, for a game the host can start in two or more modes, opens
 // the mode picker (GameModeActivity) above it.
 // Above the game rows the list has one "Continue" row (the game's name and icon, "Continue" under it) for each game
-// whose GameSaveStore::peek() finds a valid resume.bin for the installed package, in the games' name order. A tap
-// replaces this screen with the match resumed from the save, with no mode step. A save of a changed package is not
-// valid, so it has no row. The rows are found when the listing is built (onEnter, and after a remove), never while a
-// row is drawn. A long-press on a Continue row does nothing: removing is on the game's own row.
-// A long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
+// whose GameSaveStore::peek() finds a valid resume.bin for the installed package, or one it could not check (a card or
+// heap fault: the row stays rather than the launcher offering a new match over a save it cannot see), in the games'
+// name order. A tap replaces this screen with the match resumed from the save, with no mode step. A save of a changed
+// package is not valid, so it has no row. The rows are found when the listing is built (onEnter, and after a remove),
+// never while a row is drawn. A long-press on a Continue row does nothing: removing is on the game's own row. A
+// long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
 // (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup.
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
 // repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
@@ -33,6 +34,11 @@ class GamesLauncherActivity final : public UiListActivity {
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
   // mapping and the constructor cannot disagree.
   static constexpr const char* NAME = "GamesLauncher";
+  // How long Confirm is held to ask about removing the selected game (the long-press of a button-only device).
+  // The library's delete hold is 1000 ms; well under 500 would let an ordinary press of Confirm ask about removing,
+  // and GameRemoveLauncherTest pins the value by holding Confirm one millisecond short of it and then at it.
+  static constexpr unsigned long REMOVE_HOLD_MS = 1000;
+  static_assert(REMOVE_HOLD_MS >= 500 && REMOVE_HOLD_MS <= 3000, "a Confirm hold that asks about removing a game");
 
   GamesLauncherActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 

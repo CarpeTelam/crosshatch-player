@@ -35,15 +35,26 @@ need_window() {
   echo "$w"
 }
 
+# A marker line is matched with trailing blanks and CRs ignored, so a platformio.local.ini saved with CRLF endings
+# (an editor on Windows, core.autocrlf) still has its markers, and none of the checks below reads it as marker-free:
+# setup would then append a second block beside the first (retro R9 c, cross-story finding 12). Each awk program below
+# starts with this rule, which sets `line` to the record without them.
+TRIM='{ line = $0; sub(/[ \t\r]+$/, "", line) }'
+
 # Exit 0 when platformio.local.ini is absent, has neither marker, or has exactly one begin marker followed by one end
 # marker; else exit 1. setup's block replace drops every line from a begin marker to the next end marker, so any other
 # shape (no end marker, an end marker first, a second begin marker, a second block) would lose the user's lines.
 markers_ok() {
   [ -f platformio.local.ini ] || return 0
-  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
-    $0==b { if (begins || ends) bad=1; begins++ }
-    $0==e { if (!begins || ends) bad=1; ends++ }
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" "$TRIM"'
+    line==b { if (begins || ends) bad=1; begins++ }
+    line==e { if (!begins || ends) bad=1; ends++ }
     END { exit (bad || begins != ends) }' platformio.local.ini
+}
+
+# Exit 0 when platformio.local.ini has a begin marker line.
+has_begin() {
+  awk -v b="$MARK_BEGIN" "$TRIM"' line==b { found=1 } END { exit !found }' platformio.local.ini
 }
 
 MARKERS_BAD="markers are not one '$MARK_BEGIN' line followed by one '$MARK_END' line"
@@ -55,7 +66,7 @@ cmd_setup() {
   markers_ok || die "$local_ini's simulator $MARKERS_BAD; restore it by hand"
   tmp=$(mktemp)
   # Replace any previous managed block, keep the user's own settings.
-  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$local_ini" > "$tmp"
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" "$TRIM"' line==b{skip=1;next} line==e{skip=0;next} !skip' "$local_ini" > "$tmp"
   { cat "$tmp"; echo "$MARK_BEGIN"; cat "$SKILL_DIR/simulator.ini"; echo "$MARK_END"; } > "$local_ini"
   rm -f "$tmp"
   mkdir -p fs_/books "$SHOTS"
@@ -68,7 +79,7 @@ cmd_setup() {
 
 managed_block() {
   [ -f platformio.local.ini ] || return 0
-  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{on=1;next} $0==e{on=0;next} on' platformio.local.ini
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" "$TRIM"' line==b{on=1;next} line==e{on=0;next} on' platformio.local.ini
 }
 
 # Exit 0 when platformio.local.ini's managed block equals simulator.ini, else say why and exit 1.
@@ -78,12 +89,9 @@ cmd_check() {
     echo "sim: $local_ini's simulator $MARKERS_BAD; restore it by hand (setup will not replace such a block)" >&2
     return 1
   fi
-  if [ ! -f "$local_ini" ] || ! grep -qxF "$MARK_BEGIN" "$local_ini"; then
+  # markers_ok passed, so a begin marker here has its one end marker after it.
+  if [ ! -f "$local_ini" ] || ! has_begin; then
     echo "sim: $local_ini has no managed simulator block; run '$0 setup'" >&2
-    return 1
-  fi
-  if ! grep -qxF "$MARK_END" "$local_ini"; then
-    echo "sim: $local_ini's managed simulator block has no end marker '$MARK_END'; restore it by hand (setup will not replace such a block)" >&2
     return 1
   fi
   if [ "$(managed_block)" != "$(cat "$SKILL_DIR/simulator.ini")" ]; then

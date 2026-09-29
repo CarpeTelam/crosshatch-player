@@ -256,6 +256,19 @@ class CheckLayersTest(unittest.TestCase):
                                   '<GameIcons.generated.h> (lib/GameIcons) outside an #if FREEINK_CAP_GAMES branch',
                                   '1 problem(s)')
 
+    def test_a_guard_whose_comment_spans_lines_is_told_why_it_does_not_count(self):
+        # Cross-story finding 13: the message was the unguarded include's, with no word on the comment.
+        text = '#if FREEINK_CAP_GAMES /*\n*/\n#include <GameIcons.generated.h>\n#endif\n'
+        self.assert_fails({'src/components/CoverGridHomeUi.cpp': text},
+                          'src/components/CoverGridHomeUi.cpp:3: upstream code includes <GameIcons.generated.h> '
+                          '(lib/GameIcons) outside an #if FREEINK_CAP_GAMES branch; its #if line opens a block '
+                          'comment that spans lines', '1 problem(s)')
+        # An include that is unguarded for another reason gets no such hint.
+        code, out = self.run_check(self.tree({'src/components/CoverGridHomeUi.cpp':
+                                              '/*\n*/\n#include <GameIcons.generated.h>\n'}))
+        self.assertEqual(code, 1, out)
+        self.assertNotIn('block comment', out)
+
     def test_continued_guard_passes(self):
         cases = {
             # A guard continued onto a second line is read whole.

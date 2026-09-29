@@ -9,9 +9,11 @@ Packs one game folder into a `.cpgame` package (spine AD-15, AD-16) and prints i
 release workflow reads (`fork_release.py` `pack_one`). This is the only Python reader of `manifest.json`: it applies
 `Manifest::parse`'s rules, `Manifest::check`'s solo and nearby seat rules, R9's icon check, and the API range of
 `lib/GameCore/ApiLevel.h`. It refuses what it can see in the folder that the installer would refuse; it does not
-decode: a PNG is checked through its IHDR only (a truncated or corrupt image is left to the installer's converter),
-`icon.png` must be square, the `.lua` members' bytes together stay within `GameCore::LUA_SOURCES_BYTES`, a Lua file is
-checked only for a leading binary-chunk signature, and a manifest is not depth-limited. The `icon` grammar and the
+decode: a PNG is checked through its IHDR and then chunk by chunk (every chunk's length and CRC, an IEND, and image
+data that inflates to exactly the bytes its IHDR's size, colour type, and bit depth call for; the pixels are left to the
+installer's converter), `icon.png` must be square, the `.lua` members' bytes together stay within
+`GameCore::LUA_SOURCES_BYTES`, a Lua file is checked only for a leading binary-chunk signature, and a manifest nests no
+deeper than the device's JSON parser reads (`MAX_NESTING`, 32). The `icon` grammar and the
 `icon_weight` values are R9's (the spine's AD-15 amendment) and `Manifest.cpp`'s `validIcon` and `parseIconWeight` apply
 the same rules: `ICON_NAME` and `MAX_ICON_BYTES` here, `test_icon_grammar` in the sidecar test, and the C++ table in
 `ManifestTest`. The name check against `assets/game-icons/names.txt` has no C++ twin in `GameCore`, which cannot see the
@@ -83,6 +85,9 @@ PNG_MEMBER = re.compile(rf'[a-z0-9_]{{1,{MAX_MEMBER_NAME_CHARS}}}\.png')
 UNICODE_ESCAPE = re.compile(r'(?<!\\)(?:\\\\)*\\u')
 # The PNG colour types the converter accepts, each with the bit depths the PNG format allows for it.
 PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}  # samples a pixel holds, by colour type
+# StreamingJsonParser::MAX_NESTING: the device's parser refuses a manifest with a 33rd open `{` or `[`.
+MAX_NESTING = 32
 MANIFEST_MEMBER = 'manifest.json'
 MAIN_MEMBER = 'main.lua'
 ICON_MEMBER = 'icon.png'
@@ -131,6 +136,28 @@ def is_text(value, limit):
         return False
 
 
+def json_nesting(text):
+    """The deepest nesting of `{` and `[` in the JSON text (0 for a scalar), skipping strings."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in '{[':
+            depth += 1
+            deepest = max(deepest, depth)
+        elif char in '}]':
+            depth -= 1
+    return deepest
+
+
 def read_manifest(data, dir_name, api_range, load_icons):
     """(manifest, problems) for the bytes of a manifest.json.
 
@@ -149,6 +176,10 @@ def read_manifest(data, dir_name, api_range, load_icons):
         return None, [f'{MANIFEST_MEMBER}: not a JSON object']
 
     problems = []
+    if json_nesting(data.decode('utf-8-sig')) > MAX_NESTING:
+        problems.append(
+            f'{MANIFEST_MEMBER}: nests deeper than {MAX_NESTING} levels; the device\'s JSON parser refuses it'
+        )
     if UNICODE_ESCAPE.search(data.decode('utf-8-sig')):
         problems.append(
             f'{MANIFEST_MEMBER}: has a \\u escape; the device reads it as six literal characters, so write the '
@@ -271,6 +302,50 @@ def png_size(data):
     return width, height
 
 
+def png_problem(data, width, height):
+    """None, or why the chunks of a PNG whose IHDR passed png_size (`width` x `height`) do not make a whole image: a
+    chunk running past the end or with a wrong CRC, no IEND, no IDAT, a palette image with no PLTE before its data, or
+    image data that does not inflate to exactly the bytes the IHDR calls for (a filter byte and the packed samples for
+    each row, not interlaced). Not checked: bytes after IEND (decoders ignore them), the order of the other chunks, and
+    the pixels themselves, which the installer's converter reads."""
+    depth, color = data[24], data[25]
+    position = len(PNG_SIGNATURE)
+    idat = []
+    palette = False
+    ended = False
+    while position < len(data) and not ended:
+        if len(data) - position < 12:
+            return 'truncated PNG (a chunk header runs past the end)'
+        length = struct.unpack('>I', data[position:position + 4])[0]
+        end = position + 12 + length
+        if end > len(data):
+            return 'truncated PNG (a chunk runs past the end)'
+        kind = data[position + 4:position + 8]
+        if struct.unpack('>I', data[end - 4:end])[0] != zlib.crc32(data[position + 4:end - 4]):
+            return f'malformed PNG ({kind.decode("latin-1")} CRC mismatch)'
+        if kind == b'PLTE':
+            palette = True
+        elif kind == b'IDAT':
+            if color == 3 and not palette:
+                return 'malformed PNG (a palette image with no PLTE chunk before its image data)'
+            idat.append(data[position + 8:end - 4])
+        ended = kind == b'IEND'
+        position = end
+    if not ended:
+        return 'truncated PNG (no IEND chunk)'
+    if not idat:
+        return 'malformed PNG (no IDAT chunk)'
+    expected = height * ((width * PNG_CHANNELS[color] * depth + 7) // 8 + 1)
+    inflater = zlib.decompressobj()
+    try:
+        raw = inflater.decompress(b''.join(idat), expected + 1)
+    except zlib.error:
+        return 'malformed PNG (the image data is not a zlib stream)'
+    if len(raw) != expected or not inflater.eof:
+        return f'malformed PNG (the image data is not the {expected:,} bytes a {width}x{height} image holds)'
+    return None
+
+
 def image_bytes(width, height):
     """The bytes of the .bmp the installer writes for a width x height image: a header and rows padded to 4 bytes."""
     return IMAGE_HEADER_BYTES + -(-width // 32) * 4 * height
@@ -373,6 +448,10 @@ def check_members(members, dir_name, api_range, load_icons):
             size = png_size(data)
         except ValueError as exc:
             problems.append(f'{name}: {exc}')
+            continue
+        chunks = png_problem(data, *size)
+        if chunks:
+            problems.append(f'{name}: {chunks}')
             continue
         if name == ICON_MEMBER:
             # The installer scales the icon to a square and refuses a rectangle rather than crop it.

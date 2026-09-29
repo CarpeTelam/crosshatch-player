@@ -27,11 +27,13 @@
 #   lib/GameScript or lib/lua, and a Screens file that names GameScript (retro AI-5). scripts/check_layers.py holds
 #   the table as data and how to run it locally.
 # - Icons up to date: runs scripts/gen_game_icons.py, unchanged, to a scratch file and fails when the result differs
-#   by any byte from the committed lib/GameIcons/GameIcons.generated.h (never edited by hand; spine AD-2, AD-24), or
+#   by any byte from the committed lib/GameIcons/GameIcons.generated.h or from the host tests' reference
+#   test/game_script/GameIconsRaw.h (--raw-out; neither is edited by hand; spine AD-2, AD-24), or
 #   when the generator itself fails; each failure is annotated. Only its exit 3, the SVGs and
 #   assets/game-icons/SHA256SUMS disagreeing, gets re-pin advice; any other exit is annotated with its code.
-#   Fix a failure with python3 scripts/gen_game_icons.py on Linux and commit the header (after a deliberate change of
-#   source, --write-sums first); the script's docstring has the exit codes and the rest.
+#   Fix a failure with python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h on Linux and commit
+#   both files (after a deliberate change of source, --write-sums first); the script's docstring has the exit codes
+#   and the rest.
 name: Crosshatch CI
 
 on:
@@ -266,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Reads only assets/game-icons, scripts, and the committed header: neither history nor the submodule.
+      # Reads only assets/game-icons, scripts, and the committed header and reference: neither history nor the submodule.
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
@@ -276,11 +278,12 @@ jobs:
       # The generator writes to the runner's temp folder, so the committed header is compared, never rewritten. The
       # annotation carries cmp's first difference (or its EOF or missing-file line); the diff is capped because the
       # header is mostly rows of hex bytes.
-      - name: Regenerate the icon header and compare it with the committed one
+      - name: Regenerate the icon header and its host-test reference and compare them with the committed ones
         run: |
           fresh="$RUNNER_TEMP/GameIcons.generated.h"
+          fresh_raw="$RUNNER_TEMP/GameIconsRaw.h"
           # Exit 3 (PIN_MISMATCH) alone means the SVGs and SHA256SUMS disagree, so only it gets re-pin advice.
-          if python3 scripts/gen_game_icons.py --out "$fresh"; then code=0; else code=$?; fi
+          if python3 scripts/gen_game_icons.py --out "$fresh" --raw-out "$fresh_raw"; then code=0; else code=$?; fi
           if [ "$code" -eq 3 ]; then
             echo "::error::scripts/gen_game_icons.py found the SVGs and assets/game-icons/SHA256SUMS disagreeing (exit 3; its message above names the file); restore an edited SVG from Phosphor 2.1.1, or, after a deliberate change of source (an icon added, removed, or updated), rewrite SHA256SUMS with python3 scripts/gen_game_icons.py --write-sums"
             exit 1
@@ -288,13 +291,20 @@ jobs:
             echo "::error::scripts/gen_game_icons.py failed with exit $code (its message is above)"
             exit 1
           fi
-          if ! difference=$(cmp lib/GameIcons/GameIcons.generated.h "$fresh" 2>&1); then
-            echo "::error file=lib/GameIcons/GameIcons.generated.h::differs from a fresh run of scripts/gen_game_icons.py ($difference); run python3 scripts/gen_game_icons.py on Linux and commit the header"
-            echo "diff -u of the committed header and the fresh run, first 200 lines:"
-            diff -u lib/GameIcons/GameIcons.generated.h "$fresh" | head -n 200 || true
+          stale=0
+          same() { # $1 the committed file, $2 a fresh run's
+            if difference=$(cmp "$1" "$2" 2>&1); then return 0; fi
+            echo "::error file=$1::differs from a fresh run of scripts/gen_game_icons.py ($difference); run python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h on Linux (it writes lib/GameIcons/GameIcons.generated.h by default) and commit both files"
+            echo "diff -u of $1 and the fresh run, first 200 lines:"
+            diff -u "$1" "$2" | head -n 200 || true
+            stale=1
+          }
+          same lib/GameIcons/GameIcons.generated.h "$fresh"
+          same test/game_script/GameIconsRaw.h "$fresh_raw"
+          if [ "$stale" -ne 0 ]; then
             exit 1
           fi
-          echo "lib/GameIcons/GameIcons.generated.h matches a fresh run of scripts/gen_game_icons.py"
+          echo "lib/GameIcons/GameIcons.generated.h and test/game_script/GameIconsRaw.h match a fresh run of scripts/gen_game_icons.py"
 
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
