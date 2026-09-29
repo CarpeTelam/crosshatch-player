@@ -3,7 +3,7 @@ title: 'The mode picker (GameModeActivity)'
 type: 'feature'
 ticket: '9'
 created: '2026-09-29'
-status: 'built'
+status: done
 baseline_revision: '000cafe613404964b25c100715a64eb813929ee8'
 route: 'full'
 route_source: 'auto'
