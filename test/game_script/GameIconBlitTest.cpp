@@ -71,6 +71,9 @@ std::vector<uint8_t> packBytes(const std::vector<uint8_t>& bytes) {
   return out;
 }
 
+// `bytes` as the packed bitmap type (the bytes must outlive it).
+GameIcons::PackedBitmap pb(const std::vector<uint8_t>& bytes) { return GameIcons::PackedBitmap{bytes.data()}; }
+
 // A length prefix, then `runs`.
 std::vector<uint8_t> withLength(const std::vector<uint8_t>& runs, const size_t declared) {
   std::vector<uint8_t> out = {static_cast<uint8_t>(declared & 0xFF), static_cast<uint8_t>(declared >> 8)};
@@ -108,7 +111,7 @@ std::set<Pixel> drawIconPixels(const uint8_t* bitmap, const int size) {
   return plotted;
 }
 
-std::set<Pixel> inkAtPixels(const uint8_t* bitmap, const int size) {
+std::set<Pixel> inkAtPixels(const GameIcons::PackedBitmap bitmap, const int size) {
   std::set<Pixel> ink;
   for (int y = 0; y < size; ++y) {
     for (int x = 0; x < size; ++x) {
@@ -188,7 +191,7 @@ TEST(GameIconBlitTest, InkAtMatchesDrawIconsMapping) {
       const std::vector<uint8_t> packed = pack(bitmap, pixels);
       const std::set<Pixel> expected = {{pixels - 1 - row, col}};
       EXPECT_EQ(drawIconPixels(bitmap.data(), pixels), expected) << row << "," << col;
-      EXPECT_EQ(inkAtPixels(packed.data(), pixels), expected) << row << "," << col;
+      EXPECT_EQ(inkAtPixels(pb(packed), pixels), expected) << row << "," << col;
     }
   }
   // And every bitmap of the library, in each weight, against the raw bitmap the generator also computes; the two
@@ -221,7 +224,8 @@ TEST(GameIconBlitTest, EveryPackedBitmapDecodesToItsRawBitmapPixelForPixel) {
       for (const int pixels : {32, 64}) {
         SCOPED_TRACE(std::string(GameIcons::ICONS[i].name) + " weight " + std::to_string(w) + " at " +
                      std::to_string(pixels));
-        const uint8_t* packed = pixels == 32 ? GameIcons::ICONS[i].small[w] : GameIcons::ICONS[i].medium[w];
+        const GameIcons::PackedBitmap packed =
+            pixels == 32 ? GameIcons::ICONS[i].small[w] : GameIcons::ICONS[i].medium[w];
         const uint8_t* raw = pixels == 32 ? GameIconsRaw::ICONS[i].small[w] : GameIconsRaw::ICONS[i].medium[w];
         const int rowBytes = pixels / 8;
         // Decode every row, with no run left over, and put the drawn rows back in drawIcon's layout.
@@ -312,7 +316,7 @@ TEST(GameIconBlitTest, AMalformedBitmapDrawsOnlyItsRowsBeforeTheFault) {
   };
   const auto inkRows = [&](const std::vector<uint8_t>& bitmap) {
     std::set<int> rows;
-    for (const InkRun& run : runsOf(Source{bitmap.data(), 32, 1}, 0, 0, 32, 32)) rows.insert(run[0]);
+    for (const InkRun& run : runsOf(Source{pb(bitmap), 32, 1}, 0, 0, 32, 32)) rows.insert(run[0]);
     return rows;
   };
   const auto upTo = [](const int count) {
@@ -327,7 +331,7 @@ TEST(GameIconBlitTest, AMalformedBitmapDrawsOnlyItsRowsBeforeTheFault) {
     return bitmapOf(pieces);
   };
   EXPECT_EQ(inkRows(bitmapOf(good)), upTo(32));
-  EXPECT_TRUE(GameIcons::detail::wellFormed(bitmapOf(good).data(), 32));
+  EXPECT_TRUE(GameIcons::detail::wellFormed(pb(bitmapOf(good)), 32));
 
   // Control 128, a repeat with no byte to repeat, and a copy that runs off the end, each after 5 good rows.
   EXPECT_EQ(inkRows(goodUpTo(5, {0x80, 0x00, 0x00, 0x00, 0x00})), upTo(5));
@@ -342,36 +346,36 @@ TEST(GameIconBlitTest, AMalformedBitmapDrawsOnlyItsRowsBeforeTheFault) {
   EXPECT_TRUE(inkRows(withLength({}, 0)).empty());
   // inkAt reads the same rows: ink before the fault, none at or after it.
   const std::vector<uint8_t> cut = bitmapOf(good, 2 * 10);
-  EXPECT_TRUE(inkAt(cut.data(), 32, 3, 9));
-  EXPECT_FALSE(inkAt(cut.data(), 32, 3, 10));
-  EXPECT_FALSE(inkAt(cut.data(), 32, 3, 31));
+  EXPECT_TRUE(inkAt(pb(cut), 32, 3, 9));
+  EXPECT_FALSE(inkAt(pb(cut), 32, 3, 10));
+  EXPECT_FALSE(inkAt(pb(cut), 32, 3, 31));
   // A bitmap that is not whole bytes a row, or too wide for the row buffer, draws nothing.
   for (const int pixels : {12, 72, 0, -8}) {
-    EXPECT_TRUE(runsOf(Source{bitmapOf(good).data(), pixels, 1}, 0, 0, 200, 200).empty()) << pixels;
+    EXPECT_TRUE(runsOf(Source{pb(bitmapOf(good)), pixels, 1}, 0, 0, 200, 200).empty()) << pixels;
   }
 
   // A run may cross rows: 6 bytes of ink, a copy of 2 blank bytes, then 120 blank bytes make row 0 all ink and
   // row 1 ink at x 0 to 15.
   const std::vector<uint8_t> crossing = bitmapOf({{0xFB, 0x00}, {0x01, 0xFF, 0xFF}, {0x89, 0xFF}});
-  EXPECT_TRUE(GameIcons::detail::wellFormed(crossing.data(), 32));
-  EXPECT_EQ(runsOf(Source{crossing.data(), 32, 1}, 0, 0, 32, 32), (std::vector<InkRun>{{0, 0, 32}, {1, 0, 16}}));
+  EXPECT_TRUE(GameIcons::detail::wellFormed(pb(crossing), 32));
+  EXPECT_EQ(runsOf(Source{pb(crossing), 32, 1}, 0, 0, 32, 32), (std::vector<InkRun>{{0, 0, 32}, {1, 0, 16}}));
   // One run for the whole bitmap: 128 bytes of ink.
   const std::vector<uint8_t> solid = bitmapOf({{0x81, 0x00}});
-  EXPECT_TRUE(GameIcons::detail::wellFormed(solid.data(), 32));
+  EXPECT_TRUE(GameIcons::detail::wellFormed(pb(solid), 32));
   EXPECT_EQ(inkRows(solid), upTo(32));
 
   // wellFormed is the build-time check: it also refuses a stream that is not exactly its rows, though a draw of
   // it would show every row.
-  EXPECT_FALSE(GameIcons::detail::wellFormed(goodUpTo(32, {0x00, 0xFF}).data(), 32));  // a byte too many
-  EXPECT_FALSE(GameIcons::detail::wellFormed(bitmapOf({{0x81, 0x00}, {0xFD, 0x00}}).data(), 32));
-  EXPECT_FALSE(GameIcons::detail::wellFormed(bitmapOf({{0x80, 0x00}}).data(), 32));
-  EXPECT_FALSE(GameIcons::detail::wellFormed(bitmapOf({{0xFE, 0x00}, {0x81, 0xFF}}).data(), 32));  // a run past the end
-  EXPECT_FALSE(GameIcons::detail::wellFormed(bitmapOf(std::vector<std::vector<uint8_t>>(31, inkRow)).data(), 32));
+  EXPECT_FALSE(GameIcons::detail::wellFormed(pb(goodUpTo(32, {0x00, 0xFF})), 32));  // a byte too many
+  EXPECT_FALSE(GameIcons::detail::wellFormed(pb(bitmapOf({{0x81, 0x00}, {0xFD, 0x00}})), 32));
+  EXPECT_FALSE(GameIcons::detail::wellFormed(pb(bitmapOf({{0x80, 0x00}})), 32));
+  EXPECT_FALSE(GameIcons::detail::wellFormed(pb(bitmapOf({{0xFE, 0x00}, {0x81, 0xFF}})), 32));  // a run past the end
+  EXPECT_FALSE(GameIcons::detail::wellFormed(pb(bitmapOf(std::vector<std::vector<uint8_t>>(31, inkRow))), 32));
   EXPECT_EQ(inkRows(goodUpTo(32, {0x00, 0xFF})), upTo(32));
 
   // PackedReader reads no byte at or past the stored length, and keeps failing once it has failed.
   const uint8_t data[] = {0x02, 0x00, 0xFF, 0x11, 0x22, 0x33};  // a length of 2: a repeat of 2 (0x11), then more
-  GameIcons::PackedReader reader(data);
+  GameIcons::PackedReader reader{GameIcons::PackedBitmap{data}};
   uint8_t byte = 0;
   ASSERT_TRUE(reader.next(byte));
   EXPECT_EQ(byte, 0x11);
@@ -384,11 +388,25 @@ TEST(GameIconBlitTest, AMalformedBitmapDrawsOnlyItsRowsBeforeTheFault) {
   EXPECT_FALSE(reader.finished());
   uint8_t row[GameIcons::MAX_ROW_BYTES];
   const uint8_t once[] = {0x01, 0x00, 0xF7, 0x55};  // a length of 1: a repeat of 10 whose byte is at the end
-  GameIcons::PackedReader cut2(once);
+  GameIcons::PackedReader cut2{GameIcons::PackedBitmap{once}};
   EXPECT_FALSE(cut2.row(row, 2));
   EXPECT_FALSE(cut2.row(row, 1));
-  GameIcons::PackedReader wide(data);
+  // A row wider than the buffer is refused whatever the runs hold: 128 bytes of ink are there to be read.
+  const std::vector<uint8_t> solidBitmap = bitmapOf({{0x81, 0x00}});
+  GameIcons::PackedReader wide{pb(solidBitmap)};
   EXPECT_FALSE(wide.row(row, GameIcons::MAX_ROW_BYTES + 1));
+  GameIcons::PackedReader exact{pb(solidBitmap)};
+  EXPECT_TRUE(exact.row(row, GameIcons::MAX_ROW_BYTES));
+  // Once failed, always failed: after control 128 the bytes that follow are a valid copy run (control 0x00, one byte
+  // 0xAA), and the reader must not go on to read it.
+  const std::vector<uint8_t> afterFault = {0x03, 0x00, 0x80, 0x00, 0xAA};
+  GameIcons::PackedReader failed{pb(afterFault)};
+  byte = 0x5A;
+  EXPECT_FALSE(failed.next(byte));
+  EXPECT_FALSE(failed.next(byte));
+  EXPECT_FALSE(failed.row(row, 1));
+  EXPECT_FALSE(failed.finished());
+  EXPECT_EQ(byte, 0x5A);
 }
 
 // The build-time check (wellFormed, which walks the runs) and the draw's reader (PackedReader, which expands them)
@@ -427,15 +445,15 @@ TEST(GameIconBlitTest, TheBuildTimeCheckAndTheReaderAgreeOnWhatIsWellFormed) {
     if (pick(8) == 0) bitmap[0] = static_cast<uint8_t>(bitmap[0] + (pick(2) ? 1 : 0xFF));  // a wrong prefix
     // The reader reads only what the prefix says, so give it exactly the bytes there (a wrong prefix that
     // claims more than the array holds is the generator's fault, and no draw can tell).
-    const size_t claimed = GameIcons::packedLength(bitmap.data());
+    const size_t claimed = GameIcons::packedLength(pb(bitmap));
     if (claimed + GameIcons::PACKED_LENGTH_BYTES > bitmap.size())
       bitmap.resize(claimed + GameIcons::PACKED_LENGTH_BYTES, 0);
-    GameIcons::PackedReader reader(bitmap.data());
+    GameIcons::PackedReader reader(pb(bitmap));
     uint8_t row[GameIcons::MAX_ROW_BYTES];
     bool readable = true;
     for (int y = 0; y < pixels && readable; ++y) readable = reader.row(row, static_cast<size_t>(pixels / 8));
     const bool readerSays = readable && reader.finished();
-    ASSERT_EQ(GameIcons::detail::wellFormed(bitmap.data(), pixels), readerSays) << "round " << round;
+    ASSERT_EQ(GameIcons::detail::wellFormed(pb(bitmap), pixels), readerSays) << "round " << round;
     good += readerSays;
   }
   EXPECT_GT(good, 500u);  // the streams are not all broken
@@ -448,19 +466,19 @@ TEST(GameIconBlitTest, SourceForPicksTheBitmapAndScale) {
       const auto w = static_cast<size_t>(weight);
       Source source;
       ASSERT_TRUE(sourceFor(i, 32, weight, source));
-      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].small[w]);
+      EXPECT_EQ(source.bitmap.data, GameIcons::ICONS[i].small[w].data);
       EXPECT_EQ(source.pixels, 32);
       EXPECT_EQ(source.scale, 1);
       ASSERT_TRUE(sourceFor(i, 64, weight, source));
-      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium[w]);
+      EXPECT_EQ(source.bitmap.data, GameIcons::ICONS[i].medium[w].data);
       EXPECT_EQ(source.pixels, 64);
       EXPECT_EQ(source.scale, 1);
       ASSERT_TRUE(sourceFor(i, 128, weight, source));
-      EXPECT_EQ(source.bitmap, GameIcons::ICONS[i].medium[w]);
+      EXPECT_EQ(source.bitmap.data, GameIcons::ICONS[i].medium[w].data);
       EXPECT_EQ(source.pixels, 64);
       EXPECT_EQ(source.scale, 2);
     }
-    EXPECT_NE(GameIcons::ICONS[i].small[0], GameIcons::ICONS[i].small[1]);
+    EXPECT_NE(GameIcons::ICONS[i].small[0].data, GameIcons::ICONS[i].small[1].data);
   }
   Source untouched;
   const auto pastWeights = static_cast<GameIcons::Weight>(GameIcons::WEIGHT_COUNT);
@@ -470,7 +488,7 @@ TEST(GameIconBlitTest, SourceForPicksTheBitmapAndScale) {
   EXPECT_FALSE(sourceFor(0, 256, GameIcons::Weight::Fill, untouched));
   EXPECT_FALSE(sourceFor(0, 32, pastWeights, untouched));
   EXPECT_FALSE(sourceFor(0, 64, static_cast<GameIcons::Weight>(0xFF), untouched));
-  EXPECT_EQ(untouched.bitmap, nullptr);
+  EXPECT_EQ(untouched.bitmap.data, nullptr);
   EXPECT_EQ((std::vector<int>(std::begin(GameIconBlit::DRAWN_PIXELS), std::end(GameIconBlit::DRAWN_PIXELS))),
             (std::vector<int>{32, 64, 128}));
 }
@@ -482,7 +500,7 @@ TEST(GameIconBlitTest, RunsMergeAdjacentInkAndSplitAtGaps) {
   inkDrawn(bitmap, 32, 31, 5);  // touching the right edge
   inkDrawn(bitmap, 32, 0, 6);
   const std::vector<uint8_t> packed = pack(bitmap, 32);
-  const Source source{packed.data(), 32, 1};
+  const Source source{pb(packed), 32, 1};
   const std::vector<InkRun> expected = {
       {5 + 10, 3 + 20, 5}, {5 + 10, 9 + 20, 1}, {5 + 10, 31 + 20, 1}, {6 + 10, 20, 1}};
   EXPECT_EQ(runsOf(source, 20, 10, 480, 800), expected);
@@ -495,7 +513,7 @@ TEST(GameIconBlitTest, ScaleTwoDrawsEachPixelAsATwoByTwoBlock) {
   inkDrawn(bitmap, 64, 11, 20);
   inkDrawn(bitmap, 64, 63, 63);
   const std::vector<uint8_t> packed = pack(bitmap, 64);
-  const Source source{packed.data(), 64, 2};
+  const Source source{pb(packed), 64, 2};
   const std::vector<InkRun> expected = {
       {100, 50, 2}, {101, 50, 2}, {140, 70, 4}, {141, 70, 4}, {226, 176, 2}, {227, 176, 2},
   };
@@ -504,7 +522,7 @@ TEST(GameIconBlitTest, ScaleTwoDrawsEachPixelAsATwoByTwoBlock) {
 
 TEST(GameIconBlitTest, RunsAreClippedToTheCanvas) {
   const std::vector<uint8_t> full = pack(std::vector<uint8_t>(128, 0x00), 32);  // a 32 px bitmap that is all ink
-  const Source source{full.data(), 32, 1};
+  const Source source{pb(full), 32, 1};
   const auto square = [](const int left, const int top, const int right, const int bottom) {
     std::set<Pixel> pixels;
     for (int y = top; y < bottom; ++y) {
@@ -528,7 +546,7 @@ TEST(GameIconBlitTest, RunsAreClippedToTheCanvas) {
   EXPECT_TRUE(runsOf(source, 0, 0, 0, 0).empty());
   EXPECT_TRUE(runsOf(source, 0, 0, -5, 60).empty());
   // Scaled: a 128 px icon over the canvas's bottom-right corner.
-  const Source large{full.data(), 32, 2};  // stand-in: 64 drawn px from the 32 px bitmap
+  const Source large{pb(full), 32, 2};  // stand-in: 64 drawn px from the 32 px bitmap
   EXPECT_EQ(covered(runsOf(large, 70, 40, 100, 60)), square(70, 40, 100, 60));
 }
 

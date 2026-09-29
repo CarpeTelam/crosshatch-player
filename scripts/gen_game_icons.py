@@ -105,6 +105,8 @@ MAX_RUN = 128
 # Home's cover-grid Games tab draws GAME_CONTROLLER_32 (CoverGridHomeUi.cpp, ledger row 9).
 RAW_ICONS = (('game-controller', 'regular', SMALL_PIXELS),)
 Bitmap = collections.namedtuple('Bitmap', 'raw packed')
+# The header's name for a raw array's size at each drawn size.
+RAW_BYTES_NAME = {SMALL_PIXELS: 'SMALL_BYTES', MEDIUM_PIXELS: 'MEDIUM_BYTES'}
 
 # A pixel is ink when at least this fraction of it is covered.
 THRESHOLD = 0.5
@@ -595,10 +597,18 @@ def header_text(icons):
         '// indexes Icon::small and Icon::medium',
         f'inline constexpr size_t WEIGHT_COUNT = {len(WEIGHTS)};',
         '',
+        '// A packed bitmap (layout above). A type of its own, so that a raw array, whose first two bytes would be read as',
+        '// a length, cannot be passed where a packed bitmap is meant; the constructor is explicit for the same reason.',
+        'struct PackedBitmap {',
+        '  const uint8_t* data = nullptr;',
+        '  constexpr PackedBitmap() = default;',
+        '  constexpr explicit PackedBitmap(const uint8_t* bytes) : data(bytes) {}',
+        '};',
+        '',
         'struct Icon {',
         '  const char* name;',
-        '  const uint8_t* small[WEIGHT_COUNT];',
-        '  const uint8_t* medium[WEIGHT_COUNT];',
+        '  PackedBitmap small[WEIGHT_COUNT];',
+        '  PackedBitmap medium[WEIGHT_COUNT];',
         '};',
     ]
     for weights in icons:
@@ -613,13 +623,14 @@ def header_text(icons):
                 if (entry.name, weight) == (name, raw_weight):
                     lines.append(f'// {name} {weight} at {pixels} px, raw in drawIcon\'s layout: Home\'s cover-grid Games tab '
                                  'draws it with GfxRenderer::drawIcon')
-                    lines.extend(array_lines(identifier(name, weight, pixels), 'SMALL_BYTES', bitmaps[pixels].raw))
+                    lines.extend(array_lines(identifier(name, weight, pixels), RAW_BYTES_NAME[pixels],
+                                             bitmaps[pixels].raw))
     lines.append('')
     lines.append('inline constexpr Icon ICONS[] = {')
     for weights in icons:
         name = weights[WEIGHTS[0]][0].name
-        small = ', '.join(packed_identifier(name, weight, SMALL_PIXELS) for weight in WEIGHTS)
-        medium = ', '.join(packed_identifier(name, weight, MEDIUM_PIXELS) for weight in WEIGHTS)
+        small = ', '.join(f'PackedBitmap{{{packed_identifier(name, weight, SMALL_PIXELS)}}}' for weight in WEIGHTS)
+        medium = ', '.join(f'PackedBitmap{{{packed_identifier(name, weight, MEDIUM_PIXELS)}}}' for weight in WEIGHTS)
         lines.append(f'    {{"{name}", {{{small}}}, {{{medium}}}}},')
     lines.append('};')
     lines.append('inline constexpr size_t ICON_COUNT = sizeof(ICONS) / sizeof(ICONS[0]);')

@@ -450,7 +450,6 @@ class MainTest(unittest.TestCase):
         text = self.out.read_text()
         self.assertIn('enum class Weight : uint8_t { Regular, Fill };', text)
         self.assertIn('inline constexpr size_t WEIGHT_COUNT = 2;', text)
-        self.assertIn('  const uint8_t* small[WEIGHT_COUNT];\n  const uint8_t* medium[WEIGHT_COUNT];\n', text)
         for array in ('DICE_SIX_32_PB', 'DICE_SIX_64_PB', 'DICE_SIX_FILL_32_PB', 'DICE_SIX_FILL_64_PB', 'X_32_PB',
                       'X_FILL_64_PB'):
             # Each packed array's length is its stored size, the two length bytes and the runs.
@@ -463,8 +462,12 @@ class MainTest(unittest.TestCase):
         self.assertIn('// x: Phosphor 2.1.1 regular, phosphor/regular/x.svg', text)
         self.assertIn('// x: Phosphor 2.1.1 fill, phosphor/fill/x-fill.svg', text)
         self.assertIn('\n' + ggi.LICENCE_NOTICE + '\n', text)
-        dice = '{"dice-six", {DICE_SIX_32_PB, DICE_SIX_FILL_32_PB}, {DICE_SIX_64_PB, DICE_SIX_FILL_64_PB}},'
-        x = '{"x", {X_32_PB, X_FILL_32_PB}, {X_64_PB, X_FILL_64_PB}},'
+        dice = ('{"dice-six", {PackedBitmap{DICE_SIX_32_PB}, PackedBitmap{DICE_SIX_FILL_32_PB}}, '
+                '{PackedBitmap{DICE_SIX_64_PB}, PackedBitmap{DICE_SIX_FILL_64_PB}}},')
+        x = '{"x", {PackedBitmap{X_32_PB}, PackedBitmap{X_FILL_32_PB}}, {PackedBitmap{X_64_PB}, PackedBitmap{X_FILL_64_PB}}},'
+        self.assertIn('struct PackedBitmap {', text)
+        self.assertIn('  PackedBitmap small[WEIGHT_COUNT];\n  PackedBitmap medium[WEIGHT_COUNT];\n', text)
+        self.assertIn('constexpr explicit PackedBitmap(const uint8_t* bytes)', text)
         self.assertLess(text.index(dice), text.index(x))
         # Each name's regular bitmaps come before its fill ones, and the weights differ.
         self.assertLess(text.index('uint8_t X_32_PB['), text.index('uint8_t X_FILL_32_PB['))
@@ -495,6 +498,18 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(stored_layout(unpack(self.array_bytes(packed_text, f'{name}_{pixels}_PB'), pixels)),
                                  stored, f'{name} {pixels}')
         self.assertFalse(self.out.read_text() == raw_text)
+
+    def test_a_raw_entry_is_sized_by_its_own_pixels(self):
+        # A raw array at 64 px holds MEDIUM_BYTES, not SMALL_BYTES (a wrong size fails the C++ build).
+        with unittest.mock.patch.object(ggi, 'RAW_ICONS', (('x', 'regular', 32), ('dice-six', 'fill', 64))):
+            code, err = self.run_main()
+        self.assertEqual(code, 0, err)
+        text = self.out.read_text()
+        self.assertIn('inline constexpr uint8_t X_32[SMALL_BYTES] = {', text)
+        self.assertIn('inline constexpr uint8_t DICE_SIX_FILL_64[MEDIUM_BYTES] = {', text)
+        self.assertEqual(len(self.array_bytes(text, 'DICE_SIX_FILL_64')), 512)
+        self.assertEqual(len(self.array_bytes(text, 'X_32')), 128)
+        self.assertNotIn('uint8_t X_FILL_32[', text)
 
     def test_no_raw_out_writes_no_reference(self):
         self.assertEqual(self.run_main()[0], 0)

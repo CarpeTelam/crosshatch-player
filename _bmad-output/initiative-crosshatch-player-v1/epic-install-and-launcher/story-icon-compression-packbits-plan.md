@@ -93,6 +93,19 @@ Pass 1, thorough. All four lenses (blind hunter, edge case hunter, verification 
 | 13 | verification | none | none | No gaps found. |
 | 14 | intent | The diff implements cross-row runs where the intent says per row; state beyond the row buffer; checks live on the host surface; no test against the old header bytes | not a defect, no route | Descriptive. Rows 12 and the Plan Change Log cover the first two; the firmware side is covered by the builds, `check_flash_budget.py`, and the simulator. "Same pixels as today" was checked once against the base commit's header: every raw reference array equals its array there (Verification). |
 
+Pass 2, the orchestrator's independent review (adversarial, edge-case, and verification-gap lenses; no high or medium finding; the reviewers confirmed the raw reference equals the parent's arrays, 0 differences in 220 bitmaps, and fuzzed the decoder under ASan and UBSan, clean). Source of every row below: orchestrator's independent review.
+
+| # | Lens | Finding | Verdict, route | Evidence and action |
+|---|------|---------|----------------|---------------------|
+| 15 | adversarial | Raw and packed bitmaps are both `const uint8_t*`, so a raw array (first two bytes read as a length) can be handed to `Source`, `inkRuns`, or `inkAt` | low, patch | True, and nothing does it today. The generator now emits `struct PackedBitmap` (an explicit constructor, so `Source{raw, ...}` does not compile through brace elision either); `Icon`, `Source`, `inkAt`, `PackedReader`, `packedLength`, and `wellFormed` take it; `FrameReplayTest`'s local `Drawn` holds it. `Icon` is still one pointer per bitmap. |
+| 16 | edge | `RAW_ICONS` arrays are all sized `SMALL_BYTES`, so a 64 px entry would not compile | low, patch | True: sized by `RAW_BYTES_NAME[pixels]`; `test_a_raw_entry_is_sized_by_its_own_pixels` writes a 64 px and a 32 px raw entry and checks each array's length. |
+| 17 | adversarial | The `Icons up to date` job's advice text names only the header, but the fix also needs `--raw-out` | low, defer | `.github/**` is outside `touches`; it stays with the existing `## 4.15` CI item in `deferred-work.md`, which now names the advice text too. |
+| 18 | verification | The reader's "goes on failing" is untested (deleting `if (failed_) return false;` survives) | low, patch | Test added: after control 128 the next bytes are a valid copy run, and `next` (twice), `row`, and `finished` must all stay failed with `out` untouched. |
+| 19 | verification | `PackedReader::row`'s width guard is untested | low, patch | Test added: a 128-byte solid bitmap, `row(row, MAX_ROW_BYTES + 1)` must fail while `row(row, MAX_ROW_BYTES)` succeeds. |
+| 20 | verification | `size -A` output kept nowhere | low, patch | The lines are pasted in Verification. |
+
+`test/game_script/GameIconsRaw.h`, outside this entry's `touches`, is APPROVED by the orchestrator as a test-only file.
+
 ## Design Notes
 
 **Layout.** A packed bitmap is a 2-byte little-endian length `N`, then `N` bytes of PackBits (control 0-127: copy the next control+1 bytes; 129-255: repeat the next byte 257-control times; 128 is never emitted and is malformed) that decode to the drawn rows, `pixels / 8` bytes each, MSB first, bit 0 = ink, bit `x` is drawn column `x`. A run may cross rows (Plan Change Log). The length prefix keeps `Icon` at pointers only (a separate length field would cost 4 B a bitmap, 880 B in all, in `ICONS`) and gives the decoder its bound. `PackedReader` gives one byte at a time; `inkRuns` asks for a row when the draw reaches it, so it decodes the rows above a clip (at most 63) and stops after the last visible one.
@@ -104,6 +117,8 @@ Pass 1, thorough. All four lenses (blind hunter, edge case hunter, verification 
 **Decoder state.** The frozen Never line says no decoder state beyond the row buffer; the ticket's own rule is a row buffer of at most 8 B on the stack, no heap, no static buffer, no new failure path. `PackedReader` is about 24 B of locals in `inkRuns` (source pointer, read position, end, run counter, two flags, repeat value) beside the 8 B row, far under AGENTS.md's 256 B, and every one is a stack local.
 
 **Malformed data.** Only a generator bug can produce it, and `static_assert(detail::allWellFormed())` in `GameIcons.h` rejects it at build time: every bitmap's runs are in bounds, none is control 128, and they decode to exactly the bitmap's bytes with none left over. It walks the runs without expanding them (a first version expanded them and used 800,000 to 1,048,576 of clang's 1,048,576-step limit; walking takes under 100,000), so it is a second parser of the reader's rule, and `GameIconBlitTest` checks the two agree on 20,000 random streams. The reader's own checks are the belt to that, and the test feeds it broken streams.
+
+**Packed type.** The generated header defines `PackedBitmap`, one pointer with an explicit constructor, and `ICONS` holds those, so a raw array cannot be passed to the decoder by mistake; the two `size -A` sections were identical before and after the change to it, so it costs nothing.
 
 **Raw controller.** `ICONS` holds a packed copy of game-controller regular 32 (named `_PB` like every packed array); the raw `GAME_CONTROLLER_32` is an extra array, so that bitmap is stored twice (128 B).
 
@@ -122,6 +137,17 @@ Run in this worktree (baseline `1a0b7f6d`), builds and host tests under the shar
 - `pio run -e x4pro` (via `check_flash_budget.py build on`), `pio run -e sticky`, `pio run -e default` -- all SUCCESS; `sim.sh build x4pro` SUCCESS. `x4c` and `papermono` are the orchestrator's.
 - `python3 scripts/check_flash_budget.py build on`, `build off`, `compare --limit-kib 250 --ram-limit-bytes 1024`, `objects` -- all exit 0. **x4pro `firmware.bin` games on 5,889,312 B, off 5,676,064 B, +213,248 B (42,752 B under the 256,000 B gate); static internal RAM +776 B (248 B under the 1,024 B gate); 41 game objects, no static initializer, no mutable static over 64 B.** Entry 3 at `c47cceaa`: +237,808 B and +776 B. Change: -24,560 B flash, +0 B RAM. Running total over the base `962ae61` (+228,496 B, +776 B): -15,248 B flash, +0 B RAM (the epic's share of +12,000 B is not used; 27,248 B under its pass bar of +240,496 B). Same-method base: `pio run -e x4pro` on the parent commit, `firmware.bin` 5,913,872 B, equal to entry 3's figure.
 - `size -A` on the two games-on ELFs (parent and this change): `.flash.rodata` 3,491,812 B to 3,467,076 B (-24,736 B), `.flash.text` 2,301,628 B to 2,301,808 B (+180 B), `.iram0.text` and the `.dram0.*` sections unchanged. Data saved: 70,400 B raw to 45,529 B packed (-24,871 B), +128 B for the raw `GAME_CONTROLLER_32`, +7 B padding; the decoder costs 180 B of code.
+- `size -A`, x4pro games on, at the parent `1a0b7f6d` (`pio run -e x4pro` on that tree) and at this story, then again after the review fixes (identical to the first):
+
+  | section | parent | this story | after review fixes |
+  | --- | ---: | ---: | ---: |
+  | `.flash.text` | 2301628 | 2301808 | 2301808 |
+  | `.flash.rodata` | 3491812 | 3467076 | 3467076 |
+  | `.iram0.text` | 84775 | 84775 | 84775 |
+  | `.dram0.data` | 29615 | 29615 | 29615 |
+  | `.dram0.bss` | 72208 | 72208 | 72208 |
+
+- Review fixes (pass 2) changed only a type wrapper in firmware code (`PackedBitmap`), so `check_flash_budget.py`'s four steps were not re-run; `pio run -e x4pro` (`firmware.bin` 5,889,312 B, as measured) and `pio run -e default` build after the fixes, and the ELF sections match the measured ones, so the figures above stand. Host suites 868 of 868 after the fixes, every `scripts/*_test.py` OK, the header and raw reference regenerate byte for byte from a fresh archive tree.
 - `python3 scripts/check_layers.py` and `python3 scripts/check_upstream_touches.py` -- pass (no new include edge; no upstream file changed).
 - `./bin/clang-format-fix` twice, then `git status` -- nothing new.
 - `python3 scripts/gen_game_icons.py` from a fresh archive tree (`git archive` of the commit plus every submodule's archive, unpacked in the scratchpad) -- `cmp` says the regenerated header is byte-identical to the committed one, and `--raw-out` regenerates `GameIconsRaw.h` byte for byte; `gen_game_icons_test.py` passes there too. This story changes no CI gate or workflow, so the archive tree is the check of the `Icons up to date` step's command only.

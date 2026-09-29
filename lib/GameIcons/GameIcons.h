@@ -67,8 +67,8 @@ static_assert(SMALL_PIXELS % 8 == 0 && MEDIUM_PIXELS % 8 == 0 && MEDIUM_PIXELS /
               "a drawn row is whole bytes and fits the row buffer");
 
 // The length of a packed bitmap's runs, from its two-byte prefix.
-constexpr size_t packedLength(const uint8_t* bitmap) {
-  return static_cast<size_t>(bitmap[0]) | (static_cast<size_t>(bitmap[1]) << 8);
+constexpr size_t packedLength(const PackedBitmap bitmap) {
+  return static_cast<size_t>(bitmap.data[0]) | (static_cast<size_t>(bitmap.data[1]) << 8);
 }
 
 // Decodes a packed bitmap's runs a byte at a time, in order. It never reads a byte at or past the end the bitmap's
@@ -76,8 +76,8 @@ constexpr size_t packedLength(const uint8_t* bitmap) {
 // fail, and go on failing, so a draw keeps the rows it decoded before the fault and draws nothing after it.
 class PackedReader {
  public:
-  constexpr explicit PackedReader(const uint8_t* bitmap)
-      : data_(bitmap), pos_(PACKED_LENGTH_BYTES), end_(PACKED_LENGTH_BYTES + packedLength(bitmap)) {}
+  constexpr explicit PackedReader(const PackedBitmap bitmap)
+      : data_(bitmap.data), pos_(PACKED_LENGTH_BYTES), end_(PACKED_LENGTH_BYTES + packedLength(bitmap)) {}
 
   // The next decoded byte; false, `out` untouched, when the runs end or are malformed.
   constexpr bool next(uint8_t& out) {
@@ -143,12 +143,12 @@ namespace detail {
 // work small: clang stops a constant evaluation at 1,048,576 steps) are well formed, all inside the stored length, and
 // decode to pixels * pixels / 8 bytes in all, with no run or byte left over. This is PackedReader's rule, checked
 // without it, and GameIconBlitTest checks the two agree.
-constexpr bool wellFormed(const uint8_t* bitmap, const int pixels) {
+constexpr bool wellFormed(const PackedBitmap bitmap, const int pixels) {
   size_t pos = PACKED_LENGTH_BYTES;
   const size_t end = PACKED_LENGTH_BYTES + packedLength(bitmap);
   size_t decoded = 0;
   while (pos < end) {
-    const uint8_t control = bitmap[pos++];
+    const uint8_t control = bitmap.data[pos++];
     if (control == 128) return false;
     if (control < 128) {
       const size_t count = static_cast<size_t>(control) + 1;

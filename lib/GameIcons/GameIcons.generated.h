@@ -26,10 +26,18 @@ inline constexpr size_t MEDIUM_BYTES = 512;
 enum class Weight : uint8_t { Regular, Fill };  // indexes Icon::small and Icon::medium
 inline constexpr size_t WEIGHT_COUNT = 2;
 
+// A packed bitmap (layout above). A type of its own, so that a raw array, whose first two bytes would be read as
+// a length, cannot be passed where a packed bitmap is meant; the constructor is explicit for the same reason.
+struct PackedBitmap {
+  const uint8_t* data = nullptr;
+  constexpr PackedBitmap() = default;
+  constexpr explicit PackedBitmap(const uint8_t* bytes) : data(bytes) {}
+};
+
 struct Icon {
   const char* name;
-  const uint8_t* small[WEIGHT_COUNT];
-  const uint8_t* medium[WEIGHT_COUNT];
+  PackedBitmap small[WEIGHT_COUNT];
+  PackedBitmap medium[WEIGHT_COUNT];
 };
 
 // arrow-clockwise: Phosphor 2.1.1 regular, phosphor/regular/arrow-clockwise.svg
@@ -3649,61 +3657,61 @@ inline constexpr uint8_t X_FILL_64_PB[324] = {
 };
 
 inline constexpr Icon ICONS[] = {
-    {"arrow-clockwise", {ARROW_CLOCKWISE_32_PB, ARROW_CLOCKWISE_FILL_32_PB}, {ARROW_CLOCKWISE_64_PB, ARROW_CLOCKWISE_FILL_64_PB}},
-    {"arrow-down", {ARROW_DOWN_32_PB, ARROW_DOWN_FILL_32_PB}, {ARROW_DOWN_64_PB, ARROW_DOWN_FILL_64_PB}},
-    {"arrow-left", {ARROW_LEFT_32_PB, ARROW_LEFT_FILL_32_PB}, {ARROW_LEFT_64_PB, ARROW_LEFT_FILL_64_PB}},
-    {"arrow-right", {ARROW_RIGHT_32_PB, ARROW_RIGHT_FILL_32_PB}, {ARROW_RIGHT_64_PB, ARROW_RIGHT_FILL_64_PB}},
-    {"arrow-u-up-left", {ARROW_U_UP_LEFT_32_PB, ARROW_U_UP_LEFT_FILL_32_PB}, {ARROW_U_UP_LEFT_64_PB, ARROW_U_UP_LEFT_FILL_64_PB}},
-    {"arrow-u-up-right", {ARROW_U_UP_RIGHT_32_PB, ARROW_U_UP_RIGHT_FILL_32_PB}, {ARROW_U_UP_RIGHT_64_PB, ARROW_U_UP_RIGHT_FILL_64_PB}},
-    {"arrow-up", {ARROW_UP_32_PB, ARROW_UP_FILL_32_PB}, {ARROW_UP_64_PB, ARROW_UP_FILL_64_PB}},
-    {"arrows-clockwise", {ARROWS_CLOCKWISE_32_PB, ARROWS_CLOCKWISE_FILL_32_PB}, {ARROWS_CLOCKWISE_64_PB, ARROWS_CLOCKWISE_FILL_64_PB}},
-    {"boat", {BOAT_32_PB, BOAT_FILL_32_PB}, {BOAT_64_PB, BOAT_FILL_64_PB}},
-    {"check", {CHECK_32_PB, CHECK_FILL_32_PB}, {CHECK_64_PB, CHECK_FILL_64_PB}},
-    {"circle", {CIRCLE_32_PB, CIRCLE_FILL_32_PB}, {CIRCLE_64_PB, CIRCLE_FILL_64_PB}},
-    {"club", {CLUB_32_PB, CLUB_FILL_32_PB}, {CLUB_64_PB, CLUB_FILL_64_PB}},
-    {"diamond", {DIAMOND_32_PB, DIAMOND_FILL_32_PB}, {DIAMOND_64_PB, DIAMOND_FILL_64_PB}},
-    {"dice-five", {DICE_FIVE_32_PB, DICE_FIVE_FILL_32_PB}, {DICE_FIVE_64_PB, DICE_FIVE_FILL_64_PB}},
-    {"dice-four", {DICE_FOUR_32_PB, DICE_FOUR_FILL_32_PB}, {DICE_FOUR_64_PB, DICE_FOUR_FILL_64_PB}},
-    {"dice-one", {DICE_ONE_32_PB, DICE_ONE_FILL_32_PB}, {DICE_ONE_64_PB, DICE_ONE_FILL_64_PB}},
-    {"dice-six", {DICE_SIX_32_PB, DICE_SIX_FILL_32_PB}, {DICE_SIX_64_PB, DICE_SIX_FILL_64_PB}},
-    {"dice-three", {DICE_THREE_32_PB, DICE_THREE_FILL_32_PB}, {DICE_THREE_64_PB, DICE_THREE_FILL_64_PB}},
-    {"dice-two", {DICE_TWO_32_PB, DICE_TWO_FILL_32_PB}, {DICE_TWO_64_PB, DICE_TWO_FILL_64_PB}},
-    {"dot-outline", {DOT_OUTLINE_32_PB, DOT_OUTLINE_FILL_32_PB}, {DOT_OUTLINE_64_PB, DOT_OUTLINE_FILL_64_PB}},
-    {"eraser", {ERASER_32_PB, ERASER_FILL_32_PB}, {ERASER_64_PB, ERASER_FILL_64_PB}},
-    {"eye", {EYE_32_PB, EYE_FILL_32_PB}, {EYE_64_PB, EYE_FILL_64_PB}},
-    {"eye-closed", {EYE_CLOSED_32_PB, EYE_CLOSED_FILL_32_PB}, {EYE_CLOSED_64_PB, EYE_CLOSED_FILL_64_PB}},
-    {"fire", {FIRE_32_PB, FIRE_FILL_32_PB}, {FIRE_64_PB, FIRE_FILL_64_PB}},
-    {"flag-checkered", {FLAG_CHECKERED_32_PB, FLAG_CHECKERED_FILL_32_PB}, {FLAG_CHECKERED_64_PB, FLAG_CHECKERED_FILL_64_PB}},
-    {"game-controller", {GAME_CONTROLLER_32_PB, GAME_CONTROLLER_FILL_32_PB}, {GAME_CONTROLLER_64_PB, GAME_CONTROLLER_FILL_64_PB}},
-    {"gear-six", {GEAR_SIX_32_PB, GEAR_SIX_FILL_32_PB}, {GEAR_SIX_64_PB, GEAR_SIX_FILL_64_PB}},
-    {"heart", {HEART_32_PB, HEART_FILL_32_PB}, {HEART_64_PB, HEART_FILL_64_PB}},
-    {"hexagon", {HEXAGON_32_PB, HEXAGON_FILL_32_PB}, {HEXAGON_64_PB, HEXAGON_FILL_64_PB}},
-    {"hourglass", {HOURGLASS_32_PB, HOURGLASS_FILL_32_PB}, {HOURGLASS_64_PB, HOURGLASS_FILL_64_PB}},
-    {"house", {HOUSE_32_PB, HOUSE_FILL_32_PB}, {HOUSE_64_PB, HOUSE_FILL_64_PB}},
-    {"info", {INFO_32_PB, INFO_FILL_32_PB}, {INFO_64_PB, INFO_FILL_64_PB}},
-    {"lightbulb", {LIGHTBULB_32_PB, LIGHTBULB_FILL_32_PB}, {LIGHTBULB_64_PB, LIGHTBULB_FILL_64_PB}},
-    {"minus", {MINUS_32_PB, MINUS_FILL_32_PB}, {MINUS_64_PB, MINUS_FILL_64_PB}},
-    {"pause", {PAUSE_32_PB, PAUSE_FILL_32_PB}, {PAUSE_64_PB, PAUSE_FILL_64_PB}},
-    {"pencil-simple", {PENCIL_SIMPLE_32_PB, PENCIL_SIMPLE_FILL_32_PB}, {PENCIL_SIMPLE_64_PB, PENCIL_SIMPLE_FILL_64_PB}},
-    {"play", {PLAY_32_PB, PLAY_FILL_32_PB}, {PLAY_64_PB, PLAY_FILL_64_PB}},
-    {"plus", {PLUS_32_PB, PLUS_FILL_32_PB}, {PLUS_64_PB, PLUS_FILL_64_PB}},
-    {"question", {QUESTION_32_PB, QUESTION_FILL_32_PB}, {QUESTION_64_PB, QUESTION_FILL_64_PB}},
-    {"shuffle", {SHUFFLE_32_PB, SHUFFLE_FILL_32_PB}, {SHUFFLE_64_PB, SHUFFLE_FILL_64_PB}},
-    {"sign-out", {SIGN_OUT_32_PB, SIGN_OUT_FILL_32_PB}, {SIGN_OUT_64_PB, SIGN_OUT_FILL_64_PB}},
-    {"smiley", {SMILEY_32_PB, SMILEY_FILL_32_PB}, {SMILEY_64_PB, SMILEY_FILL_64_PB}},
-    {"smiley-sad", {SMILEY_SAD_32_PB, SMILEY_SAD_FILL_32_PB}, {SMILEY_SAD_64_PB, SMILEY_SAD_FILL_64_PB}},
-    {"spade", {SPADE_32_PB, SPADE_FILL_32_PB}, {SPADE_64_PB, SPADE_FILL_64_PB}},
-    {"square", {SQUARE_32_PB, SQUARE_FILL_32_PB}, {SQUARE_64_PB, SQUARE_FILL_64_PB}},
-    {"star", {STAR_32_PB, STAR_FILL_32_PB}, {STAR_64_PB, STAR_FILL_64_PB}},
-    {"timer", {TIMER_32_PB, TIMER_FILL_32_PB}, {TIMER_64_PB, TIMER_FILL_64_PB}},
-    {"trash", {TRASH_32_PB, TRASH_FILL_32_PB}, {TRASH_64_PB, TRASH_FILL_64_PB}},
-    {"triangle", {TRIANGLE_32_PB, TRIANGLE_FILL_32_PB}, {TRIANGLE_64_PB, TRIANGLE_FILL_64_PB}},
-    {"trophy", {TROPHY_32_PB, TROPHY_FILL_32_PB}, {TROPHY_64_PB, TROPHY_FILL_64_PB}},
-    {"user", {USER_32_PB, USER_FILL_32_PB}, {USER_64_PB, USER_FILL_64_PB}},
-    {"users", {USERS_32_PB, USERS_FILL_32_PB}, {USERS_64_PB, USERS_FILL_64_PB}},
-    {"warning", {WARNING_32_PB, WARNING_FILL_32_PB}, {WARNING_64_PB, WARNING_FILL_64_PB}},
-    {"waves", {WAVES_32_PB, WAVES_FILL_32_PB}, {WAVES_64_PB, WAVES_FILL_64_PB}},
-    {"x", {X_32_PB, X_FILL_32_PB}, {X_64_PB, X_FILL_64_PB}},
+    {"arrow-clockwise", {PackedBitmap{ARROW_CLOCKWISE_32_PB}, PackedBitmap{ARROW_CLOCKWISE_FILL_32_PB}}, {PackedBitmap{ARROW_CLOCKWISE_64_PB}, PackedBitmap{ARROW_CLOCKWISE_FILL_64_PB}}},
+    {"arrow-down", {PackedBitmap{ARROW_DOWN_32_PB}, PackedBitmap{ARROW_DOWN_FILL_32_PB}}, {PackedBitmap{ARROW_DOWN_64_PB}, PackedBitmap{ARROW_DOWN_FILL_64_PB}}},
+    {"arrow-left", {PackedBitmap{ARROW_LEFT_32_PB}, PackedBitmap{ARROW_LEFT_FILL_32_PB}}, {PackedBitmap{ARROW_LEFT_64_PB}, PackedBitmap{ARROW_LEFT_FILL_64_PB}}},
+    {"arrow-right", {PackedBitmap{ARROW_RIGHT_32_PB}, PackedBitmap{ARROW_RIGHT_FILL_32_PB}}, {PackedBitmap{ARROW_RIGHT_64_PB}, PackedBitmap{ARROW_RIGHT_FILL_64_PB}}},
+    {"arrow-u-up-left", {PackedBitmap{ARROW_U_UP_LEFT_32_PB}, PackedBitmap{ARROW_U_UP_LEFT_FILL_32_PB}}, {PackedBitmap{ARROW_U_UP_LEFT_64_PB}, PackedBitmap{ARROW_U_UP_LEFT_FILL_64_PB}}},
+    {"arrow-u-up-right", {PackedBitmap{ARROW_U_UP_RIGHT_32_PB}, PackedBitmap{ARROW_U_UP_RIGHT_FILL_32_PB}}, {PackedBitmap{ARROW_U_UP_RIGHT_64_PB}, PackedBitmap{ARROW_U_UP_RIGHT_FILL_64_PB}}},
+    {"arrow-up", {PackedBitmap{ARROW_UP_32_PB}, PackedBitmap{ARROW_UP_FILL_32_PB}}, {PackedBitmap{ARROW_UP_64_PB}, PackedBitmap{ARROW_UP_FILL_64_PB}}},
+    {"arrows-clockwise", {PackedBitmap{ARROWS_CLOCKWISE_32_PB}, PackedBitmap{ARROWS_CLOCKWISE_FILL_32_PB}}, {PackedBitmap{ARROWS_CLOCKWISE_64_PB}, PackedBitmap{ARROWS_CLOCKWISE_FILL_64_PB}}},
+    {"boat", {PackedBitmap{BOAT_32_PB}, PackedBitmap{BOAT_FILL_32_PB}}, {PackedBitmap{BOAT_64_PB}, PackedBitmap{BOAT_FILL_64_PB}}},
+    {"check", {PackedBitmap{CHECK_32_PB}, PackedBitmap{CHECK_FILL_32_PB}}, {PackedBitmap{CHECK_64_PB}, PackedBitmap{CHECK_FILL_64_PB}}},
+    {"circle", {PackedBitmap{CIRCLE_32_PB}, PackedBitmap{CIRCLE_FILL_32_PB}}, {PackedBitmap{CIRCLE_64_PB}, PackedBitmap{CIRCLE_FILL_64_PB}}},
+    {"club", {PackedBitmap{CLUB_32_PB}, PackedBitmap{CLUB_FILL_32_PB}}, {PackedBitmap{CLUB_64_PB}, PackedBitmap{CLUB_FILL_64_PB}}},
+    {"diamond", {PackedBitmap{DIAMOND_32_PB}, PackedBitmap{DIAMOND_FILL_32_PB}}, {PackedBitmap{DIAMOND_64_PB}, PackedBitmap{DIAMOND_FILL_64_PB}}},
+    {"dice-five", {PackedBitmap{DICE_FIVE_32_PB}, PackedBitmap{DICE_FIVE_FILL_32_PB}}, {PackedBitmap{DICE_FIVE_64_PB}, PackedBitmap{DICE_FIVE_FILL_64_PB}}},
+    {"dice-four", {PackedBitmap{DICE_FOUR_32_PB}, PackedBitmap{DICE_FOUR_FILL_32_PB}}, {PackedBitmap{DICE_FOUR_64_PB}, PackedBitmap{DICE_FOUR_FILL_64_PB}}},
+    {"dice-one", {PackedBitmap{DICE_ONE_32_PB}, PackedBitmap{DICE_ONE_FILL_32_PB}}, {PackedBitmap{DICE_ONE_64_PB}, PackedBitmap{DICE_ONE_FILL_64_PB}}},
+    {"dice-six", {PackedBitmap{DICE_SIX_32_PB}, PackedBitmap{DICE_SIX_FILL_32_PB}}, {PackedBitmap{DICE_SIX_64_PB}, PackedBitmap{DICE_SIX_FILL_64_PB}}},
+    {"dice-three", {PackedBitmap{DICE_THREE_32_PB}, PackedBitmap{DICE_THREE_FILL_32_PB}}, {PackedBitmap{DICE_THREE_64_PB}, PackedBitmap{DICE_THREE_FILL_64_PB}}},
+    {"dice-two", {PackedBitmap{DICE_TWO_32_PB}, PackedBitmap{DICE_TWO_FILL_32_PB}}, {PackedBitmap{DICE_TWO_64_PB}, PackedBitmap{DICE_TWO_FILL_64_PB}}},
+    {"dot-outline", {PackedBitmap{DOT_OUTLINE_32_PB}, PackedBitmap{DOT_OUTLINE_FILL_32_PB}}, {PackedBitmap{DOT_OUTLINE_64_PB}, PackedBitmap{DOT_OUTLINE_FILL_64_PB}}},
+    {"eraser", {PackedBitmap{ERASER_32_PB}, PackedBitmap{ERASER_FILL_32_PB}}, {PackedBitmap{ERASER_64_PB}, PackedBitmap{ERASER_FILL_64_PB}}},
+    {"eye", {PackedBitmap{EYE_32_PB}, PackedBitmap{EYE_FILL_32_PB}}, {PackedBitmap{EYE_64_PB}, PackedBitmap{EYE_FILL_64_PB}}},
+    {"eye-closed", {PackedBitmap{EYE_CLOSED_32_PB}, PackedBitmap{EYE_CLOSED_FILL_32_PB}}, {PackedBitmap{EYE_CLOSED_64_PB}, PackedBitmap{EYE_CLOSED_FILL_64_PB}}},
+    {"fire", {PackedBitmap{FIRE_32_PB}, PackedBitmap{FIRE_FILL_32_PB}}, {PackedBitmap{FIRE_64_PB}, PackedBitmap{FIRE_FILL_64_PB}}},
+    {"flag-checkered", {PackedBitmap{FLAG_CHECKERED_32_PB}, PackedBitmap{FLAG_CHECKERED_FILL_32_PB}}, {PackedBitmap{FLAG_CHECKERED_64_PB}, PackedBitmap{FLAG_CHECKERED_FILL_64_PB}}},
+    {"game-controller", {PackedBitmap{GAME_CONTROLLER_32_PB}, PackedBitmap{GAME_CONTROLLER_FILL_32_PB}}, {PackedBitmap{GAME_CONTROLLER_64_PB}, PackedBitmap{GAME_CONTROLLER_FILL_64_PB}}},
+    {"gear-six", {PackedBitmap{GEAR_SIX_32_PB}, PackedBitmap{GEAR_SIX_FILL_32_PB}}, {PackedBitmap{GEAR_SIX_64_PB}, PackedBitmap{GEAR_SIX_FILL_64_PB}}},
+    {"heart", {PackedBitmap{HEART_32_PB}, PackedBitmap{HEART_FILL_32_PB}}, {PackedBitmap{HEART_64_PB}, PackedBitmap{HEART_FILL_64_PB}}},
+    {"hexagon", {PackedBitmap{HEXAGON_32_PB}, PackedBitmap{HEXAGON_FILL_32_PB}}, {PackedBitmap{HEXAGON_64_PB}, PackedBitmap{HEXAGON_FILL_64_PB}}},
+    {"hourglass", {PackedBitmap{HOURGLASS_32_PB}, PackedBitmap{HOURGLASS_FILL_32_PB}}, {PackedBitmap{HOURGLASS_64_PB}, PackedBitmap{HOURGLASS_FILL_64_PB}}},
+    {"house", {PackedBitmap{HOUSE_32_PB}, PackedBitmap{HOUSE_FILL_32_PB}}, {PackedBitmap{HOUSE_64_PB}, PackedBitmap{HOUSE_FILL_64_PB}}},
+    {"info", {PackedBitmap{INFO_32_PB}, PackedBitmap{INFO_FILL_32_PB}}, {PackedBitmap{INFO_64_PB}, PackedBitmap{INFO_FILL_64_PB}}},
+    {"lightbulb", {PackedBitmap{LIGHTBULB_32_PB}, PackedBitmap{LIGHTBULB_FILL_32_PB}}, {PackedBitmap{LIGHTBULB_64_PB}, PackedBitmap{LIGHTBULB_FILL_64_PB}}},
+    {"minus", {PackedBitmap{MINUS_32_PB}, PackedBitmap{MINUS_FILL_32_PB}}, {PackedBitmap{MINUS_64_PB}, PackedBitmap{MINUS_FILL_64_PB}}},
+    {"pause", {PackedBitmap{PAUSE_32_PB}, PackedBitmap{PAUSE_FILL_32_PB}}, {PackedBitmap{PAUSE_64_PB}, PackedBitmap{PAUSE_FILL_64_PB}}},
+    {"pencil-simple", {PackedBitmap{PENCIL_SIMPLE_32_PB}, PackedBitmap{PENCIL_SIMPLE_FILL_32_PB}}, {PackedBitmap{PENCIL_SIMPLE_64_PB}, PackedBitmap{PENCIL_SIMPLE_FILL_64_PB}}},
+    {"play", {PackedBitmap{PLAY_32_PB}, PackedBitmap{PLAY_FILL_32_PB}}, {PackedBitmap{PLAY_64_PB}, PackedBitmap{PLAY_FILL_64_PB}}},
+    {"plus", {PackedBitmap{PLUS_32_PB}, PackedBitmap{PLUS_FILL_32_PB}}, {PackedBitmap{PLUS_64_PB}, PackedBitmap{PLUS_FILL_64_PB}}},
+    {"question", {PackedBitmap{QUESTION_32_PB}, PackedBitmap{QUESTION_FILL_32_PB}}, {PackedBitmap{QUESTION_64_PB}, PackedBitmap{QUESTION_FILL_64_PB}}},
+    {"shuffle", {PackedBitmap{SHUFFLE_32_PB}, PackedBitmap{SHUFFLE_FILL_32_PB}}, {PackedBitmap{SHUFFLE_64_PB}, PackedBitmap{SHUFFLE_FILL_64_PB}}},
+    {"sign-out", {PackedBitmap{SIGN_OUT_32_PB}, PackedBitmap{SIGN_OUT_FILL_32_PB}}, {PackedBitmap{SIGN_OUT_64_PB}, PackedBitmap{SIGN_OUT_FILL_64_PB}}},
+    {"smiley", {PackedBitmap{SMILEY_32_PB}, PackedBitmap{SMILEY_FILL_32_PB}}, {PackedBitmap{SMILEY_64_PB}, PackedBitmap{SMILEY_FILL_64_PB}}},
+    {"smiley-sad", {PackedBitmap{SMILEY_SAD_32_PB}, PackedBitmap{SMILEY_SAD_FILL_32_PB}}, {PackedBitmap{SMILEY_SAD_64_PB}, PackedBitmap{SMILEY_SAD_FILL_64_PB}}},
+    {"spade", {PackedBitmap{SPADE_32_PB}, PackedBitmap{SPADE_FILL_32_PB}}, {PackedBitmap{SPADE_64_PB}, PackedBitmap{SPADE_FILL_64_PB}}},
+    {"square", {PackedBitmap{SQUARE_32_PB}, PackedBitmap{SQUARE_FILL_32_PB}}, {PackedBitmap{SQUARE_64_PB}, PackedBitmap{SQUARE_FILL_64_PB}}},
+    {"star", {PackedBitmap{STAR_32_PB}, PackedBitmap{STAR_FILL_32_PB}}, {PackedBitmap{STAR_64_PB}, PackedBitmap{STAR_FILL_64_PB}}},
+    {"timer", {PackedBitmap{TIMER_32_PB}, PackedBitmap{TIMER_FILL_32_PB}}, {PackedBitmap{TIMER_64_PB}, PackedBitmap{TIMER_FILL_64_PB}}},
+    {"trash", {PackedBitmap{TRASH_32_PB}, PackedBitmap{TRASH_FILL_32_PB}}, {PackedBitmap{TRASH_64_PB}, PackedBitmap{TRASH_FILL_64_PB}}},
+    {"triangle", {PackedBitmap{TRIANGLE_32_PB}, PackedBitmap{TRIANGLE_FILL_32_PB}}, {PackedBitmap{TRIANGLE_64_PB}, PackedBitmap{TRIANGLE_FILL_64_PB}}},
+    {"trophy", {PackedBitmap{TROPHY_32_PB}, PackedBitmap{TROPHY_FILL_32_PB}}, {PackedBitmap{TROPHY_64_PB}, PackedBitmap{TROPHY_FILL_64_PB}}},
+    {"user", {PackedBitmap{USER_32_PB}, PackedBitmap{USER_FILL_32_PB}}, {PackedBitmap{USER_64_PB}, PackedBitmap{USER_FILL_64_PB}}},
+    {"users", {PackedBitmap{USERS_32_PB}, PackedBitmap{USERS_FILL_32_PB}}, {PackedBitmap{USERS_64_PB}, PackedBitmap{USERS_FILL_64_PB}}},
+    {"warning", {PackedBitmap{WARNING_32_PB}, PackedBitmap{WARNING_FILL_32_PB}}, {PackedBitmap{WARNING_64_PB}, PackedBitmap{WARNING_FILL_64_PB}}},
+    {"waves", {PackedBitmap{WAVES_32_PB}, PackedBitmap{WAVES_FILL_32_PB}}, {PackedBitmap{WAVES_64_PB}, PackedBitmap{WAVES_FILL_64_PB}}},
+    {"x", {PackedBitmap{X_32_PB}, PackedBitmap{X_FILL_32_PB}}, {PackedBitmap{X_64_PB}, PackedBitmap{X_FILL_64_PB}}},
 };
 inline constexpr size_t ICON_COUNT = sizeof(ICONS) / sizeof(ICONS[0]);
 

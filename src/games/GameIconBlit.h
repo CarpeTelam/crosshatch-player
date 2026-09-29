@@ -20,7 +20,7 @@ using GameIcons::DRAWN_PIXELS;
 // layout: a length, then PackBits that decode to the drawn rows), each bitmap pixel
 // drawn as a `scale` x `scale` block.
 struct Source {
-  const uint8_t* bitmap = nullptr;
+  GameIcons::PackedBitmap bitmap;
   int pixels = 0;
   int scale = 1;
 };
@@ -47,9 +47,9 @@ inline bool sourceFor(const size_t index, const int drawnPixels, const GameIcons
 // Whether the bitmap pixel drawn at (x, y), both in [0, pixels), is ink: bit 0 = ink,
 // MSB first, in the decoded row y. False for a malformed bitmap. It decodes the rows
 // above y, so it suits tests, not a draw; inkRuns decodes each row once.
-inline bool inkAt(const uint8_t* bitmap, const int pixels, const int x, const int y) {
-  if (!bitmap || pixels <= 0 || pixels % 8 != 0 || pixels / 8 > static_cast<int>(GameIcons::MAX_ROW_BYTES) || x < 0 ||
-      y < 0 || x >= pixels || y >= pixels) {
+inline bool inkAt(const GameIcons::PackedBitmap bitmap, const int pixels, const int x, const int y) {
+  if (!bitmap.data || pixels <= 0 || pixels % 8 != 0 || pixels / 8 > static_cast<int>(GameIcons::MAX_ROW_BYTES) ||
+      x < 0 || y < 0 || x >= pixels || y >= pixels) {
     return false;
   }
   uint8_t row[GameIcons::MAX_ROW_BYTES];
@@ -70,7 +70,7 @@ inline bool inkAt(const uint8_t* bitmap, const int pixels, const int x, const in
 template <typename Fn>
 void inkRuns(const Source& source, const int32_t left, const int32_t top, const int32_t width, const int32_t height,
              Fn&& fn) {
-  if (!source.bitmap || source.pixels <= 0 || source.scale <= 0) return;
+  if (!source.bitmap.data || source.pixels <= 0 || source.scale <= 0) return;
   // A row of the bitmap is whole bytes and fits the decode buffer.
   if (source.pixels % 8 != 0 || source.pixels / 8 > static_cast<int>(GameIcons::MAX_ROW_BYTES)) return;
   const int64_t side = static_cast<int64_t>(source.pixels) * source.scale;

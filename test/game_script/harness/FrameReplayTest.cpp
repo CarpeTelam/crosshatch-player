@@ -50,7 +50,7 @@ constexpr int CH = 788;
 // One icon as drawn at one size, from the generated bitmaps: which bitmap, its side,
 // and how many drawn pixels a bitmap pixel takes.
 struct Drawn {
-  const uint8_t* bitmap;
+  GameIcons::PackedBitmap bitmap;
   int pixels;
   int scale;
   int side() const { return pixels * scale; }
