@@ -141,6 +141,7 @@ class ListTest : public match::ScreenTest {
     ScreenTest::SetUp();
     installerscript::reset();
     hostcaps::reset();
+    GamesLauncherActivity::forgetOpenedGame();  // the launcher remembers the game it opened: each test starts fresh
     ButtonNavigator::setMappedInputManager(*input);
   }
 
@@ -693,8 +694,9 @@ TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelectio
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started timer"));  // 0 -> 1 -> 2 -> 1
 
-  // Confirm with nothing moved opens the first row.
+  // Confirm with nothing moved opens the first row (of a launcher that has no game to return to).
   fakelog::clearLines();
+  GamesLauncherActivity::forgetOpenedGame();
   reopen();
   input->click(Button::Confirm);
   frame();

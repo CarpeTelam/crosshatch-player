@@ -670,6 +670,54 @@ Report installAll() {
   return report;
 }
 
+Error remove(const char* id) {
+  // The launcher passes a listed game's id, which Manifest::check has vetted; this keeps a path out of /.games
+  // for any other caller.
+  const size_t length = id ? std::strlen(id) : 0;
+  bool valid = length > 0 && length <= GameCore::Manifest::MAX_ID_BYTES && id[0] != '-';
+  for (size_t i = 0; valid && i < length; ++i) {
+    valid = (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9') || id[i] == '-';
+  }
+  if (!valid) return Error::BadManifest;
+
+  // "Not there" needs a card that answers: a /.games that cannot be opened is the card's fault, not a game that is
+  // gone.
+  {
+    auto games = Storage.open(GamePaths::GAMES_DIR);
+    if (!games) {
+      LOG_ERR("GAME", "Cannot open %s", GamePaths::GAMES_DIR);
+      return Error::SdCard;
+    }
+  }
+  char dir[GamePaths::PATH_BYTES];
+  char pkg[GamePaths::PATH_BYTES];
+  char tmp[GamePaths::PATH_BYTES];
+  snprintf(dir, sizeof(dir), "%s/%s", GamePaths::GAMES_DIR, id);
+  snprintf(pkg, sizeof(pkg), "%s/%s", dir, GamePaths::PKG_NAME);
+  snprintf(tmp, sizeof(tmp), "%s/%s", GamePaths::TMP_DIR, id);
+  if (!Storage.exists(dir)) return Error::None;
+  const bool marked = Storage.exists(pkg);
+  // A folder without a .pkg beside a /.games-tmp/<id> may be the two halves of an interrupted folder move, on one
+  // cluster chain; removing one would free clusters the other uses. The installer's probe tells them apart, and a
+  // shared pair is left alone (as removeTmp leaves it).
+  if (!marked && Storage.exists(tmp) && foldersShareClusters(id)) {
+    LOG_ERR("GAME", "Keeping %s: it may share clusters with %s, which has no %s", dir, tmp, GamePaths::PKG_NAME);
+    return Error::SdCard;
+  }
+  // The marker first, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a
+  // listed game with files missing.
+  if (marked && !Storage.remove(pkg)) {
+    LOG_ERR("GAME", "Cannot remove %s", pkg);
+    return Error::SdCard;
+  }
+  if (!Storage.removeDir(dir)) {
+    LOG_ERR("GAME", "Cannot remove %s", dir);
+    return Error::SdCard;
+  }
+  LOG_INF("GAME", "Removed %s", id);
+  return Error::None;
+}
+
 }  // namespace GamePackageInstaller
 
 #endif  // FREEINK_CAP_GAMES
