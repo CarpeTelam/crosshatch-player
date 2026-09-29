@@ -63,12 +63,15 @@ Report installAll();
 
 // Removes an installed game: deletes /.games/<id>/. The .pkg goes first, because removeDir deletes in
 // directory order and a stop partway would otherwise leave a listed game with files missing; a
-// folder without a .pkg is not a game (GameRegistry). None when the game is gone (or never was);
-// SdCard when a delete fails (the game is then listed whole, or not listed at all, never half
-// listed); BadManifest for an id that no manifest could carry (nothing is touched). Never touches
-// /.games-data/<id>/ (the saved data outlives the game, and a reinstall finds it) or /.games-tmp.
-// A game the registry lists has a .pkg, which install writes only after the folder rename, so its
-// folder cannot share clusters with /.games-tmp/<id>: no probe is needed here.
+// folder without a .pkg is not a game (GameRegistry). Results:
+//   None       the folder is gone, or /.games can be opened and holds no such folder;
+//   SdCard     a delete failed (the game is then listed whole, or not listed at all, never half listed);
+//              /.games cannot be opened; or the folder has no .pkg and may share clusters with
+//              /.games-tmp/<id> (an interrupted folder move, found by the installer's probe), in which
+//              case nothing is deleted;
+//   BadManifest  an id no manifest could carry (nothing is touched).
+// Never touches /.games-data/<id>/ (the saved data outlives the game, and a reinstall finds it) or
+// /.games-tmp, except for the probe's own file there.
 Error remove(const char* id);
 
 // A short English phrase for logs.

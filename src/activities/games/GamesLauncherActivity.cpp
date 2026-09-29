@@ -27,6 +27,9 @@ constexpr uint8_t NOTE_LINES = 4;
 constexpr int16_t ROW_PADDING = 8;
 // How long Confirm is held to ask about removing the selected game (the long-press of a button-only device).
 constexpr unsigned long REMOVE_HOLD_MS = 1000;
+// The library's delete hold is 1000 ms; well under 500 would let an ordinary press of Confirm ask about removing, and
+// no host test can show it (the harness's input double ignores the threshold), so the value is pinned here.
+static_assert(REMOVE_HOLD_MS >= 500 && REMOVE_HOLD_MS <= 3000, "a Confirm hold that asks about removing a game");
 
 // The game the launcher last opened, as an FNV-1a hash of its id (0: none), so the next launcher can select it. Four
 // bytes of static RAM (AD-2 allows a mutable static up to 64 B, and this epic's share is 32 B); constinit, so it has
@@ -170,7 +173,8 @@ bool GamesLauncherActivity::handleCustomInput() {
 }
 
 bool GamesLauncherActivity::handleButtons() {
-  if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, REMOVE_HOLD_MS)) {
+  // Not under the note: the hold would eat the release that dismisses it.
+  if (!noteVisible && mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, REMOVE_HOLD_MS)) {
     // Fires at the threshold, mid-hold; the release that follows is suppressed by the manager, so it cannot
     // land in the confirmation.
     openRemoveDialog(activeNav().selected);
@@ -193,6 +197,13 @@ void GamesLauncherActivity::navigateButtons() {
 }
 
 void GamesLauncherActivity::onRowLongPress(const int index) { openRemoveDialog(index); }
+
+// The hit rects are the last render's: after the confirmation opens (or under the note popup) they are still the
+// list's rows until the next render, and a tap on one must not start a game or move the selection.
+void GamesLauncherActivity::onRowAction(const fui::ActionEvent& event) {
+  if (removeIndex >= 0 || noteVisible) return;
+  UiListActivity::onRowAction(event);
+}
 
 void GamesLauncherActivity::openRemoveDialog(const int index) {
   // A blank padding row, an empty list, or the note over the list is not a game to ask about.
@@ -479,7 +490,7 @@ void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen) {
     options[i].value = static_cast<int16_t>(i);
     options[i].state = removeFocus == i ? fui::StateFocused : fui::StateNormal;
   }
-  fui::OptionDialogProps props;
+  fui::OptionDialogProps& props = dialogProps;
   props.title = tr(STR_GAMES_REMOVE_TITLE);
   props.headline = listing.entries[index].manifest.name;
   props.message = tr(STR_GAMES_REMOVE_KEPT);

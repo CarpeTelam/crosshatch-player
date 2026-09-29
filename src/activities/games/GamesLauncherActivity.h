@@ -45,6 +45,7 @@ class GamesLauncherActivity final : public UiListActivity {
   bool handleButtons() override;
   void navigateButtons() override;
   void onRowLongPress(int index) override;
+  void onRowAction(const freeink::ui::ActionEvent& event) override;
 
   // Installs the inbox, showing "Installing" while it works, and keeps the first failure for the popup.
   void installInbox();
@@ -87,4 +88,6 @@ class GamesLauncherActivity final : public UiListActivity {
   // The listing index the open remove confirmation asks about (-1: none), and its focused button (0 Cancel, 1 Remove).
   int removeIndex = -1;
   uint8_t removeFocus = 0;
+  // The confirmation's props, filled by each buildRemoveDialog (about 700 B: too big for the render task's stack).
+  freeink::ui::OptionDialogProps dialogProps;
 };

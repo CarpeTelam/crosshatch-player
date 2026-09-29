@@ -95,10 +95,30 @@ TEST_F(RemoveTest, AReinstallAfterARemoveKeepsTheDataToo) {
 }
 
 TEST_F(RemoveTest, ARemoveOfAGameThatIsNotThereIsDoneAndMakesNothing) {
+  install("other");
   placeData("g");
+  fakesd::sim().ops.clear();
   EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
-  EXPECT_FALSE(exists("/.games"));
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_TRUE(exists("/.games/other/.pkg"));
   expectDataKept("g");
+  for (const std::string& op : fakesd::sim().ops) {
+    EXPECT_TRUE(op.rfind("open ", 0) == 0 || op.rfind("close ", 0) == 0 || op.rfind("list ", 0) == 0) << op;
+  }
+}
+
+TEST_F(RemoveTest, ACardThatCannotOpenTheGamesFolderIsNotAGameThatIsGone) {
+  install("g");
+  placeData("g");
+  fakesd::sim().failOpen.insert("/.games");
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  fakesd::sim().failOpen.clear();
+  EXPECT_TRUE(exists("/.games/g/.pkg")) << "nothing was deleted";
+  expectDataKept("g");
+
+  // No /.games at all cannot be opened either: the caller is told, not "done".
+  fakesd::reset();
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
 }
 
 TEST_F(RemoveTest, TheMarkerGoesBeforeTheOtherFiles) {
@@ -194,4 +214,52 @@ TEST_F(RemoveTest, NeverTouchesTheDataFolderOrTheScratchFolder) {
   EXPECT_FALSE(touched("/.games-tmp"));
   EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
   expectDataKept("g");
+}
+
+// The shared fake cannot alias two folders, so a cluster chain shared by /.games-tmp/g and /.games/g is modelled as
+// GamePackageInstallerTest does: the probe file the installer makes in /.games-tmp/g is already in /.games/g.
+TEST_F(RemoveTest, AFolderWithoutAMarkerThatMayShareClustersWithScratchIsNotDeleted) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/main.lua", std::string("final"));
+  fakesd::addFile("/.games/g/.xlink", std::string());
+  placeData("g");
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
+  EXPECT_FALSE(exists("/.games-tmp/g/.xlink")) << "the probe file is removed either way";
+  EXPECT_TRUE(fakelog::any("Keeping /.games/g"));
+  expectDataKept("g");
+
+  // A probe that cannot be made or removed is the safe side too.
+  for (const bool cannotMake : {true, false}) {
+    SCOPED_TRACE(cannotMake ? "cannot make" : "cannot remove");
+    fakesd::removeEntry("/.games/g/.xlink");
+    if (cannotMake) {
+      fakesd::sim().failOpenWrite.insert("/.games-tmp/g/.xlink");
+    } else {
+      fakesd::sim().failOpenWrite.clear();
+      fakesd::sim().failRemove.insert("/.games-tmp/g/.xlink");
+    }
+    EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+    EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
+  }
+}
+
+TEST_F(RemoveTest, AFolderWithoutAMarkerBesideIndependentScratchIsDeletedAndTheScratchStays) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/main.lua", std::string("leftover"));  // the probe file does not show here
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+  EXPECT_FALSE(exists("/.games-tmp/g/.xlink"));
+}
+
+TEST_F(RemoveTest, AListedGameWithScratchBesideItIsDeletedWithoutAProbe) {
+  install("g");
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::sim().ops.clear();
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_EQ(opIndex("open /.games-tmp/g/.xlink"), -1) << "a marked folder was written after its rename: no probe";
 }

@@ -329,6 +329,96 @@ TEST_F(RemoveListTest, TheConfirmationOpenedAgainOnAnotherRowAsksAboutThatRow) {
   EXPECT_EQ(removescript::script().ids, ids);
 }
 
+// The hit rects are the last render's until the next one: after the confirmation opens, a tap that arrives before it is
+// drawn still routes to a row of the list underneath.
+TEST_F(RemoveListTest, ATapOnARowBeforeTheConfirmationIsDrawnOpensNothing) {
+  hostcaps::script().pass = true;
+  addGame("alpha", "Alpha");
+  addGame("beta", "Beta", "\"solo\",\"pass\"", 1, 1, 2);
+  addGame("gamma", "Gamma");
+  open();
+  const screen::DrawnText* alpha = find("Alpha");
+  const screen::DrawnText* beta = find("Beta");
+  const screen::DrawnText* gamma = find("Gamma");
+  ASSERT_TRUE(alpha && beta && gamma);
+  const int betaX = beta->rect.x + beta->rect.width / 2;
+  const int betaY = beta->rect.y + beta->rect.height / 2;
+  const int gammaX = gamma->rect.x + gamma->rect.width / 2;
+  const int gammaY = gamma->rect.y + gamma->rect.height / 2;
+
+  input->longPress(alpha->rect.x + 5, alpha->rect.y + 5);
+  activity().loop();  // the confirmation is open; nothing has been drawn since
+  input->clear();
+  input->tap(gammaX, gammaY);
+  activity().loop();
+  input->clear();
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "the tap opened Gamma under the confirmation";
+  input->tap(betaX, betaY);  // two modes: this would push the picker
+  activity().loop();
+  input->clear();
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  render();
+  EXPECT_TRUE(dialogUp());
+  EXPECT_TRUE(ui().drewLine("Alpha")) << "still about the game that was long-pressed";
+  EXPECT_TRUE(removescript::script().ids.empty());
+  // A long-press on another row in that window does not retarget it either.
+  input->longPress(gammaX, gammaY);
+  frame();
+  EXPECT_TRUE(ui().drewLine("Alpha"));
+  EXPECT_FALSE(ui().drewLine("Gamma"));
+}
+
+// The install note is over the list: a row action under it must not move the selection or ask about removing, and a
+// hold of Confirm must not open the confirmation over it.
+TEST_F(RemoveListTest, UnderTheNoteAHoldOrALongPressOpensNothingAndMovesNothing) {
+  addGames(3);
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.firstError = Error::NotAPackage;
+  open();
+  ASSERT_TRUE(noteSays(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)));
+  input->holdLong(Button::Confirm);
+  frame();
+  EXPECT_FALSE(dialogUp());
+  longPressText("Game 03");
+  EXPECT_FALSE(dialogUp());
+  EXPECT_TRUE(noteSays(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE))) << "the note stays until it is dismissed";
+  // Dismissed, the selection is still Game 01: the long-press did not move it.
+  key(Button::Confirm);
+  EXPECT_FALSE(noteSays(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)));
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-01"));
+}
+
+// A finger down on a row arms the app's tap flash; the long-press that follows opens the confirmation, and the
+// confirmation and the list after Remove must not carry it. (The recording target discards paint, so what is pinned
+// here is the sequence: the flash cannot be seen from the harness, and the simulator shows the pressed look.)
+TEST_F(RemoveListTest, ALongPressThatFollowsATouchDownOpensAndRemovesCleanly) {
+  addGames(3);
+  open();
+  const screen::DrawnText* row = find("Game 02");
+  ASSERT_NE(row, nullptr);
+  const int x = row->rect.x + row->rect.width / 2;
+  const int y = row->rect.y + row->rect.height / 2;
+  input->touch.down = true;  // the finger lands
+  input->touch.x = x;
+  input->touch.y = y;
+  frame();
+  input->longPress(x, y);
+  frame();
+  ASSERT_TRUE(dialogUp());
+  tapText(tr(STR_GAMES_REMOVE));
+  const std::vector<std::string> ids{"game-02"};
+  EXPECT_EQ(removescript::script().ids, ids);
+  const std::vector<std::string> expected{"Game 01", "Game 03"};
+  EXPECT_EQ(shown(3), expected);
+  key(Button::Confirm);  // the selection took the next game's place
+  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-03"));
+}
+
 TEST_F(RemoveListTest, HoldingConfirmAsksAboutTheSelectedGame) {
   addGames(3);
   open();
@@ -650,8 +740,12 @@ TEST_F(ReturnTest, RemovingTheRememberedGameSendsTheNextLauncherToTheTop) {
   longPressText("Game 20");
   tapText(tr(STR_GAMES_REMOVE));
   EXPECT_EQ(removescript::script().ids.back(), "game-20");
+  // The same id installed again: only a fingerprint that the remove cleared sends the launcher to the top (a game
+  // that is merely gone would show the top whether or not it was cleared).
+  addGame("game-20", "Game 20");
   reopen();
-  EXPECT_EQ(shown(24).front(), "Game 01") << "the remembered game is gone: the top";
+  EXPECT_TRUE(ui().drewLine("Game 01")) << "the remove cleared the memory: the top";
+  EXPECT_FALSE(ui().drewLine("Game 20"));
 }
 
 TEST_F(ReturnTest, RemovingAnotherGameKeepsTheMemory) {
