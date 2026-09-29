@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -15,6 +16,11 @@
 // under the name and does not open. A file that failed to install is explained once, in a popup.
 // Opening a game replaces this screen with its match, or, for a game the host can start in two or more modes, opens
 // the mode picker (GameModeActivity) above it.
+// A long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
+// (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup.
+// The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
+// repeat rows of the one before it. The launcher remembers the game it last opened (a fingerprint of its id), and the
+// next launcher, built by ActivityManager::goToGames(), selects it and shows the page holding it.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
@@ -23,14 +29,22 @@ class GamesLauncherActivity final : public UiListActivity {
 
   GamesLauncherActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 
+  // Forgets the game the launcher last opened, so the next launcher opens on the top. A remove of that game and a
+  // restart do the same; this is for a test that must start from a fresh boot.
+  static void forgetOpenedGame();
+
  private:
-  int listCount() const override { return static_cast<int>(listing.count); }
+  // The listing's count rounded up to a whole number of pages: the rows past the listing are blank and inert.
+  int listCount() const override { return static_cast<int>(paddedCount()); }
   const char* headerTitle() const override;
   void onEnter() override;
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   void onBackButton() override;
   bool handleCustomInput() override;
+  bool handleButtons() override;
+  void navigateButtons() override;
+  void onRowLongPress(int index) override;
 
   // Installs the inbox, showing "Installing" while it works, and keeps the first failure for the popup.
   void installInbox();
@@ -43,6 +57,18 @@ class GamesLauncherActivity final : public UiListActivity {
   static void provideRow(void* ctx, uint16_t index, freeink::ui::ListItem& item);
 
   static constexpr int16_t NO_SLOT = -1;
+  static constexpr freeink::ui::ActionId ACTION_REMOVE_CHOICE = ACTION_USER;
+
+  size_t paddedCount() const;
+  // Selects the game the launcher last opened, when the listing still has it.
+  void selectRemembered();
+  // The remove confirmation: opened on a row, answered by Cancel (Back), or Remove.
+  void openRemoveDialog(int index);
+  void closeRemoveDialog();
+  void confirmRemove();
+  bool handleRemoveInput();
+  void buildRemoveDialog(UiScreen& screen);
+  static void onRemoveChoice(const freeink::ui::ActionEvent& event, void* user);
 
   // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
   GameRegistry::Listing listing;  // every installed game, by name
@@ -56,4 +82,9 @@ class GamesLauncherActivity final : public UiListActivity {
   // The one-time install failure notice: shown over the list until a tap or button dismisses it.
   char note[128] = {};
   bool noteVisible = false;
+  // Rows a page holds, as the last build measured them (1 until the first build); listCount() pads to it.
+  std::atomic<uint16_t> pageRows{1};
+  // The listing index the open remove confirmation asks about (-1: none), and its focused button (0 Cancel, 1 Remove).
+  int removeIndex = -1;
+  uint8_t removeFocus = 0;
 };

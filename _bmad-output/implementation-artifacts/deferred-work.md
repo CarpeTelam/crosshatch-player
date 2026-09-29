@@ -365,3 +365,14 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-mode-picker-plan.md`
   summary: No host test runs `ActivityManager::goHome`, so the `GameMode`, `GamesLauncher`, and `GameMatch` names selecting Home's Games row are checked by the shared `NAME` constants only.
   evidence: The harness replaces `ActivityManager` with `screen_stubs/ActivityManager.h`; dropping a name from the mapping in `ActivityManager.cpp` fails no test. A test needs `goHome`'s name-to-item mapping in a pure function outside the upstream file (ledger row 5 allows only the mapping and `goToGames()`).
+## 4.10
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-remove-a-game-from-the-launcher-plan.md`
+  summary: A remove that deletes the `.pkg` but not the folder leaves an unlisted `/.games/<id>/` with its files, and nothing reclaims the space until the same id is reinstalled (`commit()` removes it); a sweep of `/.games/*` folders without a valid `.pkg` (with the `.xlink` probe against `/.games-tmp`) would.
+  evidence: `GameRemoveTest` `ADeleteThatStopsPartwayLeavesAnUnlistedFolderAndTheDataWhole` and `AReinstallOverAPartlyDeletedFolderFinishesTheJobAndKeepsTheData`; the launcher tells the person "Could not remove it" while the game is already gone from the list.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-remove-a-game-from-the-launcher-plan.md`
+  summary: No host test drives the held-button paths: `navigateButtons()`'s `onNextContinuous` / `onPreviousContinuous` over a padded last page, and the Confirm hold's threshold and suppressed release; add a settable held time and a release on the next frame to the shared `MappedInputManager` double (`screen_stubs/MappedInputManager.h`, whose `getHeldTime()` returns 0 and `wasLongPressed` ignores its threshold).
+  evidence: Changing the two continuous lambdas in `GamesLauncherActivity::navigateButtons` to walk `listCount()` fails no test; `REMOVE_HOLD_MS` set to 0 fails no test. The file is entry 4's shared double, so this entry did not edit it.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-remove-a-game-from-the-launcher-plan.md`
+  summary: Whole-page paging assumes every launcher row is one fixed height (`GameRowIcon::SIDE` plus 16); a theme whose row grows past it would draw fewer rows than `ListNav::visibleRows` counts, and the padded pages would misalign; a second tap on Remove that arrives during the blocking delete could land on the refreshed list.
+  evidence: `GamesLauncherActivity::buildScreen` pads to `n.visibleRows`; `confirmRemove` blocks on the card under the render lock. Neither is shown to occur at the shipped fonts; the harness cannot stage a queued tap.

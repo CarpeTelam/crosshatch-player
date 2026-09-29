@@ -11,7 +11,9 @@ add_library(game_launcher_src STATIC
   ${REPO_ROOT}/src/activities/games/GamesLauncherActivity.cpp
   # The launcher opens the mode picker, which mode_picker.cmake tests.
   ${REPO_ROOT}/src/activities/games/GameModeActivity.cpp
-  ${HARNESS_DIR}/list_stubs/GamePackageInstallerDouble.cpp)
+  ${HARNESS_DIR}/list_stubs/GamePackageInstallerDouble.cpp
+  # The launcher's Remove calls GamePackageInstaller::remove; remove_game.cmake tests the launcher over this script.
+  ${HARNESS_DIR}/list_stubs/GamePackageInstallerRemoveDouble.cpp)
 target_include_directories(game_launcher_src PUBLIC ${HARNESS_DIR}/list_stubs)
 # What GameRegistry (in game_match_src) reads a manifest with. Its own library, listed after game_match_src,
 # so that it is linked whether or not the list screen itself refers to a symbol in it.

@@ -670,6 +670,34 @@ Report installAll() {
   return report;
 }
 
+Error remove(const char* id) {
+  // The launcher passes a listed game's id, which Manifest::check has vetted; this keeps a path out of /.games
+  // for any other caller.
+  const size_t length = id ? std::strlen(id) : 0;
+  bool valid = length > 0 && length <= GameCore::Manifest::MAX_ID_BYTES && id[0] != '-';
+  for (size_t i = 0; valid && i < length; ++i)
+    valid = (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9') || id[i] == '-';
+  if (!valid) return Error::BadManifest;
+
+  char dir[GamePaths::PATH_BYTES];
+  char pkg[GamePaths::PATH_BYTES];
+  snprintf(dir, sizeof(dir), "%s/%s", GamePaths::GAMES_DIR, id);
+  snprintf(pkg, sizeof(pkg), "%s/%s", dir, GamePaths::PKG_NAME);
+  if (!Storage.exists(dir)) return Error::None;
+  // The marker first, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a
+  // listed game with files missing.
+  if (Storage.exists(pkg) && !Storage.remove(pkg)) {
+    LOG_ERR("GAME", "Cannot remove %s", pkg);
+    return Error::SdCard;
+  }
+  if (!Storage.removeDir(dir)) {
+    LOG_ERR("GAME", "Cannot remove %s", dir);
+    return Error::SdCard;
+  }
+  LOG_INF("GAME", "Removed %s", id);
+  return Error::None;
+}
+
 }  // namespace GamePackageInstaller
 
 #endif  // FREEINK_CAP_GAMES

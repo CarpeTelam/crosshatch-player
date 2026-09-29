@@ -61,6 +61,16 @@ bool hasInbox();
 // removes a leftover /.games-tmp.
 Report installAll();
 
+// Removes an installed game: deletes /.games/<id>/. The .pkg goes first, because removeDir deletes in
+// directory order and a stop partway would otherwise leave a listed game with files missing; a
+// folder without a .pkg is not a game (GameRegistry). None when the game is gone (or never was);
+// SdCard when a delete fails (the game is then listed whole, or not listed at all, never half
+// listed); BadManifest for an id that no manifest could carry (nothing is touched). Never touches
+// /.games-data/<id>/ (the saved data outlives the game, and a reinstall finds it) or /.games-tmp.
+// A game the registry lists has a .pkg, which install writes only after the folder rename, so its
+// folder cannot share clusters with /.games-tmp/<id>: no probe is needed here.
+Error remove(const char* id);
+
 // A short English phrase for logs.
 const char* describe(Error error);
 

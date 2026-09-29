@@ -8,7 +8,9 @@
 #include <Logging.h>
 #include <Memory.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 #include "GameMatchActivity.h"
 #include "GameModeActivity.h"
@@ -23,6 +25,19 @@ namespace {
 constexpr uint8_t NOTE_LINES = 4;
 // Air above and below a row's icon, so the row is the icon plus this.
 constexpr int16_t ROW_PADDING = 8;
+// How long Confirm is held to ask about removing the selected game (the long-press of a button-only device).
+constexpr unsigned long REMOVE_HOLD_MS = 1000;
+
+// The game the launcher last opened, as an FNV-1a hash of its id (0: none), so the next launcher can select it. Four
+// bytes of static RAM (AD-2 allows a mutable static up to 64 B, and this epic's share is 32 B); constinit, so it has
+// no initializer to run.
+constinit uint32_t lastOpened = 0;
+
+uint32_t fingerprintOf(const char* id) {
+  uint32_t hash = 2166136261u;
+  for (; *id != '\0'; ++id) hash = (hash ^ static_cast<uint8_t>(*id)) * 16777619u;
+  return hash != 0 ? hash : 1;  // 0 is "no game"
+}
 
 // What a person is told when an inbox file did not install.
 const char* reasonText(const GamePackageInstaller::Error error) {
@@ -94,15 +109,36 @@ const char* unavailableText(const GameCore::CheckResult& check) {
 }  // namespace
 
 GamesLauncherActivity::GamesLauncherActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiListActivity(NAME, renderer, mappedInput) {}
+    : UiListActivity(NAME, renderer, mappedInput, true) {}
+
+void GamesLauncherActivity::forgetOpenedGame() { lastOpened = 0; }
 
 const char* GamesLauncherActivity::headerTitle() const { return tr(STR_GAMES_TITLE); }
 
 void GamesLauncherActivity::onEnter() {
   UiListActivity::onEnter();
+  app.on(ACTION_REMOVE_CHOICE, &GamesLauncherActivity::onRemoveChoice, this);
+  removeIndex = -1;
   installInbox();
   loadGames();
   loadIcons();
+  selectRemembered();
+}
+
+size_t GamesLauncherActivity::paddedCount() const {
+  const size_t page = pageRows.load();
+  if (page <= 1 || listing.count <= page) return listing.count;
+  return (listing.count + page - 1) / page * page;
+}
+
+void GamesLauncherActivity::selectRemembered() {
+  if (lastOpened == 0) return;
+  for (size_t i = 0; i < listing.count; ++i) {
+    if (fingerprintOf(listing.entries[i].manifest.id) == lastOpened) {
+      activeNav().requestSelection(static_cast<int>(i));  // the first build shows the whole page holding it
+      return;
+    }
+  }
 }
 
 void GamesLauncherActivity::installInbox() {
@@ -119,16 +155,127 @@ void GamesLauncherActivity::installInbox() {
 }
 
 bool GamesLauncherActivity::handleCustomInput() {
-  if (!noteVisible) return false;
-  int x = 0;
-  int y = 0;
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
-    noteVisible = false;
-    requestUpdate();
+  if (noteVisible) {
+    int x = 0;
+    int y = 0;
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+        mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
+      noteVisible = false;
+      requestUpdate();
+      return true;
+    }
+    return false;
+  }
+  return removeIndex >= 0 && handleRemoveInput();
+}
+
+bool GamesLauncherActivity::handleButtons() {
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, REMOVE_HOLD_MS)) {
+    // Fires at the threshold, mid-hold; the release that follows is suppressed by the manager, so it cannot
+    // land in the confirmation.
+    openRemoveDialog(activeNav().selected);
     return true;
   }
-  return false;
+  return UiListActivity::handleButtons();
+}
+
+// The base walks listCount(), which includes the blank rows that pad the last page; the selection must stay on games.
+void GamesLauncherActivity::navigateButtons() {
+  const int count = static_cast<int>(listing.count);
+  auto& n = activeNav();
+  buttonNavigator.onNextRelease([this, count, &n] { moveSelectionTo(ButtonNavigator::nextIndex(n.selected, count)); });
+  buttonNavigator.onPreviousRelease(
+      [this, count, &n] { moveSelectionTo(ButtonNavigator::previousIndex(n.selected, count)); });
+  buttonNavigator.onNextContinuous(
+      [this, count, &n] { moveSelectionTo(ButtonNavigator::nextPageIndex(n.selected, count, n.inputPageRows())); });
+  buttonNavigator.onPreviousContinuous(
+      [this, count, &n] { moveSelectionTo(ButtonNavigator::previousPageIndex(n.selected, count, n.inputPageRows())); });
+}
+
+void GamesLauncherActivity::onRowLongPress(const int index) { openRemoveDialog(index); }
+
+void GamesLauncherActivity::openRemoveDialog(const int index) {
+  // A blank padding row, an empty list, or the note over the list is not a game to ask about.
+  if (index < 0 || static_cast<size_t>(index) >= listing.count || noteVisible) return;
+  app.clearTapFlash();
+  removeIndex = index;
+  removeFocus = 0;  // Cancel: a stray Confirm keeps the game
+  requestUpdate();
+}
+
+void GamesLauncherActivity::closeRemoveDialog() {
+  app.clearTapFlash();
+  removeIndex = -1;
+  requestUpdate();
+}
+
+bool GamesLauncherActivity::handleRemoveInput() {
+  using Button = MappedInputManager::Button;
+  // Touch: render() registered the dialog's buttons; onRemoveChoice runs for a tap on one.
+  const auto route = UiAppHost::routeTouch(mappedInput);
+  if (route.routed && app.invalidated()) requestUpdate();
+  if (route) return true;
+  if (mappedInput.wasReleased(Button::Back)) {
+    closeRemoveDialog();
+  } else if (mappedInput.wasReleased(Button::Up) || mappedInput.wasReleased(Button::Left) ||
+             mappedInput.wasReleased(Button::NavPrevious)) {
+    removeFocus = 0;
+    requestUpdate();
+  } else if (mappedInput.wasReleased(Button::Down) || mappedInput.wasReleased(Button::Right) ||
+             mappedInput.wasReleased(Button::NavNext)) {
+    removeFocus = 1;
+    requestUpdate();
+  } else if (mappedInput.wasReleased(Button::Confirm)) {
+    if (removeFocus == 1) {
+      confirmRemove();
+    } else {
+      closeRemoveDialog();
+    }
+  }
+  return true;  // the confirmation owns every pass while it is open
+}
+
+void GamesLauncherActivity::onRemoveChoice(const fui::ActionEvent& event, void* user) {
+  auto* self = static_cast<GamesLauncherActivity*>(user);
+  if (self->removeIndex < 0) return;
+  self->removeFocus = event.value == 1 ? 1 : 0;
+  if (self->removeFocus == 1) {
+    self->confirmRemove();
+  } else {
+    self->closeRemoveDialog();
+  }
+}
+
+void GamesLauncherActivity::confirmRemove() {
+  const int index = removeIndex;
+  app.clearTapFlash();  // the dialog leaves this screen
+  if (index < 0 || static_cast<size_t>(index) >= listing.count) {
+    removeIndex = -1;
+    requestUpdate();
+    return;
+  }
+  char id[GameCore::Manifest::MAX_ID_BYTES + 1];
+  char name[GameCore::Manifest::MAX_NAME_BYTES + 1];
+  snprintf(id, sizeof(id), "%s", listing.entries[index].manifest.id);
+  snprintf(name, sizeof(name), "%s", listing.entries[index].manifest.name);
+
+  // The render task reads the listing and the icon cache, which the reload below replaces.
+  RenderLock lock(*this);
+  GUI.drawPopup(renderer, tr(STR_GAMES_REMOVING));
+  const GamePackageInstaller::Error error = GamePackageInstaller::remove(id);
+  removeIndex = -1;
+  if (error == GamePackageInstaller::Error::None && lastOpened == fingerprintOf(id)) lastOpened = 0;
+  // The registry is the truth after a failure too: a game whose .pkg went is no longer listed.
+  loadGames();
+  loadIcons();
+  const int count = static_cast<int>(listing.count);
+  activeNav().requestSelection(count > 0 ? std::min(index, count - 1) : 0);  // the next game takes its place
+  if (error != GamePackageInstaller::Error::None) {
+    LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go
+    snprintf(note, sizeof(note), "%s: %s", name, tr(STR_GAMES_REMOVE_FAILED));
+    noteVisible = true;
+  }
+  requestUpdate();
 }
 
 void GamesLauncherActivity::loadGames() {
@@ -197,7 +344,12 @@ GameRowIcon::Choice GamesLauncherActivity::choiceOf(const size_t index) const {
 
 void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::ListItem& item) {
   auto* self = static_cast<GamesLauncherActivity*>(ctx);
-  if (index >= self->listing.count) return;
+  if (index >= self->listing.count) {
+    // A padding row (listCount()): blank, and disabled so it registers no touch.
+    item.label = "";
+    item.enabled = false;
+    return;
+  }
   const GameRegistry::Entry& game = self->listing.entries[index];
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
@@ -231,6 +383,10 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
+  if (removeIndex >= 0) {
+    buildRemoveDialog(screen);  // the list is not built under it, so none of its rows takes a touch
+    return;
+  }
   if (listing.count == 0) {
     screen.centeredText(tr(STR_GAMES_EMPTY), screen.theme().bodyText);
   } else {
@@ -243,8 +399,21 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     // Icon and air, so the fixed-height page estimate is the rows' real height and paging lands on whole rows.
     props.rowHeight = static_cast<int16_t>(GameRowIcon::SIDE + 2 * ROW_PADDING);
     props.action = ACTION_ROW;
-    props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+    props.inputMask = static_cast<uint16_t>(fui::InputTouch | fui::InputLongPress);  // buttons stay in loop()
+    // Whether this build follows a fresh selection request; a correction pass of the same follow must not be undone.
+    const bool followsSelection = activeNav().followOnBuild.load();
     syncListViewport(screen, props);
+    // Whole pages: the sync measured the rows a page holds, so pad the list to a multiple of it, and when the
+    // selection was just followed show the whole page holding it (the follow pulls the minimum, which would leave
+    // it at the bottom edge of a page that starts partway).
+    auto& n = activeNav();
+    const int page = std::max(1, n.visibleRows);
+    pageRows.store(static_cast<uint16_t>(page));
+    props.count = static_cast<uint16_t>(paddedCount());
+    if (followsSelection && n.followPending && props.selectedIndex >= 0) {
+      n.top = props.selectedIndex / page * page;
+      props.topIndex = static_cast<uint16_t>(n.top);
+    }
     screen.list(props);
   }
   if (noteVisible) {
@@ -269,7 +438,8 @@ void GamesLauncherActivity::activateIndex(const int index) {
     requestUpdate();  // the tap moved the selection here; show it
     return;
   }
-  app.clearTapFlash();  // the row leaves this screen
+  app.clearTapFlash();                           // the row leaves this screen
+  lastOpened = fingerprintOf(game.manifest.id);  // the next launcher opens on this game's page
   // A game the host can start in two or more modes asks which one. The picker is pushed, so its Back returns to this
   // list as it is; the match replaces the picker, and with it the stack.
   if (GameModeActivity::needed(game.check.modes)) {
@@ -295,6 +465,51 @@ void GamesLauncherActivity::activateIndex(const int index) {
     return;
   }
   activityManager.replaceActivity(std::move(match));
+}
+
+void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen) {
+  // The input task can close the dialog (removeIndex = -1) while this runs on the render task: read it once.
+  const int index = removeIndex;
+  if (index < 0 || static_cast<size_t>(index) >= listing.count) return;
+  fui::DialogOption options[2];
+  options[0].label = tr(STR_CANCEL);
+  options[1].label = tr(STR_GAMES_REMOVE);
+  for (int i = 0; i < 2; ++i) {
+    options[i].action = ACTION_REMOVE_CHOICE;
+    options[i].value = static_cast<int16_t>(i);
+    options[i].state = removeFocus == i ? fui::StateFocused : fui::StateNormal;
+  }
+  fui::OptionDialogProps props;
+  props.title = tr(STR_GAMES_REMOVE_TITLE);
+  props.headline = listing.entries[index].manifest.name;
+  props.message = tr(STR_GAMES_REMOVE_KEPT);
+  props.options = options;
+  props.optionCount = 2;
+  props.verticalOptions = true;
+  props.titleText = screen.theme().smallText;
+  props.titleText.bold = true;
+  props.headlineText = screen.theme().bodyText;
+  props.headlineText.maxLines = 2;  // a long name wraps; the dialog grows to fit
+  props.messageText = screen.theme().smallText;
+  props.messageText.maxLines = 2;
+  props.buttonText = screen.theme().smallText;
+  props.inputMask = fui::InputTouch;  // physical buttons stay in handleRemoveInput()
+  // A framed panel, as OptionPopup draws it.
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  props.styles = fui::defaultPopupStyles();
+  props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+  props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
+  props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
+  props.styles.selected = props.styles.normal;
+  props.styles.focused = props.styles.normal;
+  props.styles.active = props.styles.normal;
+  props.styles.disabled = props.styles.normal;
+
+  const fui::Rect body = screen.body();
+  int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);
+  if (width > body.width) width = body.width;
+  const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
+  fui::optionDialog(screen.frame(), fui::centeredRect(body, fui::Size{width, height}), props);
 }
 
 void GamesLauncherActivity::onBackButton() {
