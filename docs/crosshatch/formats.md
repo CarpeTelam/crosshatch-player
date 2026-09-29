@@ -146,6 +146,88 @@ While the game
 runs, the match writes a changed store at most every 5 s (`GameSaveStore::flushIfDue`); `GameSaveStore::flush`
 writes it at once, for round end and the match's `onExit()` (AD-17).
 
+## Game package (`.cpgame`)
+
+A game ships as one `.cpgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
+only code that installs one (AD-16). Opening Games installs every `/games/*.cpgame` (any letter case for the
+extension), so a person puts packages there with the web file manager or USB. The name of the file means nothing:
+the manifest's `id` names the game.
+
+### Package
+
+A package is a zip whose members are stored or deflated (no ZIP64) and sit at the top level. The whitelist is exact:
+
+| Member | Rule |
+| --- | --- |
+| `manifest.json` | required; parsed by `GameCore::Manifest::parse`, the one manifest parser |
+| `main.lua` | required |
+| `<name>.lua` | `<name>` is `[a-z0-9_]{1,32}`; loaded by `require("<name>")` |
+| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, any other is a game image |
+
+Anything else makes the package invalid: a folder, a path with `/` or `\`, `..`, an upper-case name, a name over the
+limit, a `.bmp` (images are `.png` only; the installer converts them), and the same name twice.
+
+| Limit | Constant (`lib/GameCore/PackageLimits.h`, `GameImages.h`) | Value |
+| --- | --- | --- |
+| Package file | `PACKAGE_BYTES` | 262,144 B |
+| Members | `PACKAGE_MEMBERS` | 32 |
+| One member, uncompressed | `MEMBER_BYTES` | 131,072 B |
+| Name of a `.lua` or `.png` member, without its extension | `MEMBER_STEM_BYTES` | 32 |
+| Converted images, all `.bmp` files but `icon.bmp` | `IMAGES_BYTES` | 131,072 B |
+| Converted images | `MAX_IMAGES` | 32 |
+| Side of `icon.bmp` | `ICON_PIXELS` | 64 |
+
+The installer counts converted images as the game loader does: each `.bmp` is 62 + ceil(width / 32) * 4 * height
+bytes, header included, and `icon.bmp` is left out. It does not yet check the package and member byte limits or the
+members' CRCs; `pack_game.py` refuses a package over any limit.
+
+### Images
+
+The installer converts every `.png` with `PngToBmpConverter` into the 1-bit layout `GameCore::checkImageHeader` reads
+(a 62-byte header, top-down rows padded to 4 bytes, most significant bit first, bit 1 white) and deletes the `.png`.
+`icon.png` becomes a 64 x 64 `icon.bmp`, so it must be square (a non-square icon makes the package invalid); it is
+scaled to 64 x 64. Any other `<name>.png` becomes `<name>.bmp` at its own size. A PNG the converter refuses
+(interlaced, over 2,048 x 3,072, damaged), a converted file `checkImageHeader` does not accept, or images over the
+budget make the package invalid.
+
+### Install
+
+For each inbox file the installer:
+
+1. lists the members and checks them against the whitelist, reads `manifest.json` (`Manifest::parse`), and applies
+   `Manifest::check` with this host's capabilities: `Invalid` makes the package invalid, while `Unavailable` (an `api`
+   this firmware cannot run, for one) installs, and the registry lists it with that verdict for the launcher to mark
+   (the first Games list shows only games that can start);
+2. extracts the members, in name order, to `/.games-tmp/<id>/`, converting images as it goes, and hashes them;
+3. removes any `/.games/<id>/`, renames `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;
+4. deletes the inbox file.
+
+`/.games-data/<id>/` is never touched, so a reinstall keeps a game's saved data. A package whose `id` is already installed replaces it whatever the `version`, and of two inbox files with one `id` the last installed wins. A package that is invalid is renamed
+`<name>.cpgame.bad` (replacing an earlier `.bad` of that name) and its reason is shown once. A failure that is the
+card's or the device's (a write error, out of memory) leaves the file in the inbox for the next try. A package that fails
+before the last step never changes `/.games/<id>/`: the old folder is removed only once the new one is whole and
+extracted. A card failure inside that last step (removing the old folder, the rename, or writing `.pkg`) can leave
+the game unlisted until the file installs again, which the next visit to Games retries. `/.games-tmp/` is deleted
+whenever Games opens and after every run. At most 32 inbox files are installed per visit; the rest wait for the next.
+
+An installed game is `/.games/<id>/` holding `manifest.json`, `main.lua`, each `<name>.lua`, each `<name>.bmp`,
+`icon.bmp` when the package had an `icon.png`, and `.pkg`.
+
+### `.pkg` and the package hash
+
+`.pkg` marks a folder as an installed game, and is written last, so a folder without one (an install cut short) is not
+a game. It is exactly 20 bytes: `v1\n`, the package hash as 16 lowercase hex digits, and `\n`. A file that is longer,
+holds upper-case hex, or names another version is not a valid `.pkg`.
+
+The package hash is the first 8 bytes of a SHA-256 over the package's members sorted by name (bytewise), each as
+`name`, one `00` byte, the member's uncompressed length as 4 little-endian bytes, then its uncompressed bytes. It is
+computed over the members as packaged (the `.png` files, not the converted `.bmp` files). `src/games/GameHash` is the
+one SHA-256 helper in the firmware (mbedTLS on the device, OpenSSL in the simulator and the host tests) and
+`scripts/pack_game.py` computes the same value. Both pass one vector: `test/game_core/package_vectors.json`
+(`hash_vector`) and `package_vector.cpgame`, whose hash is `0530a15766e91bf1`. The registry
+(`src/games/GameRegistry`) lists a folder of `/.games/` only when its `.pkg` is valid and its `manifest.json` names the
+folder's own id; it has no index. `resume.bin` records the 8 hash bytes to tell a changed package.
+
 ## Golden vectors
 
 `test/game_script/codec_vectors.json` holds the limits as top-level numbers and four lists of flat records:

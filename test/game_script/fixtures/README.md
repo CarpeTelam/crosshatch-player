@@ -5,12 +5,26 @@ They live here, never in `games/`, which the release workflow packs.
 
 ## Placing a fixture on the SD card
 
-A game folder (it has a `manifest.json`) is copied whole: `cp -r test/game_script/fixtures/tracer <sd>/.games/`
-(`fs_/.games/` in the simulator). The folder name must equal the manifest's `id`.
+Games install from packages: opening Games installs every `/games/*.cpgame` (`/games/` on the card, `fs_/games/` in
+the simulator), and lists only what was installed (`/.games/<id>/` holds a `.pkg`, which only the installer writes).
+Copying a fixture folder into `/.games/` no longer lists it. Pack a game folder (it has a `manifest.json`; the folder
+name must equal the manifest's `id`) with the release packer and drop the package in the inbox:
 
-A single fault script under `faults/` becomes a game of its own: make `<sd>/.games/f-<name>/`, copy the script there as
-`main.lua`, and add this `manifest.json`, with `<name>`'s underscores written as hyphens in the id (ids allow only
-`a-z`, `0-9`, and `-`):
+```sh
+python3 scripts/pack_game.py test/game_script/fixtures/counter /tmp/packs   # writes /tmp/packs/counter.cpgame
+cp /tmp/packs/counter.cpgame <sd>/games/                                    # fs_/games/ in the simulator
+```
+
+`pack_game.py` prints the package hash on its last line and refuses a folder the installer would refuse. A fixture
+packs when it holds only `manifest.json`, `main.lua`, `<name>.lua` files, and `<name>.png` images: `counter/`,
+`gallery/`, `icons/`, `limits/`, `loop/`, `slow-restart/`, `timer/`, and `tracer/` do. Three fixtures are **host-only**
+and cannot be packed as they are: `images/` and `bad-image/` hold `.bmp` files (a package carries `.png`, which the
+installer converts) and `solo/` holds a `screenshots/` folder (a package is flat). The host suites load those from
+here directly.
+
+A single fault script under `faults/` becomes a game of its own: make a folder `f-<name>/`, copy the script there as
+`main.lua`, add this `manifest.json`, with `<name>`'s underscores written as hyphens in the id (ids allow only
+`a-z`, `0-9`, and `-`), and pack the folder as above:
 
 ```json
 {"id": "f-<name>", "name": "Fault <name>", "version": "1.0.0", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"]}
@@ -23,15 +37,15 @@ in small type), Back must return to Games, and the device must stay responsive.
 
 | Folder | What it shows |
 | --- | --- |
-| `solo/` | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
+| `solo/` (host-only) | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
 | `slow-restart/` | The tracer's round (three taps) with a slow Play again: every later round's `setup` spins about 2 s on `ch.time.ms()`, so the end-of-round menu stays on screen meanwhile. A tap on the canvas in that gap is dropped: the new round starts at "taps: 0" with no square. Play again, then Back and Resume within the gap: the pause menu stays on screen (inert) until round 2's first frame, never the round-1 board. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
 | `icons/` | Every library icon at 32, 64, and 128 px in both weights, up to three icons of one category a page (`docs/crosshatch/game-icons.md`'s order; the title shows the ink and page `n/N`, the heading the category, part, and "regular, fill"). The small and medium rows show each name regular then fill; the large area shows the regular icons above the fill ones, each name under its fill icon. Each tap turns to the next page: the 21 black pages (black icons on white) first, then the 21 white pages (white icons on black), then back to the first. The medium row sits on a light band, which shows through around each icon's ink. |
-| `images/` | `ch.gfx.image`: the game's own `badge.bmp` (100 x 60) and `dot.bmp` (37 x 37) at their own size, in black on one light band and in white on the next; each covers the band whole (opaque), and a last badge is clipped at the right edge. `icon.bmp` is the launcher's and is not loaded as an image. |
-| `bad-image/` | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
+| `images/` (host-only) | `ch.gfx.image`: the game's own `badge.bmp` (100 x 60) and `dot.bmp` (37 x 37) at their own size, in black on one light band and in white on the next; each covers the band whole (opaque), and a last badge is clipped at the right edge. `icon.bmp` is the launcher's and is not loaded as an image. |
+| `bad-image/` (host-only) | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
 | `loop/` | Runaway scripts, one band each (tap it); see below. |
 | `limits/` | The codec, status, and display-list limits, one band each (tap it); see below. |
 
@@ -41,8 +55,9 @@ in small type), Back must return to Games, and the device must stay responsive.
 
 Epic-script-runtime's closing run on an X4 Pro, in this order:
 
-1. Place `solo/` and every fault: `loop/`, `limits/`, and each script under `faults/` as `f-<name>/` (above). Start
-   from no `/.games-data/solo/`, so the round count starts at 0.
+1. Place `solo/` and every fault: `loop/`, `limits/`, and each script under `faults/` as `f-<name>/` (above; `solo/`
+   is packed from a copy without its `screenshots/` folder). Start from no `/.games-data/solo/`, so the round count
+   starts at 0.
 2. Play `solo` to game over from Home, Games (swipe inside the box: a right swipe from the left quarter is Back, an up
    swipe from the bottom is Home; the round also ends when the 60 s run out). Confirm each checklist box fills as you tap, hold, and swipe and after
    the first 5 s tick; "Last swipe" names each swipe's direction; the first frame of a round is a full refresh and the

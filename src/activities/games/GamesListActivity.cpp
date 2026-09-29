@@ -7,27 +7,44 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <strings.h>
 
-#include <algorithm>
 #include <cstdio>
-#include <cstring>
 
 #include "GameMatchActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
-#include "games/GameHostCaps.h"
-#include "games/GamePaths.h"
+#include "games/GamePackageInstaller.h"
 
 namespace fui = freeink::ui;
 
 namespace {
 
-constexpr size_t DIR_NAME_BUFFER = 64;
-constexpr size_t CHUNK_BYTES = 96;
+constexpr uint8_t NOTE_LINES = 4;
 
-bool nameLess(const GameCore::Manifest& a, const GameCore::Manifest& b) {
-  return strcasecmp(a.name, b.name) < 0 || (strcasecmp(a.name, b.name) == 0 && std::strcmp(a.id, b.id) < 0);
+// What a person is told when an inbox file did not install.
+const char* reasonText(const GamePackageInstaller::Error error) {
+  using GamePackageInstaller::Error;
+  switch (error) {
+    case Error::SdCard:
+      return tr(STR_GAMES_INSTALL_STORAGE);
+    case Error::OutOfMemory:
+      return tr(STR_GAMES_OUT_OF_MEMORY);
+    case Error::NotAPackage:
+      return tr(STR_GAMES_INSTALL_NOT_A_PACKAGE);
+    case Error::BadManifest:
+      return tr(STR_GAMES_INSTALL_BAD_MANIFEST);
+    case Error::BadMember:
+      return tr(STR_GAMES_INSTALL_BAD_MEMBER);
+    case Error::NoMain:
+      return tr(STR_GAMES_INSTALL_NO_MAIN);
+    case Error::TooManyMembers:
+      return tr(STR_GAMES_INSTALL_TOO_MANY);
+    case Error::BadImage:
+      return tr(STR_GAMES_BAD_IMAGE);
+    case Error::None:
+      break;
+  }
+  return "";
 }
 
 }  // namespace
@@ -39,101 +56,68 @@ const char* GamesListActivity::headerTitle() const { return tr(STR_GAMES_TITLE);
 
 void GamesListActivity::onEnter() {
   UiListActivity::onEnter();
+  installInbox();
   loadGames();
   rebuildRows();
 }
 
-bool GamesListActivity::readManifest(const char* dirName, GameCore::ManifestReader& reader, GameCore::Manifest& out) {
-  char path[GamePaths::PATH_BYTES];
-  snprintf(path, sizeof(path), "%s/%s/manifest.json", GamePaths::GAMES_DIR, dirName);
-  auto file = Storage.open(path);
-  if (!file) {
-    LOG_INF("GAME", "Skipping %s: no manifest.json", dirName);
-    return false;
+void GamesListActivity::installInbox() {
+  noteVisible = false;
+  if (GamePackageInstaller::hasInbox()) GUI.drawPopup(renderer, tr(STR_GAMES_INSTALLING));
+  const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
+  if (report.failed == 0) return;
+  if (report.firstFile[0] == '\0') {
+    snprintf(note, sizeof(note), "%s", reasonText(report.firstError));
+  } else {
+    snprintf(note, sizeof(note), "%s: %s", report.firstFile, reasonText(report.firstError));
   }
-  char chunk[CHUNK_BYTES];
-  reader.begin();
-  for (int n = file.read(chunk, sizeof(chunk)); n > 0; n = file.read(chunk, sizeof(chunk))) {
-    reader.feed(chunk, static_cast<size_t>(n));
+  noteVisible = true;
+}
+
+bool GamesListActivity::handleCustomInput() {
+  if (!noteVisible) return false;
+  int x = 0;
+  int y = 0;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
+    noteVisible = false;
+    requestUpdate();
+    return true;
   }
-  file.close();
-  const GameCore::ManifestError error = reader.finish(out);
-  if (error != GameCore::ManifestError::None) {
-    LOG_INF("GAME", "Skipping %s: %s", dirName, GameCore::describe(error));
-    return false;
-  }
-  if (std::strcmp(out.id, dirName) != 0) {
-    LOG_INF("GAME", "Skipping %s: manifest id is %s", dirName, out.id);
-    return false;
-  }
-  const GameCore::CheckResult check = out.check(gameHostCaps());
-  if (!check.ok()) {
-    LOG_INF("GAME", "Skipping %s: %s", dirName, GameCore::describe(check.reason));
-    return false;
-  }
-  // Solo only until the launcher's mode picker (epic-install-and-launcher).
-  if ((check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
-    LOG_INF("GAME", "Skipping %s: no solo mode on this host", dirName);
-    return false;
-  }
-  return true;
+  return false;
 }
 
 void GamesListActivity::loadGames() {
-  games.reset();
+  listing = GameRegistry::Listing{};
   rows.reset();
-  gameCount = 0;
-  auto dir = Storage.open(GamePaths::GAMES_DIR);
-  if (!dir || !dir.isDirectory()) return;
-
-  size_t folders = 0;
-  dir.rewindDirectory();
-  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-    if (entry.isDirectory()) ++folders;
-  }
-  const size_t capacity = std::min(folders, MAX_GAMES);
-  if (capacity == 0) return;
-
-  // Holds the JSON token buffer; reused for every manifest.
-  auto reader = makeUniqueNoThrow<GameCore::ManifestReader>();
-  // One entry per folder, at most MAX_GAMES (about 180 B each), sized once here.
-  games = makeUniqueNoThrow<GameCore::Manifest[]>(capacity);
-  if (!reader || !games) {
-    LOG_ERR("GAME", "OOM: manifest reader (%u B) or %u games (%u B)",
-            static_cast<unsigned>(sizeof(GameCore::ManifestReader)), static_cast<unsigned>(capacity),
-            static_cast<unsigned>(capacity * sizeof(GameCore::Manifest)));
-    games.reset();
-    return;
-  }
-
-  char dirName[DIR_NAME_BUFFER];
-  dir.rewindDirectory();
-  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-    const size_t length = entry.getName(dirName, sizeof(dirName));
-    const bool isGameFolder = entry.isDirectory() && length > 0 && length < sizeof(dirName) - 1 && dirName[0] != '.';
-    entry.close();
-    if (!isGameFolder) continue;
-    if (gameCount >= capacity) {
-      LOG_INF("GAME", "Listing the first %u games only", static_cast<unsigned>(capacity));
-      break;
+  if (!GameRegistry::load(listing)) return;
+  // Solo only until the launcher's mode picker (epic-install-and-launcher): keep the games
+  // that can start solo here, in the registry's order.
+  size_t kept = 0;
+  for (size_t i = 0; i < listing.count; ++i) {
+    const GameRegistry::Entry& game = listing.entries[i];
+    if (!game.check.ok() || (game.check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
+      LOG_INF("GAME", "Not listing %s: %s", game.manifest.id,
+              game.check.ok() ? "no solo mode on this host" : GameCore::describe(game.check.reason));
+      continue;
     }
-    if (readManifest(dirName, *reader, games[gameCount])) ++gameCount;
+    if (kept != i) listing.entries[kept] = game;
+    ++kept;
   }
-  std::sort(games.get(), games.get() + gameCount, nameLess);
-  LOG_INF("GAME", "Found %u games", static_cast<unsigned>(gameCount));
+  listing.count = kept;
 }
 
 void GamesListActivity::rebuildRows() {
   rows.reset();
-  if (gameCount == 0) return;
-  rows = makeUniqueNoThrow<fui::ListItem[]>(gameCount);
+  if (listing.count == 0) return;
+  rows = makeUniqueNoThrow<fui::ListItem[]>(listing.count);
   if (!rows) {
-    LOG_ERR("GAME", "OOM: %u list rows", static_cast<unsigned>(gameCount));
-    gameCount = 0;  // nothing can be shown or opened without rows
+    LOG_ERR("GAME", "OOM: %u list rows", static_cast<unsigned>(listing.count));
+    listing.count = 0;  // nothing can be shown or opened without rows
     return;
   }
-  for (size_t i = 0; i < gameCount; ++i) {
-    rows[i].label = games[i].name;
+  for (size_t i = 0; i < listing.count; ++i) {
+    rows[i].label = listing.entries[i].manifest.name;
     rows[i].actionValue = static_cast<int16_t>(i);
   }
 }
@@ -148,24 +132,35 @@ void GamesListActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
-  if (gameCount == 0) {
+  if (listing.count == 0) {
     screen.centeredText(tr(STR_GAMES_EMPTY), screen.theme().bodyText);
-    return;
+  } else {
+    // rows was built in onEnter() and is reused on every repaint.
+    fui::ListProps props;
+    props.items = rows.get();
+    props.count = static_cast<uint16_t>(listing.count);
+    props.action = ACTION_ROW;
+    props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+    syncListViewport(screen, props);
+    screen.list(props);
   }
-
-  // rows was built in onEnter() and is reused on every repaint.
-  fui::ListProps props;
-  props.items = rows.get();
-  props.count = static_cast<uint16_t>(gameCount);
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  syncListViewport(screen, props);
-  screen.list(props);
+  if (noteVisible) {
+    // The reason wraps over a few lines, in a bordered panel so it reads against the list.
+    fui::PopupProps popup;
+    popup.message = note;
+    popup.text = screen.theme().bodyText;
+    popup.text.maxLines = NOTE_LINES;
+    popup.text.align = fui::TextAlign::Center;
+    popup.styles = screen.theme().popup;
+    popup.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+    popup.styles.normal.borderWidth = 2;
+    screen.popup(popup);
+  }
 }
 
 void GamesListActivity::activateIndex(const int index) {
   app.clearTapFlash();  // the row leaves this screen
-  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, games[index]);
+  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, listing.entries[index].manifest);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
     return;
