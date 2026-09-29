@@ -51,9 +51,9 @@ bool readPackageIcon(const char* id, uint8_t* bits);
 // Whether the library has an icon of that name.
 bool hasLibraryIcon(const char* name);
 
-// Decodes library icon `name` in its regular or (`fill`) fill weight into `bits` (BYTES bytes). `bits` starts blank
-// (no ink) and keeps whatever rows decoded; false says it is not the whole icon: an unknown name, or a malformed
-// bitmap, which only a generator bug makes (GameIcons.h's static_assert rejects it at build time).
+// Renders library icon `name` in its regular or (`fill`) fill weight into `bits` (BYTES bytes) from the runs of ink
+// GameIconBlit::inkRuns gives drawGameIcon, so the pixels are the ones a draw makes. `bits` starts blank (no ink); it
+// stays blank, and this returns false, for a name the library lacks.
 bool renderLibraryIcon(const char* name, bool fill, uint8_t* bits);
 
 }  // namespace GameRowIcon

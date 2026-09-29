@@ -9,7 +9,6 @@
 #include <Memory.h>
 
 #include <cstdio>
-#include <cstring>
 
 #include "GameMatchActivity.h"
 #include "MappedInputManager.h"
@@ -217,10 +216,9 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
   const GameRowIcon::Choice choice = self->choiceOf(index);
   if (choice.source == GameRowIcon::Source::PackageBmp) {
     bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[index]) * GameRowIcon::BYTES;
-  } else if (!GameRowIcon::renderLibraryIcon(choice.name, choice.fill, self->libraryIcon) &&
-             std::strcmp(choice.name, GameRowIcon::FALLBACK_NAME) != 0) {
-    // Not the whole icon (only a generator bug does that): the fallback, so the row keeps an icon.
-    GameRowIcon::renderLibraryIcon(GameRowIcon::FALLBACK_NAME, false, self->libraryIcon);
+  } else {
+    // A name choose() found in the library; the row is blank only if the library itself lost game-controller.
+    GameRowIcon::renderLibraryIcon(choice.name, choice.fill, self->libraryIcon);
   }
   item.icon.data = bits;
   item.icon.width = GameRowIcon::SIDE;

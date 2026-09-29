@@ -81,6 +81,10 @@ Route full: 100+ lines across many files. The SDK list draws a caller-owned `Bit
 
 ## Plan Change Log
 
+Follow-up commit (after the orchestrator's independent review), changes outside `touches`, orchestrator-approved:
+- `test/game_script/harness/list_stubs/HostCapsScript.h` and `GameHostCapsDouble.cpp`: the `minApi` field added in the first commit; its comment now names both fields and the 0 sentinel. Approved.
+- `test/game_script/harness/screen_stubs/components/UiAppHost.h` (entry 4's file): `RecordingTarget::bitmap` also copies each `BitmapRef` (data, size, format) into `bitmapsDrawn`; `forget()` clears it; `bitmaps` still counts. One line added to entry 4's plan Verification. Approved.
+
 ## Review Triage Log
 
 Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, intent-alignment) each ran as a context-free subagent over the staged diff and all four returned. Verdict counts: high 0, medium 3, low 9, false 2, maybe-false 0 (the intent-alignment report is descriptive and files no defect).
@@ -107,6 +111,19 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 | 19 | (Found by the simulator, not a lens.) `StateDisabled` on an unavailable row hid the selection when the row was selected | low, patch | Dropped; the reason under the name is the signal. Screenshot `unavailable-row-selected.png` shows the selection on the row. |
 | 18 | Deleted guards of `loadGames`/`rebuildRows` (edge-case deletion) | false | Solo filter is the requirement removed; the rows-OOM path has no successor because no row array exists; `activateIndex` keeps the OOM check. |
 
+Pass 2, source: the orchestrator's independent review (adversarial, edge-case, and verification-gap lenses; two medium, the rest low; the orchestrator's position is in the follow-up message).
+
+| # | Finding (lens) | Verdict, route | Evidence and action |
+|---|---|---|---|
+| 20 | No test checks which bitmap a row draws (verification-gap 1) | medium, patch | `bitmapsDrawn` capture in the screen double; `EachRowDrawsItsOwnBitsAs64x64Mask1` compares six rows' bits and `Mask1`/64x64 to `rowsOf` of two `icon.bmp` files with different seeds, the fill and regular decodes of `dice-six`, and the `game-controller` fallback, decoded independently in the test. |
+| 21 | The out-of-memory fallbacks are untested, and the deferral's reason is wrong (verification-gap 2) | medium, patch | A nothrow `operator new[]` in the test executable fails the 1,024 B cache and the 4 B slot array: two tests check the `LOG_ERR`, the rows listed, their library-icon bits, and (cache case) that a row still opens. The `## 4.8` deferral is corrected. |
+| 22 | Library icons are decoded by a second path beside `inkRuns` (adversarial 3) | low, patch | `renderLibraryIcon` clears ink bits from `GameIconBlit::inkRuns(source, 0, 0, SIDE, SIDE, fn)`, the runs `drawGameIcon` fills. Existing pixel tests (independent unpack, `inkAt`) pass unchanged. |
+| 23 | An Ok game the launcher cannot start yet shows "None of its modes work here", false for it (adversarial 1) | low, defer to entry 9 | Cannot happen on today's host (`pass` and `nearby` are off). Entry 9, the mode picker, replaces this path with the mode step; a `## 4.8` item names it for entry 9. No new string. |
+| 24 | `minApi` stub outside `touches`, stale comment, 0 as sentinel (adversarial 2) | low, patch | Approved by the orchestrator (Change Log); comment rewritten to name `pass`, `minApi`, and the sentinel. |
+| 25 | `check_upstream_touches.py` result not recorded (verification-gap 3) | low, patch | Recorded in Verification against the follow-up commit. |
+| 26 | Reverting the constructor to a literal name survives (verification-gap 4) | low, patch | `TheLauncherIsNamedByTheConstantGoHomeMapsToTheGamesRow` reads the activity's name and compares it with `GamesLauncherActivity::NAME`, which `ActivityManager.cpp` compares. |
+| 27 | The render-failure fallback in `provideRow` survives removal (verification-gap 5) | low, patch | Deleted: `choose()` returns a library name only when the library has it, so the branch was dead. A missing `game-controller` draws a blank icon. |
+
 ## Design Notes
 
 - **Unknown resolved:** yes, `ListItem::icon` takes the caller's bitmap. Library icons are rasterised into it by `GameRowIcon::renderLibraryIcon`, which reuses `GameIconBlit` (the decoder `drawGameIcon` draws from), because `drawGameIcon` paints on a `GfxRenderer` and a list row is painted by the SDK. Pixels are identical to `drawGameIcon`'s; the row inverts with selection for free. Flag this in the report.
@@ -122,6 +139,12 @@ All host, firmware, and simulator builds ran under the shared build lock, on the
 - `pio run -e x4pro` (through `check_flash_budget.py build on`), `pio run -e sticky`, `pio run -e default` -- all SUCCESS at the final tree. `sim.sh build x4pro` -- SUCCESS.
 - `python3 scripts/check_layers.py` -- 434 include edges follow the layer table; `python3 scripts/check_layers_test.py` -- 51 tests OK. `python3 scripts/check_upstream_touches.py` -- see the report (run on the commit).
 - `python3 scripts/check_flash_budget.py build on`, `build off`, `compare --limit-kib 250 --ram-limit-bytes 1024`, `objects`, all exit 0. x4pro `firmware.bin`: 5,896,208 B games on (`.pio/build`), 5,677,472 B off (`.pio/build-games-off`), difference +218,736 B (37,264 B under the 256,000 B gate); static internal RAM +776 B (`.dram0.bss` +8, `.iram0.text` +684, `.iram0.text_end` +84; 248 B spare); 42 game objects, no static initializer, no mutable static over 64 B. Over the epic base at `962ae61` (+228,496 B, +776 B): -9,760 B flash, +0 B static RAM. Over the combined measurement at `40ec2e01` (+217,040 B): +1,696 B flash, +0 B static RAM. Pass bar (+240,496 B, +808 B): met, 21,760 B of flash and 32 B of RAM to spare for entries 9 to 13. Method: every figure is the tool's own two builds of the same tree; the two earlier figures are the orchestrator's recorded measurements, quoted, not re-measured here.
+
+**Follow-up commit (after the orchestrator's independent review):**
+- Host suites: 1,107 of 1,107 pass (1,103 plus four launcher tests); `GamesLauncherHarnessTest` has 35 tests. The suites that use the screen double (launcher, row icon, Home with and without games, the match and VM suites) ran 20 times under `ctest --repeat until-fail:20 -j4` (110 tests each pass): all pass. Entry 4's suites pass with the `bitmapsDrawn` capture.
+- Mutation: with the row's format set to `BW1` and every package slot read at offset 0, `EachRowDrawsItsOwnBitsAs64x64Mask1` fails; both changes were then reverted.
+- `pio run -e x4pro` and `-e sticky` -- SUCCESS. `check_layers.py` -- passes. `check_upstream_touches.py` -- see the report for the follow-up commit's result (PASS on the first commit `80b68a92`).
+- Flash: the four `check_flash_budget.py` steps were not re-run, because the firmware change is one function (`renderLibraryIcon` through `inkRuns`, and a deleted branch). The same `.pio/build/x4pro/firmware.bin` (the build `build on` makes) went from 5,896,208 B to 5,896,304 B, +96 B, against 21,760 B of room under the pass bar; static RAM is unchanged by construction (no new static).
 
 **Simulator (x4pro, 12 packages installed from the inbox by the installer; the packages were made by a scratch script: `scripts/pack_game.py` for the eleven that pack, and a hand-built stored zip, the test-side writer, for the `api` 2 game `pack_game.py` refuses).** Screenshots in `story-launcher-screenshots/`, each looked at:
 - `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-launcher-screenshots/page1.png` -- page 1 of the list: Battleship (`boat`), Card Sharks (`spade`, fill), Counter (no icon: `game-controller`), Dice Duel (`dice-six` regular) beside Dice Duel Deluxe (`dice-six` fill), Finish Line (`flag-checkered`, fill), Hearts (`heart`), and Moon Puzzle, whose icon is its `icon.png` converted to `icon.bmp`; the first row is selected.

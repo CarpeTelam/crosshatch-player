@@ -17,8 +17,10 @@
 #include <FreeInkApp.h>
 
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "GfxRenderer.h"
@@ -26,6 +28,14 @@
 #include "components/UiAppHelpers.h"
 
 namespace screen {
+
+// A bitmap the app drew (BitmapRef): its size and format, and a copy of its rows, (width + 7) / 8 bytes each.
+struct DrawnBitmap {
+  std::vector<uint8_t> data;
+  uint16_t width = 0;
+  uint16_t height = 0;
+  freeink::ui::BitmapFormat format = freeink::ui::BitmapFormat::BW1;
+};
 
 // A line of text the app drew: the words, and the rectangle it was laid out in.
 struct DrawnText {
@@ -73,9 +83,19 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
       drawn.push_back({line, where});
     });
   }
-  void bitmap(freeink::ui::Rect, freeink::ui::BitmapRef, freeink::ui::BitmapMode, freeink::ui::Paint,
+  void bitmap(freeink::ui::Rect, freeink::ui::BitmapRef bitmap, freeink::ui::BitmapMode, freeink::ui::Paint,
               freeink::ui::Rotation) override {
     ++bitmaps;
+    // A copy of what the caller passed, taken now: a row's bitmap may be a scratch the screen reuses for the next.
+    DrawnBitmap copy;
+    copy.width = bitmap.width;
+    copy.height = bitmap.height;
+    copy.format = bitmap.format;
+    if (bitmap.data) {
+      const size_t bytes = static_cast<size_t>((bitmap.width + 7) / 8) * bitmap.height;
+      copy.data.assign(bitmap.data, bitmap.data + bytes);
+    }
+    bitmapsDrawn.push_back(std::move(copy));
   }
 
   // Whether some drawn line is exactly `line`.
@@ -92,6 +112,7 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   }
   void forget() {
     drawn.clear();
+    bitmapsDrawn.clear();
     fills = strokes = bitmaps = 0;
   }
 
@@ -99,6 +120,7 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   static constexpr int16_t LINE_HEIGHT = 20;
 
   std::vector<DrawnText> drawn;
+  std::vector<DrawnBitmap> bitmapsDrawn;  // in draw order; `bitmaps` counts them
   int fills = 0;
   int strokes = 0;
   int bitmaps = 0;

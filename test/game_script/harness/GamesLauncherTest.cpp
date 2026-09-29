@@ -1,13 +1,17 @@
+#include <GameIcons.h>
 #include <I18n.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
+#include "GameRowIcon.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
 #include "MatchSupport.h"
@@ -21,7 +25,41 @@
 // 9 to 12 copy this file for the mode picker and the installer screens: the fixture below opens a screen,
 // draws it, and finds a row by the text it drew. Each test names the deferred-work item it pins.
 
+// A nothrow array allocation of exactly this many bytes fails while it is non-zero: how a test makes the launcher's
+// makeUniqueNoThrow<T[]> return null (test/font_cache_manager does the same to count allocations). Every other
+// allocation is malloc, as the default operator's, so nothing else changes.
+namespace oom {
+std::size_t failSize = 0;
+}
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+  if (oom::failSize != 0 && size == oom::failSize) return nullptr;
+  return std::malloc(size);
+}
+
 namespace {
+
+// Reads the protected name an Activity was constructed with.
+struct NameOf : Activity {
+  static const std::string& of(const Activity& activity) { return activity.*(&NameOf::name); }
+};
+
+// A library icon's rows decoded without GameRowIcon or GameIconBlit: the packed bitmap's PackBits, from the top.
+std::vector<uint8_t> libraryRows(const char* name, const bool fill) {
+  const GameIcons::PackedBitmap bitmap =
+      GameIcons::ICONS[GameIcons::find(name, std::strlen(name))].medium[fill ? 1 : 0];
+  const size_t length = bitmap.data[0] | (static_cast<size_t>(bitmap.data[1]) << 8);
+  std::vector<uint8_t> rows;
+  for (size_t pos = 2; pos < 2 + length;) {
+    const uint8_t control = bitmap.data[pos++];
+    if (control < 128) {
+      for (int i = 0; i <= control; ++i) rows.push_back(bitmap.data[pos++]);
+    } else {
+      const uint8_t value = bitmap.data[pos++];
+      for (int i = 0; i < 257 - control; ++i) rows.push_back(value);
+    }
+  }
+  return rows;
+}
 
 using Button = MappedInputManager::Button;
 using GamePackageInstaller::Error;
@@ -107,6 +145,7 @@ class ListTest : public match::ScreenTest {
   }
 
   void TearDown() override {
+    oom::failSize = 0;
     fakertos::release();  // a test that failed while holding the VM must not leave it held
     // What the manager does when a screen goes: onExit under the lock, then the destructor under it.
     if (list) {
@@ -532,6 +571,75 @@ TEST_F(ListTest, AnIconBmpThatIsNotUsableFallsBackToTheNextSource) {
   EXPECT_TRUE(logHas("Icon for i-small-none: fallback game-controller"));
   EXPECT_TRUE(logHas("/.games/g-truncated/icon.bmp is not a usable icon"));
   EXPECT_TRUE(logHas("/.games/h-small/icon.bmp is 32x32"));
+}
+
+// The bits handed to the list for each row (RecordingTarget::bitmapsDrawn, in draw order: one per row, top to bottom).
+TEST_F(ListTest, EachRowDrawsItsOwnBitsAs64x64Mask1) {
+  addIconGame("a-first", "A First", "dice-six", "fill");  // icon.bmp wins, seed 1
+  addIconFile("a-first", iconBmp(1));
+  addIconGame("b-second", "B Second", "boat");  // icon.bmp wins, a different seed
+  addIconFile("b-second", iconBmp(2));
+  addIconGame("c-fill", "C Fill", "dice-six", "fill");
+  addIconGame("d-regular", "D Regular", "dice-six");
+  addGame("e-fallback", "E Fallback");
+  addIconGame("f-unknown", "F Unknown", "not-in-the-library");
+  open();
+  const std::vector<std::string> names{"A First", "B Second", "C Fill", "D Regular", "E Fallback", "F Unknown"};
+  ASSERT_EQ(rows(names), names) << "all six rows fit the page";
+  const auto& drawn = ui().bitmapsDrawn;
+  ASSERT_EQ(drawn.size(), names.size());
+  for (const screen::DrawnBitmap& bitmap : drawn) {
+    EXPECT_EQ(bitmap.format, freeink::ui::BitmapFormat::Mask1);
+    EXPECT_EQ(bitmap.width, 64);
+    EXPECT_EQ(bitmap.height, 64);
+  }
+  EXPECT_EQ(drawn[0].data, harness::rowsOf(iconBmp(1)));
+  EXPECT_EQ(drawn[1].data, harness::rowsOf(iconBmp(2)));
+  EXPECT_NE(drawn[0].data, drawn[1].data);
+  EXPECT_EQ(drawn[2].data, libraryRows("dice-six", true));
+  EXPECT_EQ(drawn[3].data, libraryRows("dice-six", false));
+  EXPECT_NE(drawn[2].data, drawn[3].data);
+  EXPECT_EQ(drawn[4].data, libraryRows("game-controller", false));
+  EXPECT_EQ(drawn[5].data, libraryRows("game-controller", false));
+}
+
+// The two allocations loadIcons makes: when either fails the rows are still listed, each with its library icon.
+TEST_F(ListTest, WhenTheIconCacheCannotBeAllocatedTheRowsUseLibraryIcons) {
+  addIconGame("a-first", "A First", "dice-six", "fill");
+  addIconFile("a-first", iconBmp(1));
+  addIconGame("b-second", "B Second", "boat");
+  addIconFile("b-second", iconBmp(2));
+  oom::failSize = 2 * GameRowIcon::BYTES;
+  open();
+  EXPECT_TRUE(logHas("OOM: 1024 B of package icons"));
+  const std::vector<std::string> names{"A First", "B Second"};
+  EXPECT_EQ(rows(names), names);
+  ASSERT_EQ(ui().bitmapsDrawn.size(), 2u);
+  EXPECT_EQ(ui().bitmapsDrawn[0].data, libraryRows("dice-six", true));
+  EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("boat", false));
+  EXPECT_TRUE(logHas("Icon for a-first: library dice-six fill"));
+  tapRow("B Second");
+  EXPECT_EQ(activityManager.replacements.size(), 1u) << "the row still opens";
+}
+
+TEST_F(ListTest, WhenTheSlotArrayCannotBeAllocatedTheRowsUseLibraryIcons) {
+  addIconGame("a-first", "A First", "dice-six");
+  addIconFile("a-first", iconBmp(1));
+  addGame("b-second", "B Second");
+  oom::failSize = 2 * sizeof(int16_t);
+  open();
+  EXPECT_TRUE(logHas("OOM: 4 icon slots"));
+  const std::vector<std::string> names{"A First", "B Second"};
+  EXPECT_EQ(rows(names), names);
+  ASSERT_EQ(ui().bitmapsDrawn.size(), 2u);
+  EXPECT_EQ(ui().bitmapsDrawn[0].data, libraryRows("dice-six", false));
+  EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("game-controller", false));
+}
+
+// ActivityManager::goHome selects Home's Games row by this name (ledger row 5): the screen is named by the constant.
+TEST_F(ListTest, TheLauncherIsNamedByTheConstantGoHomeMapsToTheGamesRow) {
+  open();
+  EXPECT_EQ(NameOf::of(*list), std::string(GamesLauncherActivity::NAME));
 }
 
 TEST_F(ListTest, IconBmpIsReadOncePerVisitNotOncePerFrame) {

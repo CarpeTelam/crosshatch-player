@@ -92,13 +92,14 @@ bool renderLibraryIcon(const char* name, const bool fill, uint8_t* bits) {
                                fill ? GameIcons::Weight::Fill : GameIcons::Weight::Regular, source)) {
     return false;
   }
-  GameIcons::PackedReader reader(source.bitmap);
-  uint8_t row[GameIcons::MAX_ROW_BYTES];
-  for (int y = 0; y < SIDE; ++y) {
-    // A malformed bitmap (only a generator bug makes one) keeps the rows decoded before it.
-    if (!reader.row(row, ROW_BYTES)) return false;
-    std::memcpy(bits + static_cast<size_t>(y) * ROW_BYTES, row, ROW_BYTES);
-  }
+  // The runs drawGameIcon fills, cleared into the bitmap instead: the very pixels it would draw. A malformed
+  // bitmap (only a generator bug makes one) ends the icon there, as it does in a draw.
+  GameIconBlit::inkRuns(source, 0, 0, SIDE, SIDE, [bits](const int32_t y, const int32_t x, const int32_t width) {
+    for (int32_t column = x; column < x + width; ++column) {
+      bits[static_cast<size_t>(y) * ROW_BYTES + static_cast<size_t>(column) / 8] &=
+          static_cast<uint8_t>(~(0x80u >> (column % 8)));
+    }
+  });
   return true;
 }
 

@@ -332,8 +332,8 @@
 ## 4.8
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
-  summary: The launcher suite cannot see which bitmap a row draws: the screen double's `RecordingTarget::bitmap` (`screen_stubs/components/UiAppHost.h`, entry 4's file) counts the call and drops the `BitmapRef`, so a `provideRow` that hands the list the wrong slot, weight, or format still draws one bitmap per row.
-  evidence: The suite pins the source choice (`GameRowIcon::choose` and the `Icon for` log lines, both from `choiceOf`), the pixels each reader makes (`GameRowIconTest`), and the count of bitmaps per drawn row; the simulator screenshots show the pixels drawn. A `BitmapRef` capture in the double (data copy, size, format per call) would let a test compare each row's bits with `harness::rowsOf` or the library decode; it is a small addition the orchestrator has to approve, since the file is in `stays_out`.
+  summary: For entry 9 (the mode picker): `GamesLauncherActivity` starts only solo, so a game the host can start only in another mode (with `pass` or `nearby` on) shows "None of its modes work here" (`STR_GAMES_UNAVAILABLE_MODE`), which is false for it, and does not open; entry 9's mode step replaces `startable()` and that reason.
+  evidence: Cannot happen on today's host (`gameHostCaps()` has `pass` and `nearby` off); `AGameOnlyAnotherModeCanStartIsListedButDoesNotOpenYet` pins the interim behaviour with `pass` on and must change with entry 9.
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-the-paged-launcher-plan.md`
-  summary: The launcher's allocation-failure paths (`packageSlot`, `packageIcons`) are untested, and `docs/crosshatch/formats.md` still says "the first Games list shows only games that can start" although the launcher lists every game with its reason.
-  evidence: `makeUniqueNoThrow` uses `new (std::nothrow)`, which the host suites cannot make fail; on failure the rows fall back to library icons and `LOG_ERR` names the size. `formats.md` (Install, step 1) and `docs/crosshatch/game-icons.md` (no `GameRowIcon` section) are outside this entry's `touches`.
+  summary: `docs/crosshatch/formats.md` still says "the first Games list shows only games that can start" although the launcher lists every game with its reason.
+  evidence: `formats.md` (Install, step 1) and `docs/crosshatch/game-icons.md` (no `GameRowIcon` section) are outside this entry's `touches`.
