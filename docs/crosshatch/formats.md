@@ -322,6 +322,32 @@ next.
 An installed game is `/.games/<id>/` holding `manifest.json`, `main.lua`, each `<name>.lua`, each `<name>.bmp`,
 `icon.bmp` when the package had an `icon.png`, and `.pkg`.
 
+Removing a game (the Games launcher's Remove, `GamePackageInstaller::remove`) deletes `/.games/<id>/` in this order:
+
+1. `.removing`, an empty file, is written in the folder. If the card will not take it, nothing else changes and the
+   remove reports the SD card reason. The marker is not a member a package can carry, so only a remove writes one. A
+   folder that has the marker already (a retry) is not written again.
+2. `.pkg` is deleted, so the game is no longer listed.
+3. Every other entry of the folder is deleted, then `.removing`, then the folder. The marker goes last because FAT
+   reuses freed directory slots, so a marker made after the game's files can be listed ahead of some of them, and a
+   delete in directory order would take it first and leave an unmarked folder that nothing reclaims. The one exception
+   is a file whose name is over 39 bytes (the installer writes none; only a person could put one there): the folder
+   then goes to a plain recursive delete, which takes the marker in directory order.
+
+`/.games-data/<id>/` is never touched. A remove that stops after step 1, 2, or during 3 leaves a folder holding
+`.removing`; a stop after the marker's own delete leaves an empty folder with no marker, which is not listed, holds one
+directory cluster, and goes with a reinstall of that id (harmless, and nothing else reclaims it). The next time Games opens, `installAll` (before it looks at the inbox, and after it empties
+`/.games-tmp`) finishes the remove of every `/.games/<id>/` that holds `.removing`, at most 32 folders a visit, the rest
+on the next. This includes a remove that reported the SD card reason after step 1: the person chose Remove, so the game
+is finished at the next visit even though the launcher said it could not remove it. It uses the same guards as the
+remove: the folder's name must be an id a manifest could carry, and a folder with no `.pkg` beside a `/.games-tmp/<id>`
+goes through the `.xlink` probe below and is kept, with the SD card reason logged, when the probe shows shared clusters
+or fails. A folder without `.removing` is never swept, so a folder someone copied into `/.games/` by hand stays as it
+was, listed or not. A marker that could not be written or closed is taken away again, so a remove refused at step 1
+leaves the game whole; if that delete fails too, the marker stays and the next visit finishes the remove. A remove that
+cannot finish is logged and tried again on the next visit; it is not shown to the person, and no popup is drawn while
+it runs.
+
 ### `.pkg` and the package hash
 
 `.pkg` marks a folder as an installed game, and is written last, so a folder without one (an install cut short) is not

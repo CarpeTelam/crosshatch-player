@@ -211,8 +211,9 @@ TEST_F(InstallerTest, APackageWithoutAManifestOrMainEndsBad) {
 // ---- members -------------------------------------------------------------------------------------
 
 TEST_F(InstallerTest, AMemberOffTheWhitelistEndsBad) {
-  const char* names[] = {"readme.txt",  "icon.bmp", "Main2.lua", "has space.lua", "sub/x.lua",
-                         "../evil.lua", "sub/",     "up.PNG",    "x.lua.png",     ".lua"};
+  // (".removing", the remove marker, and ".pkg", the commit marker, are not members either.)
+  const char* names[] = {"readme.txt", "icon.bmp", "Main2.lua", "has space.lua", "sub/x.lua", "../evil.lua",
+                         "sub/",       "up.PNG",   "x.lua.png", ".lua",          ".removing", ".pkg"};
   for (const char* name : names) {
     SetUp();
     const Bytes package = gamePackage("g", {{name, toBytes("x")}});
