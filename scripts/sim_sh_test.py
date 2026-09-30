@@ -100,6 +100,22 @@ class SimShTest(unittest.TestCase):
         self.assert_sim('setup', 0, 'simulator envs installed')
         self.assertEqual(self.ini.read_text(), USER_BEFORE + USER_AFTER + self.block)
 
+    def test_a_file_with_crlf_or_trailing_blanks_still_has_its_markers(self):
+        # Retro R9 c, cross-story finding 12: an exact-line match read such a file as marker-free, so setup appended a
+        # second block beside the first, and check called the block missing.
+        for name, eol in (('CRLF', '\r\n'), ('trailing blanks', '  \t\n')):
+            with self.subTest(name):
+                def lines(text):
+                    return text.replace('\n', eol)
+                user = lines(USER_BEFORE) + lines(USER_AFTER)
+                self.ini.write_bytes((lines(USER_BEFORE) + lines(BEGIN) + lines(OLD) + lines(END) +
+                                      lines(USER_AFTER)).encode())
+                self.assert_sim('check', 1, 'differs from simulator.ini (stale)')
+                self.assert_sim('setup', 0, 'simulator envs installed')
+                self.assertEqual(self.ini.read_bytes(), user.encode() + self.block.encode())
+                self.assert_sim('check', 0, 'is current')
+                self.assertEqual(self.ini.read_text().count('>>> crosshatch simulator'), 1)
+
     def test_malformed_markers_are_refused(self):
         for name, text in MALFORMED.items():
             with self.subTest(name):

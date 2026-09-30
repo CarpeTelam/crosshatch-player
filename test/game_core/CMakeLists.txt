@@ -6,6 +6,7 @@ add_executable(GameCoreTest
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
+  PackageLimitsTest.cpp
   SessionTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
@@ -32,6 +33,7 @@ target_compile_definitions(GameCoreTest PRIVATE
   # ManifestTest parses every fixture game's manifest.json (fixtures stay under test/, never games/).
   GAME_SCRIPT_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures"
   FORK_VERSION_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fork_version_vectors.json"
+  PACKAGE_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/package_vectors.json"
   API_LEVEL_LIST_DIR="${REPO_ROOT}/docs/crosshatch"
   API_LEVEL_HEADER_PATH="${REPO_ROOT}/lib/GameCore/ApiLevel.h"
 )

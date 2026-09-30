@@ -5,12 +5,26 @@ They live here, never in `games/`, which the release workflow packs.
 
 ## Placing a fixture on the SD card
 
-A game folder (it has a `manifest.json`) is copied whole: `cp -r test/game_script/fixtures/tracer <sd>/.games/`
-(`fs_/.games/` in the simulator). The folder name must equal the manifest's `id`.
+Games install from packages: opening Games installs every `/games/*.chgame` (`/games/` on the card, `fs_/games/` in
+the simulator), and lists only what was installed (`/.games/<id>/` holds a `.pkg`, which only the installer writes).
+Copying a fixture folder into `/.games/` no longer lists it. Pack a game folder (it has a `manifest.json`; the folder
+name must equal the manifest's `id`) with the release packer and drop the package in the inbox:
 
-A single fault script under `faults/` becomes a game of its own: make `<sd>/.games/f-<name>/`, copy the script there as
-`main.lua`, and add this `manifest.json`, with `<name>`'s underscores written as hyphens in the id (ids allow only
-`a-z`, `0-9`, and `-`):
+```sh
+python3 scripts/pack_game.py test/game_script/fixtures/counter /tmp/packs   # writes /tmp/packs/counter.chgame
+cp /tmp/packs/counter.chgame <sd>/games/                                    # fs_/games/ in the simulator
+```
+
+`pack_game.py` prints the package hash on its last line and refuses a folder the installer would refuse. A fixture
+packs when it holds only `manifest.json`, `main.lua`, `<name>.lua` files, and `<name>.png` images: `counter/`,
+`gallery/`, `icons/`, `limits/`, `loop/`, `pack-images/`, `slow-restart/`, `timer/`, `timing/`, and `tracer/` do. Three fixtures are **host-only**
+and cannot be packed as they are: `images/` and `bad-image/` hold `.bmp` files (a package carries `.png`, which the
+installer converts) and `solo/` holds a `screenshots/` folder (a package is flat). The host suites load those from
+here directly.
+
+A single fault script under `faults/` becomes a game of its own: make a folder `f-<name>/`, copy the script there as
+`main.lua`, add this `manifest.json`, with `<name>`'s underscores written as hyphens in the id (ids allow only
+`a-z`, `0-9`, and `-`), and pack the folder as above:
 
 ```json
 {"id": "f-<name>", "name": "Fault <name>", "version": "1.0.0", "api": 1, "seats": {"min": 1, "max": 1}, "modes": ["solo"]}
@@ -23,17 +37,20 @@ in small type), Back must return to Games, and the device must stay responsive.
 
 | Folder | What it shows |
 | --- | --- |
-| `solo/` | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
+| `solo/` (host-only) | The closing device run's game (Done-when 1): eight tap, long-press, and swipe prompts against a 60 s `ch.timer` countdown, with a checklist of the inputs seen this round and `ch.store`'s rounds finished and best score at the bottom. `screenshots/` holds its simulator frames; the loader ignores them. |
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
 | `slow-restart/` | The tracer's round (three taps) with a slow Play again: every later round's `setup` spins about 2 s on `ch.time.ms()`, so the end-of-round menu stays on screen meanwhile. A tap on the canvas in that gap is dropped: the new round starts at "taps: 0" with no square. Play again, then Back and Resume within the gap: the pause menu stays on screen (inert) until round 2's first frame, never the round-1 board. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
+| `changed/counter/` | `counter/` at version 1.0.1 with the title "Counter v2": the same id and a different package hash, for installing over `counter` on a device (its save is discarded, its `ch.store` kept). `changed/` only holds such variants, named by the game id they change because the packer needs the folder name to equal the manifest's `id`; pack one with `python3 scripts/pack_game.py test/game_script/fixtures/changed/counter <out>` into an `<out>` other than `counter`'s, or it overwrites `counter.chgame`. `scripts/pack_device_run.py` packs it as `counter-changed.chgame` (see Device-run packages below). |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
 | `icons/` | Every library icon at 32, 64, and 128 px in both weights, up to three icons of one category a page (`docs/crosshatch/game-icons.md`'s order; the title shows the ink and page `n/N`, the heading the category, part, and "regular, fill"). The small and medium rows show each name regular then fill; the large area shows the regular icons above the fill ones, each name under its fill icon. Each tap turns to the next page: the 21 black pages (black icons on white) first, then the 21 white pages (white icons on black), then back to the first. The medium row sits on a light band, which shows through around each icon's ink. |
-| `images/` | `ch.gfx.image`: the game's own `badge.bmp` (100 x 60) and `dot.bmp` (37 x 37) at their own size, in black on one light band and in white on the next; each covers the band whole (opaque), and a last badge is clipped at the right edge. `icon.bmp` is the launcher's and is not loaded as an image. |
-| `bad-image/` | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
+| `images/` (host-only) | `ch.gfx.image`: the game's own `badge.bmp` (100 x 60) and `dot.bmp` (37 x 37) at their own size, in black on one light band and in white on the next; each covers the band whole (opaque), and a last badge is clipped at the right edge. `icon.bmp` is the launcher's and is not loaded as an image. |
+| `bad-image/` (host-only) | `broken.bmp` claims 8 bits per pixel: the game does not start, and the load-failure view says "An image is damaged or too large". |
+| `pack-images/` | The packable twin of `images/`: `icon.png` (96 x 96, the launcher's row icon), `badge.png` (100 x 60), and `dot.png` (37 x 37), drawn through `ch.gfx.image`. The host build packs it, `counter/`, and `timing/` with `scripts/pack_game.py` and installs them with the real installer (`PackedFixturesTest`). |
 | `loop/` | Runaway scripts, one band each (tap it); see below. |
 | `limits/` | The codec, status, and display-list limits, one band each (tap it); see below. |
+| `timing/` | Three frames at the top of what a frame may ask of the replay, one band each (tap it; tap the frame to go back): the game's own mid-gray `gray.png` (480 x 800), a frame at exactly 1,048,576 icon and image pixels (the whole `frame_icon_image_pixels` budget), and 2,048 filled rects that each cover the whole canvas (the whole command limit); see Timing run below. |
 
 `surface/` and `modules/` are host-suite scripts, not games.
 
@@ -41,8 +58,9 @@ in small type), Back must return to Games, and the device must stay responsive.
 
 Epic-script-runtime's closing run on an X4 Pro, in this order:
 
-1. Place `solo/` and every fault: `loop/`, `limits/`, and each script under `faults/` as `f-<name>/` (above). Start
-   from no `/.games-data/solo/`, so the round count starts at 0.
+1. Place `solo/` and every fault: `loop/`, `limits/`, and each script under `faults/` as `f-<name>/` (above; `solo/`
+   is packed from a copy without its `screenshots/` folder). Start from no `/.games-data/solo/`, so the round count
+   starts at 0.
 2. Play `solo` to game over from Home, Games (swipe inside the box: a right swipe from the left quarter is Back, an up
    swipe from the bottom is Home; the round also ends when the 60 s run out). Confirm each checklist box fills as you tap, hold, and swipe and after
    the first 5 s tick; "Last swipe" names each swipe's direction; the first frame of a round is a full refresh and the
@@ -58,6 +76,56 @@ Epic-script-runtime's closing run on an X4 Pro, in this order:
 
 This checks Done-when 1 (steps 2 and 4), 2 (step 5), and 4 (steps 2 and 3).
 
+## Timing run
+
+`timing/` is the device run of `_bmad-output/implementation-artifacts/deferred-work.md`'s `## e3r-1` (the replay of a
+frame at the icon and image budget, under `RenderLock`, has been timed only on the host) and of the 2,048 full-canvas
+fills that entry left unbounded. It packs as above (`gray.png` becomes a 1-bit dithered `gray.bmp` at install:
+about half the pixels white, runs of one or two pixels, the worst case for the replay's fills). Run it on an X4 Pro:
+
+0. Note the firmware commit the device runs (`git rev-parse HEAD` of the build, or the version line the device shows in
+   Settings) and write it beside the results: a timing means nothing without the build it came from. Start the serial
+   log before opening the game and keep it for the whole run: `pio device monitor -e x4pro` (115200 baud; add
+   `--filter log2file` or redirect with `| tee timing.log`), or any terminal on the board's USB serial port. It carries
+   the `band 2 charges ...` line, a watchdog or reset banner if there is one, and the `GAME` line `VM stopped; arena
+   peak ...` that a normal Leave prints.
+1. Install `timing.chgame`, open it from Home, Games. The menu is a cheap frame: the baseline.
+2. For each band in turn, tap it and record the time from the tap to the finished picture (a 60 fps phone video of the
+   screen, counted in frames, is enough; the serial log has no replay time), whether the device stays responsive
+   during it (the touch panel and the buttons answer once it is drawn), and the serial log for a watchdog or reset
+   line. Then tap the frame to go back and record the time to the menu again.
+3. Band 2's serial log line is `band 2 charges 1048576 pixels`. A refusal instead (`the frame's icons and images cover
+   over 1048576 pixels`) or a `frame is full` error is a finding: report it, do not change the limit.
+
+| Band | Frame | Commands |
+| --- | --- | --- |
+| 1 | `gray.png` once, at the canvas's top-left (373,512 canvas pixels on the 474 x 788 canvas) | 1 |
+| 2 | Two gray images, eighteen 128 px `circle` fill icons in white, and 15 one-row strips of the image at the bottom edge, 1,048,576 pixels in all on the 474 x 788 canvas (worked out from `ch.screen` on any other) | 36 (with the clear) |
+| 3 | 2,048 filled rects of the whole canvas, in `light`, `black`, `white`, `dark` in turn, the last `dark`; the screen ends dark gray | 2,048 |
+
+The simulator's frames for the three bands are in
+`_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-timing-screenshots/`; their few
+milliseconds of replay say nothing about the device.
+
+What to record for entry 14: the firmware commit, each band's tap-to-picture time and the menu's, a reset or watchdog line if any, the `VM stopped` line after Leave, and
+whether a Back press during a band's replay is answered once the picture is drawn. `GfxBindingsTest`'s
+`TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas` pins the frames on the host, and `GameHashTest` and the installer suite
+install the package.
+
+`GameHash`'s mbedTLS branch (the device build) has never run against `package_vectors.json`: the host tests use OpenSSL.
+While the installer is on the device, also install `test/game_core/package_vector.chgame` and read
+`/.games/package-vector/.pkg` back: it must read `v1` on one line and `0530a15766e91bf1` on the next.
+
+## Device-run packages
+
+The packages entry 14 puts on a device are never committed. `python3 scripts/pack_device_run.py <dir>` packs them:
+`counter`, `loop`, `timing`, and `pack-images` from here, `changed/counter` as `counter-changed`, the hardening
+generator's `binary-lua-stored` case as `invalid-binary-lua.chgame` (it must install as `.bad`), and
+`test/game_core/package_vector.chgame`, with a `HASHES.txt` of the hash `pack_game.py` printed for each. On a pull
+request, add the label `package-games`: the `Game packages` job of `.github/workflows/crosshatch-game-packages.yml` runs the
+script and uploads `<dir>` as the artifact `game-packages` (kept 30 days). The job is not a required check and runs
+only with the label; adding another label does nothing there and reruns nothing in `crosshatch-ci.yml`.
+
 ## Fault bands
 
 `loop/` ("Runaway scripts"):
@@ -67,7 +135,7 @@ This checks Done-when 1 (steps 2 and 4), 2 (step 5), and 4 (steps 2 and 3).
 | Loop forever | `main.lua:7: instruction budget exceeded` |
 | Loop inside pcall | `main.lua:7: instruction budget exceeded` |
 | Recurse through pcall | `script recursion too deep (C stack nearly full)` |
-| Slow C calls forever | `It stopped responding: one step ran over 3 seconds` (after about 3 s) |
+| Slow C calls forever | `It stopped responding: one step ran over 3 seconds` (after about 3 s; the watchdog cancels the VM, and the log reads `VM stopped; ...`, not `abandoning`) |
 | Stuck in one C call | `It stopped responding: one step ran over 3 seconds` (after about 3.5 s; the VM is abandoned) |
 
 `limits/` ("Limit faults"):

@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <string>
 #include <vector>
 
-#include "GameIconBlit.h"
 #include "GameIcons.h"
-#include "GameImageBlit.h"
 #include "LuaGameFixture.h"
+#include "ReplayFills.h"
 
 using namespace GameScript;
 using GameScriptTestSupport::DirectGame;
@@ -136,28 +136,38 @@ class GfxBindingsTest : public LuaGameTest {
     images.pixels = imagePixels.data();
   }
 
-  // The fills the replay makes for the front frame's icons and images: each run
-  // GameIconBlit::inkRuns and GameImageBlit::runs give on the canvas, as
-  // FrameReplay draws them.
-  uint64_t frontBlitFills() {
-    uint64_t fills = 0;
-    const auto count = [&](auto...) { ++fills; };
-    for (const DrawCommand& c : frontCommands()) {
-      if (c.op == Op::Icon) {
-        GameIconBlit::Source source;
-        if (!GameIconBlit::sourceFor(c.icon, GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(c.size)],
-                                     static_cast<GameIcons::Weight>(c.weight), source)) {
-          ADD_FAILURE() << "no bitmap for icon " << c.icon;
-          continue;
-        }
-        GameIconBlit::inkRuns(source, c.x, c.y, canvas.width, canvas.height, count);
-      } else if (c.op == Op::Image) {
-        const GameCore::ImageSpan& span = images.spans[c.image];
-        GameImageBlit::runs(span, images.pixelsOf(span), c.x, c.y, canvas.width, canvas.height, c.color == Color::Black,
-                            count);
-      }
+  // One image, "gray": 480 x 800 as the installer's converter writes a mid-gray PNG (an ordered dither, so every
+  // other pixel is white); only its size and dither matter to the timing fixture's frames.
+  void useGray() {
+    constexpr uint32_t W = 480;
+    constexpr uint32_t H = 800;
+    constexpr uint32_t ROW_BYTES = W / 8;
+    imageSpans.assign(1, GameCore::ImageSpan{});
+    std::strncpy(imageSpans[0].name, "gray", GameCore::IMAGE_NAME_BYTES);
+    imageSpans[0].width = W;
+    imageSpans[0].height = H;
+    imageSpans[0].rowBytes = ROW_BYTES;
+    imageSpans[0].offset = 0;
+    imagePixels.assign(static_cast<size_t>(ROW_BYTES) * H, 0);
+    for (uint32_t y = 0; y < H; ++y) {
+      std::memset(imagePixels.data() + static_cast<size_t>(y) * ROW_BYTES, (y & 1) ? 0xAA : 0x55, ROW_BYTES);
     }
-    return fills;
+    images.spans = imageSpans.data();
+    images.count = imageSpans.size();
+    images.pixels = imagePixels.data();
+  }
+
+  // The fills the real FrameReplay::draw makes for the front frame, counted on the src/games
+  // harness's recording renderer (test/game_script/harness/ReplayFills.h): each fillRect it
+  // asks for, which only icons and images make. A frame drawn with an error logged (an icon
+  // or image it could not draw) is a failure, not a cheap frame.
+  uint64_t frontBlitFills() {
+    harness::ReplayResult result;
+    frames.readFront(
+        [&](const DisplayList& list) { result = harness::replayFills(list, images, canvas.width, canvas.height); });
+    EXPECT_TRUE(result.drawn);
+    for (const std::string& line : result.errors) ADD_FAILURE() << line;
+    return result.fills;
   }
 };
 
@@ -506,14 +516,34 @@ TEST_F(GfxBindingsTest, AnUnknownIconsNameIsShownShortAndPrintable) {
     std::string shown;
   };
   std::string cut = "a";
-  for (int i = 0; i < 15; ++i) cut += "\xC3\xA9";  // 31 bytes: the 32nd would split an e-acute
+  for (int i = 0; i < 15; ++i) cut += "\xC3\xA9";  // 31 bytes; the 32nd byte, the lead of the next e-acute, is cut off
+  cut += "?";
   const Case cases[] = {
       {"string.rep('a', 40)", std::string(32, 'a')},
       {"string.rep('b', 32)", std::string(32, 'b')},
-      {"'a' .. string.rep('\\u{e9}', 20)", cut},
+      {"'a' .. string.rep('\\u{e9}', 20)", cut},          // the cut splits the 16th e-acute: its lead byte is '?'
+      {"string.rep('\\x80', 40)", std::string(32, '?')},  // continuation bytes only: 32 marks, not an empty name
       {"'x\\ny\"z\\0w\\127v\\tu'", "x?y?z?w?v?u"},
       {"''", ""},
       {"42", "42"},  // a number is a string to Lua's string checks
+      // Retro R9 g: a byte that is not part of a well-formed UTF-8 sequence is '?', so the error view shows valid text.
+      {"'a\\xC3' .. 'b'", "a?b"},    // a lone lead byte
+      {"'a\\x80b'", "a?b"},          // a lone continuation byte
+      {"'\\xE2\\x82'", "??"},        // a 3-byte sequence cut short
+      {"'\\xC0\\xAF\\xFF'", "???"},  // leads the encoding never uses
+      {"'\\xC3\\xA9\\xE2\\x82\\xAC\\xF0\\x9F\\x98\\x80'",
+       "\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80"},                                // well-formed 2, 3, 4
+      {"string.rep('a', 31) .. '\\xC3' .. 'zz'", std::string(31, 'a') + "?"},  // the 32nd byte is a lone lead
+      // Overlong forms, surrogates, and code points past U+10FFFF are not well-formed either; their neighbours are.
+      {"'\\xE0\\x80\\x80'", "???"},                    // overlong
+      {"'\\xE0\\x9F\\xBF'", "???"},                    // overlong, at the edge
+      {"'\\xE0\\xA0\\x80'", "\xE0\xA0\x80"},           // U+0800, the first 3-byte code point
+      {"'\\xED\\xA0\\x80'", "???"},                    // a surrogate
+      {"'\\xED\\x9F\\xBF'", "\xED\x9F\xBF"},           // U+D7FF, the last before them
+      {"'\\xF0\\x8F\\xBF\\xBF'", "????"},              // overlong
+      {"'\\xF0\\x90\\x80\\x80'", "\xF0\x90\x80\x80"},  // U+10000, the first 4-byte code point
+      {"'\\xF4\\x90\\x80\\x80'", "????"},              // past U+10FFFF
+      {"'\\xF4\\x8F\\xBF\\xBF'", "\xF4\x8F\xBF\xBF"},  // U+10FFFF
   };
   for (const auto& c : cases) {
     useSource("main", drawing(std::string("ch.gfx.icon(") + c.name + ", 0, 0, 'small', 'black')"));
@@ -615,6 +645,8 @@ TEST_F(GfxBindingsTest, AnUnknownImagesNameIsShownShortAndPrintable) {
       {"'x\\ny\"z\\0w\\127v\\tu'", "x?y?z?w?v?u"},
       {"''", ""},
       {"7", "7"},
+      {"'a\\xC3' .. 'b'", "a?b"},  // as for icons (retro R9 g): a lone UTF-8 lead byte is '?'
+      {"'\\xC3\\xA9'", "\xC3\xA9"},
   };
   useImages("images");
   for (const auto& c : cases) {
@@ -909,3 +941,61 @@ TEST_F(GfxBindingsTest, TextWidthBadArgumentsAreScriptErrors) {
 }
 
 }  // namespace
+
+// The timing fixture (test/game_script/fixtures/timing/, entry 13 of epic-install-and-launcher) draws its three
+// frames at the limits, whatever the canvas: the whole icon and image pixel budget, and the whole command limit. The
+// device run times them (the fixtures README); this pins that each is exactly what it says and is not refused.
+TEST_F(GfxBindingsTest, TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas) {
+  useGray();
+  useSource("main", GameScriptTestSupport::readFixture("timing/main.lua"));
+  struct Size {
+    int16_t w;
+    int16_t h;
+  };
+  // The X4 Pro's and Sticky's 474 x 788, the test canvas, and one too small to hold the icons apart.
+  const Size sizes[] = {{474, 788}, {480, 800}, {300, 500}};
+  for (const Size size : sizes) {
+    canvas = GameScript::Canvas{size.w, size.h, GameScript::TextMetrics::standIn()};
+    const std::string where = std::to_string(size.w) + "x" + std::to_string(size.h);
+    // Band 1: the one image, once.
+    {
+      SessionGame game(*this);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      ASSERT_EQ(game.tap(50, 150), Outcome::Ok) << game.errorMessage();
+      const auto commands = frontCommands();
+      ASSERT_EQ(commands.size(), 1u) << where;
+      EXPECT_EQ(commands[0].op, Op::Image);
+      EXPECT_EQ(frontBlitPixels(), static_cast<uint32_t>(std::min<int>(size.w, 480) * std::min<int>(size.h, 800)));
+      EXPECT_GT(frontBlitFills(), 100000u) << where << ": the dithered gray is a run or two a pixel pair";
+    }
+    // Band 2: exactly the budget, so a frame that adds one pixel more is refused (the next test).
+    {
+      SessionGame game(*this);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      ASSERT_EQ(game.tap(50, 260), Outcome::Ok) << game.errorMessage();
+      EXPECT_EQ(frontBlitPixels(), MAX_BLIT_PIXELS) << where;
+      EXPECT_TRUE(std::any_of(log.lines.begin(), log.lines.end(), [](const std::string& line) {
+        return line == "band 2 charges 1048576 pixels";
+      })) << where;
+      EXPECT_LT(frontCommands().size(), 100u);
+    }
+    // Band 3: the command limit, every one a filled rect over the whole canvas, in the four colors in turn.
+    {
+      SessionGame game(*this);
+      ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+      ASSERT_EQ(game.tap(50, 370), Outcome::Ok) << game.errorMessage();
+      const auto commands = frontCommands();
+      ASSERT_EQ(commands.size(), MAX_COMMANDS) << where;
+      for (const auto& c : commands) {
+        ASSERT_EQ(c.op, Op::Rect);
+        EXPECT_TRUE(c.filled);
+        EXPECT_EQ(c.x, 0);
+        EXPECT_EQ(c.y, 0);
+        EXPECT_EQ(c.w, size.w);
+        EXPECT_EQ(c.h, size.h);
+      }
+      EXPECT_EQ(commands.back().color, Color::Dark);
+      EXPECT_EQ(commands.front().color, Color::Light);
+    }
+  }
+}

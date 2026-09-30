@@ -32,8 +32,14 @@ class Session {
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
 
+  // Before start(): makes `snapshot` at `ver` the state the next start() begins from
+  // (a saved match resumed), so that start() skips setup, keeps the state and ver, and
+  // computes the status (and delivers Over if it is already over). False, changing
+  // nothing, when the snapshot is empty or larger than SNAPSHOT_BYTES.
+  bool restore(std::span<const uint8_t> snapshot, uint32_t ver);
   // Starts a round: setup(ctx), a new snapshot, its status, and Over if the round
-  // is already over. Called again for a rematch, it keeps counting ver.
+  // is already over; or, after restore(), the restored state's status alone. Called
+  // again for a rematch, it runs setup and keeps counting ver.
   Outcome start();
   // Delivers an event to the local seat's input and keeps the move it returns,
   // unless the rules above discard it.
@@ -48,6 +54,10 @@ class Session {
   // Increases with every snapshot and never resets, rematches included (AD-13).
   uint32_t ver() const { return version; }
   const Status& status() const { return current; }
+  // The ver whose status the rules have computed (Ok): equal to ver() unless a call was
+  // cancelled or failed between committing a snapshot and finishing its status, when
+  // status() is still the previous snapshot's. A restored snapshot is settled by start().
+  uint32_t settledVer() const { return settled; }
   bool pending() const { return moveLength != 0; }
   std::span<const uint8_t> snapshot() const { return {state, stateLength}; }
   // Moves discarded so far (for tests and logs).
@@ -66,8 +76,10 @@ class Session {
   IGameRules& rules;
   uint8_t localSeat;
   uint32_t version = 0;
+  uint32_t settled = 0;
   Status current;
   bool overDelivered = false;
+  bool restored = false;  // restore() ran and start() has not yet taken it
   uint32_t discarded = 0;
   size_t stateLength = 0;
   size_t moveLength = 0;

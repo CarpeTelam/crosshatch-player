@@ -1,0 +1,66 @@
+---
+title: 'Device run and owner sign-off'
+type: 'chore'
+ticket: '14'
+created: '2026-09-30'
+status: done
+---
+
+# Device run and owner sign-off (entry 14)
+
+The owner ran the packet (`device-run-packet.md` in this folder) on an X4 Pro. The orchestrator recorded each result here as the owner reported it.
+
+## Setup
+
+- **Firmware:** the CI build of `firmware-x4pro.bin` for `134afb4`, from PR #20's "Firmware builds" comment, run 36655380445. The firmware is identical to `216ccbd3`: every commit after it changes only `_bmad-output/`.
+- **Packages:** the `game-packages` artifact from run 36653510328, packed at `07c17486`. Its `HASHES.txt` matches the packet.
+- **Serial log:** not tethered for steps 0–8, by the owner's choice (2026-09-30). The log is captured only for steps 9 and 10, which need it: the `VM stopped` lines and the forced-exit skip line.
+- **Card:** `/games/`, `/.games/`, and `/.games-data/` were cleared first.
+
+## Results
+
+| Step | Result | Notes |
+| --- | --- | --- |
+| 1. Install two ways (R1, Done when 1) | pass | `counter.chgame` was uploaded with the web file manager, and the other five were copied from a computer. Opening Games showed the "Installing" popup and installed every valid package with no reboot. Five games were listed: Counter, Runaway scripts (`loop`), Packed images, Frame timing, and Package vector. The one failure note read "A Lua file is compiled, not source". The note did not return when Games was opened again. `/games/` then held `invalid-binary-lua.chgame.bad` and no `.chgame`. |
+| 2. The list (R5, R8, Done when 3) | pass | Packed images showed its own rings icon, and the other four showed `game-controller`. No row had a second line, because every game can start. Counter opened straight into the match from its row, with no mode picker (Home, Games, the game: three taps). Back, then Leave, returned to Games. The mode picker cannot open on this firmware (`pass` and `nearby` are off), so it stays host-verified only. |
+| 4. Play, sleep, Continue (R10, Done when 4) | pass | Counter was played to Taps: 4, then the device was put to sleep mid-match by holding power. The wake landed on Home. In Games, the first row was "Counter" with "Continue" as its second line. A tap on it opened straight to the board at Taps: 4, with no mode step. After Leave, the Continue row was selected. This answers A1 and the "Continue row selected after leaving" assumption on the device. |
+| 5. Reinstall the same package (R5) | pass | Before the reinstall, `/.games-data/counter/` held `resume.bin` (29 B) and `store.bin` (17 B). `counter.chgame` was uploaded again and installed when Games opened. The Continue row stayed, because the hash was unchanged. Afterwards the folder held the same two files at the same sizes. |
+| 6. Install the changed package (R5, R10, Done when 4) | pass | `counter-changed.chgame` (1.0.1) was uploaded and installed. The Continue row was gone, because the save was from the old package. `/.games-data/counter/` still held `store.bin` and `resume.bin`: the launcher hides an old package's save and does not delete it, as the Notes' `peek` assumption says. Counter opened as a New match titled "Counter v2", and its `ch.store` count carried over (14). |
+| 6a. New match over the kept save | pass | After Counter v2 was played and left, a Continue row for Counter was back. `resume.bin` stayed 29 B. A row appears only when `peek` finds the installed package's hash in the file's header, so the save now carries v2's hash: the new match replaced it (A6 on the device). |
+| 7. Remove (R5, Done when 2) | pass | A long-press on Packed images opened the confirmation with Cancel focused. Cancel and the Back swipe each returned to the Games list with nothing changed. Remove took the row away, and `/.games/pack-images/` was gone. A long-press on Counter's Continue row did nothing (A-line on Continue rows). Remove from Counter's own row took both of its rows away. `/.games/counter/` was gone, and `/.games-data/counter/` still held `store.bin` and `resume.bin`. Games then listed three: Runaway scripts, Frame timing, and Package vector. |
+| 8. Timing run (e3r-1, retro AI-10) | pass | Measured from a phone video of the screen, from the tap's frame to the frame where the picture stopped changing (the owner read the timestamps in the phone's editor). Band 1, one dithered 480 x 800 gray image: 2.04 → 2.98 s, **0.94 s**. Band 2, 1,048,576 icon and image pixels: 7.93 → 9.62 s, **1.69 s**. Band 3, 2,048 full-canvas filled rects: 14.16 → 17.86 s, **3.70 s**. These include the e-ink refresh, not only the replay under `RenderLock`. No band showed an error screen, froze, or reset. A tap after each picture was answered at once, as perceived. The way back to the menu was quicker than band 1, by eye and not timed. Band 3's 3.70 s is the input to the owner's answer on `## e3r-1`'s unbounded fills. |
+| 8a. Timing, from the serial log (tethered rerun) | pass | `GFX` "clearScreen to displayBuffer", which is the replay under `RenderLock` without the panel refresh: band 1 567 ms, band 2 1,338 ms, band 3 **3,142 ms**. Band 2's line read `band 2 charges 1048576 pixels`. Each fast panel refresh after a replay took about 559 ms (`8179_DRF`), and a full refresh on entry about 1,489 ms. There was no reset or watchdog line. These agree with the video times of step 8 (replay plus refresh). |
+| 9. Runaway scripts and "VM stopped" (retro AI-3) | pass, with one finding | Loop forever: `main.lua:7: instruction budget exceeded`; `VM stopped; arena peak 42520 bytes, stack high-water 12932 bytes free, least at a hook 14516 bytes`. Loop inside pcall: the same text; `arena peak 42240, stack high-water 12932 free, least at a hook 14084`. Recurse through pcall: `script recursion too deep (C stack nearly full)`; `arena peak 45176, stack high-water **1412 bytes free**, least at a hook 1652`. The last two runs each logged `a call ran over 3000 ms; stopping the VM`, then `VM did not stop within 500 ms of cancel; abandoning it`, then `Abandoned the stuck VM: freed its PSRAM, leaked 1032 bytes`, then the error view `It stopped responding: one step ran over 3 seconds`, about 3.1–3.5 s after the tap plus the 0.5 s abandon wait. An abandoned VM prints no "VM stopped" line. Internal free heap at idle went from 188,676 B before the two abandons to 185,160 B after (−3,516 B). Back returned to Games after every band. The owner confirmed that the last two runs were Slow C calls forever, then Stuck in one C call. **Finding:** on the device, Slow C calls forever is abandoned, not cancelled. Each of its `string.find` calls outlasts the 500 ms join after cancel, so the band meant to show a clean cancel (its hint reads "The 3 s watchdog cancels it") takes the abandon path instead, and the cancel path is not exercised on the device. The fixture's calibration (`backtrack(6, 30)`, "about 2 M steps a call") is too heavy for this CPU. Each abandon logs a 1,032 B leak, by design. The owner re-copied every package before tethering (5 games listed), so Frame timing and Runaway scripts, which save like any solo game, had Continue rows. Frame timing's two Leaves logged `arena peak 46632/50384, stack high-water 12780 free, least at a hook 14516/14500`. |
+| 10. Sleep during a stuck call (R11), first attempt | inconclusive: to repeat | This was after a restart (the log begins at boot). Stuck in one C call was tapped at about 186.4 s. The watchdog fired at 189.6 s (`a call ran over 3000 ms`) and abandoned the VM at 190.1 s (leaking 1,032 B). The power press (`held 587ms`) was handled at 190.1 s, just after the watchdog, so the forced exit found the match already in Error (`Error -> Leaving on ForcedExit`) and no VM was running. The R11 case, a forced exit with a stuck VM still running, was therefore not exercised. From the sleep request to the Sleep activity took 1.65 s, most of it the error view's full refresh (1,488 ms). Deep sleep came at 194.2 s. No `forced exit past 1500 ms` line appeared. `[PWR] Lock already held, ignore` is upstream `HalPowerManager` noise, not a fault. |
+| 3. The hash on the device (R4, Done when 2) | pass | `/.games/package-vector/.pkg` read `v1` / `0530a15766e91bf1`, the shared vector's hash, so the device's mbedTLS SHA-256 agrees with `pack_game.py` and the host's OpenSSL. `/.games/counter/.pkg` read `v1` / `fa0d541ee5b21f13`. That is `counter-changed.chgame`'s hash, as expected: the owner re-copied every package after step 7, and the changed Counter was the last one installed. |
+| 10. Sleep during a stuck call (R11), second attempt | pass | This run was tethered from boot. Stuck in one C call was started, and power was pressed before the watchdog fired (`held 402ms`, handled at 30.608 s). The match was still Playing: `Playing -> Leaving on ForcedExit` at 30.661 s. At 31.162 s the join logged `VM did not stop within 500 ms of cancel`, and the VM was abandoned at once (`freed its PSRAM, leaked 1032 bytes`). Sleep was entered at 31.163 s. **The forced exit held `RenderLock` for 502 ms**, from exiting the match to entering Sleep, within the documented bound (about 1,030 ms before the SD steps; no SD step starts after 1,500 ms). No `forced exit past 1500 ms` line appeared, and no SD step was pending. From the press being handled to deep sleep took 2.96 s, most of it the sleep screen's refreshes. The wake after this landed on Home (step 4). |
+| Package vector, opened | as expected | The shared hash vector is not a game (its `main.lua` returns an empty table), and opening it shows the "game stopped" error view. It is installed only so the device computes its hash (step 3). |
+
+## Owner's answers to the `Assumption for entry 14:` lines
+
+Numbered as in the packet's table (A1–A32). Each is agreed unless noted otherwise.
+
+- **A1** (one Continue row per saved game, above the games): agreed for now. The owner plans a per-game title screen that replaces it (below).
+- **A2–A7:** agreed. A2 holds until the Crosshatch logo becomes the fallback (`## owner-e4-launcher`). A4's packer half is stale: `pack_game.py` has refused a non-square `icon.png` since entry 7. A7 was measured at 502 ms (step 10).
+- **A8** (opening Games from Home lands on the last game's page): **not tested**. With four games per page, the device had too few games for a second page. The behaviour stays as built, and the owner can confirm it when more games are installed.
+- **A9–A11:** agreed.
+- **A12** (after Leave, the game's Continue row is selected): agreed for now. With the title screen, the game's row is selected after Leave.
+- **A13** (a New match from the game's own row replaces the save, with no confirmation): agreed for now. The owner asked why Counter kept its taps after New. It is by design: Counter reads its count from `ch.store`, which survives matches. The resume save was replaced, as step 6a showed through its hash. The title screen will offer Continue or New explicitly.
+- **A14** (the Continue list is rebuilt on entry and after each remove): agreed for now; it goes away with the title screen.
+- **A15–A27:** agreed, except where noted. A16: the owner asked whether the video times were accurate. The serial log confirmed them (a 3,142 ms replay plus a 559 ms refresh for band 3), and the owner accepted (a): no fill budget now. (b), a fill budget, goes to epic-first-party-games' pre-freeze list with A19. A18 and A22 are fixed now (e4-z2, e4-z3), and so is step 9's fixture finding (e4-z1). A15, A21, and the rest of A26 have homes in `deferred-work.md` `## owner-e4-homes`.
+- **A28–A31:** agreed. A31, the cluster-sharing risk on `resume.bin`'s rename, stays deferred: a guard is a storage design change.
+- **A32:** (a). The spine is amended: AD-17 and AD-20 now name the forced exit's retry of a `resume.bin` delete that Over could not finish, within the same 1,500 ms deadline (owner, 2026-09-30).
+- **The stack decision** (epic-script-runtime retro AI-3, `deferred-work.md` `## 3.2`): keep the 16 KB VM stack and the 2,048 B guard headroom. On the device, the recursion guard fired with 1,412 B still free (1,652 B at a hook), so the error path used about 640 B beyond the guard line and never neared overflow. The decision reopens if any device log shows under 512 B free.
+
+## Deferred to the retro session
+
+The owner deferred the on-device recheck of the fixes built after this run to the epic retrospective, in a fresh session:
+- **e4-z1:** repack `loop`, run "Slow C calls forever" tethered, and expect `VM stopped; ...` rather than `abandoning it`.
+- **e4-z2:** reflash, remove a game, and confirm that nothing else changes and no `.removing` stays behind.
+- **e4-z3:** put two invalid packages in `/games/`, and expect the note to show the first reason and "and 1 more".
+
+A8 (Games from Home lands on the last game's page) also waits for enough games to fill a second page.
+
+## Sign-off
+
+The owner ran the packet on an X4 Pro with the firmware of `216ccbd3` (CI build of `134afb4`). Every step passed. Step 9 had one finding, fixed as e4-z1, and step 10 passed on its second attempt. The owner answered every `Assumption for entry 14:` line (A1–A32), and signed off on entry 14 on 2026-09-30.

@@ -13,8 +13,11 @@ using GameCore::Manifest;
 namespace {
 
 // A host whose API range has room on both sides of a game's api.
-constexpr HostCaps HOST{3, 2, 2, false};
-constexpr HostCaps NEARBY_HOST{3, 2, 2, true};
+// Fields in order: api, minApi, maxSeats, nearby, pass.
+constexpr HostCaps HOST{3, 2, 2, false, true};
+constexpr HostCaps NEARBY_HOST{3, 2, 2, true, true};
+// What the firmware reports today: no match can run a pass game.
+constexpr HostCaps NO_PASS_HOST{3, 2, 2, false, false};
 
 Manifest game(const int32_t api, const int32_t seatsMin, const int32_t seatsMax, const uint8_t modes) {
   Manifest m;
@@ -82,7 +85,7 @@ TEST(ManifestCheckTest, NearbyOnlyWithoutTheRadioIsUnavailable) {
 }
 
 TEST(ManifestCheckTest, NearbyNeedsTwoHostSeats) {
-  constexpr HostCaps oneSeat{3, 2, 1, true};
+  constexpr HostCaps oneSeat{3, 2, 1, true, true};
   expectVerdict(game(2, 1, 2, Manifest::MODE_NEARBY).check(oneSeat), CheckStatus::Unavailable, CheckReason::NoHostMode);
 }
 
@@ -92,6 +95,27 @@ TEST(ManifestCheckTest, OkDropsModesTheHostCannotStart) {
   EXPECT_TRUE(withoutRadio.ok());
   EXPECT_EQ(withoutRadio.modes, Manifest::MODE_SOLO | Manifest::MODE_PASS);
   EXPECT_EQ(game(2, 1, 2, all).check(NEARBY_HOST).modes, all);
+}
+
+TEST(ManifestCheckTest, AHostWithoutPassOffersOnlySolo) {
+  const uint8_t all = Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY;
+  const CheckResult withoutPass = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(NO_PASS_HOST);
+  EXPECT_TRUE(withoutPass.ok());
+  EXPECT_EQ(withoutPass.modes, Manifest::MODE_SOLO);
+  // Neither pass nor nearby without their capabilities.
+  EXPECT_EQ(game(2, 1, 2, all).check(NO_PASS_HOST).modes, Manifest::MODE_SOLO);
+  // Nearby's radio does not bring pass with it.
+  constexpr HostCaps radioOnly{3, 2, 2, true, false};
+  EXPECT_EQ(game(2, 1, 2, all).check(radioOnly).modes, Manifest::MODE_SOLO | Manifest::MODE_NEARBY);
+  // The capability alone offers pass.
+  EXPECT_EQ(game(2, 1, 2, all).check(HOST).modes, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+}
+
+TEST(ManifestCheckTest, PassOnlyOnAHostWithoutPassIsUnavailable) {
+  expectVerdict(game(2, 2, 2, Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Unavailable,
+                CheckReason::NoHostMode);
+  expectVerdict(game(2, 1, 2, Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Unavailable,
+                CheckReason::NoHostMode);
 }
 
 TEST(ManifestCheckTest, PassOnlyIsOkWithoutSolo) {
@@ -117,9 +141,20 @@ TEST(ManifestCheckTest, BrokenFieldsAreInvalid) {
   Manifest badIcon = solo();
   std::strcpy(badIcon.icon, "Mark-X");
   expectVerdict(badIcon.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest underscore = solo();
+  std::strcpy(underscore.icon, "old_name");
+  expectVerdict(underscore.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest badWeight = solo();
+  badWeight.iconWeight = 2;
+  expectVerdict(badWeight.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
   Manifest unterminated = solo();
   std::memset(unterminated.version, 'v', sizeof(unterminated.version));
   expectVerdict(unterminated.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  // An icon with no terminator: only the length cap in validIcon refuses it, and the installer's strlen
+  // of the icon would otherwise read past the field.
+  Manifest unterminatedIcon = solo();
+  std::memset(unterminatedIcon.icon, 'x', sizeof(unterminatedIcon.icon));
+  expectVerdict(unterminatedIcon.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
 }
 
 TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {
@@ -133,7 +168,7 @@ TEST(ManifestCheckTest, ParsedManifestPassesCheck) {
                                 "seats": {"min": 1, "max": 1}, "modes": ["solo"], "icon": "x"})",
                             m),
             GameCore::ManifestError::None);
-  EXPECT_TRUE(m.check(HostCaps{1, 1, 2, false}).ok());
+  EXPECT_TRUE(m.check(HostCaps{1, 1, 2, false, false}).ok());
 }
 
 TEST(ManifestCheckTest, EveryReasonHasADescription) {

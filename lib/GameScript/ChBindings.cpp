@@ -145,21 +145,66 @@ int gfxText(lua_State* L) {
   return 0;
 }
 
+// The byte length of the well-formed UTF-8 sequence at text[at], with `end` bytes of text (the ranges of Unicode
+// Table 3-7): 0 when the byte there stands alone, which is a continuation byte with no lead, a lead the encoding never
+// uses (C0, C1, F5 to FF), a sequence cut short by `end`, or one that is overlong, a surrogate, or past U+10FFFF (the
+// second byte's range depends on E0, ED, F0, and F4).
+size_t utf8SequenceLength(const char* text, const size_t at, const size_t end) {
+  const auto lead = static_cast<uint8_t>(text[at]);
+  size_t length = 0;
+  uint8_t secondLow = 0x80;
+  uint8_t secondHigh = 0xBF;
+  if (lead >= 0xC2 && lead <= 0xDF) {
+    length = 2;
+  } else if (lead >= 0xE0 && lead <= 0xEF) {
+    length = 3;
+    if (lead == 0xE0) secondLow = 0xA0;   // else overlong
+    if (lead == 0xED) secondHigh = 0x9F;  // else a surrogate
+  } else if (lead >= 0xF0 && lead <= 0xF4) {
+    length = 4;
+    if (lead == 0xF0) secondLow = 0x90;   // else overlong
+    if (lead == 0xF4) secondHigh = 0x8F;  // else past U+10FFFF
+  }
+  if (length == 0 || at + length > end) return 0;
+  const auto second = static_cast<uint8_t>(text[at + 1]);
+  if (second < secondLow || second > secondHigh) return 0;
+  for (size_t i = 2; i < length; ++i) {
+    if ((static_cast<uint8_t>(text[at + i]) & 0xC0) != 0x80) return 0;
+  }
+  return length;
+}
+
 // An unknown icon or image name stops the game through the guard, as a full frame
 // does, so a script's pcall cannot carry on drawing without it. The message shows
-// at most NAME_SHOWN_BYTES of the name (cut at a UTF-8 boundary), with each control
-// byte and '"' as '?', so it stays one readable line: "ch.gfx.<kind>: unknown
-// <kind> \"<name>\"" (the function is named for what it draws).
+// at most NAME_SHOWN_BYTES bytes of the name, with each control byte, '"', and each
+// byte that is not part of a well-formed UTF-8 sequence as '?' (a game's name is any
+// bytes, and a sequence the cut splits is not well-formed), so it stays one readable
+// line and valid UTF-8: "ch.gfx.<kind>: unknown <kind> \"<name>\"" (the function is
+// named for what it draws).
 constexpr size_t NAME_SHOWN_BYTES = 32;
 
 int unknownName(lua_State* L, const char* kind, const char* name, const size_t length) {
   char shown[NAME_SHOWN_BYTES + 1];
-  const size_t kept = utf8Cut(name, length, NAME_SHOWN_BYTES);
-  for (size_t i = 0; i < kept; ++i) {
+  const size_t kept = length < NAME_SHOWN_BYTES ? length : NAME_SHOWN_BYTES;
+  size_t out = 0;
+  for (size_t i = 0; i < kept;) {
     const auto byte = static_cast<uint8_t>(name[i]);
-    shown[i] = (byte < 0x20 || byte == 0x7F || byte == '"') ? '?' : name[i];
+    if (byte < 0x80) {
+      shown[out++] = (byte < 0x20 || byte == 0x7F || byte == '"') ? '?' : name[i];
+      ++i;
+      continue;
+    }
+    const size_t sequence = utf8SequenceLength(name, i, kept);
+    if (sequence == 0) {
+      shown[out++] = '?';
+      ++i;
+      continue;
+    }
+    std::memcpy(shown + out, name + i, sequence);
+    out += sequence;
+    i += sequence;
   }
-  shown[kept] = '\0';
+  shown[out] = '\0';
   char message[72];
   snprintf(message, sizeof(message), "ch.gfx.%s: unknown %s \"%s\"", kind, kind, shown);
   return bindingContext(L)->guard->raise(L, message);

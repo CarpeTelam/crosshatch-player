@@ -16,6 +16,7 @@
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
 #include "games/GameIconDraw.h"
+#include "games/GameRegistry.h"
 #include "games/GameVM.h"
 #include "games/GameViewIcons.h"
 
@@ -50,6 +51,12 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
   return StrId::STR_GAMES_START_FAILED;
 }
 
+// Whether an icon beside a label drawn over `paint` in `text` is black (GameViewIcons::labelIsBlack has the rule).
+bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
+  return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
+                                     GameViewIcons::textInkIsWhite(text.color == fui::Color::White, text.inverted));
+}
+
 // The error view's detail for a failed VM: tr() text for the host's own failures,
 // Lua's message for the script's (AD-14).
 const char* vmFailureText(const GameVM& vm) {
@@ -82,9 +89,13 @@ StrId optionLabel(const MatchEvent event) {
 
 }  // namespace
 
+static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
+static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
+              "resume.bin records the package hash .pkg holds (GameSaveStore builds without GameHash.h)");
+
 GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                     const GameCore::Manifest& manifest)
-    : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest) {}
+                                     const GameCore::Manifest& manifest, const Start start)
+    : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest), start(start) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -104,6 +115,20 @@ void GameMatchActivity::onEnter() {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
     return;
   }
+  // resume.bin is saved and read only for an installed package: its hash says whether the
+  // save is this package's (AD-16). A game without a valid .pkg plays without one.
+  uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
+  if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
+    store.saves().setPackageHash(pkgHash);
+  } else if (start == Start::Resume) {
+    // Continue was offered for a save of this package, so its .pkg was readable a moment ago. A match started new here
+    // would play without a hash, and could not tell the save from any other file: stop, and leave the save alone.
+    LOG_ERR("GAME", "%s: cannot read .pkg; not starting a new match over a save", manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    return;
+  } else {
+    LOG_INF("GAME", "%s: no valid .pkg; no resume.bin", manifest.id);
+  }
   GameAssets assets;
   // GameAssets restores store.bin into the slot.
   const GameAssets::LoadResult loaded = assets.load(manifest.id, store.saves(), store.slot());
@@ -113,6 +138,12 @@ void GameMatchActivity::onEnter() {
   }
   replay.loadFonts(renderer);
   auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot());
+  if (created && start == Start::Resume && !seedResume(*created)) {
+    // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
+    // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    return;
+  }
   // Both failures are logged with their cause; each is memory (PSRAM, or the task's stack).
   if (!created || !created->start()) {
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_OUT_OF_MEMORY));
@@ -127,14 +158,44 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
+bool GameMatchActivity::seedResume(GameVM& created) {
+  uint16_t ver = 0;
+  bool unreadable = false;
+  const std::span<const uint8_t> snapshot = store.saves().loadResume(ver, unreadable);
+  if (snapshot.empty()) {
+    if (unreadable) {
+      // A save is there and would not read, a fault that may pass (the launcher offered Continue for it).
+      LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
+      return false;
+    }
+    // No file, or one that was read and is no save (logged with its reason): nothing to lose.
+    LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
+    return true;
+  }
+  if (!created.setResume(snapshot, ver)) {
+    // GameVM::setResume refuses only an empty or oversized snapshot, which GameSaveStore's checks already exclude, so
+    // this is not reachable today; if it ever is, the first snapshot of a new match would replace the save.
+    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; not starting a new match over it", manifest.id,
+            static_cast<unsigned>(snapshot.size()));
+    return false;
+  }
+  return true;
+}
+
 void GameMatchActivity::onExit() {
+  forcedExitBeganMs = millis();
+  forcedExit = true;
   Activity::onExit();
   // ActivityManager holds RenderLock here: never take it again (12cc816). The VM
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
-  // and the VM is gone; the store is flushed again only if a set landed since.
+  // and the VM is gone; the store is flushed again only if a set landed since. The
+  // order: cancel and join, the last snapshot written while the VM that holds it still
+  // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
+  // finish, then the store. The SD steps stop starting once the deadline has passed.
   handle(MatchEvent::ForcedExit);
   stopVm();
+  retryResumeDelete(true);
   flushStore();
 }
 
@@ -162,7 +223,12 @@ void GameMatchActivity::handle(const MatchEvent event) {
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
+      resumeWritable = true;
+      // A save Over could not delete stays pending: it is the finished round's, which must not survive a Leave, and
+      // flushResumeOf clears the pending delete once the new round's first snapshot has replaced the file.
       if (event == MatchEvent::PlayAgain) {
+        // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
+        store.saves().clearResumeBackoff();
         // Frames the last round drew after it ended are never shown, one from a
         // step still running when Play again came included: the loop asks for no
         // render until the new round's first frame is published.
@@ -176,15 +242,24 @@ void GameMatchActivity::handle(const MatchEvent event) {
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
       break;
     case MatchState::Over:
+      resumeWritable = false;
       flushStore();
+      // A finished round never resumes. A snapshot with `over` set is never written, and
+      // one still pending is dropped by the next flushResume.
+      resumeDeletePending = !store.saves().deleteResume();
+      resumeDeleteTriedMs = millis();
       break;
     case MatchState::Leaving:
       // onExit() stops and flushes itself after a forced exit.
       if (event != MatchEvent::ForcedExit) leave();
       return;
-    case MatchState::Starting:
     case MatchState::Paused:
+      resumeWritable = true;
+      break;
     case MatchState::Error:
+      resumeWritable = false;
+      break;
+    case MatchState::Starting:
       break;
   }
   requestUpdate();
@@ -203,21 +278,63 @@ void GameMatchActivity::leave() {
     RenderLock lock(*this);
     stopVm();
   }
+  // Also when a stuck VM took the match to Error first and vm is gone.
+  retryResumeDelete(true);
   flushStore();
   activityManager.goToGames();
 }
 
 void GameMatchActivity::stopVm() {
   if (!vm) return;
-  if (vm->stop(STOP_TIMEOUT_MS)) {
+  const bool joined = vm->stop(STOP_TIMEOUT_MS);
+  // After the wait, before the VM is freed or abandoned (the snapshot is in its memory).
+  // A task that did not join may still publish one on its way out; abandonVm looks again.
+  flushResume();
+  if (joined) {
     vm.reset();
     return;
   }
   abandonVm();
 }
 
+bool GameMatchActivity::sdStepAllowed(const char* what) {
+  if (!forcedExit || millis() - forcedExitBeganMs < FORCED_EXIT_DEADLINE_MS) return true;
+  LOG_ERR("GAME", "%s: forced exit past %u ms; skipped %s", manifest.id, static_cast<unsigned>(FORCED_EXIT_DEADLINE_MS),
+          what);
+  return false;
+}
+
+void GameMatchActivity::retryResumeDelete(const bool forced) {
+  if (!resumeDeletePending || !store.ready()) return;
+  const uint32_t now = millis();
+  if (!forced && now - resumeDeleteTriedMs < GameSaveStore::FLUSH_INTERVAL_MS) return;
+  if (!sdStepAllowed("the resume.bin delete")) return;
+  if (store.saves().deleteResume()) {
+    resumeDeletePending = false;
+  } else {
+    resumeDeleteTriedMs = now;
+  }
+}
+
+void GameMatchActivity::flushResume() {
+  if (vm) flushResumeOf(*vm);
+}
+
+void GameMatchActivity::flushResumeOf(GameVM& from) {
+  if (!resumeWritable || !store.ready() || !from.committed().pending()) return;
+  if (!sdStepAllowed("the resume write")) return;
+  const uint32_t replacedBefore = store.saves().resumeReplacements();
+  store.saves().flushResume(from.committed(), millis());
+  // The finished round's resume.bin is gone once a snapshot has replaced it, or once a write that then failed to
+  // rename has removed it (the new snapshot waits in resume.bin.tmp). Either way an Over delete that failed has
+  // nothing left to remove, and a retry from here on would delete this round's save. Until then the delete keeps
+  // retrying (loopPlaying, loopView, Leave, the forced exit).
+  if (store.saves().resumeReplacements() != replacedBefore) resumeDeletePending = false;
+}
+
 void GameMatchActivity::flushStore() {
   if (!store.ready()) return;  // the match never got that far
+  if (!store.slot().dirty() || !sdStepAllowed("the ch.store flush")) return;
   // Safe with a leaked task too: the slot's mutex is held only for a copy inside
   // a locked binding, which an abandon never deletes nor leaves suspended, so the
   // flush waits at most one copy, and it saves every set until the leak.
@@ -226,7 +343,8 @@ void GameMatchActivity::flushStore() {
 
 void GameMatchActivity::abandonVm() {
   LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
-  if (GameVM::abandon(std::move(vm))) return;
+  const auto writeLast = [](GameVM& ended, void* self) { static_cast<GameMatchActivity*>(self)->flushResumeOf(ended); };
+  if (GameVM::abandon(std::move(vm), writeLast, this)) return;
   // The leaked task may still call ch.store.set; the destructor leaks the slot.
   slotLeaked = true;
   LOG_ERR("GAME", "The ch.store slot stays with the leaked VM");
@@ -237,6 +355,7 @@ void GameMatchActivity::stopStuckVm() {
   LOG_ERR("GAME", "%s: a call ran over %u ms; stopping the VM", manifest.id, static_cast<unsigned>(WATCHDOG_MS));
   char detail[GameVM::ERROR_CAPACITY];
   snprintf(detail, sizeof(detail), "%s", tr(STR_GAMES_NOT_RESPONDING));
+  resumeWritable = false;  // the match is going to Error, which never writes resume.bin
   {
     // render() reads vm and the frames abandon may free.
     RenderLock lock(*this);
@@ -297,21 +416,28 @@ void GameMatchActivity::loopPlaying() {
     return;
   }
 
-  // After Play again, until the new round's first frame is published, the screen
-  // still shows the end-of-round menu or the last round's frame: a tap there is not
-  // aimed at the new round, so it is read (which consumes the contact) and dropped.
-  const bool awaitingRound = vm->roundsStarted() < roundsStartedAwaited.load();
+  // Until a round's first frame is published, and after that until the render task has handed
+  // it to the panel (roundsDisplayed), the screen still shows what came before: the Games list
+  // before the match's first round, the end-of-round menu or the last round's frame after Play
+  // again. A tap there is not aimed at the round, so it is read (which consumes the contact)
+  // and dropped. Only the first of the two also holds the frame back: once the count has moved,
+  // the frame is asked for and drawn.
+  const uint32_t awaited = roundsStartedAwaited.load();
+  const bool awaitingRound = vm->roundsStarted() < awaited;
+  const bool awaitingDisplay = awaitingRound || roundsDisplayed.load(std::memory_order_acquire) < awaited;
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
   const GameTouch::Gesture gesture = readGesture();
   GameCore::GameEvent event;
-  if (!awaitingRound &&
+  if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
     vm->postInput(event);
   }
   vm->pollTimer();
   store.flushIfDue(millis());
+  flushResume();
+  retryResumeDelete(false);  // pending only after a Play again over an Over delete that failed
 
   // Any frame before the new round's first is the last round's; once the count
   // moves, coalescing shows the newest frame.
@@ -330,6 +456,8 @@ void GameMatchActivity::loopView() {
   if (state != MatchState::Error) {
     if (!vmHealthy()) return;
     store.flushIfDue(millis());
+    flushResume();
+    retryResumeDelete(false);
   }
   // Back resumes from the pause menu, leaves from the error view, and does
   // nothing in the end-of-round menu (MatchLifecycle).
@@ -412,7 +540,9 @@ void GameMatchActivity::renderCanvas() {
   // tap: the view (or an overlay's pixels) stays on screen, and the new round's
   // first frame, which is no repaint, is drawn on a cleared screen. Nothing else
   // here runs, so the skip changes no replay state.
-  if (vm->roundsStarted() < roundsStartedAwaited.load()) {
+  // `started` is read once, before anything is drawn: the frame drawn below is that round's or a later one's.
+  const uint32_t started = vm->roundsStarted();
+  if (started < roundsStartedAwaited.load()) {
     viewOnScreen = true;
     return;
   }
@@ -430,8 +560,12 @@ void GameMatchActivity::renderCanvas() {
   renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
-  if (!vm->drawFront(renderer, viewport, replay)) return;
-  renderer.displayBuffer(replay.refreshMode());
+  if (vm->drawFront(renderer, viewport, replay)) renderer.displayBuffer(replay.refreshMode());
+  // Every way out of here past the gate stores it, a frame replay skipped as identical to the one on screen included
+  // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so
+  // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
+  // that acquires it.
+  roundsDisplayed.store(started, std::memory_order_release);
 }
 
 void GameMatchActivity::renderView(const MatchState state) {
@@ -545,8 +679,11 @@ void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, co
   const fui::OptionDialogProps& props = dialogProps;
   const char* viewIcon = GameViewIcons::forView(state);
   if (viewIcon) {
+    // The icon sits on the panel's own background, not on a button. buildView sets that panel white with a solid black
+    // foreground, so this reads black; it is the panel's foreground that decides, as a row's button style decides its
+    // icon, and the headline's text style stands in only for a foreground that is not solid (none is today).
     drawGameIcon(renderer, viewIcon, band.x + (band.width - GameViewIcons::VIEW_PIXELS) / 2, band.y,
-                 GameViewIcons::VIEW_PIXELS, true);
+                 GameViewIcons::VIEW_PIXELS, labelIsBlack(props.styles.normal.foreground, props.headlineText));
   }
   // optionDialog stacks the rows directly below the band (verticalOptions).
   const int inset = GameViewIcons::rowIconInset(props.buttonHeight);
@@ -558,7 +695,7 @@ void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, co
     if (!GameViewIcons::rowIconFits(band.width, props.buttonHeight, labelWidth, props.gap)) continue;
     const int rowY = GameViewIcons::rowTop(band.bottom(), i, props.buttonHeight, props.gap);
     const fui::State rowState = screen.frame().stateFor(ACTION_OPTION, static_cast<int16_t>(i), props.options[i].state);
-    const bool black = props.buttonStyles.resolve(rowState).foreground.color != fui::Color::White;
+    const bool black = labelIsBlack(props.buttonStyles.resolve(rowState).foreground, props.buttonText);
     drawGameIcon(renderer, rowIcon, band.x + inset, rowY + inset, GameViewIcons::ROW_PIXELS, black);
   }
 }

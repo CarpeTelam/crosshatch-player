@@ -29,7 +29,8 @@
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
 #if FREEINK_CAP_GAMES
-#include "games/GamesListActivity.h"
+#include "games/GameModeActivity.h"
+#include "games/GamesLauncherActivity.h"
 #endif
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
@@ -338,7 +339,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
 #if FREEINK_CAP_GAMES
-    if (activityName == "GamesList" || activityName == "GameMatch") {
+    if (activityName == GamesLauncherActivity::NAME || activityName == GameModeActivity::NAME ||
+        activityName == "GameMatch") {
       initialMenuItem = HomeMenuItem::GAMES;
     }
 #endif
@@ -349,9 +351,9 @@ void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<Crash
 
 #if FREEINK_CAP_GAMES
 void ActivityManager::goToGames() {
-  auto activity = makeUniqueNoThrow<GamesListActivity>(renderer, mappedInput);
+  auto activity = makeUniqueNoThrow<GamesLauncherActivity>(renderer, mappedInput);
   if (!activity) {
-    LOG_ERR("ACT", "OOM: games list activity");
+    LOG_ERR("ACT", "OOM: games launcher activity");
     return;
   }
   replaceActivity(std::move(activity));

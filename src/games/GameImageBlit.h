@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "BlitClip.h"
+
 // A game image (GameCore::GameImages) as pixels, pure so it is host-tested: each
 // row's runs of one colour, clipped to a canvas. FrameReplay fills the runs for
 // ch.gfx.image, opaque: black pixels and white pixels are both drawn.
@@ -31,13 +33,12 @@ void runs(const GameCore::ImageSpan& image, const uint8_t* pixels, const int32_t
           const int32_t width, const int32_t height, const bool drawBlack, Fn&& fn) {
   if (!pixels || image.width == 0 || image.height == 0 || image.rowBytes == 0) return;
   // The visible part, in image pixels from its top-left.
-  const int64_t firstX = left < 0 ? -static_cast<int64_t>(left) : 0;
-  const int64_t firstY = top < 0 ? -static_cast<int64_t>(top) : 0;
-  const int64_t imageW = image.width;
-  const int64_t imageH = image.height;
-  const int64_t endX = static_cast<int64_t>(width) - left < imageW ? static_cast<int64_t>(width) - left : imageW;
-  const int64_t endY = static_cast<int64_t>(height) - top < imageH ? static_cast<int64_t>(height) - top : imageH;
-  if (endX <= firstX || endY <= firstY) return;
+  const BlitClip::Visible clip = BlitClip::visible(left, top, width, height, image.width, image.height);
+  if (clip.empty()) return;
+  const int64_t firstX = clip.firstX;
+  const int64_t firstY = clip.firstY;
+  const int64_t endX = clip.endX;
+  const int64_t endY = clip.endY;
   for (int64_t dy = firstY; dy < endY; ++dy) {
     int64_t runStart = firstX;
     bool runBlack = false;

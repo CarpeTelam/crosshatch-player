@@ -24,11 +24,11 @@ The spec is the requirement source: `CAP-1` to `CAP-11`, with its Constraints an
 
 ## Done when
 
-1. The spec's success signal is observed on a real X4 Pro: an AI-written game, dropped on the SD card as one `.cpgame`, is launched by a child and a round is finished alone, passing the device, and against a second device, without adult help.
+1. The spec's success signal is observed on a real X4 Pro: an AI-written game, dropped on the SD card as one `.chgame`, is launched by a child and a round is finished alone, passing the device, and against a second device, without adult help.
 2. Every CAP-1 to CAP-11 success check passes on a fork release build.
 3. The next merge of upstream `develop` touches no game code, and the upstream-touch ledger job passes on it.
 4. `default`, `x4c`, and `papermono` build with the game libraries compiled and unreferenced, and the x4pro image grows by at most 250 KB.
-5. Sudoku, Ultimate tic-tac-toe, and Battleship are attached to a fork release as `.cpgame` assets.
+5. Sudoku, Ultimate tic-tac-toe, and Battleship are attached to a fork release as `.chgame` assets.
 
 ## Boundaries
 

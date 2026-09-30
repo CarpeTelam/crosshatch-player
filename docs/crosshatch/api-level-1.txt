@@ -253,6 +253,17 @@ manifest seats.max integer
 manifest modes array
 manifest hidden boolean?
 manifest icon string?
+manifest icon_weight string?
+# icon is a library icon name: it matches the pattern below whole ("_" is not
+# accepted) and takes at most manifest_icon_bytes bytes, and a name the library
+# lacks makes the package invalid (the installer and scripts/pack_game.py check
+# it; Manifest::parse cannot see the library). icon_weight is "regular" (when absent) or
+# "fill", ch.gfx.icon's weights (the enum icon_weight entries below); any other
+# value makes the package invalid. What a game without an icon shows is up to the
+# launcher.
+name manifest_icon [a-z][a-z0-9]*(-[a-z0-9]+)*
+enum icon_weight regular
+enum icon_weight fill
 
 # Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
 # Marks
@@ -358,6 +369,18 @@ limit timers_pending_count 1
 # image's .bmp takes 62 + ceil(w / 32) * 4 * h bytes.
 limit images_bytes 131072
 limit images_count 32
+# A .chgame package (docs/crosshatch/formats.md): the file's bytes, its members (a folder is
+# not allowed), one member's bytes uncompressed, the .lua members' bytes together, and the stem
+# of a .lua or .png member's name ([a-z0-9_]{1,32}). The installer rejects a package over any
+# of them; scripts/pack_game.py refuses to make one over any of them.
+limit package_bytes 262144
+limit package_members_count 32
+limit member_bytes 131072
+limit lua_sources_bytes 262144
+limit member_stem_bytes 32
+# A .png member's largest width and height in pixels (icon.png is scaled to 64 x 64).
+limit image_width_pixels 2048
+limit image_height_pixels 3072
 # An image's name, which ch.gfx.image takes, is its file name without ".bmp".
 # Unlike icon names, it takes no "-": a file named otherwise is skipped with a log
 # line, and drawing it stops the game as an unknown image. icon.bmp is the

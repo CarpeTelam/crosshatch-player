@@ -1,0 +1,102 @@
+{
+  "limits": {
+    "package_bytes": {
+      "limit": 262144,
+      "at": 262144,
+      "over": 262145
+    },
+    "member_bytes": {
+      "limit": 131072,
+      "at": 131072,
+      "over": 131073
+    },
+    "members": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "images_bytes": {
+      "limit": 131072,
+      "at": {
+        "images": [[2048, 511], [32, 33]],
+        "bytes": 131072
+      },
+      "over": {
+        "images": [[2048, 511], [32, 9], [32, 9]],
+        "bytes": 131074
+      }
+    },
+    "lua_sources_bytes": {
+      "limit": 262144,
+      "at": 262144,
+      "over": 262145
+    },
+    "member_name_chars": {
+      "limit": 32,
+      "at": 32,
+      "over": 33
+    },
+    "image_width": {
+      "limit": 2048,
+      "at": 2048,
+      "over": 2049
+    },
+    "image_height": {
+      "limit": 3072,
+      "at": 3072,
+      "over": 3073
+    }
+  },
+  "image_formula": {
+    "header_bytes": 62,
+    "row_pixels_per_word": 32,
+    "word_bytes": 4,
+    "icon_excluded": "icon.png"
+  },
+  "hash_vector": {
+    "id": "package-vector",
+    "members": {
+      "manifest.json": "{\n  \"id\": \"package-vector\",\n  \"name\": \"Package Vector\",\n  \"version\": \"1.0.0\",\n  \"api\": 1,\n  \"seats\": { \"min\": 1, \"max\": 1 },\n  \"modes\": [\"solo\"]\n}\n",
+      "main.lua": "-- The golden package vector: main.lua is repetitive, so the packer deflates it.\nlocal util = require(\"util\")\n-- line 0: the same text again and again so that deflate shrinks it\n-- line 1: the same text again and again so that deflate shrinks it\n-- line 2: the same text again and again so that deflate shrinks it\n-- line 3: the same text again and again so that deflate shrinks it\nreturn util\n",
+      "util.lua": "return {}\n"
+    },
+    "sha256": "0530a15766e91bf145753a3676ac5d3a00ce6d8922f122a257eb25ba3b1072c5",
+    "package_hash": "0530a15766e91bf1",
+    "package": "package_vector.chgame",
+    "package_bytes": 575
+  },
+  "nesting": {
+    "limit": 32,
+    "at": "{\"id\":\"demo\",\"name\":\"Demo\",\"version\":\"1.0.0\",\"api\":1,\"seats\":{\"min\":1,\"max\":1},\"modes\":[\"solo\"],\"x\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "over": "{\"id\":\"demo\",\"name\":\"Demo\",\"version\":\"1.0.0\",\"api\":1,\"seats\":{\"min\":1,\"max\":1},\"modes\":[\"solo\"],\"x\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}"
+  },
+  "icon_scaling": {
+    "comment": "The sides 1 to 2048 whose square icon.png PngToBmpConverter sizes at 63 x 63 (int(side * (64.0f / side)) in float32) when the installer asks for 64 x 64; every other side comes out at exactly 64. pack_game.py refuses these; GamePackageInstallerTest sweeps every side through the real converter.",
+    "target": 64,
+    "first_side": 1,
+    "last_side": 2048,
+    "scaled_to_63": [
+      41, 47, 55, 61, 82, 83, 94, 97, 107, 109, 110, 115, 121, 122, 123, 141, 159, 164, 165, 166, 188, 189,
+      194, 209, 214, 218, 219, 220, 227, 230, 235, 237, 242, 243, 244, 245, 246, 249, 282, 293, 307, 318,
+      321, 328, 330, 332, 355, 376, 378, 388, 397, 418, 425, 427, 428, 431, 436, 437, 438, 440, 454, 460,
+      470, 474, 475, 477, 484, 486, 488, 490, 492, 497, 498, 503, 564, 567, 586, 614, 636, 642, 647, 656,
+      660, 661, 664, 685, 691, 705, 710, 739, 741, 751, 752, 756, 776, 787, 794, 803, 833, 836, 837, 850,
+      854, 856, 862, 867, 872, 874, 876, 879, 880, 887, 899, 905, 908, 917, 920, 927, 933, 940, 948, 949,
+      950, 951, 953, 954, 968, 972, 975, 976, 980, 981, 984, 994, 996, 1006, 1011, 1128, 1134, 1171, 1172,
+      1177, 1228, 1233, 1272, 1284, 1293, 1294, 1299, 1303, 1312, 1317, 1320, 1322, 1328, 1351, 1370, 1382,
+      1395, 1410, 1413, 1419, 1420, 1427, 1441, 1449, 1463, 1473, 1478, 1482, 1485, 1487, 1491, 1502, 1503,
+      1504, 1505, 1512, 1529, 1531, 1543, 1545, 1551, 1552, 1555, 1571, 1574, 1575, 1581, 1583, 1587, 1588,
+      1599, 1605, 1606, 1621, 1639, 1641, 1643, 1645, 1647, 1651, 1666, 1667, 1671, 1672, 1674, 1675, 1691,
+      1699, 1700, 1701, 1708, 1712, 1715, 1724, 1725, 1731, 1733, 1734, 1744, 1748, 1752, 1758, 1760, 1774,
+      1791, 1798, 1809, 1810, 1811, 1813, 1816, 1829, 1831, 1834, 1837, 1840, 1847, 1854, 1857, 1859, 1866,
+      1869, 1880, 1893, 1896, 1898, 1900, 1902, 1906, 1908, 1913, 1917, 1919, 1923, 1925, 1935, 1936, 1941,
+      1944, 1947, 1950, 1952, 1960, 1962, 1967, 1968, 1987, 1988, 1992, 2005, 2011, 2012, 2021, 2022, 2023,
+      2033, 2037, 2041
+    ]
+  }
+}

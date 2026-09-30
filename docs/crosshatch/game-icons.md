@@ -22,7 +22,8 @@ licence file, and the generated header repeats the copyright line.
 `assets/game-icons/names.txt` lists each name twice, once per weight, with Phosphor's own file for it:
 `<name> regular phosphor/regular/<name>.svg` and `<name> fill phosphor/fill/<name>-fill.svg`.
 `python3 scripts/gen_game_icons.py` renders them into `lib/GameIcons/GameIcons.generated.h`, which is never edited by
-hand; the `Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
+hand, and opens with `// clang-format off` (`lib/GameIcons/GameIcons.h`, beside it, is formatted like any source); the
+`Icons up to date` fork CI job regenerates it and fails on any byte difference. The generator refuses a map
 whose name is not a Phosphor file stem, whose path is not Phosphor's file for that name and weight, or that gives a
 name in only one weight or in one weight twice.
 
@@ -53,16 +54,48 @@ other than the two names is an ordinary Lua argument error, as a bad size is (`b
 option 'bold')`), which `pcall` catches. The weight rides in the display list's icon command, so a replayed frame draws
 the same bitmap. A screen draws the fill weight with `drawGameIcon(..., black, true)`.
 
+## Bitmap layout
+
+Each bitmap in `ICONS` is PackBits-compressed, in drawn orientation, so a draw decodes one row at a time and needs no
+buffer beyond that row. A packed bitmap is a 2-byte little-endian length N, then N bytes of PackBits that decode to the
+drawn rows from the top, `pixels / 8` bytes each (4 at 32 px, 8 at 64 px), 1 bit per pixel, MSB first, bit 0 = ink,
+bit x = drawn column x. A run is a control byte c and its data: c 0 to 127 copies the next c + 1 bytes, c 129 to 255
+repeats the next byte 257 - c times (2 to 128), and 128 is malformed (the generator never writes it). A run may cross
+from one row into the next, so the bitmap is one stream, and the generator gives it the shortest encoding, which makes
+the output deterministic. Encoding each row on its own would cost 14,109 B more over the whole set (59,638 B against
+45,529 B, length prefixes included, from the generator's own encoder on the 220 bitmaps), and the reader that crosses
+rows needs only a run counter, a repeat value, and a read position.
+
+`GameIconBlit::inkRuns` reads rows through `GameIcons::PackedReader` into an 8-byte buffer on the stack, walks each
+into runs of ink, and decodes the next row only when the draw needs it; the rows above a clip are decoded and not
+drawn (at most 64), and an icon wholly off the canvas decodes nothing. There is no heap, no static buffer, and no
+failure path in the draw: a malformed run (control 128, or a run or copy whose data is past the stored length), which
+only a generator bug can produce, ends the icon at the row it breaks, drawing nothing from that row on and reading
+nothing past the bitmap's stored length. `GameIcons.h` also `static_assert`s that every bitmap decodes to exactly its
+rows, with no run or byte left over, so such a bug fails the build first. The fill counts and pixel budget do not
+change: the runs are the pixels' runs, as before.
+
+`GAME_CONTROLLER_32` is the one raw array, in `GfxRenderer::drawIcon`'s layout (square, rows padded to whole bytes,
+bit 0 = ink, stored rotated 90 degrees counter-clockwise: stored (row, col) is drawn at (pixels - 1 - row, col)),
+because Home's cover-grid Games tab passes it to `drawIcon`. `ICONS` still holds a packed copy of the same bitmap.
+
+`test/game_script/GameIconsRaw.h` holds every bitmap uncompressed, in that same layout, as the generator
+computes it (`python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h`). Only the host
+tests include it: `GameIconBlitTest` decodes every icon at every size and weight and compares it, byte for byte and
+pixel for pixel, with the raw bitmap, and `gen_game_icons_test.py` checks the committed file against a fresh render.
+The `Icons up to date` job regenerates both files and fails on a byte difference in either.
+
 ## Naming rules
 
 - A name is Phosphor's own: the SVG file stem, hyphens included, without `-fill` (`dice-six`, `game-controller`,
   `arrow-u-up-left`). The library's names are only the 55 in the table below (the `icon` lines of `api-level-1.txt`),
   not every icon on `https://phosphoricons.com`, which is where to preview a listed icon's drawing. The generator
   enforces `[a-z][a-z0-9-]{0,31}`, no `--`, no final `-`, and no name ending in `-fill`.
-- In C++ the header's identifiers are the name in upper case with `-` as `_`, and the fill weight adds `_FILL`:
-  `dice-six` is `DICE_SIX_32` and `DICE_SIX_64` (regular) and `DICE_SIX_FILL_32` and `DICE_SIX_FILL_64` (fill). A name
-  holds no `_` and never ends in `-fill`, so no two names share an identifier. `ICONS[i].small[weight]` and
-  `.medium[weight]` index the bitmaps by `GameIcons::Weight` (`Regular` 0, `Fill` 1).
+- In C++ the header's identifiers are the name in upper case with `-` as `_`, and the fill weight adds `_FILL`; the
+  packed arrays add the size and `_PB`: `dice-six` is `DICE_SIX_32_PB` and `DICE_SIX_64_PB` (regular) and
+  `DICE_SIX_FILL_32_PB` and `DICE_SIX_FILL_64_PB` (fill). A name holds no `_` and never ends in `-fill`, so no two
+  names share an identifier. `ICONS[i].small[weight]` and `.medium[weight]` index the bitmaps by `GameIcons::Weight`
+  (`Regular` 0, `Fill` 1).
 - One name per glyph: no alias for an icon already in the set.
 - A game's own images (`ch.gfx.image`) follow a different rule: the file name without `.bmp`, 1 to 32 characters from
   `[a-z0-9_]`, with no `-`. A chess game that ships `crown-cross.bmp` has it skipped with a log line; name it
@@ -152,6 +185,23 @@ Two screens draw library icons besides the games, both in the regular weight:
   [upstream-touches.md](upstream-touches.md)) draws `game-controller` directly, as the generated symbol
   `GameIcons::GAME_CONTROLLER_32` (regular) passed to `renderer.drawIcon`, beside upstream's own tab icons.
 
+### The launcher's row icons
+
+`GamesLauncherActivity` (`src/activities/games/`) shows one 64 x 64 icon at the left of each game's row, chosen by
+`GameRowIcon::choose` (`src/games/GameRowIcon.h`) in this order:
+
+1. the package's own `icon.bmp` (a 64 x 64 file in the converter's 1-bit layout, which the installer wrote from
+   `icon.png`, a square image whose side the converter scales to exactly 64: 64 and every power of two do, while 41
+   and 279 other sides up to 2,048 come out at 63 and are refused, by `pack_game.py` too), when the launcher read it;
+2. else the manifest's `icon` in the manifest's `icon_weight` (`regular` when absent), when the library has that name;
+3. else `game-controller` in the regular weight, the fallback for a game with neither (also for an `icon` the library
+   lacks, which the installer refuses but a hand-copied `/.games/<id>/` can name).
+
+A library icon is decoded into memory (`renderLibraryIcon`, from the same `GameIconBlit::inkRuns` runs a draw fills,
+so the pixels are the ones `drawGameIcon` would make) one row at a time into a single scratch bitmap, because the SDK's
+list draws bitmaps, not a `GfxRenderer`. The bitmap is FreeInkUI's `Mask1` (bit 0 = ink, MSB first), which is also how
+`icon.bmp` and the library store their pixels. `GameRowIconTest` and `GamesLauncherTest` pin the choice and the pixels.
+
 ### Left out
 
 Considered and not in v1: the chess pieces (Phosphor's `crown-cross`, `crown`, `castle-turret`, and `horse`, and the
@@ -168,7 +218,8 @@ duplicate `x`. None was cut for size.
    under its category in `assets/game-icons/names.txt`.
 3. Run `python3 scripts/gen_game_icons.py --write-sums` and check that `SHA256SUMS` changed only by the new SVGs'
    lines (`git diff`); a changed line for an existing SVG means that file is no longer the package's.
-4. On Linux, run `python3 scripts/gen_game_icons.py` and commit the regenerated header with `SHA256SUMS`.
+4. On Linux, run `python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h` and commit
+   the regenerated header and the test reference with `SHA256SUMS`.
 5. Add or change the `icon` line in `docs/crosshatch/api-level-1.txt` and set `API_SURFACE_CRC` in
    `lib/GameCore/ApiLevel.h` to the value `ApiSurfaceTest.ListLoadsAndMatchesItsCrc` prints.
 6. Add the name to `NAMES` in `test/game_script/fixtures/icons/main.lua`.
@@ -181,22 +232,31 @@ simulator's), since the cover-grid Home names `GameIcons::GAME_CONTROLLER_32`; o
 ## Size
 
 The generated data must stay within 96 KiB (98,304 B) of flash; `GameIconBlitTest.TheIconDataFitsIn96KiB` checks it.
-Each name costs four bitmaps, 2 x (128 B at 32 px + 512 B at 64 px) = 1,280 B, a 20 B `ICONS` entry (the name
-pointer and two bitmap pointers per size on the ESP32), and its name string.
+That limit is the owner's original budget for the icon data and stays as it was set, although packing (entry 15) left
+the data at less than half of it; the packing itself is checked by the same test (packed bytes below raw bytes), and the
+flash the icons and everything else games add is bounded by `check_flash_budget.py`'s gate below. Each name costs four
+packed bitmaps (45,529 B for all 220, about 830 B a name), a 20 B `ICONS` entry (the name pointer and two bitmap
+pointers per size on the ESP32), and its name string; `GAME_CONTROLLER_32` adds its raw 128 B once.
 
 Measured on the x4pro ELF (`.pio/build/x4pro/firmware.elf`, games on) with `xtensa-esp32s3-elf-nm -S -C`, summing the
-`GameIcons::` symbols:
+`GameIcons::` symbols, at the parent of entry 15 (`1a0b7f6d`, whose firmware sources are entry 3's `c47cceaa`) and at
+entry 15:
 
-| Data | Bytes |
-| --- | ---: |
-| 220 bitmaps (`*_32`, `*_64`, `*_FILL_32`, `*_FILL_64`), 55 x 2 x (128 + 512) | 70,400 |
-| `ICONS`, 55 x 20 | 1,100 |
-| Name strings, the sum of `len(name) + 1` (computed: they are not separate symbols) | 475 |
-| Total | 71,975 |
-| Limit (96 KiB) | 98,304 |
+| Data | Before entry 15 | After entry 15 |
+| --- | ---: | ---: |
+| 220 bitmaps, raw in `drawIcon`'s layout (`*_32`, `*_64`, `*_FILL_32`, `*_FILL_64`), 55 x 2 x (128 + 512) | 70,400 | 0 |
+| 220 packed bitmaps (`*_PB`), length prefixes included | 0 | 45,529 |
+| `GAME_CONTROLLER_32`, raw | (in the 70,400) | 128 |
+| `ICONS`, 55 x 20 | 1,100 | 1,100 |
+| `DRAWN_PIXELS` | 12 | 12 |
+| Sum of the `GameIcons::` symbols | 71,512 | 46,769 |
+| Name strings, the sum of `len(name) + 1` (computed: they are not separate symbols) | 475 | 475 |
+| Total | 71,987 | 47,244 |
+| Limit (96 KiB) | 98,304 | 98,304 |
 
-26,329 B to spare. Before this story (62 names, one weight each) the same sum was 40,964 B of a 48 KiB limit. The
-tracer's four icons measured 2,608 B the same way (without their strings).
+51,060 B to spare. (`GameIconBlitTest` counts the same data without `DRAWN_PIXELS`: 47,232 B.) Before entry 9 (62 names,
+one weight each) the same sum was 40,964 B of a 48 KiB limit. The tracer's four icons measured 2,608 B the same way
+(without their strings).
 
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
 `firmware.bin`, games on minus games off):
@@ -213,6 +273,16 @@ Entry 9 (Phosphor names, both weights; measured with the flash budget job's four
 working tree, from an empty `.pio`, not an archive tree) adds +31,072 B to the games-on image against entry 7: +31,011 B of
 icon data (71,975 B against 40,964 B) and 61 B of code for the weight argument, with no static internal RAM change.
 The runtime is now 28,592 B under the 250 KiB gate.
+
+Entry 15 (PackBits; the flash budget job's four commands run on this story's working tree, and again on its parent
+`1a0b7f6d`, whose firmware sources equal entry 3's `c47cceaa`, whose games-on image measured 5,913,872 B both times)
+takes the games-on image from 5,913,872 B to 5,889,312 B and the games-off image stays 5,676,064 B, so the difference
+falls from +237,808 B to +213,248 B: -24,560 B of flash and +0 B of static internal RAM (+776 B before and after). By
+`size -A` on the two games-on ELFs, `.flash.rodata` falls 24,736 B (3,491,812 B to 3,467,076 B) and `.flash.text` grows
+180 B (2,301,628 B to 2,301,808 B). The data: 70,400 B of raw bitmaps become 45,529 B packed (-24,871 B) and the raw
+`GAME_CONTROLLER_32` adds 128 B, so the icon data saves 24,743 B, and 7 B of padding round the rest. The decoder costs
+180 B of code (`PackedReader` inside the one `inkRuns` instance `drawGameIconAt` uses). Against the epic's base
+(`962ae61`, +228,496 B), the runtime is now 15,248 B smaller than then, and 42,752 B under the 250 KiB gate.
 
 After the refactor sweep (entry 7, measured from a fresh archive tree of entry 7's pre-amend commit (the same code as `8e233695`, which only adds the measured figures) with the flash budget job's four
 commands) the runtime added +196,336 B of flash, 59,664 B under the 250 KiB gate. The epic's base `1eacdc77`, measured

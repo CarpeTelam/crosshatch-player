@@ -25,7 +25,8 @@ constexpr const char* FULL = R"({
   "seats": { "min": 2, "max": 2 },
   "modes": ["pass", "nearby"],
   "hidden": true,
-  "icon": "game-controller"
+  "icon": "game-controller",
+  "icon_weight": "fill"
 })";
 
 // A minimal valid manifest with one extra member spliced in before the closing brace.
@@ -55,6 +56,7 @@ TEST(ManifestTest, ParsesEveryKey) {
   EXPECT_TRUE(m.hasMode(Manifest::MODE_NEARBY));
   EXPECT_TRUE(m.hidden);
   EXPECT_STREQ(m.icon, "game-controller");
+  EXPECT_EQ(m.iconWeight, Manifest::ICON_FILL);
 }
 
 TEST(ManifestTest, OptionalKeysDefault) {
@@ -62,6 +64,7 @@ TEST(ManifestTest, OptionalKeysDefault) {
   ASSERT_EQ(parse(withExtra(""), m), ManifestError::None);
   EXPECT_FALSE(m.hidden);
   EXPECT_STREQ(m.icon, "");
+  EXPECT_EQ(m.iconWeight, Manifest::ICON_REGULAR);
   EXPECT_STREQ(m.version, "");
   EXPECT_TRUE(m.hasMode(Manifest::MODE_SOLO));
 }
@@ -158,6 +161,9 @@ TEST(ManifestTest, RejectsWrongTypes) {
   EXPECT_EQ(parse(R"({"modes": "solo"})"), ManifestError::WrongType);
   EXPECT_EQ(parse(withExtra(R"("hidden": "yes")")), ManifestError::WrongType);
   EXPECT_EQ(parse(withExtra(R"("icon": null)")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("icon_weight": null)")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("icon_weight": 1)")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("icon_weight": ["fill"])")), ManifestError::WrongType);
 }
 
 TEST(ManifestTest, RejectsBadApi) {
@@ -208,17 +214,51 @@ TEST(ManifestTest, RejectsBadTextFields) {
             ManifestError::BadIcon);
 }
 
-// '_' stays valid in an icon name after the library moved to Phosphor's hyphenated
-// names, so a manifest that parsed before still parses (validIcon in Manifest.cpp).
-TEST(ManifestTest, AcceptsUnderscoreInIcon) {
+// The icon grammar is the library's, [a-z][a-z0-9]*(-[a-z0-9]+)* in at most 32 bytes (spine AD-15).
+// scripts/pack_game_test.py's test_icon_grammar holds the same accept and reject cases (plus the
+// non-string values only JSON typing decides), and ApiLevelTest.ManifestIconMatchesTheParser ties the
+// API list's pattern to this parser.
+TEST(ManifestTest, AcceptsLibraryIconNames) {
+  const std::string longest = std::string(Manifest::MAX_ICON_BYTES, 'x');
+  for (const std::string& name : {std::string("x"), std::string("a1"), std::string("game-controller"),
+                                  std::string("a-1"), std::string("a1-b2-c3"), longest}) {
+    Manifest m;
+    ASSERT_EQ(parse(withExtra("\"icon\": \"" + name + "\""), m), ManifestError::None) << name;
+    EXPECT_EQ(std::string(m.icon), name);
+  }
+}
+
+TEST(ManifestTest, RejectsIconNamesOutsideTheGrammar) {
+  const std::string tooLong = std::string(Manifest::MAX_ICON_BYTES + 1, 'x');
+  for (const std::string& name : {std::string("old_name"), std::string("a_b"), std::string("_a"), std::string("a--b"),
+                                  std::string("-a"), std::string("a-"), std::string("1a"), std::string("a b"),
+                                  std::string("a.b"), std::string("Foo"), std::string("\xC3\xA9"), tooLong}) {
+    EXPECT_EQ(parse(withExtra("\"icon\": \"" + name + "\"")), ManifestError::BadIcon) << name;
+  }
+}
+
+TEST(ManifestTest, ParsesIconWeight) {
   Manifest m;
-  ASSERT_EQ(parse(withExtra(R"("icon": "old_name")"), m), ManifestError::None);
-  EXPECT_STREQ(m.icon, "old_name");
+  ASSERT_EQ(parse(withExtra(R"("icon_weight": "regular")"), m), ManifestError::None);
+  EXPECT_EQ(m.iconWeight, Manifest::ICON_REGULAR);
+  ASSERT_EQ(parse(withExtra(R"("icon_weight": "fill")"), m), ManifestError::None);
+  EXPECT_EQ(m.iconWeight, Manifest::ICON_FILL);
+  // The weight needs no icon: the key is read on its own.
+  EXPECT_STREQ(m.icon, "");
+}
+
+TEST(ManifestTest, RejectsMalformedIconWeight) {
+  for (const char* weight : {"bold", "Regular", "FILL", "", "thin", "fill ", "fill-regular"}) {
+    EXPECT_EQ(parse(withExtra(std::string(R"("icon_weight": ")") + weight + "\"")), ManifestError::BadIconWeight)
+        << weight;
+  }
+  EXPECT_STREQ(GameCore::describe(ManifestError::BadIconWeight), "invalid icon_weight");
 }
 
 TEST(ManifestTest, RejectsDuplicateKnownKeys) {
   EXPECT_EQ(parse(withExtra(R"("id": "h")")), ManifestError::DuplicateKey);
   EXPECT_EQ(parse(withExtra(R"("hidden": true, "hidden": false)")), ManifestError::DuplicateKey);
+  EXPECT_EQ(parse(withExtra(R"("icon_weight": "fill", "icon_weight": "fill")")), ManifestError::DuplicateKey);
   EXPECT_EQ(parse(withExtra(R"("x": 1, "x": 2)")), ManifestError::None);  // unknown keys may repeat
 }
 
@@ -236,11 +276,11 @@ TEST(ManifestTest, RejectsMalformedJson) {
   EXPECT_EQ(parse(R"({"hidden": tru})"), ManifestError::Syntax);
 }
 
-// Every fixture game's manifest.json passes what GamesListActivity::readManifest
-// requires to list it: it parses, its id is the folder's name, it passes
-// Manifest::check against this host, and it offers solo. Exactly the folders that
-// are not games of their own (faults, modules, surface) have none, so a game
-// fixture that loses its manifest fails here.
+// Every fixture game's manifest.json passes what GameRegistry requires to list a game,
+// and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
+// name, it passes Manifest::check against this host, and it offers solo. Exactly the folders that
+// are not games of their own (changed, which holds only game folders one level down, and faults, modules, surface) have
+// none, so a game fixture that loses its manifest fails here.
 TEST(ManifestTest, EveryFixtureManifestIsListed) {
   std::set<std::string> listed;
   std::set<std::string> withoutManifest;
@@ -268,8 +308,9 @@ TEST(ManifestTest, EveryFixtureManifestIsListed) {
     EXPECT_NE(check.modes & Manifest::MODE_SOLO, 0) << folder << " offers no solo mode on this host";
     listed.insert(folder);
   }
-  EXPECT_EQ(withoutManifest, (std::set<std::string>{"faults", "modules", "surface"}));
+  EXPECT_EQ(withoutManifest, (std::set<std::string>{"changed", "faults", "modules", "surface"}));
   EXPECT_TRUE(listed.count("slow-restart")) << "slow-restart's manifest was not found";
+  EXPECT_TRUE(listed.count("timing")) << "timing's manifest was not found";
   EXPECT_TRUE(listed.count("tracer")) << "tracer's manifest was not found";
 }
 

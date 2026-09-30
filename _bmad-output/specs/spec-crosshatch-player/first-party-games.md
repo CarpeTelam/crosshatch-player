@@ -18,5 +18,5 @@ v1 ships these three. Together they exercise `solo`, `pass`, `nearby`, and a `hi
 ## Common rules
 
 - Every first-party game stays within API level 1: turn-structured, a snapshot of at most 1,400 B, library icons or 1-bit package images.
-- Sources live in `games/<id>/`. `scripts/pack_game.py` packs them into `.cpgame` files, which are attached to each fork release and installed through the inbox, never embedded in the firmware.
+- Sources live in `games/<id>/`. `scripts/pack_game.py` packs them into `.chgame` files, which are attached to each fork release and installed through the inbox, never embedded in the firmware.
 - Candidates set aside: Minesweeper, nonograms, tic-tac-toe (the API docs example), Dots and Boxes, Nine Men's Morris, Gomoku, Mastermind, and Hangman (setting a word needs text entry).
