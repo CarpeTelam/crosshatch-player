@@ -489,3 +489,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md`
   summary: The on-device recheck of e4-z1 (the `loop` fixture), e4-z2 (the `.removing` marker), and e4-z3 ("and N more"), and A8 (Games from Home lands on the last game's page), deferred by the owner to the epic-install-and-launcher retrospective.
   evidence: The owner closed entry 14 before the three fixes merged. The plan's "Deferred to the retro session" section lists each check. Trigger: the retrospective session.
+
+## e4-z1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-z1-loop-fixture-calibration.md`
+  summary: Two records of the `loop` package hash `e7ebc00d62486a0f`, `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/device-run-packet.md` (the hash table) and `_bmad-output/implementation-artifacts/plan-e4-y-chgame-rename.md` (its `HASHES.txt` sample), name the package before the recalibration; the new hash is `c74273851f270beb`.
+  evidence: They record what was packed for the entry-14 device run, so they stay as history; a later device run reads the hash from `pack_device_run.py`'s `HASHES.txt` or from `pack_game.py`, and the device's `/.games/loop/.pkg` will show the new one. Not edited here, because this build's paths do not include them. Trigger: when the packet is regenerated for the next device run (the retrospective's recheck of the Slow C calls band), change the `loop.chgame` row to the hash `pack_device_run.py` prints; until then the packet's row is stale.

@@ -135,7 +135,7 @@ only with the label; adding another label does nothing there and reruns nothing 
 | Loop forever | `main.lua:7: instruction budget exceeded` |
 | Loop inside pcall | `main.lua:7: instruction budget exceeded` |
 | Recurse through pcall | `script recursion too deep (C stack nearly full)` |
-| Slow C calls forever | `It stopped responding: one step ran over 3 seconds` (after about 3 s) |
+| Slow C calls forever | `It stopped responding: one step ran over 3 seconds` (after about 3 s; the watchdog cancels the VM, and the log reads `VM stopped; ...`, not `abandoning`) |
 | Stuck in one C call | `It stopped responding: one step ran over 3 seconds` (after about 3.5 s; the VM is abandoned) |
 
 `limits/` ("Limit faults"):
