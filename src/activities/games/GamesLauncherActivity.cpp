@@ -156,6 +156,7 @@ void GamesLauncherActivity::selectRemembered() {
 
 void GamesLauncherActivity::installInbox() {
   noteVisible = false;
+  noteMore[0] = '\0';
   if (GamePackageInstaller::hasInbox()) GUI.drawPopup(renderer, tr(STR_GAMES_INSTALLING));
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   if (report.failed == 0) return;
@@ -163,6 +164,13 @@ void GamesLauncherActivity::installInbox() {
     snprintf(note, sizeof(note), "%s", reasonText(report.firstError));
   } else {
     snprintf(note, sizeof(note), "%s: %s", report.firstFile, reasonText(report.firstError));
+  }
+  // The other failures are counted, not named: one line under the first reason. N is the installer's own count less
+  // the first: every file it judged and failed, a package that waits for room (TooManyGames) included. Files it did
+  // not judge are not in it: those past the 32 a visit takes (they wait for the next visit) and names over 62 bytes
+  // (skipped, logged). `failed` stops at 255, so a saturated count reads as its floor ("and 254 more").
+  if (report.failed > 1) {
+    snprintf(noteMore, sizeof(noteMore), tr(STR_GAMES_INSTALL_AND_MORE), static_cast<unsigned>(report.failed - 1));
   }
   noteVisible = true;
 }
@@ -301,6 +309,7 @@ void GamesLauncherActivity::confirmRemove() {
   if (error != GamePackageInstaller::Error::None) {
     LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go
     snprintf(note, sizeof(note), "%s: %s", name, tr(STR_GAMES_REMOVE_FAILED));
+    noteMore[0] = '\0';
     noteVisible = true;
   }
   requestUpdate();
@@ -478,7 +487,31 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     popup.styles = screen.theme().popup;
     popup.styles.normal.border = fui::Paint::solid(fui::Color::Black);
     popup.styles.normal.borderWidth = 2;
-    screen.popup(popup);
+    if (noteMore[0] == '\0') {
+      screen.popup(popup);
+    } else {
+      // "and N more" is a line of its own under the reason. The renderer's word wrap does not break on '\n', so the
+      // panel is laid out as Screen::popup lays it out, with one line more room at the bottom for that line.
+      fui::DrawTarget& target = screen.target();
+      const fui::Rect bounds = screen.frame().safeRect();
+      const fui::Insets pad = popup.padding;
+      const int16_t lineHeight = target.lineHeight(popup.text.font);
+      const int16_t contentWidth =
+          std::max<int16_t>(1, static_cast<int16_t>(bounds.width * 3 / 4 - pad.left - pad.right));
+      fui::TextStyle moreStyle = popup.text;
+      moreStyle.maxLines = 1;
+      const fui::Size reason = fui::measureWrappedText(target, note, popup.text, contentWidth);
+      const int16_t moreWidth = std::min(target.measureText(moreStyle.font, noteMore, moreStyle).width, contentWidth);
+      const fui::Rect panel = fui::centeredRect(
+          bounds, fui::Size{static_cast<int16_t>(std::max(reason.width, moreWidth) + pad.left + pad.right),
+                            static_cast<int16_t>(reason.height + lineHeight + pad.top + pad.bottom)});
+      popup.padding.bottom = static_cast<int16_t>(pad.bottom + lineHeight);  // the reason is drawn above that room
+      fui::popup(screen.frame(), panel, popup);
+      target.text(fui::Rect{static_cast<int16_t>(panel.x + pad.left),
+                            static_cast<int16_t>(panel.bottom() - pad.bottom - lineHeight),
+                            static_cast<int16_t>(panel.width - pad.left - pad.right), lineHeight},
+                  noteMore, moreStyle);
+    }
   }
 }
 

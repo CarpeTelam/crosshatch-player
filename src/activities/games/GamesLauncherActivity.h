@@ -108,6 +108,8 @@ class GamesLauncherActivity final : public UiListActivity {
   uint8_t libraryIcon[GameRowIcon::BYTES] = {};
   // The one-time install failure notice: shown over the list until a tap or button dismisses it.
   char note[128] = {};
+  // "and N more" when several packages failed: drawn as a line of its own under the note; empty for one failure.
+  char noteMore[48] = {};
   bool noteVisible = false;
   // Rows a page holds, as the last build measured them (1 until the first build); listCount() pads to it.
   std::atomic<uint16_t> pageRows{1};
