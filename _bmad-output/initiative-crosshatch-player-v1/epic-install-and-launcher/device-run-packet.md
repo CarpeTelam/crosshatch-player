@@ -80,7 +80,7 @@ Start from a card with no `/games/`, `/.games/`, or `/.games-data/` folders, so 
 This check needs a game on page 2 that has no save.
 
 - **Page size:** the X4 Pro launcher shows eight rows per page (`story-remove-screenshots/page1.png`), not four as the entry-14 record says. Continue rows come first, then games sorted by name.
-- **Why Package vector:** it saves nothing, since it stops at once with "game stopped". With eight extra games named "Aa extra 1" to "Aa extra 8" sorted ahead of it, it lands on page 2 whatever else is installed.
+- **Why Package vector:** it saves nothing, since it stops at once in the error view (`game.setup is not a function` in the simulator) and writes no `/.games-data/package-vector/`. With eight extra games named "Aa extra 1" to "Aa extra 8" sorted ahead of it, it lands on page 2 whatever else is installed.
 
 1. From a checkout at `fa642c4a`, pack the eight extra games. Each is the `counter` fixture under a new id and name:
 
@@ -94,9 +94,9 @@ This check needs a game on page 2 that has no save.
    done
    ```
 
-   On macOS, write `sed -i ''` in place of `sed -i`. The retrospective packed them on 2026-09-30, and the hashes printed were `457203b4c567adc8`, `3c36bd82a9a27878`, `ff7b3ca0e1663fc9`, `c5e336a3a155ab6d`, `f0fa2793e31f83d7`, `8ff5f0c7bb727378`, `8e67ec8ef629e495`, and `cc566037021bbf1c`.
+   On macOS, write `sed -i ''` in place of `sed -i`. The retrospective packed them on 2026-09-30 and ran this check in the simulator, where it passed (`retro-screenshots/a8-07-reentry.png`), and the hashes printed were `457203b4c567adc8`, `3c36bd82a9a27878`, `ff7b3ca0e1663fc9`, `c5e336a3a155ab6d`, `f0fa2793e31f83d7`, `8ff5f0c7bb727378`, `8e67ec8ef629e495`, and `cc566037021bbf1c`.
 2. Put the eight files in `/games/` and open Games. The list now runs past one page, and Package vector is on page 2.
-3. Page to page 2, and open Package vector. It shows the "game stopped" error view. Press Back to return to Games. The launcher is on page 2 with Package vector selected (entry 10's return to the page).
+3. Page to page 2, and open Package vector. It stops at once in the error view. Press Back to return to Games. The launcher is on page 2 with Package vector selected (entry 10's return to the page).
 4. Press Back to Home, then open Games from Home.
 5. **Expect:** the launcher opens on page 2 with Package vector selected, not on page 1 (A8).
 6. If a Continue row for Package vector appears after step 3, the game did save. Then the launcher correctly selects that Continue row on page 1 (A12). Record it, and repeat step 3 with the last game on page 2 that has no Continue row.
