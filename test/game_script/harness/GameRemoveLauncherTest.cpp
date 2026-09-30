@@ -517,6 +517,23 @@ TEST_F(RemoveListTest, ADeleteThatFailsIsReportedAndTheListMatchesTheCard) {
   EXPECT_FALSE(noteSays(tr(STR_GAMES_REMOVE_FAILED)));
 }
 
+// A dismissed install note's "and N more" must not come back under a later note: the failed remove writes its own.
+TEST_F(RemoveListTest, AFailedRemoveAfterASeveralFailureInstallNoteShowsNoMoreLine) {
+  addGames(3);
+  installerscript::script().report.failed = 3;
+  installerscript::script().report.firstError = Error::NotAPackage;
+  open();
+  ASSERT_TRUE(noteSays("and 2 more")) << ui().joined();
+  key(Button::Confirm);  // dismisses the install note
+  ASSERT_FALSE(noteSays("and 2 more"));
+  removescript::script().onRemove = nullptr;
+  removescript::script().result = Error::SdCard;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+  EXPECT_TRUE(noteSays("Game 02: " + std::string(tr(STR_GAMES_REMOVE_FAILED)))) << ui().joined();
+  EXPECT_FALSE(noteSays("more")) << "the remove note has no more line: " << ui().joined();
+}
+
 TEST_F(RemoveListTest, ADeleteThatStopsAfterTheMarkerIsReportedAndTheGameIsNoLongerListed) {
   addGames(3);
   placeData("game-02");

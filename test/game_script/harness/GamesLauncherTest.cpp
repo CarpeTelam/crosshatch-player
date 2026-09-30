@@ -966,6 +966,85 @@ TEST_F(ListTest, TheMoreLineIsDrawnUnderTheReasonAndCenteredWithIt) {
       << "centered with the reason, not left in the panel's padding";
 }
 
+// The note's panel: the smallest 2 px stroke that contains the drawn line (the bordered popup), or none.
+struct Panel {
+  bool found = false;
+  freeink::ui::Rect rect;
+  int lines = 0;  // drawn lines inside it
+  int widest = 0;
+};
+Panel panelAround(const screen::RecordingTarget& ui, const screen::DrawnText& line) {
+  const auto contains = [](const freeink::ui::Rect& outer, const freeink::ui::Rect& inner) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width &&
+           inner.y + inner.height <= outer.y + outer.height;
+  };
+  Panel panel;
+  for (const auto& stroke : ui.strokeRects) {
+    if (stroke.width != 2 || !contains(stroke.rect, line.rect)) continue;
+    if (panel.found && stroke.rect.width * stroke.rect.height >= panel.rect.width * panel.rect.height) continue;
+    panel.found = true;
+    panel.rect = stroke.rect;
+  }
+  for (const auto& drawn : ui.drawn) {
+    // The empty list's message sits behind the popup, and may or may not fall inside it.
+    if (!panel.found || !contains(panel.rect, drawn.rect) || drawn.text == tr(STR_GAMES_EMPTY)) continue;
+    ++panel.lines;
+    panel.widest = std::max<int>(panel.widest, drawn.rect.width);
+  }
+  return panel;
+}
+
+// The device wraps a text() call on spaces only, so a '\n' inside a call does not start a line there. The recording
+// target lays text out with layoutText, which does, so the line breaks are asserted on the calls as passed.
+TEST_F(ListTest, TheMoreLineIsATextCallOfItsOwnAndNoCallHoldsANewline) {
+  installerscript::script().report.failed = 2;
+  installerscript::script().report.firstError = Error::BadCrc;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "first.chgame");
+  open();
+  int reasonCalls = 0;
+  int moreCalls = 0;
+  for (const screen::DrawnText& call : ui().textCalls) {
+    EXPECT_EQ(call.text.find('\n'), std::string::npos) << "a '\\n' does not break a line on the device: " << call.text;
+    reasonCalls += call.text == std::string("first.chgame: ") + tr(STR_GAMES_INSTALL_BAD_CRC);
+    moreCalls += call.text == "and 1 more";
+  }
+  EXPECT_EQ(reasonCalls, 1) << "the reason is one call, and not joined with the more line";
+  EXPECT_EQ(moreCalls, 1);
+}
+
+TEST_F(ListTest, TheMoreLineAddsOneLineToThePanelAndNothingElse) {
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.firstError = Error::BadCrc;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "first.chgame");
+  open();
+  const screen::DrawnText* reason = nullptr;
+  for (const screen::DrawnText& drawn : ui().drawn)
+    if (drawn.text.find("first.chgame") == 0) reason = &drawn;
+  ASSERT_NE(reason, nullptr) << ui().joined();
+  const Panel one = panelAround(ui(), *reason);
+  ASSERT_TRUE(one.found) << "a bordered (2 px) panel around the note";
+  // Padding 12 above and below, 16 left and right (PopupProps): the panel is its text plus that.
+  EXPECT_EQ(one.rect.height, one.lines * screen::RecordingTarget::LINE_HEIGHT + 24);
+  EXPECT_EQ(one.rect.width, one.widest + 32);
+
+  installerscript::script().report.failed = 2;
+  reopen();
+  reason = nullptr;
+  for (const screen::DrawnText& drawn : ui().drawn)
+    if (drawn.text.find("first.chgame") == 0) reason = &drawn;
+  ASSERT_NE(reason, nullptr) << ui().joined();
+  const Panel two = panelAround(ui(), *reason);
+  ASSERT_TRUE(two.found) << "the panel keeps its border";
+  EXPECT_EQ(two.lines, one.lines + 1);
+  EXPECT_EQ(two.rect.height, one.rect.height + screen::RecordingTarget::LINE_HEIGHT);
+  EXPECT_EQ(two.rect.width, one.rect.width);
+  EXPECT_EQ(two.rect.x, one.rect.x);
+  // Centered on the screen as the one-line panel is: it grows equally up and down.
+  EXPECT_EQ(2 * two.rect.y + two.rect.height, 2 * one.rect.y + one.rect.height);
+}
+
 TEST_F(ListTest, TheMoreLineIsShownOncePerVisitAndDismissedWithTheNote) {
   addGame("alpha", "Alpha");
   installerscript::script().report.failed = 3;

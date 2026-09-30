@@ -165,9 +165,10 @@ void GamesLauncherActivity::installInbox() {
   } else {
     snprintf(note, sizeof(note), "%s: %s", report.firstFile, reasonText(report.firstError));
   }
-  // The other failures are counted, not named: one line under the first reason. `failed` stops at 255, so a
-  // saturated count reads as its floor ("and 254 more"). Every package not installed this visit counts, a file that
-  // waits for room (TooManyGames) included, as the installer counts them.
+  // The other failures are counted, not named: one line under the first reason. N is the installer's own count less
+  // the first: every file it judged and failed, a package that waits for room (TooManyGames) included. Files it did
+  // not judge are not in it: those past the 32 a visit takes (they wait for the next visit) and names over 62 bytes
+  // (skipped, logged). `failed` stops at 255, so a saturated count reads as its floor ("and 254 more").
   if (report.failed > 1) {
     snprintf(noteMore, sizeof(noteMore), tr(STR_GAMES_INSTALL_AND_MORE), static_cast<unsigned>(report.failed - 1));
   }

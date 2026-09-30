@@ -55,6 +55,16 @@ Pass 2 (quick, on the panel layout): 0 high, 2 medium, 4 low.
 - low, accepted: the panel sizing duplicates `FreeInkApp::popup` and can drift if the SDK changes it; the reason is that `GfxRenderer::wrappedText` (upstream, no ledger row) does not break on `\n`. A future fix in `wrappedText` (honor `\n`) would let this path shrink back to one `screen.popup` call with a `\n`; not deferred as a separate item because `## owner-e4-homes` A21 already opens with "the next ledger change".
 - low, rejected: plan unfinished at review time -- filled in now.
 
+Independent review (orchestrator, commit 90ced5df; lenses adversarial, edge-case, verification-gap; table in the scratchpad `e4-z3/review-all.md`). Follow-up commit on top:
+- 1 medium, patched: the tests could not catch a `\n` in the note (the recording target lays text out with `layoutText`, which breaks on `\n`; the device does not). The stub now records every raw `text()` call (`textCalls`) and every stroke rect (`strokeRects`); `TheMoreLineIsATextCallOfItsOwnAndNoCallHoldsANewline` asserts the reason is one call, "and 1 more" another, and no call holds a `\n`. The `\n` mutant (append `\n` and the more-line to `note`) now fails three launcher tests, including this one.
+- 2 low, patched: the one-failure panel's height, and 4 low, patched: the panel's width and border, in `TheMoreLineAddsOneLineToThePanelAndNothingElse` (panel = lines x 20 + 24 high, widest line + 32 wide, 2 px border, grows by one line and stays centered). Mutants "custom panel for one failure" and "no border/width" fail it.
+- 3 low, patched: `noteMore` reset in `confirmRemove` -- `AFailedRemoveAfterASeveralFailureInstallNoteShowsNoMoreLine` in `GameRemoveLauncherTest.cpp`; the mutant without the reset fails it.
+- 5 low, patched: the "every package not counted" claim was wrong for files past the 32-per-run cap and names over 62 bytes; the comments in the launcher and `GamePackageInstaller.h`, this plan, and `deferred-work.md` `## e4-z3` now say so. Behavior kept.
+- 8 low, patched: the plan's simulator file names now match the screenshot.
+- 6, 7, 9 low, recorded in `deferred-work.md` `## e4-z3` (the `TooManyGames`-first wording for the retro; the copied popup sizing; a UTF-8 cut in a future translation).
+- 10 low, rejected: 63-byte names in two tests are a margin, not a claim; the tests assert the note is drawn whole.
+- M7 and M9 (mutants that no test can tell apart: a fresh activity per visit; the reason is always wider than the more-line): equivalent, no test.
+
 ## Verification
 
 All commands ran in this worktree at the final code, under the shared build lock; logs are in the scratchpad `e4-z3/`.
@@ -63,7 +73,13 @@ All commands ran in this worktree at the final code, under the shared build lock
 - `scripts/*_test.py`: all 11 exit 0. `check_layers.py`: passed. `check_upstream_touches.py` (`upstream` fetched, complete clone): PASS, `lib/I18n/translations/english.yaml` is ledger row 2.
 - `pio run -e x4pro` (the `build on` step of the flash gate) exit 0; `pio run -e default` exit 0; `sim.sh build x4pro` exit 0.
 - `check_flash_budget.py`, four steps, exit 0 each. Games on 5,910,736 B, games off 5,678,992 B: +231,744 B flash (limit 256,000 B at `--limit-kib 250`). Static internal RAM: +784 B (on 187,848 B, off 187,064 B; limit 1,024 B). Objects: 43 game objects, largest mutable static 4 B (`lastOpened`, existing), no static initializer. Both figures are games-on minus games-off from the two builds at this one commit, the orchestrator's method; the last recorded measurement was +231,408 B and +784 B, so this change costs about +336 B flash and no static RAM by that comparison (a comparison with a recorded figure, not a re-measured base). The brief's bars are +240,496 B and +808 B.
-- Simulator: two invalid packages in `fs_/games/` (`binary-lua-stored.chgame`, `name-uppercase.chgame` from `gen_hardening_packages.py`); `sim.sh setup`, `build x4pro`, `start`, tap Games, `ss`. Both became `.chgame.bad`; the log shows both reasons; the note reads "first-bad.chgame: A Lua file is compiled, not source" and, on a line of its own, "and 1 more". Screenshot: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-and-n-more-screenshots/two-bad-packages-and-1-more.png`. (The first screenshot, of the `\n` version, showed "sourceand 1 more" in a short panel; that is why the layout changed.)
+- Simulator: two invalid packages in `fs_/games/` (`binary-lua-stored.chgame` and `name-uppercase.chgame` from `gen_hardening_packages.py`, copied to `fs_/games/` as `first-bad.chgame` and `second-bad.chgame`); `sim.sh setup`, `build x4pro`, `start`, tap Games, `ss`. Both became `.chgame.bad`; the log shows both reasons; the note reads "first-bad.chgame: A Lua file is compiled, not source" and, on a line of its own, "and 1 more". Screenshot: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-and-n-more-screenshots/two-bad-packages-and-1-more.png`. (The first screenshot, of the `\n` version, showed "sourceand 1 more" in a short panel; that is why the layout changed.)
 - `./bin/clang-format-fix` twice: no change either time.
+
+Follow-up commit (independent review fixes), at its code, same method and lock:
+- Host: `ctest -j8` three runs, 1342/1342 each; mutants run against the launcher and remove suites: the `\n` note, a custom panel for one failure, and a missing `noteMore` reset each fail at least one new test; the unmutated tree passes.
+- `scripts/*_test.py` 11/11, `check_layers.py` passed, `check_upstream_touches.py` PASS.
+- `pio run -e x4pro` (flash gate `build on`), `build off`, `compare`, `objects`, `sim.sh build x4pro`: exit 0 each. Games on 5,910,736 B, off 5,678,992 B: +231,744 B flash; static RAM +784 B (187,848 B on, 187,064 B off). Identical to the first commit: this commit changes only a comment in `src/`.
+- `./bin/clang-format-fix` twice, no change.
 
 Assumption for entry 14: with two invalid packages in `/games/`, the note shows the first reason and "and 1 more".

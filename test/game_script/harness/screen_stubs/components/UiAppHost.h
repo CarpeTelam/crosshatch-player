@@ -76,10 +76,17 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   }
   int16_t lineHeight(freeink::ui::FontId) const override { return LINE_HEIGHT; }
   void fill(freeink::ui::Rect, freeink::ui::Paint, uint8_t, uint8_t) override { ++fills; }
-  void stroke(freeink::ui::Rect, freeink::ui::Paint, uint8_t, uint8_t, uint8_t) override { ++strokes; }
+  void stroke(freeink::ui::Rect rect, freeink::ui::Paint, uint8_t width, uint8_t, uint8_t) override {
+    ++strokes;
+    strokeRects.push_back({rect, width});
+  }
   void line(freeink::ui::Point, freeink::ui::Point, uint8_t, freeink::ui::Paint) override {}
   void triangle(freeink::ui::Point, freeink::ui::Point, freeink::ui::Point, freeink::ui::Paint) override {}
   void text(freeink::ui::Rect rect, const char* text, freeink::ui::TextStyle style) override {
+    // What the caller passed, before any layout. The device wraps a call's text on spaces only
+    // (GfxRenderer::wrappedText does not break on '\n', where layoutText below does), so a test that cares about a line
+    // break reads this list: a message that needs its own line must be its own call.
+    if (text) textCalls.push_back({text, rect});
     freeink::ui::layoutText(*this, rect, text, style, [this, &style](const char* line, const freeink::ui::Rect where) {
       drawn.push_back({line, where, style.color});
     });
@@ -113,6 +120,8 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   }
   void forget() {
     drawn.clear();
+    textCalls.clear();
+    strokeRects.clear();
     bitmapsDrawn.clear();
     fills = strokes = bitmaps = 0;
   }
@@ -121,6 +130,12 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
   static constexpr int16_t LINE_HEIGHT = 20;
 
   std::vector<DrawnText> drawn;
+  std::vector<DrawnText> textCalls;  // one entry per text() call, the string as passed (`color` unused)
+  struct DrawnStroke {
+    freeink::ui::Rect rect;
+    uint8_t width = 0;
+  };
+  std::vector<DrawnStroke> strokeRects;
   std::vector<DrawnBitmap> bitmapsDrawn;  // in draw order; `bitmaps` counts them
   int fills = 0;
   int strokes = 0;

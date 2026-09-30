@@ -53,8 +53,9 @@ inline constexpr size_t MAX_PER_RUN = 32;
 // What one run of installAll did.
 struct Report {
   uint8_t installed = 0;
-  // Every file that ended in an error this call: an invalid package, a card or memory fault, and a package that waits
-  // for room (TooManyGames) alike. Stops at 255. The launcher shows failed - 1 as "and N more" under the first reason.
+  // Every file judged this call that ended in an error: an invalid package, a card or memory fault, and a package that
+  // waits for room (TooManyGames) alike; not a file past MAX_PER_RUN or with a name over INBOX_NAME_BYTES - 2 bytes
+  // (skipped). Stops at 255. The launcher shows failed - 1 as "and N more" under the first reason.
   uint8_t failed = 0;
   // The first failure, for the one-time notice. A package that installed but whose inbox file would neither delete
   // nor rename aside, or an invalid one that would not rename to .bad, is a failure (SdCard).
