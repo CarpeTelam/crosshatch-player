@@ -448,7 +448,7 @@ class BuildTest(unittest.TestCase):
 PACKER_OK = '''
 import pathlib, sys
 game, out = sys.argv[1], pathlib.Path(sys.argv[2])
-(out / (pathlib.Path(game).name + '.cpgame')).write_bytes(b'PK' + pathlib.Path(game, 'main.lua').read_bytes())
+(out / (pathlib.Path(game).name + '.chgame')).write_bytes(b'PK' + pathlib.Path(game, 'main.lua').read_bytes())
 print('packed ' + game)
 print('0123456789abcdef')
 '''
@@ -502,9 +502,9 @@ class GamesTest(unittest.TestCase):
         self.packer(PACKER_OK)
         self.assertEqual(self.pack(), 0)
         packages = json.loads(self.plan.read_text())['packages']
-        self.assertEqual([p['asset'] for p in packages], ['dots.cpgame', 'mines.cpgame'])
+        self.assertEqual([p['asset'] for p in packages], ['dots.chgame', 'mines.chgame'])
         self.assertEqual({p['package_hash'] for p in packages}, {'0123456789abcdef'})
-        self.assertEqual((self.dir / 'dist' / 'mines.cpgame').read_bytes(), b'PK-- mines\n')
+        self.assertEqual((self.dir / 'dist' / 'mines.chgame').read_bytes(), b'PK-- mines\n')
 
     def test_failing_packer_fails(self):
         self.add_game('mines')
@@ -745,10 +745,10 @@ class PublishTest(unittest.TestCase):
         text = fr.render_notes(self.PLAN)
         self.assertIn('No first-party games', text)
         self.assertIn('`crosspoint-1.6.5-ch.4-x4pro.bin` | 1,234 | `' + 'f' * 64, text)
-        plan = dict(self.PLAN, packages=[{'asset': 'dots.cpgame', 'package_hash': '0123456789abcdef', 'size': 9,
+        plan = dict(self.PLAN, packages=[{'asset': 'dots.chgame', 'package_hash': '0123456789abcdef', 'size': 9,
                                           'sha256': 'e' * 64}])
-        self.assertIn('| `dots.cpgame` | `0123456789abcdef` |', fr.render_notes(plan))
-        self.assertEqual(fr.expected_assets(plan), ['crosspoint-1.6.5-ch.4-x4pro.bin\t1234', 'dots.cpgame\t9'])
+        self.assertIn('| `dots.chgame` | `0123456789abcdef` |', fr.render_notes(plan))
+        self.assertEqual(fr.expected_assets(plan), ['crosspoint-1.6.5-ch.4-x4pro.bin\t1234', 'dots.chgame\t9'])
 
     def test_notes_name_the_api_level(self):
         first_line = fr.render_notes(self.PLAN).splitlines()[0]

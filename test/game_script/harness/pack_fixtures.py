@@ -2,7 +2,7 @@
 """Packs fixture games with the release packer, for the suite that installs its live output (PackedFixturesTest).
 
 Each `<fixtures>/<id>` is packed by `python3 scripts/pack_game.py <folder> <out>`, exactly as a person or the release
-workflow runs it, into `<out>/<id>.cpgame`, and the hash the packer printed is written beside it as `<out>/<id>.hash`
+workflow runs it, into `<out>/<id>.chgame`, and the hash the packer printed is written beside it as `<out>/<id>.hash`
 (one line of 16 hex digits). The installer's own hash of the installed game is compared with that line, so a change to
 the packer's zip framing, member order, or hash formula that the C++ installer does not follow fails the suite.
 

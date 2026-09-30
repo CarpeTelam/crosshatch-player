@@ -19,10 +19,10 @@ inline constexpr const char* GAMES_DATA_DIR = "/.games-data";
 // up to "/store.bin.tmp" (GameSaveStore.cpp checks the longest).
 inline constexpr size_t DATA_PATH_BYTES = 64;
 
-// The inbox: a person puts `<name>.cpgame` files here (web file manager or USB) and
+// The inbox: a person puts `<name>.chgame` files here (web file manager or USB) and
 // opening Games installs them (GamePackageInstaller).
 inline constexpr const char* INBOX_DIR = "/games";
-// Room for a file name in the inbox, ".cpgame" included and the terminating NUL too.
+// Room for a file name in the inbox, ".chgame" included and the terminating NUL too.
 inline constexpr size_t INBOX_NAME_BYTES = 64;
 // Room for an inbox path with ".bad" appended: INBOX_DIR, "/", the longest name.
 inline constexpr size_t INBOX_PATH_BYTES = 80;

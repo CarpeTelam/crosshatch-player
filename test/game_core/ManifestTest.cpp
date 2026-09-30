@@ -279,8 +279,8 @@ TEST(ManifestTest, RejectsMalformedJson) {
 // Every fixture game's manifest.json passes what GameRegistry requires to list a game,
 // and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
 // name, it passes Manifest::check against this host, and it offers solo. Exactly the folders that
-// are not games of their own (faults, modules, surface) have none, so a game
-// fixture that loses its manifest fails here.
+// are not games of their own (changed, which holds only game folders one level down, and faults, modules, surface) have
+// none, so a game fixture that loses its manifest fails here.
 TEST(ManifestTest, EveryFixtureManifestIsListed) {
   std::set<std::string> listed;
   std::set<std::string> withoutManifest;
@@ -308,7 +308,7 @@ TEST(ManifestTest, EveryFixtureManifestIsListed) {
     EXPECT_NE(check.modes & Manifest::MODE_SOLO, 0) << folder << " offers no solo mode on this host";
     listed.insert(folder);
   }
-  EXPECT_EQ(withoutManifest, (std::set<std::string>{"faults", "modules", "surface"}));
+  EXPECT_EQ(withoutManifest, (std::set<std::string>{"changed", "faults", "modules", "surface"}));
   EXPECT_TRUE(listed.count("slow-restart")) << "slow-restart's manifest was not found";
   EXPECT_TRUE(listed.count("timing")) << "timing's manifest was not found";
   EXPECT_TRUE(listed.count("tracer")) << "tracer's manifest was not found";

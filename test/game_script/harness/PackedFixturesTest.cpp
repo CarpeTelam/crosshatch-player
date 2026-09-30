@@ -59,18 +59,18 @@ class PackedFixtureTest : public PackedFixtureBase, public ::testing::WithParamI
 
 TEST_P(PackedFixtureTest, ThePackersPackageInstallsAndIsListedWithItsOwnHash) {
   const std::string id = GetParam();
-  const Bytes package = packed(id + ".cpgame");
+  const Bytes package = packed(id + ".chgame");
   ASSERT_FALSE(package.empty());
   std::string packerHash = toText(packed(id + ".hash"));
   while (!packerHash.empty() && (packerHash.back() == '\n' || packerHash.back() == '\r')) packerHash.pop_back();
   ASSERT_EQ(packerHash.size(), 16u) << "the hash line pack_game.py printed";
-  fakesd::addFile("/games/" + id + ".cpgame", package);
+  fakesd::addFile("/games/" + id + ".chgame", package);
 
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   ASSERT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
   EXPECT_EQ(report.failed, 0);
-  EXPECT_FALSE(exists("/games/" + id + ".cpgame"));
-  EXPECT_FALSE(exists("/games/" + id + ".cpgame.bad"));
+  EXPECT_FALSE(exists("/games/" + id + ".chgame"));
+  EXPECT_FALSE(exists("/games/" + id + ".chgame.bad"));
   EXPECT_FALSE(exists("/.games-tmp"));
 
   // Listed through the registry, whole, and with the hash the packer printed: the two implementations of R4 agree.
@@ -99,7 +99,7 @@ class PackedImagesTest : public PackedFixtureBase {};
 // The fixture with an icon.png and other .png images: the installer turned each into a .bmp the loader reads, and the
 // launcher's icon into the 64 x 64 one, at the packer's word (the packer already refused a side that would not scale).
 TEST_F(PackedImagesTest, TheIconAndTheImagesAreConvertedAndTheirPngsAreGone) {
-  fakesd::addFile("/games/pack-images.cpgame", packed("pack-images.cpgame"));
+  fakesd::addFile("/games/pack-images.chgame", packed("pack-images.chgame"));
   ASSERT_EQ(GamePackageInstaller::installAll().installed, 1);
 
   const std::string dir = "/.games/pack-images/";
@@ -124,7 +124,7 @@ TEST_F(PackedImagesTest, TheIconAndTheImagesAreConvertedAndTheirPngsAreGone) {
 
 // The fixture with one other image, the worst-case size: the packer accepts what the installer's budget accepts.
 TEST_F(PackedImagesTest, ALargeImageAssetIsConvertedToItsOwnSize) {
-  fakesd::addFile("/games/timing.cpgame", packed("timing.cpgame"));
+  fakesd::addFile("/games/timing.chgame", packed("timing.chgame"));
   ASSERT_EQ(GamePackageInstaller::installAll().installed, 1);
   const GameCore::ImageHeader gray = headerOf("/.games/timing/gray.bmp");
   EXPECT_EQ(gray.width, 480u);

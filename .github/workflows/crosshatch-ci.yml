@@ -19,6 +19,8 @@
 #   would go unnoticed on compliant PRs, and so does a file that runs no test (its log has no "Ran <n>" line with
 #   n > 0, as when unittest.main() is missing). scripts/sim_sh_test.py also tests the simulator skill's sim.sh setup
 #   and check on scratch repositories. docs/crosshatch/fork-scripts.md has the script conventions.
+# - Game packages is not here: it runs only on a labelled pull request, from crosshatch-game-packages.yml, so a label
+#   event never reruns these jobs.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.

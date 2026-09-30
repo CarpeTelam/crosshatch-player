@@ -5,14 +5,14 @@
 
 #include "GamePaths.h"
 
-// The one installer (spine AD-16): it installs every /games/*.cpgame when Games opens.
+// The one installer (spine AD-16): it installs every /games/*.chgame when Games opens.
 // For each file it validates the package (AD-15), extracts it to /.games-tmp/<id>/,
 // converts its images to .bmp, replaces any /.games/<id>/ with the new folder, writes .pkg
 // last as the commit marker, and deletes the inbox file. Validation comes first and touches no card
 // folder: the file's size, then the zip's directory (ZipDirectory), then each member as it streams
 // (its declared size as a cap, no bytecode, its CRC). /.games-data/<id>/ is never touched.
-// A package that is not valid is renamed <name>.cpgame.bad. An installed package whose inbox file will not delete is
-// renamed <name>.cpgame.installed instead, so it does not install again on every visit. All file access goes through
+// A package that is not valid is renamed <name>.chgame.bad. An installed package whose inbox file will not delete is
+// renamed <name>.chgame.installed instead, so it does not install again on every visit. All file access goes through
 // Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
 namespace GamePackageInstaller {
 
@@ -60,10 +60,10 @@ struct Report {
   char firstFile[GamePaths::INBOX_NAME_BYTES] = {};
 };
 
-// Whether /games holds at least one .cpgame file.
+// Whether /games holds at least one .chgame file.
 bool hasInbox();
 
-// Installs every .cpgame in /games (at most MAX_PER_RUN, the rest on the next call) and
+// Installs every .chgame in /games (at most MAX_PER_RUN, the rest on the next call) and
 // removes a leftover /.games-tmp.
 Report installAll();
 

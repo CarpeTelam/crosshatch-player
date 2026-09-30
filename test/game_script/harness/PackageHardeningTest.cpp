@@ -28,7 +28,7 @@ using GamePackageInstaller::Error;
 namespace {
 
 struct Case {
-  std::string file;      // "<name>.cpgame", in HARDENING_PACKAGES_DIR
+  std::string file;      // "<name>.chgame", in HARDENING_PACKAGES_DIR
   std::string expected;  // "Ok", or an Error's name
   int64_t held = -1;     // the most bytes any file under /.games-tmp may ever hold, or -1 for no check
 };
@@ -208,15 +208,15 @@ TEST_F(HardeningTest, EveryErrorHasItsOwnDescription) {
 TEST_F(HardeningTest, ADirectoryThatCannotBeReadKeepsTheFileForTheNextTry) {
   const Bytes package = gamePackage("g");
   seedInstalledGame();
-  fakesd::addFile("/games/g.cpgame", package);
+  fakesd::addFile("/games/g.chgame", package);
   const Snapshot before = snapshotOfGames();
-  fakesd::sim().failReadAt["/games/g.cpgame"] = 0;
+  fakesd::sim().failReadAt["/games/g.chgame"] = 0;
 
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
   EXPECT_TRUE(snapshotOfGames() == before);
 
   fakesd::sim().failReadAt.clear();  // the card recovers
@@ -224,31 +224,31 @@ TEST_F(HardeningTest, ADirectoryThatCannotBeReadKeepsTheFileForTheNextTry) {
 }
 
 TEST_F(HardeningTest, AFileThatWillNotOpenKeepsItToo) {
-  fakesd::addFile("/games/g.cpgame", gamePackage("g"));
-  fakesd::sim().failOpen.insert("/games/g.cpgame");
+  fakesd::addFile("/games/g.chgame", gamePackage("g"));
+  fakesd::sim().failOpen.insert("/games/g.chgame");
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   EXPECT_EQ(report.firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
 }
 
 // ---- a rejection is one file's, not the run's ---------------------------------------------------------
 
 TEST_F(HardeningTest, ARejectedPackageDoesNotBlockTheGoodOnesAfterIt) {
   seedInstalledGame();
-  fakesd::addFile("/games/a-bad.cpgame", readHostFile(std::string(HARDENING_PACKAGES_DIR) + "/crc-deflated.cpgame"));
-  fakesd::addFile("/games/b-good.cpgame", gamePackage("second"));
+  fakesd::addFile("/games/a-bad.chgame", readHostFile(std::string(HARDENING_PACKAGES_DIR) + "/crc-deflated.chgame"));
+  fakesd::addFile("/games/b-good.chgame", gamePackage("second"));
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::BadCrc);
-  EXPECT_TRUE(exists("/games/a-bad.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/a-bad.chgame.bad"));
   EXPECT_TRUE(exists("/.games/second/.pkg"));
 }
 
 TEST_F(HardeningTest, TheVectorPackageStillInstallsWithItsCrcsChecked) {
   const Vector vector = loadVector();
-  fakesd::addFile("/games/package-vector.cpgame", vector.package);
+  fakesd::addFile("/games/package-vector.chgame", vector.package);
   const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/" + vector.id + "/.pkg")), "v1\n" + vector.packageHash + "\n");

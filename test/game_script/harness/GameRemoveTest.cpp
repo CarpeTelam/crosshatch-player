@@ -30,7 +30,7 @@ class RemoveTest : public ::testing::Test {
 
   // Installs `id` through the real installer, from the inbox.
   static void install(const std::string& id) {
-    fakesd::addFile("/games/" + id + ".cpgame", gamePackage(id));
+    fakesd::addFile("/games/" + id + ".chgame", gamePackage(id));
     const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
     ASSERT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
   }

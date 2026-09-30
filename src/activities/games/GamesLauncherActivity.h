@@ -9,7 +9,7 @@
 #include "games/GameRegistry.h"
 #include "games/GameRowIcon.h"
 
-// The Games launcher (Home → Games; spine AD-22): when it opens it installs every /games/*.cpgame
+// The Games launcher (Home → Games; spine AD-22): when it opens it installs every /games/*.chgame
 // (GamePackageInstaller), then lists every installed game as a row of icon and name, paged by the
 // list. A row's icon is the package's icon.bmp, else the manifest's library icon in its weight, else
 // `game-controller` (GameRowIcon). A game this host cannot start (Manifest::check) shows its reason
