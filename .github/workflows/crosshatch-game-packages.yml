@@ -1,0 +1,45 @@
+# Game packages: on a pull request that carries the label `package-games`, packs the entry-14 device-run games with
+# scripts/pack_device_run.py and uploads the folder (the packages and HASHES.txt) as the `game-packages` artifact,
+# kept 30 days. It is not a check: it is not in Crosshatch Test Status's needs, and a skipped run blocks nothing.
+#
+# It lives apart from crosshatch-ci.yml on purpose. It needs the `labeled` event, and a label event in
+# crosshatch-ci.yml would join that workflow's per-PR concurrency group, cancel the run in progress, and turn the
+# required Crosshatch Test Status red on an unchanged head commit. Here a label event runs only this job, and only
+# for the `package-games` label.
+name: Crosshatch game packages
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crosshatch-game-packages-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  game-packages:
+    name: Game packages
+    if: contains(github.event.pull_request.labels.*.name, 'package-games') && (github.event.action != 'labeled' || github.event.label.name == 'package-games')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Needs neither history nor the submodule: the packer, the fixtures, and the committed vector are in the tree.
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Pack the device-run games
+        run: python3 scripts/pack_device_run.py "$RUNNER_TEMP/game-packages"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: game-packages
+          path: ${{ runner.temp }}/game-packages
+          retention-days: 30
+          if-no-files-found: error

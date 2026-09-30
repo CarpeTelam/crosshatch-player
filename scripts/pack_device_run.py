@@ -8,12 +8,13 @@ Writes `<out-dir>/` (created if missing):
   counter.chgame, loop.chgame, timing.chgame, pack-images.chgame   the fixtures of the same names
   counter-changed.chgame       test/game_script/fixtures/changed/counter: the same id at version 1.0.1, "Counter v2"
   invalid-binary-lua.chgame    the hardening generator's `binary-lua-stored` case, which the installer must set aside
-  package_vector.chgame        test/game_core/package_vector.chgame, the shared hash vector, copied
+  package_vector.chgame        the shared hash vector, copied: the file package_vectors.json's `hash_vector.package` names,
+                               next to it (test/game_core/package_vector.chgame)
   HASHES.txt                   one `<file> <hash>` line per file, in that order: the hash scripts/pack_game.py printed,
                                the vector's recorded `package_hash` for the vector, and `(invalid)` for the invalid one
 
 Each game is packed by running scripts/pack_game.py, as a person or the release workflow runs it. The `Game packages`
-job of .github/workflows/crosshatch-ci.yml runs this script on a pull request labelled `package-games` and uploads the
+job of .github/workflows/crosshatch-game-packages.yml runs this script on a pull request labelled `package-games` and uploads the
 folder as the `game-packages` artifact. HASHES.txt is written last, only when every package was made, and one left in
 `<out-dir>` by an earlier run is removed first, so a failed run leaves none.
 
@@ -39,7 +40,6 @@ FIXTURES = pathlib.Path('test/game_script/fixtures')
 PACKER = pathlib.Path('scripts/pack_game.py')
 GENERATOR = pathlib.Path('test/game_script/harness/gen_hardening_packages.py')
 VECTORS = pathlib.Path('test/game_core/package_vectors.json')
-VECTOR_PACKAGE = pathlib.Path('test/game_core/package_vector.chgame')
 
 # (game folder under the fixtures, file name without .chgame), in the order HASHES.txt lists them.
 GAMES = (
@@ -50,8 +50,8 @@ GAMES = (
     ('changed/counter', 'counter-changed'),
 )
 INVALID_CASE = 'binary-lua-stored.chgame'
+INVALID_EXPECTED = 'BinaryLua'  # what cases.txt says the installer must do with it
 INVALID_NAME = 'invalid-binary-lua.chgame'
-VECTOR_NAME = 'package_vector.chgame'
 HASHES_NAME = 'HASHES.txt'
 HASH = re.compile(r'[0-9a-f]{16}')
 
@@ -101,22 +101,32 @@ def invalid_package(root, staging):
     package = out / INVALID_CASE
     if not package.is_file():
         raise SetupError(f'{GENERATOR} wrote no {INVALID_CASE}')
+    try:
+        cases = [line.split() for line in (out / 'cases.txt').read_text(encoding='utf-8').splitlines()]
+    except OSError as exc:
+        raise SetupError(f'{GENERATOR} wrote no readable cases.txt: {exc}')
+    if [INVALID_CASE, INVALID_EXPECTED] not in cases:
+        raise Failure(f'cases.txt has no line "{INVALID_CASE} {INVALID_EXPECTED}"; {INVALID_CASE} is no longer the '
+                      f'package the installer must set aside as a compiled Lua file')
     return package
 
 
 def vector_package(root):
     """(committed vector package, its recorded hash); a Failure when the file is not the one the vectors describe."""
+    vectors = root / VECTORS
     try:
-        vector = json.loads((root / VECTORS).read_text(encoding='utf-8'))['hash_vector']
-        recorded, size = vector['package_hash'], vector['package_bytes']
-        package = root / VECTOR_PACKAGE
+        vector = json.loads(vectors.read_text(encoding='utf-8'))['hash_vector']
+        recorded, size, name = vector['package_hash'], vector['package_bytes'], vector['package']
+        if not isinstance(name, str) or not name or pathlib.PurePath(name).name != name:
+            raise ValueError(f'package {name!r} is not a file name')
+        package = vectors.parent / name
         actual = package.stat().st_size
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise SetupError(f'cannot read the package vector: {exc}')
     if not isinstance(recorded, str) or not HASH.fullmatch(recorded):
         raise SetupError(f'{VECTORS}: package_hash {recorded!r} is not a package hash')
     if actual != size:
-        raise Failure(f'{VECTOR_PACKAGE} is {actual} bytes; {VECTORS} says {size}')
+        raise Failure(f'{package} is {actual} bytes; {VECTORS} says {size}')
     return package, recorded
 
 
@@ -135,7 +145,7 @@ def pack_device_run(root, out_dir):
             files.append((f'{name}.chgame', package, package_hash))
         files.append((INVALID_NAME, invalid_package(root, staging), '(invalid)'))
         package, recorded = vector_package(root)
-        files.append((VECTOR_NAME, package, recorded))
+        files.append((package.name, package, recorded))
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
             for file_name, source, _ in files:

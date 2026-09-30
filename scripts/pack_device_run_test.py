@@ -56,9 +56,11 @@ out = pathlib.Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=True)
 (out / 'other.chgame').write_bytes(b'other')
 (out / 'binary-lua-stored.chgame').write_bytes(b'BAD')
+(out / 'cases.txt').write_text('other.chgame Ok\\nbinary-lua-stored.chgame BinaryLua\\n')
 '''
 VECTOR_BYTES = b'vector-package'
 VECTOR_HASH = '0123456789abcdef'
+VECTOR_FILE = 'the_vector.chgame'  # not the committed name: the script must read it from the JSON
 
 
 def fake_hash(text):
@@ -80,8 +82,8 @@ def make_root(base):
     write(root / pdr.GENERATOR, FAKE_GENERATOR)
     for folder, _ in pdr.GAMES:
         write(root / pdr.FIXTURES / folder / 'main.lua', f'-- {folder}\n')
-    write(root / pdr.VECTOR_PACKAGE, VECTOR_BYTES)
-    vectors = {'hash_vector': {'package_hash': VECTOR_HASH, 'package_bytes': len(VECTOR_BYTES)}}
+    write(root / pdr.VECTORS.parent / VECTOR_FILE, VECTOR_BYTES)
+    vectors = {'hash_vector': {'package_hash': VECTOR_HASH, 'package_bytes': len(VECTOR_BYTES), 'package': VECTOR_FILE}}
     write(root / pdr.VECTORS, json.dumps(vectors))
     return root
 
@@ -119,13 +121,13 @@ class FakeTreeTest(unittest.TestCase):
             ('pack-images.chgame', fake_hash('-- pack-images\n')),
             ('counter-changed.chgame', fake_hash('-- changed/counter\n')),
             ('invalid-binary-lua.chgame', '(invalid)'),
-            ('package_vector.chgame', VECTOR_HASH),
+            (VECTOR_FILE, VECTOR_HASH),
         ]
         self.assertEqual(hashes_of(self.out), expected)
-        self.assertEqual(sorted(p.name for p in self.out.iterdir()), sorted(FILE_ORDER + ['HASHES.txt']))
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()), sorted(FILE_ORDER[:-1] + [VECTOR_FILE, 'HASHES.txt']))
         self.assertEqual((self.out / 'counter-changed.chgame').read_bytes(), b'PK-- changed/counter\n')
         self.assertEqual((self.out / 'invalid-binary-lua.chgame').read_bytes(), b'BAD')
-        self.assertEqual((self.out / 'package_vector.chgame').read_bytes(), VECTOR_BYTES)
+        self.assertEqual((self.out / VECTOR_FILE).read_bytes(), VECTOR_BYTES)
         self.assertIn('counter-changed.chgame ' + fake_hash('-- changed/counter\n'), stdout)
 
     def test_an_existing_out_dir_is_reused_and_the_files_replaced(self):
@@ -195,26 +197,46 @@ class FakeTreeTest(unittest.TestCase):
         self.assertEqual(code, fork_common.COULD_NOT_RUN)
         self.assertIn('wrote no binary-lua-stored.chgame', stderr)
 
+    def test_a_case_that_no_longer_expects_binary_lua_is_exit_1(self):
+        gen = FAKE_GENERATOR.replace('binary-lua-stored.chgame BinaryLua', 'binary-lua-stored.chgame NotAPackage')
+        write(self.root / pdr.GENERATOR, gen)
+        code, _, stderr = call(self.root, self.out)
+        self.assertEqual(code, fork_common.FAIL)
+        self.assertIn('cases.txt has no line "binary-lua-stored.chgame BinaryLua"', stderr)
+        self.assertFalse((self.out / 'HASHES.txt').exists())
+
+    def test_a_generator_without_cases_txt_is_exit_2(self):
+        write(self.root / pdr.GENERATOR, FAKE_GENERATOR.replace("(out / 'cases.txt')", "(out / 'cases.txt.x')"))
+        self.assertEqual(call(self.root, self.out)[0], fork_common.COULD_NOT_RUN)
+
+    def test_the_vector_file_is_the_one_the_json_names_and_a_path_is_refused(self):
+        vectors = {'hash_vector': {'package_hash': VECTOR_HASH, 'package_bytes': 1, 'package': '../repo/x.chgame'}}
+        write(self.root / pdr.VECTORS, json.dumps(vectors))
+        code, _, stderr = call(self.root, self.out)
+        self.assertEqual(code, fork_common.COULD_NOT_RUN)
+        self.assertIn('is not a file name', stderr)
+        self.assertEqual(call(make_root(self.tmp.name + '/two'), self.out)[0], fork_common.PASS)
+
     def test_a_missing_generator_is_exit_2(self):
         (self.root / pdr.GENERATOR).unlink()
         self.assertEqual(call(self.root, self.out)[0], fork_common.COULD_NOT_RUN)
 
     def test_a_vector_package_of_another_size_is_exit_1(self):
-        write(self.root / pdr.VECTOR_PACKAGE, VECTOR_BYTES + b'x')
+        write(self.root / pdr.VECTORS.parent / VECTOR_FILE, VECTOR_BYTES + b'x')
         code, _, stderr = call(self.root, self.out)
         self.assertEqual(code, fork_common.FAIL)
-        self.assertIn('package_vector.chgame is 15 bytes', stderr)
+        self.assertIn('the_vector.chgame is 15 bytes', stderr)
         self.assertFalse((self.out / 'HASHES.txt').exists())
 
     def test_a_missing_vector_package_or_vectors_file_is_exit_2(self):
-        (self.root / pdr.VECTOR_PACKAGE).unlink()
+        (self.root / pdr.VECTORS.parent / VECTOR_FILE).unlink()
         self.assertEqual(call(self.root, self.out)[0], fork_common.COULD_NOT_RUN)
-        write(self.root / pdr.VECTOR_PACKAGE, VECTOR_BYTES)
+        write(self.root / pdr.VECTORS.parent / VECTOR_FILE, VECTOR_BYTES)
         (self.root / pdr.VECTORS).unlink()
         self.assertEqual(call(self.root, self.out)[0], fork_common.COULD_NOT_RUN)
 
     def test_a_vector_hash_that_is_not_a_hash_is_exit_2(self):
-        vectors = {'hash_vector': {'package_hash': 'XYZ', 'package_bytes': len(VECTOR_BYTES)}}
+        vectors = {'hash_vector': {'package_hash': 'XYZ', 'package_bytes': len(VECTOR_BYTES), 'package': VECTOR_FILE}}
         write(self.root / pdr.VECTORS, json.dumps(vectors))
         code, _, stderr = call(self.root, self.out)
         self.assertEqual(code, fork_common.COULD_NOT_RUN)
@@ -257,7 +279,7 @@ class RealTreeTest(unittest.TestCase):
     def test_the_vector_is_the_committed_file_with_its_recorded_hash(self):
         vectors = json.loads((REPO / pdr.VECTORS).read_text(encoding='utf-8'))['hash_vector']
         self.assertEqual(dict(hashes_of(self.out))['package_vector.chgame'], vectors['package_hash'])
-        self.assertEqual((self.out / 'package_vector.chgame').read_bytes(), (REPO / pdr.VECTOR_PACKAGE).read_bytes())
+        self.assertEqual((self.out / 'package_vector.chgame').read_bytes(), (REPO / pdr.VECTORS.parent / 'package_vector.chgame').read_bytes())
 
     def test_the_changed_counter_is_counter_at_1_0_1_titled_counter_v2(self):
         def members(name):

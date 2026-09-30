@@ -70,7 +70,7 @@ The build agent implemented this directly: the rename is a mechanical `sed`, and
 
 - `.cpgame` check: `hasPackageExtension` matches `.chgame` with `strcasecmp`, so `OLD2.CPGAME` is also ignored (tested).
 - The seven packages packed from the archive tree are byte-identical to the entry-14 files committed under `device-run/` (`cmp`), so the hashes in the packet stand.
-- Adding `labeled` to `types` means any label added to a PR reruns every job, and `concurrency` (`cancel-in-progress`) cancels a run in progress for the same PR. The cancelled run's `Crosshatch Test Status` reports the cancellation, which fails on the head commit (`crosshatch-test-status`'s own rule), and the new run then reports the real result. Accepted by the coordinator ("acceptable").
+- Superseded by the fix commit: `labeled` in `crosshatch-ci.yml` cancelled the run in progress and turned `Crosshatch Test Status` red on the head SHA, so the `Game packages` job moved to `.github/workflows/crosshatch-game-packages.yml` (own trigger with `labeled`, own concurrency group, `contents: read`, and a condition that on a `labeled` event requires the label to be `package-games`). `crosshatch-ci.yml` has its `types` as before; a label event runs nothing there.
 - The packet (`device-run-packet.md`) and `device-run/*.cpgame` are the orchestrator's; not touched.
 
 ## Plan Change Log
@@ -78,6 +78,8 @@ The build agent implemented this directly: the rename is a mechanical `sed`, and
 - Coordinator, mid-build: the CI part changed from a step in `Fork script tests` to a script and a labelled job. KEEP: the packing commands and the name `game-packages`; the earlier step's hashes matched the committed packages.
 
 ## Review Triage Log
+
+Fix commit (independent review of `7af3fe19`): the `labeled` trigger finding (row 6 below, first accepted) was confirmed medium and fixed as above. Also fixed: `pack_device_run.py` reads the vector's file name from `hash_vector.package` and resolves it next to the JSON; it parses the generator's `cases.txt` and exits 1 unless it holds `binary-lua-stored.chgame BinaryLua`; a test for each. The independent review's other findings are the coordinator's.
 
 Pass 1, on the diff `770116eb..HEAD` (WIP commit `pack_device_run.py` and the labelled job). All four lenses ran as context-free subagents (blind hunter, edge case hunter, verification gap, intent alignment) and returned before triage. Counts: 3 medium/low patched, 4 low deferred or noted, 12 rejected or false, 1 accepted by instruction.
 
@@ -128,4 +130,6 @@ package_vector.chgame 0530a15766e91bf1
 - `git grep -n -i cpgame -- . ':(exclude)_bmad-output'` -- only the deliberate references: `docs/crosshatch/formats.md:212-213` (the sentence that `.cpgame` was the earlier name and is ignored) and `test/game_script/harness/GamePackageInstallerTest.cpp:488-507` (the comment, the test name `ACpgameFileIsIgnored`, and its `old.cpgame`, `OLD2.CPGAME`, and the three "not renamed" checks).
 - The spine: `git diff 770116eb HEAD` on it is eight lines changed, each only `cpgame` to `chgame`.
 
-**Not exercised locally (CI only):** the workflow's trigger, the `if:` label gate, and `actions/upload-artifact@v6` (the file parses with `yaml.safe_load`; the job's command was run as above). No `Assumption for entry 14:` line was added.
+**Fix commit:** every `scripts/*_test.py` passes (`pack_device_run` now 25 tests); `pack_device_run.py` from a fresh archive tree of the fix commit exits 0 and its output is `cmp`-identical to the committed `device-run/*.cpgame`; `check_upstream_touches.py` PASS; both workflow files load with `yaml.safe_load`; `clang-format-fix` twice, nothing new. No C++ changed, so no firmware rebuild.
+
+**Not exercised locally (CI only):** the workflows' triggers, the `if:` label gates, and `actions/upload-artifact@v6` (the job's command was run as above). No `Assumption for entry 14:` line was added.

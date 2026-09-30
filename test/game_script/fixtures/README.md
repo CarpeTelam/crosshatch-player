@@ -122,9 +122,9 @@ The packages entry 14 puts on a device are never committed. `python3 scripts/pac
 `counter`, `loop`, `timing`, and `pack-images` from here, `changed/counter` as `counter-changed`, the hardening
 generator's `binary-lua-stored` case as `invalid-binary-lua.chgame` (it must install as `.bad`), and
 `test/game_core/package_vector.chgame`, with a `HASHES.txt` of the hash `pack_game.py` printed for each. On a pull
-request, add the label `package-games`: the `Game packages` job of `.github/workflows/crosshatch-ci.yml` runs the
+request, add the label `package-games`: the `Game packages` job of `.github/workflows/crosshatch-game-packages.yml` runs the
 script and uploads `<dir>` as the artifact `game-packages` (kept 30 days). The job is not a required check and runs
-only with the label; adding any label reruns the workflow's other jobs too.
+only with the label; adding another label does nothing there and reruns nothing in `crosshatch-ci.yml`.
 
 ## Fault bands
 
