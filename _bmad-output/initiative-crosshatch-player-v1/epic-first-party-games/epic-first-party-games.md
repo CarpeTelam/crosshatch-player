@@ -55,4 +55,4 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 - Also before the freeze (epic-install-and-launcher's entry-14 device run, owner, 2026-09-30):
   - whether a per-frame budget covers filled `rect`, `clear`, and `circle` commands, as `frame_icon_image_pixels` covers icons and images. On an X4 Pro, 2,048 full-canvas filled rects replayed in 3,142 ms under `RenderLock`; the owner accepted that worst case for now (A16).
   - whether a package's members get a cap on their extracted total, or a free-space check from the directory pass's declared sizes (about 4 MB is possible today; `deferred-work.md` `## 4.13`, A19).
-  - the Lua C-stack headroom decision: the recursion guard stopped with 1,412 B of stack free (1,652 B at a hook) on the device (`deferred-work.md` `## 3.2`).
+  - the Lua C-stack headroom: decided by the owner at that run. The 16 KB stack and the 2,048 B headroom stay, since the guard stopped with 1,412 B free (1,652 B at a hook). The decision reopens if a device log shows under 512 B free.

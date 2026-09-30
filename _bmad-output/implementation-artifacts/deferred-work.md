@@ -481,3 +481,11 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md` (the owner's answers to A15–A27, 2026-09-30)
   summary: Where the entry-14 deferrals that had no trigger now land. A15, the inert pause menu in the Play-again gap, goes to `## owner-e4-title-screen`. A16(b), a per-frame fill budget, and A19, a cap on a package's extracted total, go to epic-first-party-games' "before the freeze" Notes, beside the device's stack figure. A21, the reasons `ZipFile` and `PngToBmpConverter` do not give, has the trigger "the next ledger change". The rest of A26, the device cost of a `resume.bin` write and the launcher's `peek` time at entry, goes to epic-pass-and-play's closing device run.
   evidence: The owner agreed each home at the entry-14 device run. A18 (the `.removing` marker), A22 ("and N more"), and step 9's finding (the `loop` fixture's Slow C calls band is abandoned, not cancelled, on the device) are fixed before the epic closes, as e4-z1 to e4-z3.
+## owner-e4-entry14
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md`
+  summary: Resolved by the entry-14 device run (2026-09-30): the `## 3.2` item "Run the `loop` fixture on an X4 Pro and record each band's outcome and the VM stopped line's stack high-water mark". Every band ended in its error view. The stack high-water marks were 12,932 B free for the budget bands and 1,412 B for recursion. Stuck in one C call was abandoned (leaking 1,032 B each time, by design). The owner kept the 16 KB stack and 2,048 B headroom.
+  evidence: The serial log in the plan's step 9 and 10 rows. The Slow C calls band was abandoned rather than cancelled, and is recalibrated by e4-z1.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md`
+  summary: The on-device recheck of e4-z1 (the `loop` fixture), e4-z2 (the `.removing` marker), and e4-z3 ("and N more"), and A8 (Games from Home lands on the last game's page), deferred by the owner to the epic-install-and-launcher retrospective.
+  evidence: The owner closed entry 14 before the three fixes merged. The plan's "Deferred to the retro session" section lists each check. Trigger: the retrospective session.

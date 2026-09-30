@@ -3,7 +3,7 @@ title: 'Device run and owner sign-off'
 type: 'chore'
 ticket: '14'
 created: '2026-09-30'
-status: 'in-progress'
+status: done
 ---
 
 # Device run and owner sign-off (entry 14)
@@ -48,3 +48,19 @@ Numbered as in the packet's table (A1–A32). Each is agreed unless noted otherw
 - **A13** (a New match from the game's own row replaces the save, with no confirmation): agreed for now. The owner asked why Counter kept its taps after New. It is by design: Counter reads its count from `ch.store`, which survives matches. The resume save was replaced, as step 6a showed through its hash. The title screen will offer Continue or New explicitly.
 - **A14** (the Continue list is rebuilt on entry and after each remove): agreed for now; it goes away with the title screen.
 - **A15–A27:** agreed, except where noted. A16: the owner asked whether the video times were accurate. The serial log confirmed them (a 3,142 ms replay plus a 559 ms refresh for band 3), and the owner accepted (a): no fill budget now. (b), a fill budget, goes to epic-first-party-games' pre-freeze list with A19. A18 and A22 are fixed now (e4-z2, e4-z3), and so is step 9's fixture finding (e4-z1). A15, A21, and the rest of A26 have homes in `deferred-work.md` `## owner-e4-homes`.
+- **A28–A31:** agreed. A31, the cluster-sharing risk on `resume.bin`'s rename, stays deferred: a guard is a storage design change.
+- **A32:** (a). The spine is amended: AD-17 and AD-20 now name the forced exit's retry of a `resume.bin` delete that Over could not finish, within the same 1,500 ms deadline (owner, 2026-09-30).
+- **The stack decision** (epic-script-runtime retro AI-3, `deferred-work.md` `## 3.2`): keep the 16 KB VM stack and the 2,048 B guard headroom. On the device, the recursion guard fired with 1,412 B still free (1,652 B at a hook), so the error path used about 640 B beyond the guard line and never neared overflow. The decision reopens if any device log shows under 512 B free.
+
+## Deferred to the retro session
+
+The owner deferred the on-device recheck of the fixes built after this run to the epic retrospective, in a fresh session:
+- **e4-z1:** repack `loop`, run "Slow C calls forever" tethered, and expect `VM stopped; ...` rather than `abandoning it`.
+- **e4-z2:** reflash, remove a game, and confirm that nothing else changes and no `.removing` stays behind.
+- **e4-z3:** put two invalid packages in `/games/`, and expect the note to show the first reason and "and 1 more".
+
+A8 (Games from Home lands on the last game's page) also waits for enough games to fill a second page.
+
+## Sign-off
+
+The owner ran the packet on an X4 Pro with the firmware of `216ccbd3` (CI build of `134afb4`). Every step passed. Step 9 had one finding, fixed as e4-z1, and step 10 passed on its second attempt. The owner answered every `Assumption for entry 14:` line (A1–A32), and signed off on entry 14 on 2026-09-30.
