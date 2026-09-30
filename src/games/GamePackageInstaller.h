@@ -72,10 +72,11 @@ bool hasInbox();
 Report installAll();
 
 // Removes an installed game: deletes /.games/<id>/. It writes an empty .removing marker in the folder first, then
-// deletes the .pkg, then the rest (removeDir, which takes the marker too). The .pkg goes before the rest because
-// removeDir deletes in directory order and a stop partway would otherwise leave a listed game with files missing; a
-// folder without a .pkg is not a game (GameRegistry). A stop after the marker, or after the .pkg, leaves a folder
-// that the next installAll finishes, because it holds the marker (a folder without one is never swept). Results:
+// deletes the .pkg, then every other entry, then the marker, then the folder. The .pkg goes before the rest because
+// a stop partway would otherwise leave a listed game with files missing (a folder without a .pkg is not a game,
+// GameRegistry), and the marker goes last because FAT can put it ahead of other files in directory order. A stop after
+// the marker, or after the .pkg, leaves a folder that the next installAll finishes, because it holds the marker (a
+// folder without one is never swept). Results:
 //   None       the folder is gone, or /.games can be opened and holds no such folder;
 //   SdCard     the marker could not be written (nothing else changed); a delete failed (the game is then listed
 //              whole, or not listed at all, never half listed, and the next installAll retries it);

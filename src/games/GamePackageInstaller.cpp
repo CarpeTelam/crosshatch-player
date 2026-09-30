@@ -44,6 +44,10 @@ static_assert(FILE_PATH_BYTES <= GamePaths::PATH_BYTES, "an extracted member's p
 static_assert(std::char_traits<char>::length(GamePaths::INBOX_DIR) + 1 + GamePaths::INBOX_NAME_BYTES <=
                   GamePaths::INBOX_PATH_BYTES,
               "an inbox path fits GamePaths::INBOX_PATH_BYTES");
+static_assert(std::char_traits<char>::length(GamePaths::REMOVING_NAME) + 2 <= GameCore::MEMBER_NAME_BYTES + 3,
+              "removeFolderMarkerLast's name buffer holds the marker's name");
+static_assert(DIR_BYTES + GameCore::MEMBER_NAME_BYTES + 3 <= GamePaths::PATH_BYTES,
+              "removeFolderMarkerLast builds a child's path in a GamePaths::PATH_BYTES buffer");
 static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs in a byte");
 static_assert(GameCore::Manifest::MAX_ID_BYTES + 2 <= GamePaths::INBOX_NAME_BYTES,
               "finishRemovals reads a folder name into INBOX_NAME_BYTES and skips one that fills it");
@@ -280,6 +284,50 @@ bool hasRemovingMarker(const char* id) {
   return false;
 }
 
+// Deletes /.games/<id>/ (`dirPath`) with the marker last: every other entry first, then .removing, then the folder.
+// removeDir would delete in directory order, and FAT reuses freed directory slots, so a .removing created after the
+// game's files can sit ahead of some of them and go before them; a stop after that would leave an unmarked, unlisted
+// folder that nothing reclaims. A subfolder goes with removeDir (nothing in a game has one). A child whose name does
+// not fit the buffer is left to removeDir, which takes the marker in its own order; that is not a name a game has.
+// (noinline: its name and path buffers and two handles must not join removeFolder's frame.)
+[[gnu::noinline]] bool removeFolderMarkerLast(const char* dirPath) {
+  // A member's name, ".pkg", ".removing", and ".xlink" all fit; the buffer is small to keep this frame under 256 B.
+  char name[GameCore::MEMBER_NAME_BYTES + 3];
+  char path[GamePaths::PATH_BYTES];
+  bool skipped = false;
+  {
+    auto dir = Storage.open(dirPath);
+    if (!dir || !dir.isDirectory()) return false;
+    dir.rewindDirectory();
+    for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+      const size_t length = entry.getName(name, sizeof(name));
+      const bool isFolder = entry.isDirectory();
+      entry.close();
+      if (length == 0 || length >= sizeof(name) - 1) {  // getName gives 0 or a cut name when it does not fit
+        skipped = true;
+        continue;
+      }
+      if (strcasecmp(name, GamePaths::REMOVING_NAME) == 0) continue;  // (FAT matches names without regard to case)
+      const int written = snprintf(path, sizeof(path), "%s/%s", dirPath, name);
+      if (written < 0 || static_cast<size_t>(written) >= sizeof(path)) {
+        skipped = true;
+        continue;
+      }
+      if (!(isFolder ? Storage.removeDir(path) : Storage.remove(path))) {
+        LOG_ERR("GAME", "Cannot remove %s", path);
+        return false;
+      }
+    }
+  }
+  if (skipped) return Storage.removeDir(dirPath);
+  snprintf(path, sizeof(path), "%s/%s", dirPath, GamePaths::REMOVING_NAME);
+  if (Storage.exists(path) && !Storage.remove(path)) {
+    LOG_ERR("GAME", "Cannot remove %s", path);
+    return false;
+  }
+  return Storage.rmdir(dirPath);
+}
+
 // Removes /.games/<id>/ for a vetted id: the marker, then the .pkg, then the rest. Shared by remove (a person's
 // request) and finishRemovals (a request that stopped partway), so both keep every guard. Results are remove's.
 Error removeFolder(const char* id) {
@@ -313,9 +361,9 @@ Error removeFolder(const char* id) {
       return Error::SdCard;
     }
   }
-  // removeDir takes the marker with the rest, in directory order.
+  // Everything else, then the marker, then the folder: the marker outlives every file it stands for.
   snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
-  if (!Storage.removeDir(path)) {
+  if (!removeFolderMarkerLast(path)) {
     LOG_ERR("GAME", "Cannot remove %s", path);
     return Error::SdCard;
   }

@@ -74,10 +74,12 @@ Implemented directly in the foreground by the build agent (the orchestrator's br
 - `GamePaths.h`: `REMOVING_NAME`.
 - `GamePackageInstaller.cpp`: `remove` is now the id check, the `/.games` open check, and `removeFolder(id)`; `removeFolder` is the old body with the marker step added after the probe; `isGameId`, `hasRemovingMarker`, `writeRemovingMarker`, `finishRemovals` are new; `installAll` calls `finishRemovals()` after `removeTmp()`. A `static_assert` ties `MAX_ID_BYTES` to the name buffer.
 - Frames: `writeRemovingMarker` and `finishRemovals` are `[[gnu::noinline]]`. The first build inlined the marker writer into `removeFolder` and put that frame at exactly 256 B; noinline brought it to 160 B.
-- Tests: 12 new cases and 3 one-line additions in `GameRemoveTest.cpp`; `.removing` and `.pkg` join the off-whitelist member names in `GamePackageInstallerTest.cpp`. A mutation check (dropping the marker test from `finishRemovals`) fails 5 of them, among them the hand-copied folder case.
+- Tests: 12 new cases and 2 one-line additions to existing cases in `GameRemoveTest.cpp`; `.removing` and `.pkg` join the off-whitelist member names in `GamePackageInstallerTest.cpp`. A mutation check (dropping the marker test from `finishRemovals`) fails 5 of them, among them the hand-copied folder case.
 - The `_bmad/render/` folder the workflow renders is untracked scratch and is not committed.
 
 ## Plan Change Log
+
+- Follow-up commit (orchestrator ruling on independent review finding ae 1): the frozen line "`.pkg` before `removeDir` (which removes the marker)" is superseded for the last step. The folder is now deleted with the marker last (`removeFolderMarkerLast`), because FAT slot reuse can list the marker ahead of other files. The frozen block is not edited; this entry and Design Notes carry the change. KEEP: marker before `.pkg`, `.pkg` before the rest, the probe before the marker, every guard of `remove`.
 
 ## Review Triage Log
 
@@ -101,6 +103,26 @@ The four lenses ran as context-free subagents, in the foreground, in one message
 | 14 | edge | a card that cannot create the marker can no longer remove a game (a full or read-only card) | low | reject: the brief's rule ("cannot be written: `SdCard`, change nothing"); a one-entry create in an existing folder needs no free cluster in practice. |
 | 15 | intent | expectation lives at real FAT power loss; tests use the fake with failing calls | false | descriptive; the residual span (marker deleted before the last files) is stated in Design Notes and deferred with a trigger. |
 
+### Independent review of 1d13ad18 (adversarial and edge lens `ae`, verification-gap lens `vg`)
+
+Verdict counts: 0 high, 0 medium, 12 low, 1 false. Fixed in a follow-up commit on top of 1d13ad18 (not an amend). The orchestrator ruled on ae 1, ae 3, vg F1, vg F2, and the records.
+
+| # | Finding | Verdict | Route and action |
+|---|---------|---------|------------------|
+| ae 1 | `removeDir` can delete `.removing` before other files (FAT slot reuse; 9 to 13% of layouts); a stop leaves an unmarked folder | low, real | patch (orchestrator: must fix): `removeFolderMarkerLast`; test `AMarkerListedBeforeTheFilesIsTheLastEntryDeletedSoAStopIsStillFinished` (marker first in the fake's order, stopped mid-remove, finished next visit) and `ASubfolderInAMarkedFolderGoesBeforeTheMarker`; Design Notes and `formats.md` updated. |
+| ae 2 | `.pkg` delete failed: launcher says "could not remove", the next visit deletes the game | low | record, no change: the person chose Remove; one line in `formats.md` and Design Notes. |
+| ae 3 | `formats.md` sentence misplaced (reverses the resume rule); double-failure caveat missing | low | patch: paragraph rewritten, caveat restored. |
+| ae 4 | as ae 3, the doc overstates "taken away again" | low | patch with ae 3. |
+| ae 5 | full card: the marker may need a new directory cluster, so Remove cannot run | low | record (`deferred-work.md` `## e4-z2`); the brief's rule is `SdCard` and no change. |
+| ae 6 | FAT matches `.REMOVING` without case; a hand-copied folder holding one is swept | low | record; a package cannot carry any variant (reviewer's test), so only a person-made folder could. |
+| ae 7 | 32 permanently stuck folders starve the rest | low | already row 2 above. |
+| ae 8 | no popup while finishing | low | record (`formats.md` says none is drawn). |
+| vg F1 | nothing pins `finishRemovals` before the installs (mutation M24 survived) | low | patch: `AFinishedRemoveFreesRoomForAnInstallInTheSameVisit` (64 games, one marked, a new package installs in the same visit); with the call moved after the installs it fails. |
+| vg F2 | nothing pins that a retry does not rewrite the marker (M13 survived) | low | patch: `ARetryOverAnExistingMarkerDoesNotRewriteIt` (`remove` and a visit, close failing on the marker); with the guard dropped it fails. |
+| vg F3 | the fake appends entries, so FAT slot order never shows | low | covered by ae 1's test, which lists the marker first by construction; on-card order stays a device recheck. |
+| vg prose | "3 one-line additions" | false as a count, low as a slip | patch: the diff has 2; corrected. |
+| vg mutations M07b, M14, M15 | survivors judged equivalent by the reviewer | low | none needed. |
+
 ## Design Notes
 
 History read with `git log -L` on `remove`, `removeTmp`, and `foldersShareClusters` (5c49754c, d731afff, c47cceaa, 21e3c7dc, a941ee1d, b976e765). Every guard of `remove` is kept, in `removeFolder` (the body both `remove` and `finishRemovals` run):
@@ -119,22 +141,22 @@ Bound: `MAX_PER_RUN` (32) folders tried a visit, counting one that fails, so a f
 
 Marker choices: it is an empty file (`REMOVING_NAME`). A marker whose `close()` fails is removed again, best effort, so a refused remove leaves the game whole and unmarked; if that delete fails too it is logged and the next visit removes the game, which the person asked for (a test pins it). `remove` on a folder that already has a marker (a retry) writes no second one. A listed game that holds a marker (a stop right after the marker) is removed at the next visit: the person asked for it and the marker is only written by a remove.
 
-Known limit: `removeDir` (in `freeink-sdk`, not ours) deletes in directory order, so `.removing` can go before the last files; a stop in that span leaves an unmarked, unlisted folder (deferred, `## e4-z2`).
+Marker last (follow-up commit, independent review ae 1): the first commit let `removeDir` delete `.removing` with the rest. FAT reuses freed directory slots, so a marker made after the game's files can be listed ahead of some of them (the reviewer's model of SdFat's first-fit allocation put it not last in 9 to 13% of layouts), and a stop after `removeDir` deleted it left an unmarked, unlisted folder that nothing reclaims. `removeFolderMarkerLast` now deletes every other entry (a subfolder with `removeDir`), then `.removing`, then the folder with `rmdir`, so the marker outlives every file it stands for. Its guards: a child that fails to delete returns false with the marker in place; the marker name is matched without case, as FAT does; a child whose name does not fit the buffer (`getName` gives 0, a name no game has) sends the whole folder to `removeDir`, which takes the marker in its own order, rather than leaving a folder that could never finish. `remove` and `finishRemovals` share it through `removeFolder`. `commit()` still uses `removeDir` for a reinstall: it has no marker, and its inbox file stays until the install succeeds, so the next visit retries.
+
+A retry does not rewrite an existing marker (`!hasRemovingMarker(id) &&`): a rewrite whose close failed would delete the marker of a folder whose `.pkg` is already gone and strand it (independent review vg F2, pinned by `ARetryOverAnExistingMarkerDoesNotRewriteIt`). A `remove` whose `.pkg` delete failed is finished at the next visit though the launcher said "could not remove": the person chose Remove, and finishing it honours that (ae 2; `formats.md` says so).
 
 The resume result is logged, not added to `Report`: the launcher's note shows inbox files, and a remove the person started earlier would print a reason with no file name on every visit. No signature or launcher change.
 
 
 ## Verification
 
-Scratch logs are under `scratchpad/e4-z2/` (`f-*.log`). Every build and test ran under the shared lock, at the final code (the review patches included).
+Two rounds. Round 1 (commit 1d13ad18): 5 full host runs, all scripts, the four budget steps, both firmware builds, all green; figures in that commit's history (+232,096 B flash, +784 B RAM). Round 2 (the follow-up commit, at its final code; logs `scratchpad/e4-z2/h-*.log`), every build and test under the shared lock:
 
-- Host suites: `cmake --build build/test` rc 0, then `ctest --test-dir build/test -j8` five times: each `100% tests passed, 0 tests failed out of 1344`. `GameRemoveTest` has 25 cases (12 new); a mutation that sweeps every folder without the marker fails 5 of them, among them `AFolderWithNoMarkerIsNeverTouchedByAVisit`.
-- `scripts/*_test.py`: all 11 exit 0 (`check_api_freeze_test`, `check_flash_budget_test`, `check_layers_test`, `check_upstream_touches_test`, `fork_common_test`, `fork_release_test`, `game_codec_test`, `gen_game_icons_test`, `pack_device_run_test`, `pack_game_test`, `sim_sh_test`).
-- `check_layers.py`: "469 include edges in 107 game files follow the spine's layer table ... passed".
-- `check_upstream_touches.py` (an `upstream` remote, `develop` fetched, not shallow): `Result: PASS`. Every file this change touches is fork-only (`git cat-file -e upstream/develop:<path>` fails for each).
-- `pio run -e x4pro`: SUCCESS (with `-fstack-usage`, first at 4:27, again at 1:42 after the noinline change, and once more inside `build on`). `pio run -e default` (C3): SUCCESS, 3:04.
-- `check_flash_budget.py`, four steps at the final code (both builds with `PLATFORMIO_BUILD_FLAGS=-fstack-usage`, which adds `.su` files and no code): `build on` rc 0, `build off` rc 0, `compare --limit-kib 250 --ram-limit-bytes 1024` rc 0: flash on 5,911,008 B, off 5,678,912 B, **+232,096 B** (bar +240,496 B, limit 256,000 B: 23,904 B to spare); static RAM on 187,848 B, off 187,064 B, **+784 B** (bar +808 B, limit 1,024 B: 240 B to spare; no mutable static added); `objects` rc 0: 43 game objects, largest mutable static 4 B, no static initializer. The recorded +231,408 B is a figure from an earlier commit measured the same way; the +688 B difference is not a like-for-like delta, since the base commit was not rebuilt here.
-- Frames of `GamePackageInstaller.cpp` on x4pro (`-fstack-usage`, `GamePackageInstaller.cpp.su`, final code). Touched or new: `removeFolder` 160 B, `finishRemovals` 144 B, `writeRemovingMarker` 144 B, `hasRemovingMarker` 144 B, `isGameId` 32 B, `remove` 48 B, `installAll` 176 B. Untouched maximum: `removeTmp` and `foldersShareClusters` 240 B. Largest frame in the file: 240 B. The first build inlined the marker writer into `removeFolder` and made it 256 B; `noinline` on the writer and `finishRemovals` fixed it.
+- Host suites: `cmake --build build/test` rc 0, then `ctest --test-dir build/test -j8` three times: each `100% tests passed, 0 tests failed out of 1348`. `GameRemoveTest` has 29 cases. Mutations against the new tests: `removeDir` instead of `removeFolderMarkerLast` fails `AMarkerListedBeforeTheFilesIs...` and `ASubfolderInAMarkedFolder...`; dropping `!hasRemovingMarker(id)` fails `ARetryOverAnExistingMarkerDoesNotRewriteIt`; `finishRemovals` after the installs fails `AFinishedRemoveFreesRoomForAnInstallInTheSameVisit`.
+- `scripts/*_test.py`: all 11 exit 0. `check_layers.py`: passed (469 include edges in 107 game files). `check_upstream_touches.py`: `Result: PASS` (every touched file is fork-only).
+- `pio run -e x4pro` (inside `build on`, with `-fstack-usage`): SUCCESS. `pio run -e default`: SUCCESS.
+- `check_flash_budget.py`, four steps at the follow-up's final code (both builds with `PLATFORMIO_BUILD_FLAGS=-fstack-usage`, no code change): `build on` rc 0, `build off` rc 0, `compare --limit-kib 250 --ram-limit-bytes 1024` rc 0: flash on 5,911,488 B, off 5,678,912 B, **+232,576 B** (bar +240,496 B; 23,424 B to spare under the 256,000 B limit); static RAM on 187,848 B, off 187,064 B, **+784 B** (bar +808 B; 240 B to spare); `objects` rc 0: 43 game objects, largest mutable static 4 B, none added. Round 1's +232,096 B at 1d13ad18 was measured the same way, so the follow-up adds +480 B flash and no RAM.
+- Frames of `GamePackageInstaller.cpp` on x4pro (`-fstack-usage`, final code). Touched or new: `removeFolderMarkerLast` 224 B (256 B with a 64 B name buffer, so the name buffer is `MEMBER_NAME_BYTES + 3`, with `static_assert`s), `removeFolder` 160 B, `finishRemovals` 144 B, `writeRemovingMarker` 144 B, `hasRemovingMarker` 144 B, `installAll` 176 B, `remove` 48 B. Untouched maximum: `removeTmp` and `foldersShareClusters` 240 B. Largest in the file: 240 B.
 - `./bin/clang-format-fix` twice as the last step: see the final report (nothing new in `git status`).
 
 Assumption for entry 14: remove a game from the Games list: it is removed as before, and nothing else changes (the list, the popup, and the saved data are as they were); a remove that a power loss or a card fault stopped partway is finished the next time Games opens, and a folder someone copied into `/.games/` by hand is left alone.

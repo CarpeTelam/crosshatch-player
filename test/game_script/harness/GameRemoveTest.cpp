@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <string>
 
 #include "GamePackageInstaller.h"
@@ -60,6 +61,15 @@ class RemoveTest : public ::testing::Test {
     fakesd::addFile("/.games/" + id + "/main.lua", std::string("return {}"));
     if (withPkg) fakesd::addFile("/.games/" + id + "/.pkg", std::string("v1\n0000000000000000\n"));
     fakesd::addFile("/.games/" + id + "/.removing", std::string());
+  }
+
+  // As placeMarkedFolder, but the marker comes first in directory order, as a FAT card can list it (a freed slot is
+  // reused by the next entry made): the order removeDir would delete it in.
+  static void placeMarkerFirstFolder(const std::string& id) {
+    fakesd::addFile("/.games/" + id + "/.removing", std::string());
+    fakesd::addFile("/.games/" + id + "/manifest.json", std::string("{}"));
+    fakesd::addFile("/.games/" + id + "/main.lua", std::string("return {}"));
+    fakesd::addFile("/.games/" + id + "/.pkg", std::string("v1\n0000000000000000\n"));
   }
 
   static size_t listed() {
@@ -297,6 +307,8 @@ TEST_F(RemoveTest, TheRemovingMarkerIsWrittenBeforeThePkgGoesAndThePkgBeforeTheF
   EXPECT_LT(closed, pkg) << "the marker is whole before the .pkg goes";
   EXPECT_LT(pkg, manifest);
   EXPECT_LT(pkg, marker);
+  EXPECT_LT(manifest, marker) << "the marker goes after every file it stands for";
+  EXPECT_LT(opIndex("remove /.games/g/main.lua"), marker);
   EXPECT_FALSE(exists("/.games/g"));
   std::string lastRemove;
   for (const std::string& op : fakesd::sim().ops)
@@ -539,4 +551,77 @@ TEST_F(RemoveTest, AVisitFinishesAMarkedFolderBeforeItInstallsTheSameIdAgain) {
   EXPECT_TRUE(exists("/.games/g/.pkg"));
   EXPECT_FALSE(exists("/.games/g/.removing"));
   expectDataKept("g");
+}
+
+// The marker outlives every file: a card can list it first, and removeDir would delete it first.
+TEST_F(RemoveTest, AMarkerListedBeforeTheFilesIsTheLastEntryDeletedSoAStopIsStillFinished) {
+  install("other");
+  placeMarkerFirstFolder("g");
+  placeData("g");
+  fakesd::sim().failRemove.insert("/.games/g/main.lua");
+  fakesd::sim().ops.clear();
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_TRUE(exists("/.games/g/.removing")) << "the marker is still there when a file will not go";
+  EXPECT_FALSE(exists("/.games/g/.pkg"));
+  EXPECT_FALSE(exists("/.games/g/manifest.json"));
+  EXPECT_TRUE(exists("/.games/g/main.lua"));
+  EXPECT_EQ(opIndex("remove /.games/g/.removing"), -1);
+
+  // The visit finds the marker, and finishes once the card allows.
+  visit();
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  fakesd::sim().failRemove.clear();
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_TRUE(exists("/.games/other/.pkg"));
+  EXPECT_FALSE(touched("/.games-data"));
+  expectDataKept("g");
+  const int marker = opIndex("remove /.games/g/.removing");
+  ASSERT_GE(marker, 0);
+  EXPECT_LT(opIndex("remove /.games/g/main.lua"), marker);
+}
+
+TEST_F(RemoveTest, ASubfolderInAMarkedFolderGoesBeforeTheMarker) {
+  placeMarkedFolder("g");
+  fakesd::addFile("/.games/g/extra/notes.txt", std::string("notes"));
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_LT(opIndex("remove /.games/g/extra/notes.txt"), opIndex("remove /.games/g/.removing"));
+}
+
+TEST_F(RemoveTest, ARetryOverAnExistingMarkerDoesNotRewriteIt) {
+  placeMarkedFolder("g");
+  fakesd::sim().failClose.insert("/.games/g/.removing");  // a rewrite would fail its close and take the marker away
+  fakesd::sim().ops.clear();
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_EQ(opIndex("open /.games/g/.removing"), -1) << "the marker that is there is not made again";
+
+  placeMarkedFolder("h");
+  fakesd::sim().failClose.insert("/.games/h/.removing");
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/h"));
+  EXPECT_EQ(opIndex("open /.games/h/.removing"), -1);
+}
+
+// finishRemovals runs before the installs: at the limit, a folder it clears makes room for a package in the same visit.
+TEST_F(RemoveTest, AFinishedRemoveFreesRoomForAnInstallInTheSameVisit) {
+  char id[16];
+  for (size_t i = 0; i < GameRegistry::MAX_GAMES; ++i) {
+    std::snprintf(id, sizeof(id), "game-%02u", static_cast<unsigned>(i));
+    fakesd::addFile(std::string("/.games/") + id + "/.pkg", std::string("v1\n0000000000000000\n"));
+    fakesd::addFile(std::string("/.games/") + id + "/manifest.json", manifestJson(id));
+  }
+  fakesd::addFile("/.games/game-07/.removing", std::string());  // a stop right after the marker: still whole
+  fakesd::addFile("/games/extra.chgame", gamePackage("extra"));
+
+  const GamePackageInstaller::Report report = visit();
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_FALSE(exists("/.games/game-07"));
+  EXPECT_TRUE(exists("/.games/extra/.pkg"));
 }
