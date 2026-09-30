@@ -418,7 +418,7 @@ Done when:
 **Device, X4 Pro: pending the owner.**
 - The deferred recheck is `device-run-packet.md` R1–R4, regenerated at `d4b30b64`:
   - R1: e4-z1, tethered.
-  - R2: e4-z2, including an optional on-card `.removing` check.
+  - R2: e4-z2, including the on-card `.removing` check (required by the owner, Q3).
   - R3: e4-z3.
   - R4: A8.
 - It uses the CI firmware from run 36678813150 (kept until 2026-12-29) and the `game-packages` artifact from run 36678813162 (kept until 2026-10-30). This retro repacked the set locally and got the same hashes, with `loop` at `c74273851f270beb`.
@@ -454,7 +454,7 @@ Every item is **proposed**. The retrospective applied none of them. The owner de
 | # | Action | Owner | Kind | From |
 |---|--------|-------|------|------|
 | AI-1 | Run `device-run-packet.md` R1–R4 on the X4 Pro. Record each result, with the firmware, under this file's Behavior verification. A failure becomes a new story before epic-pass-and-play starts | owner | verification | the invocation; R15 |
-| AI-2 | Answer Q2 ("and N more" at the 64-game limit). If the recommendation is taken, build it with AI-14 as one small story: the launcher's note text, one `STR_` key, `installInbox` after a successful remove (rev-3), and the host tests that pin both | owner, then dev loop | remediation | Q2, rev-3; Behavior verification |
+| AI-2 | Q2 answered (owner, 2026-09-30): take the recommendation. Build it with AI-14 and AI-15 as one small story before epic-pass-and-play's first story: the launcher's note text, one `STR_` key, `installInbox` after a successful remove (rev-3), and the host tests that pin both | owner, then dev loop | remediation | Q2, rev-3; Behavior verification |
 | AI-3 | Done (owner, 2026-09-30): the model-name rule is removed from `orchestrated-epics.md`'s Build-agent brief. An orchestrator's brief no longer states a model-name rule | owner | process | proc-1, Q1 |
 | AI-4 | Add a fidelity rule to `docs/crosshatch/orchestrated-epics.md`'s Build-agent brief and `docs/contributing/touch-and-ui.md`. A screen double records raw `text()` calls and never lays out on `\n` unless the renderer does. A host timing bound is derived from the device ratio (about 95×, `plan-e4-z1…:52`) and labelled an estimate until a device run measures it. A story that adds a double names the device behaviour it stands in for, and the test that pins the two agree. Fold `save_store_stubs/HalStorage.h` into `harness/stubs/HalStorage.h` in the next refactor sweep | owner (docs); dev loop (stub) | process, remediation | proc-2, agg-3 |
 | AI-5 | Add a packet step to `orchestrated-epics.md`: before a device-run packet is built, every fault fixture whose outcome depends on device timing gets a tethered calibration run, or is listed in the packet as "uncalibrated: expected outcome estimated from the host ratio" | owner | process | proc-3 |
@@ -497,10 +497,10 @@ Proposals only. Each cites what the code does.
 - **No blocking finding stands open.** Every high the reviews raised was patched in its story (proc-8). This retro's review found three mediums (rev-1 to rev-3). None loses saved data, and each has a fix-now item (AI-2, AI-14, AI-15) for a small story before epic-pass-and-play.
 - **Open items, tracked:**
   - The owner's device recheck of e4-z1, e4-z2, e4-z3, and A8 (AI-1). These fixes merged after entry 14's sign-off, and only the host and the simulator have run them.
-  - Q2 (Q1 is answered).
+  - Q1, Q2, and Q3 are answered (2026-09-30).
   - The proposed items AI-2 and AI-4 to AI-15.
 
-If AI-1's recheck fails, the failure becomes a story and this verdict is revisited. The owner's own decision, when given, overrides this machine verdict and is recorded here.
+**Owner's decision (2026-09-30): accepted-with-open-items, as the machine verdict proposed.** If AI-1's recheck fails, the failure becomes a story and this verdict is revisited.
 
 ## Open questions
 
@@ -512,7 +512,7 @@ If AI-1's recheck fails, the failure becomes a story and this verdict is revisit
 - The 111 existing trailers stay; they are merged history on `develop`.
 - This retro's own commits used a trailer with no model name while the question was open.
 
-**Q2. "and N more" at the 64-game limit (`## e4-z3`).** The simulator shows the problem is sharper than the ticket described:
+**Q2. "and N more" at the 64-game limit (`## e4-z3`). Answered.** The simulator shows the problem is sharper than the ticket described:
 - At the limit every package after its manifest read is judged "too many". So the note reads "Too many games are installed; remove one first" / "and 2 more" whether the other two are valid packages waiting for room (`d-03`) or broken files (`d-05`).
 - The broken ones keep their `.chgame` name and never show their reasons until a game is removed (A29, `GamePackageInstaller.cpp:796`).
 - A non-zip file is set aside as `.bad` but counted in the same N (`d-06`).
@@ -527,4 +527,8 @@ If AI-1's recheck fails, the failure becomes a story and this verdict is revisit
 
 The alternative is to validate a package fully before the limit check, so a broken one is set aside with its reason even at the limit. It costs an extract per waiting package on every visit, which is why A29 chose otherwise.
 
-**Q3. The recheck's scope.** R2's optional step, a hand-placed `.removing` on the card, is the only check of FAT slot reuse and directory order for e4-z2 on real media. The simulator's ext4 cannot show either. The owner decides whether to run it; it takes one extra file copy.
+**Owner's answer (2026-09-30): the recommendation.** Name the kind, and run the inbox install right after a successful remove. It is built with AI-14 and AI-15 as one small story before epic-pass-and-play's first story (AI-2).
+
+**Q3. The recheck's scope. Answered.** R2's optional step, a hand-placed `.removing` on the card, is the only check of FAT slot reuse and directory order for e4-z2 on real media. The simulator's ext4 cannot show either. The owner decides whether to run it; it takes one extra file copy.
+
+**Owner's answer (2026-09-30): include it.** R2's marker check is now required in `device-run-packet.md`.

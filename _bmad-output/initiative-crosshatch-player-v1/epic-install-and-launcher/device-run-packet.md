@@ -28,7 +28,7 @@ The packages are not committed. They are packed from the fixtures at the firmwar
 | --- | --- | --- | --- |
 | `counter.chgame` | `counter`, version 1.0.0 | `e8c3ac8dfb646d3b` | R1 (installed), R2 |
 | `loop.chgame` | `loop` (Runaway scripts) | `c74273851f270beb` | R1 (was `e7ebc00d62486a0f` before e4-z1's recalibration) |
-| `timing.chgame` | `timing` (Frame timing) | `ea2741992f220fd8` | R1 (installed), R2 (optional marker check) |
+| `timing.chgame` | `timing` (Frame timing) | `ea2741992f220fd8` | R1 (installed), R2 (the marker check) |
 | `pack-images.chgame` | `pack-images` (Packed images) | `5f3b4f61e48de51b` | R1 (installed) |
 | `counter-changed.chgame` | `counter`, version 1.0.1 | `fa0d541ee5b21f13` | not used in this recheck |
 | `invalid-binary-lua.chgame` | `hardening` | (invalid) | R3 |
@@ -60,7 +60,7 @@ Start from a card with no `/games/`, `/.games/`, or `/.games-data/` folders, so 
    - Counter's row and its Continue row are both gone.
    - From a computer or the web file manager, `/.games/counter/` does not exist, and no file named `.removing` is anywhere under `/.games/`.
    - `/.games-data/counter/` still holds `store.bin` and `resume.bin`, at the same sizes.
-4. **Optional: a remove that stopped partway.** This checks the marker path on a real FAT card, which the host fake and the simulator cannot show.
+4. **A remove that stopped partway (required; the owner, 2026-09-30).** This checks the marker path on a real FAT card, which the host fake and the simulator cannot show.
    - From a computer, create an empty file `/.games/timing/.removing`, and put the card back.
    - Open Games. Frame timing is not listed, `/.games/timing/` is gone, and `/.games-data/timing/` (if the game made one) is untouched.
    - A folder copied into `/.games/` by hand, with no `.removing` and no `.pkg`, is left in place.
@@ -106,7 +106,7 @@ This check needs a game on page 2 that has no save.
 
 - The firmware you flashed: the CI artifact, or a local build of `fa642c4a`.
 - R1: the serial lines from the tap to the error view for both bands, and the time to the error view.
-- R2: the `/.games/` and `/.games-data/counter/` listings before and after, and whether the optional marker check was run and passed.
+- R2: the `/.games/` and `/.games-data/counter/` listings before and after, and the marker check's result.
 - R3: the photo of the note, and the names of the two `.bad` files.
 - R4: which page opened and which row was selected, with a photo.
 - Anything else seen: a reset, a watchdog banner, or a `forced exit past 1500 ms` line.
