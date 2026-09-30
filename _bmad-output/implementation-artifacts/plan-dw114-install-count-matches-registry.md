@@ -3,7 +3,7 @@ title: 'Count installed games with the registry''s own per-folder test'
 type: 'bugfix'
 ticket: ''
 created: '2026-09-30'
-status: 'in-progress'
+status: 'built'
 route: 'oneshot'
 route_source: 'auto'
 baseline_revision: 'fa642c4ab22d2af55eba4aacef3350f2d93f27f9'
@@ -49,3 +49,13 @@ Pass 1 (quick lens, context-free subagent): 1 high, 0 medium, 3 low, 0 false.
 - `pio run -e x4pro`, `-e sticky`, `-e default`, `-e x4c`, `-e papermono` -- expected: all build.
 - `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` -- expected: no defects.
 - `./bin/clang-format-fix` -- expected: no changes on a second run.
+
+**Evidence (aedf9f7e, 2026-09-30, cloud container, 4 cores):**
+- Host tests: 1363/1363 pass (`ctest -j`, 21.9 s); both new `GameLimitTest` cases included.
+- `pio run` for `x4pro`, `default`, `sticky`, `x4c`, `papermono`: all SUCCESS.
+- `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`: PASSED (`default`, cppcheck).
+- `sim.sh build x4pro`: SUCCESS.
+- `scripts/check_flash_budget.py` build on/off, `compare --limit-kib 250 --ram-limit-bytes 1024`, `objects`: within budget (static RAM +784 B of 1,024 B, games on minus off), no object problems.
+- `check_upstream_touches.py` PASS, `check_layers.py` passed, `check_api_freeze.py --base-ref origin/develop` passed, every `scripts/*_test.py` passed.
+- `./bin/clang-format-fix` twice: no changes on the second run.
+
