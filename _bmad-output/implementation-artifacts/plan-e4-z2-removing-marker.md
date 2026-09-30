@@ -160,3 +160,16 @@ Two rounds. Round 1 (commit 1d13ad18): 5 full host runs, all scripts, the four b
 - `./bin/clang-format-fix` twice as the last step: see the final report (nothing new in `git status`).
 
 Assumption for entry 14: remove a game from the Games list: it is removed as before, and nothing else changes (the list, the popup, and the saved data are as they were); a remove that a power loss or a card fault stopped partway is finished the next time Games opens, and a folder someone copied into `/.games/` by hand is left alone.
+
+### Delta review of c2aa2b4e
+
+0 high, 0 medium, 4 low. A third commit on top of c2aa2b4e (no amend).
+
+| # | Finding | Verdict | Route and action |
+|---|---------|---------|------------------|
+| 1 | no test reaches the long-name fallback (`if (skipped) return Storage.removeDir(dirPath);`); deleting it passes every test | low, real | patch: `AFolderHoldingANameTooLongForTheLoopIsStillRemoved` (adapted from the reviewer's probe); with the line deleted it fails. |
+| 2 | the fallback still deletes the marker in directory order; only a person's hand-placed long name reaches it | low | record: accepted residual, stated in `formats.md` step 3 and `deferred-work.md` `## e4-z2`. |
+| 3 | `formats.md` lacks the empty unmarked folder after the marker's delete, and the fallback | low | patch: both added. |
+| 4 | a hand-placed read-only file fails the remove every visit and uses a slot | low | record: predates this change (`removeDir` failed the same way); row 2 and ae 7. |
+
+Verification of the delta commit (`src/` unchanged, so no firmware rebuild; the flash figures above stand): host build rc 0; `GameRemoveTest` 30/30 and `GameInstallerTest` 87/87, five runs each; full `ctest -j8` 1349/1349; deleting the fallback line fails `AFolderHoldingANameTooLongForTheLoopIsStillRemoved` (reverted); all 11 `scripts/*_test.py` and `check_layers.py` pass; `clang-format-fix` twice with a clean `git status`.

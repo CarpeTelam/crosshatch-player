@@ -625,3 +625,19 @@ TEST_F(RemoveTest, AFinishedRemoveFreesRoomForAnInstallInTheSameVisit) {
   EXPECT_FALSE(exists("/.games/game-07"));
   EXPECT_TRUE(exists("/.games/extra/.pkg"));
 }
+
+// A name too long for removeFolderMarkerLast's buffer (only a person puts one in a game's folder) sends the folder to
+// removeDir, so it is still removed: without the fallback the marker would go and rmdir would refuse a full folder.
+TEST_F(RemoveTest, AFolderHoldingANameTooLongForTheLoopIsStillRemoved) {
+  install("g");
+  placeData("g");
+  fakesd::addFile("/.games/g/" + std::string(45, 'y') + ".txt", std::string("hand"));
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  EXPECT_FALSE(exists("/.games/g"));
+  expectDataKept("g");
+
+  placeMarkedFolder("h");
+  fakesd::addFile("/.games/h/" + std::string(45, 'y') + ".txt", std::string("hand"));
+  visit();
+  EXPECT_FALSE(exists("/.games/h"));
+}

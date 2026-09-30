@@ -330,10 +330,13 @@ Removing a game (the Games launcher's Remove, `GamePackageInstaller::remove`) de
 2. `.pkg` is deleted, so the game is no longer listed.
 3. Every other entry of the folder is deleted, then `.removing`, then the folder. The marker goes last because FAT
    reuses freed directory slots, so a marker made after the game's files can be listed ahead of some of them, and a
-   delete in directory order would take it first and leave an unmarked folder that nothing reclaims.
+   delete in directory order would take it first and leave an unmarked folder that nothing reclaims. The one exception
+   is a file whose name is over 39 bytes (the installer writes none; only a person could put one there): the folder
+   then goes to a plain recursive delete, which takes the marker in directory order.
 
-`/.games-data/<id>/` is never touched. A remove that stops after step 1, 2, or 3 leaves a folder holding
-`.removing`. The next time Games opens, `installAll` (before it looks at the inbox, and after it empties
+`/.games-data/<id>/` is never touched. A remove that stops after step 1, 2, or during 3 leaves a folder holding
+`.removing`; a stop after the marker's own delete leaves an empty folder with no marker, which is not listed, holds one
+directory cluster, and goes with a reinstall of that id (harmless, and nothing else reclaims it). The next time Games opens, `installAll` (before it looks at the inbox, and after it empties
 `/.games-tmp`) finishes the remove of every `/.games/<id>/` that holds `.removing`, at most 32 folders a visit, the rest
 on the next. This includes a remove that reported the SD card reason after step 1: the person chose Remove, so the game
 is finished at the next visit even though the launcher said it could not remove it. It uses the same guards as the
