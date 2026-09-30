@@ -4,8 +4,9 @@ This packet holds what the owner needs for entry 14 of epic-install-and-launcher
 
 ## Firmware
 
-- **Commit:** `b34aca51` on `claude/epic-install-launcher-orchestrate-s01gz1` (the epic PR's branch). Later commits on the branch that change only `_bmad-output/` leave the firmware identical; if code changes after this packet, the PR says so and this line is updated.
+- **Commit:** `216ccbd3` on `claude/epic-install-launcher-orchestrate-s01gz1` (the epic PR's branch). Later commits on the branch that change only `_bmad-output/` leave the firmware identical; if code changes after this packet, the PR says so and this line is updated.
 - **Build and flash** an X4 Pro from a checkout at that commit: `git submodule update --init --recursive`, then `pio run -e x4pro -t upload`.
+- **Or download it:** the PR's "Firmware builds" comment (posted by CI for the PR's latest commit) links `firmware-x4pro.bin`; flash it with CrossPoint Reader Flash Tools. It is the same firmware when the PR's head differs from the commit above only in `_bmad-output/`.
 - **Serial log:** start it before the first step and keep it for the whole run, with `pio device monitor -e x4pro` (115200 baud). Add `--filter log2file`, or pipe it through `tee device-run.log`. It carries:
   - the installer's lines and reasons (tag `GAME`);
   - `VM stopped; arena peak ... bytes, stack high-water ... bytes free, least at a hook ... bytes` after every match ends (epic-script-runtime retro AI-3);
@@ -13,32 +14,41 @@ This packet holds what the owner needs for entry 14 of epic-install-and-launcher
   - any watchdog or reset banner.
 - **Size at this epic's end** (`check_flash_budget.py`, x4pro, games on minus off): see the Notes' last `Measurement` line. The pass bar is +240,496 B flash and +808 B static RAM.
 
-## Packages (`device-run/`)
+## Packages
 
-Each package's hash is the last line `scripts/pack_game.py` printed; `.pkg` on the card holds it after install.
+The packages are not committed. They are built from the fixtures at the firmware commit, and the hashes below say whether what you hold is right.
+
+- **From the PR:** add the `package-games` label to the epic PR. That runs the `Game packages` job of the `Crosshatch game packages` workflow.
+  - Open that run from the PR's Checks tab. Its Artifacts section holds `game-packages`: a ZIP of the seven files below and `HASHES.txt`, kept 30 days.
+  - After a new push, the run repacks at the new head.
+- **Locally:** from a checkout at the firmware commit, `python3 scripts/pack_device_run.py <out-dir>` writes the same seven files and `HASHES.txt`.
+
+Each package's hash is the one `scripts/pack_game.py` prints. After install, `/.games/<id>/.pkg` holds it on its second line.
 
 | File | Game | Hash | Why |
 | --- | --- | --- | --- |
-| `counter.cpgame` | `counter`, version 1.0.0 | `e8c3ac8dfb646d3b` | `ch.store`, the save, Continue, reinstall of the same package |
-| `counter-changed.cpgame` | `counter`, version 1.0.1, title "Counter v2" | `fa0d541ee5b21f13` | A changed package: its Continue row must go, and `/.games-data/counter/` must stay |
-| `loop.cpgame` | `loop` (Runaway scripts) | `e7ebc00d62486a0f` | The abandon path, the "VM stopped" line, and a sleep during a stuck call |
-| `timing.cpgame` | `timing` | `ea2741992f220fd8` | The three replay bands (`test/game_script/fixtures/README.md`, "Timing run") |
-| `pack-images.cpgame` | `pack-images` (Packed images) | `5f3b4f61e48de51b` | A package with `icon.png` (96 x 96 rings, converted to the 64 px row icon) and two images |
-| `invalid-binary-lua.cpgame` | `hardening` | (invalid) | From entry 6's generator (`binary-lua-stored`): must become `.bad` with "A Lua file is compiled, not source" |
-| `package_vector.cpgame` | `package-vector` | `0530a15766e91bf1` | The shared hash vector: the device's mbedTLS hash must match it (R4) |
+| `counter.chgame` | `counter`, version 1.0.0 | `e8c3ac8dfb646d3b` | `ch.store`, the save, Continue, and a reinstall of the same package |
+| `counter-changed.chgame` | `counter`, version 1.0.1, title "Counter v2" (`test/game_script/fixtures/changed/counter/`) | `fa0d541ee5b21f13` | A changed package: its Continue row must go, and `/.games-data/counter/` must stay |
+| `loop.chgame` | `loop` (Runaway scripts) | `e7ebc00d62486a0f` | The abandon path, the "VM stopped" line, and a sleep during a stuck call |
+| `timing.chgame` | `timing` | `ea2741992f220fd8` | The three replay bands (`test/game_script/fixtures/README.md`, "Timing run") |
+| `pack-images.chgame` | `pack-images` (Packed images) | `5f3b4f61e48de51b` | A package with `icon.png` (96 x 96 rings, converted to the 64 px row icon) and two images |
+| `invalid-binary-lua.chgame` | `hardening` | (invalid) | From entry 6's generator (`binary-lua-stored`): must become `.bad` with "A Lua file is compiled, not source" |
+| `package_vector.chgame` | `package-vector` | `0530a15766e91bf1` | The shared hash vector: the device's mbedTLS hash must match it (R4) |
+
+This firmware ignores a `.cpgame` file (the old name): it neither installs nor becomes `.bad` (the owner's Decision of 2026-09-30).
 
 ## Steps
 
 Start from a card with no `/.games/`, `/.games-data/`, or `/games/` folders, so every result is this run's.
 
 1. **Install two ways (R1, Done when 1).**
-   - Put `counter.cpgame` in `/games/` with the web file manager.
-   - Copy `pack-images.cpgame`, `loop.cpgame`, `timing.cpgame`, `invalid-binary-lua.cpgame`, and `package_vector.cpgame` onto the card's `/games/` from a computer.
+   - Put `counter.chgame` in `/games/` with the web file manager.
+   - Copy `pack-images.chgame`, `loop.chgame`, `timing.chgame`, `invalid-binary-lua.chgame`, and `package_vector.chgame` onto the card's `/games/` from a computer.
    - Open Home, Games. Record:
      - whether every valid package installs with no reboot;
      - the "Installing" popup;
      - the one `.bad` note, with its reason, shown once and not again on the next visit;
-     - `/games/invalid-binary-lua.cpgame.bad` on the card.
+     - `/games/invalid-binary-lua.chgame.bad` on the card.
 2. **The list (R5, R8, Done when 3).**
    - Check that each row shows its icon: `pack-images` its own rings, the others their manifest icon or `game-controller`.
    - Open `counter` from Home in at most 3 taps (Home, Games, the game; the mode picker is skipped with one mode).
@@ -50,11 +60,11 @@ Start from a card with no `/.games/`, `/.games-data/`, or `/games/` folders, so 
    - Tap it: the board shows the same taps, with no mode step.
    - Leave: the launcher selects the Continue row, on its page.
 5. **Reinstall the same package (R5).**
-   - Put `counter.cpgame` in `/games/` again and open Games.
+   - Put `counter.chgame` in `/games/` again and open Games.
    - Record that `/.games-data/counter/` (`store.bin`, `resume.bin`) is unchanged: same files and sizes, checked from a computer or the web file manager.
    - The Continue row stays, since the hash is the same.
 6. **Install the changed package (R5, R10, Done when 4).**
-   - Put `counter-changed.cpgame` in `/games/` and open Games.
+   - Put `counter-changed.chgame` in `/games/` and open Games.
    - The Continue row is gone (a save from a changed package is discarded), and `/.games-data/counter/` still holds `store.bin`.
    - Open it: the title reads "Counter v2", and "Saved taps" still shows the kept `ch.store` count.
 7. **Remove (R5, Done when 2).**
@@ -130,10 +140,10 @@ Every `Assumption for entry 14:` line in the epic Notes, verbatim, in order. Ans
 | A23 | The `goHome` mapping test and the `## 4.4`/`## 4.1` drift guards and layout pins: deferred because each needs an upstream edit beyond row 5 or a `src/` seam; add at the next touch, and use `sim.sh ss` diffs for layout. (entry 13, 2026-09-29) | |
 | A24 | `## 4.5`'s launcher-with-the-installer-scripted and Home-doubles items: deferred because a joined suite needs the converter's stubs and the screen doubles in one target (they clash) and the firmware build already compiles the real Home; entry 14's install-then-open-Games visit covers the joined path once. (entry 13, 2026-09-29) | |
 | A25 | Mode passing and pass-and-play Continue: deferred to epic-pass-and-play and epic-play-nearby, unreachable while `pass` and `nearby` are off. (entry 13, 2026-09-29) | |
-| A26 | Device measurements (resume write cost, `peek` time at entry, how much of the panel's refresh is behind `displayBuffer`, `GameHash`'s mbedTLS read-back of `package_vector.cpgame` as `v1` then `0530a15766e91bf1`): entry 14's steps; the fixtures README's "Timing run" lists them. (entry 13, 2026-09-29) | |
+| A26 | Device measurements (resume write cost, `peek` time at entry, how much of the panel's refresh is behind `displayBuffer`, `GameHash`'s mbedTLS read-back of `package_vector.chgame` as `v1` then `0530a15766e91bf1`): entry 14's steps; the fixtures README's "Timing run" lists them. (entry 13, 2026-09-29) | |
 | A27 | `## 4.10`'s fixed row height and a queued second Remove tap: deferred, not shown at the shipped fonts; trigger a theme change or a device report. (entry 13, 2026-09-29) | |
 | A28 | a valid package that would be the 65th game stays in `/games` with its reason shown on every visit until a game is removed; it is not renamed `.bad`, since it is not invalid. (e4-x, 2026-09-29) | |
 | A29 | a package that arrives while 64 games are installed is refused with "too many games" right after its manifest is read, whether or not the rest of it is valid; an invalid one is judged, and set aside as `.bad` with its own reason, only once a game has been removed and there is room. (e4-x, 2026-09-29) | |
-| A30 | an installed package whose inbox file will not delete is moved to `<name>.cpgame.installed` (or `.installed.2` to `.installed.5` when an earlier copy under that name will not go) and counted as installed; the leftover file is harmless and a person may delete it from a computer. (e4-x, 2026-09-29) | |
+| A30 | an installed package whose inbox file will not delete is moved to `<name>.chgame.installed` (or `.installed.2` to `.installed.5` when an earlier copy under that name will not go) and counted as installed; the leftover file is harmless and a person may delete it from a computer. (e4-x, 2026-09-29) | |
 | A31 | a power loss during `resume.bin`'s rename can leave it and `resume.bin.tmp` on one cluster chain (SdFat writes the new directory entry before it removes the old one), and the next write would then free the save's clusters; `store.bin` has had the same exposure since before this epic. Deferred: a guard is a storage design change (the cross-story review's row 10). (orchestrator, 2026-09-29) | |
 | A32 | the forced exit also retries the `resume.bin` delete (a finished round's save that did not delete at Over), which spine AD-17 does not list among `onExit()`'s SD writes; the Notes and `formats.md` record it. The owner decides whether AD-17 and AD-20 are amended to say so (the cross-story review's row 11). (orchestrator, 2026-09-29) | |
