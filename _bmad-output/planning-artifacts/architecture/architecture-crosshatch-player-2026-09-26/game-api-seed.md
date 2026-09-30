@@ -18,7 +18,7 @@ A crosshatch game is a Lua 5.5 script that runs on an e-ink device with a touchs
 
 ## 1. The package
 
-A game is one `.cpgame` file: a zip archive with these files at its root and nothing else (no folders).
+A game is one `.chgame` file: a zip archive with these files at its root and nothing else (no folders).
 
 | File | Required | What it is |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 
 Unknown keys are ignored.
 
-**Install.** copy the `.cpgame` into the `/games/` folder on the SD card (with the device's web file manager, or over USB), then open Games on the device. The device installs it and removes the file. If the package is broken, the file is renamed `*.cpgame.bad` and the launcher tells you why.
+**Install.** copy the `.chgame` into the `/games/` folder on the SD card (with the device's web file manager, or over USB), then open Games on the device. The device installs it and removes the file. If the package is broken, the file is renamed `*.chgame.bad` and the launcher tells you why.
 
 **Changing a game.** any change to the package's files counts as a new package. Two devices can play each other in Play Nearby only when both have exactly the same package.
 

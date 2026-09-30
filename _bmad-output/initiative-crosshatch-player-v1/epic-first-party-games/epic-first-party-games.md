@@ -27,7 +27,7 @@ Completed at inception. This epic owns CAP-10 and closes CAP-1's success check.
 1. Sudoku (solo), Ultimate tic-tac-toe (pass, nearby), and Battleship (pass, nearby, hidden) are script packages in `games/<id>/`, and no game-specific C++ exists in the firmware.
 2. Each packs with `pack_game.py`, installs through the inbox, and plays a round on a device in every mode it declares.
 3. All three stay within API level 1 and the 1,400 B snapshot, add nothing to the API, and draw boards and markers from `GameIcons`.
-4. A fork release made by the release workflow (AD-25) has the three `.cpgame` files attached, packed byte-for-byte from `games/<id>/`.
+4. A fork release made by the release workflow (AD-25) has the three `.chgame` files attached, packed byte-for-byte from `games/<id>/`.
 5. Merged to `develop` with the five-env build, host suites, whole-tree format check, `pio check`, and the fork-only size and ledger jobs all green.
 6. The last ticket sets `API_LEVEL_FROZEN` in `lib/GameCore/ApiLevel.h`, closing v1; the first fork release from that commit is the freezing release (spine AD-19).
 
