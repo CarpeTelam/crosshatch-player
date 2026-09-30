@@ -34,4 +34,9 @@ inline constexpr const char* TMP_DIR = "/.games-tmp";
 // The commit marker in an installed game's folder, written last (docs/crosshatch/formats.md).
 inline constexpr const char* PKG_NAME = ".pkg";
 
+// The mark of a remove that has begun, an empty file GamePackageInstaller::remove writes in /.games/<id>/ before it
+// deletes the .pkg. The installer finishes a remove that stopped partway only in a folder that holds one, so a folder
+// a person copied there by hand is never swept (docs/crosshatch/formats.md).
+inline constexpr const char* REMOVING_NAME = ".removing";
+
 }  // namespace GamePaths

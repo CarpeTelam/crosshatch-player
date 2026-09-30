@@ -64,17 +64,24 @@ struct Report {
 bool hasInbox();
 
 // Installs every .chgame in /games (at most MAX_PER_RUN, the rest on the next call) and
-// removes a leftover /.games-tmp.
+// removes a leftover /.games-tmp. Before it looks at the inbox (so with no inbox too) it finishes any remove that
+// stopped partway: each /.games/<id>/ holding a .removing marker (remove writes one first) is removed the way remove
+// does, with the same guards, at most MAX_PER_RUN folders a call. A folder without the marker, such as one copied
+// there by hand, is never touched, and neither is /.games-data. A folder that will not go is logged, not reported,
+// and tried again on the next call.
 Report installAll();
 
-// Removes an installed game: deletes /.games/<id>/. The .pkg goes first, because removeDir deletes in
-// directory order and a stop partway would otherwise leave a listed game with files missing; a
-// folder without a .pkg is not a game (GameRegistry). Results:
+// Removes an installed game: deletes /.games/<id>/. It writes an empty .removing marker in the folder first, then
+// deletes the .pkg, then the rest (removeDir, which takes the marker too). The .pkg goes before the rest because
+// removeDir deletes in directory order and a stop partway would otherwise leave a listed game with files missing; a
+// folder without a .pkg is not a game (GameRegistry). A stop after the marker, or after the .pkg, leaves a folder
+// that the next installAll finishes, because it holds the marker (a folder without one is never swept). Results:
 //   None       the folder is gone, or /.games can be opened and holds no such folder;
-//   SdCard     a delete failed (the game is then listed whole, or not listed at all, never half listed);
+//   SdCard     the marker could not be written (nothing else changed); a delete failed (the game is then listed
+//              whole, or not listed at all, never half listed, and the next installAll retries it);
 //              /.games cannot be opened; or the folder has no .pkg and may share clusters with
 //              /.games-tmp/<id> (an interrupted folder move, found by the installer's probe), in which
-//              case nothing is deleted;
+//              case nothing is written or deleted;
 //   BadManifest  an id no manifest could carry (nothing is touched).
 // Never touches /.games-data/<id>/ (the saved data outlives the game, and a reinstall finds it) or
 // /.games-tmp, except for the probe's own file there.

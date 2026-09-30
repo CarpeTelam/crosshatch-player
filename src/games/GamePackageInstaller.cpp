@@ -45,6 +45,8 @@ static_assert(std::char_traits<char>::length(GamePaths::INBOX_DIR) + 1 + GamePat
                   GamePaths::INBOX_PATH_BYTES,
               "an inbox path fits GamePaths::INBOX_PATH_BYTES");
 static_assert(MAX_PER_RUN <= UINT8_MAX, "Report counts installs in a byte");
+static_assert(GameCore::Manifest::MAX_ID_BYTES + 2 <= GamePaths::INBOX_NAME_BYTES,
+              "finishRemovals reads a folder name into INBOX_NAME_BYTES and skips one that fills it");
 static_assert(GamePaths::INBOX_PATH_BYTES <= FILE_PATH_BYTES, "installAll builds an inbox path in Job::pathA");
 
 // How many names moveAside tries: <name><suffix>, then <name><suffix>.2 and on. One digit, which Job::asidePath has
@@ -240,6 +242,106 @@ void removeTmp() {
     }
   }
   Storage.rmdir(GamePaths::TMP_DIR);  // only an empty folder goes, so a kept one stays
+}
+
+// True when `id` could be a game's folder name, by the rule Manifest::check applies to a manifest's id: at most
+// MAX_ID_BYTES of lower-case letters, digits, and "-", not starting with "-". It keeps a path out of /.games for any
+// other caller of remove, and finishRemovals skips a folder named anything else.
+bool isGameId(const char* id) {
+  const size_t length = id ? std::strlen(id) : 0;
+  bool valid = length > 0 && length <= GameCore::Manifest::MAX_ID_BYTES && id[0] != '-';
+  for (size_t i = 0; valid && i < length; ++i) {
+    valid = (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9') || id[i] == '-';
+  }
+  return valid;
+}
+
+bool hasRemovingMarker(const char* id) {
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::REMOVING_NAME);
+  return Storage.exists(path);
+}
+
+// Writes the empty marker that says a remove has begun. A marker that may not be whole (its close failed) is taken
+// away again, best effort, so that a failed remove leaves the game whole and unmarked; if that delete fails too the
+// marker stays, and the next visit finishes the remove the person asked for.
+// (noinline: its path buffer and file must not join removeFolder's frame.)
+[[gnu::noinline]] bool writeRemovingMarker(const char* id) {
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::REMOVING_NAME);
+  HalFile file;
+  if (!Storage.openFileForWrite("GAME", path, file)) {
+    LOG_ERR("GAME", "Cannot write %s", path);
+    return false;
+  }
+  if (file.close()) return true;
+  LOG_ERR("GAME", "Cannot write %s", path);
+  if (!Storage.remove(path)) LOG_ERR("GAME", "Cannot remove %s", path);
+  return false;
+}
+
+// Removes /.games/<id>/ for a vetted id: the marker, then the .pkg, then the rest. Shared by remove (a person's
+// request) and finishRemovals (a request that stopped partway), so both keep every guard. Results are remove's.
+Error removeFolder(const char* id) {
+  // One buffer, used in turn for the folder, its .pkg, and /.games-tmp/<id> (three of them would be 288 B of locals).
+  char path[GamePaths::PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.exists(path)) return Error::None;
+  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+  const bool hasPkg = Storage.exists(path);
+  // A folder without a .pkg beside a /.games-tmp/<id> may be the two halves of an interrupted folder move, on one
+  // cluster chain; removing one would free clusters the other uses. The installer's probe tells them apart, and a
+  // shared pair is left alone (as removeTmp leaves it). It comes before the marker: a file written into a folder
+  // that shares clusters would show in the other.
+  if (!hasPkg) {
+    snprintf(path, sizeof(path), "%s/%s", GamePaths::TMP_DIR, id);
+    if (Storage.exists(path) && foldersShareClusters(id)) {
+      LOG_ERR("GAME", "Keeping %s/%s: it may share clusters with %s, which has no %s", GamePaths::GAMES_DIR, id, path,
+              GamePaths::PKG_NAME);
+      return Error::SdCard;
+    }
+  }
+  // The remove marker first: from here on a stop leaves a folder that the next visit finishes, and only such a folder
+  // (finishRemovals); a card that will not take it changes nothing.
+  if (!hasRemovingMarker(id) && !writeRemovingMarker(id)) return Error::SdCard;
+  // Then the .pkg, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a listed game
+  // with files missing.
+  if (hasPkg) {
+    snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
+    if (!Storage.remove(path)) {
+      LOG_ERR("GAME", "Cannot remove %s", path);
+      return Error::SdCard;
+    }
+  }
+  // removeDir takes the marker with the rest, in directory order.
+  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
+  if (!Storage.removeDir(path)) {
+    LOG_ERR("GAME", "Cannot remove %s", path);
+    return Error::SdCard;
+  }
+  LOG_INF("GAME", "Removed %s", id);
+  return Error::None;
+}
+
+// Finishes the removes that stopped partway: each /.games/<id>/ that holds the marker, whether or not its .pkg is
+// still there. A folder without the marker is not ours (it may be one a person copied by hand) and is left alone,
+// and so is /.games-data. At most MAX_PER_RUN folders are tried a call, the rest on the next; one that will not go
+// is logged and tried again on the next visit.
+// (noinline: its name buffer and directory handles must not join installAll's frame.)
+[[gnu::noinline]] void finishRemovals() {
+  auto dir = Storage.open(GamePaths::GAMES_DIR);
+  if (!dir || !dir.isDirectory()) return;
+  char name[GamePaths::INBOX_NAME_BYTES];
+  size_t tried = 0;
+  dir.rewindDirectory();
+  for (auto entry = dir.openNextFile(); entry && tried < MAX_PER_RUN; entry = dir.openNextFile()) {
+    const size_t length = entry.getName(name, sizeof(name));
+    const bool isFolder = entry.isDirectory();
+    entry.close();
+    if (!isFolder || length == 0 || length >= sizeof(name) - 1 || !isGameId(name) || !hasRemovingMarker(name)) continue;
+    ++tried;
+    if (removeFolder(name) != Error::None) LOG_ERR("GAME", "Could not finish removing %s", name);
+  }
 }
 
 // Reads the file into ZipDirectory's terms: bytes at an offset.
@@ -749,6 +851,8 @@ bool hasInbox() {
 Report installAll() {
   Report report;
   removeTmp();  // a leftover from an install that never finished
+  // After removeTmp, so a scratch folder beside a marked one has been dealt with (or kept) before the probe looks.
+  finishRemovals();  // a remove that stopped partway
   if (!hasInbox()) return report;
 
   auto names = makeUniqueNoThrow<InboxName[]>(MAX_PER_RUN);
@@ -811,12 +915,7 @@ Report installAll() {
 Error remove(const char* id) {
   // The launcher passes a listed game's id, which Manifest::check has vetted; this keeps a path out of /.games
   // for any other caller.
-  const size_t length = id ? std::strlen(id) : 0;
-  bool valid = length > 0 && length <= GameCore::Manifest::MAX_ID_BYTES && id[0] != '-';
-  for (size_t i = 0; valid && i < length; ++i) {
-    valid = (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9') || id[i] == '-';
-  }
-  if (!valid) return Error::BadManifest;
+  if (!isGameId(id)) return Error::BadManifest;
 
   // "Not there" needs a card that answers: a /.games that cannot be opened is the card's fault, not a game that is
   // gone.
@@ -827,39 +926,7 @@ Error remove(const char* id) {
       return Error::SdCard;
     }
   }
-  // One buffer, used in turn for the folder, its .pkg, and /.games-tmp/<id> (three of them would be 288 B of locals).
-  char path[GamePaths::PATH_BYTES];
-  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
-  if (!Storage.exists(path)) return Error::None;
-  snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
-  const bool marked = Storage.exists(path);
-  // A folder without a .pkg beside a /.games-tmp/<id> may be the two halves of an interrupted folder move, on one
-  // cluster chain; removing one would free clusters the other uses. The installer's probe tells them apart, and a
-  // shared pair is left alone (as removeTmp leaves it).
-  if (!marked) {
-    snprintf(path, sizeof(path), "%s/%s", GamePaths::TMP_DIR, id);
-    if (Storage.exists(path) && foldersShareClusters(id)) {
-      LOG_ERR("GAME", "Keeping %s/%s: it may share clusters with %s, which has no %s", GamePaths::GAMES_DIR, id, path,
-              GamePaths::PKG_NAME);
-      return Error::SdCard;
-    }
-  }
-  // The marker first, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a
-  // listed game with files missing.
-  if (marked) {
-    snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
-    if (!Storage.remove(path)) {
-      LOG_ERR("GAME", "Cannot remove %s", path);
-      return Error::SdCard;
-    }
-  }
-  snprintf(path, sizeof(path), "%s/%s", GamePaths::GAMES_DIR, id);
-  if (!Storage.removeDir(path)) {
-    LOG_ERR("GAME", "Cannot remove %s", path);
-    return Error::SdCard;
-  }
-  LOG_INF("GAME", "Removed %s", id);
-  return Error::None;
+  return removeFolder(id);
 }
 
 }  // namespace GamePackageInstaller

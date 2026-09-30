@@ -51,6 +51,17 @@ class RemoveTest : public ::testing::Test {
     }
   }
 
+  // The next visit to Games: installAll with nothing in the inbox, which finishes the removes that stopped partway.
+  static GamePackageInstaller::Report visit() { return GamePackageInstaller::installAll(); }
+
+  // What a stop leaves in /.games/<id>/: the folder's files and the .removing marker, and no .pkg.
+  static void placeMarkedFolder(const std::string& id, const bool withPkg = false) {
+    fakesd::addFile("/.games/" + id + "/manifest.json", std::string("{}"));
+    fakesd::addFile("/.games/" + id + "/main.lua", std::string("return {}"));
+    if (withPkg) fakesd::addFile("/.games/" + id + "/.pkg", std::string("v1\n0000000000000000\n"));
+    fakesd::addFile("/.games/" + id + "/.removing", std::string());
+  }
+
   static size_t listed() {
     GameRegistry::Listing listing;
     EXPECT_TRUE(GameRegistry::load(listing));
@@ -181,6 +192,7 @@ TEST_F(RemoveTest, AReinstallOverAPartlyDeletedFolderFinishesTheJobAndKeepsTheDa
   install("g");
   EXPECT_EQ(listed(), 1u);
   EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_FALSE(exists("/.games/g/.removing")) << "the folder the install replaced took its marker with it";
   expectDataKept("g");
 }
 
@@ -227,6 +239,7 @@ TEST_F(RemoveTest, AFolderWithoutAMarkerThatMayShareClustersWithScratchIsNotDele
   EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
+  EXPECT_FALSE(exists("/.games/g/.removing")) << "nothing is written into a folder that may share clusters";
   EXPECT_FALSE(exists("/.games-tmp/g/.xlink")) << "the probe file is removed either way";
   EXPECT_TRUE(fakelog::any("Keeping /.games/g"));
   expectDataKept("g");
@@ -262,4 +275,268 @@ TEST_F(RemoveTest, AListedGameWithScratchBesideItIsDeletedWithoutAProbe) {
   EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
   EXPECT_FALSE(exists("/.games/g"));
   EXPECT_EQ(opIndex("open /.games-tmp/g/.xlink"), -1) << "a marked folder was written after its rename: no probe";
+}
+
+// A18: a remove that stops partway is finished at the next visit, only in a folder that holds the .removing marker.
+
+TEST_F(RemoveTest, TheRemovingMarkerIsWrittenBeforeThePkgGoesAndThePkgBeforeTheFolder) {
+  install("g");
+  fakesd::sim().ops.clear();
+  ASSERT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  const int opened = opIndex("open /.games/g/.removing");
+  const int closed = opIndex("close /.games/g/.removing");
+  const int pkg = opIndex("remove /.games/g/.pkg");
+  const int manifest = opIndex("remove /.games/g/manifest.json");
+  const int marker = opIndex("remove /.games/g/.removing");
+  ASSERT_GE(opened, 0);
+  ASSERT_GE(closed, 0);
+  ASSERT_GE(pkg, 0);
+  ASSERT_GE(manifest, 0);
+  ASSERT_GE(marker, 0) << "removeDir takes the marker with the folder";
+  EXPECT_LT(opened, closed);
+  EXPECT_LT(closed, pkg) << "the marker is whole before the .pkg goes";
+  EXPECT_LT(pkg, manifest);
+  EXPECT_LT(pkg, marker);
+  EXPECT_FALSE(exists("/.games/g"));
+  std::string lastRemove;
+  for (const std::string& op : fakesd::sim().ops)
+    if (op.rfind("remove ", 0) == 0) lastRemove = op;
+  EXPECT_EQ(lastRemove, "remove /.games/g") << "the folder goes last";
+}
+
+TEST_F(RemoveTest, AStopAfterTheMarkerIsFinishedOnTheNextVisit) {
+  install("g");
+  install("other");
+  placeData("g");
+  fakesd::sim().failRemove.insert("/.games/g/.pkg");
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  ASSERT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_TRUE(fakesd::bytesOf("/.games/g/.removing").empty()) << "the marker is an empty file";
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_EQ(listed(), 2u);
+
+  // A card that still refuses: the visit tries and changes nothing.
+  fakesd::sim().ops.clear();
+  EXPECT_EQ(visit().failed, 0) << "a resume that fails is logged, not reported as an inbox failure";
+  EXPECT_TRUE(exists("/.games/g/manifest.json"));
+  EXPECT_EQ(opIndex("remove /.games/g/manifest.json"), -1);
+  EXPECT_TRUE(fakelog::any("Could not finish removing g"));
+
+  // The card recovers, and nobody calls remove again.
+  fakesd::sim().failRemove.clear();
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_TRUE(exists("/.games/other/.pkg"));
+  EXPECT_EQ(listed(), 1u);
+  EXPECT_FALSE(touched("/.games-data"));
+  expectDataKept("g");
+}
+
+TEST_F(RemoveTest, AStopAfterThePkgIsFinishedOnTheNextVisit) {
+  install("g");
+  install("other");
+  placeData("g");
+  fakesd::sim().failRemove.insert("/.games/g/main.lua");
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_FALSE(exists("/.games/g/.pkg"));
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_EQ(listed(), 1u) << "unlisted already";
+
+  visit();
+  EXPECT_TRUE(exists("/.games/g/main.lua")) << "a card that still refuses keeps the folder";
+
+  fakesd::sim().failRemove.clear();
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_TRUE(exists("/.games/other/.pkg"));
+  EXPECT_FALSE(touched("/.games-data"));
+  expectDataKept("g");
+}
+
+TEST_F(RemoveTest, AFolderThatAPowerLossLeftWithTheMarkerIsRemovedWithNoCallToRemove) {
+  install("other");
+  placeMarkedFolder("stopped");                  // power lost after the .pkg went
+  placeMarkedFolder("early", /*withPkg=*/true);  // power lost right after the marker was written
+  placeData("stopped");
+  visit();
+  EXPECT_FALSE(exists("/.games/stopped"));
+  EXPECT_FALSE(exists("/.games/early"));
+  EXPECT_TRUE(exists("/.games/other/.pkg"));
+  expectDataKept("stopped");
+}
+
+TEST_F(RemoveTest, AFolderWithNoMarkerIsNeverTouchedByAVisit) {
+  install("g");
+  // What a person copies by hand: no .pkg, no marker.
+  fakesd::addFile("/.games/hand/main.lua", std::string("mine"));
+  fakesd::addFile("/.games/hand/manifest.json", std::string("{}"));
+  fakesd::addFile("/.games/hand/sub/notes.txt", std::string("notes"));
+  fakesd::addFile("/.games/loose.txt", std::string("a file, not a game"));
+  // A marker outside a vetted id's folder, or not directly in a folder of /.games, is not ours either.
+  fakesd::addFile("/.games/Bad_Name/.removing", std::string());
+  fakesd::addFile("/.games/-dash/.removing", std::string());
+  fakesd::addFile("/.games/hand/sub/.removing", std::string());
+  fakesd::addFile("/.games/.removing", std::string());
+  fakesd::sim().ops.clear();
+
+  const GamePackageInstaller::Report report = visit();
+  EXPECT_EQ(report.failed, 0);
+  for (const std::string& op : fakesd::sim().ops) {
+    EXPECT_TRUE(op.rfind("remove ", 0) != 0 && op.rfind("write ", 0) != 0 && op.rfind("rename ", 0) != 0) << op;
+  }
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games/hand/main.lua")), "mine");
+  EXPECT_TRUE(exists("/.games/hand/manifest.json"));
+  EXPECT_TRUE(exists("/.games/hand/sub/notes.txt"));
+  EXPECT_TRUE(exists("/.games/loose.txt"));
+  EXPECT_TRUE(exists("/.games/Bad_Name/.removing"));
+  EXPECT_TRUE(exists("/.games/-dash/.removing"));
+  EXPECT_TRUE(exists("/.games/hand/sub/.removing"));
+  EXPECT_TRUE(exists("/.games/.removing"));
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_EQ(listed(), 1u);
+}
+
+TEST_F(RemoveTest, AVisitNeverTouchesTheDataFolder) {
+  install("g");
+  placeData("g");
+  placeData("orphan");  // data with no game: not ours to sweep either
+  placeMarkedFolder("stopped");
+  placeData("stopped");
+  fakesd::sim().ops.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/stopped"));
+  EXPECT_FALSE(touched("/.games-data")) << "the saved data is never opened, listed, renamed, or removed";
+  expectDataKept("g");
+  expectDataKept("orphan");
+  expectDataKept("stopped");
+}
+
+TEST_F(RemoveTest, AMarkerThatWillNotBeWrittenChangesNothing) {
+  install("g");
+  placeData("g");
+  fakesd::sim().failOpenWrite.insert("/.games/g/.removing");
+  fakesd::sim().ops.clear();
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_TRUE(exists("/.games/g/manifest.json"));
+  EXPECT_TRUE(exists("/.games/g/main.lua"));
+  EXPECT_FALSE(exists("/.games/g/.removing"));
+  EXPECT_EQ(opIndex("remove "), -1) << "nothing is deleted once the marker will not be written";
+  EXPECT_EQ(listed(), 1u);
+  expectDataKept("g");
+
+  // A marker whose close fails may not be whole: it is taken away again, and the game stays listed and whole.
+  fakesd::sim().failOpenWrite.clear();
+  fakesd::sim().failClose.insert("/.games/g/.removing");
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_FALSE(exists("/.games/g/.removing"));
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  visit();
+  EXPECT_EQ(listed(), 1u) << "a game that is still whole is not swept by the next visit";
+  expectDataKept("g");
+
+  // A marker that will not go either stays on the listed game, and the next visit finishes the remove.
+  fakesd::sim().failRemove.insert("/.games/g/.removing");
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_TRUE(fakelog::any("Cannot remove /.games/g/.removing"));
+  fakesd::sim().failRemove.clear();
+  fakesd::sim().failClose.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  expectDataKept("g");
+}
+
+// (The shared fake models a shared cluster chain as RemoveTest's earlier probe cases do: the probe file made in
+// /.games-tmp/g is already in /.games/g.)
+TEST_F(RemoveTest, AMarkedFolderThatMayShareClustersWithScratchIsKeptByAVisit) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/main.lua", std::string("final"));
+  fakesd::addFile("/.games/g/.xlink", std::string());
+  fakesd::addFile("/.games/g/.removing", std::string());
+  placeData("g");
+
+  visit();
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+  EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_FALSE(exists("/.games-tmp/g/.xlink")) << "the probe file is removed either way";
+  EXPECT_TRUE(fakelog::any("Keeping /.games/g"));
+  EXPECT_TRUE(fakelog::any("Could not finish removing g"));
+  expectDataKept("g");
+
+  // A probe that cannot be made or removed is the safe side too.
+  for (const bool cannotMake : {true, false}) {
+    SCOPED_TRACE(cannotMake ? "cannot make" : "cannot remove");
+    fakesd::removeEntry("/.games/g/.xlink");
+    if (cannotMake) {
+      fakesd::sim().failOpenWrite.insert("/.games-tmp/g/.xlink");
+    } else {
+      fakesd::sim().failOpenWrite.clear();
+      fakesd::sim().failRemove.insert("/.games-tmp/g/.xlink");
+    }
+    visit();
+    EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
+    EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
+  }
+}
+
+TEST_F(RemoveTest, AMarkedFolderBesideIndependentScratchIsFinishedByAVisit) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  placeMarkedFolder("g");
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_FALSE(exists("/.games-tmp/g")) << "the visit empties the scratch folder as it always does";
+}
+
+TEST_F(RemoveTest, AVisitFinishesAtMostAFullBatchOfMarkedFolders) {
+  const size_t total = GamePackageInstaller::MAX_PER_RUN + 8;
+  for (size_t i = 0; i < total; ++i) placeMarkedFolder(std::string("m") + std::to_string(10 + i));
+  auto left = [total] {
+    size_t n = 0;
+    for (size_t i = 0; i < total; ++i) n += exists("/.games/m" + std::to_string(10 + i)) ? 1 : 0;
+    return n;
+  };
+  visit();
+  EXPECT_EQ(left(), 8u);
+  visit();
+  EXPECT_EQ(left(), 0u);
+}
+
+// (The fake lists in creation order, so the stuck folder is reached first; a card lists in slot order.)
+TEST_F(RemoveTest, AFailingMarkedFolderUsesUpItsPlaceInTheBatchAndDoesNotBlockTheRest) {
+  const size_t total = GamePackageInstaller::MAX_PER_RUN;
+  placeMarkedFolder("a-stuck");
+  fakesd::sim().failRemove.insert("/.games/a-stuck/main.lua");
+  for (size_t i = 0; i < total; ++i) placeMarkedFolder(std::string("m") + std::to_string(10 + i));
+  visit();
+  EXPECT_TRUE(exists("/.games/a-stuck"));
+  size_t left = 0;
+  for (size_t i = 0; i < total; ++i) left += exists("/.games/m" + std::to_string(10 + i)) ? 1 : 0;
+  EXPECT_EQ(left, 1u) << "31 of the 32 marked folders behind the stuck one went, and the stuck one counted";
+  visit();
+  for (size_t i = 0; i < total; ++i) EXPECT_FALSE(exists("/.games/m" + std::to_string(10 + i)));
+  EXPECT_TRUE(exists("/.games/a-stuck"));
+}
+
+TEST_F(RemoveTest, AVisitFinishesAMarkedFolderBeforeItInstallsTheSameIdAgain) {
+  install("g");
+  placeData("g");
+  fakesd::sim().failRemove.insert("/.games/g/main.lua");
+  ASSERT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  fakesd::sim().failRemove.clear();
+
+  fakesd::addFile("/games/g.chgame", gamePackage("g"));
+  const GamePackageInstaller::Report report = visit();
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_EQ(listed(), 1u);
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_FALSE(exists("/.games/g/.removing"));
+  expectDataKept("g");
 }
