@@ -21,6 +21,7 @@ struct Script {
   std::function<void()> onInstall;      // runs inside installAll(), before it returns
   std::vector<std::string> order;       // "hasInbox" and "installAll", in the order the screen called them
   bool popupWhenInstalling = false;     // whether the "Installing" popup had been drawn when installAll ran
+  bool lockWhenInstalling = false;      // whether the render lock was held when installAll last ran
 
   int installCalls() const {
     int n = 0;

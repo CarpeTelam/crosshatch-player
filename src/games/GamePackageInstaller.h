@@ -55,8 +55,12 @@ struct Report {
   uint8_t installed = 0;
   // Every file judged this call that ended in an error: an invalid package, a card or memory fault, and a package that
   // waits for room (TooManyGames) alike; not a file past MAX_PER_RUN or with a name over INBOX_NAME_BYTES - 2 bytes
-  // (skipped). Stops at 255. The launcher shows failed - 1 as "and N more" under the first reason.
+  // (skipped). Stops at 255. The launcher counts the failures after the first under its reason, the ones that wait
+  // for room apart from the rest (`waiting`).
   uint8_t failed = 0;
+  // The failures counted in `failed` that are packages waiting for room (TooManyGames), the first failure included when
+  // it is one. Counted only with `failed`, so it is never more than `failed`, saturated or not.
+  uint8_t waiting = 0;
   // The first failure, for the one-time notice. A package that installed but whose inbox file would neither delete
   // nor rename aside, or an invalid one that would not rename to .bad, is a failure (SdCard).
   Error firstError = Error::None;

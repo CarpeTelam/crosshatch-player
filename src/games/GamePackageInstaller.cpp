@@ -946,7 +946,10 @@ Report installAll() {
         report.firstError = error;
         snprintf(report.firstFile, sizeof(report.firstFile), "%s", names[i].text);
       }
-      if (report.failed < UINT8_MAX) ++report.failed;  // a saturated count is still a failure
+      if (report.failed < UINT8_MAX) {  // a saturated count is still a failure
+        ++report.failed;
+        if (error == Error::TooManyGames) ++report.waiting;  // only with `failed`, so never more than it
+      }
       if (error != Error::TooManyGames) ++judged;
     }
     // The renames and deletes above take files out of the inbox and leave the others in their order, so the ones

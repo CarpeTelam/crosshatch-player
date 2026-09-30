@@ -155,22 +155,38 @@ void GamesLauncherActivity::selectRemembered() {
 }
 
 void GamesLauncherActivity::installInbox() {
-  noteVisible = false;
-  noteMore[0] = '\0';
   if (GamePackageInstaller::hasInbox()) GUI.drawPopup(renderer, tr(STR_GAMES_INSTALLING));
-  const GamePackageInstaller::Report report = GamePackageInstaller::installAll();
+  showInstallNote(GamePackageInstaller::installAll());
+}
+
+void GamesLauncherActivity::showInstallNote(const GamePackageInstaller::Report& report) {
+  noteVisible = false;
+  noteWaiting[0] = '\0';
+  noteMore[0] = '\0';
   if (report.failed == 0) return;
   if (report.firstFile[0] == '\0') {
     snprintf(note, sizeof(note), "%s", reasonText(report.firstError));
   } else {
     snprintf(note, sizeof(note), "%s: %s", report.firstFile, reasonText(report.firstError));
   }
-  // The other failures are counted, not named: one line under the first reason. N is the installer's own count less
-  // the first: every file it judged and failed, a package that waits for room (TooManyGames) included. Files it did
-  // not judge are not in it: those past the 32 a visit takes (they wait for the next visit) and names over 62 bytes
-  // (skipped, logged). `failed` stops at 255, so a saturated count reads as its floor ("and 254 more").
-  if (report.failed > 1) {
-    snprintf(noteMore, sizeof(noteMore), tr(STR_GAMES_INSTALL_AND_MORE), static_cast<unsigned>(report.failed - 1));
+  // The other failures are counted, not named, on lines under the first reason. They are the installer's own count
+  // less the first: every file it judged and failed. Files it did not judge are not in it: those past the 32 a visit
+  // takes (they wait for the next visit) and names over 62 bytes (skipped, logged). `failed` and `waiting` stop at
+  // 255, so a saturated count reads as its floor ("and 254 more").
+  const unsigned others = report.failed - 1u;
+  // At the game limit every package judged after its manifest read waits for room (TooManyGames), valid or not, so
+  // those are told apart from the ones that did not install for a reason of their own. `waiting` counts the first
+  // failure too when it waits; it is not one of the others.
+  unsigned waiting = report.waiting;
+  if (report.firstError == GamePackageInstaller::Error::TooManyGames && waiting > 0) --waiting;
+  waiting = std::min(waiting, others);
+  if (waiting == 0) {
+    if (others > 0) snprintf(noteMore, sizeof(noteMore), tr(STR_GAMES_INSTALL_AND_MORE), others);
+  } else {
+    snprintf(noteWaiting, sizeof(noteWaiting), tr(STR_GAMES_INSTALL_MORE_WAITING), waiting);
+    if (others > waiting) {
+      snprintf(noteMore, sizeof(noteMore), tr(STR_GAMES_INSTALL_AND_MORE_NOT_INSTALLED), others - waiting);
+    }
   }
   noteVisible = true;
 }
@@ -293,22 +309,39 @@ void GamesLauncherActivity::confirmRemove() {
   snprintf(id, sizeof(id), "%s", listing.entries[index].manifest.id);
   snprintf(name, sizeof(name), "%s", listing.entries[index].manifest.name);
 
-  // The render task reads the listing, the Continue rows, and the icon cache, which the reload below replaces.
+  GamePackageInstaller::Error error = GamePackageInstaller::Error::None;
+  bool install = false;
+  {
+    // The render task reads the listing, the Continue rows, and the icon cache, which the reload below replaces.
+    RenderLock lock(*this);
+    GUI.drawPopup(renderer, tr(STR_GAMES_REMOVING));
+    error = GamePackageInstaller::remove(id);
+    removeIndex = -1;
+    if (error == GamePackageInstaller::Error::None && lastOpened == fingerprintOf(id)) lastOpened = 0;
+    // A removed game frees a place, so a package that waited for room installs now, as on entering, rather than on
+    // the next visit ("remove one first" is what its note asked for).
+    install = error == GamePackageInstaller::Error::None && GamePackageInstaller::hasInbox();
+    if (install) GUI.drawPopup(renderer, tr(STR_GAMES_INSTALLING));
+  }
+  // Outside the lock: the install reads none of what the render task reads (the listing, the Continue rows, the icon
+  // cache, the note), and takes seconds for a package with images. Nothing requests a render while it runs; a render
+  // already queued draws the old listing, which is still whole. Only the second scope writes what the render reads.
+  GamePackageInstaller::Report report;
+  if (install) report = GamePackageInstaller::installAll();
   RenderLock lock(*this);
-  GUI.drawPopup(renderer, tr(STR_GAMES_REMOVING));
-  const GamePackageInstaller::Error error = GamePackageInstaller::remove(id);
-  removeIndex = -1;
-  if (error == GamePackageInstaller::Error::None && lastOpened == fingerprintOf(id)) lastOpened = 0;
+  if (install) showInstallNote(report);
   // The registry is the truth after a failure too: a game whose .pkg went is no longer listed.
   loadGames();
   loadContinue();
   loadIcons();
   const int count = static_cast<int>(listing.count);
-  // The next game takes its place, on its own row below the Continue rows.
+  // The next game takes its place, on its own row below the Continue rows. The selection keeps the removed row's index,
+  // so when the install after the remove adds a game that sorts before it, the row is that game's neighbour.
   activeNav().requestSelection(count > 0 ? static_cast<int>(continueCount) + std::min(index, count - 1) : 0);
   if (error != GamePackageInstaller::Error::None) {
     LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go
     snprintf(note, sizeof(note), "%s: %s", name, tr(STR_GAMES_REMOVE_FAILED));
+    noteWaiting[0] = '\0';
     noteMore[0] = '\0';
     noteVisible = true;
   }
@@ -487,30 +520,43 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     popup.styles = screen.theme().popup;
     popup.styles.normal.border = fui::Paint::solid(fui::Color::Black);
     popup.styles.normal.borderWidth = 2;
-    if (noteMore[0] == '\0') {
+    // The other failures' lines, top to bottom: those that wait for room, then the rest.
+    const char* moreLines[2] = {};
+    int moreCount = 0;
+    if (noteWaiting[0] != '\0') moreLines[moreCount++] = noteWaiting;
+    if (noteMore[0] != '\0') moreLines[moreCount++] = noteMore;
+    if (moreCount == 0) {
       screen.popup(popup);
     } else {
-      // "and N more" is a line of its own under the reason. The renderer's word wrap does not break on '\n', so the
-      // panel is laid out as Screen::popup lays it out, with one line more room at the bottom for that line.
+      // Each more-line is a line of its own under the reason. The renderer's word wrap does not break on '\n', so the
+      // panel is laid out as Screen::popup lays it out, with one line more room at the bottom for each of them.
       fui::DrawTarget& target = screen.target();
       const fui::Rect bounds = screen.frame().safeRect();
       const fui::Insets pad = popup.padding;
       const int16_t lineHeight = target.lineHeight(popup.text.font);
+      const int16_t moreHeight = static_cast<int16_t>(moreCount * lineHeight);
       const int16_t contentWidth =
           std::max<int16_t>(1, static_cast<int16_t>(bounds.width * 3 / 4 - pad.left - pad.right));
       fui::TextStyle moreStyle = popup.text;
       moreStyle.maxLines = 1;
       const fui::Size reason = fui::measureWrappedText(target, note, popup.text, contentWidth);
-      const int16_t moreWidth = std::min(target.measureText(moreStyle.font, noteMore, moreStyle).width, contentWidth);
-      const fui::Rect panel = fui::centeredRect(
-          bounds, fui::Size{static_cast<int16_t>(std::max(reason.width, moreWidth) + pad.left + pad.right),
-                            static_cast<int16_t>(reason.height + lineHeight + pad.top + pad.bottom)});
-      popup.padding.bottom = static_cast<int16_t>(pad.bottom + lineHeight);  // the reason is drawn above that room
+      int16_t widest = reason.width;
+      for (int i = 0; i < moreCount; ++i) {
+        widest =
+            std::max(widest, std::min(target.measureText(moreStyle.font, moreLines[i], moreStyle).width, contentWidth));
+      }
+      const fui::Rect panel =
+          fui::centeredRect(bounds, fui::Size{static_cast<int16_t>(widest + pad.left + pad.right),
+                                              static_cast<int16_t>(reason.height + moreHeight + pad.top + pad.bottom)});
+      popup.padding.bottom = static_cast<int16_t>(pad.bottom + moreHeight);  // the reason is drawn above that room
       fui::popup(screen.frame(), panel, popup);
-      target.text(fui::Rect{static_cast<int16_t>(panel.x + pad.left),
-                            static_cast<int16_t>(panel.bottom() - pad.bottom - lineHeight),
-                            static_cast<int16_t>(panel.width - pad.left - pad.right), lineHeight},
-                  noteMore, moreStyle);
+      for (int i = 0; i < moreCount; ++i) {
+        // Bottom-up from the panel's padding: the last line sits where e4-z3's one more-line sat.
+        const int16_t y = static_cast<int16_t>(panel.bottom() - pad.bottom - (moreCount - i) * lineHeight);
+        target.text(fui::Rect{static_cast<int16_t>(panel.x + pad.left), y,
+                              static_cast<int16_t>(panel.width - pad.left - pad.right), lineHeight},
+                    moreLines[i], moreStyle);
+      }
     }
   }
 }

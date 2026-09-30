@@ -534,6 +534,142 @@ TEST_F(RemoveListTest, AFailedRemoveAfterASeveralFailureInstallNoteShowsNoMoreLi
   EXPECT_FALSE(noteSays("more")) << "the remove note has no more line: " << ui().joined();
 }
 
+// ---- installing the inbox after a remove (AI-2, the retro's rev-3) ----
+
+// The note's "remove one first" is followed at once: the package that waited for room installs after the remove, in
+// the same visit, and is listed before the person leaves the screen.
+TEST_F(RemoveListTest, ARemoveAtTheLimitInstallsTheWaitingPackageAndListsIt) {
+  addGames(64);
+  installerscript::script().inbox = true;
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.waiting = 1;
+  installerscript::script().report.firstError = Error::TooManyGames;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "extra.chgame");
+  open();
+  ASSERT_TRUE(noteSays("extra.chgame: " + std::string(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES)))) << ui().joined();
+  key(Button::Confirm);  // dismisses the note
+  ASSERT_EQ(installerscript::script().installCalls(), 1);
+
+  installerscript::script().report = GamePackageInstaller::Report{};
+  installerscript::script().report.installed = 1;
+  installerscript::script().onInstall = [] {
+    EXPECT_FALSE(fakesd::has("/.games/game-02")) << "the install runs after the remove";
+    addGame("extra", "Extra");  // sorts first: on the page the list shows
+  };
+  installerscript::script().popupWhenInstalling = false;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+
+  EXPECT_EQ(removescript::script().ids, std::vector<std::string>{"game-02"});
+  EXPECT_EQ(installerscript::script().installCalls(), 2) << "one install on entering, one after the remove";
+  const std::vector<std::string> tail(installerscript::script().order.end() - 2, installerscript::script().order.end());
+  EXPECT_EQ(tail, (std::vector<std::string>{"hasInbox", "installAll"}));
+  EXPECT_TRUE(installerscript::script().popupWhenInstalling) << "\"Installing\" was drawn before the installer ran";
+  EXPECT_FALSE(installerscript::script().lockWhenInstalling) << "the render task is not held off for an install";
+  EXPECT_TRUE(removescript::script().lockWhenRemoving) << "the remove still runs under the lock";
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "no scope took the lock twice";
+  EXPECT_TRUE(ui().drewLine("Extra")) << "the installed game is listed: " << ui().joined();
+  EXPECT_FALSE(ui().drewLine("Game 02"));
+  EXPECT_FALSE(noteSays(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES))) << "nothing failed, so no note: " << ui().joined();
+}
+
+TEST_F(RemoveListTest, AnInstallThatFailsAfterARemoveShowsItsNoteWithTheKindsOfTheOthers) {
+  addGames(3);
+  open();
+  installerscript::script().inbox = true;
+  installerscript::script().report.installed = 1;
+  installerscript::script().report.failed = 3;
+  installerscript::script().report.waiting = 2;
+  installerscript::script().report.firstError = Error::TooManyGames;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "second.chgame");
+  installerscript::script().onInstall = [] { addGame("first", "First"); };
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+
+  EXPECT_TRUE(noteSays("second.chgame: " + std::string(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES)))) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("1 more waiting for room")) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("and 1 more not installed")) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("First")) << "the one that did install is listed under the note: " << ui().joined();
+  EXPECT_FALSE(ui().drewLine("Game 02"));
+  EXPECT_FALSE(noteSays(tr(STR_GAMES_REMOVE_FAILED)));
+
+  key(Button::Back);  // dismisses the note, and only the note
+  EXPECT_FALSE(noteSays("more")) << ui().joined();
+  EXPECT_EQ(activityManager.asks.goHome, 0);
+}
+
+TEST_F(RemoveListTest, TheNoteOfAnInstallAfterARemoveKeepsNoLineOfTheEarlierNote) {
+  addGames(3);
+  installerscript::script().report.failed = 3;
+  installerscript::script().report.waiting = 3;
+  installerscript::script().report.firstError = Error::TooManyGames;
+  open();
+  ASSERT_TRUE(ui().drewLine("2 more waiting for room")) << ui().joined();
+  key(Button::Confirm);  // dismisses the install note
+
+  installerscript::script().inbox = true;
+  installerscript::script().report = GamePackageInstaller::Report{};
+  installerscript::script().report.failed = 2;
+  installerscript::script().report.firstError = Error::BadCrc;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+  EXPECT_TRUE(noteSays(tr(STR_GAMES_INSTALL_BAD_CRC))) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("and 1 more")) << ui().joined();
+  EXPECT_FALSE(noteSays("waiting")) << "the entry's note is gone with its lines: " << ui().joined();
+}
+
+TEST_F(RemoveListTest, ARemoveWithAnEmptyInboxInstallsNothing) {
+  addGames(3);
+  open();
+  installerscript::script().order.clear();
+  longPressText("Game 02");
+  // The tap by hand, so the theme's calls are read before the next render clears them.
+  const screen::DrawnText* remove = find(tr(STR_GAMES_REMOVE));
+  ASSERT_NE(remove, nullptr) << ui().joined();
+  input->tap(remove->rect.x + remove->rect.width / 2, remove->rect.y + remove->rect.height / 2);
+  if (!input->consumeSuppressedRelease()) activity().loop();  // frame()'s pass, without its render
+  input->clear();
+  auto& theme = UITheme::getInstance().getTheme();
+  EXPECT_TRUE(theme.drew("drawPopup", tr(STR_GAMES_REMOVING))) << "the tap removed the game";
+  EXPECT_FALSE(theme.drew("drawPopup", tr(STR_GAMES_INSTALLING))) << "nothing to install, so no \"Installing\"";
+  render();
+  // Asked, and nothing to install: no installAll.
+  EXPECT_EQ(installerscript::script().order, std::vector<std::string>{"hasInbox"});
+  EXPECT_EQ(shown(3), (std::vector<std::string>{"Game 01", "Game 03"}));
+}
+
+TEST_F(RemoveListTest, AFailedRemoveInstallsNothing) {
+  addGames(3);
+  open();
+  installerscript::script().order.clear();
+  installerscript::script().inbox = true;
+  removescript::script().onRemove = nullptr;
+  removescript::script().result = Error::SdCard;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+  EXPECT_TRUE(installerscript::script().order.empty()) << "no place was freed, so the inbox is not even asked about";
+  EXPECT_TRUE(noteSays("Game 02: " + std::string(tr(STR_GAMES_REMOVE_FAILED)))) << ui().joined();
+}
+
+TEST_F(RemoveListTest, AFailedRemoveAfterANoteWithBothMoreLinesShowsNeither) {
+  addGames(3);
+  installerscript::script().report.failed = 4;
+  installerscript::script().report.waiting = 3;
+  installerscript::script().report.firstError = Error::TooManyGames;
+  open();
+  ASSERT_TRUE(ui().drewLine("2 more waiting for room")) << ui().joined();
+  ASSERT_TRUE(ui().drewLine("and 1 more not installed")) << ui().joined();
+  key(Button::Confirm);  // dismisses the install note
+  removescript::script().onRemove = nullptr;
+  removescript::script().result = Error::SdCard;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+  EXPECT_TRUE(noteSays("Game 02: " + std::string(tr(STR_GAMES_REMOVE_FAILED)))) << ui().joined();
+  EXPECT_FALSE(noteSays("more")) << "the remove note has no more-line: " << ui().joined();
+}
+
 TEST_F(RemoveListTest, ADeleteThatStopsAfterTheMarkerIsReportedAndTheGameIsNoLongerListed) {
   addGames(3);
   placeData("game-02");
