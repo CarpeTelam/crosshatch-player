@@ -471,3 +471,8 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-y-chgame-rename.md`
   summary: `scripts/pack_device_run.py` checks the committed `package_vector.chgame` only by size against `package_vectors.json`, and lists the recorded hash for it; it does not recompute the hash from the package's members.
   evidence: Review (edge case hunter), e4-y. The vector's bytes and hash are pinned by `PackageHardeningTest` (it installs the vector and compares the installer's hash) and `pack_game_test.py`, so a stale file fails those first. Trigger: the vector is regenerated with a byte-for-byte same size.
+## owner-e4-title-screen
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md` (the owner's answers to A1, A12, A13, and A14, 2026-09-30)
+  summary: A per-game title screen, opened from the game's single launcher row, offering Continue (when a save exists) or New, the mode, the game's instructions, and its options. The launcher then lists one row per game, with no separate Continue rows, and after Leave it selects the game's row.
+  evidence: The owner, at the entry-14 device run: Continue rows in the list work "for now". The title screen replaces them and makes New over a save an explicit choice (today a New match from the game's row silently replaces the save, A13). It needs a UX design (bmad-ux) and a spine note for the launcher and mode picker flow (AD-22), so it is a later epic's work. Trigger: planning epic-pass-and-play, whose seat choice also belongs on a pre-game screen.

@@ -35,3 +35,15 @@ The owner ran the packet (`device-run-packet.md` in this folder) on an X4 Pro. T
 | 3. The hash on the device (R4, Done when 2) | pass | `/.games/package-vector/.pkg` read `v1` / `0530a15766e91bf1`, the shared vector's hash, so the device's mbedTLS SHA-256 agrees with `pack_game.py` and the host's OpenSSL. `/.games/counter/.pkg` read `v1` / `fa0d541ee5b21f13`. That is `counter-changed.chgame`'s hash, as expected: the owner re-copied every package after step 7, and the changed Counter was the last one installed. |
 | 10. Sleep during a stuck call (R11), second attempt | pass | This run was tethered from boot. Stuck in one C call was started, and power was pressed before the watchdog fired (`held 402ms`, handled at 30.608 s). The match was still Playing: `Playing -> Leaving on ForcedExit` at 30.661 s. At 31.162 s the join logged `VM did not stop within 500 ms of cancel`, and the VM was abandoned at once (`freed its PSRAM, leaked 1032 bytes`). Sleep was entered at 31.163 s. **The forced exit held `RenderLock` for 502 ms**, from exiting the match to entering Sleep, within the documented bound (about 1,030 ms before the SD steps; no SD step starts after 1,500 ms). No `forced exit past 1500 ms` line appeared, and no SD step was pending. From the press being handled to deep sleep took 2.96 s, most of it the sleep screen's refreshes. The wake after this landed on Home (step 4). |
 | Package vector, opened | as expected | The shared hash vector is not a game (its `main.lua` returns an empty table), and opening it shows the "game stopped" error view. It is installed only so the device computes its hash (step 3). |
+
+## Owner's answers to the `Assumption for entry 14:` lines
+
+Numbered as in the packet's table (A1–A32). Each is agreed unless noted otherwise.
+
+- **A1** (one Continue row per saved game, above the games): agreed for now. The owner plans a per-game title screen that replaces it (below).
+- **A2–A7:** agreed. A2 holds until the Crosshatch logo becomes the fallback (`## owner-e4-launcher`). A4's packer half is stale: `pack_game.py` has refused a non-square `icon.png` since entry 7. A7 was measured at 502 ms (step 10).
+- **A8** (opening Games from Home lands on the last game's page): **not tested**. With four games per page, the device had too few games for a second page. The behaviour stays as built, and the owner can confirm it when more games are installed.
+- **A9–A11:** agreed.
+- **A12** (after Leave, the game's Continue row is selected): agreed for now. With the title screen, the game's row is selected after Leave.
+- **A13** (a New match from the game's own row replaces the save, with no confirmation): agreed for now. The owner asked why Counter kept its taps after New. It is by design: Counter reads its count from `ch.store`, which survives matches. The resume save was replaced, as step 6a showed through its hash. The title screen will offer Continue or New explicitly.
+- **A14** (the Continue list is rebuilt on entry and after each remove): agreed for now; it goes away with the title screen.
