@@ -67,6 +67,14 @@ bool GameRegistry::readPackageHash(const char* id, uint8_t (&hash)[GamePkg::HASH
   return length > 0 && GamePkg::parsePkg(bytes, static_cast<size_t>(length), hash);
 }
 
+bool GameRegistry::readGame(const char* dirName, GameCore::ManifestReader& reader, Entry& out) {
+  if (!readPackageHash(dirName, out.pkgHash)) {
+    LOG_INF("GAME", "Skipping %s: no valid .pkg", dirName);
+    return false;
+  }
+  return readManifest(dirName, reader, out);
+}
+
 bool GameRegistry::load(Listing& out) {
   out.entries.reset();
   out.count = 0;
@@ -106,11 +114,7 @@ bool GameRegistry::load(Listing& out) {
       break;
     }
     Entry& game = entries[count];
-    if (!readPackageHash(dirName, game.pkgHash)) {
-      LOG_INF("GAME", "Skipping %s: no valid .pkg", dirName);
-      continue;
-    }
-    if (!readManifest(dirName, *reader, game)) continue;
+    if (!readGame(dirName, *reader, game)) continue;
     game.check = game.manifest.check(host);
     ++count;
   }

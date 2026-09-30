@@ -457,7 +457,7 @@
 ## e4-x
 
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-x-cross-story-fixes.md`
-  summary: The 65th-game check counts folders whose `.pkg` parses, but `GameRegistry::load` also skips a folder whose manifest is missing, invalid, or names another id, so a card with such a folder can refuse an install while fewer than 64 games are listed.
+  summary: Resolved by `plan-dw114-install-count-matches-registry.md`: the count and the replacement test both use `GameRegistry::readGame`, the registry's own per-folder test (`GameLimitTest.OnlyFoldersTheRegistryListsCount`, `APackageIntoAFolderTheRegistrySkipsAddsAGame`). It read: The 65th-game check counts folders whose `.pkg` parses, but `GameRegistry::load` also skips a folder whose manifest is missing, invalid, or names another id, so a card with such a folder can refuse an install while fewer than 64 games are listed.
   evidence: Review (edge case, blind hunter), e4-x. Conservative by design: the count can only be high, so it never lets a hidden game through. Exactness needs a manifest read of up to 64 folders on every install (or sharing the registry's per-folder test); trigger: a report of a refusal with fewer than 64 games listed (the folder is not listed, so only a computer clears it).
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-x-cross-story-fixes.md`
   summary: An installed inbox file that would not delete is renamed `<name>.cpgame.installed` and nothing cleans these up, tells the person, or retries the delete on a later visit.

@@ -1071,6 +1071,35 @@ TEST_F(GameLimitTest, OnlyFoldersWithAMarkerCount) {
   EXPECT_EQ(install().installed, 1);
 }
 
+TEST_F(GameLimitTest, OnlyFoldersTheRegistryListsCount) {
+  installedGames(GameRegistry::MAX_GAMES - 1);
+  // A valid .pkg, but a manifest the registry skips: missing, invalid, or naming another id.
+  const std::string pkg("v1\n0000000000000000\n");
+  fakesd::addFile("/.games/no-manifest/.pkg", pkg);
+  fakesd::addFile("/.games/bad-manifest/.pkg", pkg);
+  fakesd::addFile("/.games/bad-manifest/manifest.json", std::string("{"));
+  fakesd::addFile("/.games/other-id/.pkg", pkg);
+  fakesd::addFile("/.games/other-id/manifest.json", manifestJson("game-00"));
+  drop("last.chgame", gamePackage("last"));
+  EXPECT_EQ(install().installed, 1) << "63 games are listed, so the 64th installs";
+  GameRegistry::Listing listing;
+  ASSERT_TRUE(GameRegistry::load(listing));
+  EXPECT_EQ(listing.count, GameRegistry::MAX_GAMES);
+}
+
+TEST_F(GameLimitTest, APackageIntoAFolderTheRegistrySkipsAddsAGame) {
+  installedGames(GameRegistry::MAX_GAMES - 1);
+  fakesd::addFile("/.games/skipped/.pkg", std::string("v1\n0000000000000000\n"));  // no manifest: not listed
+  drop("new.chgame", gamePackage("new"));
+  drop("skipped.chgame", gamePackage("skipped"));
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 1) << "whichever lands first is the 64th; the other is a 65th, not a replacement";
+  EXPECT_EQ(report.firstError, Error::TooManyGames);
+  GameRegistry::Listing listing;
+  ASSERT_TRUE(GameRegistry::load(listing));
+  EXPECT_EQ(listing.count, GameRegistry::MAX_GAMES);
+}
+
 TEST_F(GameLimitTest, TheOthersInTheInboxStillInstallWhenOneIsRefused) {
   installedGames(GameRegistry::MAX_GAMES - 1);
   drop("a.chgame", gamePackage("a"));
