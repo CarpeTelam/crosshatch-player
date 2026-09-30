@@ -154,12 +154,12 @@ MemberKind classify(const std::string_view name) {
 }
 
 bool hasPackageExtension(const char* name, const size_t length) {
-  constexpr char EXTENSION[] = ".cpgame";
+  constexpr char EXTENSION[] = ".chgame";
   constexpr size_t EXTENSION_BYTES = sizeof(EXTENSION) - 1;
   return length > EXTENSION_BYTES && strcasecmp(name + length - EXTENSION_BYTES, EXTENSION) == 0;
 }
 
-// Calls `visit(name)` for each .cpgame file in the inbox, until it returns false.
+// Calls `visit(name)` for each .chgame file in the inbox, until it returns false.
 template <typename F>
 void forEachInboxFile(F&& visit) {
   auto dir = Storage.open(GamePaths::INBOX_DIR);
@@ -565,7 +565,7 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
   return written == sizeof(pkg) && closed ? Error::None : Error::SdCard;
 }
 
-// The suffix of an inbox file that installed but would not delete. Neither it nor ".bad" ends in ".cpgame", so the
+// The suffix of an inbox file that installed but would not delete. Neither it nor ".bad" ends in ".chgame", so the
 // inbox scan skips both.
 constexpr char INSTALLED_SUFFIX[] = ".installed";
 

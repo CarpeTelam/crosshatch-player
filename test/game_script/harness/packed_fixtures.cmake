@@ -1,5 +1,5 @@
 # The packer's live output through the C++ installer. The
-# only other bridge between scripts/pack_game.py and GamePackageInstaller is the committed package_vector.cpgame, which
+# only other bridge between scripts/pack_game.py and GamePackageInstaller is the committed package_vector.chgame, which
 # has no image or icon; here the host build runs the real packer on fixture folders into the build dir, and
 # PackedFixturesTest installs each package with the real installer and lists it through the registry. It links
 # installer.cmake's game_installer_src unchanged, and runs after it by name.
@@ -15,7 +15,7 @@ set(PACKED_FIXTURE_OUTPUTS)
 foreach(fixture IN LISTS PACKED_FIXTURES)
   file(GLOB_RECURSE fixture_files CONFIGURE_DEPENDS ${REPO_ROOT}/test/game_script/fixtures/${fixture}/*)
   list(APPEND PACKED_FIXTURE_INPUTS ${fixture_files})
-  list(APPEND PACKED_FIXTURE_OUTPUTS ${PACKED_FIXTURES_DIR}/${fixture}.cpgame ${PACKED_FIXTURES_DIR}/${fixture}.hash)
+  list(APPEND PACKED_FIXTURE_OUTPUTS ${PACKED_FIXTURES_DIR}/${fixture}.chgame ${PACKED_FIXTURES_DIR}/${fixture}.hash)
 endforeach()
 
 add_custom_command(

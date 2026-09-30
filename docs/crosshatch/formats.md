@@ -204,12 +204,13 @@ snapshot whose status is not over, and deletes `resume.bin` and its tmp instead 
 when it enters Over (a finished round never resumes; a delete the card refuses is retried at most every 5 s in Over and Paused, and at Leave and the forced exit regardless, until it succeeds; the forced exit's SD steps stop starting 1,500 ms after it began). Leave keeps the file. The `ver` a resumed match continues from
 is the file's, so a match that has passed 65,535 snapshots wraps in the file (the spine's `u16`) and only there.
 
-## Game package (`.cpgame`)
+## Game package (`.chgame`)
 
-A game ships as one `.cpgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
-only code that installs one (AD-16). Opening Games installs every `/games/*.cpgame` (any letter case for the
-extension; a name that starts with `.`, such as a Mac's `._name.cpgame` sidecar, is skipped), so a person puts packages there with the web file manager or USB. The name of the file means nothing:
-the manifest's `id` names the game.
+A game ships as one `.chgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
+only code that installs one (AD-16). Opening Games installs every `/games/*.chgame` (any letter case for the
+extension; a name that starts with `.`, such as a Mac's `._name.chgame` sidecar, is skipped), so a person puts packages there with the web file manager or USB. The name of the file means nothing:
+the manifest's `id` names the game. The extension was `.cpgame` until 2026-09-30; none shipped, and the installer
+ignores a `.cpgame` file (it is neither installed nor renamed).
 
 ### Package
 
@@ -277,10 +278,10 @@ For each inbox file the installer:
 2. extracts the members, in name order, to `/.games-tmp/<id>/`, converting images as it goes, and hashes them;
 3. removes any `/.games/<id>/` (its `.pkg` first, so a removal that stops partway leaves no listed game), renames
    `/.games-tmp/<id>/` to `/.games/<id>/`, and writes `.pkg` last;
-4. deletes the inbox file; if the card will not delete it, renames it `<name>.cpgame.installed` (replacing an earlier
+4. deletes the inbox file; if the card will not delete it, renames it `<name>.chgame.installed` (replacing an earlier
    one; one that will not go, such as a file the card marks read-only, leaves `.installed.2`, then `.3`, up to `.5`),
    which the inbox scan ignores, so the installed game does not install again on every visit and undo a Remove. An
-   invalid package's `.bad` name works the same way. The leftover file is harmless; renaming it back to `.cpgame`
+   invalid package's `.bad` name works the same way. The leftover file is harmless; renaming it back to `.chgame`
    installs it again, and it may be deleted from a computer.
 
 Right after the manifest is read (before anything is written), the installer refuses an install that would make more
@@ -298,7 +299,7 @@ installed game, say) is still reached.
 `/.games-data/<id>/` is never touched, so a reinstall keeps a game's saved data. A package whose `id` is already
 installed replaces it whatever the `version`, and of two inbox files with one `id` the last installed wins.
 
-A package that is invalid is renamed `<name>.cpgame.bad` (replacing an earlier `.bad` of that name) and its reason is
+A package that is invalid is renamed `<name>.chgame.bad` (replacing an earlier `.bad` of that name) and its reason is
 shown once. A failure that is the card's or the device's (a write, rename, or delete error, out of memory) leaves the
 file in the inbox for the next try, and so does an inbox file that will neither delete nor rename to `.installed` after
 its game installed, or an invalid one that will not rename to `.bad`: each is reported as an SD card failure, so a stuck
@@ -332,7 +333,7 @@ The package hash is the first 8 bytes of a SHA-256 over the package's members so
 computed over the members as packaged (the `.png` files, not the converted `.bmp` files). `src/games/GameHash` is the
 one SHA-256 helper in the firmware (mbedTLS on the device, OpenSSL in the simulator and the host tests) and
 `scripts/pack_game.py` computes the same value. Both pass one vector: `test/game_core/package_vectors.json`
-(`hash_vector`) and `package_vector.cpgame`, whose hash is `0530a15766e91bf1`. The registry
+(`hash_vector`) and `package_vector.chgame`, whose hash is `0530a15766e91bf1`. The registry
 (`src/games/GameRegistry`) lists a folder of `/.games/` only when its `.pkg` is valid and its `manifest.json` names the
 folder's own id; it has no index. `resume.bin` records the 8 hash bytes to tell a changed package ([resume.bin](#resumebin)).
 

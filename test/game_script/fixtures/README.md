@@ -5,14 +5,14 @@ They live here, never in `games/`, which the release workflow packs.
 
 ## Placing a fixture on the SD card
 
-Games install from packages: opening Games installs every `/games/*.cpgame` (`/games/` on the card, `fs_/games/` in
+Games install from packages: opening Games installs every `/games/*.chgame` (`/games/` on the card, `fs_/games/` in
 the simulator), and lists only what was installed (`/.games/<id>/` holds a `.pkg`, which only the installer writes).
 Copying a fixture folder into `/.games/` no longer lists it. Pack a game folder (it has a `manifest.json`; the folder
 name must equal the manifest's `id`) with the release packer and drop the package in the inbox:
 
 ```sh
-python3 scripts/pack_game.py test/game_script/fixtures/counter /tmp/packs   # writes /tmp/packs/counter.cpgame
-cp /tmp/packs/counter.cpgame <sd>/games/                                    # fs_/games/ in the simulator
+python3 scripts/pack_game.py test/game_script/fixtures/counter /tmp/packs   # writes /tmp/packs/counter.chgame
+cp /tmp/packs/counter.chgame <sd>/games/                                    # fs_/games/ in the simulator
 ```
 
 `pack_game.py` prints the package hash on its last line and refuses a folder the installer would refuse. A fixture
@@ -41,6 +41,7 @@ in small type), Back must return to Games, and the device must stay responsive.
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
 | `slow-restart/` | The tracer's round (three taps) with a slow Play again: every later round's `setup` spins about 2 s on `ch.time.ms()`, so the end-of-round menu stays on screen meanwhile. A tap on the canvas in that gap is dropped: the new round starts at "taps: 0" with no square. Play again, then Back and Resume within the gap: the pause menu stays on screen (inert) until round 2's first frame, never the round-1 board. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
+| `changed/counter/` | `counter/` at version 1.0.1 with the title "Counter v2": the same id and a different package hash, for installing over `counter` on a device (its save is discarded, its `ch.store` kept). `changed/` only holds such variants, named by the game id they change because the packer needs the folder name to equal the manifest's `id`; pack one with `python3 scripts/pack_game.py test/game_script/fixtures/changed/counter <out>` into an `<out>` other than `counter`'s, or it overwrites `counter.chgame`. `scripts/pack_device_run.py` packs it as `counter-changed.chgame` (see Device-run packages below). |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
 | `icons/` | Every library icon at 32, 64, and 128 px in both weights, up to three icons of one category a page (`docs/crosshatch/game-icons.md`'s order; the title shows the ink and page `n/N`, the heading the category, part, and "regular, fill"). The small and medium rows show each name regular then fill; the large area shows the regular icons above the fill ones, each name under its fill icon. Each tap turns to the next page: the 21 black pages (black icons on white) first, then the 21 white pages (white icons on black), then back to the first. The medium row sits on a light band, which shows through around each icon's ink. |
@@ -88,7 +89,7 @@ about half the pixels white, runs of one or two pixels, the worst case for the r
    `--filter log2file` or redirect with `| tee timing.log`), or any terminal on the board's USB serial port. It carries
    the `band 2 charges ...` line, a watchdog or reset banner if there is one, and the `GAME` line `VM stopped; arena
    peak ...` that a normal Leave prints.
-1. Install `timing.cpgame`, open it from Home, Games. The menu is a cheap frame: the baseline.
+1. Install `timing.chgame`, open it from Home, Games. The menu is a cheap frame: the baseline.
 2. For each band in turn, tap it and record the time from the tap to the finished picture (a 60 fps phone video of the
    screen, counted in frames, is enough; the serial log has no replay time), whether the device stays responsive
    during it (the touch panel and the buttons answer once it is drawn), and the serial log for a watchdog or reset
@@ -112,8 +113,18 @@ whether a Back press during a band's replay is answered once the picture is draw
 install the package.
 
 `GameHash`'s mbedTLS branch (the device build) has never run against `package_vectors.json`: the host tests use OpenSSL.
-While the installer is on the device, also install `test/game_core/package_vector.cpgame` and read
+While the installer is on the device, also install `test/game_core/package_vector.chgame` and read
 `/.games/package-vector/.pkg` back: it must read `v1` on one line and `0530a15766e91bf1` on the next.
+
+## Device-run packages
+
+The packages entry 14 puts on a device are never committed. `python3 scripts/pack_device_run.py <dir>` packs them:
+`counter`, `loop`, `timing`, and `pack-images` from here, `changed/counter` as `counter-changed`, the hardening
+generator's `binary-lua-stored` case as `invalid-binary-lua.chgame` (it must install as `.bad`), and
+`test/game_core/package_vector.chgame`, with a `HASHES.txt` of the hash `pack_game.py` printed for each. On a pull
+request, add the label `package-games`: the `Game packages` job of `.github/workflows/crosshatch-ci.yml` runs the
+script and uploads `<dir>` as the artifact `game-packages` (kept 30 days). The job is not a required check and runs
+only with the label; adding any label reruns the workflow's other jobs too.
 
 ## Fault bands
 

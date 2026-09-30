@@ -56,7 +56,7 @@ class InstallerIconTest : public ::testing::Test {
   }
 
   static GamePackageInstaller::Report install(const std::string& manifest) {
-    fakesd::addFile(INBOX + "g.cpgame", gamePackage("g", {}, manifest));
+    fakesd::addFile(INBOX + "g.chgame", gamePackage("g", {}, manifest));
     return GamePackageInstaller::installAll();
   }
 
@@ -66,8 +66,8 @@ class InstallerIconTest : public ::testing::Test {
     EXPECT_EQ(report.installed, 0) << manifest;
     EXPECT_EQ(report.failed, 1) << manifest;
     EXPECT_EQ(report.firstError, why) << manifest << ": " << GamePackageInstaller::describe(report.firstError);
-    EXPECT_FALSE(exists(INBOX + "g.cpgame"));
-    EXPECT_TRUE(exists(INBOX + "g.cpgame.bad")) << manifest;
+    EXPECT_FALSE(exists(INBOX + "g.chgame"));
+    EXPECT_TRUE(exists(INBOX + "g.chgame.bad")) << manifest;
     EXPECT_TRUE(childrenOf("/.games").empty());
     EXPECT_FALSE(exists("/.games-tmp"));
   }
@@ -191,7 +191,7 @@ TEST_F(InstallerIconTest, AnUpgradeWithAnUnknownIconLeavesTheInstalledGameAndIts
   const GamePackageInstaller::Report report = install(withMembers(R"("icon": "no-such-icon")"));
   EXPECT_EQ(report.firstError, Error::UnknownIcon);
   EXPECT_EQ(report.installed, 0);
-  EXPECT_TRUE(exists(INBOX + "g.cpgame.bad"));
+  EXPECT_TRUE(exists(INBOX + "g.chgame.bad"));
   EXPECT_TRUE(snapshotOfGames() == before) << "/.games or /.games-data changed";
   EXPECT_FALSE(exists("/.games-tmp"));
 }

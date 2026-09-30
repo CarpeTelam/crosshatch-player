@@ -462,3 +462,12 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-x-cross-story-fixes.md`
   summary: An installed inbox file that would not delete is renamed `<name>.cpgame.installed` and nothing cleans these up, tells the person, or retries the delete on a later visit.
   evidence: Review (edge case, blind hunter), e4-x. The brief asked for the rename, a log line, and a reported error only when the rename also fails; `formats.md` says renaming the file back installs it again and that it may be deleted from a computer. Trigger: cards that fill with these (each up to `PACKAGE_BYTES`), which needs a card that refuses deletes repeatedly.
+
+## e4-y
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-y-chgame-rename.md`
+  summary: `counter/main.lua`'s header comment ("Copy this folder to /.games/counter/ on the SD card") is out of date, since copying a fixture folder into `/.games/` no longer lists the game, and `changed/counter/main.lua` copies it.
+  evidence: Review (blind hunter), e4-y. Pre-existing text in `counter/`, not caused by the rename. Changing either file's bytes changes the package hash the entry-14 packet records (`e8c3ac8dfb646d3b`, `fa0d541ee5b21f13`); trigger: the next edit to either fixture, or the packet's hash refresh.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-y-chgame-rename.md`
+  summary: `scripts/pack_device_run.py` checks the committed `package_vector.chgame` only by size against `package_vectors.json`, and lists the recorded hash for it; it does not recompute the hash from the package's members.
+  evidence: Review (edge case hunter), e4-y. The vector's bytes and hash are pinned by `PackageHardeningTest` (it installs the vector and compares the installer's hash) and `pack_game_test.py`, so a stale file fails those first. Trigger: the vector is regenerated with a byte-for-byte same size.

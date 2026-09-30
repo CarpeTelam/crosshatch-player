@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Writes the crafted .cpgame packages the installer's hardening suite (PackageHardeningTest) installs.
+"""Writes the crafted .chgame packages the installer's hardening suite (PackageHardeningTest) installs.
 
 Python makes them because the firmware's miniz cannot deflate, and a zip bomb, a deflated member at its
 limit, and most of the malformed layouts need real deflate streams or hand-set header fields. Standard
-library only. Each case is a file `<name>.cpgame` plus a line `<name>.cpgame <expected>` in `cases.txt`, where
+library only. Each case is a file `<name>.chgame` plus a line `<name>.chgame <expected>` in `cases.txt`, where
 `<expected>` is `Ok` (it installs) or the name of the `GamePackageInstaller::Error` that rejects it; an optional third
 field is the most bytes any file under /.games-tmp may ever hold while it is installed. The at-limit
 and one-over cases take their numbers from test/game_core/package_vectors.json (the file scripts/pack_game.py's
@@ -268,8 +268,8 @@ def main(argv):
         out.mkdir(parents=True, exist_ok=True)
         lines = []
         for name, expected, data, held in cases(vectors):
-            (out / f'{name}.cpgame').write_bytes(data)
-            lines.append(f'{name}.cpgame {expected}' + (f' {held}' if held is not None else '') + '\n')
+            (out / f'{name}.chgame').write_bytes(data)
+            lines.append(f'{name}.chgame {expected}' + (f' {held}' if held is not None else '') + '\n')
         (out / 'cases.txt').write_text(''.join(lines))
     except (OSError, KeyError, ValueError) as exc:
         print(f'error: {exc}', file=sys.stderr)

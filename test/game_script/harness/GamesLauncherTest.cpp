@@ -826,10 +826,10 @@ TEST_F(ListTest, AFailedFileIsExplainedOnceInAPopupOverTheListAndBackDismissesIt
   installerscript::script().report.failed = 1;
   installerscript::script().report.firstError = Error::NoMain;
   std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
-                "broken.cpgame");
+                "broken.chgame");
   open();
   const std::string shown = flat(ui().joined());
-  EXPECT_NE(shown.find(std::string("broken.cpgame: ") + tr(STR_GAMES_INSTALL_NO_MAIN)), std::string::npos) << shown;
+  EXPECT_NE(shown.find(std::string("broken.chgame: ") + tr(STR_GAMES_INSTALL_NO_MAIN)), std::string::npos) << shown;
 
   // Back dismisses the note and only the note: the list is still up and nothing left it.
   input->click(Button::Back);
@@ -837,7 +837,7 @@ TEST_F(ListTest, AFailedFileIsExplainedOnceInAPopupOverTheListAndBackDismissesIt
   EXPECT_EQ(activityManager.asks.goHome, 0);
   EXPECT_TRUE(activityManager.updateRequested());
   render();
-  EXPECT_EQ(flat(ui().joined()).find("broken.cpgame"), std::string::npos);
+  EXPECT_EQ(flat(ui().joined()).find("broken.chgame"), std::string::npos);
   EXPECT_TRUE(ui().drewLine("Alpha"));
 
   // Then Back means Back.
@@ -905,14 +905,14 @@ TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
     installerscript::script().report.failed = 1;
     installerscript::script().report.firstError = static_cast<Error>(value);
     std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
-                  "a.cpgame");
+                  "a.chgame");
     if (list) {
       reopen();
     } else {
       open();
     }
     const std::string shown = flat(ui().joined());
-    EXPECT_NE(shown.find("a.cpgame: " + text), std::string::npos) << "shown: " << shown;
+    EXPECT_NE(shown.find("a.chgame: " + text), std::string::npos) << "shown: " << shown;
     for (const int other : withText) {
       if (other == value) continue;
       EXPECT_EQ(shown.find(expectedText(static_cast<Error>(other))), std::string::npos)

@@ -68,7 +68,7 @@ class InstallerTest : public ::testing::Test {
 
 TEST_F(InstallerTest, InstallsTheVectorPackageWithItsFilesAndHash) {
   const Vector vector = loadVector();
-  drop("package-vector.cpgame", vector.package);
+  drop("package-vector.chgame", vector.package);
   ASSERT_TRUE(GamePackageInstaller::hasInbox());
 
   const GamePackageInstaller::Report report = install();
@@ -81,7 +81,7 @@ TEST_F(InstallerTest, InstallsTheVectorPackageWithItsFilesAndHash) {
   EXPECT_EQ(toText(fakesd::bytesOf(dir + ".pkg")), "v1\n" + vector.packageHash + "\n");
   EXPECT_EQ(childrenOf("/.games/" + vector.id).size(), 4u);
   // The inbox file and the scratch folder are gone.
-  EXPECT_FALSE(exists(INBOX + "package-vector.cpgame"));
+  EXPECT_FALSE(exists(INBOX + "package-vector.chgame"));
   EXPECT_FALSE(exists("/.games-tmp"));
   EXPECT_FALSE(GamePackageInstaller::hasInbox());
 
@@ -95,7 +95,7 @@ TEST_F(InstallerTest, InstallsTheVectorPackageWithItsFilesAndHash) {
 }
 
 TEST_F(InstallerTest, WritesPkgLastAndDeletesTheInboxFileAfterIt) {
-  drop("package-vector.cpgame", loadVector().package);
+  drop("package-vector.chgame", loadVector().package);
   install();
   const int renamed = opIndex("rename /.games-tmp/package-vector /.games/package-vector");
   // The last open of the .pkg: the limit check looks for an installed one before the folder is moved (opens nothing).
@@ -104,7 +104,7 @@ TEST_F(InstallerTest, WritesPkgLastAndDeletesTheInboxFileAfterIt) {
   for (size_t i = 0; i < opsSoFar.size(); ++i) {
     if (opsSoFar[i] == "open /.games/package-vector/.pkg") pkg = static_cast<int>(i);
   }
-  const int deleted = opIndex("remove /games/package-vector.cpgame");
+  const int deleted = opIndex("remove /games/package-vector.chgame");
   ASSERT_GE(renamed, 0);
   ASSERT_GE(pkg, 0);
   ASSERT_GE(deleted, 0);
@@ -124,7 +124,7 @@ TEST_F(InstallerTest, ReinstallReplacesTheFolderAndKeepsTheGamesData) {
   fakesd::addFile("/.games/package-vector/.pkg", std::string("v1\n0000000000000000\n"));
   fakesd::addFile("/.games-data/package-vector/store.bin", std::string("saved"));
   fakesd::addFile("/.games-data/package-vector/resume.bin", std::string("resume"));
-  drop("package-vector.cpgame", loadVector().package);
+  drop("package-vector.chgame", loadVector().package);
 
   EXPECT_EQ(install().installed, 1);
   EXPECT_FALSE(exists("/.games/package-vector/old.lua"));
@@ -134,13 +134,13 @@ TEST_F(InstallerTest, ReinstallReplacesTheFolderAndKeepsTheGamesData) {
 }
 
 TEST_F(InstallerTest, AFailedReinstallLeavesTheOldGameWhole) {
-  drop("g.cpgame", gamePackage("keeper"));
+  drop("g.chgame", gamePackage("keeper"));
   ASSERT_EQ(install().installed, 1);
   const Bytes before = fakesd::bytesOf("/.games/keeper/.pkg");
 
   // Same id, but an image that cannot convert: rejected before the old folder is touched.
   const Bytes bad = gamePackage("keeper", {{"badge.png", toBytes("not a png")}});
-  drop("g.cpgame", bad);
+  drop("g.chgame", bad);
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(fakesd::bytesOf("/.games/keeper/.pkg"), before);
@@ -156,7 +156,7 @@ TEST_F(InstallerTest, TheHashCoversTheOriginalMembersNotTheConvertedImages) {
                                        {"main.lua", toBytes("return {}\n")},
                                        {"badge.png", badge},
                                        {"icon.png", icon}};
-  drop("with-images.cpgame", makeZip(members));
+  drop("with-images.chgame", makeZip(members));
   ASSERT_EQ(install().installed, 1);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/with-images/.pkg")), "v1\n" + hex(packageDigest(members), 8) + "\n");
 }
@@ -164,7 +164,7 @@ TEST_F(InstallerTest, TheHashCoversTheOriginalMembersNotTheConvertedImages) {
 // ---- manifest ------------------------------------------------------------------------------------
 
 TEST_F(InstallerTest, AnUnavailablePackageInstallsAndTheRegistryListsIt) {
-  drop("future.cpgame", gamePackage("future", {}, manifestJson("future", "Future", 99)));
+  drop("future.chgame", gamePackage("future", {}, manifestJson("future", "Future", 99)));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 0);
@@ -190,22 +190,22 @@ TEST_F(InstallerTest, AManifestThatBreaksItsOwnRulesEndsBad) {
   for (const Case& c : cases) {
     SetUp();
     const Bytes package = gamePackage("g", {}, c.manifest);
-    drop("g.cpgame", package);
+    drop("g.chgame", package);
     SCOPED_TRACE(c.what);
-    expectRejected("g.cpgame", package, Error::BadManifest);
+    expectRejected("g.chgame", package, Error::BadManifest);
     EXPECT_FALSE(HasFatalFailure());
   }
 }
 
 TEST_F(InstallerTest, APackageWithoutAManifestOrMainEndsBad) {
   const Bytes noManifest = makeZip({{"main.lua", toBytes("return {}\n")}});
-  drop("a.cpgame", noManifest);
-  expectRejected("a.cpgame", noManifest, Error::BadManifest);
+  drop("a.chgame", noManifest);
+  expectRejected("a.chgame", noManifest, Error::BadManifest);
 
   SetUp();
   const Bytes noMain = makeZip({{"manifest.json", toBytes(manifestJson("g"))}});
-  drop("b.cpgame", noMain);
-  expectRejected("b.cpgame", noMain, Error::NoMain);
+  drop("b.chgame", noMain);
+  expectRejected("b.chgame", noMain, Error::NoMain);
 }
 
 // ---- members -------------------------------------------------------------------------------------
@@ -216,29 +216,29 @@ TEST_F(InstallerTest, AMemberOffTheWhitelistEndsBad) {
   for (const char* name : names) {
     SetUp();
     const Bytes package = gamePackage("g", {{name, toBytes("x")}});
-    drop("g.cpgame", package);
+    drop("g.chgame", package);
     SCOPED_TRACE(name);
-    expectRejected("g.cpgame", package, Error::BadMember);
+    expectRejected("g.chgame", package, Error::BadMember);
     EXPECT_FALSE(HasFatalFailure());
   }
 }
 
 TEST_F(InstallerTest, ALongMemberNameEndsBad) {
   const Bytes package = gamePackage("g", {{std::string(33, 'a') + ".lua", toBytes("x")}});
-  drop("g.cpgame", package);
-  expectRejected("g.cpgame", package, Error::BadMember);
+  drop("g.chgame", package);
+  expectRejected("g.chgame", package, Error::BadMember);
 }
 
 TEST_F(InstallerTest, AMemberNamedAtTheLimitIsAllowed) {
-  drop("g.cpgame", gamePackage("g", {{std::string(32, 'a') + ".lua", toBytes("x")}}));
+  drop("g.chgame", gamePackage("g", {{std::string(32, 'a') + ".lua", toBytes("x")}}));
   EXPECT_EQ(install().installed, 1);
   EXPECT_TRUE(exists("/.games/g/" + std::string(32, 'a') + ".lua"));
 }
 
 TEST_F(InstallerTest, ADuplicateMemberEndsBad) {
   const Bytes package = gamePackage("g", {{"main.lua", toBytes("return 1\n")}});
-  drop("g.cpgame", package);
-  expectRejected("g.cpgame", package, Error::BadMember);
+  drop("g.chgame", package);
+  expectRejected("g.chgame", package, Error::BadMember);
 }
 
 TEST_F(InstallerTest, MoreMembersThanTheLimitEndsBad) {
@@ -246,30 +246,30 @@ TEST_F(InstallerTest, MoreMembersThanTheLimitEndsBad) {
   for (size_t i = 0; i + 2 < GameCore::PACKAGE_MEMBERS + 1; ++i)
     extra.push_back({"m" + std::to_string(i) + ".lua", {}});
   const Bytes package = gamePackage("g", extra);
-  drop("g.cpgame", package);
-  expectRejected("g.cpgame", package, Error::TooManyMembers);
+  drop("g.chgame", package);
+  expectRejected("g.chgame", package, Error::TooManyMembers);
 
   SetUp();  // exactly the limit installs
   extra.pop_back();
-  drop("g.cpgame", gamePackage("g", extra));
+  drop("g.chgame", gamePackage("g", extra));
   EXPECT_EQ(install().installed, 1);
 }
 
 TEST_F(InstallerTest, NotAZipEndsBad) {
   const Bytes junk = toBytes("this is not a zip file at all, just text long enough to hold an end record");
-  drop("junk.cpgame", junk);
-  expectRejected("junk.cpgame", junk, Error::NotAPackage);
+  drop("junk.chgame", junk);
+  expectRejected("junk.chgame", junk, Error::NotAPackage);
 
   SetUp();
   const Bytes tiny = toBytes("PK");
-  drop("tiny.cpgame", tiny);
-  expectRejected("tiny.cpgame", tiny, Error::NotAPackage);
+  drop("tiny.chgame", tiny);
+  expectRejected("tiny.chgame", tiny, Error::NotAPackage);
 }
 
 // ---- images --------------------------------------------------------------------------------------
 
 TEST_F(InstallerTest, ConvertsIconPngToA64x64IconBmpAndDropsThePng) {
-  drop("g.cpgame", gamePackage("g", {{"icon.png", solidPng(32, 32, 0)}}));
+  drop("g.chgame", gamePackage("g", {{"icon.png", solidPng(32, 32, 0)}}));
   ASSERT_EQ(install().installed, 1);
   EXPECT_FALSE(exists("/.games/g/icon.png"));
   const GameCore::ImageHeader header = headerOf("/.games/g/icon.bmp");
@@ -281,7 +281,7 @@ TEST_F(InstallerTest, ConvertsIconPngToA64x64IconBmpAndDropsThePng) {
 TEST_F(InstallerTest, AnIconOfAnySquareSizeComesOutAt64x64) {
   for (const int side : {1, 2, 3, 5, 7, 10, 13, 31, 32, 33, 48, 63, 64, 65, 96, 100, 127, 128, 200}) {
     SetUp();
-    drop("g.cpgame", gamePackage("g", {{"icon.png", solidPng(side, side, 128)}}));
+    drop("g.chgame", gamePackage("g", {{"icon.png", solidPng(side, side, 128)}}));
     SCOPED_TRACE(side);
     const GamePackageInstaller::Report report = install();
     ASSERT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
@@ -298,9 +298,9 @@ TEST_F(InstallerTest, AnIconThatTheConverterScalesTo63IsBadImage) {
   for (const int side : {41, 47, 55, 61, 82, 83, 94, 97}) {
     SetUp();
     const Bytes package = gamePackage("g", {{"icon.png", solidPng(side, side, 128)}});
-    drop("g.cpgame", package);
+    drop("g.chgame", package);
     SCOPED_TRACE(side);
-    expectRejected("g.cpgame", package, Error::BadImage);
+    expectRejected("g.chgame", package, Error::BadImage);
     EXPECT_FALSE(HasFatalFailure());
     EXPECT_TRUE(fakelog::any("icon.bmp came out 63x63, not 64x64"));
   }
@@ -385,9 +385,9 @@ TEST_F(InstallerTest, ANonSquareIconEndsBadAndLeavesNothingBehind) {
   for (const auto& size : {std::pair<int, int>{100, 50}, {50, 100}, {64, 63}, {1, 2}}) {
     SetUp();
     const Bytes package = gamePackage("g", {{"icon.png", solidPng(size.first, size.second, 0)}});
-    drop("g.cpgame", package);
+    drop("g.chgame", package);
     SCOPED_TRACE(std::to_string(size.first) + "x" + std::to_string(size.second));
-    expectRejected("g.cpgame", package, Error::BadImage);
+    expectRejected("g.chgame", package, Error::BadImage);
     EXPECT_FALSE(HasFatalFailure());
     EXPECT_TRUE(fakelog::any("the icon must be square"));
   }
@@ -396,7 +396,7 @@ TEST_F(InstallerTest, ANonSquareIconEndsBadAndLeavesNothingBehind) {
 TEST_F(InstallerTest, ConvertsAnImageToItsOwnSizeInTheLoadersLayout) {
   // Left half black, right half white, so the bit order shows.
   const Bytes png = makePng(20, 10, [](int x, int) { return x < 10 ? uint8_t{0} : uint8_t{255}; });
-  drop("g.cpgame", gamePackage("g", {{"badge.png", png}}));
+  drop("g.chgame", gamePackage("g", {{"badge.png", png}}));
   ASSERT_EQ(install().installed, 1);
   EXPECT_FALSE(exists("/.games/g/badge.png"));
   EXPECT_FALSE(exists("/.games/g/icon.bmp"));  // no icon.png, no icon.bmp
@@ -426,9 +426,9 @@ TEST_F(InstallerTest, APngTheConverterRefusesEndsBad) {
   for (const auto& c : cases) {
     SetUp();
     const Bytes package = gamePackage("g", {{"pic.png", c.second}});
-    drop("g.cpgame", package);
+    drop("g.chgame", package);
     SCOPED_TRACE(c.first);
-    expectRejected("g.cpgame", package, Error::BadImage);
+    expectRejected("g.chgame", package, Error::BadImage);
     EXPECT_FALSE(HasFatalFailure());
   }
 }
@@ -437,8 +437,8 @@ TEST_F(InstallerTest, ADamagedPngWithASoundHeaderEndsBadAndIsShownOnce) {
   Bytes png = solidPng(20, 20, 0);
   png.resize(png.size() / 2);  // the header is whole, the pixel data is cut
   const Bytes package = gamePackage("g", {{"pic.png", png}});
-  drop("g.cpgame", package);
-  expectRejected("g.cpgame", package, Error::BadImage);
+  drop("g.chgame", package);
+  expectRejected("g.chgame", package, Error::BadImage);
   EXPECT_TRUE(fakelog::any("Cannot convert"));
   // Renamed, so the next visit does not judge it again.
   EXPECT_FALSE(GamePackageInstaller::hasInbox());
@@ -448,41 +448,63 @@ TEST_F(InstallerTest, ADamagedPngOnAFailingCardIsTheCardsFault) {
   // The card drops the converter's writes and then the decode fails: the short write decides.
   Bytes png = solidPng(20, 20, 0);
   png.resize(png.size() / 2);
-  drop("g.cpgame", gamePackage("g", {{"pic.png", png}}));
+  drop("g.chgame", gamePackage("g", {{"pic.png", png}}));
   fakesd::sim().failWrite.insert("/.games-tmp/g/pic.bmp");
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
 }
 
 TEST_F(InstallerTest, AnImageWrittenShortIsTheCardsFaultNotThePackages) {
   // The converter ignores a failed write, so the output is just short.
-  drop("g.cpgame", gamePackage("g", {{"badge.png", solidPng(20, 10, 255)}}));
+  drop("g.chgame", gamePackage("g", {{"badge.png", solidPng(20, 10, 255)}}));
   fakesd::sim().failWrite.insert("/.games-tmp/g/badge.bmp");
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
   fakesd::sim().failWrite.clear();
   EXPECT_EQ(install().installed, 1);
 }
 
 // ---- the inbox -----------------------------------------------------------------------------------
 
-TEST_F(InstallerTest, OnlyCpgameFilesAreInstalled) {
-  drop("real.cpgame", gamePackage("real"));
-  drop("UPPER.CPGAME", gamePackage("upper"));
-  drop("old.cpgame.bad", toBytes("x"));
+TEST_F(InstallerTest, OnlyChgameFilesAreInstalled) {
+  drop("real.chgame", gamePackage("real"));
+  drop("UPPER.CHGAME", gamePackage("upper"));
+  drop("old.chgame.bad", toBytes("x"));
   drop("notes.txt", toBytes("x"));
-  drop("cpgame", toBytes("x"));
-  fakesd::addDir("/games/folder.cpgame");
+  drop("chgame", toBytes("x"));
+  fakesd::addDir("/games/folder.chgame");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 2);
   EXPECT_EQ(report.failed, 0);
   EXPECT_TRUE(exists("/.games/real/.pkg"));
   EXPECT_TRUE(exists("/.games/upper/.pkg"));
-  EXPECT_TRUE(exists("/games/old.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/old.chgame.bad"));
   EXPECT_TRUE(exists("/games/notes.txt"));
-  EXPECT_TRUE(exists("/games/folder.cpgame"));
+  EXPECT_TRUE(exists("/games/folder.chgame"));
+}
+
+// The extension was .cpgame before it became .chgame; none shipped, so the installer takes no .cpgame: the file is not
+// installed, not set aside as .bad, and not counted as an inbox file.
+TEST_F(InstallerTest, ACpgameFileIsIgnored) {
+  const Bytes package = gamePackage("old");
+  drop("old.cpgame", package);
+  drop("OLD2.CPGAME", gamePackage("old2"));
+  EXPECT_FALSE(GamePackageInstaller::hasInbox());
+  drop("new.chgame", gamePackage("new"));
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_TRUE(exists("/.games/new/.pkg"));
+  EXPECT_FALSE(exists("/.games/old"));
+  EXPECT_FALSE(exists("/.games/old2"));
+  ASSERT_TRUE(exists("/games/old.cpgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/old.cpgame"), package);
+  EXPECT_TRUE(exists("/games/OLD2.CPGAME"));
+  EXPECT_FALSE(exists("/games/old.cpgame.bad"));
+  EXPECT_FALSE(exists("/games/old.chgame.bad"));
+  EXPECT_FALSE(exists("/games/old.cpgame.installed"));
 }
 
 TEST_F(InstallerTest, AnEmptyOrMissingInboxDoesNothing) {
@@ -495,25 +517,25 @@ TEST_F(InstallerTest, AnEmptyOrMissingInboxDoesNothing) {
 }
 
 TEST_F(InstallerTest, OneBadFileDoesNotStopTheGoodOnes) {
-  drop("a-good.cpgame", gamePackage("good-a"));
+  drop("a-good.chgame", gamePackage("good-a"));
   const Bytes bad = toBytes("not a zip, long enough to look for an end record in, honest");
-  drop("b-bad.cpgame", bad);
-  drop("c-good.cpgame", gamePackage("good-c"));
+  drop("b-bad.chgame", bad);
+  drop("c-good.chgame", gamePackage("good-c"));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 2);
   EXPECT_EQ(report.failed, 1);
-  EXPECT_STREQ(report.firstFile, "b-bad.cpgame");
+  EXPECT_STREQ(report.firstFile, "b-bad.chgame");
   EXPECT_TRUE(exists("/.games/good-a/.pkg"));
   EXPECT_TRUE(exists("/.games/good-c/.pkg"));
-  EXPECT_EQ(fakesd::bytesOf("/games/b-bad.cpgame.bad"), bad);
+  EXPECT_EQ(fakesd::bytesOf("/games/b-bad.chgame.bad"), bad);
 }
 
 TEST_F(InstallerTest, ANewBadFileReplacesAnEarlierBadOfTheSameName) {
-  drop("g.cpgame.bad", toBytes("earlier"));
+  drop("g.chgame.bad", toBytes("earlier"));
   const Bytes bad = toBytes("not a zip, long enough to look for an end record in, honest");
-  drop("g.cpgame", bad);
+  drop("g.chgame", bad);
   EXPECT_EQ(install().failed, 1);
-  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.bad"), bad);
+  EXPECT_EQ(fakesd::bytesOf("/games/g.chgame.bad"), bad);
 }
 
 TEST_F(InstallerTest, ALeftoverScratchFolderIsDeletedEvenWithNothingToInstall) {
@@ -525,7 +547,7 @@ TEST_F(InstallerTest, ALeftoverScratchFolderIsDeletedEvenWithNothingToInstall) {
 
 TEST_F(InstallerTest, ALeftoverScratchFolderOfTheSameIdDoesNotBlockTheInstall) {
   fakesd::addFile("/.games-tmp/package-vector/main.lua", std::string("half"));
-  drop("package-vector.cpgame", loadVector().package);
+  drop("package-vector.chgame", loadVector().package);
   EXPECT_EQ(install().installed, 1);
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/package-vector/util.lua")), "return {}\n");
 }
@@ -534,7 +556,7 @@ TEST_F(InstallerTest, TakesAtMostMaxPerRunAndTheRestOnTheNextCall) {
   const Bytes package = gamePackage("same");
   for (size_t i = 0; i < GamePackageInstaller::MAX_PER_RUN + 1; ++i) {
     char name[24];
-    std::snprintf(name, sizeof(name), "p%02zu.cpgame", i);
+    std::snprintf(name, sizeof(name), "p%02zu.chgame", i);
     drop(name, package);
   }
   EXPECT_EQ(install().installed, GamePackageInstaller::MAX_PER_RUN);
@@ -544,7 +566,7 @@ TEST_F(InstallerTest, TakesAtMostMaxPerRunAndTheRestOnTheNextCall) {
 }
 
 TEST_F(InstallerTest, ANameTooLongForTheInboxIsSkipped) {
-  drop(std::string(GamePaths::INBOX_NAME_BYTES, 'a') + ".cpgame", gamePackage("long-name"));
+  drop(std::string(GamePaths::INBOX_NAME_BYTES, 'a') + ".chgame", gamePackage("long-name"));
   EXPECT_FALSE(GamePackageInstaller::hasInbox());
   EXPECT_EQ(install().installed, 0);
 }
@@ -552,54 +574,54 @@ TEST_F(InstallerTest, ANameTooLongForTheInboxIsSkipped) {
 // ---- storage failures ----------------------------------------------------------------------------
 
 TEST_F(InstallerTest, AStorageFailureKeepsTheFileForTheNextTry) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   fakesd::sim().failRename.insert("/.games-tmp/g");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 0);
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
   EXPECT_FALSE(exists("/.games-tmp"));
   EXPECT_TRUE(childrenOf("/.games").empty());
 
   fakesd::sim().failRename.clear();  // the card recovers
   EXPECT_EQ(install().installed, 1);
-  EXPECT_FALSE(exists("/games/g.cpgame"));
+  EXPECT_FALSE(exists("/games/g.chgame"));
 }
 
 TEST_F(InstallerTest, AFailedMemberWriteIsAStorageFailure) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   fakesd::sim().failWrite.insert("/.games-tmp/g/main.lua");
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
   EXPECT_FALSE(exists("/.games-tmp"));
 }
 
 TEST_F(InstallerTest, AFailedPkgWriteLeavesNoGameInTheRegistry) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   fakesd::sim().failWrite.insert("/.games/g/.pkg");
   EXPECT_EQ(install().firstError, Error::SdCard);
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
   EXPECT_EQ(listing.count, 0u);
-  EXPECT_TRUE(exists("/games/g.cpgame"));  // retried next time, which replaces the folder
+  EXPECT_TRUE(exists("/games/g.chgame"));  // retried next time, which replaces the folder
   fakesd::sim().failWrite.clear();
   EXPECT_EQ(install().installed, 1);
 }
 
 TEST_F(InstallerTest, ACardFailureInTheLastStepOfAReinstallIsRetried) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   ASSERT_EQ(install().installed, 1);
 
   // The new package extracts fine, then the rename into place fails: the old folder is already
   // gone (the game is unlisted), and the file stays so the next visit installs it again.
   const Bytes update = gamePackage("g", {{"extra.lua", toBytes("return 2\n")}});
-  drop("g.cpgame", update);
+  drop("g.chgame", update);
   fakesd::sim().failRename.insert("/.games-tmp/g");
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.bad"));
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
   EXPECT_EQ(listing.count, 0u);
@@ -622,7 +644,7 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
       members.push_back({entry.path().filename().string(), readHostFile(entry.path().string())});
     }
-    drop(std::string(fixture) + ".cpgame", makeZip(members));
+    drop(std::string(fixture) + ".chgame", makeZip(members));
     SCOPED_TRACE(fixture);
     const GamePackageInstaller::Report report = install();
     ASSERT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
@@ -659,9 +681,9 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
 // ---- the last step, the scratch folder, and the inbox ---------------------------------------------
 
 TEST_F(InstallerTest, AReinstallTakesTheMarkerAwayBeforeItRemovesTheOldFiles) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   ASSERT_EQ(install().installed, 1);
-  drop("g.cpgame", gamePackage("g", {{"extra.lua", toBytes("return 2\n")}}));
+  drop("g.chgame", gamePackage("g", {{"extra.lua", toBytes("return 2\n")}}));
 
   // Removing the old folder stops partway: the marker is gone, so nothing half-deleted is listed.
   fakesd::sim().failRemove.insert("/.games/g/manifest.json");
@@ -670,7 +692,7 @@ TEST_F(InstallerTest, AReinstallTakesTheMarkerAwayBeforeItRemovesTheOldFiles) {
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
   EXPECT_EQ(listing.count, 0u);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
   EXPECT_FALSE(exists("/.games-tmp"));  // the new files were ours alone, so they are cleaned up
 
   fakesd::sim().failRemove.clear();
@@ -679,9 +701,9 @@ TEST_F(InstallerTest, AReinstallTakesTheMarkerAwayBeforeItRemovesTheOldFiles) {
 }
 
 TEST_F(InstallerTest, AMarkerThatWillNotGoLeavesTheOldGameWhole) {
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   ASSERT_EQ(install().installed, 1);
-  drop("g.cpgame", gamePackage("g", {{"extra.lua", toBytes("return 2\n")}}));
+  drop("g.chgame", gamePackage("g", {{"extra.lua", toBytes("return 2\n")}}));
   fakesd::sim().failRemove.insert("/.games/g/.pkg");
   EXPECT_EQ(install().firstError, Error::SdCard);
   EXPECT_TRUE(exists("/.games/g/main.lua"));
@@ -706,7 +728,7 @@ TEST_F(InstallerTest, ScratchSharingClustersWithAGameWithoutAMarkerIsNeverRemove
   fakesd::addFile("/.games-tmp/done/main.lua", std::string("stale"));   // /.games/done has a .pkg: safe
   fakesd::addFile("/.games/done/.pkg", std::string("v1\n0530a15766e91bf1\n"));
   fakesd::addFile("/.games-tmp/loose.txt", std::string("x"));
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
 
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 0);
@@ -715,7 +737,7 @@ TEST_F(InstallerTest, ScratchSharingClustersWithAGameWithoutAMarkerIsNeverRemove
   EXPECT_EQ(toText(fakesd::bytesOf("/.games-tmp/g/main.lua")), "scratch");
   EXPECT_EQ(toText(fakesd::bytesOf("/.games/g/main.lua")), "final");
   EXPECT_FALSE(exists("/.games-tmp/g/.xlink"));  // the probe file is removed either way
-  EXPECT_TRUE(exists("/games/g.cpgame"));        // kept, not renamed .bad
+  EXPECT_TRUE(exists("/games/g.chgame"));        // kept, not renamed .bad
   EXPECT_FALSE(exists("/.games-tmp/other"));
   EXPECT_FALSE(exists("/.games-tmp/done"));
   EXPECT_FALSE(exists("/.games-tmp/loose.txt"));
@@ -729,7 +751,7 @@ TEST_F(InstallerTest, ScratchBesideAnIndependentHalfRemovedGameIsRemovedAndTheIn
   // /.games-tmp/g is whole and its own (the probe file does not show in /.games/g).
   fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
   fakesd::addFile("/.games/g/manifest.json", std::string("{}"));
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 0);
@@ -743,7 +765,7 @@ TEST_F(InstallerTest, ScratchIsKeptWhenTheProbeFileCannotBeMadeOrRemoved) {
     SetUp();
     fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
     fakesd::addFile("/.games/g/main.lua", std::string("final"));
-    drop("g.cpgame", gamePackage("g"));
+    drop("g.chgame", gamePackage("g"));
     if (cannotMake) {
       fakesd::sim().failOpenWrite.insert("/.games-tmp/g/.xlink");
     } else {
@@ -758,23 +780,23 @@ TEST_F(InstallerTest, ScratchIsKeptWhenTheProbeFileCannotBeMadeOrRemoved) {
 
 TEST_F(InstallerTest, AFileWhereTheScratchFolderGoesIsRemoved) {
   fakesd::addFile("/.games-tmp", std::string("not a folder"));
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   EXPECT_EQ(install().installed, 1);
   EXPECT_TRUE(exists("/.games/g/.pkg"));
   EXPECT_FALSE(exists("/.games-tmp"));
 }
 
 TEST_F(InstallerTest, HiddenAndSidecarNamesAreNotPackages) {
-  drop("._g.cpgame", toBytes("AppleDouble, about 4 KB of resource fork on a real card"));
-  drop(".hidden.cpgame", gamePackage("hidden"));
-  drop(".cpgame", gamePackage("stemless"));
+  drop("._g.chgame", toBytes("AppleDouble, about 4 KB of resource fork on a real card"));
+  drop(".hidden.chgame", gamePackage("hidden"));
+  drop(".chgame", gamePackage("stemless"));
   EXPECT_FALSE(GamePackageInstaller::hasInbox());
-  drop("g.cpgame", gamePackage("g"));
+  drop("g.chgame", gamePackage("g"));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 0);
-  EXPECT_TRUE(exists("/games/._g.cpgame"));
-  EXPECT_FALSE(exists("/games/._g.cpgame.bad"));
+  EXPECT_TRUE(exists("/games/._g.chgame"));
+  EXPECT_FALSE(exists("/games/._g.chgame.bad"));
   EXPECT_FALSE(exists("/.games/hidden"));
 }
 
@@ -782,16 +804,16 @@ TEST_F(InstallerTest, HiddenAndSidecarNamesAreNotPackages) {
 // moves out of the inbox instead.
 TEST_F(InstallerTest, AnInstalledInboxFileThatWillNotDeleteIsRenamedOutOfTheInbox) {
   const Bytes package = gamePackage("g");
-  drop("g.cpgame", package);
-  fakesd::sim().failRemove.insert("/games/g.cpgame");
+  drop("g.chgame", package);
+  fakesd::sim().failRemove.insert("/games/g.chgame");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 0);
   EXPECT_EQ(report.firstError, Error::None);
   EXPECT_TRUE(exists("/.games/g/.pkg"));
-  EXPECT_FALSE(exists("/games/g.cpgame"));
-  ASSERT_TRUE(exists("/games/g.cpgame.installed"));
-  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.installed"), package);
+  EXPECT_FALSE(exists("/games/g.chgame"));
+  ASSERT_TRUE(exists("/games/g.chgame.installed"));
+  EXPECT_EQ(fakesd::bytesOf("/games/g.chgame.installed"), package);
   EXPECT_FALSE(GamePackageInstaller::hasInbox()) << "the renamed file is not an inbox file";
 
   // The next visit installs nothing, so a Remove of the game between visits stays removed.
@@ -804,13 +826,13 @@ TEST_F(InstallerTest, AnInstalledInboxFileThatWillNotDeleteIsRenamedOutOfTheInbo
 
 TEST_F(InstallerTest, AnEarlierInstalledCopyIsReplacedByTheNextOne) {
   const Bytes second = gamePackage("g", {{"extra.lua", toBytes("return 2\n")}});
-  drop("g.cpgame", gamePackage("g"));
-  fakesd::sim().failRemove.insert("/games/g.cpgame");
+  drop("g.chgame", gamePackage("g"));
+  fakesd::sim().failRemove.insert("/games/g.chgame");
   ASSERT_EQ(install().installed, 1);
-  drop("g.cpgame", second);
+  drop("g.chgame", second);
   EXPECT_EQ(install().installed, 1);
-  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.installed"), second);
-  EXPECT_FALSE(exists("/games/g.cpgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/g.chgame.installed"), second);
+  EXPECT_FALSE(exists("/games/g.chgame"));
 }
 
 // A file the card marks read-only keeps the mark when it is renamed, and will not delete: an earlier copy under the
@@ -818,38 +840,38 @@ TEST_F(InstallerTest, AnEarlierInstalledCopyIsReplacedByTheNextOne) {
 // in for the mark, and its rename, like SdFat's, will not replace a name).
 TEST_F(InstallerTest, AnEarlierInstalledCopyThatWillNotGoLeavesTheNextNameFree) {
   const Bytes update = gamePackage("g", {{"extra.lua", toBytes("return 2\n")}});
-  drop("g.cpgame", update);
-  fakesd::addFile("/games/g.cpgame.installed", toBytes("an earlier copy"));
-  fakesd::sim().failRemove.insert("/games/g.cpgame");
-  fakesd::sim().failRemove.insert("/games/g.cpgame.installed");
+  drop("g.chgame", update);
+  fakesd::addFile("/games/g.chgame.installed", toBytes("an earlier copy"));
+  fakesd::sim().failRemove.insert("/games/g.chgame");
+  fakesd::sim().failRemove.insert("/games/g.chgame.installed");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 0);
-  EXPECT_FALSE(exists("/games/g.cpgame"));
-  EXPECT_EQ(toText(fakesd::bytesOf("/games/g.cpgame.installed")), "an earlier copy");
-  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.installed.2"), update);
-  EXPECT_TRUE(fakelog::any("Cannot remove /games/g.cpgame.installed"));
-  EXPECT_FALSE(GamePackageInstaller::hasInbox()) << "no name it takes ends in .cpgame";
+  EXPECT_FALSE(exists("/games/g.chgame"));
+  EXPECT_EQ(toText(fakesd::bytesOf("/games/g.chgame.installed")), "an earlier copy");
+  EXPECT_EQ(fakesd::bytesOf("/games/g.chgame.installed.2"), update);
+  EXPECT_TRUE(fakelog::any("Cannot remove /games/g.chgame.installed"));
+  EXPECT_FALSE(GamePackageInstaller::hasInbox()) << "no name it takes ends in .chgame";
   EXPECT_EQ(install().installed, 0) << "and nothing installs again";
 }
 
 TEST_F(InstallerTest, AnEarlierBadCopyThatWillNotGoLeavesTheNextNameFree) {
   const Bytes package = gamePackage("g", {{"pic.png", toBytes("not a png at all, no header")}});
-  drop("g.cpgame", package);
-  fakesd::addFile("/games/g.cpgame.bad", toBytes("an earlier verdict"));
-  fakesd::sim().failRemove.insert("/games/g.cpgame.bad");
+  drop("g.chgame", package);
+  fakesd::addFile("/games/g.chgame.bad", toBytes("an earlier verdict"));
+  fakesd::sim().failRemove.insert("/games/g.chgame.bad");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.firstError, Error::BadImage) << "the package's reason, not the card's";
-  EXPECT_FALSE(exists("/games/g.cpgame"));
-  EXPECT_EQ(fakesd::bytesOf("/games/g.cpgame.bad.2"), package);
-  EXPECT_EQ(toText(fakesd::bytesOf("/games/g.cpgame.bad")), "an earlier verdict");
+  EXPECT_FALSE(exists("/games/g.chgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/g.chgame.bad.2"), package);
+  EXPECT_EQ(toText(fakesd::bytesOf("/games/g.chgame.bad")), "an earlier verdict");
 }
 
 TEST_F(InstallerTest, WhenEveryAsideNameIsTakenAndStuckTheFileIsReportedAndKept) {
-  drop("g.cpgame", gamePackage("g"));
-  fakesd::sim().failRemove.insert("/games/g.cpgame");
+  drop("g.chgame", gamePackage("g"));
+  fakesd::sim().failRemove.insert("/games/g.chgame");
   for (const char* name : {"", ".2", ".3", ".4", ".5"}) {
-    const std::string path = std::string("/games/g.cpgame.installed") + name;
+    const std::string path = std::string("/games/g.chgame.installed") + name;
     fakesd::addFile(path, toBytes("stuck"));
     fakesd::sim().failRemove.insert(path);
   }
@@ -857,23 +879,23 @@ TEST_F(InstallerTest, WhenEveryAsideNameIsTakenAndStuckTheFileIsReportedAndKept)
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::SdCard);
   EXPECT_TRUE(exists("/.games/g/.pkg")) << "it did install";
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.installed.6"));
-  EXPECT_TRUE(fakelog::any("No free name for /games/g.cpgame.installed"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.installed.6"));
+  EXPECT_TRUE(fakelog::any("No free name for /games/g.chgame.installed"));
 }
 
 TEST_F(InstallerTest, AnInstalledInboxFileThatWillNeitherDeleteNorRenameIsReportedAndKept) {
-  drop("g.cpgame", gamePackage("g"));
-  fakesd::sim().failRemove.insert("/games/g.cpgame");
-  fakesd::sim().failRename.insert("/games/g.cpgame");
+  drop("g.chgame", gamePackage("g"));
+  fakesd::sim().failRemove.insert("/games/g.chgame");
+  fakesd::sim().failRename.insert("/games/g.chgame");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::SdCard);
-  EXPECT_STREQ(report.firstFile, "g.cpgame");
+  EXPECT_STREQ(report.firstFile, "g.chgame");
   EXPECT_TRUE(exists("/.games/g/.pkg"));  // it did install
-  EXPECT_TRUE(exists("/games/g.cpgame"));
-  EXPECT_FALSE(exists("/games/g.cpgame.installed"));
-  EXPECT_TRUE(fakelog::any("Cannot rename /games/g.cpgame to /games/g.cpgame.installed"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
+  EXPECT_FALSE(exists("/games/g.chgame.installed"));
+  EXPECT_TRUE(fakelog::any("Cannot rename /games/g.chgame to /games/g.chgame.installed"));
 }
 
 // ---- the 65th game ------------------------------------------------------------------------------------
@@ -903,7 +925,7 @@ class GameLimitTest : public InstallerTest {
 TEST_F(GameLimitTest, TheLimitIsTheRegistrysAndAllOfItsGamesAreListed) {
   ASSERT_EQ(GameRegistry::MAX_GAMES, 64u);
   installedGames(GameRegistry::MAX_GAMES - 1);
-  drop("last.cpgame", gamePackage("last"));
+  drop("last.chgame", gamePackage("last"));
   EXPECT_EQ(install().installed, 1) << "the 64th game installs";
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
@@ -916,15 +938,15 @@ TEST_F(GameLimitTest, TheLimitIsTheRegistrysAndAllOfItsGamesAreListed) {
 TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
   installedGames(GameRegistry::MAX_GAMES);
   const Bytes package = gamePackage("extra");
-  drop("extra.cpgame", package);
+  drop("extra.chgame", package);
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 0);
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::TooManyGames);
-  EXPECT_STREQ(report.firstFile, "extra.cpgame");
+  EXPECT_STREQ(report.firstFile, "extra.chgame");
   // Not the package's fault: it is not renamed .bad, and nothing of it is on the card but the file.
-  EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame"), package);
-  EXPECT_FALSE(exists("/games/extra.cpgame.bad"));
+  EXPECT_EQ(fakesd::bytesOf("/games/extra.chgame"), package);
+  EXPECT_FALSE(exists("/games/extra.chgame.bad"));
   EXPECT_FALSE(exists("/.games/extra"));
   EXPECT_FALSE(exists("/.games-tmp"));
   EXPECT_EQ(fakesd::countOps("mkdir /.games-tmp"), 0u);
@@ -935,7 +957,7 @@ TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
   ASSERT_EQ(GamePackageInstaller::remove("game-07"), Error::None);
   EXPECT_EQ(install().installed, 1);
   EXPECT_TRUE(exists("/.games/extra/.pkg"));
-  EXPECT_FALSE(exists("/games/extra.cpgame"));
+  EXPECT_FALSE(exists("/games/extra.chgame"));
 }
 
 // The limit is judged right after the manifest, before anything is written, so a package that waits costs a read of its
@@ -944,24 +966,24 @@ TEST_F(GameLimitTest, A65thGameIsRefusedAndItsFileWaitsInTheInbox) {
 TEST_F(GameLimitTest, AnInvalidPackageAtTheLimitWaitsLikeAnyOtherAndIsBadOnceThereIsRoom) {
   installedGames(GameRegistry::MAX_GAMES);
   const Bytes package = gamePackage("extra", {{"pic.png", toBytes("not a png at all, no header")}});
-  drop("extra.cpgame", package);
+  drop("extra.chgame", package);
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.firstError, Error::TooManyGames);
-  EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame"), package);
-  EXPECT_FALSE(exists("/games/extra.cpgame.bad"));
+  EXPECT_EQ(fakesd::bytesOf("/games/extra.chgame"), package);
+  EXPECT_FALSE(exists("/games/extra.chgame.bad"));
 
   ASSERT_EQ(GamePackageInstaller::remove("game-07"), Error::None);
   const GamePackageInstaller::Report later = install();
   EXPECT_EQ(later.firstError, Error::BadImage) << GamePackageInstaller::describe(later.firstError);
-  EXPECT_FALSE(exists("/games/extra.cpgame"));
-  EXPECT_EQ(fakesd::bytesOf("/games/extra.cpgame.bad"), package);
+  EXPECT_FALSE(exists("/games/extra.chgame"));
+  EXPECT_EQ(fakesd::bytesOf("/games/extra.chgame.bad"), package);
   EXPECT_FALSE(exists("/.games/extra"));
 }
 
 // Nothing of a package that waits is written to the card: no scratch folder, no extracted member, no converted image.
 TEST_F(GameLimitTest, APackageThatWaitsForRoomWritesNothing) {
   installedGames(GameRegistry::MAX_GAMES);
-  drop("extra.cpgame", gamePackage("extra", {{"icon.png", solidPng(16, 16, 0)}}));
+  drop("extra.chgame", gamePackage("extra", {{"icon.png", solidPng(16, 16, 0)}}));
   const std::vector<std::string> before = fakesd::sim().ops;
   EXPECT_EQ(install().firstError, Error::TooManyGames);
   for (size_t i = before.size(); i < fakesd::sim().ops.size(); ++i) {
@@ -978,16 +1000,16 @@ TEST_F(GameLimitTest, APackageThatWaitsForRoomWritesNothing) {
 // written): a game the count did not know. The next package counts again, so the 65th is refused.
 TEST_F(GameLimitTest, AGameALateFailedCommitLeftBehindIsCountedForTheNextPackage) {
   installedGames(GameRegistry::MAX_GAMES - 1);
-  drop("a.cpgame", gamePackage("a"));
-  drop("b.cpgame", gamePackage("b"));
+  drop("a.chgame", gamePackage("a"));
+  drop("b.chgame", gamePackage("b"));
   fakesd::sim().failClose.insert("/.games/a/.pkg");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 0);
   EXPECT_EQ(report.failed, 2);
-  EXPECT_STREQ(report.firstFile, "a.cpgame");
+  EXPECT_STREQ(report.firstFile, "a.chgame");
   EXPECT_EQ(report.firstError, Error::SdCard);
   EXPECT_TRUE(exists("/.games/a/.pkg")) << "a is installed all the same";
-  EXPECT_TRUE(exists("/games/b.cpgame"));
+  EXPECT_TRUE(exists("/games/b.chgame"));
   EXPECT_FALSE(exists("/.games/b"));
   EXPECT_TRUE(fakelog::any("Not installing b:"));
   GameRegistry::Listing listing;
@@ -1001,36 +1023,36 @@ TEST_F(GameLimitTest, ThePackagesBehindManyThatWaitForRoomAreStillReached) {
   for (int i = 0; i < WAITING; ++i) {
     char name[16];
     std::snprintf(name, sizeof(name), "wait-%02d", i);
-    drop(std::string(name) + ".cpgame", gamePackage(name));
+    drop(std::string(name) + ".chgame", gamePackage(name));
   }
-  drop("update.cpgame", gamePackage("game-33", {{"extra.lua", toBytes("return 2\n")}}));  // last in the inbox
+  drop("update.chgame", gamePackage("game-33", {{"extra.lua", toBytes("return 2\n")}}));  // last in the inbox
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1) << "the update of an installed game is reached behind " << WAITING;
   EXPECT_EQ(report.failed, WAITING);
   EXPECT_EQ(report.firstError, Error::TooManyGames);
   EXPECT_TRUE(exists("/.games/game-33/extra.lua"));
-  EXPECT_FALSE(exists("/games/update.cpgame"));
+  EXPECT_FALSE(exists("/games/update.chgame"));
   for (int i = 0; i < WAITING; ++i) {
     char name[32];
-    std::snprintf(name, sizeof(name), "/games/wait-%02d.cpgame", i);
+    std::snprintf(name, sizeof(name), "/games/wait-%02d.chgame", i);
     EXPECT_TRUE(exists(name)) << name << " waits";
   }
 }
 
 TEST_F(GameLimitTest, TheFoldersAreCountedOnceACallAndKeptAsInstallsLand) {
   installedGames(GameRegistry::MAX_GAMES - 3);
-  for (const char* id : {"a", "b", "c", "d"}) drop(std::string(id) + ".cpgame", gamePackage(id));
+  for (const char* id : {"a", "b", "c", "d"}) drop(std::string(id) + ".chgame", gamePackage(id));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 3);
   EXPECT_EQ(report.failed, 1) << "the count went up with each install, so the fourth was over the limit";
-  EXPECT_STREQ(report.firstFile, "d.cpgame");
+  EXPECT_STREQ(report.firstFile, "d.chgame");
   // One read of each folder's .pkg for the count, not one more for every package.
   EXPECT_EQ(fakesd::countOps("open /.games/game-05/.pkg"), 1u);
 }
 
 TEST_F(GameLimitTest, ReplacingAnInstalledGameIsAllowedAtTheLimit) {
   installedGames(GameRegistry::MAX_GAMES);
-  drop("game-33.cpgame", gamePackage("game-33", {{"extra.lua", toBytes("return 2\n")}}));
+  drop("game-33.chgame", gamePackage("game-33", {{"extra.lua", toBytes("return 2\n")}}));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
   EXPECT_TRUE(exists("/.games/game-33/extra.lua"));
@@ -1044,70 +1066,70 @@ TEST_F(GameLimitTest, OnlyFoldersWithAMarkerCount) {
   fakesd::addFile("/.games/.hidden/.pkg", std::string("x"));
   fakesd::addFile("/.games/stray.txt", std::string("x"));
   fakesd::addFile("/.games/broken/.pkg", std::string("not a package marker"));  // the registry skips it too
-  drop("last.cpgame", gamePackage("last"));
+  drop("last.chgame", gamePackage("last"));
   EXPECT_EQ(install().installed, 1);
 }
 
 TEST_F(GameLimitTest, TheOthersInTheInboxStillInstallWhenOneIsRefused) {
   installedGames(GameRegistry::MAX_GAMES - 1);
-  drop("a.cpgame", gamePackage("a"));
-  drop("b.cpgame", gamePackage("b"));
+  drop("a.chgame", gamePackage("a"));
+  drop("b.chgame", gamePackage("b"));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.installed, 1);
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.firstError, Error::TooManyGames);
-  EXPECT_STREQ(report.firstFile, "b.cpgame");
+  EXPECT_STREQ(report.firstFile, "b.chgame");
   EXPECT_TRUE(exists("/.games/a/.pkg"));
-  EXPECT_TRUE(exists("/games/b.cpgame"));
+  EXPECT_TRUE(exists("/games/b.chgame"));
 }
 
 TEST_F(InstallerTest, ABadPackageThatWillNotRenameIsReportedAsTheCardsFault) {
-  drop("junk.cpgame", toBytes("not a zip, long enough to look for an end record in, honest"));
-  fakesd::sim().failRename.insert("/games/junk.cpgame");
+  drop("junk.chgame", toBytes("not a zip, long enough to look for an end record in, honest"));
+  fakesd::sim().failRename.insert("/games/junk.chgame");
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/junk.cpgame"));
+  EXPECT_TRUE(exists("/games/junk.chgame"));
 }
 
 TEST_F(InstallerTest, AFailedPackageDoesNotBlockTheNextOneWithTheSameId) {
-  drop("a.cpgame", gamePackage("g", {{"pic.png", toBytes("not a png at all, no header")}}));
-  drop("b.cpgame", gamePackage("g"));
+  drop("a.chgame", gamePackage("g", {{"pic.png", toBytes("not a png at all, no header")}}));
+  drop("b.chgame", gamePackage("g"));
   const GamePackageInstaller::Report report = install();
   EXPECT_EQ(report.failed, 1);
   EXPECT_EQ(report.installed, 1);
-  EXPECT_STREQ(report.firstFile, "a.cpgame");
+  EXPECT_STREQ(report.firstFile, "a.chgame");
   EXPECT_TRUE(exists("/.games/g/.pkg"));
 }
 
 TEST_F(InstallerTest, ACloseThatFailsIsAStorageFailure) {
   for (const char* path : {"/.games-tmp/g/main.lua", "/.games-tmp/g/badge.bmp", "/.games-tmp/g/icon.bmp"}) {
     SetUp();
-    drop("g.cpgame", gamePackage("g", {{"badge.png", solidPng(8, 8, 0)}, {"icon.png", solidPng(16, 16, 0)}}));
+    drop("g.chgame", gamePackage("g", {{"badge.png", solidPng(8, 8, 0)}, {"icon.png", solidPng(16, 16, 0)}}));
     fakesd::sim().failClose.insert(path);
     SCOPED_TRACE(path);
     EXPECT_EQ(install().firstError, Error::SdCard);
-    EXPECT_TRUE(exists("/games/g.cpgame"));
+    EXPECT_TRUE(exists("/games/g.chgame"));
     EXPECT_TRUE(childrenOf("/.games").empty());
   }
 }
 
 TEST_F(InstallerTest, ReadAndRemoveFailuresOnTheConvertedImageAreStorageFailures) {
   const Bytes package = gamePackage("g", {{"icon.png", solidPng(16, 16, 0)}});
-  drop("g.cpgame", package);
+  drop("g.chgame", package);
   fakesd::sim().failReadAt["/.games-tmp/g/icon.bmp"] = 0;
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
 
   SetUp();
-  drop("g.cpgame", package);
+  drop("g.chgame", package);
   fakesd::sim().failRemove.insert("/.games-tmp/g/icon.png");
   EXPECT_EQ(install().firstError, Error::SdCard);
-  EXPECT_TRUE(exists("/games/g.cpgame"));
+  EXPECT_TRUE(exists("/games/g.chgame"));
 }
 
 TEST_F(InstallerTest, ANameTheSimulatorCutsIsSkippedToo) {
   fakesd::sim().getNameCuts = true;  // the simulator's getName cuts a long name to fit instead of returning 0
-  drop(std::string(GamePaths::INBOX_NAME_BYTES, 'a') + ".cpgame", gamePackage("long-name"));
+  drop(std::string(GamePaths::INBOX_NAME_BYTES, 'a') + ".chgame", gamePackage("long-name"));
   EXPECT_FALSE(GamePackageInstaller::hasInbox());
   EXPECT_EQ(install().installed, 0);
 }

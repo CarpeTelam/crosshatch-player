@@ -151,7 +151,7 @@ class PackTest(PackerTestCase):
         self.assertEqual((code, err), (0, ''))
         lines = out.splitlines()
         self.assertRegex(lines[-1], HASH_LINE)
-        target = self.project.out / 'demo.cpgame'
+        target = self.project.out / 'demo.chgame'
         self.assertEqual(lines[-2], f'packed {target} ({target.stat().st_size} bytes)')
         with zipfile.ZipFile(target) as package:
             self.assertEqual(package.namelist(), ['badge.png', 'icon.png', 'main.lua', 'manifest.json', 'util.lua'])
@@ -191,30 +191,30 @@ class PackTest(PackerTestCase):
             (folder / name).write_bytes(data.encode() if isinstance(data, str) else data)
             os.utime(folder / name, (1_000_000_000, 1_000_000_000))
         self.assertEqual(self.project.run(folder, self.project.root / 'two')[0], 0)
-        self.assertEqual((self.project.root / 'one' / 'demo.cpgame').read_bytes(),
-                         (self.project.root / 'two' / 'demo.cpgame').read_bytes())
+        self.assertEqual((self.project.root / 'one' / 'demo.chgame').read_bytes(),
+                         (self.project.root / 'two' / 'demo.chgame').read_bytes())
 
     def test_a_stale_package_is_deleted_when_the_folder_stops_packing(self):
         folder = self.project.game()
         self.assertEqual(self.project.run(folder)[0], 0)
-        stale = self.project.out / 'demo.cpgame'
+        stale = self.project.out / 'demo.chgame'
         self.assertTrue(stale.is_file())
         (folder / 'notes.txt').write_bytes(b'x')
         got, out, err = self.project.run(folder)
         self.assertEqual((got, out), (1, ''), err)
         self.assertFalse(stale.exists())
         (folder / 'notes.txt').unlink()
-        (self.project.out / 'other.cpgame').write_bytes(b'x')
+        (self.project.out / 'other.chgame').write_bytes(b'x')
         (folder / 'notes.txt').write_bytes(b'x')
         self.assertEqual(self.project.run(folder)[0], 1)
-        self.assertTrue((self.project.out / 'other.cpgame').exists())
+        self.assertTrue((self.project.out / 'other.chgame').exists())
 
     def test_out_dir_is_created(self):
         folder = self.project.game()
         out = self.project.root / 'a' / 'b'
         self.assertEqual(self.project.run(folder, out)[0], 0)
-        self.assertTrue((out / 'demo.cpgame').is_file())
-        self.assertEqual([p.name for p in out.iterdir()], ['demo.cpgame'])
+        self.assertTrue((out / 'demo.chgame').is_file())
+        self.assertEqual([p.name for p in out.iterdir()], ['demo.chgame'])
 
     def test_folder_name_is_read_after_resolving(self):
         folder = self.project.game()
@@ -405,7 +405,7 @@ class LimitTest(PackerTestCase):
         payload = LIMITS['package_bytes']['at'] - self.package_overhead()
         code, _, err = self.project.run(self.project.game(self.package_files(payload)))
         self.assertEqual((code, err), (0, ''))
-        self.assertEqual((self.project.out / 'demo.cpgame').stat().st_size, LIMITS['package_bytes']['at'])
+        self.assertEqual((self.project.out / 'demo.chgame').stat().st_size, LIMITS['package_bytes']['at'])
         shutil.rmtree(self.project.out)
         payload = LIMITS['package_bytes']['over'] - self.package_overhead()
         self.assertRefused(self.project.game(self.package_files(payload)), '262,145 bytes; at most 262,144')
@@ -428,7 +428,7 @@ class LimitTest(PackerTestCase):
             with self.subTest(extension=extension):
                 data = png(1, 1) if extension == 'png' else b'-- x\n'
                 self.assertEqual(self.project.run(self.project.game({f'{at}.{extension}': data}))[0], 0)
-                with zipfile.ZipFile(self.project.out / 'demo.cpgame') as package:
+                with zipfile.ZipFile(self.project.out / 'demo.chgame') as package:
                     self.assertIn(f'{at}.{extension}', package.namelist())
                 shutil.rmtree(self.project.out)
                 self.assertRefused(self.project.game({f'{over}.{extension}': data}), 'is not a package member')
@@ -436,7 +436,7 @@ class LimitTest(PackerTestCase):
     def test_member_count(self):
         at, over = LIMITS['members']['at'], LIMITS['members']['over']
         self.assertEqual(self.project.run(self.project.game(self.member_files(at)))[0], 0)
-        with zipfile.ZipFile(self.project.out / 'demo.cpgame') as package:
+        with zipfile.ZipFile(self.project.out / 'demo.chgame') as package:
             self.assertEqual(len(package.namelist()), 32)
         shutil.rmtree(self.project.out)
         self.assertRefused(self.project.game(self.member_files(over)), '33 members; at most 32')
@@ -645,10 +645,10 @@ class CannotRunTest(PackerTestCase):
     def test_nothing_is_left_behind_by_a_write_that_fails(self):
         folder = self.project.game()
         self.project.out.mkdir()
-        (self.project.out / 'demo.cpgame').mkdir()  # os.replace onto a directory fails
+        (self.project.out / 'demo.chgame').mkdir()  # os.replace onto a directory fails
         got, _, _ = self.project.run(folder)
         self.assertEqual(got, 2)
-        self.assertEqual([p.name for p in self.project.out.iterdir()], ['demo.cpgame'])
+        self.assertEqual([p.name for p in self.project.out.iterdir()], ['demo.chgame'])
 
 
 class ReadManifestTest(unittest.TestCase):
@@ -954,7 +954,7 @@ class VectorTest(PackerTestCase):
         code, out, err = self.project.run(folder)
         self.assertEqual((code, err), (0, ''))
         self.assertEqual(out.splitlines()[-1], self.vector['package_hash'])
-        packed = (self.project.out / f'{self.vector["id"]}.cpgame').read_bytes()
+        packed = (self.project.out / f'{self.vector["id"]}.chgame').read_bytes()
         # Content, methods, and hash, never the compressed bytes: deflate output can differ between zlib builds.
         with zipfile.ZipFile(io.BytesIO(packed)) as package:
             self.assertEqual({name: package.read(name) for name in package.namelist()}, self.members)
@@ -971,7 +971,7 @@ class ReleaseAndFixtureTest(PackerTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             package, package_hash = fork_release.pack_one(
                 self.project.root, self.project.root / 'scripts' / 'pack_game.py', 'demo', out)
-        self.assertEqual(package, out / 'demo.cpgame')
+        self.assertEqual(package, out / 'demo.chgame')
         self.assertRegex(package_hash, HASH_LINE)
         with zipfile.ZipFile(package) as archive:
             self.assertEqual(package_hash, r4_hash({n: archive.read(n) for n in archive.namelist()})[:16])
@@ -993,7 +993,7 @@ class ReleaseAndFixtureTest(PackerTestCase):
         code, out, err = self.run_real('counter', self.project.out)
         self.assertEqual((code, err), (0, ''))
         self.assertRegex(out.splitlines()[-1], HASH_LINE)
-        with zipfile.ZipFile(self.project.out / 'counter.cpgame') as package:
+        with zipfile.ZipFile(self.project.out / 'counter.chgame') as package:
             self.assertEqual(package.namelist(), ['main.lua', 'manifest.json'])
 
     def test_the_timing_fixture_packs_with_its_real_png(self):
@@ -1004,7 +1004,7 @@ class ReleaseAndFixtureTest(PackerTestCase):
         code, out, err = self.run_real('timing', self.project.out)
         self.assertEqual((code, err), (0, ''))
         self.assertRegex(out.splitlines()[-1], HASH_LINE)
-        with zipfile.ZipFile(self.project.out / 'timing.cpgame') as package:
+        with zipfile.ZipFile(self.project.out / 'timing.chgame') as package:
             self.assertEqual(package.namelist(), ['gray.png', 'main.lua', 'manifest.json'])
 
     def test_the_images_fixture_is_refused_for_its_bmp_files(self):

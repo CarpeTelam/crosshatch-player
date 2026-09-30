@@ -31,7 +31,7 @@ vectors from its test/game_core/fork_version_vectors.json, the file the firmware
 overrides it), and the game API level from its lib/GameCore/ApiLevel.h. A commit without ApiLevel.h is released with
 "No game API" in its notes, and one whose vectors have no asset_name_capacity with the 48 bytes its firmware has.
 
-Games: `python3 scripts/pack_game.py games/<id> <out-dir>` must exit 0, write <out-dir>/<id>.cpgame, print the
+Games: `python3 scripts/pack_game.py games/<id> <out-dir>` must exit 0, write <out-dir>/<id>.chgame, print the
 package hash (16 lowercase hex digits) as its last line of output, and leave games/ unchanged.
 
 Exit 0: passed. 1: a release rule is broken. 2: the step could not run (missing file, git or pio failure).
@@ -624,7 +624,7 @@ def pack_one(project_dir, packer, game_id, out_dir):
     package_hash = lines[-1] if lines else ''
     if not PACKAGE_HASH.fullmatch(package_hash):
         raise Failure(f'games/{game_id}: the packer\'s last line {package_hash!r} is not a package hash')
-    package = pathlib.Path(out_dir) / f'{game_id}.cpgame'
+    package = pathlib.Path(out_dir) / f'{game_id}.chgame'
     if not package.is_file():
         raise Failure(f'games/{game_id}: the packer wrote no {package.name}')
     return package, package_hash

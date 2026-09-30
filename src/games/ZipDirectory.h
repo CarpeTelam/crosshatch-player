@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-// A .cpgame's zip directory read the way the installer needs it (spine AD-15). lib/ZipFile keeps its
+// A .chgame's zip directory read the way the installer needs it (spine AD-15). lib/ZipFile keeps its
 // EOCD entry count private, checks no CRC, and skips a name of 256 bytes or more without a word, so the
 // installer reads the EOCD and the central directory itself, before it extracts anything, and streams
 // the members through ZipFile afterwards. Pure: it reads through `reader`, so the host tests feed it

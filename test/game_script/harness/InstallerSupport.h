@@ -202,7 +202,7 @@ inline std::string jsonString(const std::string& json, const std::string& key, s
   return out;
 }
 
-// entry 2's golden vector: test/game_core/package_vectors.json and package_vector.cpgame.
+// entry 2's golden vector: test/game_core/package_vectors.json and package_vector.chgame.
 struct Vector {
   std::string id;
   std::string packageHash;  // 16 hex digits

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Packs one game folder into a `.cpgame` package (spine AD-15, AD-16) and prints its package hash.
+Packs one game folder into a `.chgame` package (spine AD-15, AD-16) and prints its package hash.
 
     python3 scripts/pack_game.py <dir> <out_dir>
 
-`<dir>` is `games/<id>/`, whose name must equal the manifest's `id`; the package is written to `<out_dir>/<id>.cpgame`
+`<dir>` is `games/<id>/`, whose name must equal the manifest's `id`; the package is written to `<out_dir>/<id>.chgame`
 (the directory is created when the package is valid). On success stdout ends with the 16-hex package hash, which the
 release workflow reads (`fork_release.py` `pack_one`). This is the only Python reader of `manifest.json`: it applies
 `Manifest::parse`'s rules, `Manifest::check`'s solo and nearby seat rules, R9's icon check, and the API range of
@@ -21,7 +21,7 @@ the same rules: `ICON_NAME` and `MAX_ICON_BYTES` here, `test_icon_grammar` in th
 library: the installer checks it through `GameIcons::find`.
 
 Exit codes: 0 packed. 1 the package is invalid: each problem is printed as `error: ...` on stderr, nothing is
-written, and a package an earlier run left at `<out_dir>/<id>.cpgame` is deleted. 2 the packer could not run: `<dir>`
+written, and a package an earlier run left at `<out_dir>/<id>.chgame` is deleted. 2 the packer could not run: `<dir>`
 is missing, `ApiLevel.h` or `assets/game-icons/names.txt` (read only when the manifest has an `icon`) is unreadable,
 `<out_dir>` cannot be created, or `<out_dir>` is the game folder itself; nothing is written.
 
@@ -518,7 +518,7 @@ def pack(directory, out_dir):
     dir_name = directory.resolve().name
     if pathlib.Path(out_dir).resolve() == directory.resolve():
         raise SetupError(f'{out_dir} is the game folder; a package is never written into it')
-    target = pathlib.Path(out_dir) / f'{dir_name}.cpgame'
+    target = pathlib.Path(out_dir) / f'{dir_name}.chgame'
 
     members, problems = read_members(directory)
     problems += check_members(members, dir_name, (level.min_level, level.level), load_icon_names)
@@ -549,7 +549,7 @@ def pack(directory, out_dir):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Pack games/<id>/ into <out_dir>/<id>.cpgame and print its hash.')
+    parser = argparse.ArgumentParser(description='Pack games/<id>/ into <out_dir>/<id>.chgame and print its hash.')
     parser.add_argument('directory', help='the game folder, games/<id>/')
     parser.add_argument('out_dir', help='the directory the package is written to')
     args = parser.parse_args(argv)
