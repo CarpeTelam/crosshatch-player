@@ -18,8 +18,9 @@ local function recurse()
 end
 
 -- A backtracking pattern that fails: string.find tries about C(n + k + 1, k + 1)
--- splits (over every start position) inside one C call, where no hook runs, while the Lua loop around it spends few
--- instructions. k stays within the matcher's depth limit (MAXCCALLS, 16).
+-- splits (over every start position) inside one C call, where no hook runs, while
+-- the Lua loop around it spends few instructions. k stays within the matcher's
+-- depth limit (MAXCCALLS, 16).
 local function backtrackArgs(k, n)
   return string.rep("a", n), string.rep(".-", k) .. "b"
 end

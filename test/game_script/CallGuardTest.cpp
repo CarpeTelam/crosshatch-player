@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -107,10 +108,11 @@ TEST_F(CallGuardTest, ACancelFromAnotherTaskStopsARunningLoopEvenUnderPcall) {
 }
 
 // The loop fixture's "Slow C calls forever" band shows the clean cancel: the watchdog
-// cancels it and the hook, which runs at the next call, stops it well inside the
-// match's 500 ms join (GameMatchActivity::STOP_TIMEOUT_MS). A device call is far
-// slower than a host call, so the bound here is a tenth of the join, on the host.
-TEST_F(CallGuardTest, ACancelStopsTheLoopFixturesSlowCallsBandWithinOneSlowCall) {
+// cancels it and the hook, which runs at the next call, stops it inside the match's
+// 500 ms join (GameMatchActivity::STOP_TIMEOUT_MS). The first test runs the real band
+// and cancels it; the second bounds the cost of one of its calls.
+
+TEST_F(CallGuardTest, ACancelStopsTheLoopFixturesSlowCallsBand) {
   for (const int cancelAfterMs : {100, 137, 173}) {
     useSource("main", GameScriptTestSupport::readFixture("loop/main.lua"));
     DirectGame game(arena, frames, sources, ports, canvas);
@@ -123,23 +125,59 @@ TEST_F(CallGuardTest, ACancelStopsTheLoopFixturesSlowCallsBandWithinOneSlowCall)
     }
     ASSERT_NE(band, nullptr);
 
-    using Clock = std::chrono::steady_clock;
-    std::atomic<Clock::time_point> cancelledAt{Clock::time_point{}};
-    std::thread canceller([&game, &cancelledAt, cancelAfterMs] {
-      while (!game.inLua()) std::this_thread::yield();
+    // The canceller also stops when the tap has returned, so a band that errors or
+    // ends at once fails the test below instead of hanging it here.
+    std::atomic<bool> tapReturned{false};
+    std::thread canceller([&game, &tapReturned, cancelAfterMs] {
+      while (!game.inLua() && !tapReturned) std::this_thread::yield();
       std::this_thread::sleep_for(std::chrono::milliseconds(cancelAfterMs));
-      cancelledAt = Clock::now();
       game.requestCancel();
     });
     const Outcome outcome =
         game.input(InputEvent{InputKind::Tap, static_cast<int16_t>(band->x), static_cast<int16_t>(band->y)});
-    const auto returnedAt = Clock::now();
+    tapReturned = true;
     canceller.join();
     EXPECT_EQ(outcome, Outcome::Cancelled) << game.errorMessage();
     EXPECT_EQ(game.callGuard().fault(), Fault::Cancelled);  // not the budget: the loop's calls are few instructions
-    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(returnedAt - cancelledAt.load()).count(), 50)
-        << "cancel after " << cancelAfterMs << " ms";
   }
+}
+
+// One call of that band must end well inside the 500 ms join on the device, which
+// runs this pattern about 95 times slower than a host (a 10 M-instruction loop takes
+// 3.30 s on the ESP32-S3, 0.035 s here; plan-e4-z1-loop-fixture-calibration.md). A host
+// bound of 2 ms is then about 190 ms on the device. The fixture's own call takes about
+// 0.2 ms; (6, 20) takes 8 ms and (6, 30), the old size, 80 to 100 ms. The mean is over 20
+// calls, and the least of three such means is taken, so a stall of the runner does not
+// fail the test.
+TEST_F(CallGuardTest, ACallOfTheLoopFixturesSlowCallsBandIsFarUnderTheJoin) {
+  std::string source = GameScriptTestSupport::readFixture("loop/main.lua");
+  const std::string forever = "while true do find(subject, pattern) end";
+  const size_t at = source.find(forever);
+  ASSERT_NE(at, std::string::npos) << "slowCallsForever's loop changed; update this test with it";
+  constexpr int CALLS = 20;
+  source.replace(at, forever.size(), "for _ = 1, " + std::to_string(CALLS) + " do find(subject, pattern) end");
+  useSource("main", source);
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+  const DrawCommand* band = nullptr;
+  const auto commands = frontCommands();
+  for (const auto& c : commands) {
+    if (c.op == Op::Text && std::string("Slow C calls forever") == std::string(c.text, c.textLength)) band = &c;
+  }
+  ASSERT_NE(band, nullptr);
+
+  using Clock = std::chrono::steady_clock;
+  double leastMeanMs = 1e9;
+  for (int batch = 0; batch < 3; ++batch) {
+    const auto start = Clock::now();
+    ASSERT_EQ(game.input(InputEvent{InputKind::Tap, static_cast<int16_t>(band->x), static_cast<int16_t>(band->y)}),
+              Outcome::Ok)
+        << game.errorMessage();
+    const std::chrono::duration<double, std::milli> elapsed = Clock::now() - start;
+    leastMeanMs = std::min(leastMeanMs, elapsed.count() / CALLS);
+  }
+  EXPECT_LT(leastMeanMs, 2.0) << "a call of the slow band takes " << leastMeanMs << " ms on the host";
 }
 
 TEST_F(CallGuardTest, NestedPcallStopsOnStackHeadroom) {
