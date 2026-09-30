@@ -26,10 +26,10 @@ The packages are not committed. They are packed from the fixtures at the firmwar
 
 | File | Game | Hash | Used in |
 | --- | --- | --- | --- |
-| `counter.chgame` | `counter`, version 1.0.0 | `e8c3ac8dfb646d3b` | R2, R4 |
-| `loop.chgame` | `loop` (Runaway scripts) | `c74273851f270beb` | R1, R4 (was `e7ebc00d62486a0f` before e4-z1's recalibration) |
-| `timing.chgame` | `timing` (Frame timing) | `ea2741992f220fd8` | R2, R4 |
-| `pack-images.chgame` | `pack-images` (Packed images) | `5f3b4f61e48de51b` | R4 |
+| `counter.chgame` | `counter`, version 1.0.0 | `e8c3ac8dfb646d3b` | R1 (installed), R2 |
+| `loop.chgame` | `loop` (Runaway scripts) | `c74273851f270beb` | R1 (was `e7ebc00d62486a0f` before e4-z1's recalibration) |
+| `timing.chgame` | `timing` (Frame timing) | `ea2741992f220fd8` | R1 (installed), R2 (optional marker check) |
+| `pack-images.chgame` | `pack-images` (Packed images) | `5f3b4f61e48de51b` | R1 (installed) |
 | `counter-changed.chgame` | `counter`, version 1.0.1 | `fa0d541ee5b21f13` | not used in this recheck |
 | `invalid-binary-lua.chgame` | `hardening` | (invalid) | R3 |
 | `package_vector.chgame` | `package-vector` | `0530a15766e91bf1` | R4 |
@@ -77,14 +77,30 @@ Start from a card with no `/games/`, `/.games/`, or `/.games-data/` folders, so 
 
 ### R4. A8: Games opened from Home lands on the last game's page
 
-This check needs a game on page 2 that has no save. The launcher shows four rows per page. Continue rows come first, then games sorted by name: Counter, Frame timing, Package vector, Packed images, Runaway scripts. Package vector saves nothing, since it stops at once with "game stopped".
+This check needs a game on page 2 that has no save.
 
-1. If R2 removed Counter, put `counter.chgame` back in `/games/` and open Games.
-2. Play Counter to one tap and leave. Open Runaway scripts, open its menu, and leave, so that both have Continue rows. The list is now two Continue rows, then five games. Page 2 starts at Package vector.
-3. Open Package vector on page 2. It shows the "game stopped" error view. Press Back to return to Games.
+- **Page size:** the X4 Pro launcher shows eight rows per page (`story-remove-screenshots/page1.png`), not four as the entry-14 record says. Continue rows come first, then games sorted by name.
+- **Why Package vector:** it saves nothing, since it stops at once with "game stopped". With eight extra games named "Aa extra 1" to "Aa extra 8" sorted ahead of it, it lands on page 2 whatever else is installed.
+
+1. From a checkout at `fa642c4a`, pack the eight extra games. Each is the `counter` fixture under a new id and name:
+
+   ```sh
+   mkdir -p extra
+   for i in 1 2 3 4 5 6 7 8; do
+     d=$(mktemp -d)/extra$i
+     cp -r test/game_script/fixtures/counter "$d"
+     sed -i "s/\"id\": \"counter\"/\"id\": \"extra$i\"/; s/\"name\": \"Counter\"/\"name\": \"Aa extra $i\"/" "$d/manifest.json"
+     python3 scripts/pack_game.py "$d" extra/extra$i.chgame
+   done
+   ```
+
+   On macOS, write `sed -i ''` in place of `sed -i`. The retrospective packed them on 2026-09-30, and the hashes printed were `457203b4c567adc8`, `3c36bd82a9a27878`, `ff7b3ca0e1663fc9`, `c5e336a3a155ab6d`, `f0fa2793e31f83d7`, `8ff5f0c7bb727378`, `8e67ec8ef629e495`, and `cc566037021bbf1c`.
+2. Put the eight files in `/games/` and open Games. The list now runs past one page, and Package vector is on page 2.
+3. Page to page 2, and open Package vector. It shows the "game stopped" error view. Press Back to return to Games. The launcher is on page 2 with Package vector selected (entry 10's return to the page).
 4. Press Back to Home, then open Games from Home.
-5. **Expect:** the launcher opens on page 2 with Package vector selected (entry 10's return-to-page fingerprint), not on page 1.
-6. If a Continue row for Package vector appears after step 3, the game did save. Then the launcher correctly selects that Continue row on page 1 (A12). Record it, and repeat step 3 with Packed images, which is also on page 2.
+5. **Expect:** the launcher opens on page 2 with Package vector selected, not on page 1 (A8).
+6. If a Continue row for Package vector appears after step 3, the game did save. Then the launcher correctly selects that Continue row on page 1 (A12). Record it, and repeat step 3 with the last game on page 2 that has no Continue row.
+7. Remove the extra games afterwards if you like. Removing is R2's path, so each remove also rechecks e4-z2.
 
 ## What to record
 
