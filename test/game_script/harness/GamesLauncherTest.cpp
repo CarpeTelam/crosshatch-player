@@ -6,11 +6,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 #include <string>
 #include <vector>
 
+#include "GamePaths.h"
 #include "GameRowIcon.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
@@ -874,6 +876,115 @@ TEST_F(ListTest, AFailureWithNoFileNameShowsTheReasonAlone) {
   const std::string shown = flat(ui().joined());
   EXPECT_NE(shown.find(tr(STR_GAMES_INSTALL_STORAGE)), std::string::npos) << shown;
   EXPECT_EQ(shown.find(": "), std::string::npos) << "no file name, so no \"name: \" before the reason";
+}
+
+// ---- "and N more" (A22): Report.failed counts every failure, the note names only the first ----
+
+TEST_F(ListTest, OneFailureShowsNoMoreLine) {
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.firstError = Error::NoMain;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "broken.chgame");
+  open();
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find("broken.chgame: " + std::string(tr(STR_GAMES_INSTALL_NO_MAIN))), std::string::npos) << shown;
+  EXPECT_EQ(shown.find("more"), std::string::npos) << shown;
+}
+
+TEST_F(ListTest, TwoFailuresShowTheFirstReasonAndAndOneMoreOnItsOwnLine) {
+  installerscript::script().report.failed = 2;
+  installerscript::script().report.firstError = Error::BadCrc;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "first.chgame");
+  open();
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find(std::string("first.chgame: ") + tr(STR_GAMES_INSTALL_BAD_CRC) + " and 1 more"),
+            std::string::npos)
+      << shown;
+  EXPECT_TRUE(ui().drewLine("and 1 more")) << "a line of its own: " << ui().joined();
+  EXPECT_EQ(shown.find("and 2 more"), std::string::npos) << "N is the failures after the first: " << shown;
+}
+
+TEST_F(ListTest, TheMoreLineIsTheFailureCountLessTheFirstEvenWhenTheFirstWaitsForRoom) {
+  // The installer counts a package that waits for room in `failed` (GamePackageInstallerTest pins it), so the note
+  // does.
+  installerscript::script().report.failed = 7;
+  installerscript::script().report.firstError = Error::TooManyGames;
+  open();
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find(std::string(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES)) + " and 6 more"), std::string::npos) << shown;
+  EXPECT_TRUE(ui().drewLine("and 6 more")) << ui().joined();
+}
+
+TEST_F(ListTest, ASaturatedFailureCountReadsAsItsFloorNotAWrappedNumber) {
+  // Report.failed stops at 255 (uint8_t): the line says 254, and never 0, -1, or 255.
+  installerscript::script().report.failed = std::numeric_limits<uint8_t>::max();
+  installerscript::script().report.firstError = Error::SdCard;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile), "%s",
+                std::string(GamePaths::INBOX_NAME_BYTES - 1, 'n').c_str());  // the longest file name
+  open();
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find(std::string(tr(STR_GAMES_INSTALL_STORAGE)) + " and 254 more"), std::string::npos) << shown;
+  EXPECT_TRUE(ui().drewLine("and 254 more")) << ui().joined();
+}
+
+TEST_F(ListTest, TheLongestReasonWithTheLongestFileNameIsDrawnWholeAboveTheMoreLine) {
+  // The longest file name with the longest reason still draws whole (note[128], four lines), and the more line follows.
+  installerscript::script().report.failed = 12;
+  std::string longest;
+  for (int value = 0; value < 256; ++value) {
+    const char* text = expectedText(static_cast<Error>(value));
+    if (text && longest.size() < std::strlen(text)) {
+      longest = text;
+      installerscript::script().report.firstError = static_cast<Error>(value);
+    }
+  }
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile), "%s",
+                std::string(GamePaths::INBOX_NAME_BYTES - 1, 'n').c_str());
+  open();
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find(longest + " and 11 more"), std::string::npos) << shown;
+  EXPECT_TRUE(ui().drewLine("and 11 more")) << ui().joined();
+}
+
+TEST_F(ListTest, TheMoreLineIsDrawnUnderTheReasonAndCenteredWithIt) {
+  installerscript::script().report.failed = 2;
+  installerscript::script().report.firstError = Error::BadCrc;
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile),
+                "first.chgame");
+  open();
+  const auto& drawn = ui().drawn;
+  size_t more = drawn.size();
+  for (size_t i = 0; i < drawn.size(); ++i)
+    if (drawn[i].text == "and 1 more") more = i;
+  ASSERT_LT(more, drawn.size()) << ui().joined();
+  ASSERT_GT(more, 0u);
+  const screen::DrawnText& reason = drawn[more - 1];  // the reason's last line, drawn just before
+  EXPECT_NE(reason.text.find("damaged"), std::string::npos) << ui().joined();
+  EXPECT_EQ(drawn[more].rect.y, reason.rect.y + reason.rect.height) << "the more line starts where the reason ends";
+  EXPECT_NEAR(drawn[more].rect.x + drawn[more].rect.width / 2.0, reason.rect.x + reason.rect.width / 2.0, 1.0)
+      << "centered with the reason, not left in the panel's padding";
+}
+
+TEST_F(ListTest, TheMoreLineIsShownOncePerVisitAndDismissedWithTheNote) {
+  addGame("alpha", "Alpha");
+  installerscript::script().report.failed = 3;
+  installerscript::script().report.firstError = Error::NoMain;
+  open();
+  ASSERT_NE(flat(ui().joined()).find("and 2 more"), std::string::npos) << "the note is up on entering";
+  EXPECT_EQ(installerscript::script().installCalls(), 1);
+
+  input->click(Button::Back);
+  frame();
+  render();
+  EXPECT_EQ(flat(ui().joined()).find("and 2 more"), std::string::npos) << "the dismissed note stays dismissed";
+  render();
+  EXPECT_EQ(flat(ui().joined()).find("and 2 more"), std::string::npos) << "and a later frame does not bring it back";
+  EXPECT_EQ(installerscript::script().installCalls(), 1) << "one install, so one note, per visit";
+
+  reopen();  // a new visit installs again and explains again, once
+  EXPECT_EQ(installerscript::script().installCalls(), 2);
+  EXPECT_NE(flat(ui().joined()).find("and 2 more"), std::string::npos);
 }
 
 TEST_F(ListTest, NoFailureShowsNoNote) {

@@ -481,3 +481,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md` (the owner's answers to A15–A27, 2026-09-30)
   summary: Where the entry-14 deferrals that had no trigger now land. A15, the inert pause menu in the Play-again gap, goes to `## owner-e4-title-screen`. A16(b), a per-frame fill budget, and A19, a cap on a package's extracted total, go to epic-first-party-games' "before the freeze" Notes, beside the device's stack figure. A21, the reasons `ZipFile` and `PngToBmpConverter` do not give, has the trigger "the next ledger change". The rest of A26, the device cost of a `resume.bin` write and the launcher's `peek` time at entry, goes to epic-pass-and-play's closing device run.
   evidence: The owner agreed each home at the entry-14 device run. A18 (the `.removing` marker), A22 ("and N more"), and step 9's finding (the `loop` fixture's Slow C calls band is abandoned, not cancelled, on the device) are fixed before the epic closes, as e4-z1 to e4-z3.
+
+## e4-z3
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-z3-and-n-more.md`
+  summary: Resolved by e4-z3: the `## 4.3` and `## 4.13` item "`GamePackageInstaller::Report` keeps only the first failure, so with two bad files in the inbox the second is renamed `.cpgame.bad` (today `.chgame.bad`) and only logged" (owner's Assumption A22). With `Report.failed > 1` the launcher's note shows the first reason and a second line "and N more" (`STR_GAMES_INSTALL_AND_MORE`, N = `failed - 1`); the installer's behavior is unchanged (`Report::failed` gains a comment only).
+  evidence: N counts every file that ended in an error in that visit, including a package that waits for room (`TooManyGames`), because `installAll` counts it in `failed` today and the note already explains that reason. A saturated count (255) reads "and 254 more", a floor. The other failures' reasons are still not named; that stays a later UX choice.
