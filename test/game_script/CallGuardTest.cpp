@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -102,6 +103,42 @@ TEST_F(CallGuardTest, ACancelFromAnotherTaskStopsARunningLoopEvenUnderPcall) {
     canceller.join();
     EXPECT_EQ(outcome, Outcome::Cancelled) << fixture << " -> " << game.errorMessage();
     EXPECT_FALSE(game.inLua());
+  }
+}
+
+// The loop fixture's "Slow C calls forever" band shows the clean cancel: the watchdog
+// cancels it and the hook, which runs at the next call, stops it well inside the
+// match's 500 ms join (GameMatchActivity::STOP_TIMEOUT_MS). A device call is far
+// slower than a host call, so the bound here is a tenth of the join, on the host.
+TEST_F(CallGuardTest, ACancelStopsTheLoopFixturesSlowCallsBandWithinOneSlowCall) {
+  for (const int cancelAfterMs : {100, 137, 173}) {
+    useSource("main", GameScriptTestSupport::readFixture("loop/main.lua"));
+    DirectGame game(arena, frames, sources, ports, canvas);
+    ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+    ASSERT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    const DrawCommand* band = nullptr;
+    const auto commands = frontCommands();
+    for (const auto& c : commands) {
+      if (c.op == Op::Text && std::string("Slow C calls forever") == std::string(c.text, c.textLength)) band = &c;
+    }
+    ASSERT_NE(band, nullptr);
+
+    using Clock = std::chrono::steady_clock;
+    std::atomic<Clock::time_point> cancelledAt{Clock::time_point{}};
+    std::thread canceller([&game, &cancelledAt, cancelAfterMs] {
+      while (!game.inLua()) std::this_thread::yield();
+      std::this_thread::sleep_for(std::chrono::milliseconds(cancelAfterMs));
+      cancelledAt = Clock::now();
+      game.requestCancel();
+    });
+    const Outcome outcome =
+        game.input(InputEvent{InputKind::Tap, static_cast<int16_t>(band->x), static_cast<int16_t>(band->y)});
+    const auto returnedAt = Clock::now();
+    canceller.join();
+    EXPECT_EQ(outcome, Outcome::Cancelled) << game.errorMessage();
+    EXPECT_EQ(game.callGuard().fault(), Fault::Cancelled);  // not the budget: the loop's calls are few instructions
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(returnedAt - cancelledAt.load()).count(), 50)
+        << "cancel after " << cancelAfterMs << " ms";
   }
 }
 

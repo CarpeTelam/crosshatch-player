@@ -17,15 +17,26 @@ local function recurse()
   pcall(recurse)
 end
 
--- A backtracking pattern that fails: string.find tries about C(n + k, k) splits
--- inside one C call, where no hook runs, while the Lua loop around it spends few
+-- A backtracking pattern that fails: string.find tries about C(n + k + 1, k + 1)
+-- splits (over every start position) inside one C call, where no hook runs, while the Lua loop around it spends few
 -- instructions. k stays within the matcher's depth limit (MAXCCALLS, 16).
-local function backtrack(k, n)
-  return string.find(string.rep("a", n), string.rep(".-", k) .. "b")
+local function backtrackArgs(k, n)
+  return string.rep("a", n), string.rep(".-", k) .. "b"
 end
 
+local function backtrack(k, n)
+  return string.find(backtrackArgs(k, n))
+end
+
+-- Each call must end well inside the 500 ms the match waits for the VM after a
+-- cancel (GameMatchActivity::STOP_TIMEOUT_MS): the hook runs at the next call, and
+-- only then sees the cancel. The pattern is built once, so the loop spends about 5
+-- instructions a call and the 2 M instruction budget stays far beyond the 3 s
+-- watchdog.
 local function slowCallsForever()
-  while true do backtrack(6, 30) end -- about 2 M steps a call
+  local find = string.find
+  local subject, pattern = backtrackArgs(6, 10)
+  while true do find(subject, pattern) end -- about 19 K splits (27 K matcher steps) a call
 end
 
 local function stuckInOneCall()

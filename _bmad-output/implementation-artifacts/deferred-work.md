@@ -481,3 +481,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md` (the owner's answers to A15–A27, 2026-09-30)
   summary: Where the entry-14 deferrals that had no trigger now land. A15, the inert pause menu in the Play-again gap, goes to `## owner-e4-title-screen`. A16(b), a per-frame fill budget, and A19, a cap on a package's extracted total, go to epic-first-party-games' "before the freeze" Notes, beside the device's stack figure. A21, the reasons `ZipFile` and `PngToBmpConverter` do not give, has the trigger "the next ledger change". The rest of A26, the device cost of a `resume.bin` write and the launcher's `peek` time at entry, goes to epic-pass-and-play's closing device run.
   evidence: The owner agreed each home at the entry-14 device run. A18 (the `.removing` marker), A22 ("and N more"), and step 9's finding (the `loop` fixture's Slow C calls band is abandoned, not cancelled, on the device) are fixed before the epic closes, as e4-z1 to e4-z3.
+
+## e4-z1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-z1-loop-fixture-calibration.md`
+  summary: Two records of the `loop` package hash `e7ebc00d62486a0f`, `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/device-run-packet.md` (the hash table) and `_bmad-output/implementation-artifacts/plan-e4-y-chgame-rename.md` (its `HASHES.txt` sample), name the package before the recalibration; the new hash is `78097bce80f7b534`.
+  evidence: They record what was packed for the entry-14 device run, so they stay as history; a later device run reads the hash from `pack_device_run.py`'s `HASHES.txt` or from `pack_game.py`, and the device's `/.games/loop/.pkg` will show the new one. Not edited here, because this build's paths do not include them.
