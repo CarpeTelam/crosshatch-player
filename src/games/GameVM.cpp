@@ -45,7 +45,8 @@ void logRound(const GameCore::Session& session, const GameScript::SoloRounds& ro
 }  // namespace
 
 std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
-                                       const char* gameId, GameScript::StoreSlot& store) {
+                                       const char* gameId, GameScript::StoreSlot& store,
+                                       const GameCore::Roster& roster) {
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
   // The two frames, then the mailbox's one snapshot: one block, since the mailbox lives
@@ -60,7 +61,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
   std::unique_ptr<GameVM> vm(new (std::nothrow)
-                                 GameVM(std::move(assets), std::move(frameStorage), canvas, gameId, store));
+                                 GameVM(std::move(assets), std::move(frameStorage), canvas, gameId, store, roster));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -70,8 +71,9 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
 }
 
 GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas,
-               const char* gameId, GameScript::StoreSlot& store)
+               const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster)
     : assets(std::move(loaded)),
+      roster(roster),
       frameStorage(std::move(storage)),
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
       mailbox({frameStorage.get() + 2 * GameScript::MAX_BYTES, GameCore::SNAPSHOT_BYTES}),
@@ -122,7 +124,7 @@ void GameVM::run() {
   // The Session and (in LuaGame::load) the codec scratch come from the arena's
   // reserve, which Lua's region never touches, so Lua can never starve either.
   GameScript::ArenaAllocator& heap = arena.allocator();
-  GameCore::Session* session = heap.create<GameCore::Session>(GameCore::Roster::solo(), game);
+  GameCore::Session* session = heap.create<GameCore::Session>(roster, game);
   Outcome outcome = Outcome::ScriptError;
   if (session) {
     outcome = game.load();

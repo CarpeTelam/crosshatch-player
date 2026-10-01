@@ -46,9 +46,10 @@ class MatchTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
-  void enter(const std::string& id, const std::string& name = "") {
+  void enter(const std::string& id, const std::string& name = "",
+             const GameCore::Roster& roster = GameCore::Roster::solo()) {
     gameId = id;
-    activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id, name));
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id, name), roster);
     activity->onEnter();
   }
 
@@ -958,7 +959,8 @@ TEST_F(MatchTest, AStoreOnTheCardIsRestoredIntoTheGamesStoreWhenTheMatchStarts) 
   ASSERT_TRUE(fakesd::has(storePath("counter")));
   fakelog::clearLines();
 
-  activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf("counter"));
+  activity =
+      std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf("counter"), GameCore::Roster::solo());
   exited = false;
   activity->onEnter();
   showFrame();
@@ -996,6 +998,103 @@ TEST_F(MatchTest, ADirtyStoreIsWrittenOnceTheFlushIntervalPassesWhilePaused) {
   fakertos::advance(1);
   frame();
   EXPECT_TRUE(fakesd::has(storePath("counter")));
+}
+
+// ---- an open pass match (epic-pass-and-play entry 1): pass-open through the real match, VM, and Session ----
+
+class PassMatchTest : public MatchTest {
+ protected:
+  // The canvas point at the middle of pass-open's cell `cell` (1..9, row by row: 140 px squares from (27, 200)).
+  static int cellX(const int cell) { return 27 + (cell - 1) % 3 * 140 + 70; }
+  static int cellY(const int cell) { return 200 + (cell - 1) / 3 * 140 + 70; }
+
+  // Taps `cell` and draws the frame the VM publishes after it, recording only that frame's calls.
+  void tapCell(const int cell) {
+    tapCanvas(cellX(cell), cellY(cell));
+    frame();
+    renderer->forget();
+    showFrame();
+  }
+
+  // What the renderer drew since its last forget() holds the text `text`.
+  bool drew(const std::string& text) const {
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    return std::find(texts.begin(), texts.end(), text) != texts.end();
+  }
+
+  // Where the first log line holding `part` is, or the log's size when none does.
+  static size_t lineOf(const std::string& part) {
+    const std::vector<std::string> lines = fakelog::snapshot();
+    for (size_t i = 0; i < lines.size(); ++i) {
+      if (lines[i].find(part) != std::string::npos) return i;
+    }
+    return lines.size();
+  }
+};
+
+TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEveryone) {
+  installFixture("pass-open");
+  fakesd::addFile("/.games/pass-open/.pkg", "v1\n0530a15766e91bf1\n");  // a package that would keep resume.bin
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  EXPECT_TRUE(logHas("pass-open: pass match; no resume.bin until pass saves (epic-pass-and-play entry 9)"));
+  renderer->forget();
+  showFrame();
+  EXPECT_TRUE(drew("Player 1 (X) to move")) << "seat 1 is drawn first";
+
+  tapCell(1);
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  EXPECT_FALSE(drew("That square is taken"));
+
+  // Seat 2 taps seat 1's square: the rejection reaches seat 2's input and ui, and it is still seat 2's turn.
+  tapCell(1);
+  EXPECT_TRUE(logHas("apply seat 2 cell 1"));
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  EXPECT_TRUE(drew("That square is taken"));
+
+  tapCell(2);
+  EXPECT_TRUE(drew("Player 1 (X) to move"));
+  EXPECT_FALSE(drew("That square is taken")) << "the rejection was seat 2's, so seat 1's ui never had it";
+  tapCell(4);
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  tapCell(3);
+  EXPECT_TRUE(drew("Player 1 (X) to move"));
+
+  // X completes 1-4-7: the round ends, over reaches each seat once in seat order, and every answer is dropped.
+  tapCanvas(cellX(7), cellY(7));
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  EXPECT_LT(lineOf("over for seat 1"), lineOf("over for seat 2"));
+  EXPECT_EQ(fakelog::countLines("apply seat "), 6u) << "five moves and the rejected one; no answer to over";
+  EXPECT_FALSE(logHas("cell 5")) << "each seat answered over with cell 5, which never reached apply";
+  for (const char* move : {"apply seat 1 cell 1", "apply seat 2 cell 2", "apply seat 1 cell 4", "apply seat 2 cell 3",
+                           "apply seat 1 cell 7"}) {
+    EXPECT_EQ(fakelog::countLines(move), 1u) << move;
+  }
+
+  renderer->forget();
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_OVER)));
+  EXPECT_TRUE(drew("Everyone: Player 1 wins")) << "the menu sits over seat 0's frame";
+  EXPECT_FALSE(drew("Player 1 (X): Player 1 wins"));
+
+  // Play again: a new round on the same pass match, seat 1 first.
+  tapOption(tr(STR_GAMES_PLAY_AGAIN));
+  EXPECT_EQ(state(), "Playing");
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("Round started") >= 2; }));
+  renderer->forget();
+  render();
+  EXPECT_TRUE(drew("Player 1 (X) to move"));
+
+  // Leave writes nothing either: a pass match has no resume.bin until pass saves.
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  tapOption(tr(STR_GAMES_LEAVE));
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_TRUE(match::resumeFilesOnCard().empty());
 }
 
 }  // namespace

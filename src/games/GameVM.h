@@ -4,6 +4,7 @@
 #include <GameInput.h>
 #include <HalMemory.h>
 #include <LuaGame.h>
+#include <Roster.h>
 #include <SoloRounds.h>
 #include <VmFailure.h>
 #include <freertos/FreeRTOS.h>
@@ -32,7 +33,7 @@ class GfxRenderer;
 
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
 // the frame buffers, the input queue, the LuaGame with its clock and log, and, in
-// the arena while the task runs, the solo GameCore::Session that drives it. The
+// the arena while the task runs, the match's GameCore::Session that drives it. The
 // ch.store slot is the match's, borrowed. The task alone calls into Lua; it never
 // takes RenderLock, calls ActivityManager, or touches Storage. The match posts
 // input and reads frames, and destroys this object only after join() returns true
@@ -57,10 +58,12 @@ class GameVM {
   // Takes the loaded sources and allocates the arena and both frame buffers (and the
   // snapshot mailbox's storage after them) in PSRAM. The game sees `viewport`'s canvas
   // size as ch.screen and measures ch.text_width with `replay`'s text metrics (after
-  // FrameReplay::loadFonts); `gameId` tags its log lines, and `store` (which must
-  // outlive the task, see MatchStore) backs ch.store. Null (logged) when memory runs out.
+  // FrameReplay::loadFonts); `gameId` tags its log lines, `store` (which must outlive
+  // the task, see MatchStore) backs ch.store, and the Session plays `roster` (solo, or an
+  // open pass match). Null (logged) when memory runs out.
   static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
-                                        const char* gameId, GameScript::StoreSlot& store);
+                                        const char* gameId, GameScript::StoreSlot& store,
+                                        const GameCore::Roster& roster);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -168,7 +171,7 @@ class GameVM {
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
-         GameScript::StoreSlot& store);
+         GameScript::StoreSlot& store, const GameCore::Roster& roster);
   static void taskEntry(void* param);
   void run();
   // errorMessage() without its gate: for run(), the task that writes it, which
@@ -183,6 +186,8 @@ class GameVM {
   bool deleteIfStuckInLua();
 
   GameAssets assets;
+  // Who plays: the Session run() builds is this roster's.
+  GameCore::Roster roster;
   GameArena arena;
   HalMemory::PsramBuffer frameStorage;
   GameScript::FrameBuffers frameBuffers;

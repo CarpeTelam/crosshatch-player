@@ -10,6 +10,7 @@
 #include "GameMatchActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "games/GameHostCaps.h"
 
 namespace fui = freeink::ui;
 
@@ -19,6 +20,7 @@ using GameCore::Manifest;
 
 struct ModeText {
   uint8_t bit;
+  GameCore::Mode mode;
   StrId name;
   StrId description;
   const char* log;  // the mode's name in the log
@@ -26,9 +28,10 @@ struct ModeText {
 
 // The rows' order.
 constexpr ModeText MODE_TEXTS[GameModeActivity::MAX_MODES] = {
-    {Manifest::MODE_SOLO, StrId::STR_GAMES_MODE_SOLO, StrId::STR_GAMES_MODE_SOLO_DESC, "solo"},
-    {Manifest::MODE_PASS, StrId::STR_GAMES_MODE_PASS, StrId::STR_GAMES_MODE_PASS_DESC, "pass"},
-    {Manifest::MODE_NEARBY, StrId::STR_GAMES_MODE_NEARBY, StrId::STR_GAMES_MODE_NEARBY_DESC, "nearby"},
+    {Manifest::MODE_SOLO, GameCore::Mode::Solo, StrId::STR_GAMES_MODE_SOLO, StrId::STR_GAMES_MODE_SOLO_DESC, "solo"},
+    {Manifest::MODE_PASS, GameCore::Mode::Pass, StrId::STR_GAMES_MODE_PASS, StrId::STR_GAMES_MODE_PASS_DESC, "pass"},
+    {Manifest::MODE_NEARBY, GameCore::Mode::Nearby, StrId::STR_GAMES_MODE_NEARBY, StrId::STR_GAMES_MODE_NEARBY_DESC,
+     "nearby"},
 };
 
 }  // namespace
@@ -83,14 +86,32 @@ void GameModeActivity::buildScreen(UiScreen& screen) {
 void GameModeActivity::activateIndex(const int index) {
   if (index < 0 || static_cast<size_t>(index) >= rowCount) return;
   const ModeText& mode = MODE_TEXTS[rowKind[index]];
-  // GameMatchActivity runs solo only (epic-pass-and-play passes the mode in), so every row starts that match.
-  if (mode.bit == Manifest::MODE_SOLO) {
-    LOG_INF("GAME", "Mode solo picked for %s", manifest.id);
-  } else {
-    LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", mode.log, manifest.id, mode.log);
+  GameCore::Roster roster = GameCore::Roster::solo();
+  switch (mode.mode) {
+    case GameCore::Mode::Solo:
+      LOG_INF("GAME", "Mode solo picked for %s", manifest.id);
+      break;
+    case GameCore::Mode::Pass: {
+      // The fewest seats a pass match can have; the seat choice is deferred (deferred-work.md, ## e5-inception).
+      const uint8_t seats = GameCore::passSeats(manifest.seatsMin, manifest.seatsMax, gameHostCaps().maxSeats);
+      if (seats == 0) {
+        LOG_ERR("GAME", "Cannot start %s in pass: seats %d..%d leave no pass match on this host", manifest.id,
+                static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax));
+        requestUpdate();  // the tap moved the selection here; show it
+        return;
+      }
+      roster = GameCore::Roster::pass(seats);
+      LOG_INF("GAME", "Mode pass picked for %s: %u seats", manifest.id, static_cast<unsigned>(seats));
+      break;
+    }
+    case GameCore::Mode::Nearby:
+      // GameMatchActivity cannot run nearby until epic-play-nearby, so this row starts a solo match.
+      LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", mode.log, manifest.id,
+              mode.log);
+      break;
   }
   app.clearTapFlash();  // the row leaves this screen
-  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, manifest);
+  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, manifest, roster);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame

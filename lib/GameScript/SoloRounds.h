@@ -15,11 +15,18 @@ namespace GameScript {
 class GameTimer;
 class InputQueue;
 
-// The solo round loop the GameVM task runs over one Session (AD-21): the first
-// round, one step per input event, Play again, and the count of ended rounds the
-// match watches to enter Over, and the count of started rounds it watches after
-// Play again. requestPlayAgain(), roundsStarted(), and roundsEnded() are for the
-// loop task; everything else runs on the VM task. Host-tested with a LuaGame.
+// The round loop the GameVM task runs over one Session (AD-21): the first round,
+// one step per input event, Play again, and the count of ended rounds the match
+// watches to enter Over, and the count of started rounds it watches after Play
+// again. requestPlayAgain(), roundsStarted(), and roundsEnded() are for the loop
+// task; everything else runs on the VM task. Host-tested with a LuaGame.
+//
+// The name predates pass and play: the loop serves a roster with one local seat
+// (solo, nearby) or with every seat local (pass). It comes in two layers. The steps
+// (begin, beginAgain, play, draw) take the seat from their caller and never pick one.
+// The open match's composition (start, restart, step) runs them with the seat
+// GameCore::seatShown names: the one local seat, or in pass the turn seat, and seat 0
+// once the round is over.
 class SoloRounds {
  public:
   SoloRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
@@ -33,31 +40,51 @@ class SoloRounds {
   // after the Session has delivered `over` and the round's last frame is drawn.
   uint32_t roundsEnded() const { return ended.load(std::memory_order_acquire); }
   // Rounds that have started so far: one is counted once a round's first frame is
-  // published (start() and each restart()), before that round can count as ended.
+  // published (the first draw() after begin() or beginAgain()), before that round can
+  // count as ended.
   // Any frame published after Play again and before this count moves is the last
   // round's, so the match asks for no render until it does.
   uint32_t roundsStarted() const { return started.load(std::memory_order_acquire); }
 
-  // VM task: the first round of `session` (setup, status, `over` if it is already
-  // over, then draw).
-  GameCore::Outcome start(GameCore::Session& session);
   // VM task: true once after requestPlayAgain().
   bool takePlayAgain() { return playAgain.exchange(false, std::memory_order_acq_rel); }
-  // VM task: a new round on the same Session, so ver keeps counting; the pending
-  // timer is cancelled first, so a timer event already queued is stale.
+
+  // ---- the steps (VM task): each takes its seat from the caller ----
+
+  // The first round of `session`: setup, status, and `over` if it is already over.
+  // Draws nothing; the round counts as started at its first draw().
+  GameCore::Outcome begin(GameCore::Session& session);
+  // A new round on the same Session, so ver keeps counting; the pending timer is
+  // cancelled first, so a timer event already queued is stale. Draws nothing.
+  GameCore::Outcome beginAgain();
+  // One event to `seat`'s input, then the pending move. A timer event the game
+  // re-armed or cancelled after it fired is dropped first. Draws nothing.
+  GameCore::Outcome play(const GameCore::GameEvent& event, uint8_t seat);
+  // Draws the snapshot for `seat` (0: the frame for everyone). A round's first
+  // frame counts it as started; a frame of a round that is over counts its end, once.
+  GameCore::Outcome draw(uint8_t seat);
+
+  // ---- the open match (VM task): the steps with the seat seatShown names ----
+
+  // begin, then draw.
+  GameCore::Outcome start(GameCore::Session& session);
+  // beginAgain, then draw.
   GameCore::Outcome restart();
-  // VM task: one event as the game sees it: a stale timer event is dropped, then
-  // input, the pending move, and a draw.
+  // One event as the game sees it: a stale timer event is dropped with no draw; else
+  // play, then draw (the seat shown after the move).
   GameCore::Outcome step(const GameCore::GameEvent& event);
 
  private:
-  GameCore::Outcome startRound();
+  GameCore::Outcome beginRound();
   void countRoundEnd();
+  // The seat GameCore::seatShown names for the session's status now.
+  uint8_t shownSeat() const;
 
   GameTimer& timer;
   InputQueue& queue;
   GameCore::Session* session = nullptr;
-  bool roundOver = false;  // VM task: the current round has been counted
+  bool roundOver = false;          // VM task: the current round has been counted
+  bool firstFramePending = false;  // VM task: the current round has not drawn yet
   std::atomic<bool> playAgain{false};
   std::atomic<uint32_t> started{0};
   std::atomic<uint32_t> ended{0};

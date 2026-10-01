@@ -265,6 +265,25 @@ inline GameCore::Manifest manifestOf(const std::string& id, const std::string& n
   return manifest;
 }
 
+// The texts the renderer recorded since its last forget(), one string a ch.gfx.text: FrameReplay draws one code point
+// a drawText call, so the calls of one text (consecutive, on one line) are joined back.
+inline std::vector<std::string> drawnTexts(const GfxRenderer& renderer) {
+  std::vector<std::string> texts;
+  bool joining = false;
+  int lineY = 0;
+  for (const auto& call : renderer.calls) {
+    if (call.kind != GfxRenderer::Kind::DrawText) {
+      joining = false;
+      continue;
+    }
+    if (!joining || call.y != lineY) texts.emplace_back();
+    texts.back() += call.text;
+    joining = true;
+    lineY = call.y;
+  }
+  return texts;
+}
+
 // The three built-in fonts FrameReplay::loadFonts reads, as the double models them: 9, 11, and 17
 // px a glyph (small, medium, large), on lines 20, 24, and 30 px high. None equals the stand-in
 // advance the replay measures with before loadFonts (8, 10, 14), so a game that measures text

@@ -264,7 +264,8 @@ class ResumeMatchTest : public match::ScreenTest {
   void enter(const std::string& id, const GameMatchActivity::Start start = GameMatchActivity::Start::New) {
     gameId = id;
     exited = false;
-    activity = std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id), start);
+    activity =
+        std::make_unique<GameMatchActivity>(*renderer, *input, match::manifestOf(id), GameCore::Roster::solo(), start);
     firstFramePending = true;
     activity->onEnter();
   }
@@ -1143,7 +1144,7 @@ class ResumeVmTest : public match::ScreenTest {
     if (!store->allocate(id.c_str(), static_cast<uint32_t>(clockMs()))) return false;
     GameAssets assets;
     if (assets.load(id.c_str(), store->saves(), store->slot()) != GameAssets::LoadResult::Ok) return false;
-    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot());
+    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), GameCore::Roster::solo());
     return vm != nullptr;
   }
   bool startAndWaitFirstFrame() {

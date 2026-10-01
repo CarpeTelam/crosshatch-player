@@ -1,0 +1,8 @@
+{
+  "id": "pass-open",
+  "name": "Pass open",
+  "version": "1.0.0",
+  "api": 1,
+  "seats": { "min": 1, "max": 2 },
+  "modes": ["solo", "pass"]
+}

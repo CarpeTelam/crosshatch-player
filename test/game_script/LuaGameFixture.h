@@ -174,14 +174,14 @@ class LuaGameTest : public ::testing::Test {
   // test/game_script/fixtures/faults/<name>.lua as main.lua.
   void useFault(const std::string& name) { useSource("main", readFixture("faults/" + name + ".lua")); }
 
-  // The GameVM task's composition (GameVM::run): a solo Session in the arena, taken
-  // before the Lua state, over a LuaGame, driven by the production round loop
-  // (GameScript::SoloRounds) over its own input queue, so a regression in the loop
-  // fails these tests too.
+  // The GameVM task's composition (GameVM::run): a Session of `roster` (solo unless a
+  // test gives one) in the arena, taken before the Lua state, over a LuaGame, driven by
+  // the production round loop (GameScript::SoloRounds) over its own input queue, so a
+  // regression in the loop fails these tests too.
   struct SessionGame {
-    SessionGame(LuaGameTest& test)
+    explicit SessionGame(LuaGameTest& test, const GameCore::Roster& roster = GameCore::Roster::solo())
         : arena(test.arena), game(test.arena, test.frames, test.sources, test.ports, test.canvas, test.images) {
-      session = arena.create<GameCore::Session>(GameCore::Roster::solo(), game);
+      session = arena.create<GameCore::Session>(roster, game);
     }
     ~SessionGame() {
       game.close();

@@ -266,10 +266,10 @@ TEST_F(SessionGameTest, EveryFaultScriptEndsWithTheReadmesText) {
       failed = Step::Load;
     } else if (game.session->start() != Outcome::Ok) {
       failed = Step::Setup;
-    } else if (game.session->draw() != Outcome::Ok) {
+    } else if (game.session->draw(1) != Outcome::Ok) {
       failed = Step::Draw;
-    } else if (game.session->handle(tap) != Outcome::Ok || game.session->applyPending() != Outcome::Ok ||
-               game.session->draw() != Outcome::Ok) {
+    } else if (game.session->handle(tap, 1) != Outcome::Ok || game.session->applyPending() != Outcome::Ok ||
+               game.session->draw(1) != Outcome::Ok) {
       failed = Step::Input;
     }
     EXPECT_EQ(failed, expected) << name << " (README: " << row[1] << ") -> " << game.errorMessage();
@@ -299,7 +299,7 @@ TEST_F(SessionGameTest, ChangesMadeOutsideApplyAreDiscardedAndUiPersists) {
   SessionGame game(*this);
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontText(), "0 nil 0");
-  ASSERT_EQ(game.session->draw(), Outcome::Ok);
+  ASSERT_EQ(game.session->draw(1), Outcome::Ok);
   EXPECT_EQ(frontText(), "0 nil 0");  // draw's change is gone
   ASSERT_EQ(game.tap(1, 1), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontText(), "1 0 1");  // apply saw neither input's nor status's change

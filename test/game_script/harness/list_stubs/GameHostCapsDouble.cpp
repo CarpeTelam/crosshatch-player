@@ -1,4 +1,5 @@
-// The scripted gameHostCaps() (HostCapsScript.h).
+// The scripted gameHostCaps() (HostCapsScript.h), standing in for the device's gameHostCaps()
+// (src/games/GameHostCaps.cpp): the same HostCapsValues, with `pass` and `minApi` scriptable.
 
 #if FREEINK_CAP_GAMES
 
@@ -17,10 +18,9 @@ Script& script() {
 }  // namespace hostcaps
 
 GameCore::HostCaps gameHostCaps() {
-  constexpr int32_t MAX_SEATS = 2;  // as GameHostCaps.cpp
   const hostcaps::Script& script = hostcaps::script();
-  return GameCore::HostCaps{API_LEVEL, script.minApi != 0 ? script.minApi : API_MIN_LEVEL, MAX_SEATS, false,
-                            script.pass};
+  return GameCore::HostCaps{API_LEVEL, script.minApi != 0 ? script.minApi : API_MIN_LEVEL, HostCapsValues::MAX_SEATS,
+                            HostCapsValues::NEARBY_BUILT, script.pass};
 }
 
 #endif  // FREEINK_CAP_GAMES

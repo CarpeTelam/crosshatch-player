@@ -148,24 +148,24 @@ TEST_F(InstallerIconTest, AMalformedIconWeightIsAnInvalidManifest) {
   }
 }
 
-// The pass capability: this host cannot run a pass game (HostCaps::pass is false), so a game with solo and
-// pass lists as solo only, and a pass-only game installs (a later host may run it) but is unavailable here.
-TEST_F(InstallerIconTest, ASoloAndPassGameOffersOnlySoloHere) {
+// The pass capability: this host runs an open pass match (HostCaps::pass is on since epic-pass-and-play), so a game
+// with solo and pass lists both modes, and a pass-only game installs and can start in pass.
+TEST_F(InstallerIconTest, ASoloAndPassGameOffersBothModesHere) {
   ASSERT_EQ(install(withMembers(R"("icon": "x")", R"(["solo", "pass"])", R"({"min": 1, "max": 2})")).installed, 1);
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
   ASSERT_EQ(listing.count, 1u);
   EXPECT_TRUE(listing.entries[0].check.ok());
-  EXPECT_EQ(listing.entries[0].check.modes, GameCore::Manifest::MODE_SOLO);
+  EXPECT_EQ(listing.entries[0].check.modes, GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS);
 }
 
-TEST_F(InstallerIconTest, APassOnlyGameInstallsAndIsUnavailable) {
+TEST_F(InstallerIconTest, APassOnlyGameInstallsAndCanStartInPass) {
   ASSERT_EQ(install(withMembers(R"("icon": "x")", R"(["pass"])", R"({"min": 2, "max": 2})")).installed, 1);
   GameRegistry::Listing listing;
   ASSERT_TRUE(GameRegistry::load(listing));
   ASSERT_EQ(listing.count, 1u);
-  EXPECT_EQ(listing.entries[0].check.status, GameCore::CheckStatus::Unavailable);
-  EXPECT_EQ(listing.entries[0].check.reason, GameCore::CheckReason::NoHostMode);
+  EXPECT_TRUE(listing.entries[0].check.ok());
+  EXPECT_EQ(listing.entries[0].check.modes, GameCore::Manifest::MODE_PASS);
 }
 
 // A package installed before the grammar tightened, with "_" in its icon, no longer parses: the registry skips

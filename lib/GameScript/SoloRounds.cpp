@@ -1,5 +1,6 @@
 #include "SoloRounds.h"
 
+#include <SeatShown.h>
 #include <Session.h>
 
 #include "GameInput.h"
@@ -14,43 +15,75 @@ void SoloRounds::requestPlayAgain() {
   playAgain.store(true, std::memory_order_release);
 }
 
-Outcome SoloRounds::start(GameCore::Session& played) {
+Outcome SoloRounds::begin(GameCore::Session& played) {
   session = &played;
-  return startRound();
+  return beginRound();
+}
+
+Outcome SoloRounds::beginAgain() {
+  timer.cancel();
+  return beginRound();
+}
+
+Outcome SoloRounds::play(const GameCore::GameEvent& event, const uint8_t seat) {
+  // A timer the game re-armed or cancelled after this event fired is not due.
+  if (!timer.accepts(event)) return Outcome::Ok;
+  const Outcome outcome = session->handle(event, seat);
+  if (outcome != Outcome::Ok) return outcome;
+  return session->applyPending();
+}
+
+Outcome SoloRounds::draw(const uint8_t seat) {
+  const Outcome outcome = session->draw(seat);
+  if (outcome != Outcome::Ok) return outcome;
+  if (firstFramePending) {
+    // After the round's first frame is published and before any end, so the match
+    // never sees a round end without its start.
+    firstFramePending = false;
+    started.fetch_add(1, std::memory_order_acq_rel);
+  }
+  // After the draw, so the round's last frame is out before the match sees the end.
+  countRoundEnd();
+  return outcome;
+}
+
+Outcome SoloRounds::start(GameCore::Session& played) {
+  const Outcome outcome = begin(played);
+  if (outcome != Outcome::Ok) return outcome;
+  return draw(shownSeat());
 }
 
 Outcome SoloRounds::restart() {
-  timer.cancel();
-  return startRound();
+  const Outcome outcome = beginAgain();
+  if (outcome != Outcome::Ok) return outcome;
+  return draw(shownSeat());
 }
 
 Outcome SoloRounds::step(const GameCore::GameEvent& event) {
-  // A timer the game re-armed or cancelled after this event fired is not due.
+  // A stale timer is dropped before anything, with no draw (play would drop it too,
+  // but the draw after it would publish a frame nothing changed).
   if (!timer.accepts(event)) return Outcome::Ok;
-  Outcome outcome = session->handle(event);
-  if (outcome == Outcome::Ok) outcome = session->applyPending();
-  if (outcome == Outcome::Ok) outcome = session->draw();
-  if (outcome == Outcome::Ok) countRoundEnd();
-  return outcome;
+  const Outcome outcome = play(event, shownSeat());
+  if (outcome != Outcome::Ok) return outcome;
+  return draw(shownSeat());
 }
 
-Outcome SoloRounds::startRound() {
+Outcome SoloRounds::beginRound() {
   roundOver = false;
-  Outcome outcome = session->start();
-  if (outcome == Outcome::Ok) outcome = session->draw();
-  if (outcome == Outcome::Ok) {
-    // After the first frame's publish and before any end, so the match never sees
-    // a round end without its start.
-    started.fetch_add(1, std::memory_order_acq_rel);
-    countRoundEnd();
-  }
-  return outcome;
+  firstFramePending = true;
+  return session->start();
 }
 
 void SoloRounds::countRoundEnd() {
   if (roundOver || !session->status().over) return;
   roundOver = true;
   ended.fetch_add(1, std::memory_order_acq_rel);
+}
+
+uint8_t SoloRounds::shownSeat() const {
+  const GameCore::Status& status = session->status();
+  const GameCore::MatchState state = status.over ? GameCore::MatchState::Over : GameCore::MatchState::Playing;
+  return GameCore::seatShown(state, session->roster(), status);
 }
 
 }  // namespace GameScript
