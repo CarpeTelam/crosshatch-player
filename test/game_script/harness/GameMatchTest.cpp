@@ -1288,11 +1288,11 @@ TEST_F(PassMatchTest, ATapWhoseFingerCameDownWhileTheLoopWasBlockedReachesTheSea
   EXPECT_FALSE(logHas("Dropped a touch"));
 }
 
-// A tap whose finger was sampled during seat 2's push and lifted after it, with no pass reaching readGesture between
-// (on the device, passes that returned early: Back, a VM check, RoundOver, TurnChanged), is back-dated by its held
-// time to before the push completed and dropped. The
-// push takes time here (onDisplay), so this pins that render notes the completion after displayBuffer returns (fix
-// reviews H7, J6).
+// The same-pass race back-dating covers: the update that samples the finger runs while seat 2's push is still going,
+// and the pass's gesture read (here, the lift's pass) comes after the push completed, so frameDisplayed already names
+// seat 2's frame. The tap is back-dated by its held time to before the push completed and dropped. The push takes
+// time here (onDisplay), so this pins that render notes the completion after displayBuffer returns (fix reviews H7,
+// J6, K1).
 TEST_F(PassMatchTest, ATapSampledDuringTheNextSeatsPushIsBackDatedToTheFrameBeforeIt) {
   installFixture("pass-open");
   enter("pass-open", "Pass open", GameCore::Roster::pass(2));
@@ -1315,7 +1315,7 @@ TEST_F(PassMatchTest, ATapSampledDuringTheNextSeatsPushIsBackDatedToTheFrameBefo
   ASSERT_TRUE(drew("Player 2 (O) to move"));
   fakertos::advance(30);
   fakelog::clearLines();
-  input->liftTouch();  // the lift's pass is the first to reach readGesture (as after a pass that returned early)
+  input->liftTouch();  // the gesture read after the push completed, standing for the same pass's latch
   frame();
   ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("tap for seat 2"); }));
   EXPECT_TRUE(logHas("Dropped a touch")) << "the tap was not back-dated to before the push completed";
