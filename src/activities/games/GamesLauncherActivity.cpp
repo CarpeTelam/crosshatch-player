@@ -577,41 +577,21 @@ void GamesLauncherActivity::activateIndex(const int row) {
   }
   app.clearTapFlash();                           // the row leaves this screen
   lastOpened = fingerprintOf(game.manifest.id);  // the next launcher opens on this game's page
-  // A Continue row resumes the solo match its save holds, so there is no mode to ask. A game the host can start in two
-  // or more modes otherwise asks which one. The picker is pushed, so its Back returns to this list as it is; the match
-  // replaces the picker, and with it the stack.
-  if (!resume && GameModeActivity::needed(game.check.modes)) {
-    auto picker = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game.manifest, game.check.modes);
-    if (!picker) {
-      LOG_ERR("GAME", "OOM: %u byte mode activity", static_cast<unsigned>(sizeof(GameModeActivity)));
+  // A game's own row opens its title screen (GameModeActivity), which offers its save and its modes. It is pushed, so
+  // its Back returns to this list as it is; the match replaces it, and with it the stack.
+  if (!resume) {
+    auto title = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game);
+    if (!title) {
+      LOG_ERR("GAME", "OOM: %u byte title screen", static_cast<unsigned>(sizeof(GameModeActivity)));
       requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
       return;
     }
-    activityManager.pushActivity(std::move(picker));
+    activityManager.pushActivity(std::move(title));
     return;
   }
-  // A game with no solo mode starts its one mode: pass as an open pass match with the fewest seats it can have, and
-  // nearby solo until epic-play-nearby passes it in. A Continue row resumes a solo match.
-  GameCore::Roster roster = GameCore::Roster::solo();
-  if (!resume && (game.check.modes & GameCore::Manifest::MODE_SOLO) == 0) {
-    if ((game.check.modes & GameCore::Manifest::MODE_PASS) != 0) {
-      const uint8_t seats =
-          GameCore::passSeats(game.manifest.seatsMin, game.manifest.seatsMax, gameHostCaps().maxSeats);
-      if (seats == 0) {
-        LOG_ERR("GAME", "Cannot start %s in pass: seats %d..%d leave no pass match on this host", game.manifest.id,
-                static_cast<int>(game.manifest.seatsMin), static_cast<int>(game.manifest.seatsMax));
-        requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
-        return;
-      }
-      roster = GameCore::Roster::pass(seats);
-      LOG_INF("GAME", "%s offers only pass: a %u-seat pass match", game.manifest.id, static_cast<unsigned>(seats));
-    } else {
-      LOG_INF("GAME", "%s offers only nearby: the match plays solo until it can run nearby", game.manifest.id);
-    }
-  }
-  auto match =
-      makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest, roster,
-                                           resume ? GameMatchActivity::Start::Resume : GameMatchActivity::Start::New);
+  // A Continue row resumes the solo match its save holds (the solo-only peek found it), so there is no mode to ask.
+  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest, GameCore::Roster::solo(),
+                                                    GameMatchActivity::Start::Resume);
   if (!match) {
     LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
