@@ -526,12 +526,12 @@
 ## dev-env-cold-start
 
 - source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
-  summary: AGENTS.md does not say which lock `pio run -t unit-tests` takes, though it configures `build/test` (with the default generator) like the host-test builds under `/tmp/crosshatch-hosttest.lock`, and its "delete `build/test` before switching" can delete a directory the warm host-test build is writing.
+  summary: Resolved by `plan-orchestration-follow-up.md`: AGENTS.md's unit-test bullet runs `pio run -t unit-tests`, and the `build/test` delete before it, under both locks. It read: AGENTS.md does not say which lock `pio run -t unit-tests` takes, though it configures `build/test` (with the default generator) like the host-test builds under `/tmp/crosshatch-hosttest.lock`, and its "delete `build/test` before switching" can delete a directory the warm host-test build is writing.
   evidence: Review pass 1 (blind hunter, edge-case hunter); `scripts/register_unit_tests_target.py`. A fix edits AGENTS.md, so it is deferred; it fits the follow-up on the orchestration doc.
 - source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
-  summary: AGENTS.md does not name the warm-build logs (`~/.cache/crosshatch/warm-x4pro.log`, `warm-hosttest.log`), or give a one-line fallback for a failed setup (rerun `python3 scripts/dev_setup.py` and read its `error:` lines).
+  summary: Resolved by `plan-orchestration-follow-up.md`: AGENTS.md's setup bullet names both warm logs and says to fix and rerun after an `error:` line. It read: AGENTS.md does not name the warm-build logs (`~/.cache/crosshatch/warm-x4pro.log`, `warm-hosttest.log`), or give a one-line fallback for a failed setup (rerun `python3 scripts/dev_setup.py` and read its `error:` lines).
   evidence: Review pass 1 (blind hunter). A fix edits AGENTS.md; it fits the follow-up on the orchestration doc.
 - source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
-  summary: Review before firmware builds is prose only. A plain `/bmad-build` still has its implementer run every Verification command, firmware builds included, before step 4's review. Binding it needs a `_bmad/custom/bmad-build.toml` override, so the handoff runs only host tests and fast checks, and the firmware builds run after review.
+  summary: Resolved by `plan-orchestration-follow-up.md`: `_bmad/custom/bmad-build.toml` adds a persistent fact and an implementation handoff: the implementer runs only host tests and fast checks, and the firmware checks run after review, before the commit. It read: Review before firmware builds is prose only. A plain `/bmad-build` still has its implementer run every Verification command, firmware builds included, before step 4's review. Binding it needs a `_bmad/custom/bmad-build.toml` override, so the handoff runs only host tests and fast checks, and the firmware builds run after review.
   evidence: Review pass 1 (intent alignment, finding 2); this session's timed build lost a firmware run to a review fix. Medium.
 

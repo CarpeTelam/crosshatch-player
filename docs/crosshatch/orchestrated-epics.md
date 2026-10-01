@@ -16,24 +16,31 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 
 - **Lanes.** Take the lanes and their order from the epic file's Notes (epic-script-runtime ran two: CI and scripts,
   2 → 3 → 5 → 17, beside the runtime lane). Stories in one lane touch shared files in order; lanes run in parallel.
-  `tickets.py next` shows what is ready.
-- **One worktree per lane**, branched from the epic branch. Each needs `git submodule update --init --recursive`.
-- **Two fixed locks.** Every `pio run`, `pio check`, `pio project metadata`, and `sim.sh setup`/`build`, the
-  orchestrator's own included, runs as `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test
-  CMake configure and build as `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'` (a bare `flock <lock> a && b`
-  locks only `a`); two builds at once can wipe a build directory mid-build or race on the shared
-  `~/.platformio/packages`. The session-start warm builds (`scripts/dev_setup.py --warm`) take the same locks, so the
-  first build waits for them. Your scratchpad `{scratch}` holds each story's `{scratch}/<ref>/` scratch files and
-  fresh trees.
+  `tickets.py next` shows what is ready. Lanes overlap planning, implementation, and review, not builds: every
+  build queues on one build lock, and builds at once barely gain on a 4-core container. Fresh worktrees, 2026-10-01:
+  `x4pro` and `default` side by side took 384 s, against 611 s one after the other. But the serial `default` (369.5 s)
+  rebuilt the C3 framework and the parallel one did not; with `default` at its cached 160.4 s, serial is an estimated
+  400 s. Run two lanes unless the epic's Notes name more; a third mostly waits on the lock.
+- **One worktree per lane**, branched from the epic branch, set up one lane at a time. In it, run
+  `git submodule update --init --recursive`, then
+  `flock /tmp/crosshatch-build.lock pio pkg install -e x4pro -e default` (the worktree's own library deps; the setup
+  script's install stamp is machine-wide, so it skips them), then
+  `PLATFORMIO_BUILD_CACHE_DIR={main}/.cache python3 scripts/dev_setup.py --warm`. `--warm` skips a build whose lock is
+  already held, so wait for that lane's warm `x4pro` build to finish (`~/.cache/crosshatch/warm-x4pro.log`) before
+  setting up the next lane; a lane whose warm build was skipped builds cold on its first story.
+  Every lane builds with the main checkout's build cache (the brief's Environment says how). Measured 2026-10-01 in
+  fresh worktrees with their library deps installed first: `x4pro` took 148.9 s with the shared cache (222 objects
+  reused) and 240.7 s without (`plan-orchestration-follow-up.md`).
+- **Locks.** AGENTS.md's two fixed locks (Known pitfalls) cover the orchestrator's own builds too. Your scratchpad
+  `{scratch}` holds each story's `{scratch}/<ref>/` scratch files and fresh trees.
 - **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3, Claude
   Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own review
   subagents (the cause of O1). The build agents' review lenses need only 2. Before the first story, start
   one subagent that reports whether it has the `Agent` tool; if it does not, the build agents run their lenses in their
   own context, and step 3's fallback applies to every story.
-- **The upstream remote.** Worktrees share one git config, so add `upstream` once, fetch `develop`
-  (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
-  `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
-  complete clone) before any agent runs `scripts/check_upstream_touches.py`.
+- **The upstream remote.** `scripts/dev_setup.py` (next bullet) adds `upstream`, fetches `develop`, and unshallows the
+  clone; worktrees share that git config, so every agent can run `scripts/check_upstream_touches.py`. Confirm its
+  `git` step passed; if it failed, its docstring lists the commands to run by hand.
 - **Toolchain and base measurement.** Run `python3 scripts/dev_setup.py` (a cloud session's SessionStart hook has
   already run it; its output says whether a step failed). On the epic's base commit, under the build lock, build
   `x4pro` and `default`, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
@@ -44,8 +51,10 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 
 ### Each story
 
-1. **Start the build agent** in its lane's worktree with the brief below, filled in, and the story's ref. Say in the
-   prompt that the build runs for an orchestrator.
+1. **Start the build agent** in its lane's worktree. Its prompt starts with the slash command `/bmad-build {ref}`, so
+   the agent runs the whole bmad-build workflow (plan, implement, review, present) and not a summary of it. Then say
+   that the build runs for an orchestrator, and give the brief below, filled in. The brief only pre-answers the
+   workflow's human gates and adds this fork's rules; it never replaces a workflow step.
 2. **Answer blocking questions.** A question the repo does not settle goes to the owner (see Owner hand-offs); send the
    answer back to the same agent.
 3. **Review every story independently (AI-1).** In epic-script-runtime the build agents could not start subagents, so
@@ -122,7 +131,8 @@ Before handing this section to a build agent, replace:
 
 - `{epic-folder}`: the epic's folder, such as `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime`;
 - `{ref}`: the story's ref, such as `2.7`, or the id of work that is not a ticket;
-- `{scratch}`: the orchestrator's scratchpad directory.
+- `{scratch}`: the orchestrator's scratchpad directory;
+- `{main}`: the main checkout's path, whose `.cache` every lane's builds share.
 
 Everything from here to the end of the file is the brief.
 
@@ -134,7 +144,8 @@ an independent review of your commit. Follow AGENTS.md exactly; re-read it in yo
 ### How to run the build
 
 You work in your own git worktree (your current directory); never touch the main checkout or another agent's worktree.
-Invoke the `bmad-build` skill with `{ref}` and follow its workflow; the plan goes where `tickets.py find {ref}` says,
+Your prompt starts with `/bmad-build {ref}`: run that skill and follow every step of its workflow (clarify, plan,
+implement, review, present), with nothing skipped or condensed; the plan goes where `tickets.py find {ref}` says,
 or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/plan-<slug>.md`, with the slug led by
 `{ref}`. If bmad-build hands the plan to an implementation subagent, that subagent only implements the plan; it never
 invokes bmad-build or follows this brief. The orchestrator pre-answers the workflow's human gates, so do not stop at
@@ -168,12 +179,10 @@ them:
 
 ### Environment
 
-- Run `git submodule update --init --recursive` in your worktree before any firmware, simulator, or host-test build.
-- **One build at a time across all agents.** Wrap every `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`,
-  and `sim.sh build` in `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test CMake configure and
-  build in `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'`, so the lock covers the whole chain (a bare
-  `flock <lock> a && b` locks only `a`). The session-start warm builds hold the same locks, so your first build may
-  wait for one. Firmware builds take minutes: use a long timeout, or run in the background and wait.
+- The orchestrator has set your worktree up: submodules, library deps, and a warm build when one ran. Every build takes
+  AGENTS.md's locks (Known pitfalls). Export `PLATFORMIO_BUILD_CACHE_DIR={main}/.cache` in every shell that builds,
+  so `pio` and the scripts that call it (`sim.sh`, `scripts/check_flash_budget.py`) share the lanes' cache. Firmware
+  builds take minutes: use a long timeout, or run in the background and wait.
 - Host tests build in your worktree's `build/test`, with the commands in AGENTS.md.
 - Scratch files, logs, and fresh trees go under `{scratch}/{ref}/`; delete fresh trees when you are done (disk is
   limited).
@@ -193,7 +202,8 @@ them:
   git submodule foreach --recursive 'git archive --prefix="$displaypath/" HEAD | tar -x -C {scratch}/{ref}/fresh'
   ```
 
-  The recursion matters: `freeink-sdk` has nested submodules. Run the workflow step's commands there, and say in the
+  The recursion matters: `freeink-sdk` has nested submodules. Run only that gate's own commands there (never the
+  other envs or the other gates), reusing the machine's warm `~/.platformio` (never move it aside), and say in the
   plan which kind of tree it was. A new fork job goes in `Crosshatch Test Status`'s `needs` in
   `.github/workflows/crosshatch-ci.yml`; never edit `ci.yml`.
 - Screenshots: when your verify names simulator screenshots, look at each one (`build/sim/shots/`), then copy the ones
@@ -201,26 +211,20 @@ them:
   (epic-script-runtime used `story-gfx-screenshots/`), under short file names that say what they show, commit them with the story, and list
   each path with one line on what it shows in the plan's Verification and your final report. The orchestrator shows
   them to the owner.
-- Game fixtures live in `test/game_script/fixtures/`, never `games/`.
-- Upstream files change only as `docs/crosshatch/upstream-touches.md` allows; run
-  `python3 scripts/check_upstream_touches.py` before committing when you touched a non-fork file.
+- Upstream files: run `python3 scripts/check_upstream_touches.py` before committing when you touched a non-fork file.
 - New fork scripts follow `docs/crosshatch/fork-scripts.md` (sidecar test, exit contract, `fork_common.py`, listed in
   the ledger's Game paths).
 - Deferred items: append to `_bmad-output/implementation-artifacts/deferred-work.md` only under a heading `## {ref}` at
   the end of the file, each entry in the file's existing format (`- source_plan:`, `summary:`, `evidence:`). The file
   merges with `merge=union`; a distinct first line per story keeps two lanes' appends from interleaving line by line.
-- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured". A
-  delta subtracts two measurements made the same way, never a recorded figure, and names commits that exist.
-- Before moving or rewriting an existing function, run `git log -L` on it and say in Design Notes what each guard or
-  early return in it protects. Keep each one, with a comment when its reason is ordering or safety (AGENTS.md, Known
-  pitfalls).
-- Formatting: run `./bin/clang-format-fix` (no arguments) as the very last step before the commit, after every edit
-  (review fixes and plan edits included), then run it a second time and confirm `git status` shows nothing new. Keep
-  any formatting-only change it makes to fork files outside your paths in your commit (never revert it) and name it
-  in your report; if it changes an upstream file the ledger does not list, stop and report it as a blocking question.
-- For C/C++ changes build `x4pro`, plus `default` (C3) when the diff touches code outside `FREEINK_CAP_GAMES`, and run
-  `pio check -e x4pro` (AGENTS.md's flags) for games code; for `src/games` or screens also `sim.sh build x4pro`. CI
-  builds all five envs on the epic PR.
+- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured"
+  (deltas as AGENTS.md's Known pitfalls say).
+- Before moving or rewriting an existing function, say in Design Notes what each guard or early return in it protects
+  (AGENTS.md's `git log -L` pitfall).
+- Formatting as AGENTS.md says, review fixes and plan edits included; name any formatting-only change it makes outside
+  your paths in your report, and stop with a blocking question if it changes an upstream file the ledger does not list.
+- For C/C++ changes, build and check as AGENTS.md's "While testing" and static-analysis bullets say; for `src/games`
+  or screens also `sim.sh build x4pro`.
 
 ### Final report
 
