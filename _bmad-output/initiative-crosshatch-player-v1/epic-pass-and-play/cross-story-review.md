@@ -40,4 +40,27 @@ Accepted for the fix story: rows 1–14. Row 15 goes to the owner, rows 16–17 
 
 ## Review of the fix commit
 
-(Recorded when it runs.)
+**What was reviewed:** the fix commit `ef46f8a5` (plan `plan-e5-xr-cross-story-fixes.md`), diff `a002936c..ef46f8a5` without planning documents, checked by the same three context-free lenses on 2026-10-01. Raw reports are in the orchestrator's scratchpad (`xreview/fix-*.md`).
+
+**Overall result:**
+- The lenses found rows 1–14 closed, with a test pinning each.
+- They judged sound the builder's departure from row 4's literal action. Seat 0 still gets input after Over, as R7 requires; only a touch made under another seat's frame is dropped.
+- The findings below go to a second fix commit, which gets the same review.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| F1 | A2, EC3 | A save of this package with a newer file or codec version, or a snapshot over this firmware's limit (a later firmware's save after a downgrade), still reads as None, so New replaces it without asking. Row 2's trigger is still open for those files. | fix | Report such a file as Unstartable, as an unknown mode byte now is. |
+| F2 | A1, EC4 | The touch tag is the frame number read before `drawFront` and stored after `displayBuffer`. If a publish lands between the two, the panel shows seat B while the tag names A, and B's taps are dropped. A tap read during the refresh carries the old tag. A wrap past `UINT32_MAX`, or the sentinel itself, misroutes. | fix | `drawFront` returns the generation it actually drew, under the frame mutex, and the match stores that. Compare with wrap-safe arithmetic and keep the sentinel out of the range. Add a test with a publish between the read and the draw. |
+| F3 | A3 | `confirmRow` and `removeIndex`, the dialogs' open flags, are still plain integers written by the loop task and read by render. Each opener sets the row before `focus = 0`, so a render in between draws the destructive button focused. | fix | Make them atomic, store `focus` first, then publish the row with release ordering. |
+| F4 | A4, EC1 | `SoloRounds::start`, `restart` and `step` pass `seatShown`'s new `NO_SEAT` to `play` and `draw` as seat 255. This cannot happen until a roster has a non-local seat, which epic-play-nearby brings. | fix | Return Ok without input or draw when `shownSeat()` is `NO_SEAT`. |
+| F5 | EC2 | `GameVM::showSeatNow` to a non-local turn seat: `drawShown` returns Ok without drawing, `seatServed` opens the render gate, and the mover's private frame is pushed after the blank. Not reachable until epic-play-nearby. | fix | When the turn seat is not local, stay in HandOff and do not open the gate. |
+| F6 | A5 | `peekResume` allocates a second `SNAPSHOT_LIMIT` buffer while the match holds the store's buffer. Under low heap an Unstartable save then shows the generic text, and `peekStartable`'s "never while a match runs" comment is now false. | fix | Reuse the store's buffer (nothing references it after an empty `loadResume`), or correct the comment and pin the fallback. |
+| F7 | A7 | A timer queued behind the winning move still reaches seat 0's `input`, by design (R7, R11). This reverses entry 1's plan row 3 for taps, and neither the reversal nor the timer path is recorded or tested. | fix | Record the departure and the reversal in the fix plan, and add a VM test that a seat-0 timer after Over is delivered without error. |
+| F8 | A8 | `GameEvent.h`'s `serial` says "Timer only", but touches now carry the frame tag in it. | fix | Comment only (`lib/GameCore/GameEvent.h` joins the fix's `touches` for this line). |
+| F9 | A9 | `rosterFor` logs `LOG_ERR` "Cannot start … in pass" for a row its search skips, even when a later row starts, and a test asserts that line. | fix | Search quietly, and log only when no row can start. |
+| F10 | A10 | Row 1's real trigger, `goToGames()` running out of memory, is never driven. | fix | Add a manager double whose `goToGames` refuses. Assert the match stays current, the panel holds the blank, and a later sleep pushes nothing. |
+| F11 | VG2 | The no-VM blank push in `onExit` runs under the manager's `RenderLock`, but its test does not assert `fakelock::selfDeadlocks == 0`. | fix | Add the assertion. |
+| F12 | VG1 | The resumed hidden match's zero-draw check runs after 20 non-blocking loops, with no barrier on the VM task, so an early draw of the turn seat could pass unseen. | fix | Assert exactly one draw of the turn seat after the blank's tap, or wait for the VM's first publish before the zero count. |
+| F13 | A12 | `STR_GAMES_RESUME_NOT_HERE` is about 100 characters, and no test shows it fits the error view on every screen. | fix | Assert the full text is drawn untruncated in the error-view case, or shorten it. |
+| F14 | A6 | Leave's blank uses HALF_REFRESH, while the hand-off blank uses FULL. When `goToGames()` fails, the half-refreshed blank stays. | packet | Ghosting is a device check: entry 11 checks the Leave blank beside the sleep blank (row 17). |
+| F15 | A11 | A corrupt mode byte is now kept for good as "cannot be continued on this device", and New asks about it every time. | reject | Keeping a file of this package and asking before New is the safe side for a person's save (R8). Telling corruption from a later firmware's mode needs a format the save does not carry. |
