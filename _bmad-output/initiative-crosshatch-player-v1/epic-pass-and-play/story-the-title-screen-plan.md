@@ -3,7 +3,7 @@ title: 'The title screen'
 type: 'feature'
 ticket: '7'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'fb315fd8ffd410079554834619552f06a10de431'
