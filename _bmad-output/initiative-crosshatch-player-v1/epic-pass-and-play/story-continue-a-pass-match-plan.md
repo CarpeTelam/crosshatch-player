@@ -3,7 +3,7 @@ title: 'Continue a pass match'
 type: 'feature'
 ticket: '9'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: '8b7b8f68d34d1453e5b45798f0724dea17c38b3d'
