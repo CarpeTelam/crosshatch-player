@@ -7,7 +7,7 @@ Packs one game folder into a `.chgame` package (spine AD-15, AD-16) and prints i
 `<dir>` is `games/<id>/`, whose name must equal the manifest's `id`; the package is written to `<out_dir>/<id>.chgame`
 (the directory is created when the package is valid). On success stdout ends with the 16-hex package hash, which the
 release workflow reads (`fork_release.py` `pack_one`). This is the only Python reader of `manifest.json`: it applies
-`Manifest::parse`'s rules, `Manifest::check`'s solo and nearby seat rules, R9's icon check, and the API range of
+`Manifest::parse`'s rules, `Manifest::check`'s solo, pass, and nearby seat rules, R9's icon check, and the API range of
 `lib/GameCore/ApiLevel.h`. It refuses what it can see in the folder that the installer would refuse; it does not
 decode: a PNG is checked through its IHDR and then chunk by chunk (every chunk's length and CRC, an IEND, and image
 data that inflates to exactly the bytes its IHDR's size, colour type, and bit depth call for; the pixels are left to the
@@ -248,8 +248,8 @@ def read_manifest(data, dir_name, api_range, load_icons):
         else:
             if 'solo' in modes and seat_min is not None and seat_min != 1:
                 bad('a solo game needs seats.min 1')
-            if 'nearby' in modes and seat_max is not None and seat_max < 2:
-                bad('a nearby game needs seats.max of 2 or more')
+            if ('pass' in modes or 'nearby' in modes) and seat_max is not None and seat_max < 2:
+                bad('a pass or nearby game needs seats.max of 2 or more')
 
     if 'hidden' in manifest and not isinstance(manifest['hidden'], bool):
         bad('hidden must be true or false')
