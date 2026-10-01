@@ -639,3 +639,11 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-the-forced-exit-s-blank-hand-off-plan.md`
   summary: That the forced exit's blank comes before the resume write (`flushResume()`) is a code-order fact only: a pass match writes no `resume.bin` until entry 9, so no host test can see the order. Moving the push to after `flushResume()` passes every test today (checked by mutation in entry 6's review). Entry 9 adds a hidden-pass forced-exit test whose push records that no resume write has run yet.
   evidence: Review of entry 6 (intent-alignment, item 6); `GameMatchActivity::stopVm`. Trigger: entry 9.
+## 5.5
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-resume-bin-for-pass-matches-plan.md`
+  summary: A new pass match must call `store.saves().setRoster(roster)` (beside `setPackageHash`) before its first `flushResume`: the store's roster is solo until set, so a pass match that skips it writes `resume.bin` as mode 0, n 1, which a later Continue resumes as solo. A resumed match needs no call: the new `loadResume(ver, unreadable, game, host, saved)` adopts the roster it loaded.
+  evidence: Review of entry 5 (blind-hunter, edge-case-hunter, pass 1); `GameSaveStore::setRoster` keeps the solo default so the unchanged solo callers write today's bytes. Trigger: entry 9 (pass resume in `GameMatchActivity`).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-resume-bin-for-pass-matches-plan.md`
+  summary: Resolved in part by entry 5: `## 4.12`'s "Continue rows list solo saves only" item. `GameSaveStore` now writes and reads pass saves (mode 1, n), and `peek(game, pkgHash, host)` reports one the game and host can start; the launcher still calls the solo-only `peek(id, pkgHash)`, so a pass save is offered once the title screen (entry 7) calls the new form.
+  evidence: `GameSaveStoreTest.APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeIt`, `APassSaveIsNoneToTheSoloOnlyFormsAndIsKept`; `docs/crosshatch/formats.md` (resume.bin). Trigger: entry 7.
