@@ -98,3 +98,25 @@ Accepted for the fix story: rows 1–14. Row 15 goes to the owner, rows 16–17 
 | H6 | A | The new `game-canvas.md` paragraph and comments mis-state the latch. A still-held finger is re-latched at the first Playing pass, not tagged at lift. The 90 ms delay applies to every contact, so the "dropped" window is wrong for touches in the refresh's last 90 ms. | fix | Reword to match the code. |
 | H7 | A | The premise that closing the remaining windows (a touch-down first seen after an SD write; a tap under 90 ms) needs upstream input timestamps is false. `MappedInputManager::getHeldTime()` already gives a tap's held duration for 250 ms after it, so a contact can be back-dated to `now - getHeldTime()` against a per-frame display time. | fix | Back-date the contact if that stays small, closing the windows in which a touch reaches the next seat. Otherwise record the real reason (a display time per frame) in the plan and `game-canvas.md`, and this goes to entry 11 as an `Assumption for entry 11:` line. |
 | H8 | A | The new `InputDoubleTest` was inserted between `ScreenRendererDoubleTest` and its comment. | fix | Move the comment back. |
+
+## Review of the fourth fix commit
+
+**What was reviewed:** `4fbb9a87` (rows H1–H8; diff `0c18e437..4fbb9a87`), checked by the same three context-free lenses on 2026-10-01. Raw reports are in `xreview/fix4-*.md`.
+
+**Overall result:** H1, H2, H4, H6 and H8 check out:
+- the new loop fields are loop-only, and `lastPush` is guarded by `pushMutex`;
+- the lock order holds and the compares are wrap-safe;
+- the save checks run in H2's order.
+
+The findings concern how far H7's back-dating reaches on the device, and its test double.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| J1 | EC, A | The device samples touch only in `mappedInputManager.update()` on the loop task, so a finger that comes down during `flushResume`'s SD write is first stamped after the block. Back-dating cannot reach before the push that completed meanwhile, and that tap can still reach the next seat. The H7 test passes only because the double stamps the touch-down when the test calls `holdTouch`. | fix + owner | Make the double stamp at the first frame that reads the contact. Turn the test into one showing this window is still open. Correct the comment and `game-canvas.md` ("What remains" lists taps too). The remaining window goes to entry 11 as an `Assumption for entry 11:` line. Closing it needs touch sampled off the loop task, which is upstream input code. |
+| J2 | EC, A, VG | `getHeldTime()` returns a button's hold, not the touch's, when a button was pressed or released on that update, and 0 when a home action is mapped. A tap read on such a pass is back-dated by seconds and wrongly dropped. The double ignores both cases. | fix | Use a touch-only held time if one is reachable without an upstream edit. Otherwise skip back-dating on a pass with a button edge or a mapped home action, so the tap falls back to the latch. Model the precedence in the double and test it. |
+| J3 | EC | The back-dating anchors to `millis()` at read rather than to the release sample's time, so it is late by the update-to-read delay, a few milliseconds. | fix if small | Anchor to the release sample when it is reachable without an upstream edit. Otherwise note it beside J1. |
+| J4 | A | The drop window now runs until `displayBuffer` returns, after the post-waveform resync and power-off. The next seat's first tap on a frame that is already fully visible may be dropped silently. Unmeasured. | packet | The device-run packet measures the gap between the waveform's end and `displayBuffer`'s return, and checks that the next seat's first tap registers. |
+| J5 | A | The double's 90 ms and 500 ms thresholds are copied numbers. The real constants are private to upstream `MappedInputManager.cpp` and the SDK's `InputManager.h`. | defer | A CI check that reads them is a new gate in upstream-owned files' terms. `deferred-work.md` (`## e5-xr`) records it, with the packet checking both thresholds on the device. |
+| J6 | VG | H7's after-the-refresh stamp is unpinned, because the fake `displayBuffer` takes no time. | fix | In the H7 test, use `onDisplay` to advance the clock during the push. |
+| J7 | VG | H4's removal of the latch reset in `handle()` is unpinned. | fix | Add a hidden test that holds a contact from Playing through Result and HandOff into seat 2's first Playing pass, then long-presses; assert "Dropped a touch". |
+| J8 | VG | The double reports a long press only on the first read of a pass, while the device reports it for the whole update, and `InputDoubleTest` pins the "once" behaviour. | fix | Match the device and fix the test. |
