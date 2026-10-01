@@ -27,6 +27,7 @@ FILE_ORDER = [
     'pack-images.chgame',
     'counter-changed.chgame',
     'pass-open.chgame',
+    'pass-hidden.chgame',
     'invalid-binary-lua.chgame',
     'package_vector.chgame',
 ]
@@ -122,6 +123,7 @@ class FakeTreeTest(unittest.TestCase):
             ('pack-images.chgame', fake_hash('-- pack-images\n')),
             ('counter-changed.chgame', fake_hash('-- changed/counter\n')),
             ('pass-open.chgame', fake_hash('-- pass-open\n')),
+            ('pass-hidden.chgame', fake_hash('-- pass-hidden\n')),
             ('invalid-binary-lua.chgame', '(invalid)'),
             (VECTOR_FILE, VECTOR_HASH),
         ]
@@ -269,14 +271,14 @@ class RealTreeTest(unittest.TestCase):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
         self.assertTrue(self.result.stdout.endswith((self.out / 'HASHES.txt').read_text(encoding='utf-8')))
 
-    def test_hashes_lists_the_eight_files_in_order(self):
+    def test_hashes_lists_the_nine_files_in_order(self):
         rows = hashes_of(self.out)
         self.assertEqual([name for name, _ in rows], FILE_ORDER)
         for name, package_hash in rows:
             if name != 'invalid-binary-lua.chgame':
                 self.assertRegex(package_hash, r'[0-9a-f]{16}', name)
         self.assertEqual(dict(rows)['invalid-binary-lua.chgame'], '(invalid)')
-        self.assertEqual(len(set(package_hash for _, package_hash in rows)), 8)
+        self.assertEqual(len(set(package_hash for _, package_hash in rows)), 9)
 
     def test_the_vector_is_the_committed_file_with_its_recorded_hash(self):
         vectors = json.loads((REPO / pdr.VECTORS).read_text(encoding='utf-8'))['hash_vector']

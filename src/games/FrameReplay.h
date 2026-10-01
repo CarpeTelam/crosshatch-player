@@ -32,6 +32,12 @@ class FrameReplay {
   // shown before: the screen shows something else now. Render task.
   void forceFull() { policy.forceFull(); }
 
+  // The blank hand-off screen of a hidden pass match: a cleared screen with the HandOff view's library icon
+  // (GameViewIcons::forView) at 128 px, black, centred on the canvas, and no game command at all. Forces the next
+  // frame in full, since the screen no longer shows one. The caller pushes it (displayBuffer) with its own refresh.
+  // Render task.
+  void drawBlank(const GfxRenderer& renderer, const GameViewport& viewport);
+
   // Draws the frame inside the viewport, clipped to it, unless it is identical to
   // the frame on screen and nothing forces it; `hint` is the largest refresh
   // request of the frames coalesced into it, and `images` the table its image

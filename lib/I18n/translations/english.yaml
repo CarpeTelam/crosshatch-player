@@ -577,3 +577,5 @@ STR_GAMES_RESUME_FAILED: "The saved match could not be resumed. It is unchanged:
 STR_GAMES_INSTALL_AND_MORE: "and %u more"
 STR_GAMES_INSTALL_MORE_WAITING: "%u more waiting for room"
 STR_GAMES_INSTALL_AND_MORE_NOT_INSTALLED: "and %u more not installed"
+STR_GAMES_PASS_TO_PLAYER: "Tap to pass to player %u"
+STR_GAMES_NEXT_ROUND_STARTING: "Starting the next round"

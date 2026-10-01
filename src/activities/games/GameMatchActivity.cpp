@@ -82,6 +82,8 @@ StrId optionLabel(const MatchEvent event) {
     case MatchEvent::RoundOver:
     case MatchEvent::ScriptError:
     case MatchEvent::ForcedExit:
+    case MatchEvent::TurnChanged:
+    case MatchEvent::Tap:
       break;  // never a menu choice (MatchLifecycle::menuFor)
   }
   return StrId::STR_BACK;
@@ -100,7 +102,8 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
       UiAppHost(renderer),
       manifest(manifest),
       roster(roster),
-      start(start) {}
+      start(start),
+      lifecycle(roster.mode == GameCore::Mode::Pass && manifest.hidden) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -145,7 +148,8 @@ void GameMatchActivity::onEnter() {
     return;
   }
   replay.loadFonts(renderer);
-  auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster);
+  auto created =
+      GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster, lifecycle.hiddenPass());
   if (created && start == Start::Resume && !seedResume(*created)) {
     // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
     // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
@@ -225,29 +229,31 @@ void GameMatchActivity::handle(const MatchEvent event) {
           MatchLifecycle::name(event));
   // The next view registers its own options; the old table must not route.
   closeRouting();
+  // The next screen's tap passes nothing until render has pushed that screen.
+  passScreenShown.store(MatchState::Starting);
   selected.store(0);
   // Before shown: a render already queued must not see Playing with the old count.
   if (event == MatchEvent::PlayAgain) roundsStartedAwaited.store(vm->roundsStarted() + 1);
+  // The hand-off's tap asks the VM for the next seat, and the canvas waits for that request's frame; stored before
+  // shown for the same reason as the count above.
+  if (from == MatchState::HandOff && event == MatchEvent::Tap) seatAwaited.store(vm->showTurnSeat());
+  resumesTo.store(lifecycle.resumesTo());
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
       resumeWritable = true;
-      // A save Over could not delete stays pending: it is the finished round's, which must not survive a Leave, and
-      // flushResumeOf clears the pending delete once the new round's first snapshot has replaced the file.
-      if (event == MatchEvent::PlayAgain) {
-        // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
-        store.saves().clearResumeBackoff();
-        // Frames the last round drew after it ended are never shown, one from a
-        // step still running when Play again came included: the loop asks for no
-        // render until the new round's first frame is published.
-        // roundsStartedAwaited was stored above, before shown.
-        shownFrame = vm->frameGen();
-        vm->playAgain();
-      }
-      // A new round's first frame asks for its own render; a resumed one is redrawn,
-      // unless it resumes into the Play-again gap, where renderCanvas keeps the view
-      // on screen until the new round's first frame.
+      if (event == MatchEvent::PlayAgain) startNextRound();
+      // A new round's first frame asks for its own render, as does the next seat's after the hand-off; a resumed one
+      // is redrawn, unless it resumes into the Play-again gap, where renderCanvas keeps the view on screen until the
+      // new round's first frame.
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
+      break;
+    case MatchState::Result:
+      resumeWritable = true;
+      break;
+    case MatchState::HandOff:
+      resumeWritable = true;
+      if (event == MatchEvent::PlayAgain) startNextRound();
       break;
     case MatchState::Over:
       resumeWritable = false;
@@ -263,6 +269,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
       return;
     case MatchState::Paused:
       resumeWritable = true;
+      // A pause menu opened in the Play-again gap says so (pauseInGap; resumesTo was stored above). loopView redraws
+      // it once the round starts.
+      gapWhenPaused = pauseInGap();
       break;
     case MatchState::Error:
       resumeWritable = false;
@@ -271,6 +280,19 @@ void GameMatchActivity::handle(const MatchEvent event) {
       break;
   }
   requestUpdate();
+}
+
+void GameMatchActivity::startNextRound() {
+  // A save Over could not delete stays pending: it is the finished round's, which must not survive a Leave, and
+  // flushResumeOf clears the pending delete once the new round's first snapshot has replaced the file.
+  // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
+  store.saves().clearResumeBackoff();
+  // Frames the last round drew after it ended are never shown, one from a
+  // step still running when Play again came included: the loop asks for no
+  // render until the new round's first frame is published.
+  // roundsStartedAwaited was stored in handle(), before shown.
+  shownFrame = vm->frameGen();
+  vm->playAgain();
 }
 
 void GameMatchActivity::fail(const StrId headline, const char* detail) {
@@ -405,6 +427,10 @@ void GameMatchActivity::loop() {
     case MatchState::Error:
       loopView();
       return;
+    case MatchState::Result:
+    case MatchState::HandOff:
+      loopHandOff();
+      return;
     case MatchState::Starting:  // onEnter leaves it before the first loop
     case MatchState::Leaving:
       return;
@@ -423,6 +449,15 @@ void GameMatchActivity::loopPlaying() {
     handle(MatchEvent::RoundOver);
     return;
   }
+  // A hidden pass match's move passed the turn: the VM has drawn the mover's frame again, which Result shows under
+  // the banner naming the next seat (stored first). Only a hidden match's VM counts these.
+  const uint32_t passed = vm->turnsPassed();
+  if (passed != turnsSeen) {
+    turnsSeen = passed;
+    passTo.store(vm->passedTo());
+    handle(MatchEvent::TurnChanged);
+    return;
+  }
 
   // Until a round's first frame is published, and after that until the render task has handed
   // it to the panel (roundsDisplayed), the screen still shows what came before: the Games list
@@ -430,9 +465,13 @@ void GameMatchActivity::loopPlaying() {
   // again. A tap there is not aimed at the round, so it is read (which consumes the contact)
   // and dropped. Only the first of the two also holds the frame back: once the count has moved,
   // the frame is asked for and drawn.
+  // A hidden pass match's next seat is held back the same way: until the VM has served the hand-off's request, the
+  // front frame may still be the last seat's, and until render has pushed the new one the blank is on the panel.
   const uint32_t awaited = roundsStartedAwaited.load();
-  const bool awaitingRound = vm->roundsStarted() < awaited;
-  const bool awaitingDisplay = awaitingRound || roundsDisplayed.load(std::memory_order_acquire) < awaited;
+  const uint32_t seat = seatAwaited.load();
+  const bool awaitingRound = vm->roundsStarted() < awaited || vm->seatShownRequest() < seat;
+  const bool awaitingDisplay = awaitingRound || roundsDisplayed.load(std::memory_order_acquire) < awaited ||
+                               seatDisplayed.load(std::memory_order_acquire) < seat;
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
@@ -473,6 +512,11 @@ void GameMatchActivity::loopView() {
     handle(MatchEvent::Back);
     return;
   }
+  // The pause menu opened in the Play-again gap says the round is starting; once it has, it is drawn without the line.
+  if (state == MatchState::Paused && gapWhenPaused && vm && vm->roundsStarted() >= roundsStartedAwaited.load()) {
+    gapWhenPaused = false;
+    requestUpdate();
+  }
   const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
   const auto route = routeTouch(mappedInput);
   if (route && route.event.action == ACTION_OPTION) {
@@ -491,6 +535,38 @@ void GameMatchActivity::loopView() {
     requestUpdate();
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     choose(menu, current);
+  }
+}
+
+void GameMatchActivity::loopHandOff() {
+  const MatchState state = lifecycle.state();
+  // As in a menu: the VM may still fail, hang, or set ch.store in a call that was running when the screen changed.
+  if (!vmHealthy()) return;
+  store.flushIfDue(millis());
+  flushResume();
+  retryResumeDelete(false);
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    handle(MatchEvent::Back);
+    return;
+  }
+  // A timer that falls due here is held by the VM for the next seat (GameVM::stepHandOff).
+  vm->pollTimer();
+  // A tap or Confirm passes only once render has pushed this state's own screen (passScreenShown), so neither a double
+  // tap nor a quick press skips the banner or the blank before it is on the panel; one before is read and dropped.
+  const auto route = routeTouch(mappedInput);
+  const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  const bool passed = (route && route.event.action == ACTION_PASS) || confirmed;
+  if (passed && passScreenShown.load(std::memory_order_acquire) == state) {
+    app.clearTapFlash();  // the tap leaves this screen
+    handle(MatchEvent::Tap);
+    return;
+  }
+  if (state != MatchState::Result) return;
+  // Result shows the mover's own frame, which a tap queued behind the move may still change.
+  const uint32_t frame = vm->frameGen();
+  if (frame != shownFrame && frame != renderedFrame.load(std::memory_order_acquire)) {
+    shownFrame = frame;
+    requestUpdate();
   }
 }
 
@@ -534,7 +610,11 @@ void GameMatchActivity::render(RenderLock&&) {
     case MatchState::Paused:
     case MatchState::Over:
     case MatchState::Error:
+    case MatchState::Result:
       renderView(state);
+      return;
+    case MatchState::HandOff:
+      renderHandOff();
       return;
     case MatchState::Starting:  // the previous screen stays until the first frame
     case MatchState::Leaving:
@@ -549,8 +629,12 @@ void GameMatchActivity::renderCanvas() {
   // first frame, which is no repaint, is drawn on a cleared screen. Nothing else
   // here runs, so the skip changes no replay state.
   // `started` is read once, before anything is drawn: the frame drawn below is that round's or a later one's.
+  // `served` likewise, for a hidden pass match: until the VM has served the hand-off's request, the front frame may be
+  // the last seat's, which must never follow the blank; once it has, the frame is the next seat's or a later one of
+  // that seat's.
   const uint32_t started = vm->roundsStarted();
-  if (started < roundsStartedAwaited.load()) {
+  const uint32_t served = vm->seatShownRequest();
+  if (started < roundsStartedAwaited.load() || served < seatAwaited.load()) {
     viewOnScreen = true;
     return;
   }
@@ -574,12 +658,38 @@ void GameMatchActivity::renderCanvas() {
   // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
   // that acquires it.
   roundsDisplayed.store(started, std::memory_order_release);
+  seatDisplayed.store(served, std::memory_order_release);
+}
+
+bool GameMatchActivity::canvasUnderView(const MatchState state) const {
+  // The error view stands alone.
+  if (state == MatchState::Error || !vm) return false;
+  // Paused from the hand-off: the device is between players, and no seat's frame may show.
+  if (state == MatchState::Paused && resumesTo.load() == MatchState::HandOff) return false;
+  // Before the next seat's frame is published the front frame may be the last seat's.
+  return vm->seatShownRequest() >= seatAwaited.load();
+}
+
+void GameMatchActivity::renderHandOff() {
+  // No game command: the blank and its icon only, refreshed in full, so none of the last seat's frame stays on the
+  // panel.
+  replay.drawBlank(renderer, viewport);
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  // The next seat's frame is drawn on a cleared screen in full.
+  viewOnScreen = true;
+  // The tap zone (it draws nothing), published only now that the blank is on the panel: a tap before it is dropped.
+  viewState = MatchState::HandOff;
+  renderUi();
+  // handle() may have closed routing after this render read its state.
+  if (shown.load() != MatchState::HandOff) closeRouting();
+  // The blank is on the panel: a tap may pass it now (loopHandOff), unless the match has moved on meanwhile.
+  passScreenShown.store(MatchState::HandOff, std::memory_order_release);
 }
 
 void GameMatchActivity::renderView(const MatchState state) {
   renderer.clearScreen();
-  // The menus sit over the last frame; the error view stands alone.
-  if (state != MatchState::Error && vm) {
+  // The menus and the Result banner sit over the last frame (canvasUnderView says when there is none to show).
+  if (canvasUnderView(state)) {
     replay.forceFull();
     renderedFrame.store(vm->frameGen(), std::memory_order_release);
     vm->drawFront(renderer, viewport, replay);
@@ -591,14 +701,19 @@ void GameMatchActivity::renderView(const MatchState state) {
   // table just published is the old view's and must not route taps.
   if (shown.load() != state) closeRouting();
   viewOnScreen = true;
-  const bool menu = state != MatchState::Error;
-  const char* back = "";  // Back does nothing in the end-of-round menu
-  if (state == MatchState::Paused) back = tr(STR_GAMES_RESUME);
-  if (state == MatchState::Error) back = tr(STR_BACK);
-  const auto labels =
-      mappedInput.mapLabels(back, menu ? tr(STR_SELECT) : "", menu ? tr(STR_DIR_UP) : "", menu ? tr(STR_DIR_DOWN) : "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(menu ? HalDisplay::FAST_REFRESH : HalDisplay::FULL_REFRESH);
+  const bool menu = state != MatchState::Error && state != MatchState::Result;
+  // The Result banner has no button hints: its whole screen is the tap, and Confirm does the same.
+  if (state != MatchState::Result) {
+    const char* back = "";  // Back does nothing in the end-of-round menu
+    if (state == MatchState::Paused) back = tr(STR_GAMES_RESUME);
+    if (state == MatchState::Error) back = tr(STR_BACK);
+    const auto labels = mappedInput.mapLabels(back, menu ? tr(STR_SELECT) : "", menu ? tr(STR_DIR_UP) : "",
+                                              menu ? tr(STR_DIR_DOWN) : "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  }
+  renderer.displayBuffer(state == MatchState::Error ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
+  // Result's banner is on the panel: a tap may pass it now (loopHandOff), unless the match has moved on meanwhile.
+  if (state == MatchState::Result) passScreenShown.store(MatchState::Result, std::memory_order_release);
 }
 
 void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
@@ -616,13 +731,19 @@ const char* GameMatchActivity::viewHeadline(const MatchState state) const {
     case MatchState::Starting:
     case MatchState::Playing:
     case MatchState::Leaving:
-      break;  // no view
+    case MatchState::Result:   // the banner, which has no headline
+    case MatchState::HandOff:  // the blank, which has no text
+      break;                   // no view
   }
   return nullptr;
 }
 
 void GameMatchActivity::buildView(UiScreen& screen) {
   const MatchState state = viewState;
+  if (state == MatchState::Result || state == MatchState::HandOff) {
+    buildHandOffView(screen, state);
+    return;
+  }
   const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
   const char* headline = viewHeadline(state);
   if (menu.count == 0 || !headline) return;
@@ -646,8 +767,10 @@ void GameMatchActivity::buildView(UiScreen& screen) {
   props.headlineText.align = fui::TextAlign::Center;
   props.headlineText.maxLines = 2;
   // The error view adds Lua's message in small type, wrapped (AD-14); its
-  // ERROR_CAPACITY bytes fit in 8 lines.
+  // ERROR_CAPACITY bytes fit in 8 lines. A pause menu in the Play-again gap says
+  // the round is starting, since Resume shows nothing new until it has.
   props.message = state == MatchState::Error ? errorDetail : nullptr;
+  if (state == MatchState::Paused && pauseInGap()) props.message = tr(STR_GAMES_NEXT_ROUND_STARTING);
   props.messageText = theme.smallText;
   props.messageText.maxLines = 8;
   props.buttonText = theme.bodyText;
@@ -678,6 +801,48 @@ void GameMatchActivity::buildView(UiScreen& screen) {
   const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
   const fui::Rect band = fui::optionDialog(screen.frame(), fui::centeredRect(safe, fui::Size{width, height}), props);
   drawViewIcons(screen, band, state, menu, count);
+}
+
+void GameMatchActivity::buildHandOffView(UiScreen& screen, const MatchState state) {
+  const fui::Rect safe = screen.frame().safeRect();
+  // A tap anywhere passes the device on (loopHandOff), routed like any FreeInkUI control.
+  fui::TapZone zone;
+  zone.action = ACTION_PASS;
+  fui::TapZonesProps zones;
+  zones.zones = &zone;
+  zones.count = 1;
+  fui::tapZones(screen.frame(), safe, zones);
+  // The hand-off screen has no text beyond the icon FrameReplay::drawBlank drew.
+  if (state != MatchState::Result) return;
+  // Result's banner: a framed panel at the bottom, over the mover's frame, naming who takes the device next.
+  snprintf(bannerText, sizeof(bannerText), tr(STR_GAMES_PASS_TO_PLAYER), static_cast<unsigned>(passTo.load()));
+  const auto& theme = screen.theme();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  fui::ButtonProps& props = bannerProps;
+  props.label = bannerText;  // no action: the tap zone above takes the whole screen
+  props.text = theme.bodyText;
+  fui::BoxStyle& panel = props.styles.normal;
+  panel.background = fui::Paint::solid(fui::Color::White);
+  panel.foreground = fui::Paint::solid(fui::Color::Black);
+  panel.border = fui::Paint::solid(fui::Color::Black);
+  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
+  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
+  props.styles.selected = panel;
+  props.styles.focused = panel;
+  props.styles.active = panel;
+  props.styles.disabled = panel;
+  props.styles.explicitlySet = true;
+  const auto width = static_cast<int16_t>(safe.width * 4 / 5);
+  const auto height = static_cast<int16_t>(2 * theme.rowHeight);
+  const fui::Rect rect{static_cast<int16_t>(safe.x + (safe.width - width) / 2),
+                       static_cast<int16_t>(safe.bottom() - height - theme.spaceLg), width, height};
+  fui::button(screen.frame(), rect, props);
+}
+
+bool GameMatchActivity::pauseInGap() const {
+  // roundsStartedAwaited passes 1 only with a Play again: before a match's first frame no round is "next".
+  const uint32_t awaited = roundsStartedAwaited.load();
+  return vm && awaited > 1 && resumesTo.load() == MatchState::Playing && vm->roundsStarted() < awaited;
 }
 
 void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, const MatchState state,

@@ -15,6 +15,7 @@
 #include "GameIconBlit.h"
 #include "GameIconDraw.h"
 #include "GameImageBlit.h"
+#include "GameViewIcons.h"
 #include "GameViewport.h"
 #include "fontIds.h"
 
@@ -30,6 +31,9 @@ static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) == static_cast<s
               "IconWeight follows GameIcons::Weight");
 static_assert(static_cast<size_t>(GameScript::IconWeight::Fill) + 1 == GameIcons::WEIGHT_COUNT,
               "one IconWeight per library weight");
+
+// The hand-off screen's icon: the library's large drawn size, 128 px.
+constexpr int BLANK_ICON_PIXELS = GameIconBlit::DRAWN_PIXELS[static_cast<size_t>(GameScript::TextSize::Large)];
 
 // The built-in font each text size draws in, indexed by TextSize.
 constexpr int TEXT_FONT_IDS[] = {UI_10_FONT_ID, UI_12_FONT_ID, NOTOSANS_18_FONT_ID};
@@ -182,6 +186,16 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
   }
   renderer.setClipRect(savedClip[0], savedClip[1], savedClip[2], savedClip[3]);
   return true;
+}
+
+void FrameReplay::drawBlank(const GfxRenderer& renderer, const GameViewport& viewport) {
+  renderer.clearScreen();
+  const char* icon = GameViewIcons::forView(GameCore::MatchState::HandOff);
+  if (icon) {
+    drawGameIcon(renderer, icon, viewport.originX() + (viewport.width() - BLANK_ICON_PIXELS) / 2,
+                 viewport.originY() + (viewport.height() - BLANK_ICON_PIXELS) / 2, BLANK_ICON_PIXELS, true);
+  }
+  policy.forceFull();
 }
 
 void FrameReplay::drawText(const GfxRenderer& renderer, const GameViewport& viewport,

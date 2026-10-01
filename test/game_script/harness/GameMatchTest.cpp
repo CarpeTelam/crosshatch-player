@@ -10,6 +10,7 @@
 
 #include "ArenaSize.h"
 #include "GameAssets.h"
+#include "GameIconDraw.h"
 #include "GameSaveStore.h"
 #include "GameViewIcons.h"
 #include "MatchSupport.h"
@@ -708,6 +709,27 @@ TEST_F(PlayAgainGapTest, AGapRenderMarksTheScreenAsNotHoldingTheCanvasEvenWhenNo
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
 }
 
+// The pause menu says why Resume shows nothing new in the gap, and is drawn without the line once the round has
+// started.
+TEST_F(PlayAgainGapTest, ThePauseMenuInTheGapSaysTheNextRoundIsStartingUntilItHas) {
+  playAgainByTouch();
+  enterTheGap();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_PAUSED)));
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+  for (int i = 0; i < 5; ++i) frame();
+  EXPECT_FALSE(activityManager.updateRequested()) << "the menu was redrawn while the gap was still open";
+  fakertos::release();
+  ASSERT_TRUE(pump([&] { return activityManager.updateRequested(); })) << "the round started and the menu stayed";
+  EXPECT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_PAUSED)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+}
+
 // The render task runs beside the loop task on the device; the tests above render between loop
 // passes. This one renders from a second thread, continuously, while Play again is chosen and the gap
 // is held open, to see that the gap draws nothing whichever way the two interleave. A render that
@@ -1095,6 +1117,507 @@ TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEv
   tapOption(tr(STR_GAMES_LEAVE));
   EXPECT_EQ(state(), "Leaving");
   EXPECT_TRUE(match::resumeFilesOnCard().empty());
+}
+
+// An open pass match never hands off (entry 4's Never): no Result, no HandOff, and no blank push.
+TEST_F(PassMatchTest, AnOpenPassMatchNeverEntersResultOrHandOffNorPushesABlank) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCell(1);
+  tapCell(2);
+  tapCell(4);
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  EXPECT_FALSE(logHas("-> Result")) << fakelog::snapshot().back();
+  EXPECT_FALSE(logHas("-> HandOff"));
+  ASSERT_FALSE(renderer->shown.empty());
+  for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(push.texts.empty()) << "a blank was pushed";
+}
+
+// ---- the renderer double's push (screen_stubs/GfxRenderer.h, entry 4): what the device's displayBuffer shows ----
+
+// The device pushes the whole framebuffer, which clearScreen wipes and both the canvas and FreeInkUI draw into: a push
+// holds every text drawn since the last clearScreen, in the order drawn, and none from before it.
+TEST_F(MatchTest, APushHoldsTheCanvasAndUiTextsDrawnSinceTheLastClearScreenAndNoneBeforeIt) {
+  renderer->drawText(UI_12_FONT_ID, 10, 10, "o");
+  renderer->noteUiText("before");
+  renderer->clearScreen();
+  renderer->drawText(UI_12_FONT_ID, 10, 20, "a");
+  renderer->drawText(UI_12_FONT_ID, 20, 20, "b");
+  renderer->noteUiText("menu");
+  renderer->drawText(UI_12_FONT_ID, 10, 40, "c");
+  renderer->displayBuffer(HalDisplay::FAST_REFRESH);
+  ASSERT_EQ(renderer->shown.size(), 1u);
+  EXPECT_EQ(renderer->shown[0].texts, (std::vector<std::string>{"ab", "menu", "c"}));
+  renderer->noteUiText("late");
+  renderer->displayBuffer(HalDisplay::FAST_REFRESH);  // nothing cleared: the first push's texts are still there
+  EXPECT_EQ(renderer->shown[1].texts, (std::vector<std::string>{"ab", "menu", "c", "late"}));
+  renderer->clearScreen();
+  renderer->displayBuffer(HalDisplay::FULL_REFRESH);
+  EXPECT_TRUE(renderer->shown[2].texts.empty());
+  renderer->forget();  // forgets the UI notes with the calls they were numbered by
+  renderer->displayBuffer(HalDisplay::FULL_REFRESH);
+  EXPECT_TRUE(renderer->shown[3].texts.empty());
+}
+
+// ---- a hidden pass match (epic-pass-and-play entry 4): pass-hidden, the hand-off between seats ----
+
+class HiddenPassTest : public MatchTest {
+ protected:
+  void SetUp() override {
+    MatchTest::SetUp();
+    installFixture("pass-hidden");
+  }
+
+  // Enters pass-hidden as the launcher would start it: its manifest says hidden, and pass(2) plays it.
+  void enterHidden() {
+    gameId = "pass-hidden";
+    GameCore::Manifest manifest = match::manifestOf("pass-hidden", "Pass hidden");
+    manifest.seatsMin = 2;
+    manifest.seatsMax = 2;
+    manifest.modes = GameCore::Manifest::MODE_PASS;
+    manifest.hidden = true;
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::pass(2));
+    activity->onEnter();
+  }
+
+  // A tap at the middle of the screen: on the blank or the Result banner's screen, it passes the device on.
+  void tapScreen() {
+    input->tap(240, 400);
+    frame();
+  }
+
+  // The push the last render made.
+  const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }
+  // Whether some text of `push` holds `part`.
+  static bool holds(const GfxRenderer::Shown& push, const std::string& part) {
+    return std::any_of(push.texts.begin(), push.texts.end(),
+                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
+  }
+
+  // The blank is asked for and drawn: a full refresh, and no text on the panel.
+  void expectBlank() {
+    ASSERT_TRUE(activityManager.updateRequested());
+    const size_t pushes = renderer->shown.size();
+    render();
+    ASSERT_EQ(renderer->shown.size(), pushes + 1);
+    EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_TRUE(lastPush().texts.empty()) << lastPush().texts.front();
+  }
+
+  // From the blank on screen: the tap, then the turn seat's frame, drawn in full once the VM has published it.
+  void showSeat(const int seat) {
+    tapScreen();
+    ASSERT_EQ(state(), "Playing");
+    showFrame();
+    EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_TRUE(holds(lastPush(), "Player " + std::to_string(seat) + "'s secret: ")) << seat;
+  }
+
+  // The seat on screen moves (a tap on the canvas); the turn passes, so the match shows Result, drawn.
+  void moveAndPass(const int mover, const int next) {
+    tapCanvas(100, 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+    ASSERT_TRUE(activityManager.updateRequested());
+    const size_t hints = UITheme::getInstance().getTheme().hints.size();
+    render();
+    EXPECT_EQ(UITheme::getInstance().getTheme().hints.size(), hints) << "Result drew button hints";
+    EXPECT_EQ(lastPush().mode, HalDisplay::FAST_REFRESH);
+    EXPECT_TRUE(holds(lastPush(), "Player " + std::to_string(mover) + "'s secret: ")) << "the mover's own frame";
+    EXPECT_TRUE(holds(lastPush(), "Tap to pass to player " + std::to_string(next)));
+  }
+};
+
+TEST_F(HiddenPassTest, EachSeatIsShownOnlyAfterABlankAndNoSecretCrossesIt) {
+  enterHidden();
+  EXPECT_EQ(state(), "HandOff");
+  EXPECT_TRUE(logHas("pass-hidden: Starting -> HandOff on Started"));
+  expectBlank();
+  showSeat(1);
+  EXPECT_TRUE(holds(lastPush(), "Moves: 0"));
+  moveAndPass(1, 2);
+  tapScreen();
+  EXPECT_EQ(state(), "HandOff");
+  expectBlank();
+  const size_t seat2At = renderer->shown.size();
+  showSeat(2);
+  EXPECT_TRUE(holds(lastPush(), "river"));
+  EXPECT_TRUE(holds(lastPush(), "Moves: 1"));
+  moveAndPass(2, 1);
+  tapScreen();
+  expectBlank();
+  const size_t seat1AgainAt = renderer->shown.size();
+  showSeat(1);
+
+  // Every push in order: seat 2's secret never before seat 2's first push after the blank, and seat 1's never from then
+  // until the next hand-off's blank.
+  for (size_t i = 0; i < renderer->shown.size(); ++i) {
+    const GfxRenderer::Shown& push = renderer->shown[i];
+    if (i < seat2At) {
+      EXPECT_FALSE(holds(push, "river")) << "push " << i;
+    }
+    if (i >= seat2At && i < seat1AgainAt) {
+      EXPECT_FALSE(holds(push, "apple")) << "push " << i;
+    }
+  }
+  EXPECT_EQ(fakelog::countLines("Result on TurnChanged"), 2u);
+  EXPECT_EQ(fakelog::countLines("HandOff on Tap"), 2u);
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 2u) << "seat 2's first frame and its own frame after its move";
+}
+
+TEST_F(HiddenPassTest, TheRoundEndsInOverForEveryoneAndPlayAgainStartsOnTheBlank) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);
+  tapScreen();
+  expectBlank();
+  showSeat(2);
+  moveAndPass(2, 1);
+  tapScreen();
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);
+  tapScreen();
+  expectBlank();
+  showSeat(2);
+  // The fourth move ends the round: over reaches each seat once, and the match goes to Over, never through Result.
+  tapCanvas(100, 300);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_EQ(fakelog::countLines("Result on TurnChanged"), 3u);
+  EXPECT_TRUE(logHas("pass-hidden: Playing -> Over on RoundOver"));
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_OVER)));
+  EXPECT_TRUE(holds(lastPush(), "Everyone: the secrets were apple and river")) << "the menu sits over seat 0's frame";
+
+  // Play again: the new round begins on the blank, and its first frame is seat 1's, after the tap.
+  tapOption(tr(STR_GAMES_PLAY_AGAIN));
+  EXPECT_EQ(state(), "HandOff");
+  EXPECT_TRUE(logHas("pass-hidden: Over -> HandOff on PlayAgain"));
+  expectBlank();
+  // Paused on that blank: Resume draws the blank again, not an inert menu, so the menu has no "next round" line.
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING)));
+  EXPECT_FALSE(holds(lastPush(), "Everyone")) << "the menu from the blank sat over the last round's frame";
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  showSeat(1);
+  EXPECT_TRUE(holds(lastPush(), "Moves: 0"));
+  EXPECT_EQ(fakelog::countLines("Round started"), 2u);
+}
+
+// The blank's tap zone is published only after the blank is pushed: a tap or Confirm before it, or one made while
+// displayBuffer is still running, is dropped, so neither can skip the blank.
+TEST_F(HiddenPassTest, ATapBeforeTheBlankIsOnThePanelIsDropped) {
+  enterHidden();
+  tapScreen();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a tap before the blank was drawn passed it";
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapScreen();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_EQ(state(), "HandOff") << "a tap while the blank was being pushed passed it";
+  input->click(Button::Confirm);  // once it is up, Confirm passes it as a tap does
+  frame();
+  EXPECT_EQ(state(), "Playing");
+}
+
+TEST_F(HiddenPassTest, PauseFromResultOrTheBlankReturnsThereAndTheBlanksPauseMenuSitsOnNoFrame) {
+  enterHidden();
+  expectBlank();
+  // The new match's first blank: no round has been played, so the pause menu says nothing of a next one.
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_PAUSED)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING)));
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);
+
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_PAUSED)));
+  EXPECT_TRUE(holds(lastPush(), "apple")) << "the mover's frame stays under the menu";
+  tapOption(tr(STR_GAMES_RESUME));
+  EXPECT_EQ(state(), "Result");
+  render();
+  EXPECT_TRUE(holds(lastPush(), "Tap to pass to player 2"));
+
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  EXPECT_TRUE(activity->handleHomeGesture());  // Home pauses the blank too
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_PAUSED)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << "the pause menu of a hand-off is no gap";
+  EXPECT_FALSE(holds(lastPush(), "apple")) << "a pause menu from the blank showed seat 1's frame";
+  EXPECT_FALSE(holds(lastPush(), "river"));
+  EXPECT_TRUE(holds(lastPush(), tr(STR_GAMES_PAUSED)));
+  input->click(Button::Back);  // Back in the pause menu resumes
+  frame();
+  EXPECT_EQ(state(), "HandOff");
+  expectBlank();
+  showSeat(2);
+}
+
+// A tap that seat 1 makes right after its turn-passing move, queued behind it, is seat 1's: its input runs, and the
+// move it returns is discarded (seat 1 is no longer the turn seat), so nothing of seat 2 is drawn or played.
+TEST_F(HiddenPassTest, ATapQueuedBehindTheTurnPassingMoveReachesTheMoverAndIsNeverApplied) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);           // seat 1's input logs first: held there
+  tapCanvas(100, 300);
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(200, 300);  // queued behind the move, while the match still shows seat 1's canvas
+  frame();
+  fakertos::pass();  // the move's "apply seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // its "draw for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // its frame is published and the turn counted; the queued tap is held at its "tap for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  render();
+  EXPECT_TRUE(holds(lastPush(), "Tap to pass to player 2"));
+  activityManager.markRendered();
+  fakertos::release();
+  // The queued tap's frame, seat 1's again, is newer than the one under the banner: Result asks to draw it.
+  ASSERT_TRUE(pump([&] { return fakelog::countLines("draw for seat 1") == 3u && activityManager.updateRequested(); }));
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 2u);
+  EXPECT_EQ(fakelog::countLines("apply seat 1"), 1u) << "the queued tap's move was applied";
+  EXPECT_FALSE(logHas("apply seat 2"));
+  EXPECT_FALSE(logHas("tap for seat 2"));
+  EXPECT_FALSE(logHas("draw for seat 2"));
+  render();
+  EXPECT_TRUE(holds(lastPush(), "Tap to pass to player 2"));
+  EXPECT_TRUE(holds(lastPush(), "Moves: 1"));
+}
+
+// Two taps queued behind seat 1's turn-passing move: the first is still being played, and the second still waits in
+// the queue, when the hand-off's tap asks for seat 2. The VM plays what is queued under the view it was meant for
+// before it shows seat 2, so the second tap reaches seat 1 too (its move discarded), never seat 2.
+TEST_F(HiddenPassTest, ATapStillQueuedWhenTheNextSeatIsAskedForReachesTheMoverNotTheNextSeat) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(100, 300);  // A, seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(200, 300);  // B
+  frame();
+  tapCanvas(300, 300);  // C
+  frame();
+  fakertos::pass();  // A's "apply seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's "draw for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's frame is published and the turn counted; B is held at its "tap for seat 1", C queued
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  render();
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  tapScreen();  // asks for seat 2 while C is still queued
+  ASSERT_EQ(state(), "Playing");
+  fakertos::release();
+  ASSERT_TRUE(pumpToRender());
+  render();
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 3u) << "C reached another seat than the one that made it";
+  EXPECT_FALSE(logHas("tap for seat 2"));
+  EXPECT_EQ(fakelog::countLines("apply seat 1"), 1u);
+  EXPECT_FALSE(logHas("apply seat 2")) << "seat 1's queued tap was applied as seat 2's move";
+  EXPECT_LT(fakelog::countLines("draw for seat 2"), 2u);
+}
+
+// The seat gate: seat 1's tap queued behind its move is still being played when the hand-off's tap asks for seat 2, so
+// seat 1's late frame is the newest one published until seat 2's is. A render then draws nothing and the loop asks for
+// none; seat 2's frame is the first one after the blank.
+TEST_F(HiddenPassTest, SeatOnesLateFrameIsNeverDrawnAfterTheBlank) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(100, 300);  // A, seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(200, 300);  // B: queued behind A
+  frame();
+  fakertos::pass();  // A's "apply seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's "draw for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's frame is published and the turn counted; B is held at its "tap for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  render();
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  tapScreen();  // asks for seat 2, while B is still seat 1's
+  ASSERT_EQ(state(), "Playing");
+  fakertos::pass();  // B's "draw for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // B's frame is published; the VM is held at seat 2's "draw for seat 2"
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_EQ(fakelog::countLines("draw for seat 1"), 3u);
+  // Paused here, before seat 2's frame: the menu sits on no frame, never seat 1's late one.
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  EXPECT_FALSE(holds(lastPush(), "apple")) << "the pause menu sat over seat 1's frame while seat 2 had the device";
+  input->click(Button::Back);  // resumes into the gate
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  activityManager.markRendered();
+  for (int i = 0; i < 10; ++i) frame();
+  EXPECT_FALSE(activityManager.updateRequested()) << "the loop asked to render seat 1's late frame";
+  const size_t pushes = renderer->shown.size();
+  render();
+  EXPECT_EQ(renderer->shown.size(), pushes) << "a render after the blank pushed seat 1's late frame";
+  fakertos::release();
+  ASSERT_TRUE(pumpToRender());
+  render();
+  ASSERT_EQ(renderer->shown.size(), pushes + 1);
+  EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  EXPECT_FALSE(holds(lastPush(), "apple"));
+}
+
+// A timer that falls due during the hand-off is polled and held, and reaches the next seat right after its first frame.
+TEST_F(HiddenPassTest, ATimerDueOnTheBlankReachesTheNextSeatAfterItsFirstFrame) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);  // seat 1's tap re-armed the 5 s timer at 1000 ms
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  fakertos::advance(5000);
+  frame();  // the blank's loop polls the timer: due now, and held by the VM
+  showSeat(2);
+  ASSERT_TRUE(waitFor([&] { return logHas("timer for seat 2"); }));
+  const std::vector<std::string> lines = fakelog::snapshot();
+  const auto at = [&](const std::string& part) {
+    return std::find_if(lines.begin(), lines.end(),
+                        [&](const std::string& line) { return line.find(part) != std::string::npos; }) -
+           lines.begin();
+  };
+  EXPECT_LT(at("draw for seat 2"), at("timer for seat 2"));
+  EXPECT_FALSE(logHas("timer for seat 1")) << "the timer reached the seat that had passed the device on";
+}
+
+// Result's tap passes only once its banner is on the panel: a tap before its render, or one made while its
+// displayBuffer is still running, is dropped, so a double tap on the move cannot skip the banner.
+TEST_F(HiddenPassTest, ATapBeforeResultsBannerIsOnThePanelIsDropped) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  tapCanvas(100, 300);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  tapScreen();
+  EXPECT_EQ(state(), "Result") << "a tap before the banner was drawn passed it";
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapScreen();
+    input->click(Button::Confirm);
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_EQ(state(), "Result") << "a tap while the banner was being pushed passed it";
+  tapScreen();
+  EXPECT_EQ(state(), "HandOff");
+}
+
+// The loop watches the VM in Result as in a menu: a call stuck there ends in the error view.
+TEST_F(HiddenPassTest, ACallStuckInResultIsStoppedIntoTheErrorView) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm();      // the clock: seat 1's input reads it in ch.timer.after
+  tapCanvas(100, 300);  // the move: held at its clock read
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(200, 300);  // queued behind it
+  frame();
+  fakertos::pass();  // the move ends and the turn passes; the queued tap is held at its clock read, inside Lua
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  frame();  // the first poll that sees the call starts its clock
+  fakertos::advance(3001);
+  frame();
+  EXPECT_EQ(state(), "Error");
+  expectErrorView(tr(STR_GAMES_ERROR), tr(STR_GAMES_NOT_RESPONDING));
+  fakertos::release();
+}
+
+// The blank is the eye-closed library icon at 128 px, black, centred on the canvas, and nothing else: drawn as
+// drawGameIcon draws it there, on a cleared screen.
+TEST_F(HiddenPassTest, TheBlankIsOnlyTheEyeClosedIconCentredOnTheCanvas) {
+  enterHidden();
+  renderer->forget();
+  expectBlank();
+  GfxRenderer expected(480, 800);
+  expected.clearScreen();
+  // The canvas is 474 x 788 at (3, 6).
+  ASSERT_TRUE(drawGameIcon(expected, "eye-closed", 3 + (474 - 128) / 2, 6 + (788 - 128) / 2, 128, true));
+  std::vector<GfxRenderer::Call> drawn;
+  for (const GfxRenderer::Call& call : renderer->calls) {
+    if (call.kind == GfxRenderer::Kind::ClearScreen) drawn.clear();
+    if (call.kind == GfxRenderer::Kind::FillRect || call.kind == GfxRenderer::Kind::DrawText ||
+        call.kind == GfxRenderer::Kind::FillRectDither || call.kind == GfxRenderer::Kind::DrawLine) {
+      drawn.push_back(call);
+    }
+  }
+  std::vector<GfxRenderer::Call> icon;
+  for (const GfxRenderer::Call& call : expected.calls) {
+    if (call.kind == GfxRenderer::Kind::FillRect) icon.push_back(call);
+  }
+  ASSERT_FALSE(icon.empty());
+  ASSERT_EQ(drawn.size(), icon.size()) << "the blank draws more or less than the icon";
+  for (size_t i = 0; i < icon.size(); ++i) {
+    EXPECT_EQ(drawn[i].kind, GfxRenderer::Kind::FillRect) << i;
+    EXPECT_EQ(drawn[i].x, icon[i].x) << i;
+    EXPECT_EQ(drawn[i].y, icon[i].y) << i;
+    EXPECT_EQ(drawn[i].w, icon[i].w) << i;
+    EXPECT_EQ(drawn[i].black, icon[i].black) << i;
+  }
 }
 
 }  // namespace
