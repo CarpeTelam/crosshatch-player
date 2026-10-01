@@ -52,8 +52,8 @@ struct Entry {
 
 struct Card {
   std::vector<Entry> entries;  // creation order, removed ones marked dead
-  std::vector<std::string>
-      ops;  // "open <p>", "close <p>", "write <p>", "rename <a> <b>", "remove <p>", "mkdir <p>", "list <p>"
+  // "open <p>", "close <p>", "write <p>", "rename <a> <b>", "remove <p>", "mkdir <p>", "list <p>", "exists <p>"
+  std::vector<std::string> ops;
 
   // Per-path failures.
   std::set<std::string> failOpen;       // open of the path returns an empty file
@@ -63,6 +63,8 @@ struct Card {
   std::set<std::string> failRemove;     // remove or rmdir of the path fails
   std::set<std::string> failRename;     // as source or as target
   std::set<std::string> failMkdir;
+  // remove of the file deletes it and still returns false, as SdFat's does when the entry went but a sync failed
+  std::set<std::string> failRemoveDone;
   // A read that would reach byte `n` or later of the path fails (returns -1, as an SD error does).
   std::map<std::string, size_t> failReadAt;
   // Reads of the path return no bytes from offset `n` on (a short read, not an error).
@@ -322,7 +324,10 @@ class HalFile : public Print {
 
 class HalStorage {
  public:
-  bool exists(const char* path) { return fakesd::has(path); }
+  bool exists(const char* path) {
+    fakesd::sim().ops.push_back(std::string("exists ") + path);
+    return fakesd::has(path);
+  }
 
   HalFile open(const char* path, const oflag_t oflag = O_RDONLY) {
     const std::string p(path);
@@ -365,7 +370,7 @@ class HalStorage {
     fakesd::Entry* const entry = fakesd::find(p);
     if (fakesd::sim().failRemove.count(p) != 0 || !entry || entry->isDir) return false;
     entry->dead = true;
-    return true;
+    return fakesd::sim().failRemoveDone.count(p) == 0;
   }
   bool rmdir(const char* path) {
     const std::string p(path);

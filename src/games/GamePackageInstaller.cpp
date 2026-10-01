@@ -351,13 +351,26 @@ Error removeFolder(const char* id) {
   }
   // The remove marker first: from here on a stop leaves a folder that the next visit finishes, and only such a folder
   // (finishRemovals); a card that will not take it changes nothing.
-  if (!hasRemovingMarker(id) && !writeRemovingMarker(id)) return Error::SdCard;
+  // (A marker already there is an earlier remove's that stopped partway; it is never written again, since a rewrite
+  // whose close failed would strand a folder whose .pkg is gone. finishRemovals only calls this on such a folder.)
+  const bool markerWasThere = hasRemovingMarker(id);
+  if (!markerWasThere && !writeRemovingMarker(id)) return Error::SdCard;
   // Then the .pkg, as commit() does: a stop or a failure from here on leaves an unlisted folder, never a listed game
   // with files missing.
   if (hasPkg) {
     snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::PKG_NAME);
     if (!Storage.remove(path)) {
       LOG_ERR("GAME", "Cannot remove %s", path);
+      // The caller is told the game was not removed, so a game that is still listed and whole must not be finished
+      // silently by the next visit: the marker this call wrote goes again, best effort (if it will not, it stays and
+      // the next visit finishes the remove). Only while the .pkg is still there: a delete can report failure after
+      // the entry went (a failed sync), and that unlisted folder needs its marker; a card that cannot answer counts
+      // as "gone" too, so the marker stays (the side that never strands an unlisted folder). A marker that was there
+      // before this call stands for an earlier remove that stopped partway, and stays for the next visit to finish.
+      if (!markerWasThere && Storage.exists(path)) {
+        snprintf(path, sizeof(path), "%s/%s/%s", GamePaths::GAMES_DIR, id, GamePaths::REMOVING_NAME);
+        if (!Storage.remove(path)) LOG_ERR("GAME", "Cannot remove %s", path);
+      }
       return Error::SdCard;
     }
   }
@@ -946,7 +959,10 @@ Report installAll() {
         report.firstError = error;
         snprintf(report.firstFile, sizeof(report.firstFile), "%s", names[i].text);
       }
-      if (report.failed < UINT8_MAX) ++report.failed;  // a saturated count is still a failure
+      if (report.failed < UINT8_MAX) {  // a saturated count is still a failure
+        ++report.failed;
+        if (error == Error::TooManyGames) ++report.waiting;  // only with `failed`, so never more than it
+      }
       if (error != Error::TooManyGames) ++judged;
     }
     // The renames and deletes above take files out of the inbox and leave the others in their order, so the ones

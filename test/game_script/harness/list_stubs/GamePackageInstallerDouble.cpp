@@ -5,6 +5,7 @@
 #include <I18n.h>
 
 #include "InstallerScript.h"
+#include "RenderLockProbe.h"
 #include "components/UITheme.h"
 
 namespace installerscript {
@@ -27,6 +28,7 @@ Report installAll() {
   installerscript::Script& script = installerscript::script();
   script.order.push_back("installAll");
   script.popupWhenInstalling = UITheme::getInstance().getTheme().drew("drawPopup", tr(STR_GAMES_INSTALLING));
+  script.lockWhenInstalling = fakelock::held();
   if (script.onInstall) script.onInstall();
   return script.report;
 }

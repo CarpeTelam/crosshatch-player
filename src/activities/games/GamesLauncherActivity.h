@@ -9,6 +9,10 @@
 #include "games/GameRegistry.h"
 #include "games/GameRowIcon.h"
 
+namespace GamePackageInstaller {
+struct Report;
+}
+
 // The Games launcher (Home → Games; spine AD-22): when it opens it installs every /games/*.chgame
 // (GamePackageInstaller), then lists every installed game as a row of icon and name, paged by the
 // list. A row's icon is the package's icon.bmp, else the manifest's library icon in its weight, else
@@ -23,7 +27,11 @@
 // package is not valid, so it has no row. The rows are found when the listing is built (onEnter, and after a remove),
 // never while a row is drawn. A long-press on a Continue row does nothing: removing is on the game's own row. A
 // long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
-// (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup.
+// (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup. After a
+// remove that succeeds, the inbox is installed at once when it holds a file (a package that waited for room takes the
+// freed place), as on entering, and the listing is read after it. That install also tries to finish the removes that
+// stopped partway (installAll's finishRemovals, at most 32 a call), so a game whose remove failed earlier but kept its
+// .removing marker goes at that moment, not the next time Games opens (one that still will not go stays, logged).
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
 // repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
 // game it last opened (a fingerprint of its id), and the next launcher, built by ActivityManager::goToGames(), selects
@@ -60,8 +68,11 @@ class GamesLauncherActivity final : public UiListActivity {
   void onRowLongPress(int index) override;
   void onRowAction(const freeink::ui::ActionEvent& event) override;
 
-  // Installs the inbox, showing "Installing" while it works, and keeps the first failure for the popup.
+  // Installs the inbox, showing "Installing" while it works, and sets the note from its report (showInstallNote).
   void installInbox();
+  // Sets the note from an install's report: the first failure's reason, and under it the other failures by kind (those
+  // that wait for room, then the rest), or no note when nothing failed.
+  void showInstallNote(const GamePackageInstaller::Report& report);
   void loadGames();
   // Finds the Continue rows for the loaded listing: one GameSaveStore::peek() for each game that can start, so a card
   // with no save costs two existence checks a game and each save one whole-file read.
@@ -108,7 +119,10 @@ class GamesLauncherActivity final : public UiListActivity {
   uint8_t libraryIcon[GameRowIcon::BYTES] = {};
   // The one-time install failure notice: shown over the list until a tap or button dismisses it.
   char note[128] = {};
-  // "and N more" when several packages failed: drawn as a line of its own under the note; empty for one failure.
+  // The other failures of an install, each drawn as a line of its own under the note (noteWaiting above noteMore), and
+  // each empty when it has nothing to say. noteWaiting: "N more waiting for room", the others that wait for room.
+  // noteMore: "and N more not installed" for the rest when some wait, else "and N more" for all of them.
+  char noteWaiting[48] = {};
   char noteMore[48] = {};
   bool noteVisible = false;
   // Rows a page holds, as the last build measured them (1 until the first build); listCount() pads to it.

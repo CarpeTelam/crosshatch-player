@@ -1066,6 +1066,188 @@ TEST_F(ListTest, TheMoreLineIsShownOncePerVisitAndDismissedWithTheNote) {
   EXPECT_NE(flat(ui().joined()).find("and 2 more"), std::string::npos);
 }
 
+// ---- the kind of the others (AI-2, the retro's Q2): those that wait for room apart from the rest ----
+
+// The scripted report: `failed` failures, `waiting` of them packages that wait for room (the first included when it is
+// one), the first `first`, in first.chgame.
+void scriptReport(const int failed, const int waiting, const Error first) {
+  GamePackageInstaller::Report& report = installerscript::script().report;
+  report.failed = static_cast<uint8_t>(failed);
+  report.waiting = static_cast<uint8_t>(waiting);
+  report.firstError = first;
+  std::snprintf(report.firstFile, sizeof(report.firstFile), "first.chgame");
+}
+
+// The note's text() calls but its reason, in the order drawn: its more-lines, each as passed. The empty list's message
+// is behind the note, not part of it.
+std::vector<std::string> moreCalls(const screen::RecordingTarget& ui) {
+  std::vector<std::string> out;
+  for (const screen::DrawnText& call : ui.textCalls)
+    if (call.text.rfind("first.chgame", 0) != 0 && call.text != tr(STR_GAMES_EMPTY)) out.push_back(call.text);
+  return out;
+}
+
+TEST_F(ListTest, OneFailureShowsNoMoreLineWhateverItsKindOrTheWaitingCount) {
+  // The matrix's "1, any, any": with no other failure, no count of waiting packages makes a line, even one the real
+  // installer cannot report (more waiting than failed), so the note never claims more than `failed`.
+  for (const int waiting : {0, 1, 255}) {
+    for (const Error first : {Error::TooManyGames, Error::BadCrc}) {
+      SCOPED_TRACE(std::to_string(waiting) + (first == Error::TooManyGames ? " waiting, a first that waits"
+                                                                           : " waiting, a first that does not wait"));
+      scriptReport(1, waiting, first);
+      if (list) {
+        reopen();
+      } else {
+        open();
+      }
+      EXPECT_EQ(moreCalls(ui()), std::vector<std::string>{}) << ui().joined();
+    }
+  }
+}
+
+TEST_F(ListTest, WithNoneOfTheOthersWaitingTheLineStaysAndNMore) {
+  // The matrix's "others, none waiting": a first that waits is not one of the others.
+  const std::vector<std::string> expected{"and 2 more"};
+  scriptReport(3, 0, Error::BadCrc);
+  open();
+  EXPECT_EQ(moreCalls(ui()), expected) << ui().joined();
+  scriptReport(3, 1, Error::TooManyGames);
+  reopen();
+  EXPECT_EQ(moreCalls(ui()), expected) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("and 2 more"));
+}
+
+TEST_F(ListTest, WhenEveryOtherWaitsOneLineSaysSoAndNothingSaysNotInstalled) {
+  scriptReport(3, 3, Error::TooManyGames);  // the retro's d-03: three valid packages over the limit
+  open();
+  EXPECT_EQ(moreCalls(ui()), std::vector<std::string>{"2 more waiting for room"}) << ui().joined();
+  EXPECT_TRUE(ui().drewLine("2 more waiting for room"));
+  EXPECT_NE(flat(ui().joined()).find(std::string(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES)) + " 2 more waiting for room"),
+            std::string::npos)
+      << ui().joined();
+
+  scriptReport(2, 1, Error::BadImage);  // a first of another kind: the one that waits is still named
+  reopen();
+  EXPECT_EQ(moreCalls(ui()), std::vector<std::string>{"1 more waiting for room"}) << ui().joined();
+}
+
+TEST_F(ListTest, WaitingAndOtherFailuresAreTwoLinesTheWaitingFirst) {
+  scriptReport(4, 3, Error::TooManyGames);
+  open();
+  const std::vector<std::string> expected{"2 more waiting for room", "and 1 more not installed"};
+  EXPECT_EQ(moreCalls(ui()), expected) << ui().joined();
+  EXPECT_NE(flat(ui().joined())
+                .find(std::string(tr(STR_GAMES_INSTALL_TOO_MANY_GAMES)) +
+                      " 2 more waiting for room and 1 more not installed"),
+            std::string::npos)
+      << ui().joined();
+}
+
+TEST_F(ListTest, OneOfEachKindReadsWithoutAVerbToAgree) {
+  scriptReport(3, 2, Error::TooManyGames);
+  open();
+  const std::vector<std::string> expected{"1 more waiting for room", "and 1 more not installed"};
+  EXPECT_EQ(moreCalls(ui()), expected) << ui().joined();
+}
+
+TEST_F(ListTest, ASaturatedWaitingCountReadsAsItsFloor) {
+  scriptReport(std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max(), Error::TooManyGames);
+  open();
+  EXPECT_EQ(moreCalls(ui()), std::vector<std::string>{"254 more waiting for room"}) << ui().joined();
+}
+
+// The installer never reports more waiting than other failures (Report::waiting), but the note does not rely on it: a
+// report that did, with a first that does not wait, still names no more waiting than there are others.
+TEST_F(ListTest, TheWaitingLineNeverCountsMoreThanTheOthers) {
+  scriptReport(std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max(), Error::BadCrc);
+  open();
+  EXPECT_EQ(moreCalls(ui()), std::vector<std::string>{"254 more waiting for room"}) << ui().joined();
+}
+
+TEST_F(ListTest, TheTwoMoreLinesStackUnderTheReasonCenteredWithIt) {
+  scriptReport(4, 2, Error::BadCrc);
+  open();
+  const auto& drawn = ui().drawn;
+  size_t waiting = drawn.size();
+  size_t more = drawn.size();
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (drawn[i].text == "2 more waiting for room") waiting = i;
+    if (drawn[i].text == "and 1 more not installed") more = i;
+  }
+  ASSERT_LT(waiting, drawn.size()) << ui().joined();
+  ASSERT_LT(more, drawn.size()) << ui().joined();
+  ASSERT_GT(waiting, 0u);
+  const screen::DrawnText& reason = drawn[waiting - 1];  // the reason's last line, drawn just before
+  EXPECT_NE(reason.text.find("damaged"), std::string::npos) << ui().joined();
+  EXPECT_EQ(drawn[waiting].rect.y, reason.rect.y + reason.rect.height) << "the first starts where the reason ends";
+  EXPECT_EQ(drawn[more].rect.y, drawn[waiting].rect.y + drawn[waiting].rect.height) << "the second under the first";
+  for (const size_t line : {waiting, more}) {
+    EXPECT_NEAR(drawn[line].rect.x + drawn[line].rect.width / 2.0, reason.rect.x + reason.rect.width / 2.0, 1.0)
+        << drawn[line].text << " is centered with the reason";
+  }
+}
+
+TEST_F(ListTest, EachMoreLineIsATextCallOfItsOwnAndNoCallHoldsANewline) {
+  scriptReport(4, 3, Error::TooManyGames);
+  open();
+  int reasonCalls = 0;
+  for (const screen::DrawnText& call : ui().textCalls) {
+    EXPECT_EQ(call.text.find('\n'), std::string::npos) << "a '\\n' does not break a line on the device: " << call.text;
+    reasonCalls += call.text == std::string("first.chgame: ") + tr(STR_GAMES_INSTALL_TOO_MANY_GAMES);
+  }
+  EXPECT_EQ(reasonCalls, 1) << "the reason is one call, joined with neither more-line";
+  const std::vector<std::string> expected{"2 more waiting for room", "and 1 more not installed"};
+  EXPECT_EQ(moreCalls(ui()), expected);
+}
+
+TEST_F(ListTest, TwoMoreLinesAddTwoLinesToThePanelAndNothingElse) {
+  scriptReport(1, 0, Error::BadCrc);
+  open();
+  const auto reasonLine = [this]() -> const screen::DrawnText* {
+    for (const screen::DrawnText& drawn : ui().drawn)
+      if (drawn.text.find("first.chgame") == 0) return &drawn;
+    return nullptr;
+  };
+  ASSERT_NE(reasonLine(), nullptr) << ui().joined();
+  const Panel one = panelAround(ui(), *reasonLine());
+  ASSERT_TRUE(one.found) << "a bordered (2 px) panel around the note";
+
+  scriptReport(4, 2, Error::BadCrc);
+  reopen();
+  ASSERT_NE(reasonLine(), nullptr) << ui().joined();
+  const Panel three = panelAround(ui(), *reasonLine());
+  ASSERT_TRUE(three.found) << "the panel keeps its border";
+  EXPECT_EQ(three.lines, one.lines + 2);
+  EXPECT_EQ(three.rect.height, one.rect.height + 2 * screen::RecordingTarget::LINE_HEIGHT);
+  EXPECT_EQ(three.rect.width, three.widest + 32) << "as wide as its widest line needs";
+  EXPECT_EQ(three.rect.height, three.lines * screen::RecordingTarget::LINE_HEIGHT + 24);
+  // Centered on the screen as the one-line panel is: it grows equally up and down, and left and right.
+  EXPECT_EQ(2 * three.rect.y + three.rect.height, 2 * one.rect.y + one.rect.height);
+  EXPECT_EQ(2 * three.rect.x + three.rect.width, 2 * one.rect.x + one.rect.width);
+}
+
+TEST_F(ListTest, TheLongestReasonWithTheLongestFileNameIsDrawnWholeAboveBothMoreLines) {
+  installerscript::script().report.failed = 12;
+  installerscript::script().report.waiting = 6;
+  std::string longest;
+  for (int value = 0; value < 256; ++value) {
+    const char* text = expectedText(static_cast<Error>(value));
+    if (text && longest.size() < std::strlen(text)) {
+      longest = text;
+      installerscript::script().report.firstError = static_cast<Error>(value);
+    }
+  }
+  std::snprintf(installerscript::script().report.firstFile, sizeof(installerscript::script().report.firstFile), "%s",
+                std::string(GamePaths::INBOX_NAME_BYTES - 1, 'n').c_str());
+  open();
+  // Six wait; the first is one of them only when it waits itself.
+  const int waiting = installerscript::script().report.firstError == Error::TooManyGames ? 5 : 6;
+  const std::string lines =
+      std::to_string(waiting) + " more waiting for room and " + std::to_string(11 - waiting) + " more not installed";
+  const std::string shown = flat(ui().joined());
+  EXPECT_NE(shown.find(longest + " " + lines), std::string::npos) << shown;
+}
+
 TEST_F(ListTest, NoFailureShowsNoNote) {
   installerscript::script().report.installed = 1;
   addGame("alpha", "Alpha");
