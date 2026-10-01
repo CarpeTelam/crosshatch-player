@@ -108,13 +108,13 @@ This check needs a game on page 2 that has no save.
 
 ## What to record
 
-- The firmware you flashed: the CI artifact, or a local build of `fa642c4a`.
+- The firmware you flashed: the CI artifact, or a local build of `b83dfbe2` (or of `develop` at #21's merge, the same firmware).
 - R1: the serial lines from the tap to the error view for both bands, and the time to the error view.
 - R2: the `/.games/` and `/.games-data/counter/` listings before and after, and the marker check's result.
 - R3: the photo of the note, and the names of the two `.bad` files.
 - R4: which page opened and which row was selected, with a photo.
 - Anything else seen: a reset, a watchdog banner, or a `forced exit past 1500 ms` line.
 
-## Owner question (from `deferred-work.md` `## e4-z3`)
+## The new note forms (AI-2)
 
-When the first failure in a visit is the 64-game limit, the note reads "Too many games are installed; remove one first" and then "and N more". This can read as "remove N+1 games". The retrospective records a recommended answer under Open questions. The device cannot show this case without 64 installed games, so the recheck does not include it.
+The owner question this section held (the note at the 64-game limit, `deferred-work.md` `## e4-z3`) was answered on 2026-09-30 and built as AI-2 in CarpeTelam/crosshatch-player#21: the note now reads "N more waiting for room" and "and N more not installed", and a successful Remove installs a waiting package at once. Both need 64 installed games, or a package left in `/games/` by a card fault, so this recheck does not stage them on the device; they are verified on the host (`GamesLauncherTest`, `GameRemoveLauncherTest`, `InstallerWaitingTest`) and in the simulator (`retro-screenshots/d-03-note-3-valid-over-64.png` and its neighbours). R3 still reads "and 1 more", and R2's removes run the new remove path. Record here if you stage either form anyway.

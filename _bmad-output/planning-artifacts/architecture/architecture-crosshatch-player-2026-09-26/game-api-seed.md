@@ -52,7 +52,7 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 | `version` | Any string, for people. |
 | `api` | The API level the game needs. This document is level 1, a preview until crosshatch v1 is released: it may still grow, and a game written against it may need updating. |
 | `seats` | The minimum and maximum number of players (`min`, `max`). Devices at API level 1 support at most 2. |
-| `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
+| `modes` | One or more of `solo` (one player; needs `seats.min` of 1), `pass` (players share one device; needs `seats.max` of 2 or more), `nearby` (each player on their own device; needs `seats.max` of 2 or more). |
 | `hidden` | Optional, default `false`. Set `true` if players must not see each other's screens (Battleship, Hangman); in pass-and-play, the runtime then adds a hand-off screen between turns (section 3). |
 | `icon` | Optional. The name of a library icon (section 5) to use as the game's icon when the package has no `icon.png`: lowercase letters and digits, starting with a letter, with single `-` between words (`dice-six`), at most 32 characters. A name the library doesn't have makes the package invalid. *(Amended 2026-09-28.)* |
 | `icon_weight` | Optional, default `"regular"`. The weight `icon` is drawn in: `"regular"` (outlines) or `"fill"` (solid), as for `ch.gfx.icon`. *(Amended 2026-09-28.)* |
@@ -83,7 +83,7 @@ return game
 
 - **`state` is the whole game, and only `apply` changes it.** Keep everything the players share in `state`: the board, scores, whose turn it is. `apply` gets its own copy; change it and return it, or return a new table. Changes made in `draw`, `input`, or `status` are thrown away.
 - **`status` must depend only on `state`.** No clocks, no random numbers. It decides whose turn it is and when the round is over.
-- **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You can change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn.
+- **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You can change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn. Each `ui` table lasts for the match: Play again keeps it, and a resumed match starts with empty ones.
 - **A move is a small table** describing what a player did, such as `{cell = 5}`. `input` turns a tap into a move; `apply` checks it and applies it. Return `nil, "reason"` from `apply` to reject an illegal move.
 - **`setup` and `apply` run on one device only** (the host in Play Nearby). Other devices receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you.
 - **Seats are numbers from 1.** Seat 1 is the host in Play Nearby. The one exception is seat `0` ("everyone"), which `draw` and `input` receive in pass-and-play once the round is over. The runtime passes moves to `apply` only from the seat that `status` names.
@@ -115,7 +115,7 @@ There is no dragging. Some swipes belong to the device and never reach your game
 - **One move at a time.** After `input` returns a move, the runtime ignores further moves until that move is applied or rejected.
 - **Rejections come back as an event.** When a move is rejected, the player's `input` receives `{kind = "rejected", reason = "…"}`. Show it however you like, for example by setting a message in `ui`.
 - **The end of a round is an event too.** When a round ends, each local player's `input` receives `{kind = "over"}` exactly once. Record per-device results such as wins there, not in `draw`, which runs many times. From then on, pass-and-play calls `draw` and `input` with seat `0`. At the same time, the device shows its own end-of-round menu over your last frame: **Play again** (which calls `setup` again with the same players) or **Leave**.
-- **Hidden games in pass-and-play.** With `hidden = true`, after a move that changes whose turn it is, the mover first sees the result (your `draw` is called with the mover's seat), then taps to pass the device; the screen goes blank until the next player taps. The same blank screen appears when a hidden round starts or resumes.
+- **Hidden games in pass-and-play.** With `hidden = true`, after a move that changes whose turn it is, the mover first sees the result (your `draw` is called with the mover's seat), then taps to pass the device; the screen goes blank until the next player taps. The same blank screen appears when a hidden round starts or resumes. A `timer` that comes due while the result or the blank screen shows waits until the next player is shown.
 
 ## 4. Values in `state`, moves, and `ch.store`
 
