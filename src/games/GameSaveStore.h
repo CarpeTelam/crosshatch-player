@@ -65,22 +65,30 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // What /.games-data/<gameId>/resume.bin (or a whole resume.bin.tmp, when it is missing) holds for a
   // match of the package with `pkgHash`. Valid: exactly what loadResume accepts. Its header names this
   // file, file version, codec version, and package, it is a solo save (mode 0, one seat), and its
-  // snapshot is 1 to Codec::SNAPSHOT_LIMIT bytes of canonical codec. None: no file, or one that was
-  // read and is not that (one line logged, and the file stays). Unreadable: a file is there and
-  // could not be checked, because it would not open or read or the buffer below could not be
-  // allocated (logged): a card or heap fault that may pass, so the caller must not take it for
+  // snapshot is 1 to Codec::SNAPSHOT_LIMIT bytes of canonical codec. Unstartable: a save of this
+  // package whose mode or seat count this game cannot start on this host, or whose mode byte this
+  // firmware does not know (logged quietly, at LOG_INF, as kept): there is a save, which a new match
+  // would replace, but it cannot be resumed here. None: no file, or one that was read and is none of
+  // these (another package's, or malformed; one line logged, and the file stays). Unreadable: a file
+  // is there and could not be checked, because it would not open or read or the buffer below could
+  // not be allocated (logged): a card or heap fault that may pass, so the caller must not take it for
   // "no save" and offer a new match over what may be a good one. Reads the whole file into a buffer of its own for
-  // the call. Solo saves only: a pass save is None here (logged quietly, and kept); the form below takes it.
-  enum class SaveState : uint8_t { None, Valid, Unreadable };
+  // the call. Solo saves only: a pass save is Unstartable here (and kept); the form below takes it.
+  enum class SaveState : uint8_t { None, Valid, Unreadable, Unstartable };
   static SaveState peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]);
   // As above for `game` (its id names the folder), accepting a solo or pass save whose mode and seat count
   // `game` can start on `host`: solo with one seat, or pass with max(2, seats.min) to
   // min(seats.max, host.maxSeats, Roster::MAX_SEATS) seats, each only where game.check(host) starts that mode.
-  // A well-formed save it cannot start is None, logged quietly and kept; a malformed one (`bad seat count`,
-  // `unknown mode`) is None with an error line, and kept too. Valid exactly when the loadResume below with the
-  // same `game` and `host` accepts the save.
+  // A well-formed save it cannot start, or one with an unknown mode byte, is Unstartable, logged quietly and kept;
+  // a malformed one (`bad seat count`) is None with an error line, and kept too. Valid exactly when the loadResume
+  // below with the same `game` and `host` accepts the save.
   static SaveState peek(const GameCore::Manifest& game, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES],
                         const GameCore::HostCaps& host);
+  // The peek above for this store's game id and package hash (None until setPackageHash, and with a nearby roster, as
+  // loadResume reads nothing then), with a buffer of its own:
+  // it changes neither this store's buffer nor its roster, so a match can ask why loadResume refused a save and
+  // still write as before. The match's Continue asks it after a loadResume that returned nothing.
+  SaveState peekResume(const GameCore::Manifest& game, const GameCore::HostCaps& host) const;
   // Before saveResume, flushResume, or loadResume: the hash of the installed package
   // (.pkg). Until it is set, resume.bin is neither read nor written.
   void setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]);

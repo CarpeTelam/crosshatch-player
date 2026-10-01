@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "GameModeActivity.h"
+#include "GameConfirmDialog.h"
 #include "activities/UiListActivity.h"
 #include "games/GameRegistry.h"
 #include "games/GameRowIcon.h"

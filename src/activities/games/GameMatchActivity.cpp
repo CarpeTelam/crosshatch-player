@@ -158,10 +158,11 @@ void GameMatchActivity::onEnter() {
   // here and setResume calls the store, so the snapshot stays valid.
   std::span<const uint8_t> snapshot;
   uint16_t ver = 0;
-  if (start == Start::Resume && !seedResume(snapshot, ver)) {
+  StrId refusal = StrId::STR_GAMES_RESUME_FAILED;
+  if (start == Start::Resume && !seedResume(snapshot, ver, refusal)) {
     // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
     // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
-    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    fail(StrId::STR_GAMES_START_FAILED, I18N.get(refusal));
     return;
   }
   auto created =
@@ -188,21 +189,35 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
-bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver) {
+bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver, StrId& refusal) {
   bool unreadable = false;
   GameCore::Roster saved;
   snapshot = store.saves().loadResume(ver, unreadable, manifest, gameHostCaps(), saved);
   if (snapshot.empty()) {
+    refusal = StrId::STR_GAMES_RESUME_FAILED;
     if (unreadable) {
       // A save is there and would not read, a fault that may pass (the title screen offered Continue for it).
       LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
       return false;
     }
-    if (savedForAnotherHost()) {
-      // A firmware with Pass and Play or more seats may resume it: a new match here would replace it with its first
-      // snapshot.
-      LOG_ERR("GAME", "%s: resume.bin is a save this host cannot start; not starting a new match over it", manifest.id);
-      return false;
+    // Why there is none, asked of the card again with a buffer of its own: the store's buffer and roster stay as they
+    // are, so the error view writes nothing and a new match writes its own roster.
+    switch (store.saves().peekResume(manifest, gameHostCaps())) {
+      case GameSaveStore::SaveState::Unstartable:
+        // A save of this package whose mode or seats this host cannot start, or a later firmware's mode: a new match
+        // here would replace it with its first snapshot.
+        LOG_ERR("GAME", "%s: resume.bin is a save this host cannot start; not starting a new match over it",
+                manifest.id);
+        refusal = StrId::STR_GAMES_RESUME_NOT_HERE;
+        return false;
+      case GameSaveStore::SaveState::Unreadable:
+      case GameSaveStore::SaveState::Valid:
+        // A read that faults now (the first did not) cannot rule out a save, and a save that reads now changed since
+        // the load refused it: either way the file is kept.
+        LOG_ERR("GAME", "%s: resume.bin could not be checked again; not starting a new match over it", manifest.id);
+        return false;
+      case GameSaveStore::SaveState::None:
+        break;
     }
     // No file, or one that was read and is no save (logged with its reason): nothing to lose.
     LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
@@ -218,21 +233,6 @@ bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t&
   return true;
 }
 
-bool GameMatchActivity::savedForAnotherHost() {
-  // Only the host is widened: a save of this package the game itself cannot start was written by no firmware (the
-  // hash ties it to this manifest).
-  GameCore::HostCaps any = gameHostCaps();
-  any.pass = true;
-  any.maxSeats = GameCore::Roster::MAX_SEATS;
-  uint16_t ver = 0;
-  bool unreadable = false;
-  GameCore::Roster saved;
-  // A load spends the store's buffer and roster, which only the error view follows. A read that faults now (the first
-  // read did not) cannot rule out such a save, so it refuses too and the file is kept.
-  const bool loaded = !store.saves().loadResume(ver, unreadable, manifest, any, saved).empty();
-  return loaded || unreadable;
-}
-
 void GameMatchActivity::onExit() {
   forcedExitBeganMs = millis();
   forcedExit = true;
@@ -242,11 +242,16 @@ void GameMatchActivity::onExit() {
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
   // order: cancel and join, a hidden pass match's blank hand-off screen pushed (stopVm,
-  // pushForcedExitBlank), the last snapshot written while the VM that holds it still
+  // pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
   // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
   // finish, then the store. The SD steps stop starting once the deadline has passed,
   // which counts the blank's push.
   handle(MatchEvent::ForcedExit);
+  // With no VM there is no stop to wait for, so a hidden pass match's blank comes first, before the SD steps, when a
+  // seat's frame may still be on the panel: after a stuck VM was stopped on the way to Error before the error view was
+  // drawn (R6). A Leave pushed its own before goToGames() (leave), so one whose Games screen ran out of memory left the
+  // blank, and nothing is pushed again.
+  if (!vm && lifecycle.hiddenPass() && panel == Panel::Seat) pushBlank("forced exit");
   stopVm();
   retryResumeDelete(true);
   flushStore();
@@ -348,6 +353,9 @@ void GameMatchActivity::leave() {
   {
     RenderLock lock(*this);
     stopVm();
+    // A hidden pass match's Leave from a pause menu over a seat's frame blanks the panel before Games draws: if
+    // goToGames() runs out of memory, this match stays current with no VM, and the frame would stay on the panel.
+    if (lifecycle.hiddenPass() && panel == Panel::Seat) pushBlank("leave");
   }
   // Also when a stuck VM took the match to Error first and vm is gone.
   retryResumeDelete(true);
@@ -371,15 +379,20 @@ void GameMatchActivity::stopVm() {
 }
 
 void GameMatchActivity::pushForcedExitBlank() {
-  // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave goes to
-  // Games, which draws its own screen.
+  // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave pushes
+  // its own after the stop (leave).
   if (!forcedExit || !lifecycle.hiddenPass()) return;
-  // The caller holds RenderLock (ActivityManager's, never taken here: 12cc816), so the render task is not inside
-  // render() and replay and the framebuffer are this task's for now. Not an SD step: the deadline does not gate it,
-  // but its time counts against the SD steps that follow.
+  // Not an SD step: the deadline does not gate it, but its time counts against the SD steps that follow.
+  pushBlank("forced exit");
+}
+
+void GameMatchActivity::pushBlank(const char* when) {
+  // The caller holds RenderLock (in onExit ActivityManager's, never taken here: 12cc816), so the render task is not
+  // inside render() and replay, the framebuffer, and panel are this task's for now.
   replay.drawBlank(renderer, viewport);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-  LOG_INF("GAME", "%s: forced exit: blank hand-off screen pushed (half refresh)", manifest.id);
+  panel = Panel::Blank;
+  LOG_INF("GAME", "%s: %s: blank hand-off screen pushed (half refresh)", manifest.id, when);
 }
 
 bool GameMatchActivity::sdStepAllowed(const char* what) {
@@ -534,7 +547,8 @@ void GameMatchActivity::loopPlaying() {
   GameCore::GameEvent event;
   if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
-    vm->postInput(event);
+    // With the frame on the panel, so the VM drops it if another seat has been drawn since (a pass match).
+    vm->postInput(event, frameDisplayed.load(std::memory_order_acquire));
   }
   vm->pollTimer();
   store.flushIfDue(millis());
@@ -707,11 +721,15 @@ void GameMatchActivity::renderCanvas() {
   renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
-  if (vm->drawFront(renderer, viewport, replay)) renderer.displayBuffer(replay.refreshMode());
-  // Every way out of here past the gate stores it, a frame replay skipped as identical to the one on screen included
+  if (vm->drawFront(renderer, viewport, replay)) {
+    renderer.displayBuffer(replay.refreshMode());
+    panel = Panel::Seat;
+  }
+  // Every way out of here past the gate stores these, a frame replay skipped as identical to the one on screen included
   // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so
   // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
-  // that acquires it.
+  // that acquires it. The frame's number first, so a loop that sees the counts posts its touches with it.
+  frameDisplayed.store(frame, std::memory_order_release);
   roundsDisplayed.store(started, std::memory_order_release);
   seatDisplayed.store(served, std::memory_order_release);
 }
@@ -729,7 +747,10 @@ void GameMatchActivity::renderHandOff() {
   // No game command: the blank and its icon only, refreshed in full, so none of the last seat's frame stays on the
   // panel.
   replay.drawBlank(renderer, viewport);
-  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  // In full when the blank replaces anything else (R4); a repaint of the blank already on the panel (after the light
+  // panel closed, or any other render in HandOff) has nothing of a seat's frame left to clear.
+  renderer.displayBuffer(panel == Panel::Blank ? HalDisplay::FAST_REFRESH : HalDisplay::FULL_REFRESH);
+  panel = Panel::Blank;
   // The next seat's frame is drawn on a cleared screen in full.
   viewOnScreen = true;
   // The tap zone (it draws nothing), published only now that the blank is on the panel: a tap before it is dropped.
@@ -744,7 +765,8 @@ void GameMatchActivity::renderHandOff() {
 void GameMatchActivity::renderView(const MatchState state) {
   renderer.clearScreen();
   // The menus and the Result banner sit over the last frame (canvasUnderView says when there is none to show).
-  if (canvasUnderView(state)) {
+  const bool canvas = canvasUnderView(state);
+  if (canvas) {
     replay.forceFull();
     renderedFrame.store(vm->frameGen(), std::memory_order_release);
     vm->drawFront(renderer, viewport, replay);
@@ -767,6 +789,8 @@ void GameMatchActivity::renderView(const MatchState state) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
   renderer.displayBuffer(state == MatchState::Error ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
+  // Seat 0's frame under the Over menu is everyone's, so only a view over another seat's frame counts as one.
+  panel = canvas && state != MatchState::Over ? Panel::Seat : Panel::Other;
   // Result's banner is on the panel: a tap may pass it now (loopHandOff), unless the match has moved on meanwhile.
   if (state == MatchState::Result) passScreenShown.store(MatchState::Result, std::memory_order_release);
 }

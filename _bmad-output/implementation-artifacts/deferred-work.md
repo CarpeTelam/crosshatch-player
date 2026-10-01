@@ -781,3 +781,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-refactor-sweep-plan.md`
   summary: Unchanged, with their own triggers (entry 10 met them and changes nothing about them): `## e5-inception`'s seat-choice rows (a host with `seats_max` above 2); `## 4.1`'s per-pixel tests of `Op::Circle`, outline, line, and text on the renderer double (entry 4 only added `FrameReplay::drawBlank`, the hand-off screen, which its own tests pin); `## 4.13`'s other items: the per-move `resume.bin` write cost and the forced exit's total, the panel refresh behind `displayBuffer`, and `GameHash`'s mbedTLS branch (entry 11, R14), the unbounded fills (the `timing` fixture's device run), `## 4.11`'s rejected resume kept (a `LUA_ERRMEM` failure kind), the `goHome` mapping test (the next row-5 touch), the launcher's fixed row height and a second tap on Remove (a theme that grows the row, or a device report), the installer's extracted-sum bound and `ZipFile`'s and `PngToBmpConverter`'s reason codes (the installer and upstream files stay out of entry 10); `## 5.8`'s note that a registry load that ran out of memory is not retried in the same visit (a device report).
   evidence: Review of entry 10 (intent alignment): each was open in a heading entry 10 references and needs no change here. The owner confirms each at entry 11.
+
+## e5-xr
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: `lib/GameCore/GameEvent.h` still documents `serial` as "Timer only", while `GameVM::postInput` now carries a touch's frame tag in it from the loop to the VM task (zeroed before the game sees the event); update that comment, or give the tag its own field.
+  evidence: Review of e5-xr (blind hunter). `GameEvent.h` and `GameInput.h` were outside e5-xr's touches. Trigger: the next change to `GameEvent.h` or `InputQueue`.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: The confirm dialog's open state (`GameModeActivity::confirmRow`, `GamesLauncherActivity::removeIndex`) is a plain field the loop task writes and the render task reads once per build; e5-xr made only the dialog's `focus` atomic, as cross-story row 7 asked.
+  evidence: Review of e5-xr (blind hunter); the read-once comments in `buildConfirmDialog` and the launcher's remove dialog. Pre-existing. Trigger: the next change to either dialog's open/close path.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: A `resume.bin` with a later file version, codec version, or a snapshot over today's limit is `None` (malformed) to `peek`, so the title screen's New and a Continue's fallback replace it without asking; e5-xr keeps only an unknown mode byte or an unstartable mode or seat count as `Unstartable`.
+  evidence: Review of e5-xr (edge-case hunter): `GameSaveStore::readResume` returns the header status before the mode. Pre-existing; cross-story row 2 named modes, seats, and the mode byte only. Trigger: the first resume.bin format or codec version bump.

@@ -73,12 +73,13 @@ class SoloRounds {
   // One event as the game sees it: a stale timer event is dropped with no draw; else
   // play, then draw (the seat shown after the move).
   GameCore::Outcome step(const GameCore::GameEvent& event);
+  // The seat GameCore::seatShown names for the session's status now: after start, restart, or a step that drew, the
+  // seat whose frame was published last (GameVM notes it, to drop a touch posted under another seat's frame).
+  uint8_t shownSeat() const;
 
  private:
   GameCore::Outcome beginRound();
   void countRoundEnd();
-  // The seat GameCore::seatShown names for the session's status now.
-  uint8_t shownSeat() const;
 
   GameTimer& timer;
   InputQueue& queue;

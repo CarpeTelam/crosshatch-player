@@ -14,14 +14,14 @@ inline constexpr uint8_t NO_SEAT = 0xFF;
 
 // The seat whose frame this device shows (and whose input it reads) in match state `state`.
 // For the two roster shapes a match has: one local seat (solo, a nearby device), shown in every
-// state but HandOff; or every seat local (pass), which shows the turn seat while the round is on
-// and seat 0, the frame for everyone, once it is over: in Over, or when the status already is (the
-// step that ended it). A hidden pass match's Result shows `mover`, the seat that just moved, and
-// its HandOff shows NO_SEAT, whatever the roster. Paused here is the open/solo answer only (the
-// turn seat, or the one local seat): a match asks with its lifecycle (the overload below), which
-// answers a hidden match's Paused from the state it was paused from. A roster with several local
-// seats but not all would be shown its turn seat even when that seat is not local; no match has
-// one. Pure.
+// state but HandOff; or several local seats (pass: every seat), which shows the turn seat while the
+// round is on and seat 0, the frame for everyone, once it is over: in Over, or when the status
+// already is (the step that ended it). A hidden pass match's Result shows `mover`, the seat that
+// just moved, and its HandOff shows NO_SEAT, whatever the roster. Paused shows what Playing shows
+// (the turn seat, or the one local seat): a hidden pass match's render answers its Paused from the
+// state it was paused from itself (GameMatchActivity::canvasUnderView), and its VM keeps its own
+// view (GameVM). Fails closed: a turn seat or mover this device does not play shows NO_SEAT, never
+// another device's seat. Pure.
 inline uint8_t seatShown(const MatchState state, const Roster& roster, const Status& status,
                          const uint8_t mover = NO_SEAT) {
   if (state == MatchState::HandOff) return NO_SEAT;
@@ -31,17 +31,9 @@ inline uint8_t seatShown(const MatchState state, const Roster& roster, const Sta
   // Fails closed: a Result asked without a mover, or with one this device does not play,
   // draws nothing rather than another seat's private view.
   if (state == MatchState::Result) return roster.isLocal(mover) ? mover : NO_SEAT;
-  return status.turn;
-}
-
-// The seat a match shows: the state form with `lifecycle.state()`, except that Paused answers
-// for the state it returns to, so a hidden pass match paused from Result keeps the mover's view
-// and one paused from HandOff shows NO_SEAT, never the next seat's view. An open pass or solo
-// match's Paused shows what the state form shows (its resumesTo() is Playing). Pure.
-inline uint8_t seatShown(const MatchLifecycle& lifecycle, const Roster& roster, const Status& status,
-                         const uint8_t mover = NO_SEAT) {
-  const MatchState state = lifecycle.state() == MatchState::Paused ? lifecycle.resumesTo() : lifecycle.state();
-  return seatShown(state, roster, status, mover);
+  // The same for a turn seat that is not local (a roster with several local seats but not all): LuaGame already
+  // refuses a turn outside 1..n, but not one of another device's seats.
+  return roster.isLocal(status.turn) ? status.turn : NO_SEAT;
 }
 
 }  // namespace GameCore

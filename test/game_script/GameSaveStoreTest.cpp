@@ -560,8 +560,7 @@ TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAnd
       {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX"), "bad_magic"},
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "unknown_file_version"},
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "unknown_codec_version"},
-      {resumeFile(TAPS3, 7, PKG, 2), "unknown mode"},
-      {resumeFile(TAPS3, 7, PKG, 255, 2), "unknown mode"},
+      // An unknown mode byte is a save this host cannot start, not a malformed file (AnUnknownModeIsUnstartable...).
       {resumeFile(TAPS3, 7, PKG, 0, 2), "bad seat count"},
       {resumeFile(TAPS3, 7, PKG, 0, 0), "bad seat count"},
       {resumeFile(Bytes{}), "empty snapshot"},
@@ -993,12 +992,13 @@ TEST_F(GameSaveStoreTest, APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeI
 }
 
 // The older, solo-only forms (no firmware code calls them; the title screen and the match's Continue use the new
-// ones): a pass save is not theirs to offer or resume, so it is None to them, and the file stays.
-TEST_F(GameSaveStoreTest, APassSaveIsNoneToTheSoloOnlyFormsAndIsKept) {
+// ones): a pass save is not theirs to offer or resume, so it is Unstartable to peek, loadResume refuses it, and the
+// file stays.
+TEST_F(GameSaveStoreTest, APassSaveIsUnstartableToTheSoloOnlyFormsAndIsKept) {
   const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unstartable);
   EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
                            " is a save that cannot be resumed here: mode not startable; the file is kept"));
   EXPECT_FALSE(fakelog::any("ERR"));
@@ -1008,15 +1008,18 @@ TEST_F(GameSaveStoreTest, APassSaveIsNoneToTheSoloOnlyFormsAndIsKept) {
   EXPECT_TRUE(saves->loadResume(ver, unreadable).empty());
   EXPECT_FALSE(unreadable);
   EXPECT_EQ(ver, 0u);
-  EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": mode not startable"));
+  EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
+                           " is a save that cannot be resumed here: mode not startable; the file is kept"));
+  EXPECT_FALSE(fakelog::any("ERR")) << "the save is kept, not discarded";
   EXPECT_EQ(fakesd::bytesOf(RESUME), passSave);
 }
 
-// A save of a mode or seat count this game cannot start on this host: None in peek (one quiet line) and empty from
-// loadResume (one error line), the same for both, and the file stays. The pass seats are max(2, seats.min) to
-// min(seats.max, host.maxSeats, Roster::MAX_SEATS), and only where game.check(host) starts pass and some seat count
-// fits. A seat count no save of its mode has is a malformed file: `bad seat count`, an error line in peek too.
-TEST_F(GameSaveStoreTest, ASaveTheGameOrHostCannotStartIsNoneToBothAndKept) {
+// A save of a mode or seat count this game cannot start on this host: Unstartable in peek and empty from loadResume,
+// each with one quiet line saying the file is kept, and the file stays (cross-story review row 2: the title screen
+// asks before New replaces it). The pass seats are max(2, seats.min) to min(seats.max, host.maxSeats,
+// Roster::MAX_SEATS), and only where game.check(host) starts pass and some seat count fits. A seat count no save of its
+// mode has is a malformed file: `bad seat count`, None, with an error line in peek too.
+TEST_F(GameSaveStoreTest, ASaveTheGameOrHostCannotStartIsUnstartableAndKept) {
   constexpr uint8_t SOLO_ONLY = Manifest::MODE_SOLO;
   constexpr uint8_t PASS_ONLY = Manifest::MODE_PASS;
   constexpr uint8_t BOTH = Manifest::MODE_SOLO | Manifest::MODE_PASS;
@@ -1074,31 +1077,38 @@ TEST_F(GameSaveStoreTest, ASaveTheGameOrHostCannotStartIsNoneToBothAndKept) {
       EXPECT_FALSE(fakelog::any("ERR")) << label;
       continue;
     }
-    EXPECT_EQ(state, GameSaveStore::SaveState::None) << label;
+    const bool malformed = std::string(c.reason) == "bad seat count";
+    EXPECT_EQ(state, malformed ? GameSaveStore::SaveState::None : GameSaveStore::SaveState::Unstartable) << label;
     EXPECT_TRUE(snapshot.empty()) << label;
     EXPECT_EQ(ver, 0u) << label;
     EXPECT_TRUE(sameRoster(saved, Roster::solo())) << label;
-    const bool malformed = std::string(c.reason) == "bad seat count";
-    EXPECT_EQ(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
-                           " is a save that cannot be resumed here: " + c.reason + "; the file is kept"),
-              !malformed)
+    const std::string kept = std::string("INF GAME: counter: ") + RESUME +
+                             " is a save that cannot be resumed here: " + c.reason + "; the file is kept";
+    EXPECT_EQ(std::count(fakelog::lines.begin(), fakelog::lines.end(), kept), malformed ? 0 : 2)
+        << label << ": peek's and loadResume's lines";
+    EXPECT_EQ(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason), malformed)
         << label;
-    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason)) << label;
     EXPECT_EQ(std::count_if(fakelog::lines.begin(), fakelog::lines.end(),
                             [](const std::string& line) { return line.rfind("ERR", 0) == 0; }),
-              malformed ? 2 : 1)
-        << label << (malformed ? ": peek's line is an error too" : ": only loadResume's line is an error");
+              malformed ? 2 : 0)
+        << label << (malformed ? ": both lines of a malformed file are errors" : ": a kept save logs no error");
   }
 }
 
-TEST_F(GameSaveStoreTest, AnUnknownModeIsDiscardedByTheNewFormsAndKept) {
+// A mode byte this firmware does not write (a later firmware's mode, perhaps): Unstartable to both peeks and refused by
+// loadResume, each logged quietly as kept; the file stays.
+TEST_F(GameSaveStoreTest, AnUnknownModeIsUnstartableAndKept) {
   for (const uint8_t mode : {2, 3, 255}) {
     SetUp();
     const Bytes file = resumeFile(TAPS3, 7, PKG, mode, 2);
     fakesd::addFile(RESUME, file);
     openResume();
-    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::None) << int(mode);
-    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": unknown mode")) << int(mode);
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Unstartable) << int(mode);
+    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unstartable) << int(mode);
+    EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
+                             " is a save that cannot be resumed here: unknown mode; the file is kept"))
+        << int(mode);
+    EXPECT_FALSE(fakelog::any("ERR")) << int(mode);
     fakelog::lines.clear();
     uint16_t ver = 5;
     bool unreadable = true;
@@ -1107,9 +1117,39 @@ TEST_F(GameSaveStoreTest, AnUnknownModeIsDiscardedByTheNewFormsAndKept) {
     EXPECT_FALSE(unreadable);
     EXPECT_EQ(ver, 0u);
     EXPECT_TRUE(sameRoster(saved, Roster::solo()));
-    EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": unknown mode")) << int(mode);
+    EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
+                             " is a save that cannot be resumed here: unknown mode; the file is kept"))
+        << int(mode);
+    EXPECT_FALSE(fakelog::any("ERR")) << int(mode);
     EXPECT_EQ(fakesd::bytesOf(RESUME), file) << int(mode);
   }
+}
+
+// peekResume, the match's refusal check (cross-story review row 10): the static peek's answer for the store's own id
+// and package, read with a buffer of its own, so neither the store's buffer nor its roster (what its next save writes)
+// changes, where a loadResume that loads the save adopts the save's roster.
+TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekAndLeavesTheStoresBufferAndRoster) {
+  const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
+  fakesd::addFile(RESUME, passSave);
+  open();
+  EXPECT_EQ(saves->peekResume(counterGame(), PASS_HOST), GameSaveStore::SaveState::None)
+      << "without the package hash no file is known to be this package's";
+  openResume();
+  std::fill(buffer.begin(), buffer.end(), 0xAB);
+  const Bytes before = buffer;
+  EXPECT_EQ(saves->peekResume(counterGame(), PASS_HOST), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(saves->peekResume(counterGame(), hostOf(4, false)), GameSaveStore::SaveState::Unstartable);
+  EXPECT_EQ(saves->peekResume(counterGame(Manifest::MODE_SOLO), PASS_HOST), GameSaveStore::SaveState::Unstartable);
+  EXPECT_EQ(buffer, before) << "peekResume read into the store's buffer";
+  EXPECT_EQ(fakesd::bytesOf(RESUME), passSave);
+  // The store's roster is still solo: its next save is mode 0, n 1, not the pass save's roster.
+  ASSERT_TRUE(saves->saveResume(TAPS4, 8));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 8, PKG, SOLO_BYTE, 1));
+  // A nearby roster reads nothing, as loadResume does (AD-17).
+  Roster nearby = Roster::pass(2);
+  nearby.mode = Mode::Nearby;
+  saves->setRoster(nearby);
+  EXPECT_EQ(saves->peekResume(counterGame(), PASS_HOST), GameSaveStore::SaveState::None);
 }
 
 // A save the firmware before pass saves wrote: formats.md's example, byte for byte. File version 1 is unchanged.

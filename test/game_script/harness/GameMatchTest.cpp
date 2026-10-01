@@ -1138,6 +1138,51 @@ TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEv
 }
 
 // An open pass match never hands off (entry 4's Never): no Result, no HandOff, and no blank push.
+// The loop posts each touch with the frame on the panel (cross-story review row 5): seat 1's second tap, made under its
+// frame while its turn-passing move is still being played, is dropped by the VM, never seat 2's move.
+TEST_F(PassMatchTest, ATapMadeUnderSeatOnesFrameBehindItsTurnPassingMoveNeverReachesSeatTwo) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(cellX(2), cellY(2));  // seat 1's second tap, under the same frame
+  frame();
+  fakertos::release();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("tap for seat 2"); }));
+  EXPECT_TRUE(logHas("Dropped a touch"));
+  EXPECT_FALSE(logHas("tap for seat 2")) << "seat 1's tap became seat 2's input";
+  EXPECT_FALSE(logHas("apply seat 2"));
+  EXPECT_EQ(fakelog::countLines("apply seat 1 cell 1"), 1u);
+}
+
+// The same behind the move that ends the round (cross-story review row 4): the tap never reaches seat 0, which is a
+// frame, never an input seat.
+TEST_F(PassMatchTest, ATapMadeBehindTheRoundEndingMoveNeverReachesSeatZero) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  for (const int cell : {1, 4, 2, 5}) {
+    ASSERT_NO_FATAL_FAILURE(tapCell(cell));
+  }
+  ASSERT_TRUE(drew("Player 1 (X) to move"));
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(cellX(3), cellY(3));  // X completes 1-2-3: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(cellX(9), cellY(9));  // made under seat 1's frame, queued behind the winning move
+  frame();
+  fakertos::release();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("tap for seat 0"); }));
+  EXPECT_TRUE(logHas("Dropped a touch"));
+  EXPECT_FALSE(logHas("tap for seat 0")) << "seat 0 is a frame, never an input seat";
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(logHas("Script error"));
+}
+
 TEST_F(PassMatchTest, AnOpenPassMatchNeverEntersResultOrHandOffNorPushesABlank) {
   installFixture("pass-open");
   enter("pass-open", "Pass open", GameCore::Roster::pass(2));
@@ -1922,8 +1967,11 @@ TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmStillPushesTheBlank
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
 }
 
-// A user Leave stops the VM itself, with no forced exit: it pushes no blank, and the exit after it finds no VM.
-TEST_F(HiddenPassTest, LeavingAHiddenMatchPushesNoHalfRefresh) {
+// A user Leave from a pause menu over a seat's frame (cross-story review row 1) pushes the blank, a half refresh with
+// no text, after the VM's stop and before it asks for Games: if Games then ran out of memory, this match would stay
+// current with no VM, and the seat's frame must not stay on the panel. The exit after it finds the blank there and
+// pushes nothing.
+TEST_F(HiddenPassTest, LeavingFromASeatsFramePushesTheBlankBeforeGamesAndTheExitAfterItNothing) {
   enterHidden();
   expectBlank();
   showSeat(1);
@@ -1931,15 +1979,178 @@ TEST_F(HiddenPassTest, LeavingAHiddenMatchPushesNoHalfRefresh) {
   frame();
   ASSERT_EQ(state(), "Paused");
   renderView();
+  ASSERT_TRUE(holds(lastPush(), "apple")) << "the pause menu sits over seat 1's frame";
   const size_t pushes = renderer->shown.size();
+  size_t pushesAtGames = 0;
+  bool vmStoppedAtGames = false;
+  activityManager.onGoToGames = [&] {
+    pushesAtGames = renderer->shown.size();
+    vmStoppedAtGames = logHas("VM stopped");
+  };
   tapOption(tr(STR_GAMES_LEAVE));
+  activityManager.onGoToGames = nullptr;
   ASSERT_EQ(state(), "Leaving");
   EXPECT_EQ(activityManager.asks.goToGames, 1);
+  EXPECT_EQ(pushesAtGames, pushes + 1) << "the blank was not pushed before Games was asked for";
+  EXPECT_TRUE(vmStoppedAtGames);
+  ASSERT_EQ(renderer->shown.size(), pushes + 1);
+  EXPECT_EQ(lastPush().mode, HalDisplay::HALF_REFRESH);
+  EXPECT_TRUE(lastPush().texts.empty()) << lastPush().texts.front();
+  EXPECT_EQ(fakelog::countLines("pass-hidden: leave: blank hand-off screen pushed (half refresh)"), 1u);
   const ExitRecord record = sleepRecordingPushes();
-  EXPECT_TRUE(record.pushes.empty());
-  EXPECT_EQ(renderer->shown.size(), pushes) << "Leave pushed a screen";
-  EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+  EXPECT_TRUE(record.pushes.empty()) << "the exit after Leave pushed again";
+  EXPECT_FALSE(logHas("forced exit: blank hand-off screen pushed"));
   EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// A Leave from a screen that holds no seat's private frame pushes nothing: the Over menu sits over seat 0's frame,
+// which is everyone's, and the blank's pause menu sits on no frame. The exit after it pushes nothing either.
+TEST_F(HiddenPassTest, LeavingFromOverOrTheBlanksPauseMenuPushesNothing) {
+  for (const bool fromOver : {true, false}) {
+    SCOPED_TRACE(fromOver ? "from Over" : "from the blank's pause menu");
+    if (activity) {
+      if (!exited) activityManager.exitHolding(*activity);
+      activityManager.destroyHolding(activity);
+      ASSERT_TRUE(fakertos::waitNoTasks());
+    }
+    exited = false;
+    fakelog::clearLines();
+    enterHidden();
+    expectBlank();
+    if (fromOver) {
+      for (int turn = 0; turn < 3; ++turn) {
+        const int mover = turn % 2 + 1;
+        showSeat(mover);
+        moveAndPass(mover, 3 - mover);
+        tapScreen();
+        expectBlank();
+      }
+      showSeat(2);
+      tapCanvas(100, 300);  // the fourth move ends the round
+      frame();
+      ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+      renderView();
+      ASSERT_TRUE(holds(lastPush(), "Everyone: the secrets were apple and river"));
+    } else {
+      input->click(Button::Back);
+      frame();
+      ASSERT_EQ(state(), "Paused");
+      renderView();
+      ASSERT_FALSE(holds(lastPush(), "apple"));
+    }
+    const size_t pushes = renderer->shown.size();
+    tapOption(tr(STR_GAMES_LEAVE));
+    ASSERT_EQ(state(), "Leaving");
+    EXPECT_EQ(renderer->shown.size(), pushes) << "Leave pushed a screen";
+    const ExitRecord record = sleepRecordingPushes();
+    EXPECT_TRUE(record.pushes.empty());
+    EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+    EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  }
+}
+
+// A render in HandOff with the blank already on the panel (the light panel closed, a status repaint) repaints it with
+// a fast refresh and no text (cross-story review row 6); the blank entered from any other screen is a full refresh.
+TEST_F(HiddenPassTest, ARepaintOfTheBlankIsAFastRefreshAndEnteringItIsFull) {
+  enterHidden();
+  expectBlank();  // from the screen before the match: full
+  render();
+  EXPECT_EQ(lastPush().mode, HalDisplay::FAST_REFRESH);
+  EXPECT_TRUE(lastPush().texts.empty());
+  render();
+  EXPECT_EQ(lastPush().mode, HalDisplay::FAST_REFRESH);
+  showSeat(1);
+  moveAndPass(1, 2);
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();  // from Result's banner over seat 1's frame: full
+  render();
+  EXPECT_EQ(lastPush().mode, HalDisplay::FAST_REFRESH);
+  EXPECT_TRUE(lastPush().texts.empty());
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();  // from the pause menu: full
+}
+
+// A call stuck on a seat's frame frees the VM on the way to Error; a forced exit before the error view is drawn finds
+// no VM but a seat's frame on the panel, and pushes the blank before any SD step (cross-story review row 1). Nothing is
+// pushed after it.
+TEST_F(HiddenPassTest, AForcedExitWithNoVmOverASeatsFramePushesTheBlankAndNothingAfter) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm();      // the clock: seat 1's input reads it in ch.timer.after
+  tapCanvas(100, 300);  // the move: held at its clock read, inside Lua
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  frame();  // the first poll that sees the call starts its clock
+  fakertos::advance(3001);
+  frame();
+  ASSERT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("a call ran over"));
+  fakertos::release();
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  // The error view is asked for but not yet drawn: seat 1's frame is still on the panel.
+  ASSERT_TRUE(holds(lastPush(), "apple"));
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD step ran before the blank";
+  const size_t pushes = renderer->shown.size();
+  render();
+  EXPECT_EQ(renderer->shown.size(), pushes) << "a push after the forced exit";
+}
+
+// The VM's view lags the match (cross-story review row 9): a tap queued behind seat 1's turn-passing move is played,
+// under the mover's view, while the match is already on the blank. Its frame (seat 1's again) never reaches the panel:
+// no push after the blank holds seat 1's text until seat 2's frame, whatever is drawn meanwhile (a repaint, the pause
+// menu).
+TEST_F(HiddenPassTest, AMoversFramePlayedWhileTheMatchIsOnTheBlankNeverReachesThePanel) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(100, 300);  // A, seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(200, 300);  // B: queued behind A, under seat 1's frame
+  frame();
+  fakertos::pass();  // A's "apply seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's "draw for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::pass();  // A's frame is published and the turn counted; B is held at its "tap for seat 1"
+  ASSERT_TRUE(fakertos::waitParked());
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  render();
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  const size_t blankAt = renderer->shown.size();
+  expectBlank();
+  fakertos::release();  // B plays to the mover and seat 1's frame is published again, the match on the blank
+  ASSERT_TRUE(waitFor([] { return fakelog::countLines("draw for seat 1") == 3u; }));
+  for (int i = 0; i < 10; ++i) frame();
+  render();  // a repaint on the blank
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  showSeat(2);
+  ASSERT_GT(renderer->shown.size(), blankAt);
+  for (size_t i = blankAt; i < renderer->shown.size(); ++i) {
+    EXPECT_FALSE(holds(renderer->shown[i], "apple")) << "push " << i << " after the blank holds seat 1's frame";
+  }
+  EXPECT_FALSE(logHas("tap for seat 2")) << "B reached seat 2";
 }
 
 // The blank is the eye-closed library icon at 128 px, black, centred on the canvas, and nothing else: drawn as

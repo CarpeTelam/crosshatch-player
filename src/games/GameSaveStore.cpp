@@ -65,10 +65,15 @@ constexpr char SEATS_NOT_STARTABLE[] = "seats not startable";
 // A seat count no save of its mode has (solo n other than 1; pass n below 2 or over Roster::MAX_SEATS): a malformed
 // file, refused at LOG_ERR as other malformed files are.
 constexpr char BAD_SEAT_COUNT[] = "bad seat count";
+// A mode byte this firmware does not write (2..255): a later firmware's mode, perhaps, so the save is kept as one this
+// host cannot start, not taken for a malformed file.
+constexpr char UNKNOWN_MODE[] = "unknown mode";
 
-// A refusal peek logs at LOG_INF: the save is fine, only not this match's to resume.
-bool keptQuietly(const char* problem) {
-  return std::strcmp(problem, MODE_NOT_STARTABLE) == 0 || std::strcmp(problem, SEATS_NOT_STARTABLE) == 0;
+// Whether a refusal makes the save Unstartable, which peek and loadResume log at LOG_INF as kept: a save of this
+// package that is fine, or may be, only not this host's to resume, which a new match must not replace without asking.
+bool unstartableHere(const char* problem) {
+  return std::strcmp(problem, MODE_NOT_STARTABLE) == 0 || std::strcmp(problem, SEATS_NOT_STARTABLE) == 0 ||
+         std::strcmp(problem, UNKNOWN_MODE) == 0;
 }
 
 // The mode resume.bin's mode byte names; false for a byte no mode is written as (a nearby match saves nothing).
@@ -192,7 +197,7 @@ const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)
   // Before the mode: another package's save is that package's whatever its mode, and stays a quiet line in peek.
   if (std::memcmp(prefix + RESUME_HASH_AT, pkgHash, GameSaveStore::PACKAGE_HASH_BYTES) != 0) return OTHER_PACKAGE;
   Mode mode = Mode::Solo;
-  if (!modeOfByte(prefix[RESUME_MODE_AT], mode)) return "unknown mode";
+  if (!modeOfByte(prefix[RESUME_MODE_AT], mode)) return UNKNOWN_MODE;
   const uint8_t seats = prefix[RESUME_SEATS_AT];
   Roster found;
   switch (mode) {
@@ -379,8 +384,9 @@ GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const 
     // nor is a well-formed save this form, game, or host cannot resume (it stays too).
     if (std::strcmp(problem, OTHER_PACKAGE) == 0) {
       LOG_INF("GAME", "%s: %s is another package's save: %s", gameId, path, problem);
-    } else if (keptQuietly(problem)) {
+    } else if (unstartableHere(problem)) {
       LOG_INF("GAME", "%s: %s is a save that cannot be resumed here: %s; the file is kept", gameId, path, problem);
+      return SaveState::Unstartable;
     } else if (unreadable) {
       LOG_ERR("GAME", "%s: could not check %s: %s; the file is kept", gameId, path, problem);
     } else {
@@ -389,6 +395,13 @@ GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const 
     return unreadable ? SaveState::Unreadable : SaveState::None;
   }
   return SaveState::Valid;
+}
+
+GameSaveStore::SaveState GameSaveStore::peekResume(const GameCore::Manifest& game,
+                                                   const GameCore::HostCaps& host) const {
+  // As loadResume: without the package hash no file here is known to be this package's, and a nearby match has none.
+  if (!resumeOn()) return SaveState::None;
+  return peekStartable(id, packageHash, startableFor(game, host));
 }
 
 void GameSaveStore::setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]) {
@@ -431,6 +444,8 @@ std::span<const uint8_t> GameSaveStore::loadStartable(uint16_t& ver, bool& unrea
   if (const char* problem = readResume(path, packageHash, startable, ver, buffer, length, saved, &fault)) {
     if (fault) {
       LOG_ERR("GAME", "%s: could not read %s: %s; the file is kept", id, path, problem);
+    } else if (unstartableHere(problem)) {
+      LOG_INF("GAME", "%s: %s is a save that cannot be resumed here: %s; the file is kept", id, path, problem);
     } else {
       LOG_ERR("GAME", "%s: discarded %s: %s", id, path, problem);
     }

@@ -178,46 +178,53 @@ through the new `loadResume` (below) writes the roster it loaded, so a resumed p
 Each of `peek` and `loadResume` has two forms. The older ones, `peek(id, pkgHash)` and `loadResume(ver, unreadable)`,
 accept a solo save only; no firmware code calls them (the host suites still do). The newer ones,
 `peek(game, pkgHash, host)` and `loadResume(ver, unreadable, game, host, saved)`, take the game's manifest and the
-host's caps. The game's title screen calls the new `peek` once, when it opens; the match's Continue calls the new
-`loadResume`, and on a refusal calls it again with the host widened to pass and 16 seats, to tell a save only another
-host can start from one that is not usable anywhere (below). They accept a save that game can start on that
-host: solo with n 1, or pass with n from max(2, `seats.min`) to the least of `seats.max`, the host's `maxSeats`, and
-16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)` starts it. A pass game with no seat count that
-fits the host cannot start pass there, so its pass save is `mode not startable`. The new `loadResume` gives the saved
-roster in `saved` (`Roster::solo()` or `Roster::pass(n)`, and `Roster::solo()` when it loads nothing).
+host's caps. The game's title screen calls the new `peek` once, when it opens. The match's Continue calls the new
+`loadResume`; when that loads nothing, the match calls `peekResume(game, host)` to learn why (below). `peekResume` is
+the new `peek` for the store's own id and package hash: it reads into a buffer of its own, so the store's buffer and
+roster do not change, and it reads nothing without the package hash or with a nearby roster, as `loadResume` does. Both
+forms accept a save that game can start on that host: solo with n 1, or pass with n from max(2, `seats.min`) to the
+least of `seats.max`, the host's `maxSeats`, and 16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)`
+starts it. A pass game with no seat count that fits the host cannot start pass there, so its pass save is
+`mode not startable`. The new `loadResume` gives the saved roster in `saved` (`Roster::solo()` or `Roster::pass(n)`, and
+`Roster::solo()` when it loads nothing).
 
 **Usable** is what `GameSaveStore::peek` answers `Valid` for, and it is exactly what the `loadResume` of the same form
 accepts: the header checks `ok`, the package hash is the installed package's, the mode and n are ones the form accepts
 (above; checked after the package hash, so another package's save is `other package` whatever its mode), and the
 snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is refused
-before it is read. `peek` reads the whole file into a buffer allocated for the call. It answers one of three things:
+before it is read. `peek` reads the whole file into a buffer allocated for the call. It answers one of four things:
 
 - `Valid`: the game's title screen offers its Continue row (the title screen calls `peek` once, when it opens);
-- `None`: no file, or one that was read and is not usable (the header status, `other package`, `unknown mode`,
-  `bad seat count`, `mode not startable`, `seats not startable`, `empty snapshot`, `truncated`, `too large`, or the
-  codec's error). `bad seat count` is a seat count no save of its mode has (solo n other than 1, pass n below 2 or over
-  16), a malformed file. One log line names why, at `LOG_ERR`, except a save of another package and a well-formed
-  save the form, game, or host cannot resume (`mode not startable`, `seats not startable`), which are `LOG_INF`
-  because the title screen asks again each time it opens and the save is not broken. `loadResume` logs every refusal,
-  these included, at `LOG_ERR` ("discarded"). The file stays, so a save of another package, or one only another host can
-  start, survives until the game's next match replaces it;
+- `Unstartable`: a save of this package that the form, game, or host cannot resume: a well-formed mode or seat count
+  it cannot start (`mode not startable`, `seats not startable`), or a mode byte this firmware does not write
+  (`unknown mode`, 2 to 255: perhaps a later firmware's). One `LOG_INF` line says it is kept. The title screen offers
+  no Continue row for it, but it is a save: a New row asks before it replaces it, as over any save;
+- `None`: no file, or one that was read and is not usable for another reason (the header status, `other package`,
+  `bad seat count`, `empty snapshot`, `truncated`, `too large`, or the codec's error). `bad seat count` is a seat count
+  no save of its mode has (solo n other than 1, pass n below 2 or over 16), a malformed file. One log line names why,
+  at `LOG_ERR`, except a save of another package, which is `LOG_INF` because the title screen asks again each time it
+  opens and the save is not broken. `loadResume` logs these refusals at `LOG_ERR` ("discarded"), and an `Unstartable`
+  save at `LOG_INF`, as kept, as `peek` does. The file stays, so a save of another package, or a malformed one,
+  survives until the game's next match replaces it;
 - `Unreadable`: a file is there and could not be checked, because it would not open (`cannot open`) or read
   (`cannot read`) or the buffer could not be allocated, whatever the save's mode. A card or heap fault may pass, so it
   is not `None`: the title screen still offers the Continue row, so that a new match is not the only choice offered
   over a save that may be good.
 
 The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`), and plays the
-roster the save records, whatever roster Continue passed. A save that is `None` then starts a new match, since nothing
-usable is lost, with one exception: a save of this package that only another host can start (`mode not startable` or
-`seats not startable` here, accepted by the widened `loadResume`; `GameMatchActivity::savedForAnotherHost`) does not.
-Neither does a save the match cannot read (`Unreadable`), or one that the VM refuses although `peek` accepted it: the
-match shows the error view "The saved match could not be resumed", `resume.bin` is untouched, and Back goes to Games,
-where the game's row opens its title screen: Continue can be tried again there, and a New row replaces the save on
-purpose, after asking. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
-`peek` already excludes, so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a
-valid `.pkg` there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known
-to be this package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view
-rather than play new.
+roster the save records, whatever roster Continue passed. When `loadResume` loads nothing, the match asks `peekResume`
+why. A `None` save starts a new match, since nothing usable is lost; that match plays the roster Continue passed, the
+title screen's first New row that can start (solo for a game that starts solo). An `Unstartable` save stops the match in
+the error view with its own reason, "This saved game cannot be continued on this device", and `resume.bin` is left as it
+was. So does a save the match cannot read: `Unreadable` from either read, or `Valid` from the second, which means the
+file changed between the two reads. So does a save the VM refuses although `peek` accepted it. Those show the error view
+"The saved match could not be resumed", with `resume.bin` left as it was. Back then goes to Games, where the game's row
+opens its title screen: Continue can be tried again there, and a New row replaces the save on purpose, after asking.
+(`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which `peek` already excludes,
+so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a valid `.pkg`
+there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known to be this
+package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view rather than
+play new.
 
 A game that fails on the resumed state (a script error at its first `status` or `draw`) does not delete the save either.
 The failure cannot tell a game that rejects the state, every time, from a transient fault (a callback that runs out of
