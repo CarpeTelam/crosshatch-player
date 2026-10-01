@@ -89,16 +89,26 @@ the flush waits at most one copy and saves every set made before the leak.
 never takes it again (pitfall 12cc816). It notes `millis()` at its very start, and the order is:
 
 1. cancel the VM and join it (up to 500 ms);
-2. the pending snapshot is written as `resume.bin` (in Playing or Paused only), before an abandon can free the memory it
+2. in a hidden pass match only, the blank hand-off screen (`FrameReplay::drawBlank`, the screen HandOff shows) is drawn
+   and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged ("forced exit: blank hand-off screen
+   pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the device sleeps (AD-12, AD-20).
+   The match is Leaving, so render draws nothing, and the render task is not inside `render()` while the lock is held,
+   so the loop task may use `replay` and the framebuffer here. Any state with a VM gets it, the error view of a script
+   error included (only a stuck call frees the VM on the way to Error). Solo and open pass matches, a user Leave, and an
+   exit with no VM (Error after a stuck call, or after Leave) push nothing. The half refresh is AD-12's choice, where
+   the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
+   (epic-pass-and-play entry 11);
+3. the pending snapshot is written as `resume.bin` (in Playing or Paused only), before an abandon can free the memory it
    lives in;
-3. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
+4. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
    snapshot written before it is deleted;
-4. a `resume.bin` delete that Over could not finish is retried;
-5. the `ch.store` flush.
+5. a `resume.bin` delete that Over could not finish is retried;
+6. the `ch.store` flush.
 
-Those are the only SD writes in `onExit()` (AD-17). Each of steps 2, 3's write, 4, and 5 starts only if less than
+Those are the only SD writes in `onExit()` (AD-17). Each of steps 3, 4's write, 5, and 6 starts only if less than
 `FORCED_EXIT_DEADLINE_MS` (1,500 ms) has passed since the start of `onExit()`; a step that would start later is skipped
-and logged with one `LOG_ERR` line naming it. A resume write that failed less than 5 s (`FLUSH_INTERVAL_MS`) before is not
+and logged with one `LOG_ERR` line naming it. Step 2 is no SD step and the deadline does not gate it, but its time counts
+against the deadline of the steps after it. A resume write that failed less than 5 s (`FLUSH_INTERVAL_MS`) before is not
 retried at the exit either. Leave has no deadline and follows the same order (its delete retry and store flush come after
 it releases `RenderLock`).
 
@@ -112,6 +122,18 @@ only what starts before the deadline: each is one tmp write and rename, the card
 1,500 ms from the start of `onExit()`. `ResumeMatchTest` pins the arithmetic on the host's fake clock (a timeout no
 poll divides into, so a late poll shows), counts elapsed time under a thread that advances the clock faster than the
 polls do, and checks the order and the skipped steps.
+
+A hidden pass match's blank (step 2) is pushed after the join's wait and before the abandon's: at once when the VM
+joins, about 500 ms after `onExit()` began when it is stuck. Its half refresh counts against the 1,500 ms window, for
+every forced exit of a hidden pass match, and is unmeasured (entry 11; `lib/hal/HalDisplay.h` names 1,720 ms for a
+half refresh, source unstated). If `displayBuffer` returns only after that long, every SD step after it is skipped,
+even when the VM joined at once. The host double's push costs no clock, so `GameMatchTest` moves the clock by hand
+where it needs the push to take time. Measured on an X4 Pro before the blank existed, so without it: a forced exit
+with a stuck VM held `RenderLock` for 502 ms (epic-install-and-launcher entry 14).
+
+**Resume before store.** The resume write (step 3) comes before the `ch.store` flush (step 6), so a slow exit can skip the
+store flush after the resume write ran: Continue may then resume a board newer than `ch.store` holds. Deferred
+(retrospective rev-5); its trigger is a device log line `forced exit past 1500 ms; skipped the ch.store flush`.
 
 ## Hidden pass states
 
@@ -137,6 +159,9 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 on the canvas, and no game command; the hand-off screen has no other text. The match pushes it with a full refresh, so
 nothing of the last seat's frame stays on the panel, and only then publishes its tap zone (`fui::tapZones` over the safe
 area, routed by `routeTouch`).
+
+A forced exit (sleep, any Replace) pushes the blank too, with a half refresh, from any state with a VM: see The forced
+exit, step 2.
 
 **Taps.** The banner's screen and the blank accept a tap anywhere and Confirm, and only once render has pushed that
 state's own screen (`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): a tap or a Confirm
