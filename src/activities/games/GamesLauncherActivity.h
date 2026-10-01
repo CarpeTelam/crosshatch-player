@@ -14,29 +14,23 @@ struct Report;
 }
 
 // The Games launcher (Home → Games; spine AD-22): when it opens it installs every /games/*.chgame
-// (GamePackageInstaller), then lists every installed game as a row of icon and name, paged by the
+// (GamePackageInstaller), then lists every installed game as one row of icon and name, paged by the
 // list. A row's icon is the package's icon.bmp, else the manifest's library icon in its weight, else
 // `game-controller` (GameRowIcon). A game this host cannot start (Manifest::check) shows its reason
 // under the name and does not open. A file that failed to install is explained once, in a popup.
-// Opening a game replaces this screen with its match, or, for a game the host can start in two or more modes, opens
-// the mode picker (GameModeActivity) above it.
-// Above the game rows the list has one "Continue" row (the game's name and icon, "Continue" under it) for each game
-// whose GameSaveStore::peek() finds a valid resume.bin for the installed package, or one it could not check (a card or
-// heap fault: the row stays rather than the launcher offering a new match over a save it cannot see), in the games'
-// name order. A tap replaces this screen with the match resumed from the save, with no mode step. A save of a changed
-// package is not valid, so it has no row. The rows are found when the listing is built (onEnter, and after a remove),
-// never while a row is drawn. A long-press on a Continue row does nothing: removing is on the game's own row. A
-// long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
+// A row of a game the host can start pushes the game's title screen (GameModeActivity), which offers its save
+// (Continue) and its modes, so Back returns to this list as it was. The launcher reads no save: the title screen peeks
+// it when it opens. A registry load that runs out of memory leaves no rows and says "Not enough memory", not "No games
+// found". A long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
 // (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup. After a
 // remove that succeeds, the inbox is installed at once when it holds a file (a package that waited for room takes the
 // freed place), as on entering, and the listing is read after it. That install also tries to finish the removes that
 // stopped partway (installAll's finishRemovals, at most 32 a call), so a game whose remove failed earlier but kept its
 // .removing marker goes at that moment, not the next time Games opens (one that still will not go stays, logged).
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
-// repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
-// game it last opened (a fingerprint of its id), and the next launcher, built by ActivityManager::goToGames(), selects
-// that game's Continue row when it has one (a Confirm on its own row would start a New match over the save), else its
-// own row, and shows the page holding it.
+// repeat rows of the one before it. The launcher remembers the game it last opened (a fingerprint of its id), and the
+// next launcher, built by ActivityManager::goToGames(), selects that game's row and shows the whole page holding it: a
+// Confirm there opens the title screen, whose first row is Continue when the game has a save, so two Confirms resume.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
@@ -73,10 +67,8 @@ class GamesLauncherActivity final : public UiListActivity {
   // Sets the note from an install's report: the first failure's reason, and under it the other failures by kind (those
   // that wait for room, then the rest), or no note when nothing failed.
   void showInstallNote(const GamePackageInstaller::Report& report);
+  // Reads the listing from the registry; a load that runs out of memory leaves it empty and sets listFailed.
   void loadGames();
-  // Finds the Continue rows for the loaded listing: one GameSaveStore::peek() for each game that can start, so a card
-  // with no save costs two existence checks a game and each save one whole-file read.
-  void loadContinue();
   // Reads each game's icon.bmp once, and says where every row's icon comes from.
   void loadIcons();
   // Where row `index`'s icon comes from: what provideRow draws and loadIcons logs.
@@ -87,13 +79,10 @@ class GamesLauncherActivity final : public UiListActivity {
   static constexpr int16_t NO_SLOT = -1;
   static constexpr freeink::ui::ActionId ACTION_REMOVE_CHOICE = ACTION_USER;
 
-  // Rows with a game behind them: the Continue rows, then one for each game in the listing.
-  size_t rowCount() const { return continueCount + listing.count; }
-  // The listing index of the game row `row` (below rowCount()) opens: a Continue row's own (continueOf's first
-  // continueCount entries), else row - continueCount.
-  size_t gameOfRow(size_t row) const { return row < continueCount ? continueOf[row] : row - continueCount; }
+  // Rows with a game behind them: one for each game in the listing, row i being listing.entries[i].
+  size_t rowCount() const { return listing.count; }
   size_t paddedCount() const;
-  // Selects the game the launcher last opened, when the listing still has it: its Continue row, else its own row.
+  // Selects the game the launcher last opened, when the listing still has it.
   void selectRemembered();
   // The remove confirmation: opened on a row, answered by Cancel (Back), or Remove.
   void openRemoveDialog(int row);
@@ -105,11 +94,9 @@ class GamesLauncherActivity final : public UiListActivity {
 
   // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
   GameRegistry::Listing listing;  // every installed game, by name
-  // The listing index of the game of each Continue row, in listing order; the first continueCount are filled. A member
-  // array (128 B, in the heap-allocated activity): a Continue row can always be listed, so the launcher never offers
-  // a game's own row, which starts a New match over its save, for want of an allocation.
-  uint16_t continueOf[GameRegistry::MAX_GAMES] = {};
-  size_t continueCount = 0;
+  // Whether the last loadGames() ran out of memory (its listing is then empty): the list says so instead of "No games
+  // found". Written by loadGames, read by buildScreen, as noteVisible.
+  bool listFailed = false;
   // The bitmaps of the games that have an icon.bmp, GameRowIcon::BYTES each in slot order, and the slot of
   // each game (parallel to listing.entries; NO_SLOT for none). Both are read-only after onEnter().
   std::unique_ptr<uint8_t[]> packageIcons;

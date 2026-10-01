@@ -12,13 +12,10 @@
 #include <cstdio>
 #include <cstring>
 
-#include "GameMatchActivity.h"
 #include "GameModeActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
-#include "games/GameHostCaps.h"
 #include "games/GamePackageInstaller.h"
-#include "games/GameSaveStore.h"
 
 namespace fui = freeink::ui;
 
@@ -123,7 +120,6 @@ void GamesLauncherActivity::onEnter() {
   removeIndex = -1;
   installInbox();
   loadGames();
-  loadContinue();
   loadIcons();
   selectRemembered();
 }
@@ -139,17 +135,9 @@ void GamesLauncherActivity::selectRemembered() {
   if (lastOpened == 0) return;
   for (size_t i = 0; i < listing.count; ++i) {
     if (fingerprintOf(listing.entries[i].manifest.id) == lastOpened) {
-      // The game's Continue row when it has one, else its own row below them; the first build shows the whole page
-      // holding it. Not the own row of a game with a save: one Confirm there starts a New match, which replaces the
-      // save the person has just left.
-      size_t row = continueCount + i;
-      for (size_t r = 0; r < continueCount; ++r) {
-        if (continueOf[r] == i) {
-          row = r;
-          break;
-        }
-      }
-      activeNav().requestSelection(static_cast<int>(row));
+      // The game's own row; the first build shows the whole page holding it. A Confirm there opens the title screen,
+      // whose first row is Continue when the game has a save, so it never starts a New match over the save just left.
+      activeNav().requestSelection(static_cast<int>(i));
       return;
     }
   }
@@ -244,12 +232,7 @@ void GamesLauncherActivity::openRemoveDialog(const int row) {
   // A blank padding row, an empty list, or the note over the list is not a game to ask about.
   if (row < 0 || static_cast<size_t>(row) >= rowCount() || noteVisible) return;
   app.clearTapFlash();
-  if (static_cast<size_t>(row) < continueCount) {
-    // A Continue row opens a save; the game's own row is where a game is removed. The press did its job: clear it.
-    requestUpdate();
-    return;
-  }
-  removeIndex = static_cast<int>(gameOfRow(static_cast<size_t>(row)));
+  removeIndex = row;
   removeFocus = 0;  // Cancel: a stray Confirm keeps the game
   requestUpdate();
 }
@@ -312,7 +295,7 @@ void GamesLauncherActivity::confirmRemove() {
   GamePackageInstaller::Error error = GamePackageInstaller::Error::None;
   bool install = false;
   {
-    // The render task reads the listing, the Continue rows, and the icon cache, which the reload below replaces.
+    // The render task reads the listing and the icon cache, which the reload below replaces.
     RenderLock lock(*this);
     GUI.drawPopup(renderer, tr(STR_GAMES_REMOVING));
     error = GamePackageInstaller::remove(id);
@@ -327,9 +310,9 @@ void GamesLauncherActivity::confirmRemove() {
     install = error == GamePackageInstaller::Error::None && GamePackageInstaller::hasInbox();
     if (install) GUI.drawPopup(renderer, tr(STR_GAMES_INSTALLING));
   }
-  // Outside the lock: the install reads none of what the render task reads (the listing, the Continue rows, the icon
-  // cache, the note), and takes seconds for a package with images. Nothing requests a render while it runs; a render
-  // already queued draws the old listing, which is still whole. Only the second scope writes what the render reads.
+  // Outside the lock: the install reads none of what the render task reads (the listing, the icon cache, the note), and
+  // takes seconds for a package with images. Nothing requests a render while it runs; a render already queued draws the
+  // old listing, which is still whole. Only the second scope writes what the render reads.
   // Built in place (no default-constructed Report assigned from a returned one), so the frame holds one Report.
   const GamePackageInstaller::Report report =
       install ? GamePackageInstaller::installAll() : GamePackageInstaller::Report{};
@@ -337,13 +320,11 @@ void GamesLauncherActivity::confirmRemove() {
   if (install) showInstallNote(report);
   // The registry is the truth after a failure too: a game whose .pkg went is no longer listed.
   loadGames();
-  loadContinue();
   loadIcons();
   const int count = static_cast<int>(listing.count);
-  // The next game takes its place, on its own row below the Continue rows. The selection keeps the removed row's index,
-  // so when the install after the remove adds a game that sorts before it, or finishes the remove of one, the row is a
-  // neighbour's.
-  activeNav().requestSelection(count > 0 ? static_cast<int>(continueCount) + std::min(index, count - 1) : 0);
+  // The next game takes its place. The selection keeps the removed row's index, so when the install after the remove
+  // adds a game that sorts before it, or finishes the remove of one, the row is a neighbour's.
+  activeNav().requestSelection(count > 0 ? std::min(index, count - 1) : 0);
   if (error != GamePackageInstaller::Error::None) {
     LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go; `note` is set above
     noteWaiting[0] = '\0';
@@ -355,31 +336,15 @@ void GamesLauncherActivity::confirmRemove() {
 
 void GamesLauncherActivity::loadGames() {
   listing = GameRegistry::Listing{};
-  // Every registry game is a row, in the registry's order; one this host cannot start says why on its row.
-  if (!GameRegistry::load(listing)) return;
+  // Every registry game is a row, in the registry's order; one this host cannot start says why on its row. A load that
+  // runs out of memory (the registry logs it) leaves the listing empty, and the list says why rather than "No games".
+  listFailed = !GameRegistry::load(listing);
+  if (listFailed) return;
   for (size_t i = 0; i < listing.count; ++i) {
     const GameRegistry::Entry& game = listing.entries[i];
     if (!game.check.ok())
       LOG_INF("GAME", "Unavailable %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
   }
-}
-
-void GamesLauncherActivity::loadContinue() {
-  continueCount = 0;
-  // GameRegistry::load lists at most MAX_GAMES games, the size of continueOf; the bound is repeated here because an
-  // overrun would write past the array.
-  for (size_t i = 0; i < listing.count && i < GameRegistry::MAX_GAMES; ++i) {
-    const GameRegistry::Entry& game = listing.entries[i];
-    if (!game.check.ok()) continue;  // a row that cannot open a match would not resume one
-    // A save that could not be checked (Unreadable) still gets its row: hiding it would offer only the game's own row,
-    // which starts a new match over what may be a good save. Continue reads the file again when it is tapped, and a
-    // save it cannot read then is an error view, never a new match (GameMatchActivity::seedResume).
-    if (GameSaveStore::peek(game.manifest.id, game.pkgHash) != GameSaveStore::SaveState::None) {
-      continueOf[continueCount++] = static_cast<uint16_t>(i);
-    }
-  }
-  LOG_DBG("GAME", "%u Continue rows of %u games", static_cast<unsigned>(continueCount),
-          static_cast<unsigned>(listing.count));
 }
 
 void GamesLauncherActivity::loadIcons() {
@@ -443,24 +408,19 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
     item.enabled = false;
     return;
   }
-  const size_t gameIndex = self->gameOfRow(index);
-  const GameRegistry::Entry& game = self->listing.entries[gameIndex];
+  const GameRegistry::Entry& game = self->listing.entries[index];
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
-  // A Continue row says so under the name. The other rows give the reason, not a dimmed row: a disabled state would
-  // hide the selection, which can rest on this row.
-  if (index < self->continueCount) {
-    item.subtitle = tr(STR_GAMES_CONTINUE);
-  } else if (!game.check.ok()) {
-    item.subtitle = unavailableText(game.check);
-  }
+  // A game this host cannot start gives the reason under its name, not a dimmed row: a disabled state would hide the
+  // selection, which can rest on this row.
+  if (!game.check.ok()) item.subtitle = unavailableText(game.check);
 
   // The package's icon is read already; a library icon is decoded into the one scratch, which the list draws from
   // (measure and draw share one provider call) before it asks for the next row.
   const uint8_t* bits = self->libraryIcon;
-  const GameRowIcon::Choice choice = self->choiceOf(gameIndex);
+  const GameRowIcon::Choice choice = self->choiceOf(index);
   if (choice.source == GameRowIcon::Source::PackageBmp) {
-    bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[gameIndex]) * GameRowIcon::BYTES;
+    bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[index]) * GameRowIcon::BYTES;
   } else {
     // A name choose() found in the library; the row is blank only if the library itself lost game-controller.
     GameRowIcon::renderLibraryIcon(choice.name, choice.fill, self->libraryIcon);
@@ -487,7 +447,7 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     return;
   }
   if (listing.count == 0) {
-    screen.centeredText(tr(STR_GAMES_EMPTY), screen.theme().bodyText);
+    screen.centeredText(listFailed ? tr(STR_GAMES_OUT_OF_MEMORY) : tr(STR_GAMES_EMPTY), screen.theme().bodyText);
   } else {
     // Rows are formatted on demand from the listing (provideRow), so no per-row array exists.
     fui::ListProps props;
@@ -568,8 +528,7 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
 
 void GamesLauncherActivity::activateIndex(const int row) {
   if (row < 0 || static_cast<size_t>(row) >= rowCount()) return;
-  const bool resume = static_cast<size_t>(row) < continueCount;  // a Continue row
-  const GameRegistry::Entry& game = listing.entries[gameOfRow(static_cast<size_t>(row))];
+  const GameRegistry::Entry& game = listing.entries[row];
   if (!game.check.ok()) {
     LOG_INF("GAME", "Not starting %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
     requestUpdate();  // the tap moved the selection here; show it
@@ -577,27 +536,15 @@ void GamesLauncherActivity::activateIndex(const int row) {
   }
   app.clearTapFlash();                           // the row leaves this screen
   lastOpened = fingerprintOf(game.manifest.id);  // the next launcher opens on this game's page
-  // A game's own row opens its title screen (GameModeActivity), which offers its save and its modes. It is pushed, so
-  // its Back returns to this list as it is; the match replaces it, and with it the stack.
-  if (!resume) {
-    auto title = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game);
-    if (!title) {
-      LOG_ERR("GAME", "OOM: %u byte title screen", static_cast<unsigned>(sizeof(GameModeActivity)));
-      requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
-      return;
-    }
-    activityManager.pushActivity(std::move(title));
-    return;
-  }
-  // A Continue row resumes the solo match its save holds (the solo-only peek found it), so there is no mode to ask.
-  auto match = makeUniqueNoThrow<GameMatchActivity>(renderer, mappedInput, game.manifest, GameCore::Roster::solo(),
-                                                    GameMatchActivity::Start::Resume);
-  if (!match) {
-    LOG_ERR("GAME", "OOM: %u byte match activity", static_cast<unsigned>(sizeof(GameMatchActivity)));
+  // The row opens the game's title screen (GameModeActivity), which offers its save and its modes. It is pushed, so its
+  // Back returns to this list as it is; the match replaces it, and with it the stack.
+  auto title = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game);
+  if (!title) {
+    LOG_ERR("GAME", "OOM: %u byte title screen", static_cast<unsigned>(sizeof(GameModeActivity)));
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
     return;
   }
-  activityManager.replaceActivity(std::move(match));
+  activityManager.pushActivity(std::move(title));
 }
 
 void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen) {
