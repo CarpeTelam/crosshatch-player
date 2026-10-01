@@ -3,7 +3,7 @@ title: 'Pass lifecycle: Result, HandOff, and the seat each state draws'
 type: 'feature'
 ticket: '2'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: '7c1bf3356876e5271b7baee7b1a7f9b9104a7450'
