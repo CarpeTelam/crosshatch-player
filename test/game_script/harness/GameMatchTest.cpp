@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1069,9 +1070,8 @@ class PassMatchTest : public MatchTest {
 
 TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEveryone) {
   installFixture("pass-open");
-  fakesd::addFile("/.games/pass-open/.pkg", "v1\n0530a15766e91bf1\n");  // a package that would keep resume.bin
+  fakesd::addFile("/.games/pass-open/.pkg", "v1\n0530a15766e91bf1\n");  // a package that keeps resume.bin
   enter("pass-open", "Pass open", GameCore::Roster::pass(2));
-  EXPECT_TRUE(logHas("pass-open: pass match; no resume.bin until pass saves (epic-pass-and-play entry 9)"));
   renderer->forget();
   showFrame();
   EXPECT_TRUE(drew("Player 1 (X) to move")) << "seat 1 is drawn first";
@@ -1122,14 +1122,19 @@ TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEv
   render();
   EXPECT_TRUE(drew("Player 1 (X) to move"));
 
-  // Leave writes nothing either: a pass match has no resume.bin until pass saves.
+  // Leave keeps the pass save: its mode (byte 14) is pass and its seat count (byte 15) two.
   input->click(Button::Back);
   frame();
   ASSERT_EQ(state(), "Paused");
   renderView();
   tapOption(tr(STR_GAMES_LEAVE));
   EXPECT_EQ(state(), "Leaving");
-  EXPECT_TRUE(match::resumeFilesOnCard().empty());
+  const std::string savePath = "/.games-data/pass-open/resume.bin";
+  ASSERT_EQ(match::resumeFilesOnCard(), std::set<std::string>{savePath});
+  const auto saved = fakesd::bytesOf(savePath);
+  ASSERT_GT(saved.size(), 15u);
+  EXPECT_EQ(saved[14], 1u) << "mode pass";
+  EXPECT_EQ(saved[15], 2u) << "two seats";
 }
 
 // An open pass match never hands off (entry 4's Never): no Result, no HandOff, and no blank push.

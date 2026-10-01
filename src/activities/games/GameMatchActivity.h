@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
@@ -28,7 +29,8 @@
 // (docs/crosshatch/game-canvas.md).
 //
 // A pass match plays the turn seat's frame and input on this one device, and seat 0's frame (everyone's) once the
-// round is over (GameCore::seatShown); it keeps no resume.bin until pass saves (epic-pass-and-play entry 9).
+// round is over (GameCore::seatShown). It saves and resumes as a solo match does (below), its save recording the pass
+// roster.
 //
 // A hidden pass match (a pass roster and manifest.hidden) runs the hidden pass machine (MatchLifecycle's hiddenPass)
 // with a GameVM that draws only the seat it is asked for: each round begins on the blank hand-off screen (HandOff:
@@ -38,19 +40,22 @@
 // too, after the VM's stop and before the SD steps, so no seat's frame stays on the panel.
 // docs/crosshatch/game-canvas.md has the states.
 //
-// A solo match with a .pkg also saves its latest snapshot as resume.bin (GameSaveStore):
+// A solo or pass match with a .pkg also saves its latest snapshot as resume.bin (GameSaveStore), recording its roster:
 // the VM hands each committed one to the loop through GameVM::committed(), the loop
-// writes it every pass in Playing and Paused, the forced exit and Leave write the last
-// pending one, and entering Over deletes the file. Start::Resume restores it.
+// writes it every pass in Playing, Paused, Result, and HandOff, the forced exit and Leave write the last
+// pending one, and entering Over deletes the file. Start::Resume restores it with the roster the save records, whatever
+// roster the caller passed: a hidden pass save resumes on the blank hand-off screen (HandOff), whose tap shows the
+// saved turn seat; any other at Playing, on that seat's frame.
 //
 // The match follows AD-21's solo states, or the hidden pass ones (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing (or a hidden match's first HandOff) until Leaving, or until a stuck VM is
 // stopped on the way to Error, so Playing, Paused, Over, Result, and HandOff always have one.
 class GameMatchActivity final : public Activity, private UiAppHost {
  public:
-  // New starts a round with setup; Resume continues from the game's resume.bin when
-  // GameSaveStore can use it, starts a new match (logged) when there is no usable save, and stops in the error view,
-  // the save untouched, when there is one that cannot be read or that the VM refuses.
+  // New starts a round with setup; Resume continues from the game's resume.bin, solo or pass, with the save's roster
+  // when GameSaveStore can use it, starts a new match with the caller's roster (logged) when there is no usable save,
+  // and stops in the error view, the save untouched, when there is one that cannot be read, that only another host (one
+  // with Pass and Play or more seats) could start, or that the VM refuses.
   enum class Start : uint8_t { New, Resume };
 
   // The forced exit's SD steps (the resume write, the resume.bin delete retry, the
@@ -59,7 +64,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // and rename, whose time is the card's. Leave has no deadline.
   static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = 1500;
 
-  // `roster` is who plays: GameCore::Roster::solo(), or Roster::pass(n) for an open pass match.
+  // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
+  // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
                     const GameCore::Roster& roster, Start start = Start::New);
   ~GameMatchActivity() override;
@@ -129,7 +135,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void pushForcedExitBlank();
   // Writes a dirty ch.store now (round end, Leave, onExit; AD-17).
   void flushStore();
-  // Playing and Paused: writes the VM's latest committed snapshot as resume.bin (not
+  // Playing, Paused, Result, and HandOff: writes the VM's latest committed snapshot as resume.bin (not
   // again until FLUSH_INTERVAL_MS after a failed write, Leave and the forced exit
   // included). Nothing in Over or Error, or without a .pkg.
   void flushResume();
@@ -141,11 +147,17 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // False, with one log line naming `what`, for an SD step of the forced exit that would
   // start past FORCED_EXIT_DEADLINE_MS; true for every step outside a forced exit.
   bool sdStepAllowed(const char* what);
-  // Start::Resume, before the VM starts: seeds it with the saved snapshot. True also when there
-  // is no usable save (logged: the match starts new, since nothing is lost). False when a save is
-  // there and cannot be used now, because it would not read or the VM refused it: the caller
-  // shows the error view and leaves the file, which a new match would replace.
-  bool seedResume(GameVM& created);
+  // Start::Resume, after the assets load and before the VM is created: reads the save into `snapshot` and `ver` (in the
+  // store's buffer; valid until the store's next call), and makes its roster the match's (roster, lifecycle; logged).
+  // True with `snapshot` empty when there is no usable save (logged: the match starts new with the caller's roster,
+  // since nothing is lost). False when a save is there and cannot be used now, because it would not read or only
+  // another host (one with Pass and Play or more seats) could start it (savedForAnotherHost): the caller shows the
+  // error view and leaves the file, which a new match would replace.
+  bool seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver);
+  // seedResume's refusal path only: whether resume.bin is a save of this package the game can start on some host with
+  // Pass and Play and the most seats a roster has (loadResume, read again with that host), or may be one because that
+  // read faulted (unreadable). True spends the store's buffer and roster; the match then goes to Error, the file kept.
+  bool savedForAnotherHost();
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
   // For a VM that did not join: abandons it (GameVM::abandon), writing its last snapshot
@@ -193,7 +205,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   bool slotLeaked = false;
 
   Start start;
-  // The state allows resume.bin to be written: Playing or Paused, not yet Over or Error
+  // The state allows resume.bin to be written: Playing, Paused, Result, or HandOff, not yet Over or Error
   // (loop task; handle() keeps it).
   bool resumeWritable = false;
   // Entering Over could not delete resume.bin (the card refused): the loop retries until it
