@@ -64,3 +64,20 @@ Accepted for the fix story: rows 1–14. Row 15 goes to the owner, rows 16–17 
 | F13 | A12 | `STR_GAMES_RESUME_NOT_HERE` is about 100 characters, and no test shows it fits the error view on every screen. | fix | Assert the full text is drawn untruncated in the error-view case, or shorten it. |
 | F14 | A6 | Leave's blank uses HALF_REFRESH, while the hand-off blank uses FULL. When `goToGames()` fails, the half-refreshed blank stays. | packet | Ghosting is a device check: entry 11 checks the Leave blank beside the sleep blank (row 17). |
 | F15 | A11 | A corrupt mode byte is now kept for good as "cannot be continued on this device", and New asks about it every time. | reject | Keeping a file of this package and asking before New is the safe side for a person's save (R8). Telling corruption from a later firmware's mode needs a format the save does not carry. |
+
+## Review of the follow-up fix commit
+
+**What was reviewed:** `723f08fb` (rows F1–F13; diff `00ca4070..723f08fb` without planning documents), checked by the same three context-free lenses on 2026-10-01. Raw reports are in the orchestrator's scratchpad (`xreview/fix2-*.md`).
+
+**Overall result:** all three lenses found F1–F13 closed, each pinned by a named test except F3. F3's store ordering cannot be staged in the host harness, and no cheaper pin was found. The verification-gap lens also noted that F11's premise was false: `expectOneBlankPush` already asserted `selfDeadlocks == 0`, so the added line duplicates it, harmlessly.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| G1 | EC (3), A | With a roster where some seats are local and some are not, F4 and F5 fail closed but stall. A local move that passes the turn to a non-local seat is never drawn. A hidden hand-off to a non-local seat leaves the match in Playing while the VM stays in HandOff, so the blank stays for good. A timer due under a non-local seat is lost. A round whose first turn is non-local never publishes a frame. | defer | No match can have such a roster until epic-play-nearby, whose remote seats decide what the device shows while it waits. `deferred-work.md` gets a `## e5-xr` entry that blocks epic-play-nearby on it, naming the four paths and the F5 test's second `showTurnSeat()` call, which the match cannot make. |
+| G2 | A | The touch tag is read when the loop handles the release, not at touch-down. A tap released during the refresh, or while the loop is blocked in `flushResume`, can carry the previous frame (dropped) or the next one. The fix also deleted `game-canvas.md`'s "may be dropped" caveat. | fix | Restore the caveat in `game-canvas.md`, naming both windows. Latch the tag at touch-down only if it stays small, and record the choice in the plan. |
+| G3 | EC, A | Another package's save with a newer codec version logs `LOG_ERR` "discarded" on every title-screen open, while `formats.md` promises `LOG_INF` for another package's save. | fix | A newer codec from another package is `OTHER_PACKAGE` (None, `LOG_INF`), and the test case changes with it. |
+| G4 | EC | `tooLarge` is checked before mode and seat count, so this package's oversized file with a bad seat count is kept as Unstartable, and New asks about it every time. | fix | Check mode and seat count before the size. |
+| G5 | A | `startNew` logs every non-Continue failure as "Cannot start … in pass". | fix | Name the row's mode (`MODE_TEXTS`) in the line. |
+| G6 | VG, A | Nothing pins the wrap-safe compare: reverting to `>=` fails no test, though a tag about 2^31 ahead of the seat's frame pins it cheaply. Separately, the sentinel is remapped rather than kept out of the counter's range. | fix | Add the cheap pin. A comment states that the counter cannot reach `UNTAGGED` in practice (2^32 publishes). |
+
+**Who fixes them:** the build agent fixes G2–G6 in one more commit, and records G1's deferral. That commit gets a last pass from the same three lenses before the merge.
