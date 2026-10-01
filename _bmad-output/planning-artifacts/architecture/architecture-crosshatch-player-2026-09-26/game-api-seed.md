@@ -176,7 +176,7 @@ A table that survives restarts, one per game on each device. Use it for things l
 
 Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`.
 
-**What is saved.** `ch.store` data survives reinstalling or updating the game. Unfinished rounds are separate: in `solo` and `pass` modes the runtime saves after every move and offers **Continue** in the launcher, so you don't need to save them yourself. An unfinished round is discarded when any file in the package changes.
+**What is saved.** `ch.store` data survives reinstalling or updating the game. Unfinished rounds are separate: in `solo` and `pass` modes the runtime saves after every move and offers **Continue** on the game's title screen, so you don't need to save them yourself. An unfinished round is not offered once any file in the package changes, and a new round replaces it.
 
 ### Other
 
