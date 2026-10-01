@@ -81,8 +81,11 @@ Report installAll();
 // the marker, or after the .pkg, leaves a folder that the next installAll finishes, because it holds the marker (a
 // folder without one is never swept). Results:
 //   None       the folder is gone, or /.games can be opened and holds no such folder;
-//   SdCard     the marker could not be written (nothing else changed); a delete failed (the game is then listed
-//              whole, or not listed at all, never half listed, and the next installAll retries it);
+//   SdCard     the marker could not be written (nothing else changed); the .pkg would not go (the game is then
+//              listed, whole, and unmarked, and the next installAll leaves it; a marker that was there before this
+//              call, or that would not go either, stays, and the next installAll finishes the remove); a later
+//              delete failed, or the .pkg's failed after its entry went (the game is then not listed at all, never
+//              half listed, and the next installAll finishes it);
 //              /.games cannot be opened; or the folder has no .pkg and may share clusters with
 //              /.games-tmp/<id> (an interrupted folder move, found by the installer's probe), in which
 //              case nothing is written or deleted;

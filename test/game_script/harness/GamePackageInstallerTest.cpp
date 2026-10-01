@@ -761,6 +761,28 @@ TEST_F(InstallerTest, ScratchBesideAnIndependentHalfRemovedGameIsRemovedAndTheIn
   EXPECT_FALSE(fakelog::any("Keeping"));
 }
 
+// The probe's order on the install path (mayRemoveTmp): its file is made and closed in /.games-tmp/g, then looked for
+// in /.games/g, then removed. Looking after the remove would never see it, and a shared cluster chain would be taken
+// for two folders. (Only one probe runs on this card: the install that follows finds no scratch left.)
+TEST_F(InstallerTest, TheProbeLooksForItsFileBeforeItRemovesIt) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/manifest.json", std::string("{}"));
+  drop("g.chgame", gamePackage("g"));
+  fakesd::sim().ops.clear();
+  ASSERT_EQ(install().installed, 1);
+  const int opened = opIndex("open /.games-tmp/g/.xlink");
+  const int closed = opIndex("close /.games-tmp/g/.xlink");
+  const int looked = opIndex("exists /.games/g/.xlink");
+  const int removed = opIndex("remove /.games-tmp/g/.xlink");
+  ASSERT_GE(opened, 0);
+  ASSERT_GE(closed, 0);
+  ASSERT_GE(looked, 0);
+  ASSERT_GE(removed, 0);
+  EXPECT_LT(opened, closed);
+  EXPECT_LT(closed, looked);
+  EXPECT_LT(looked, removed);
+}
+
 TEST_F(InstallerTest, ScratchIsKeptWhenTheProbeFileCannotBeMadeOrRemoved) {
   for (const bool cannotMake : {true, false}) {
     SetUp();
