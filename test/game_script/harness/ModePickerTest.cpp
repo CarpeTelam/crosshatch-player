@@ -485,7 +485,15 @@ TEST_F(TitleScreenTest, ASoloGameAndAPassGameEachStartInTwoTapsFromTheLauncher) 
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started two-pass"));
   EXPECT_TRUE(logHas("Mode pass picked for two-pass: 2 seats"));
-  EXPECT_TRUE(logHas("two-pass: pass match; no resume.bin"));
+  // The match was given the pass roster: its first snapshot is saved as mode 1, n 2.
+  ASSERT_TRUE(match::waitFor([&] {
+    entered->loop();
+    input->clear();
+    return fakesd::bytesOf(resumePath("two-pass")).size() > 15;
+  }));
+  const Bytes firstSave = fakesd::bytesOf(resumePath("two-pass"));
+  EXPECT_EQ(firstSave[14], SAVED_PASS);
+  EXPECT_EQ(firstSave[15], 2u);
 }
 
 // ---- the screen: its header and rows ----
@@ -585,7 +593,6 @@ TEST_F(TitleScreenTest, ATapOnPassStartsATwoSeatPassMatchThatDrawsSeatOneFirst) 
   EXPECT_TRUE(logHas("Mode pass picked for pass-open: 2 seats"));
   EXPECT_TRUE(logHas("Started pass-open"));
   EXPECT_FALSE(logHas("plays solo"));
-  EXPECT_TRUE(logHas("pass-open: pass match; no resume.bin")) << "the match was given the pass roster";
   EXPECT_TRUE(matchDrew(*match, "Player 1 (X) to move"));
   // Seat 1 takes cell 1 (centred at canvas (97, 270)): seat 2's board follows, which no solo match draws.
   ASSERT_TRUE(tapMatchCanvas(*match, 97, 270));
@@ -670,10 +677,10 @@ TEST_F(TitleScreenTest, ATapOnContinueResumesATwoModeGamesSoloSaveSolo) {
   EXPECT_FALSE(logHas("pass match"));
 }
 
-// A pass save (mode 1, n 2) gets its Continue row. Until entry 9 the match resumes no pass save, so the tap starts a
-// pass match with the pass roster, which reads, writes, and deletes no resume.bin: played to Over and left, the save's
-// bytes are unchanged (a solo roster would have replaced them with its first snapshot).
-TEST_F(TitleScreenTest, ContinueOnAPassSaveStartsAPassMatchThatLeavesTheSaveUntouchedThroughOverAndExit) {
+// A pass save (mode 1, n 2) gets its Continue row, and the tap resumes it as a pass match: the saved snapshot is drawn,
+// setup never runs, and the save is unchanged through the match and its exit (a restored snapshot is not written
+// again).
+TEST_F(TitleScreenTest, ContinueOnAPassSaveResumesItAsAPassMatch) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
@@ -684,22 +691,23 @@ TEST_F(TitleScreenTest, ContinueOnAPassSaveStartsAPassMatchThatLeavesTheSaveUnto
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: none)"));
-  EXPECT_TRUE(logHas("counter: pass match; no resume.bin"));
-  EXPECT_TRUE(logHas("no usable resume.bin") || logHas("Resuming at ver")) << "Start::Resume, not New";
-  ASSERT_TRUE(pumpMatchTo("setup ran")) << "until entry 9, a new pass match";
-  ASSERT_TRUE(playCountingGameToOver());
+  EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
+  ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
+  EXPECT_TRUE(logHas("Resuming at ver 3"));
+  EXPECT_TRUE(logHas("draw\t2")) << "the saved snapshot is what is drawn";
+  EXPECT_FALSE(logHas("setup ran"));
   for (int i = 0; i < 20; ++i) {
     entered->loop();
     input->clear();
   }
-  EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved) << "through play and Over";
+  EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved) << "through play";
   match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Keep);  // Leave: the forced exit
   ASSERT_TRUE(fakesd::has(resumePath("counter")));
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved) << "and after the exit";
 }
 
-// A pass-only game's pass save resumes with the pass roster too.
-TEST_F(TitleScreenTest, ContinueOnAPassOnlyGamesSaveStartsAPassMatch) {
+// A pass-only game's pass save resumes as a pass match too.
+TEST_F(TitleScreenTest, ContinueOnAPassOnlyGamesSaveResumesIt) {
   addCountingGame("counter", "Counter", "\"pass\"", 2, 2);
   save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
@@ -708,8 +716,9 @@ TEST_F(TitleScreenTest, ContinueOnAPassOnlyGamesSaveStartsAPassMatch) {
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: -)"));
-  EXPECT_TRUE(logHas("no usable resume.bin") || logHas("Resuming at ver")) << "Start::Resume, not New";
-  ASSERT_TRUE(pumpMatchTo("setup ran"));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+  EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
+  EXPECT_FALSE(logHas("setup ran"));
   match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Keep);
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
@@ -734,8 +743,9 @@ TEST_F(TitleScreenTest, ASoloGamesUnreadableSaveIsOfferedAndItsContinueEndsInThe
 }
 
 // A two-mode game's Unreadable save may be a pass save, which a solo match would replace: its Continue starts a pass
-// match (until entry 9, a new one), and the file's bytes are unchanged through the match and its exit.
-TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveStartsAPassMatchAndIsLeftAlone) {
+// match, which stops in the error view as any save that will not read does, and the file's bytes are unchanged through
+// the match and its exit.
+TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAlone) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
@@ -748,8 +758,13 @@ TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveStartsAPassMatchAndIsLeftAlon
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: unreadable)"));
   EXPECT_FALSE(logHas("a solo match"));
-  EXPECT_TRUE(logHas("no usable resume.bin") || logHas("Resuming at ver")) << "Start::Resume, not New";
-  ASSERT_TRUE(pumpMatchTo("setup ran"));
+  EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
+  EXPECT_TRUE(logHas("counter: Starting -> Error on ScriptError"));
+  for (int i = 0; i < 20; ++i) {
+    entered->loop();
+    input->clear();
+  }
+  EXPECT_FALSE(logHas("setup ran")) << "no game ran";
   match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Keep);
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }

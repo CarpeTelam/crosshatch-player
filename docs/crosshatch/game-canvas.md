@@ -36,8 +36,8 @@ the only place that changes state and runs what entering a state requires. Any e
 
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
-| Starting | the VM started | Playing | The first frame replaces the Games list; gestures made before it is published and drawn are read and dropped, as after Play again (a tap that opened the game, lifted late, is not the game's first input). With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts. A save that is there but cannot be read, or that the VM refuses, does not start a new match over it: see the next row. |
-| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read or was refused by the VM ("The saved match could not be resumed"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
+| Starting | the VM started | Playing | The first frame replaces the Games list; gestures made before it is published and drawn are read and dropped, as after Play again (a tap that opened the game, lifted late, is not the game's first input). With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver, with the roster the save records (solo, or an open pass match on its saved turn seat; a hidden pass save goes to HandOff, below), and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts with the roster it was given. A save that is there but cannot be read, that only a host with Pass and Play or more seats could start, or that the VM refuses does not start a new match over it: see the next row. |
+| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read, is a save of this package that only a host with Pass and Play or more seats could start, or was refused by the VM ("The saved match could not be resumed"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
 | Playing | Back or Home | Paused | The pause menu (Resume, Leave) opens over the frame; the game gets no input or timers. |
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; `resume.bin` and its tmp are deleted (an over snapshot is never written, and one still pending deletes the file instead); the end-of-round menu (Play again, Leave) opens over the last frame. A round that ends while the pause menu is open deletes the file at once, from the pause menu's loop pass. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. A pause menu opened in the gap says so: its line "Starting the next round" sits under the headline, and the menu is drawn again without it once the round's first frame is published (`GameMatchActivity::gapWhenPaused`). The last round's board, which would take no taps, is never shown. |
@@ -49,14 +49,20 @@ the only place that changes state and runs what entering a state requires. Any e
 
 ### Resume
 
-A match with an installed package (`.pkg`) keeps `resume.bin` (docs/crosshatch/formats.md) so a solo match survives
-sleep. The VM hands each snapshot it commits to the loop task through a latest-wins mailbox (`GameVM::committed()`), and
-in Playing and Paused every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the forced
+A match with an installed package (`.pkg`) keeps `resume.bin` (docs/crosshatch/formats.md) so a solo or pass match
+survives sleep; the save records the match's mode and, for pass, its seat count. The VM hands each snapshot it commits to
+the loop task through a latest-wins mailbox (`GameVM::committed()`), and in Playing and Paused (and a hidden pass
+match's Result and HandOff) every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the forced
 exit write the last pending one, once more, after the VM has stopped and before it is freed (a write that failed less than
 5 s before is not retried then either). Only Over
 deletes the file; Leave and the forced exit keep it. Entering with `Start::Resume` restores it (`Session::restore`), so
-the match continues from the snapshot and does not write it again until a move commits. The VM task never touches the
-card (AD-5).
+the match continues from the snapshot and does not write it again until a move commits. The save is read before the VM
+is built, and its roster is the match's, whatever roster the caller passed (Continue plays the save's roster): a hidden
+pass save resumes on the blank hand-off screen (HandOff), whose tap shows the saved turn seat; an open pass save resumes
+in Playing on that seat's frame. A save of this package that this host cannot start but a host with Pass and Play or more
+seats could (`GameMatchActivity::savedForAnotherHost`, which also refuses when its second read faults) stops in the error
+view with the file kept, as an unreadable one does. Such a save is not offered as Continue, so a New match (the title
+screen's explicit choice) still replaces it, as formats.md says. The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -98,8 +104,8 @@ never takes it again (pitfall 12cc816). It notes `millis()` at its very start, a
    exit with no VM (Error after a stuck call, or after Leave) push nothing. The half refresh is AD-12's choice, where
    the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
    (epic-pass-and-play entry 11);
-3. the pending snapshot is written as `resume.bin` (in Playing or Paused only), before an abandon can free the memory it
-   lives in;
+3. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
+   free the memory it lives in;
 4. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
    snapshot written before it is deleted;
 5. a `resume.bin` delete that Over could not finish is retried;
@@ -145,7 +151,7 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
-| Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the blank hand-off screen replaces the Games list. |
+| Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the blank hand-off screen replaces the Games list. A resumed hidden pass save starts here too: the VM restores the snapshot instead of running `setup`, and the blank's tap shows the saved turn seat. |
 | HandOff | a tap anywhere, or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the blank on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
 | Playing | a move that passes the turn | Result | The VM draws the mover's own frame again and counts the move (`GameVM::turnsPassed`, `passedTo`); the match shows that frame with the banner "Tap to pass to player N" (a fast refresh, no button hints). |
 | Playing | the status the game shipped is over | Over | As in solo: a move that ends the round is RoundOver, never a turn change, and the end-of-round menu sits over seat 0's frame, the one for everyone. |
@@ -180,7 +186,9 @@ next seat.
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
 as anywhere else. Play again drops a held timer with the last round.
 
-A hidden pass match keeps no `resume.bin` (pass does not save until epic-pass-and-play entry 9).
+**Saves.** A hidden pass match keeps `resume.bin` as a solo match does (Resume, above): each committed snapshot is
+written in Playing, Paused, Result, and HandOff, Over deletes it, and Leave and the forced exit keep it. The forced
+exit's blank is pushed before the resume write (step 2, then step 3).
 
 ## The views
 

@@ -1115,6 +1115,493 @@ TEST_F(ResumeMatchTest, TheForcedExitOfAVmStuckInALockedBindingEndsWithinTheBoun
   EXPECT_TRUE(fakertos::waitNoTasks());
 }
 
+// ---- pass saves (epic-pass-and-play entry 9): pass-open and pass-hidden through the real match, VM, and store ----
+
+// resume.bin's mode byte for a pass match (docs/crosshatch/formats.md): 0 solo, 1 pass.
+constexpr uint8_t SAVED_PASS = 1;
+
+// resume.bin of a pass match of `seats` seats, as GameSaveStore lays it out for the package `hash`.
+Bytes passResumeBytes(const Bytes& snapshot, const uint16_t ver, const uint8_t seats,
+                      const uint8_t (&hash)[GamePkg::HASH_BYTES] = HASH_A) {
+  Bytes out = resumeBytes(snapshot, ver, hash);
+  out[14] = SAVED_PASS;
+  out[15] = seats;
+  return out;
+}
+
+class PassResumeTest : public ResumeMatchTest {
+ protected:
+  void TearDown() override {
+    renderer->onDisplay = nullptr;
+    ResumeMatchTest::TearDown();
+  }
+
+  // Installs fixture `id` with HASH_A's .pkg and enters it as the launcher would, with its manifest: pass-open's (seats
+  // 1..2, solo and pass) or, when `hidden`, pass-hidden's (seats 2..2, pass, hidden). `roster` is the caller's.
+  void enterPass(const std::string& id, const bool hidden, const GameMatchActivity::Start start,
+                 const GameCore::Roster& roster = GameCore::Roster::pass(2)) {
+    match::installFixture(id);
+    installPkg(id);
+    GameCore::Manifest manifest = match::manifestOf(id);
+    manifest.seatsMin = hidden ? 2 : 1;
+    manifest.seatsMax = 2;
+    manifest.modes =
+        hidden ? GameCore::Manifest::MODE_PASS : GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS;
+    manifest.hidden = hidden;
+    enterWith(manifest, roster, start);
+  }
+
+  void enterWith(const GameCore::Manifest& manifest, const GameCore::Roster& roster,
+                 const GameMatchActivity::Start start) {
+    gameId = manifest.id;
+    exited = false;
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, roster, start);
+    // A hidden match's first screen is the blank, never a frame: its tests draw each screen themselves.
+    firstFramePending = !manifest.hidden;
+    activity->onEnter();
+  }
+
+  // The game's resume.bin: its mode byte (14), seat count (15), and ver (16..17); -1 when there is no such file.
+  int savedByte(const size_t at) const {
+    const Bytes bytes = fakesd::bytesOf(resumePath(gameId));
+    return bytes.size() > at ? bytes[at] : -1;
+  }
+  int savedMode() const { return savedByte(14); }
+  int savedSeats() const { return savedByte(15); }
+  int savedVer() const {
+    const Bytes bytes = fakesd::bytesOf(resumePath(gameId));
+    return bytes.size() > 17 ? bytes[16] | bytes[17] << 8 : -1;
+  }
+  // resume.bin holds a two-seat pass save at `ver`.
+  bool savedPassAt(const int ver) const { return savedMode() == SAVED_PASS && savedSeats() == 2 && savedVer() == ver; }
+  bool pumpToPassSave(const int ver) {
+    return pump([&] { return savedPassAt(ver); });
+  }
+
+  // How many SD ops so far touched a resume file.
+  static size_t resumeOps() {
+    const auto& ops = fakesd::sim().ops;
+    return static_cast<size_t>(std::count_if(
+        ops.begin(), ops.end(), [](const std::string& op) { return op.find("resume.bin") != std::string::npos; }));
+  }
+
+  // pass-open: the canvas point at the middle of cell `cell` (1..9, row by row: 140 px squares from (27, 200)).
+  void tapCell(const int cell) {
+    tapCanvas(27 + (cell - 1) % 3 * 140 + 70, 200 + (cell - 1) / 3 * 140 + 70);
+    frame();
+    renderer->forget();
+    showFrame();
+  }
+  // pass-open: X takes 1, 4, and 7 while O takes 2 and 3; the round ends.
+  void playOpenToOver() {
+    for (const int cell : {1, 2, 4, 3}) {
+      ASSERT_NO_FATAL_FAILURE(tapCell(cell));
+    }
+    tapCanvas(27 + 70, 200 + 2 * 140 + 70);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  }
+  bool drew(const std::string& text) const {
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    return std::find(texts.begin(), texts.end(), text) != texts.end();
+  }
+
+  // pass-hidden: the screen the match asked for is drawn; then a tap anywhere on it passes the device on.
+  void tapScreen() {
+    input->tap(240, 400);
+    frame();
+  }
+  const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }
+  static bool holds(const GfxRenderer::Shown& push, const std::string& part) {
+    return std::any_of(push.texts.begin(), push.texts.end(),
+                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
+  }
+  // pass-hidden from the start or a resume: the blank drawn, its tap, and the turn seat's frame drawn.
+  void passTheBlank() {
+    ASSERT_EQ(state(), "HandOff");
+    showFrame();
+    EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_TRUE(lastPush().texts.empty()) << lastPush().texts.front();
+    tapScreen();
+    ASSERT_EQ(state(), "Playing");
+    showFrame();
+  }
+  // pass-hidden: seat 1's frame is on the panel; its move passes the turn to seat 2 (Result).
+  void moveToResult() {
+    input->tap(CANVAS_X + 100, CANVAS_Y + 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  }
+};
+
+TEST_F(PassResumeTest, ANewOpenPassMatchWritesEachSnapshotAsAPassSaveAndOverDeletesIt) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1)) << "setup's snapshot, mode 1 n 2";
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pumpToPassSave(2));
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  ASSERT_NO_FATAL_FAILURE(tapCell(2));
+  ASSERT_TRUE(pumpToPassSave(3));
+  for (const int cell : {4, 3}) {
+    ASSERT_NO_FATAL_FAILURE(tapCell(cell));
+  }
+  tapCanvas(27 + 70, 200 + 2 * 140 + 70);  // X completes 1-4-7
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(fakesd::has(resumePath("pass-open")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("pass-open")));
+  sleep();
+  EXPECT_FALSE(fakesd::has(resumePath("pass-open"))) << "the forced exit in the end-of-round menu writes nothing";
+}
+
+TEST_F(PassResumeTest, LeavingAPassMatchKeepsItsPassSave) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pumpToPassSave(2));
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  input->press(Button::NavNext);  // Leave: the second option, by keys
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+  EXPECT_TRUE(savedPassAt(2)) << "Leave keeps the pass save";
+}
+
+TEST_F(PassResumeTest, ADeleteTheCardRefusesAtAPassMatchsOverIsRetriedAsInSolo) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  fakesd::sim().failRemove.insert(resumePath("pass-open"));
+  ASSERT_NO_FATAL_FAILURE(playOpenToOver());
+  EXPECT_TRUE(logHas("cannot delete " + resumePath("pass-open")));
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_TRUE(fakesd::has(resumePath("pass-open"))) << "the card still refuses";
+  fakesd::sim().failRemove.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the retry waits this long after a failed try
+  ASSERT_TRUE(pump([&] { return !fakesd::has(resumePath("pass-open")); })) << "the retry never came";
+}
+
+TEST_F(PassResumeTest, AHiddenPassMatchWritesItsSnapshotsInHandOffAndResult) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_EQ(state(), "HandOff");
+  ASSERT_TRUE(pumpToPassSave(1)) << "setup's snapshot, written on the blank";
+  EXPECT_EQ(state(), "HandOff");
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pumpToPassSave(2)) << "the move's snapshot, written in Result";
+  EXPECT_EQ(state(), "Result");
+}
+
+// The hidden match's write fails in Result and succeeds on the blank after the backoff.
+TEST_F(PassResumeTest, AHiddenPassMatchsWriteThatFailedInResultIsWrittenOnTheBlank) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
+  showFrame();  // Result's banner, which the tap below passes
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  ASSERT_TRUE(pumpToPassSave(2));
+  EXPECT_EQ(state(), "HandOff");
+}
+
+// The save's roster wins over the caller's: a solo caller's Continue on a hidden pass save shows the blank first, and
+// its tap shows seat 2 at the saved move.
+TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTurnSeat) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pumpToPassSave(2));
+  sleep();
+  ASSERT_TRUE(savedPassAt(2));
+  const Bytes saved = fakesd::bytesOf(resumePath("pass-hidden"));
+
+  fakelog::clearLines();
+  renderer->shown.clear();
+  enterPass("pass-hidden", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+  EXPECT_TRUE(logHas("pass-hidden: resuming the save's roster: pass, 2 seat(s)"));
+  EXPECT_TRUE(logHas("pass-hidden: Starting -> HandOff on Started"));
+  ASSERT_TRUE(pump([&] { return logHas("Resuming at ver 2"); }));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
+  for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));
+  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 0u) << "no seat is drawn before the blank's tap";
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("pass-hidden")), saved) << "the restored snapshot is not written again";
+}
+
+TEST_F(PassResumeTest, AnOpenPassSaveResumesInPlayOnTheSavedTurnSeatsFrame) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pumpToPassSave(2));
+  sleep();
+  ASSERT_TRUE(savedPassAt(2));
+
+  fakelog::clearLines();
+  enterPass("pass-open", false, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+  EXPECT_TRUE(logHas("pass-open: resuming the save's roster: pass, 2 seat(s)"));
+  EXPECT_EQ(state(), "Playing");
+  renderer->forget();
+  showFrame();
+  EXPECT_TRUE(drew("Player 2 (O) to move")) << "seat 2's frame, at the saved board";
+  EXPECT_TRUE(logHas("Resuming at ver 2"));
+  // Seat 2 moves: the resumed match goes on writing a two-seat pass save.
+  ASSERT_NO_FATAL_FAILURE(tapCell(2));
+  EXPECT_TRUE(logHas("apply seat 2 cell 2"));
+  ASSERT_TRUE(pumpToPassSave(3));
+  EXPECT_TRUE(drew("Player 1 (X) to move"));
+}
+
+// Sleep in a hidden match's Result with the write failed: the forced exit writes the snapshot, and Continue resumes at
+// it, on the blank.
+TEST_F(PassResumeTest, AHiddenMatchSleptInResultContinuesAtTheSnapshotTheSleepWrote) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  ASSERT_TRUE(savedPassAt(1));
+  sleep();
+  ASSERT_TRUE(savedPassAt(2)) << "the forced exit writes the move";
+
+  fakelog::clearLines();
+  enterPass("pass-hidden", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  EXPECT_TRUE(holds(lastPush(), "Moves: 1"));
+  EXPECT_TRUE(logHas("Resuming at ver 2"));
+}
+
+TEST_F(PassResumeTest, AnOpenMatchSleptMidMoveContinuesAtTheSnapshotTheSleepWrote) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-open"));
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-open")); }));
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  ASSERT_TRUE(savedPassAt(1));
+  sleep();
+  ASSERT_TRUE(savedPassAt(2)) << "the forced exit writes the move";
+
+  fakelog::clearLines();
+  enterPass("pass-open", false, GameMatchActivity::Start::Resume);
+  renderer->forget();
+  showFrame();
+  EXPECT_TRUE(drew("Player 2 (O) to move"));
+  EXPECT_TRUE(logHas("Resuming at ver 2"));
+}
+
+// The reverse of the solo-caller cases: a solo save resumed by a caller that passes a pass roster plays solo, and its
+// writes stay mode 0, n 1.
+TEST_F(PassResumeTest, ASoloSaveResumedWithAPassCallersRosterPlaysSolo) {
+  enterPass("pass-open", false, GameMatchActivity::Start::New, GameCore::Roster::solo());
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pump([&] { return savedMode() == 0 && savedSeats() == 1 && savedVer() == 2; }));
+  sleep();
+
+  fakelog::clearLines();
+  enterPass("pass-open", false, GameMatchActivity::Start::Resume, GameCore::Roster::pass(2));
+  EXPECT_TRUE(logHas("pass-open: resuming the save's roster: solo, 1 seat(s)"));
+  EXPECT_EQ(state(), "Playing");
+  renderer->forget();
+  showFrame();
+  EXPECT_TRUE(drew("Player 1 (O) to move")) << "solo: seat 1 places both marks";
+  ASSERT_NO_FATAL_FAILURE(tapCell(2));
+  EXPECT_TRUE(logHas("apply seat 1 cell 2"));
+  ASSERT_TRUE(pump([&] { return savedVer() == 3; }));
+  EXPECT_EQ(savedMode(), 0);
+  EXPECT_EQ(savedSeats(), 1);
+  // The VM's Session plays the solo roster: at the round's end `over` reaches seat 1 only (a pass roster would give
+  // seat 2 one too).
+  for (const int cell : {4, 3}) {
+    ASSERT_NO_FATAL_FAILURE(tapCell(cell));
+  }
+  tapCanvas(27 + 70, 200 + 2 * 140 + 70);  // X completes 1-4-7
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 0u);
+}
+
+// A hidden game that also offers solo: its solo save resumes in Playing, never on the blank, whatever the caller
+// passes.
+TEST_F(PassResumeTest, AHiddenGamesSoloSaveResumesInPlayingNotHandOff) {
+  match::installFixture("pass-open");
+  installPkg("pass-open");
+  GameCore::Manifest manifest = match::manifestOf("pass-open");
+  manifest.seatsMax = 2;
+  manifest.modes = GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS;
+  manifest.hidden = true;
+  enterWith(manifest, GameCore::Roster::solo(), GameMatchActivity::Start::New);
+  firstFramePending = true;
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_NO_FATAL_FAILURE(tapCell(1));
+  ASSERT_TRUE(pump([&] { return savedMode() == 0 && savedSeats() == 1 && savedVer() == 2; }));
+  sleep();
+
+  fakelog::clearLines();
+  enterWith(manifest, GameCore::Roster::pass(2), GameMatchActivity::Start::Resume);
+  EXPECT_TRUE(logHas("pass-open: resuming the save's roster: solo, 1 seat(s)"));
+  EXPECT_EQ(state(), "Playing");
+  EXPECT_TRUE(logHas("pass-open: Starting -> Playing on Started"));
+  EXPECT_FALSE(logHas("-> HandOff"));
+}
+
+// A resumed hidden pass match played to its end: Over deletes the save, and Play again writes the new round's pass
+// save from the blank.
+TEST_F(PassResumeTest, AResumedHiddenMatchPlayedToOverDeletesItsSaveAndPlayAgainSavesFromTheBlank) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pumpToPassSave(2));
+  sleep();
+
+  fakelog::clearLines();
+  enterPass("pass-hidden", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+  // Seat 2 and then seat 1 move, each through Result and the blank; seat 2's next move is the fourth and ends the
+  // round.
+  for (int turn = 0; turn < 2; ++turn) {
+    ASSERT_NO_FATAL_FAILURE(passTheBlank());
+    ASSERT_NO_FATAL_FAILURE(moveToResult());
+    showFrame();  // Result's banner, which the tap below passes
+    tapScreen();
+    ASSERT_EQ(state(), "HandOff");
+  }
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  EXPECT_TRUE(holds(lastPush(), "Moves: 3"));
+  input->tap(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  EXPECT_FALSE(fakesd::has(resumePath("pass-hidden")));
+  EXPECT_FALSE(fakesd::has(resumeTmpPath("pass-hidden")));
+
+  input->click(Button::Confirm);  // Play again is the first option
+  frame();
+  EXPECT_EQ(state(), "HandOff");
+  ASSERT_TRUE(pump([&] { return savedMode() == SAVED_PASS && savedSeats() == 2; })) << "the new round's save";
+  EXPECT_EQ(state(), "HandOff");
+}
+
+// A save only a host with more seats can start (n 3 of a 2..3 game on this two-seat host) is not replaced by a new
+// match: the match stops in the error view and the file stays as it was.
+TEST_F(PassResumeTest, ASaveOnlyAnotherHostCanStartStopsInTheErrorViewAndIsKept) {
+  installGame("trio", countingGame(5));
+  installPkg("trio");
+  const Bytes saved = passResumeBytes(snapshotOf(2), 3, 3);
+  fakesd::addFile(resumePath("trio"), saved);
+  GameCore::Manifest manifest = match::manifestOf("trio");
+  manifest.seatsMin = 2;
+  manifest.seatsMax = 3;
+  manifest.modes = GameCore::Manifest::MODE_PASS;
+  enterWith(manifest, GameCore::Roster::pass(2), GameMatchActivity::Start::Resume);
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("trio: resume.bin is a save this host cannot start; not starting a new match over it"));
+  EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
+  for (int i = 0; i < 10; ++i) {
+    input->tap(CANVAS_X + 50, CANVAS_Y + 50);
+    frame();
+  }
+  EXPECT_FALSE(logHas("setup ran")) << "no game ran";
+  EXPECT_FALSE(logHas("Resuming at ver"));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("trio")), saved);
+  EXPECT_EQ(tmpOpens(), 0u);
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("trio")), saved) << "and the forced exit keeps it";
+}
+
+TEST_F(PassResumeTest, AnUnreadablePassSaveStopsInTheErrorViewAndIsKept) {
+  const Bytes saved = passResumeBytes(snapshotOf(2), 3, 2);
+  fakesd::addFile(resumePath("pass-open"), saved);
+  fakesd::sim().failReadAt[resumePath("pass-open")] = 0;
+  enterPass("pass-open", false, GameMatchActivity::Start::Resume);
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
+  for (int i = 0; i < 20; ++i) frame();
+  EXPECT_FALSE(logHas("Round started"));
+  fakesd::sim().failReadAt.clear();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("pass-open")), saved);
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("pass-open")), saved);
+}
+
+// No usable save: none, another package's, a malformed one, and one no host can start (more seats than the game has)
+// each start a new match with the caller's pass roster, whose first snapshot replaces the file.
+TEST_F(PassResumeTest, WithNoUsableSaveContinueStartsANewMatchWithTheCallersRoster) {
+  struct Case {
+    const char* name;
+    Bytes file;  // empty: no file
+    const char* logged;
+  };
+  Bytes unknownMode = passResumeBytes(snapshotOf(2), 3, 2);
+  unknownMode[14] = 7;
+  const Case cases[] = {
+      {"none", {}, nullptr},
+      {"other package", passResumeBytes(snapshotOf(2), 3, 2, HASH_B), ": other package"},
+      {"malformed", unknownMode, ": unknown mode"},
+      {"more seats than the game has", passResumeBytes(snapshotOf(2), 3, 3), ": seats not startable"},
+      {"a pass save of one seat", passResumeBytes(snapshotOf(2), 3, 1), ": bad seat count"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.name);
+    fakelog::clearLines();
+    fakesd::removeEntry(resumePath("pass-open"));
+    if (!c.file.empty()) fakesd::addFile(resumePath("pass-open"), c.file);
+    enterPass("pass-open", false, GameMatchActivity::Start::Resume);
+    if (c.logged) {
+      EXPECT_TRUE(logHas("discarded " + resumePath("pass-open") + c.logged));
+    }
+    EXPECT_TRUE(logHas("pass-open: no usable resume.bin; starting a new match"));
+    EXPECT_FALSE(logHas("resuming the save's roster"));
+    EXPECT_EQ(state(), "Playing");
+    renderer->forget();
+    showFrame();
+    EXPECT_TRUE(drew("Player 1 (X) to move")) << "a new pass match";
+    EXPECT_TRUE(pumpToPassSave(1)) << "its first snapshot, mode 1 n 2";
+    sleep();
+  }
+}
+
+// The forced exit of a hidden match in Playing with a snapshot whose write failed: the blank is pushed before any
+// resume.bin op, and the snapshot is written after it (deferred-work ## 5.6).
+TEST_F(PassResumeTest, AHiddenForcedExitPushesTheBlankBeforeAnyResumeOpAndThenWritesThePendingSnapshot) {
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); })) << "setup's snapshot";
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple"));
+  ASSERT_FALSE(fakesd::has(resumePath("pass-hidden")));
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // no loop pass since: the write is pending and due
+
+  const size_t opsBefore = resumeOps();
+  size_t opsAtPush = 0;
+  size_t pushes = 0;
+  renderer->onDisplay = [&] {
+    ++pushes;
+    opsAtPush = resumeOps();
+  };
+  sleep();
+  renderer->onDisplay = nullptr;
+  ASSERT_EQ(pushes, 1u);
+  EXPECT_TRUE(lastPush().texts.empty()) << "the push was the blank";
+  EXPECT_EQ(lastPush().mode, HalDisplay::HALF_REFRESH);
+  EXPECT_EQ(opsAtPush, opsBefore) << "a resume.bin op ran before the blank was pushed";
+  EXPECT_GT(resumeOps(), opsBefore);
+  EXPECT_TRUE(savedPassAt(1)) << "the pending snapshot was written after the blank";
+}
+
 // ---- the waits (R11): elapsed time, not polls ----
 
 class ResumeVmTest : public match::ScreenTest {

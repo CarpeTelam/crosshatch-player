@@ -15,6 +15,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
+#include "games/GameHostCaps.h"
 #include "games/GameIconDraw.h"
 #include "games/GameRegistry.h"
 #include "games/GameVM.h"
@@ -89,6 +90,11 @@ StrId optionLabel(const MatchEvent event) {
   return StrId::STR_BACK;
 }
 
+// A hidden pass match: a pass roster of a game whose manifest says hidden (MatchLifecycle's hiddenPass).
+bool isHiddenPass(const GameCore::Roster& roster, const GameCore::Manifest& manifest) {
+  return roster.mode == GameCore::Mode::Pass && manifest.hidden;
+}
+
 }  // namespace
 
 static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
@@ -103,7 +109,7 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
       manifest(manifest),
       roster(roster),
       start(start),
-      lifecycle(roster.mode == GameCore::Mode::Pass && manifest.hidden) {}
+      lifecycle(isHiddenPass(roster, manifest)) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -126,11 +132,10 @@ void GameMatchActivity::onEnter() {
   // resume.bin is saved and read only for an installed package: its hash says whether the
   // save is this package's (AD-16). A game without a valid .pkg plays without one.
   uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
-  if (roster.mode == GameCore::Mode::Pass) {
-    // Without the hash GameSaveStore reads, writes, and deletes no resume.bin.
-    LOG_INF("GAME", "%s: pass match; no resume.bin until pass saves (epic-pass-and-play entry 9)", manifest.id);
-  } else if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
+  if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
     store.saves().setPackageHash(pkgHash);
+    // A save records who plays (its mode, and a pass match's seats); a resumed match's load replaces this roster.
+    store.saves().setRoster(roster);
   } else if (start == Start::Resume) {
     // Continue was offered for a save of this package, so its .pkg was readable a moment ago. A match started new here
     // would play without a hash, and could not tell the save from any other file: stop, and leave the save alone.
@@ -148,11 +153,24 @@ void GameMatchActivity::onEnter() {
     return;
   }
   replay.loadFonts(renderer);
-  auto created =
-      GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster, lifecycle.hiddenPass());
-  if (created && start == Start::Resume && !seedResume(*created)) {
+  // Read after assets.load, which restores store.bin through the store's buffer that the snapshot is read into, and
+  // before create, since the VM's Session and the lifecycle are built from the roster the save records. Nothing between
+  // here and setResume calls the store, so the snapshot stays valid.
+  std::span<const uint8_t> snapshot;
+  uint16_t ver = 0;
+  if (start == Start::Resume && !seedResume(snapshot, ver)) {
     // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
     // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
+    return;
+  }
+  auto created =
+      GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster, lifecycle.hiddenPass());
+  if (created && !snapshot.empty() && !created->setResume(snapshot, ver)) {
+    // GameVM::setResume refuses only an empty or oversized snapshot, which GameSaveStore's checks already exclude, so
+    // this is not reachable today; if it ever is, the first snapshot of a new match would replace the save.
+    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; not starting a new match over it", manifest.id,
+            static_cast<unsigned>(snapshot.size()));
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_RESUME_FAILED));
     return;
   }
@@ -170,28 +188,49 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
-bool GameMatchActivity::seedResume(GameVM& created) {
-  uint16_t ver = 0;
+bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver) {
   bool unreadable = false;
-  const std::span<const uint8_t> snapshot = store.saves().loadResume(ver, unreadable);
+  GameCore::Roster saved;
+  snapshot = store.saves().loadResume(ver, unreadable, manifest, gameHostCaps(), saved);
   if (snapshot.empty()) {
     if (unreadable) {
       // A save is there and would not read, a fault that may pass (the launcher offered Continue for it).
       LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
       return false;
     }
+    if (savedForAnotherHost()) {
+      // A firmware with Pass and Play or more seats may resume it: a new match here would replace it with its first
+      // snapshot.
+      LOG_ERR("GAME", "%s: resume.bin is a save this host cannot start; not starting a new match over it", manifest.id);
+      return false;
+    }
     // No file, or one that was read and is no save (logged with its reason): nothing to lose.
     LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
     return true;
   }
-  if (!created.setResume(snapshot, ver)) {
-    // GameVM::setResume refuses only an empty or oversized snapshot, which GameSaveStore's checks already exclude, so
-    // this is not reachable today; if it ever is, the first snapshot of a new match would replace the save.
-    LOG_ERR("GAME", "%s: the VM refused a %u-byte snapshot; not starting a new match over it", manifest.id,
-            static_cast<unsigned>(snapshot.size()));
-    return false;
-  }
+  // The save's roster is the match's, whatever the caller passed: the VM's Session, the lifecycle, and the store's
+  // writes (loadResume adopted it) all follow it.
+  roster = saved;
+  // Still Starting and before the VM exists: no event has been applied, so the flag is fixed from here on.
+  lifecycle = MatchLifecycle(isHiddenPass(saved, manifest));
+  LOG_INF("GAME", "%s: resuming the save's roster: %s, %u seat(s)", manifest.id, GameCore::modeName(saved.mode),
+          static_cast<unsigned>(saved.seats));
   return true;
+}
+
+bool GameMatchActivity::savedForAnotherHost() {
+  // Only the host is widened: a save of this package the game itself cannot start was written by no firmware (the
+  // hash ties it to this manifest).
+  GameCore::HostCaps any = gameHostCaps();
+  any.pass = true;
+  any.maxSeats = GameCore::Roster::MAX_SEATS;
+  uint16_t ver = 0;
+  bool unreadable = false;
+  GameCore::Roster saved;
+  // A load spends the store's buffer and roster, which only the error view follows. A read that faults now (the first
+  // read did not) cannot rule out such a save, so it refuses too and the file is kept.
+  const bool loaded = !store.saves().loadResume(ver, unreadable, manifest, any, saved).empty();
+  return loaded || unreadable;
 }
 
 void GameMatchActivity::onExit() {
