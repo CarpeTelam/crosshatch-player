@@ -139,22 +139,27 @@ target_link_libraries(GameScriptTest PRIVATE
 
 gtest_discover_tests(GameScriptTest)
 
-# GameSaveStore (src/games) over a fake SD card and a captured log: store.bin's
-# restore rules and its tmp-then-rename write. The stubs stand in for HalStorage.h
-# and Logging.h, so this is its own executable.
+# GameSaveStore (src/games) over the harness's fake SD card and captured log
+# (harness/stubs/HalStorage.h and Logging.h): store.bin's restore rules and its
+# tmp-then-rename write, and resume.bin's. The stubs stand in for HalStorage.h and
+# Logging.h, so this is its own executable.
 add_executable(GameSaveStoreTest
   GameSaveStoreTest.cpp
   ${REPO_ROOT}/src/games/GameSaveStore.cpp
   ${REPO_ROOT}/lib/GameScript/BlobHeader.cpp
   ${REPO_ROOT}/lib/GameScript/Codec.cpp
   ${REPO_ROOT}/lib/GameScript/StoreSlot.cpp
+  ${REPO_ROOT}/lib/GameCore/Manifest.cpp
+  ${REPO_ROOT}/lib/GameCore/Roster.cpp
+  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
 )
 
 target_include_directories(GameSaveStoreTest PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/save_store_stubs
+  ${CMAKE_CURRENT_SOURCE_DIR}/harness/stubs
   ${REPO_ROOT}/lib/GameScript
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/src/games
 )
 

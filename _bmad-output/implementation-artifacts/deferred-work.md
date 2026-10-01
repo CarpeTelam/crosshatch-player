@@ -630,3 +630,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-the-hidden-hand-off-in-the-match-plan.md`
   summary: In a solo or open pass match, a pause menu opened in the Play-again gap is drawn over the canvas's newest frame, which in the gap is the last round's (a frame a step still running at Play again published), though `game-canvas.md` says the last round's board is never shown. A hidden pass match is not affected: its gap is on the blank (Paused from HandOff draws no frame) or behind the seat gate.
   evidence: Review of entry 4 (blind-hunter, pass 1); `GameMatchActivity::canvasUnderView` and `renderView`, unchanged for solo since e3r-x. Pre-existing; the fix (`canvasUnderView` also false while `roundsStarted() < roundsStartedAwaited`) changes solo's view. Trigger: the sweep (entry 10).
+
+## 5.5
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-resume-bin-for-pass-matches-plan.md`
+  summary: A new pass match must call `store.saves().setRoster(roster)` (beside `setPackageHash`) before its first `flushResume`: the store's roster is solo until set, so a pass match that skips it writes `resume.bin` as mode 0, n 1, which a later Continue resumes as solo. A resumed match needs no call: the new `loadResume(ver, unreadable, game, host, saved)` adopts the roster it loaded.
+  evidence: Review of entry 5 (blind-hunter, edge-case-hunter, pass 1); `GameSaveStore::setRoster` keeps the solo default so the unchanged solo callers write today's bytes. Trigger: entry 9 (pass resume in `GameMatchActivity`).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-resume-bin-for-pass-matches-plan.md`
+  summary: Resolved in part by entry 5: `## 4.12`'s "Continue rows list solo saves only" item. `GameSaveStore` now writes and reads pass saves (mode 1, n), and `peek(game, pkgHash, host)` reports one the game and host can start; the launcher still calls the solo-only `peek(id, pkgHash)`, so a pass save is offered once the title screen (entry 7) calls the new form.
+  evidence: `GameSaveStoreTest.APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeIt`, `APassSaveIsNoneToTheSoloOnlyFormsAndIsKept`; `docs/crosshatch/formats.md` (resume.bin). Trigger: entry 7.
