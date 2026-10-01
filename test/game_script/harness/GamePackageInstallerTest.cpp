@@ -635,11 +635,30 @@ TEST_F(InstallerTest, ACardFailureInTheLastStepOfAReinstallIsRetried) {
 }
 
 // The fixtures README says these pack with pack_game.py and install; a stored zip of the same
-// members (the folder's manifest.json and .lua files) stands in for the packer here.
-TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
-  const char* fixtures[] = {"counter",   "gallery",      "icons", "limits", "loop",
-                            "pass-open", "slow-restart", "timer", "timing", "tracer"};
-  for (const char* fixture : fixtures) {
+// members (the folder's manifest.json and .lua files) stands in for the packer here. Each can start
+// on this host in every mode its manifest declares.
+TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStart) {
+  using GameCore::Manifest;
+  // Each fixture and the modes its manifest declares, every one of which must start on this host.
+  struct Fixture {
+    const char* id;
+    uint8_t modes;
+  };
+  const Fixture fixtures[] = {
+      {"counter", Manifest::MODE_SOLO},
+      {"gallery", Manifest::MODE_SOLO},
+      {"icons", Manifest::MODE_SOLO},
+      {"limits", Manifest::MODE_SOLO},
+      {"loop", Manifest::MODE_SOLO},
+      {"pass-hidden", Manifest::MODE_PASS},
+      {"pass-open", static_cast<uint8_t>(Manifest::MODE_SOLO | Manifest::MODE_PASS)},
+      {"slow-restart", Manifest::MODE_SOLO},
+      {"timer", Manifest::MODE_SOLO},
+      {"timing", Manifest::MODE_SOLO},
+      {"tracer", Manifest::MODE_SOLO},
+  };
+  for (const Fixture& f : fixtures) {
+    const char* fixture = f.id;
     const std::string dir = std::string(GAME_FIXTURES_DIR) + "/" + fixture;
     std::vector<Member> members;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
@@ -654,7 +673,7 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
     bool found = false;
     for (size_t i = 0; i < listing.count; ++i) {
       if (std::string(listing.entries[i].manifest.id) == fixture) {
-        found = listing.entries[i].check.ok() && (listing.entries[i].check.modes & GameCore::Manifest::MODE_SOLO) != 0;
+        found = listing.entries[i].check.ok() && (listing.entries[i].check.modes & f.modes) == f.modes;
       }
     }
     EXPECT_TRUE(found);

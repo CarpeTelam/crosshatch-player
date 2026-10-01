@@ -229,17 +229,17 @@ inline std::set<std::string> resumeFilesOnCard() {
 
 // What becomes of the resume.bin files a match writes on its way out (the forced exit writes the last snapshot).
 enum class Saves : uint8_t {
-  Discard,  // taken off the card: the launcher opened next has no Continue row for them
-  Keep,     // left on the card, as production leaves them: a game that was left mid-round has a Continue row
+  Discard,  // taken off the card: the game's title screen opened next has no Continue row for them
+  Keep,     // left on the card, as production leaves them: a game that was left mid-round offers Continue
 };
 
 // Lets go of the matches a launcher test started (`drop` does it, as the manager would), the same way every run.
 // A match's VM publishes its first snapshot a moment after it logs "Started <id>", and the match writes its last
 // snapshot as resume.bin on the way out, so a test that dropped it at once got a save on some runs and none on others,
-// and the launcher opened next listed a Continue row or not. This waits until every match that started has logged its
+// and the title screen opened next offered Continue or not. This waits until every match that started has logged its
 // first round, then drops. `saves` says what happens to the saves the drop wrote: Discard takes them away (a test that
-// means a save puts it there before, and one that means the state production reaches, a game left mid-round with its
-// Continue row, says Keep). Discard takes away only the files the drop itself created: a save that was on the card
+// means a save puts it there before, and one that means the state production reaches, a game left mid-round that
+// offers Continue, says Keep). Discard takes away only the files the drop itself created: a save that was on the card
 // before it (one the test placed, or one the match's own loop wrote) stays.
 inline void letStartedMatchesGo(const std::function<void()>& drop, const Saves saves) {
   waitFor([] { return fakelog::countLines("GAME: Started ") <= fakelog::countLines("Round started"); }, 3000);

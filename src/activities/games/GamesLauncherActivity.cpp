@@ -233,7 +233,7 @@ void GamesLauncherActivity::openRemoveDialog(const int row) {
   if (row < 0 || static_cast<size_t>(row) >= rowCount() || noteVisible) return;
   app.clearTapFlash();
   removeIndex = row;
-  removeFocus = 0;  // Cancel: a stray Confirm keeps the game
+  confirm.focus = 0;  // Cancel: a stray Confirm keeps the game
   requestUpdate();
 }
 
@@ -244,40 +244,34 @@ void GamesLauncherActivity::closeRemoveDialog() {
 }
 
 bool GamesLauncherActivity::handleRemoveInput() {
-  using Button = MappedInputManager::Button;
   // Touch: render() registered the dialog's buttons; onRemoveChoice runs for a tap on one.
   const auto route = UiAppHost::routeTouch(mappedInput);
   if (route.routed && app.invalidated()) requestUpdate();
   if (route) return true;
-  if (mappedInput.wasReleased(Button::Back)) {
-    closeRemoveDialog();
-  } else if (mappedInput.wasReleased(Button::Up) || mappedInput.wasReleased(Button::Left) ||
-             mappedInput.wasReleased(Button::NavPrevious)) {
-    removeFocus = 0;
-    requestUpdate();
-  } else if (mappedInput.wasReleased(Button::Down) || mappedInput.wasReleased(Button::Right) ||
-             mappedInput.wasReleased(Button::NavNext)) {
-    removeFocus = 1;
-    requestUpdate();
-  } else if (mappedInput.wasReleased(Button::Confirm)) {
-    if (removeFocus == 1) {
-      confirmRemove();
-    } else {
-      closeRemoveDialog();
-    }
-  }
+  answerRemove(confirm.readButtons(mappedInput));
   return true;  // the confirmation owns every pass while it is open
+}
+
+void GamesLauncherActivity::answerRemove(const GameConfirmDialog::Answer answer) {
+  switch (answer) {
+    case GameConfirmDialog::Answer::None:
+      break;
+    case GameConfirmDialog::Answer::Repaint:
+      requestUpdate();
+      break;
+    case GameConfirmDialog::Answer::Cancel:
+      closeRemoveDialog();
+      break;
+    case GameConfirmDialog::Answer::Confirm:
+      confirmRemove();
+      break;
+  }
 }
 
 void GamesLauncherActivity::onRemoveChoice(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<GamesLauncherActivity*>(user);
-  if (self->removeIndex < 0) return;
-  self->removeFocus = event.value == 1 ? 1 : 0;
-  if (self->removeFocus == 1) {
-    self->confirmRemove();
-  } else {
-    self->closeRemoveDialog();
-  }
+  if (self->removeIndex < 0) return;  // closed: a tap routed by the table built while it was open
+  self->answerRemove(self->confirm.answerTap(event));
 }
 
 void GamesLauncherActivity::confirmRemove() {
@@ -342,8 +336,19 @@ void GamesLauncherActivity::loadGames() {
   if (listFailed) return;
   for (size_t i = 0; i < listing.count; ++i) {
     const GameRegistry::Entry& game = listing.entries[i];
-    if (!game.check.ok())
-      LOG_INF("GAME", "Unavailable %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
+    // An Invalid manifest is the package's fault on every host; an Unavailable one is this host's.
+    const char* status = nullptr;
+    switch (game.check.status) {
+      case GameCore::CheckStatus::Ok:
+        continue;
+      case GameCore::CheckStatus::Invalid:
+        status = "Invalid";
+        break;
+      case GameCore::CheckStatus::Unavailable:
+        status = "Unavailable";
+        break;
+    }
+    LOG_INF("GAME", "%s %s: %s", status, game.manifest.id, GameCore::describe(game.check.reason));
   }
 }
 
@@ -551,45 +556,8 @@ void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen) {
   // The input task can close the dialog (removeIndex = -1) while this runs on the render task: read it once.
   const int index = removeIndex;
   if (index < 0 || static_cast<size_t>(index) >= listing.count) return;
-  fui::DialogOption options[2];
-  options[0].label = tr(STR_CANCEL);
-  options[1].label = tr(STR_GAMES_REMOVE);
-  for (int i = 0; i < 2; ++i) {
-    options[i].action = ACTION_REMOVE_CHOICE;
-    options[i].value = static_cast<int16_t>(i);
-    options[i].state = removeFocus == i ? fui::StateFocused : fui::StateNormal;
-  }
-  fui::OptionDialogProps& props = dialogProps;
-  props.title = tr(STR_GAMES_REMOVE_TITLE);
-  props.headline = listing.entries[index].manifest.name;
-  props.message = tr(STR_GAMES_REMOVE_KEPT);
-  props.options = options;
-  props.optionCount = 2;
-  props.verticalOptions = true;
-  props.titleText = screen.theme().smallText;
-  props.titleText.bold = true;
-  props.headlineText = screen.theme().bodyText;
-  props.headlineText.maxLines = 2;  // a long name wraps; the dialog grows to fit
-  props.messageText = screen.theme().smallText;
-  props.messageText.maxLines = 2;
-  props.buttonText = screen.theme().smallText;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in handleRemoveInput()
-  // A framed panel, as OptionPopup draws it.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  props.styles = fui::defaultPopupStyles();
-  props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
-  props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = props.styles.normal;
-  props.styles.focused = props.styles.normal;
-  props.styles.active = props.styles.normal;
-  props.styles.disabled = props.styles.normal;
-
-  const fui::Rect body = screen.body();
-  int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);
-  if (width > body.width) width = body.width;
-  const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
-  fui::optionDialog(screen.frame(), fui::centeredRect(body, fui::Size{width, height}), props);
+  confirm.build(screen, renderer, ACTION_REMOVE_CHOICE, tr(STR_GAMES_REMOVE_TITLE),
+                listing.entries[index].manifest.name, tr(STR_GAMES_REMOVE_KEPT), tr(STR_GAMES_REMOVE));
 }
 
 void GamesLauncherActivity::onBackButton() {

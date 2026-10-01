@@ -176,9 +176,11 @@ through the new `loadResume` (below) writes the roster it loaded, so a resumed p
 `setRoster` after that load wins.
 
 Each of `peek` and `loadResume` has two forms. The older ones, `peek(id, pkgHash)` and `loadResume(ver, unreadable)`,
-accept a solo save only; the launcher's Continue and the match use them today. The newer ones,
-`peek(game, pkgHash, host)` and `loadResume(ver, unreadable, game, host, saved)`, which the title screen and the
-match's Continue move to, take the game's manifest and the host's caps and accept a save that game can start on that
+accept a solo save only; no firmware code calls them (the host suites still do). The newer ones,
+`peek(game, pkgHash, host)` and `loadResume(ver, unreadable, game, host, saved)`, take the game's manifest and the
+host's caps. The game's title screen calls the new `peek` once, when it opens; the match's Continue calls the new
+`loadResume`, and on a refusal calls it again with the host widened to pass and 16 seats, to tell a save only another
+host can start from one that is not usable anywhere (below). They accept a save that game can start on that
 host: solo with n 1, or pass with n from max(2, `seats.min`) to the least of `seats.max`, the host's `maxSeats`, and
 16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)` starts it. A pass game with no seat count that
 fits the host cannot start pass there, so its pass save is `mode not startable`. The new `loadResume` gives the saved
@@ -190,25 +192,28 @@ accepts: the header checks `ok`, the package hash is the installed package's, th
 snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is refused
 before it is read. `peek` reads the whole file into a buffer allocated for the call. It answers one of three things:
 
-- `Valid`: a Continue row is listed for the game (the launcher calls `peek` once per game when it builds its list);
+- `Valid`: the game's title screen offers its Continue row (the title screen calls `peek` once, when it opens);
 - `None`: no file, or one that was read and is not usable (the header status, `other package`, `unknown mode`,
   `bad seat count`, `mode not startable`, `seats not startable`, `empty snapshot`, `truncated`, `too large`, or the
   codec's error). `bad seat count` is a seat count no save of its mode has (solo n other than 1, pass n below 2 or over
   16), a malformed file. One log line names why, at `LOG_ERR`, except a save of another package and a well-formed
   save the form, game, or host cannot resume (`mode not startable`, `seats not startable`), which are `LOG_INF`
-  because every launcher build asks again and the save is not broken. `loadResume` logs every refusal, these
-  included, at `LOG_ERR` ("discarded"). The file stays, so a save of another package, or one only another host can
+  because the title screen asks again each time it opens and the save is not broken. `loadResume` logs every refusal,
+  these included, at `LOG_ERR` ("discarded"). The file stays, so a save of another package, or one only another host can
   start, survives until the game's next match replaces it;
 - `Unreadable`: a file is there and could not be checked, because it would not open (`cannot open`) or read
   (`cannot read`) or the buffer could not be allocated, whatever the save's mode. A card or heap fault may pass, so it
-  is not `None`: the launcher still lists the Continue row, so that a new match is not the only choice offered over a
-  save that may be good.
+  is not `None`: the title screen still offers the Continue row, so that a new match is not the only choice offered
+  over a save that may be good.
 
-The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`). A save that is
-`None` then starts a new match, since nothing usable is lost. A save it cannot read (`Unreadable`), or that the VM
-refuses although `peek` accepted it, does not: the match shows the error view "The saved match could not be resumed",
-`resume.bin` is untouched, and Back returns to the list, where Continue can be tried again or the game's own row starts a
-new match on purpose. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
+The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`), and plays the
+roster the save records, whatever roster Continue passed. A save that is `None` then starts a new match, since nothing
+usable is lost, with one exception: a save of this package that only another host can start (`mode not startable` or
+`seats not startable` here, accepted by the widened `loadResume`; `GameMatchActivity::savedForAnotherHost`) does not.
+Neither does a save the match cannot read (`Unreadable`), or one that the VM refuses although `peek` accepted it: the
+match shows the error view "The saved match could not be resumed", `resume.bin` is untouched, and Back goes to Games,
+where the game's row opens its title screen: Continue can be tried again there, and a New row replaces the save on
+purpose, after asking. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
 `peek` already excludes, so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a
 valid `.pkg` there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known
 to be this package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view
@@ -217,7 +222,8 @@ rather than play new.
 A game that fails on the resumed state (a script error at its first `status` or `draw`) does not delete the save either.
 The failure cannot tell a game that rejects the state, every time, from a transient fault (a callback that runs out of
 heap is a script error too), and deleting on the second would lose a good save. Continue shows the error view again on
-each try until a new match, started from the game's own row, replaces the file with its first snapshot.
+each try until a new match, started from a New row of the game's title screen, replaces the file with its first
+snapshot.
 
 **Writing** is `store.bin`'s: the header and snapshot go to `resume.bin.tmp`, which is closed, then `resume.bin` is
 removed and the tmp renamed over it. A failed write removes the partial tmp and leaves `resume.bin` as it was, a stop
