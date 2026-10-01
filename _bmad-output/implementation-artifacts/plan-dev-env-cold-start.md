@@ -3,13 +3,13 @@ title: 'Faster cloud cold start and a shorter verification loop'
 type: 'chore'
 ticket: ''
 created: '2026-10-01'
-status: 'in-review'
+status: 'built'
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'a84f54b4ed291318fb84afeb848f51b2dd473a2a'
 review: 'thorough'
 review_source: 'auto'
-lenses_ran: []
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
 context:
   - '{project-root}/AGENTS.md'
@@ -116,6 +116,32 @@ context:
 - **Synchronous setup:** the container is cached after the hook, so a later session finds everything installed.
 - **Detached warm builds:** they run after the cache point, so they help only the current session. They take the same fixed locks as agents, so an agent's first build waits for the warm one instead of colliding with it.
 - **apt for `libpcre3`,** as CI does, instead of extracting it into scratch: no `LD_LIBRARY_PATH` to carry into `pio check`.
+
+## Review Triage Log
+
+Pass 1 (thorough: blind hunter, edge-case hunter, verification gap, intent alignment; all four ran as context-free subagents and returned). 7 medium, 5 low patched; 1 verification redone; 3 deferred; the rest rejected.
+
+- medium, patch: the hook sent the script's `error:` lines and its own failure line to stderr, and a SessionStart hook's stdout is what reaches the agent. The hook now runs it with `2>&1` and echoes to stdout; `HookTest` asserts it.
+- medium, patch: `append_proxy_ca` appended in place, and both certifi bundles are hardlinks into uv's cache (link count 2, checked). It now writes a temp file and `os.replace`s it; there is a hardlink test.
+- medium, patch: `build_lock` waited with no deadline inside the 900 s hook. It now polls `LOCK_NB` for up to 120 s, then fails the step and says to rerun; there is a busy-lock test.
+- medium, patch: each resume queued another warm build behind a blocking `flock`. Warm builds now skip a held lock (checked first, then `flock -n`). Checked live: a second hook run skipped the running x4pro build. The tests now wait for spawned fakes, which also fixes the `state.json` race the blind hunter saw (low).
+- medium, patch (verification gap): nothing pinned that warm output goes to the log; a fake marker now asserts it.
+- medium, patch (verification gap): a failed install writing no stamp was unpinned; the test now asserts no stamp and a reinstall on the next run.
+- medium, patch (verification gap): apt-get's update-and-retry path was untested; now tested with a no-lists fake.
+- low, patch (verification gap): reinstalling a uv tool at another version was untested; now tested with clang-format 20.1.0.
+- low, patch: one failed network fetch skipped setting `merge.ours.driver`. The local actions now come first.
+- low, patch: apt-get ran with the hook's stdin and no `DEBIAN_FRONTEND`. Subprocesses now get `stdin=DEVNULL`, and apt-get runs noninteractive.
+- medium, verification redone: the new gate's `pio check -e x4pro` had run in a tree that was already built. Rerun in a fresh `git archive` tree of 50701eae with submodule archives and no `.pio`: PASSED in 71.5 s.
+- low, defer: AGENTS.md does not say which lock `pio run -t unit-tests` takes, though it writes `build/test` like the host-test lock's builds (agent-context file).
+- low, defer: AGENTS.md does not say where the warm logs are (`~/.cache/crosshatch/warm-*.log`) or give a fallback when setup fails (agent-context file).
+- medium, defer: review-before-firmware is prose only. A plain `/bmad-build` still runs every Verification command, firmware included, before step 4. Binding it needs a `_bmad/custom/bmad-build.toml` override, which is outside this intent's docs scope.
+- low, reject: `prepare_penv` runs outside the lock when a penv exists. It writes only when the penv is wrong, and then a running build is already broken.
+- low, reject: an `upstream` remote with another URL, `PLATFORMIO_CORE_DIR`, a damaged packages dir with a matching stamp, `platformio.local.ini` in the stamp key, a missing cmake/ninja preflight, `clang-format` order on PATH, and non-`SetupError` exceptions. All are rare in a cloud container, and their fixes add branches.
+- low, reject: the CI setup steps are duplicated a third time. That matches the flash-budget job's existing convention.
+- false: GameHash should value-initialize `context` instead of suppressing the warning. cppcheck names `finish`, not `context`, and the suppressed tree passes the check.
+- false: "two locks diverge from 'a fixed build lock'". The plan's Tasks, approved by the user, specify both.
+- false: "sticky-only code is not built locally". That is by intent: CI builds all five envs.
+- not a finding (intent alignment): the end-to-end session time and the container cache's persistence are not measured in-session; the first new cloud session after merge measures them.
 
 ## Verification
 

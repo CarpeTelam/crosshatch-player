@@ -19,16 +19,17 @@ is already done, so a second run only checks. The steps, in order:
                     otherwise resolves to a core whose tool-scons pin fails with "No module named
                     'SCons.Tool.FortranCommon'"), and the install is retried once. An existing penv gets both first.
                     The install holds /tmp/crosshatch-build.lock (an install beside a running build left the xtensa
-                    toolchain half copied) and then writes ~/.platformio/crosshatch-pkg-install.stamp; while the stamp
+                    toolchain half copied), waiting at most 120 s for it, and then writes ~/.platformio/crosshatch-pkg-install.stamp; while the stamp
                     matches platformio.ini, a later run skips the install, which would otherwise reinstall the C3
                     tools (about 45 s) on every run until a `default` build has run.
-  5. git            `git fetch --unshallow` in a shallow clone, the `upstream` remote, a fetch of upstream's develop,
-                    and `merge.ours.driver` (the AGENTS.md policy for scripts/check_upstream_touches.py and merges).
-  6. system         `apt-get install libsdl2-dev libpcre3` (the simulator and the packaged cppcheck of `pio check`,
+  5. git            the `upstream` remote and `merge.ours.driver`, then `git fetch --unshallow` in a shallow clone and
+                    a fetch of upstream's develop (the AGENTS.md policy for scripts/check_upstream_touches.py and merges).
+  6. system         `apt-get install libsdl2-dev libpcre3` (noninteractive) (the simulator and the packaged cppcheck of `pio check`,
                     as CI installs them) when one is missing; skipped with a note when not root or without apt-get.
   7. --warm         starts two detached builds and returns at once: `pio run -e x4pro` under
                     /tmp/crosshatch-build.lock and the host-test build under /tmp/crosshatch-hosttest.lock, the locks
-                    AGENTS.md gives every agent, so an agent's first build waits for the warm one. Their logs go to
+                    AGENTS.md gives every agent, so an agent's first build waits for the warm one. A build whose lock
+                    is already held is skipped (`flock -n`), never queued. Their logs go to
                     ~/.cache/crosshatch/warm-x4pro.log and warm-hosttest.log, appended to, each run headed by a line.
 
 A failed step is reported and the remaining steps still run.
@@ -73,12 +74,17 @@ UV_TOOLS = (
 )
 PIO_ENVS = ('x4pro', 'default')
 SYSTEM_PACKAGES = ('libsdl2-dev', 'libpcre3')
+APT_ENV = {'DEBIAN_FRONTEND': 'noninteractive'}  # no debconf prompt
 
 BUILD_LOCK = '/tmp/crosshatch-build.lock'
 HOSTTEST_LOCK = '/tmp/crosshatch-hosttest.lock'
 # Written in ~/.platformio after a passing install; a later run whose key matches skips the install, which otherwise
 # reinstalls the C3 tools each time (about 45 s) until a `default` build has run.
 STAMP_NAME = 'crosshatch-pkg-install.stamp'
+BUILD_LOCK_WAIT_S = 120
+LOCK_POLL_S = 0.2
+# The warm processes started by this run (the tests wait for them).
+spawned = []
 HOSTTEST_BUILD = 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test'
 
 CERTIFI_WHERE = 'import certifi; print(certifi.where())'
@@ -95,16 +101,40 @@ def read_text(path):
         return None
 
 
+def try_lock(lock):
+    """Take an exclusive flock on the open file lock without waiting; False when another process holds it."""
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
 @contextlib.contextmanager
 def build_lock():
-    """Hold BUILD_LOCK, the lock every pio command takes (AGENTS.md), waiting for a running build."""
+    """Hold BUILD_LOCK, the lock every pio command takes (AGENTS.md), waiting up to BUILD_LOCK_WAIT_S for a running
+    build: the hook has a 900 s timeout, and a kill mid-install would leave the packages half installed."""
     try:
         lock = open(BUILD_LOCK, 'a')
     except OSError as exc:
         raise SetupError(f'cannot open {BUILD_LOCK}: {exc}')
     with lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        deadline = time.monotonic() + BUILD_LOCK_WAIT_S
+        while not try_lock(lock):
+            if time.monotonic() >= deadline:
+                raise SetupError(f'the build lock {BUILD_LOCK} is busy (a build is running); rerun '
+                                 '`python3 scripts/dev_setup.py` when it is done')
+            time.sleep(LOCK_POLL_S)
         yield
+
+
+def lock_held(path):
+    """True when another process holds the flock on path."""
+    try:
+        with open(path, 'a') as lock:
+            return not try_lock(lock)  # closing the file releases a lock taken here
+    except OSError as exc:
+        raise SetupError(f'cannot open {path}: {exc}')
 
 
 def is_root():
@@ -120,19 +150,23 @@ def tail(text):
     return '\n'.join(f'    {line}' for line in lines)
 
 
-def run(command, cwd=None):
-    """Run command, capturing stdout and stderr together; return (exit code, output). A missing tool is a SetupError."""
+def run(command, cwd=None, env=None):
+    """Run command, capturing stdout and stderr together; return (exit code, output). A missing tool is a SetupError.
+
+    stdin is /dev/null: the hook's stdin carries its JSON input, which no command may read. env adds to os.environ.
+    """
     try:
-        proc = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                              errors='replace')
+        proc = subprocess.run(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, errors='replace',
+                              env=None if env is None else {**os.environ, **env})
     except OSError as exc:
         raise SetupError(f'cannot run {command[0]}: {exc}')
     return proc.returncode, proc.stdout
 
 
-def run_checked(command, cwd=None):
+def run_checked(command, cwd=None, env=None):
     """run(), with a non-zero exit code a SetupError carrying the command and the tail of its output."""
-    code, output = run(command, cwd=cwd)
+    code, output = run(command, cwd=cwd, env=env)
     if code != 0:
         raise SetupError(f'{shlex.join(str(part) for part in command)} failed ({code}):\n{tail(output)}')
     return output
@@ -190,11 +224,16 @@ def append_proxy_ca(step, proxy_ca, bundle):
     addition = b'\n'.join(missing) + b'\n'
     if bundle_data and not bundle_data.endswith(b'\n'):
         addition = b'\n' + addition
+    # A new file renamed over the bundle, never an append: uv installs certifi as a hardlink into its cache, so an
+    # in-place write would also change the cached copy and every environment that links to it.
+    temp = bundle.with_name(f'.{bundle.name}.crosshatch-tmp')
     try:
-        with bundle.open('ab') as out:
-            out.write(addition)
+        temp.write_bytes(bundle_data + addition)
+        shutil.copymode(bundle, temp)
+        os.replace(temp, bundle)
     except OSError as exc:
-        raise SetupError(f'cannot append the proxy CA to {bundle}: {exc}')
+        temp.unlink(missing_ok=True)
+        raise SetupError(f'cannot add the proxy CA to {bundle}: {exc}')
     say(step, f'appended {len(missing)} certificate(s) from {proxy_ca} to {bundle}')
 
 
@@ -305,16 +344,17 @@ class Setup:
 
     # 5
     def git_setup(self, step):
-        if fork_common.git_text('rev-parse', '--is-shallow-repository', cwd=self.root) == 'true':
-            say(step, 'unshallowing the clone')
-            fork_common.git('fetch', '--unshallow', cwd=self.root)
+        # The local settings first, so a failed network fetch below still leaves them done.
         if fork_common.git('remote', 'get-url', 'upstream', cwd=self.root, ok_codes=(0, 2))[0] != 0:
             say(step, f'adding the upstream remote {UPSTREAM_URL}')
             fork_common.git('remote', 'add', 'upstream', UPSTREAM_URL, cwd=self.root)
-        fork_common.git('fetch', '--no-tags', 'upstream', UPSTREAM_REFSPEC, cwd=self.root)
         code, driver = fork_common.git('config', 'merge.ours.driver', cwd=self.root, ok_codes=(0, 1))
         if code != 0 or driver.decode().strip() != 'true':
             fork_common.git('config', 'merge.ours.driver', 'true', cwd=self.root)
+        if fork_common.git_text('rev-parse', '--is-shallow-repository', cwd=self.root) == 'true':
+            say(step, 'unshallowing the clone')
+            fork_common.git('fetch', '--unshallow', cwd=self.root)
+        fork_common.git('fetch', '--no-tags', 'upstream', UPSTREAM_REFSPEC, cwd=self.root)
         say(step, 'ok: full history, upstream/develop fetched, merge.ours.driver set')
 
     # 6
@@ -331,10 +371,10 @@ class Setup:
             return
         install = ['apt-get', 'install', '-y', '--no-install-recommends', *missing]
         say(step, f'installing {" ".join(missing)}')
-        code, _ = run(install)
+        code, _ = run(install, env=APT_ENV)
         if code != 0:  # a fresh image has no package lists yet
-            run_checked(['apt-get', 'update'])
-            run_checked(install)
+            run_checked(['apt-get', 'update'], env=APT_ENV)
+            run_checked(install, env=APT_ENV)
 
     @staticmethod
     def package_installed(package):
@@ -356,12 +396,21 @@ class Setup:
             raise SetupError('pio is not installed, so the x4pro warm build was not started')
 
     def spawn(self, step, lock, command, log):
+        """Start command under lock, detached, unless the lock is held: a running or waiting build (an agent's, or
+        an earlier warm one) makes a warm one pointless, and queueing it would delay the agent's first build."""
+        stamp = time.strftime('%Y-%m-%d %H:%M:%S')
         try:
             with log.open('a') as out:  # append: an earlier warm build may still be writing to it
-                out.write(f'=== {time.strftime("%Y-%m-%d %H:%M:%S")} {command} (waits for {lock})\n')
+                if lock_held(lock):
+                    out.write(f'=== {stamp} {command}: skipped, {lock} is held\n')
+                    say(step, f'skipped `{command}`: {lock} is held by a running build')
+                    return
+                out.write(f'=== {stamp} {command} (under {lock})\n')
                 out.flush()
-                subprocess.Popen(['flock', lock, 'sh', '-c', command], cwd=self.root, stdin=subprocess.DEVNULL,
-                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+                # -n: if a build took the lock since the check above, skip rather than queue.
+                spawned.append(subprocess.Popen(['flock', '-n', lock, 'sh', '-c', command], cwd=self.root,
+                                                stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                                start_new_session=True))
         except OSError as exc:
             raise SetupError(f'cannot start `{command}` under {lock}: {exc}')
         say(step, f'started `{command}` under {lock}; log {log}')

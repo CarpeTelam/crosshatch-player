@@ -68,8 +68,26 @@ def has_ca(prefix):
     return bundle(prefix).is_file() and PROXY_BODY in bundle(prefix).read_text()
 
 
+def flock(args):
+    """Honours -n against a real flock on the lock file; logs the call and prints a marker, touching no state."""
+    import fcntl
+    nonblocking = args[0] == '-n'
+    path = args[1] if nonblocking else args[0]
+    lock = open(path, 'a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | (fcntl.LOCK_NB if nonblocking else 0))
+    except BlockingIOError:
+        sys.exit(1)
+    with open(os.environ['FAKE_LOG'], 'a') as log:
+        log.write(json.dumps(['flock', *args]) + '\n')
+    print('FAKE-FLOCK-OUTPUT', flush=True)
+    sys.exit(0)
+
+
 def main(tool):
     args = sys.argv[1:]
+    if tool == 'flock':
+        flock(args)
     with open(os.environ['FAKE_LOG'], 'a') as log:
         log.write(json.dumps([tool.split(':')[0], *args]) + '\n')
     s = json.loads(STATE.read_text())
@@ -138,7 +156,14 @@ def main(tool):
         else:
             code = 1
     elif tool == 'apt-get':
-        if args[0] == 'install':
+        if os.environ.get('DEBIAN_FRONTEND') != 'noninteractive':
+            code = 99
+        elif args[0] == 'update':
+            s['apt_lists'] = True
+        elif not s['apt_lists']:
+            print('E: Unable to locate package')
+            code = 100
+        else:
             s['packages'] += [arg for arg in args[1:] if not arg.startswith('-')]
     STATE.write_text(json.dumps(s))
     sys.exit(code)
@@ -154,6 +179,7 @@ COLD = {
     'upstream': False,
     'driver': False,
     'packages': [],
+    'apt_lists': True,
 }
 WARM_TOOLS = ('git', 'uv', 'dpkg-query', 'apt-get', 'flock')
 
@@ -175,11 +201,13 @@ class SetupTestBase(unittest.TestCase):
         self.log = self.dir / 'calls.log'
         self.log.touch()
         (self.bin / 'fake.py').write_text(FAKE_MODULE % {'public': PUBLIC_CERT, 'proxy_body': PROXY_BODY})
-        saved = {name: os.environ.get(name) for name in ('PATH', 'HOME', 'FAKE_STATE', 'FAKE_LOG')}
+        saved = {name: os.environ.get(name) for name in ('PATH', 'HOME', 'FAKE_STATE', 'FAKE_LOG', 'DEBIAN_FRONTEND')}
         self.addCleanup(self.restore_environment, saved)
+        os.environ.pop('DEBIAN_FRONTEND', None)  # the script must set it for apt-get itself
         os.environ.update(PATH=str(self.bin), HOME=str(self.home), FAKE_STATE=str(self.state),
                           FAKE_LOG=str(self.log))
-        for name, value in (('is_root', mock.Mock(return_value=True)), ('BUILD_LOCK', str(self.dir / 'build.lock'))):
+        for name, value in (('is_root', mock.Mock(return_value=True)), ('BUILD_LOCK', str(self.dir / 'build.lock')),
+                            ('HOSTTEST_LOCK', str(self.dir / 'hosttest.lock'))):
             patch = mock.patch.object(dev_setup, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -217,10 +245,33 @@ class SetupTestBase(unittest.TestCase):
         """main()'s exit code, with stdout and stderr captured; the calls log starts empty for each run."""
         self.log.write_text('')
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = dev_setup.main(['--root', str(self.repo), '--proxy-ca', str(proxy_ca or self.ca), *args])
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = dev_setup.main(['--root', str(self.repo), '--proxy-ca', str(proxy_ca or self.ca), *args])
+        finally:
+            self.wait_for_spawned()
         self.out, self.err = out.getvalue(), err.getvalue()
         return code
+
+    @staticmethod
+    def wait_for_spawned():
+        """Wait for the warm processes main() started, so none outlives the step or the temp dir."""
+        while dev_setup.spawned:
+            dev_setup.spawned.pop().wait(timeout=10)
+
+    def hold_lock(self, path):
+        """A process holding the flock on path until the test ends."""
+        holder = subprocess.Popen(
+            [sys.executable, '-c', 'import fcntl, sys\nlock = open(sys.argv[1], "a")\n'
+             'fcntl.flock(lock, fcntl.LOCK_EX)\nprint("locked", flush=True)\nsys.stdin.read()\n', str(path)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+        def release():
+            holder.stdin.close()
+            holder.wait()
+            holder.stdout.close()
+        self.addCleanup(release)
+        self.assertEqual(holder.stdout.readline().strip(), 'locked')
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -310,6 +361,24 @@ class ColdAndWarmTest(SetupTestBase):
                                                                            'default']))
         holder.stdout.close()
 
+    def test_a_busy_build_lock_fails_the_install_after_the_deadline(self):
+        self.set_state(pio='ok')
+        self.hold_lock(dev_setup.BUILD_LOCK)
+        with mock.patch.object(dev_setup, 'BUILD_LOCK_WAIT_S', 0.3):
+            self.assertEqual(self.run_setup(), 2)
+        self.assertIn(f'error: pio packages: the build lock {dev_setup.BUILD_LOCK} is busy', self.err)
+        self.assertIn('rerun `python3 scripts/dev_setup.py`', self.err)
+        self.assertFalse(self.ran('pio'))
+        self.assertFalse(self.stamp().exists())
+
+    def test_a_uv_tool_at_another_version_is_reinstalled(self):
+        self.assertEqual(self.run_setup(), 0, self.err)
+        state = self.read_state()
+        state['uv_tools']['clang-format'] = '20.1.0'
+        self.state.write_text(json.dumps(state))
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assertEqual(self.ran('uv', 'tool', 'install'), [['uv', 'tool', 'install', 'clang-format>=21,<22']])
+
     def test_a_submodule_at_another_commit_is_left_alone(self):
         self.set_state(submodules=True)
         self.assertEqual(self.run_setup(), 0, self.err)
@@ -327,6 +396,20 @@ class FailureTest(SetupTestBase):
         self.assertTrue(self.ran('uv', 'pip', 'install'))
         self.assertTrue(self.ran('git', '-C', str(self.repo), 'config', 'merge.ours.driver', 'true'))
         self.assertTrue(self.ran('apt-get', 'install'))
+        # A failed install writes no stamp, so the next run installs again.
+        self.assertFalse(self.stamp().exists())
+        self.assertEqual(self.run_setup(), 2)
+        self.assertTrue(self.ran('pio', 'pkg', 'install'))
+
+    def test_a_failed_network_fetch_still_sets_the_local_git_settings(self):
+        self.set_state(pio='ok')
+        git = self.bin / 'git'
+        git.write_text(git.read_text().replace("import fake\n", "import fake\n"
+                                               "if 'fetch' in sys.argv: sys.exit(128)\n"))
+        self.assertEqual(self.run_setup(), 2)
+        self.assertIn('error: git: git fetch --unshallow failed (128)', self.err)
+        self.assertTrue(self.ran('git', '-C', str(self.repo), 'remote', 'add', 'upstream', dev_setup.UPSTREAM_URL))
+        self.assertTrue(self.ran('git', '-C', str(self.repo), 'config', 'merge.ours.driver', 'true'))
 
     def test_without_uv_the_tool_steps_fail_naming_uv_and_the_rest_still_run(self):
         self.remove('uv')
@@ -348,6 +431,18 @@ class FailureTest(SetupTestBase):
 
 
 class ProxyCaTest(SetupTestBase):
+    def test_a_hardlinked_bundle_is_replaced_and_its_other_link_is_unchanged(self):
+        bundle = self.dir / 'bundle.pem'
+        bundle.write_text(PUBLIC_CERT)
+        cached = self.dir / 'uv-cache-cacert.pem'
+        os.link(bundle, cached)
+        with contextlib.redirect_stdout(io.StringIO()):
+            dev_setup.append_proxy_ca('test', self.ca, bundle)
+        self.assertEqual(bundle.read_text().count(PROXY_BODY), 1)
+        self.assertEqual(cached.read_text(), PUBLIC_CERT)
+        self.assertEqual(os.stat(cached).st_nlink, 1)
+        self.assertEqual([path.name for path in self.dir.iterdir() if 'crosshatch-tmp' in path.name], [])
+
     def test_without_the_proxy_ca_no_bundle_is_touched(self):
         self.set_state(pio='ok')
         self.assertEqual(self.run_setup(proxy_ca=self.dir / 'missing.crt'), 0, self.err)
@@ -385,6 +480,13 @@ class SystemPackagesTest(SetupTestBase):
         self.assertEqual(self.run_setup(), 0, self.err)
         self.assertIn('system packages: skipped: no apt-get', self.out)
 
+    def test_without_package_lists_apt_updates_and_installs_again(self):
+        self.set_state(pio='ok', apt_lists=False)
+        self.assertEqual(self.run_setup(), 0, self.err)
+        install = ['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3']
+        self.assertEqual(self.ran('apt-get'), [install, ['apt-get', 'update'], install])
+        self.assertEqual(self.read_state()['packages'], ['libsdl2-dev', 'libpcre3'])
+
     def test_only_a_missing_package_is_installed(self):
         self.set_state(pio='ok', packages=['libsdl2-dev'])
         self.assertEqual(self.run_setup(), 0, self.err)
@@ -397,46 +499,73 @@ class WarmTest(SetupTestBase):
         super().setUp()
         self.set_state(pio='ok')
 
-    def wait_for_flock_calls(self, count):
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            calls = self.ran('flock')
-            if len(calls) >= count:
-                return calls
-            time.sleep(0.05)
-        self.fail(f'expected {count} flock calls, got {self.ran("flock")}')
+    def logs(self):
+        return self.home / '.cache' / 'crosshatch'
 
     def test_warm_starts_both_builds_under_the_fixed_locks(self):
         self.assertEqual(self.run_setup('--warm'), 0, self.err)
-        calls = self.wait_for_flock_calls(2)
         pio = self.home / '.local' / 'bin' / 'pio'
-        self.assertCountEqual(calls, [
-            ['flock', dev_setup.BUILD_LOCK, 'sh', '-c', f'{pio} run -e x4pro'],
-            ['flock', '/tmp/crosshatch-hosttest.lock', 'sh', '-c', dev_setup.HOSTTEST_BUILD],
+        self.assertCountEqual(self.ran('flock'), [
+            ['flock', '-n', dev_setup.BUILD_LOCK, 'sh', '-c', f'{pio} run -e x4pro'],
+            ['flock', '-n', dev_setup.HOSTTEST_LOCK, 'sh', '-c', dev_setup.HOSTTEST_BUILD],
         ])
         self.assertIn('cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release', dev_setup.HOSTTEST_BUILD)
-        logs = self.home / '.cache' / 'crosshatch'
-        self.assertTrue((logs / 'warm-x4pro.log').is_file())
-        self.assertTrue((logs / 'warm-hosttest.log').is_file())
+        # The builds' output goes to their logs, never to the hook's output.
+        for log in ('warm-x4pro.log', 'warm-hosttest.log'):
+            self.assertIn('FAKE-FLOCK-OUTPUT', (self.logs() / log).read_text())
+        self.assertNotIn('FAKE-FLOCK-OUTPUT', self.out)
         # A second run appends, so a warm build still running keeps its log.
         self.assertEqual(self.run_setup('--warm'), 0, self.err)
-        self.wait_for_flock_calls(2)
-        self.assertEqual((logs / 'warm-x4pro.log').read_text().count('=== '), 2)
+        self.assertEqual(len(self.ran('flock')), 2)
+        self.assertEqual((self.logs() / 'warm-x4pro.log').read_text().count('=== '), 2)
+
+    def test_a_held_lock_skips_its_warm_build(self):
+        self.hold_lock(dev_setup.HOSTTEST_LOCK)
+        self.assertEqual(self.run_setup('--warm'), 0, self.err)
+        self.assertEqual([call[2] for call in self.ran('flock')], [dev_setup.BUILD_LOCK])
+        self.assertIn(f'skipped `{dev_setup.HOSTTEST_BUILD}`: {dev_setup.HOSTTEST_LOCK} is held', self.out)
+        self.assertIn('skipped', (self.logs() / 'warm-hosttest.log').read_text())
+
+    def test_flock_n_skips_a_build_whose_lock_was_taken_after_the_check(self):
+        self.assertEqual(self.run_setup(), 0, self.err)  # writes the stamp, so the install skips the held lock
+        self.hold_lock(dev_setup.BUILD_LOCK)
+        with mock.patch.object(dev_setup, 'lock_held', return_value=False):
+            self.assertEqual(self.run_setup('--warm'), 0, self.err)
+        self.assertEqual([call[2] for call in self.ran('flock')], [dev_setup.HOSTTEST_LOCK])
+        self.assertNotIn('FAKE-FLOCK-OUTPUT', (self.logs() / 'warm-x4pro.log').read_text())
 
     def test_warm_spawn_failure_exits_2(self):
         self.remove('flock')
         self.assertEqual(self.run_setup('--warm'), 2)
         self.assertIn('error: warm: cannot start', self.err)
 
+    def run_cli(self):
+        """The script in its own process, with this test's lock paths, until its stdout and stderr close."""
+        code = ('import sys\n'
+                f'sys.path.insert(0, {str(HERE)!r})\n'
+                'import dev_setup\n'
+                f'dev_setup.BUILD_LOCK = {dev_setup.BUILD_LOCK!r}\n'
+                f'dev_setup.HOSTTEST_LOCK = {dev_setup.HOSTTEST_LOCK!r}\n'
+                f'sys.exit(dev_setup.main(["--warm", "--root", {str(self.repo)!r}, "--proxy-ca", {str(self.ca)!r}]))\n')
+        return subprocess.run([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              timeout=60)
+
+    def test_cli_warm_output_goes_to_the_logs_not_stdout(self):
+        proc = self.run_cli()
+        # Not root under CI, which only skips the system packages.
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        deadline = time.monotonic() + 10
+        log = self.logs() / 'warm-x4pro.log'
+        while 'FAKE-FLOCK-OUTPUT' not in log.read_text() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIn('FAKE-FLOCK-OUTPUT', log.read_text())
+        self.assertNotIn('FAKE-FLOCK-OUTPUT', proc.stdout + proc.stderr)
+        while len(self.ran('flock')) < 2 and time.monotonic() < deadline:  # let both fakes exit before tearDown
+            time.sleep(0.05)
+
     def test_cli_exit_code(self):
-        # No uv, so no pio: the subprocess never takes the real build lock.
         self.remove('flock')
-        self.remove('uv')
-        env = dict(os.environ)
-        proc = subprocess.run(
-            [sys.executable, str(HERE / 'dev_setup.py'), '--warm', '--root', str(self.repo), '--proxy-ca', str(self.ca)],
-            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        # Not root under CI, which only skips the system packages; the missing flock alone fails.
+        proc = self.run_cli()
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn('error: warm: cannot start', proc.stderr)
 
@@ -459,6 +588,7 @@ class HookTest(unittest.TestCase):
         (self.project / 'scripts' / 'dev_setup.py').write_text(
             'import pathlib, sys\n'
             f'pathlib.Path({str(self.marker)!r}).write_text(" ".join(sys.argv[1:]))\n'
+            'print("error: a setup step failed", file=sys.stderr)\n'
             'sys.exit(2)\n')
 
     def run_hook(self, remote):
@@ -478,7 +608,10 @@ class HookTest(unittest.TestCase):
         proc = self.run_hook('true')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.marker.read_text(), '--warm')
-        self.assertIn('scripts/dev_setup.py failed (2)', proc.stderr)
+        # Only stdout reaches the session's context, so the script's errors and the hook's line must be there.
+        self.assertIn('error: a setup step failed', proc.stdout)
+        self.assertIn('scripts/dev_setup.py failed (2)', proc.stdout)
+        self.assertEqual(proc.stderr, '')
 
     def test_settings_register_the_hook_with_a_900_s_timeout(self):
         settings = json.loads((HERE.parent / '.claude' / 'settings.json').read_text())

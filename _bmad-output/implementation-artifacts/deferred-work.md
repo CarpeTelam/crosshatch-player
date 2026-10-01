@@ -522,3 +522,16 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-z2-removing-marker.md`
   summary: Two residuals of `removeFolderMarkerLast`, recorded not fixed: a file whose name is over 39 bytes (only a person can put one in a game's folder) sends the folder to `removeDir`, which can take the marker before that file; and a stop right after the marker's own delete leaves an empty, unmarked, unlisted folder (one directory cluster, removed by a reinstall of the id).
   evidence: Delta review of c2aa2b4e (findings 2 and 3). The installer writes no name over 36 bytes, so an installed game cannot reach either the fallback or, except by a stop in that one call, the empty folder. Trigger: a device report of a leftover folder with no `.removing`.
+
+## dev-env-cold-start
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
+  summary: AGENTS.md does not say which lock `pio run -t unit-tests` takes, though it configures `build/test` (with the default generator) like the host-test builds under `/tmp/crosshatch-hosttest.lock`, and its "delete `build/test` before switching" can delete a directory the warm host-test build is writing.
+  evidence: Review pass 1 (blind hunter, edge-case hunter); `scripts/register_unit_tests_target.py`. A fix edits AGENTS.md, so it is deferred; it fits the follow-up on the orchestration doc.
+- source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
+  summary: AGENTS.md does not name the warm-build logs (`~/.cache/crosshatch/warm-x4pro.log`, `warm-hosttest.log`), or give a one-line fallback for a failed setup (rerun `python3 scripts/dev_setup.py` and read its `error:` lines).
+  evidence: Review pass 1 (blind hunter). A fix edits AGENTS.md; it fits the follow-up on the orchestration doc.
+- source_plan: `_bmad-output/implementation-artifacts/plan-dev-env-cold-start.md`
+  summary: Review before firmware builds is prose only. A plain `/bmad-build` still has its implementer run every Verification command, firmware builds included, before step 4's review. Binding it needs a `_bmad/custom/bmad-build.toml` override, so the handoff runs only host tests and fast checks, and the firmware builds run after review.
+  evidence: Review pass 1 (intent alignment, finding 2); this session's timed build lost a firmware run to a review fix. Medium.
+
