@@ -6,23 +6,27 @@ This packet was regenerated at the merged commit on 2026-09-30. The entry-14 ver
 
 ## Firmware
 
-- **Commit:** `d4b30b64`, the head of CarpeTelam/crosshatch-player#20, merged into `develop` as `fa642c4a` with the same tree. It carries e4-z1, e4-z2, and e4-z3. The entry-14 firmware `216ccbd3` has none of them.
-- **Download it:** the PR's "Firmware builds" comment links `firmware-x4pro.bin` from run 36678813150 (artifact 11081730162, built at `d4b30b6`, kept until 2026-12-29). Extract the `.bin` from the ZIP and flash it with CrossPoint Reader Flash Tools.
-- **Or build and flash it:** from a checkout of `develop` at `fa642c4a`, run `git submodule update --init --recursive`, then `pio run -e x4pro -t upload`.
+- **Commit:** `b83dfbe2`, the head of CarpeTelam/crosshatch-player#21: `develop` at `fa642c4a` plus the retrospective's fix story (e4-r1 and e4-r2). It carries e4-z1, e4-z2, and e4-z3 (from #20) and AI-2, AI-14, and AI-15 (from #21). Use this firmware rather than `d4b30b64`, so the recheck also covers the new note text and the remove changes. The entry-14 firmware `216ccbd3` has none of them.
+- **Download it:** #21's "Firmware builds" comment links `firmware-x4pro.bin` from run 36800377668 (artifact 11135436134, built at `b83dfbe`). Extract the `.bin` from the ZIP and flash it with CrossPoint Reader Flash Tools. After #21 merges, a build of `develop` at its merge commit is the same firmware.
+- **Or build and flash it:** from a checkout at `b83dfbe2` (or `develop` once #21 merges), run `git submodule update --init --recursive`, then `pio run -e x4pro -t upload`.
 - **Serial log (needed for R1):** `pio device monitor -e x4pro` (115200 baud), with `--filter log2file` or piped through `tee recheck.log`. Start it before R1 and keep it running to the end. The lines this recheck reads are all tagged `GAME`:
   - `a call ran over 3000 ms; stopping the VM`
   - `VM cancelled`
   - `VM stopped; arena peak ... bytes, stack high-water ... bytes free, least at a hook ... bytes`
   - `VM did not stop within 500 ms of cancel; abandoning it`
   - `Abandoned the stuck VM: freed its PSRAM, leaked 1032 bytes`
-- **Size at this commit** (`check_flash_budget.py`, x4pro, games on minus off): +232,912 B flash and +784 B static RAM, measured at `7e7bcc48`; `d4b30b64` changes only `_bmad-output/` after it. The pass bar is +240,496 B and +808 B.
+- **Size at this commit** (`check_flash_budget.py`'s four steps, x4pro, games on minus off, measured at `b83dfbe2` on 2026-10-01): +233,344 B flash and +784 B static RAM. The pass bar is +240,496 B and +808 B.
+- **What else changed since `d4b30b64`:**
+  - The install note names the kind of failure: "N more waiting for room" and "and N more not installed". With two invalid packages and nothing waiting, R3 still reads "and 1 more".
+  - A successful Remove installs a waiting package at once.
+  - A Remove that reports "Could not remove it" now keeps the game.
 
 ## Packages
 
-The packages are not committed. They are packed from the fixtures at the firmware commit.
+The packages are not committed. They are packed from the fixtures, which are unchanged from `d4b30b64` to `b83dfbe2`.
 
 - **From the PR:** run 36678813162 of the `Crosshatch game packages` workflow packed them at `d4b30b64`. Its `game-packages` artifact (11080014576) is kept until 2026-10-30. Open it from the PR's Checks tab.
-- **Locally:** from a checkout at `fa642c4a` (or `d4b30b64`), `python3 scripts/pack_device_run.py <out-dir>` writes the same seven files and `HASHES.txt`. The retrospective ran it on 2026-09-30, and it printed the hashes below.
+- **Locally:** from a checkout at `b83dfbe2` (or `fa642c4a`, `d4b30b64`), `python3 scripts/pack_device_run.py <out-dir>` writes the same seven files and `HASHES.txt`. The retrospective ran it on 2026-09-30, and it printed the hashes below.
 
 | File | Game | Hash | Used in |
 | --- | --- | --- | --- |
@@ -82,7 +86,7 @@ This check needs a game on page 2 that has no save.
 - **Page size:** the X4 Pro launcher shows eight rows per page (`story-remove-screenshots/page1.png`), not four as the entry-14 record says. Continue rows come first, then games sorted by name.
 - **Why Package vector:** it saves nothing, since it stops at once in the error view (`game.setup is not a function` in the simulator) and writes no `/.games-data/package-vector/`. With eight extra games named "Aa extra 1" to "Aa extra 8" sorted ahead of it, it lands on page 2 whatever else is installed.
 
-1. From a checkout at `fa642c4a`, pack the eight extra games. Each is the `counter` fixture under a new id and name:
+1. From a checkout at `b83dfbe2`, pack the eight extra games. Each is the `counter` fixture under a new id and name:
 
    ```sh
    mkdir -p extra

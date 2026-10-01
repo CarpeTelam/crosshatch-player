@@ -532,3 +532,36 @@ The alternative is to validate a package fully before the limit check, so a brok
 **Q3. The recheck's scope. Answered.** R2's optional step, a hand-placed `.removing` on the card, is the only check of FAT slot reuse and directory order for e4-z2 on real media. The simulator's ext4 cannot show either. The owner decides whether to run it; it takes one extra file copy.
 
 **Owner's answer (2026-09-30): include it.** R2's marker check is now required in `device-run-packet.md`.
+
+## Addendum: the fix story applied (2026-10-01)
+
+The owner asked for AI-2, AI-14, and AI-15 to be built as one story before epic-pass-and-play. It ran as two lanes, each with `bmad-build` in its own worktree, following `docs/crosshatch/orchestrated-epics.md`. It landed on CarpeTelam/crosshatch-player#21.
+
+| Item | What was built | Commit | Plan |
+|------|----------------|--------|------|
+| AI-14 (rev-1) and AI-15 (rev-2, rev-4) | When the `.pkg` delete fails, `removeFolder` deletes the `.removing` marker it wrote itself, so a game the launcher reports as kept stays kept; a marker that was already there is kept for the next visit to finish. The harness fake records `exists`, and tests pin the `.xlink` probe's create → exists → remove order on the install and remove paths. A new OOM suite fails each of an install's four nothrow allocations | `8d9cd309` (e4-r1) | `plan-e4-r1-remove-marker-and-installer-seams.md` |
+| AI-2 (Q2, rev-3) | `Report::waiting` counts packages waiting for room. When waiting packages are among the others, the note shows "%u more waiting for room" and "and %u more not installed"; otherwise it keeps e4-z3's "and N more". A successful Remove runs the install between two `RenderLock` scopes, never under the lock | `b5ce80c0` (e4-r2) | `plan-e4-r2-more-kinds-and-install-after-remove.md` |
+| Combined-diff review follow-up | Fixed: `confirmRemove`'s frame (336 B → 192 B, `-fstack-usage`, x4pro); a wrong test comment; the `formats.md` wording on the sweep a post-remove install runs; and a test with the real installer for a kept marker swept by that install. Deferred under `## e4-r2`: a queued render over the "Installing" popup, a reinstall of a removed game whose file is still in the inbox, and `waiting` after a recount | `b83dfbe2` | the e4-r2 plan's Review Triage Log, passes 2 and 3 |
+
+**Reviews:**
+- Each lane's four lenses ran as context-free sub-agents and returned.
+- A separate context-free reviewer ran the adversarial, edge-case, and verification-gap lenses in one context over the combined diff `40a1409a..05b65125`, with the question of how the lanes interact. It found 7 lows, routed as the table says.
+
+**Verification at `b83dfbe2`** (local, under the build lock, 2026-10-01):
+- Host suites passed 1,392 of 1,392.
+- All 11 `scripts/*_test.py`, `check_layers.py`, and `check_upstream_touches.py` passed.
+- All five envs built, and so did `sim.sh build x4pro`.
+- `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` passed.
+- `./bin/clang-format-fix` ran twice and left the tree clean.
+- CI ran on the same head.
+
+**Size:**
+- `check_flash_budget.py`'s four steps give +233,344 B flash and +784 B static RAM, games on minus off.
+- The base, measured the same way at `40a1409a`, was +232,912 B and +784 B. So the story costs **+432 B flash and +0 B static RAM**.
+- 7,152 B flash and 24 B static RAM remain under this epic's pass bar.
+
+**Still open:**
+- The owner's device recheck (AI-1). `device-run-packet.md` now names `b83dfbe2` as its firmware.
+- The new note strings, for the owner to confirm on the device.
+- AI-4 to AI-13.
+
