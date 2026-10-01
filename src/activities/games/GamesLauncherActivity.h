@@ -29,7 +29,9 @@ struct Report;
 // long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
 // (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup. After a
 // remove that succeeds, the inbox is installed at once when it holds a file (a package that waited for room takes the
-// freed place), as on entering, and the listing is read after it.
+// freed place), as on entering, and the listing is read after it. That install also tries to finish the removes that
+// stopped partway (installAll's finishRemovals, at most 32 a call), so a game whose remove failed earlier but kept its
+// .removing marker goes at that moment, not the next time Games opens (one that still will not go stays, logged).
 // The list pages by whole pages: it is padded with blank rows to a whole number of pages, so the last page does not
 // repeat rows of the one before it (Continue rows are rows of the list like the games'). The launcher remembers the
 // game it last opened (a fingerprint of its id), and the next launcher, built by ActivityManager::goToGames(), selects

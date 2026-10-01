@@ -352,7 +352,11 @@ it that fails at step 2 is still finished then); when the `.pkg`'s delete report
 sync), which leaves an unlisted folder that only the marker lets the next visit reclaim; and when the card cannot say
 whether the `.pkg` is still there (a card fault reads as "not there"), which the remove treats as gone, the safe side
 for a folder that may be unlisted. A remove that cannot finish is logged and tried again on the next visit; it is not
-shown to the person, and no popup is drawn while it runs.
+shown to the person, and no popup is drawn while it runs. "The next visit" includes one more moment: right after a remove that
+succeeds while `/games/` holds a package, the launcher runs `installAll` again (so a package that waited for room takes
+the freed place), and that run tries to finish marked folders as a visit does (at most 32, a folder that will not go
+logged and kept). A game whose marker stayed after a remove that failed earlier therefore goes then, and the listing
+read after the install no longer shows it; no note names it.
 
 ### `.pkg` and the package hash
 

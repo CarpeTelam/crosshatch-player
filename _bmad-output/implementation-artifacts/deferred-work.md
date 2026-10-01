@@ -534,6 +534,16 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-r2-more-kinds-and-install-after-remove.md`
   summary: During the install after a remove the render lock is released, so a render already queued when the remove finished can draw the old listing (the removed game still in it) over "Installing" until the install ends; and when the install adds a game that sorts before the removed row, the selection lands on that row's neighbour.
   evidence: e4-r2 review (blind hunter, edge-case hunter); rejected as rare and cosmetic, recorded for the device recheck. Nothing requests a render between the two lock scopes. Trigger: a device report of the removed game showing during "Installing", or of a surprising selection after a remove at the limit.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-r2-more-kinds-and-install-after-remove.md`
+  summary: The queued render over "Installing" (the entry above), with the orchestrator's combined review's fix: an `installing` flag set under the first `RenderLock` scope of `confirmRemove`, which `buildScreen` honours by drawing the "Installing" panel instead of the stale listing, and which the second scope clears.
+  evidence: Orchestrator's combined-diff review of e4-r1 + e4-r2 (#3, low). The window is the unlocked `installAll`; nothing requests a render in it. Trigger: a device report of the removed game, or the list without "Installing", showing during the install after a remove.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-r2-more-kinds-and-install-after-remove.md`
+  summary: Removing a game X while `X.chgame` is still in the inbox (left there by an earlier out-of-memory or card failure) reinstalls X at once, behind "Installing" and with no note, so the Remove seems to do nothing; before e4-r2 it reinstalled on the next visit.
+  evidence: Orchestrator's combined-diff review (#5, low). The install after a remove runs whenever `hasInbox()` and the remove returned None. Trigger: a device report of a game that will not stay removed; the fix would skip or name an inbox file whose id is the one just removed.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e4-r2-more-kinds-and-install-after-remove.md`
+  summary: `Report::waiting` is not tested after a late commit failure's recount (`AGameALateFailedCommitLeftBehindIsCountedForTheNextPackage`): a package counted as waiting there sits beside a game that did install, so the note's "N more waiting for room" can be one too many in that case.
+  evidence: Orchestrator's combined-diff review (#7, low). The recount path needs a commit that fails after the folder moved, a card fault, at 63 games. Trigger: a change to the recount, or a device report of a waiting count that does not match `/games`.
+
 ## e4-r1
 
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-r1-remove-marker-and-installer-seams.md`

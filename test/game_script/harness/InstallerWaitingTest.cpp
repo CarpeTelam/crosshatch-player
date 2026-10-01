@@ -1,6 +1,7 @@
 // GamePackageInstaller's Report::waiting over the fake SD card, with the real installer: of the failures it counts,
 // the packages that wait for room (TooManyGames), the first included when it waits. The launcher's note tells those
-// apart from the rest (GamesLauncherTest), so the count is pinned here on real packages at the game limit.
+// apart from the rest (GamesLauncherTest), so the count is pinned here on real packages at the game limit. The last
+// test runs the launcher's install after a remove (remove, then installAll) on the real installer.
 
 #include <gtest/gtest.h>
 
@@ -9,6 +10,7 @@
 #include <string>
 
 #include "GamePackageInstaller.h"
+#include "GamePaths.h"
 #include "GameRegistry.h"
 #include "HalDisplay.h"
 #include "InstallerSupport.h"
@@ -142,4 +144,52 @@ TEST_F(WaitingTest, TheWaitingCountStopsAt255WithTheFailedCount) {
   EXPECT_EQ(report.failed, UINT8_MAX);
   EXPECT_EQ(report.waiting, UINT8_MAX);
   EXPECT_EQ(report.firstError, Error::TooManyGames);
+}
+
+// ---- the install after a remove (GamesLauncherActivity::confirmRemove's sequence, on the real installer) ----
+
+namespace {
+// Whether the registry lists `id`; the registry must load.
+bool listed(const char* id) {
+  GameRegistry::Listing listing;
+  EXPECT_TRUE(GameRegistry::load(listing));
+  for (size_t i = 0; i < listing.count; ++i)
+    if (std::string(listing.entries[i].manifest.id) == id) return true;
+  return false;
+}
+}  // namespace
+
+// The launcher runs installAll right after a remove that succeeds while the inbox holds a package, and installAll first
+// tries to finish every folder that holds a .removing marker. So a listed game whose marker stayed after a remove that
+// failed earlier in the visit (the .pkg and the marker would not go) is finished at that moment, not on the next visit;
+// its saved data stays.
+TEST_F(WaitingTest, TheInstallAfterARemoveAlsoFinishesAGameWhoseMarkerStayed) {
+  installedGames(GameRegistry::MAX_GAMES);  // game-00 .. game-63
+  fakesd::addFile("/.games-data/game-01/store.bin", std::string("store of game-01"));
+  fakesd::addFile("/.games-data/game-02/store.bin", std::string("store of game-02"));
+  drop("extra.chgame", gamePackage("extra"));
+
+  // The earlier failed remove: neither the .pkg nor the marker it wrote will go, so the game stays listed, marked.
+  fakesd::sim().failRemove.insert("/.games/game-01/.pkg");
+  fakesd::sim().failRemove.insert("/.games/game-01/" + std::string(GamePaths::REMOVING_NAME));
+  ASSERT_EQ(GamePackageInstaller::remove("game-01"), Error::SdCard);
+  fakesd::sim().failRemove.clear();
+  ASSERT_TRUE(exists("/.games/game-01/" + std::string(GamePaths::REMOVING_NAME)));
+  ASSERT_TRUE(listed("game-01"));
+
+  // Then a remove that succeeds, and the launcher's install.
+  ASSERT_EQ(GamePackageInstaller::remove("game-02"), Error::None);
+  ASSERT_TRUE(GamePackageInstaller::hasInbox());
+  const Report report = GamePackageInstaller::installAll();
+
+  EXPECT_EQ(report.installed, 1) << GamePackageInstaller::describe(report.firstError);
+  EXPECT_EQ(report.failed, 0);
+  EXPECT_EQ(report.waiting, 0);
+  EXPECT_FALSE(exists("/games/extra.chgame"));
+  EXPECT_TRUE(listed("extra"));
+  EXPECT_FALSE(exists("/.games/game-01")) << "the marked game was finished by the same call";
+  EXPECT_FALSE(listed("game-01"));
+  EXPECT_FALSE(listed("game-02"));
+  EXPECT_EQ(fakesd::bytesOf("/.games-data/game-01/store.bin"), toBytes("store of game-01")) << "data is untouched";
+  EXPECT_EQ(fakesd::bytesOf("/.games-data/game-02/store.bin"), toBytes("store of game-02"));
 }

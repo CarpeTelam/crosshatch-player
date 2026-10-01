@@ -304,10 +304,9 @@ void GamesLauncherActivity::confirmRemove() {
     requestUpdate();
     return;
   }
+  // The id is copied: the reload below replaces the listing. The name is read before it (the failure note).
   char id[GameCore::Manifest::MAX_ID_BYTES + 1];
-  char name[GameCore::Manifest::MAX_NAME_BYTES + 1];
   snprintf(id, sizeof(id), "%s", listing.entries[index].manifest.id);
-  snprintf(name, sizeof(name), "%s", listing.entries[index].manifest.name);
 
   GamePackageInstaller::Error error = GamePackageInstaller::Error::None;
   bool install = false;
@@ -318,6 +317,10 @@ void GamesLauncherActivity::confirmRemove() {
     error = GamePackageInstaller::remove(id);
     removeIndex = -1;
     if (error == GamePackageInstaller::Error::None && lastOpened == fingerprintOf(id)) lastOpened = 0;
+    // The failure note names the game while the listing still holds it; it is shown after the reload.
+    if (error != GamePackageInstaller::Error::None) {
+      snprintf(note, sizeof(note), "%s: %s", listing.entries[index].manifest.name, tr(STR_GAMES_REMOVE_FAILED));
+    }
     // A removed game frees a place, so a package that waited for room installs now, as on entering, rather than on
     // the next visit ("remove one first" is what its note asked for).
     install = error == GamePackageInstaller::Error::None && GamePackageInstaller::hasInbox();
@@ -326,8 +329,9 @@ void GamesLauncherActivity::confirmRemove() {
   // Outside the lock: the install reads none of what the render task reads (the listing, the Continue rows, the icon
   // cache, the note), and takes seconds for a package with images. Nothing requests a render while it runs; a render
   // already queued draws the old listing, which is still whole. Only the second scope writes what the render reads.
-  GamePackageInstaller::Report report;
-  if (install) report = GamePackageInstaller::installAll();
+  // Built in place (no default-constructed Report assigned from a returned one), so the frame holds one Report.
+  const GamePackageInstaller::Report report =
+      install ? GamePackageInstaller::installAll() : GamePackageInstaller::Report{};
   RenderLock lock(*this);
   if (install) showInstallNote(report);
   // The registry is the truth after a failure too: a game whose .pkg went is no longer listed.
@@ -336,11 +340,11 @@ void GamesLauncherActivity::confirmRemove() {
   loadIcons();
   const int count = static_cast<int>(listing.count);
   // The next game takes its place, on its own row below the Continue rows. The selection keeps the removed row's index,
-  // so when the install after the remove adds a game that sorts before it, the row is that game's neighbour.
+  // so when the install after the remove adds a game that sorts before it, or finishes the remove of one, the row is a
+  // neighbour's.
   activeNav().requestSelection(count > 0 ? static_cast<int>(continueCount) + std::min(index, count - 1) : 0);
   if (error != GamePackageInstaller::Error::None) {
-    LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go
-    snprintf(note, sizeof(note), "%s: %s", name, tr(STR_GAMES_REMOVE_FAILED));
+    LOG_ERR("GAME", "Cannot remove %s", id);  // remove() logged the path that would not go; `note` is set above
     noteWaiting[0] = '\0';
     noteMore[0] = '\0';
     noteVisible = true;

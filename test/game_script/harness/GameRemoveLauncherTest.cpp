@@ -649,8 +649,26 @@ TEST_F(RemoveListTest, AFailedRemoveInstallsNothing) {
   removescript::script().result = Error::SdCard;
   longPressText("Game 02");
   tapText(tr(STR_GAMES_REMOVE));
-  EXPECT_TRUE(installerscript::script().order.empty()) << "no place was freed, so the inbox is not even asked about";
+  // Installs only after a remove that reports None. A remove that reports the card's fault after the .pkg went (the
+  // game is then unlisted, a place freed) installs nothing either: the waiting package installs on the next visit.
+  EXPECT_TRUE(installerscript::script().order.empty()) << "a failed remove does not even ask about the inbox";
   EXPECT_TRUE(noteSays("Game 02: " + std::string(tr(STR_GAMES_REMOVE_FAILED)))) << ui().joined();
+}
+
+// A remove that reports the card's fault after the .pkg went: the game is unlisted, a place is free, and still nothing
+// installs until the next visit (the install follows only a remove that reports None).
+TEST_F(RemoveListTest, AFailedRemoveThatTookThePkgInstallsNothingEither) {
+  addGames(3);
+  open();
+  installerscript::script().order.clear();
+  installerscript::script().inbox = true;
+  removescript::script().onRemove = [] { fakesd::removeEntry("/.games/game-02/.pkg"); };
+  removescript::script().result = Error::SdCard;
+  longPressText("Game 02");
+  tapText(tr(STR_GAMES_REMOVE));
+  EXPECT_TRUE(installerscript::script().order.empty()) << "the inbox is not asked about";
+  EXPECT_TRUE(noteSays("Game 02: " + std::string(tr(STR_GAMES_REMOVE_FAILED)))) << ui().joined();
+  EXPECT_EQ(shown(3), (std::vector<std::string>{"Game 01", "Game 03"})) << "a game without its .pkg is not listed";
 }
 
 TEST_F(RemoveListTest, AFailedRemoveAfterANoteWithBothMoreLinesShowsNeither) {

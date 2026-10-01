@@ -97,6 +97,28 @@ Pass 1. All four lenses ran as context-free subagents and returned: blind-hunter
 - low, patch -- blind-hunter 9: `installInbox`'s header comment updated; the `waiting` comment rewritten with the counter fix. Rejected: the `"damaged"` anchor in the new stacking test copies e4-z3's `TheMoreLineIsDrawnUnderTheReasonAndCenteredWithIt`, and a string change fails it loudly.
 - intent-alignment divergences 2-4 (the split applies whatever the first failure is; two keys and an installer counter; the install after a remove is `installInbox`'s steps split around the lock): each is the plan's intent as written, not a defect.
 
+Pass 2: the orchestrator's combined-diff review of e4-r1 + e4-r2 at 05b65125 (lenses run in one context, not subagents): 7 low. Fixed in the follow-up commit:
+- low, patch -- #4: `confirmRemove`'s locals (id[33], name[65], a 68 B `Report`, and a likely 68 B temporary from declare-then-assign) came near AGENTS.md's 256 B. The `Report` is now built in place (`install ? installAll() : Report{}`); and the name copy is gone: the failure note is formatted in the first lock scope, while the listing still holds the name (the guard 21e3c7dc's copy stood for, reading the name before the reload replaces the listing, is kept; the id copy stays for `remove`, `lastOpened`, and the log). Frame, x4pro `-fstack-usage`: 336 B at 05b65125, 256 B with the in-place `Report` alone, 192 B with both.
+- low, patch -- #2: `AFailedRemoveInstallsNothing`'s message said "no place was freed", wrong when `remove` returns SdCard after the `.pkg` went (e4-r1's path, `GamePackageInstaller.cpp` ~L370): the game is unlisted, a place is free, and the waiting package installs only on the next visit. Comment corrected; behaviour kept (install only on `error == None`, the intent's "after a successful remove").
+- low, patch -- #1: an install after a remove runs `installAll`, whose `finishRemovals` finishes every marked folder, so a game whose remove failed earlier in the visit but kept its marker goes then, not "the next time Games opens". `docs/crosshatch/formats.md` and the launcher's header comment say so.
+- low, patch -- #6: no real-installer test of that. `InstallerWaitingTest.TheInstallAfterARemoveAlsoFinishesAGameWhoseMarkerStayed`: 64 games, game-01 marked, `remove("game-02")`, `installAll()`: the waiting package installs, game-01 is finished and unlisted, `/.games-data/game-01` untouched.
+Deferred (`deferred-work.md` `## e4-r2`):
+- low, defer -- #3: a queued render can paint the old listing over "Installing" during the unlocked install (already recorded), now with the reviewer's fix: an `installing` flag set under the first lock that `buildScreen` honours.
+- low, defer -- #5: removing X while `X.chgame` is still in the inbox (from an earlier out-of-memory or card failure) reinstalls X at once with no note; before e4-r2, on the next visit.
+- low, defer -- #7: `Report::waiting` after a late commit failure's recount can describe a game that did install; no test covers `waiting` after a recount.
+
+Pass 3: the follow-up's own diff (`git diff 05b65125`), four lenses as context-free subagents, all returned: blind-hunter, edge-case-hunter, verification-gap, intent-alignment. 0 high, 0 medium, 9 low, 2 false.
+- low, patch -- blind 3, blind 4, intent 3: the new installer test could not tell which remove freed the place and `listed()` passed on a registry that failed to load. `listed()` now asserts the load; the test asserts `failed`/`waiting` 0, the inbox emptied, `extra` listed, both games' data kept; the message no longer claims which place was taken (the test pins the sweep inside the same call, not the room).
+- low, patch -- blind 2: the marker was placed by hand; it now comes from a real failed remove (`failRemove` on the `.pkg` and `.removing`, `remove("game-01")` returns SdCard, marker kept, game listed).
+- low, patch -- blind 5: `installer_waiting.cmake`'s comment now names the second subject. Rejected: moving the test to `GameRemoveTest.cpp` (lane e4-r1's file; the orchestrator allowed either suite).
+- low, patch -- blind 8, edge-case 2, edge-case 3: the header and `formats.md` said "finishes every"; now "tries to finish … at most 32, one that will not go stays, logged", and `formats.md` says no note names the finished game.
+- low, patch -- blind 7, edge-case 1: the selection comment now also names a game the sweep removes before the row.
+- low, patch -- verification-gap 1: no launcher test had a remove that returned SdCard after the `.pkg` went with the inbox full. `AFailedRemoveThatTookThePkgInstallsNothingEither` (no `installAll`, the note, the game unlisted).
+- low, rejected -- blind 1, intent 2: no launcher-level test with the real sweep: the launcher suites run a scripted installer by design; the sweep is pinned on the real installer and the launcher's reload after the install by `ARemoveAtTheLimitInstallsTheWaitingPackageAndListsIt`.
+- low, rejected -- blind 6, intent 1, verification-gap other-3: a marked game vanishes with no note, and a remove that freed a place by failing late installs nothing. Both are the orchestrator's decisions for this follow-up (#1 documented, #2 behaviour kept, the intent's "after a successful remove").
+- false -- blind 9, intent 4, verification-gap other-1: "the 256 B claim is unmeasured". Measured with `-fstack-usage` on x4pro (Verification, follow-up).
+- false -- intent (top): "the diff is not applied in the working tree": that lens read the main checkout's paths; the worktree holds the diff.
+
 ## Design Notes
 
 Strings. The owner's "N more are waiting" needs "is" for N = 1, which with "and N more not installed" would take three keys; the brief allows two. "%u more waiting for room" drops the verb and reads right for 1 and for many, and "for room" says why when the first failure is another reason. It has no "and", so it sits between the reason and the closing "and N more not installed". Assumption for the retro's device recheck: the note's extra lines read "N more waiting for room" and "and N more not installed" (e4-z3's "and N more" when none of the others waits).
@@ -126,6 +148,12 @@ The implementer works only in the git worktree that holds this plan (never `/hom
   - `remove-at-limit-list-after.png`: the list after the note is dismissed, Extra C on top. The selection is on Game 01, the removed row's index shifted by the new game (review row, deferred).
   - `note-waiting-and-not-installed.png`: three non-zip files and the two waiting packages at 64: "not-a-game.chgame: Not a game package" / "2 more waiting for room" / "and 2 more not installed"; the non-zip files became `.chgame.bad` (d-06 told apart).
 - Assumption for the retro's device recheck: with packages over the 64-game limit, the note's extra lines read "N more waiting for room" and, for any other failures, "and N more not installed" (e4-z3's "and N more" when none of the others waits); and after a Remove the waiting package installs at once, behind an "Installing" popup.
+
+**Follow-up commit** (on 05b65125, the combined tree; same lock and method; logs `fu-*`, `fu2-*` in the scratchpad's `e4-r2/`):
+- Host: full `ctest -j8` 1392/1392 passed. `scripts/*_test.py` 11/11, `check_layers.py` passed, `check_upstream_touches.py` PASS.
+- `confirmRemove`'s frame (`PLATFORMIO_BUILD_FLAGS=-fstack-usage`, x4pro, `GamesLauncherActivity.cpp.su`): 336 B with the code at 05b65125 (default `Report` assigned from `installAll`, `id` and `name` copies), 256 B with the `Report` built in place, **192 B** final (no `name` copy). `installInbox` 112 B, `showInstallNote` 32 B.
+- `check_flash_budget.py` `build on`/`build off` (both with `-fstack-usage`, which emits `.su` files only), `compare --limit-kib 250 --ram-limit-bytes 1024`, `objects`: exit 0 each. +233,344 B flash, +784 B static RAM (187,848 / 187,064), 43 objects, largest mutable static 4 B. Against the base at 40a1409a (+232,912 B, +784 B): **+432 B flash, 0 B static RAM**, the same as the first commit.
+- `pio run -e default` SUCCESS. No simulator run: the follow-up changes no screen.
 
 **Manual checks:**
 - simulator screenshots: 64 games + 1 valid + 2 invalid; 64 games + 3 valid; remove at the limit, then the waiting package listed.
