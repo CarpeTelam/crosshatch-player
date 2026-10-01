@@ -86,9 +86,10 @@ struct Job {
   char pathA[FILE_PATH_BYTES];
   char pathB[FILE_PATH_BYTES];
   char asidePath[GamePaths::INBOX_PATH_BYTES + sizeof(".installed.9")];  // the inbox file renamed out of the inbox
-  bool gamesCounted = false;  // installedGames is read (once a call, when the first package needs it)
-  bool addsGame = false;      // the package being installed is a game whose id is not installed yet
-  size_t installedGames = 0;  // folders with a valid .pkg, stopping at GameRegistry::MAX_GAMES
+  bool gamesCounted = false;    // installedGames is read (once a call, when the first package needs it)
+  bool addsGame = false;        // the package being installed is a game whose id the registry does not list yet
+  size_t installedGames = 0;    // folders GameRegistry lists, stopping at GameRegistry::MAX_GAMES
+  GameRegistry::Entry counted;  // readGame's scratch: `manifest` above is the package's, still needed
   uint8_t header[GameCore::IMAGE_HEADER_BYTES];
 };
 
@@ -291,11 +292,11 @@ bool hasRemovingMarker(const char* id) {
 // not fit the buffer is left to removeDir, which takes the marker in its own order; that is not a name a game has.
 // (noinline: its name and path buffers and two handles must not join removeFolder's frame.)
 [[gnu::noinline]] bool removeFolderMarkerLast(const char* dirPath) {
-  // A member's name, ".pkg", ".removing", and ".xlink" all fit; the buffer is small to keep this frame under 256 B.
-  char name[GameCore::MEMBER_NAME_BYTES + 3];
   char path[GamePaths::PATH_BYTES];
   bool skipped = false;
   {
+    // A member's name, ".pkg", ".removing", and ".xlink" all fit; the buffer is small to keep this frame under 256 B.
+    char name[GameCore::MEMBER_NAME_BYTES + 3];
     auto dir = Storage.open(dirPath);
     if (!dir || !dir.isDirectory()) return false;
     dir.rewindDirectory();
@@ -754,15 +755,13 @@ bool moveAside(Job& job, const char* suffix) {
   return false;
 }
 
-// The folders of /.games with a valid .pkg (the first test GameRegistry::load applies), counted up to
-// GameRegistry::MAX_GAMES. A folder whose manifest the registry then skips still counts: the count can only be high,
-// never let a hidden game through. A card that cannot list /.games counts as none: the install then fails on its own
-// card fault, if it is one.
-size_t countInstalledGames() {
+// The folders of /.games that GameRegistry::load lists (its own readGame test), counted up to
+// GameRegistry::MAX_GAMES, so a folder the registry skips cannot refuse an install while fewer games are listed. A card
+// that cannot list /.games counts as none: the install then fails on its own card fault, if it is one.
+size_t countInstalledGames(Job& job) {
   auto dir = Storage.open(GamePaths::GAMES_DIR);
   if (!dir || !dir.isDirectory()) return 0;
   char name[GamePaths::INBOX_NAME_BYTES];
-  uint8_t hash[GamePkg::HASH_BYTES];
   size_t games = 0;
   dir.rewindDirectory();
   for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
@@ -770,21 +769,21 @@ size_t countInstalledGames() {
     const bool isFolder = entry.isDirectory();
     entry.close();
     if (!isFolder || length == 0 || length >= sizeof(name) - 1 || name[0] == '.') continue;
-    if (GameRegistry::readPackageHash(name, hash) && ++games >= GameRegistry::MAX_GAMES) break;
+    if (GameRegistry::readGame(name, job.reader, job.counted) && ++games >= GameRegistry::MAX_GAMES) break;
   }
   return games;
 }
 
 // True when installing job.manifest.id would make more than GameRegistry::MAX_GAMES games: the registry lists that
 // many, in directory order, so a game past them would be installed and not shown, and could not be removed. A package
-// that replaces an installed id is always allowed. The folders are counted once a call (the first package that is not
-// a replacement), and installAll keeps the count as installs land.
+// that replaces a listed id is always allowed; one whose folder the registry skips adds a game, since the count left it
+// out. The folders are counted once a call (the first package that adds a game), and installAll keeps the count as
+// installs land.
 bool wouldBeOverTheLimit(Job& job) {
-  uint8_t hash[GamePkg::HASH_BYTES];
-  job.addsGame = !GameRegistry::readPackageHash(job.manifest.id, hash);
+  job.addsGame = !GameRegistry::readGame(job.manifest.id, job.reader, job.counted);
   if (!job.addsGame) return false;
   if (!job.gamesCounted) {
-    job.installedGames = countInstalledGames();
+    job.installedGames = countInstalledGames(job);
     job.gamesCounted = true;
   }
   return job.installedGames >= GameRegistry::MAX_GAMES;

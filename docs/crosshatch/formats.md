@@ -289,8 +289,9 @@ than 64 games (`GameRegistry::MAX_GAMES`, the most the registry lists, in direct
 installed, with 64 games installed already, stays in the inbox with its own reason ("Too many games are installed;
 remove one first") and installs once a game is removed. It is not renamed `.bad`, since nothing has judged it invalid:
 an invalid package that arrives at the limit says the same until there is room, and then gets its own reason. A package
-that replaces an installed `id` is always allowed. A folder counts as a game when it holds a valid `.pkg` (the first
-test the registry applies; a folder whose manifest the registry then skips still counts, so the count can only be high).
+that replaces a listed `id` is always allowed. A folder counts as a game when the registry lists it: a valid `.pkg` and
+a `manifest.json` that parses and names the folder (`GameRegistry::readGame`, the test the registry applies), so a
+folder it skips neither refuses an install nor lets a package into it past the limit.
 The folders are counted once per visit and the count follows the installs (and is taken again after an install that
 failed once its folder had moved, which can leave a valid `.pkg`). A package that waits for room costs a read of its
 directory and manifest and writes nothing, and it does not use up the 32 of a visit, so one behind them (an update of an

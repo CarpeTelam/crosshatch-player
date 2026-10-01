@@ -16,24 +16,34 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 
 - **Lanes.** Take the lanes and their order from the epic file's Notes (epic-script-runtime ran two: CI and scripts,
   2 → 3 → 5 → 17, beside the runtime lane). Stories in one lane touch shared files in order; lanes run in parallel.
-  `tickets.py next` shows what is ready.
-- **One worktree per lane**, branched from the epic branch. Each needs `git submodule update --init --recursive`.
-- **One build lock.** Create `{lock}`, a lock file in your scratchpad `{scratch}` (which also holds each story's
-  `{scratch}/<ref>/` scratch files and fresh trees), and give it to every build agent. Every `pio run`, `pio check`,
-  `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the orchestrator's own
-  included, runs as `flock {lock} sh -c '<commands>'` (a bare `flock {lock} a && b` locks only `a`); two builds at
-  once can wipe a build directory mid-build or race on the shared `~/.platformio/packages`.
+  `tickets.py next` shows what is ready. Lanes overlap planning, implementation, and review, not builds: every
+  build queues on one build lock, and builds at once barely gain on a 4-core container. Fresh worktrees, 2026-10-01:
+  `x4pro` and `default` side by side took 384 s, against 611 s one after the other. But the serial `default` (369.5 s)
+  rebuilt the C3 framework and the parallel one did not; with `default` at its cached 160.4 s, serial is an estimated
+  400 s. Run two lanes unless the epic's Notes name more; a third mostly waits on the lock.
+- **One worktree per lane**, branched from the epic branch, set up one lane at a time. In it, run
+  `git submodule update --init --recursive`, then
+  `flock /tmp/crosshatch-build.lock pio pkg install -e x4pro -e default` (the worktree's own library deps; the setup
+  script's install stamp is machine-wide, so it skips them), then
+  `PLATFORMIO_BUILD_CACHE_DIR={main}/.cache python3 scripts/dev_setup.py --warm`. `--warm` skips a build whose lock is
+  already held, so wait for that lane's warm `x4pro` build to finish (`~/.cache/crosshatch/warm-x4pro.log`) before
+  setting up the next lane; a lane whose warm build was skipped builds cold on its first story.
+  Every lane builds with the main checkout's build cache (the brief's Environment says how). Measured 2026-10-01 in
+  fresh worktrees with their library deps installed first: `x4pro` took 148.9 s with the shared cache (222 objects
+  reused) and 240.7 s without (`plan-orchestration-follow-up.md`).
+- **Locks.** AGENTS.md's two fixed locks (Known pitfalls) cover the orchestrator's own builds too. Your scratchpad
+  `{scratch}` holds each story's `{scratch}/<ref>/` scratch files and fresh trees.
 - **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3, Claude
   Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own review
   subagents (the cause of O1). The build agents' review lenses need only 2. Before the first story, start
   one subagent that reports whether it has the `Agent` tool; if it does not, the build agents run their lenses in their
   own context, and step 3's fallback applies to every story.
-- **The upstream remote.** Worktrees share one git config, so add `upstream` once, fetch `develop`
-  (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
-  `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
-  complete clone) before any agent runs `scripts/check_upstream_touches.py`.
-- **Toolchain and base measurement.** On the epic's base commit, under the lock, apply AGENTS.md's certifi steps, build
-  all five envs, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
+- **The upstream remote.** `scripts/dev_setup.py` (next bullet) adds `upstream`, fetches `develop`, and unshallows the
+  clone; worktrees share that git config, so every agent can run `scripts/check_upstream_touches.py`. Confirm its
+  `git` step passed; if it failed, its docstring lists the commands to run by hand.
+- **Toolchain and base measurement.** Run `python3 scripts/dev_setup.py` (a cloud session's SessionStart hook has
+  already run it; its output says whether a step failed). On the epic's base commit, under the build lock, build
+  `x4pro` and `default`, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
   static-RAM figures, with the commit, as a dated `Measurement` line in the epic Notes. Every delta in the epic
   subtracts this measurement, not a figure an earlier epic recorded. In epic-icon-library, `sticky` and `default`
   stopped mid-story on the certifi step, and the flash cost was first quoted against a figure recorded before the gate
@@ -41,8 +51,10 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 
 ### Each story
 
-1. **Start the build agent** in its lane's worktree with the brief below, filled in, and the story's ref. Say in the
-   prompt that the build runs for an orchestrator.
+1. **Start the build agent** in its lane's worktree. Its prompt starts with the slash command `/bmad-build {ref}`, so
+   the agent runs the whole bmad-build workflow (plan, implement, review, present) and not a summary of it. Then say
+   that the build runs for an orchestrator, and give the brief below, filled in. The brief only pre-answers the
+   workflow's human gates and adds this fork's rules; it never replaces a workflow step.
 2. **Answer blocking questions.** A question the repo does not settle goes to the owner (see Owner hand-offs); send the
    answer back to the same agent.
 3. **Review every story independently (AI-1).** In epic-script-runtime the build agents could not start subagents, so
@@ -70,7 +82,7 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
    conflict (O10); when two branches edited the same existing entry, union keeps both versions, so read the result.
 5. **Record out-of-session fixes.** A fix that lands outside its story's session, such as one that changes an earlier
    story's code, records its verification in the plan of the story it changes (O5).
-6. **Re-run the host suites on the combined tree before every push** (under the lock), plus
+6. **Re-run the host suites on the combined tree before every push** (under the host-test lock), plus
    `python3 scripts/<name>_test.py` for each fork script. In epic-script-runtime a parallel fix (c25a2ff6) broke another
    story's tests, and only this run caught it (O5).
 7. **Show the screenshots.** Right after merging a story whose verify names screenshots, send its
@@ -105,9 +117,11 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   triage table. A build agent fixes what is accepted, and that fix commit gets the same review before the push. A story
   that lands after the review gets its own combined-diff pass. In epic-icon-library this pass found a medium data race
   that every per-story review missed (retro O2).
-- On the combined tree, under the lock: build all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`), run
-  `pio check` as AGENTS.md gives it, the host suites, the fork script tests, `sim.sh build x4pro` when `src/games` or a
-  screen changed, and `./bin/clang-format-fix` twice with nothing new in `git status`.
+- On the combined tree, in AGENTS.md's verification order and under the locks: the host suites, the fork script
+  tests, and `./bin/clang-format-fix` twice with nothing new in `git status`; then build `x4pro` and `default`, run
+  `pio check` as AGENTS.md gives it (with `-e x4pro` too when games code changed), and `sim.sh build x4pro` when
+  `src/games` or a screen changed. CI builds all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`) on the
+  epic PR.
 - Open one PR for the epic into `develop` with a Conventional Commit title, and never merge it with a red check
   (AGENTS.md, Policy).
 
@@ -117,8 +131,8 @@ Before handing this section to a build agent, replace:
 
 - `{epic-folder}`: the epic's folder, such as `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime`;
 - `{ref}`: the story's ref, such as `2.7`, or the id of work that is not a ticket;
-- `{lock}`: the shared lock file in the orchestrator's scratchpad;
-- `{scratch}`: the orchestrator's scratchpad directory.
+- `{scratch}`: the orchestrator's scratchpad directory;
+- `{main}`: the main checkout's path, whose `.cache` every lane's builds share.
 
 Everything from here to the end of the file is the brief.
 
@@ -130,7 +144,8 @@ an independent review of your commit. Follow AGENTS.md exactly; re-read it in yo
 ### How to run the build
 
 You work in your own git worktree (your current directory); never touch the main checkout or another agent's worktree.
-Invoke the `bmad-build` skill with `{ref}` and follow its workflow; the plan goes where `tickets.py find {ref}` says,
+Your prompt starts with `/bmad-build {ref}`: run that skill and follow every step of its workflow (clarify, plan,
+implement, review, present), with nothing skipped or condensed; the plan goes where `tickets.py find {ref}` says,
 or, for work that is not a ticket, to `_bmad-output/implementation-artifacts/plan-<slug>.md`, with the slug led by
 `{ref}`. If bmad-build hands the plan to an implementation subagent, that subagent only implements the plan; it never
 invokes bmad-build or follows this brief. The orchestrator pre-answers the workflow's human gates, so do not stop at
@@ -155,18 +170,18 @@ them:
   despite the flag (the icon epic's follow-up reviewer, 2026-09-28), so if your turn ends early anyway, say at the top
   of the report that it is interim and which subagents are still running; you resume when they return. Wait for every
   lens subagent, and any implementation subagent, to return before you triage or give a final report. The Review Triage
-  Log names the lenses that returned.
+  Log names the lenses that returned. Run the review after the host tests and fast checks and before any firmware
+  build or `pio check` (AGENTS.md's verification order), so a review fix costs one round of firmware builds.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
 
 ### Environment
 
-- Run `git submodule update --init --recursive` in your worktree before any firmware, simulator, or host-test build.
-- **One build at a time across all agents.** Wrap every `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`,
-  `sim.sh build`, and host-test CMake configure and build in the shared lock: `flock {lock} sh -c '<commands>'`, so
-  the lock covers the whole chain (a bare `flock {lock} a && b` locks only `a`). Firmware builds take minutes: use a
-  long timeout, or run in the background and wait.
+- The orchestrator has set your worktree up: submodules, library deps, and a warm build when one ran. Every build takes
+  AGENTS.md's locks (Known pitfalls). Export `PLATFORMIO_BUILD_CACHE_DIR={main}/.cache` in every shell that builds,
+  so `pio` and the scripts that call it (`sim.sh`, `scripts/check_flash_budget.py`) share the lanes' cache. Firmware
+  builds take minutes: use a long timeout, or run in the background and wait.
 - Host tests build in your worktree's `build/test`, with the commands in AGENTS.md.
 - Scratch files, logs, and fresh trees go under `{scratch}/{ref}/`; delete fresh trees when you are done (disk is
   limited).
@@ -186,7 +201,8 @@ them:
   git submodule foreach --recursive 'git archive --prefix="$displaypath/" HEAD | tar -x -C {scratch}/{ref}/fresh'
   ```
 
-  The recursion matters: `freeink-sdk` has nested submodules. Run the workflow step's commands there, and say in the
+  The recursion matters: `freeink-sdk` has nested submodules. Run only that gate's own commands there (never the
+  other envs or the other gates), reusing the machine's warm `~/.platformio` (never move it aside), and say in the
   plan which kind of tree it was. A new fork job goes in `Crosshatch Test Status`'s `needs` in
   `.github/workflows/crosshatch-ci.yml`; never edit `ci.yml`.
 - Screenshots: when your verify names simulator screenshots, look at each one (`build/sim/shots/`), then copy the ones
@@ -194,25 +210,20 @@ them:
   (epic-script-runtime used `story-gfx-screenshots/`), under short file names that say what they show, commit them with the story, and list
   each path with one line on what it shows in the plan's Verification and your final report. The orchestrator shows
   them to the owner.
-- Game fixtures live in `test/game_script/fixtures/`, never `games/`.
-- Upstream files change only as `docs/crosshatch/upstream-touches.md` allows; run
-  `python3 scripts/check_upstream_touches.py` before committing when you touched a non-fork file.
+- Upstream files: run `python3 scripts/check_upstream_touches.py` before committing when you touched a non-fork file.
 - New fork scripts follow `docs/crosshatch/fork-scripts.md` (sidecar test, exit contract, `fork_common.py`, listed in
   the ledger's Game paths).
 - Deferred items: append to `_bmad-output/implementation-artifacts/deferred-work.md` only under a heading `## {ref}` at
   the end of the file, each entry in the file's existing format (`- source_plan:`, `summary:`, `evidence:`). The file
   merges with `merge=union`; a distinct first line per story keeps two lanes' appends from interleaving line by line.
-- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured". A
-  delta subtracts two measurements made the same way, never a recorded figure, and names commits that exist.
-- Before moving or rewriting an existing function, run `git log -L` on it and say in Design Notes what each guard or
-  early return in it protects. Keep each one, with a comment when its reason is ordering or safety (AGENTS.md, Known
-  pitfalls).
-- Formatting: run `./bin/clang-format-fix` (no arguments) as the very last step before the commit, after every edit
-  (review fixes and plan edits included), then run it a second time and confirm `git status` shows nothing new. Keep
-  any formatting-only change it makes to fork files outside your paths in your commit (never revert it) and name it
-  in your report; if it changes an upstream file the ledger does not list, stop and report it as a blocking question.
-- For C/C++ changes build `x4pro` and `default` (C3) at least; for `src/games` or screens also `sim.sh build x4pro`.
-  The orchestrator builds all five envs before the PR.
+- A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured"
+  (deltas as AGENTS.md's Known pitfalls say).
+- Before moving or rewriting an existing function, say in Design Notes what each guard or early return in it protects
+  (AGENTS.md's `git log -L` pitfall).
+- Formatting as AGENTS.md says, review fixes and plan edits included; name any formatting-only change it makes outside
+  your paths in your report, and stop with a blocking question if it changes an upstream file the ledger does not list.
+- For C/C++ changes, build and check as AGENTS.md's "While testing" and static-analysis bullets say; for `src/games`
+  or screens also `sim.sh build x4pro`.
 
 ### Final report
 

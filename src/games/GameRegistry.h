@@ -36,4 +36,9 @@ class GameRegistry {
 
   // The package hash in /.games/<id>/.pkg; false when the file is missing or not a valid .pkg.
   static bool readPackageHash(const char* id, uint8_t (&hash)[GamePkg::HASH_BYTES]);
+
+  // Whether load() lists /.games/<dirName>/: a valid .pkg, and a manifest.json that parses and names dirName. Fills
+  // `out`'s hash and manifest (not its check); `reader` is reused scratch. The installer counts games with this too,
+  // so its limit counts exactly the games the launcher shows.
+  static bool readGame(const char* dirName, GameCore::ManifestReader& reader, Entry& out);
 };
