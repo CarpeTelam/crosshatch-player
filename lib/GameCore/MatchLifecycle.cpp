@@ -16,32 +16,41 @@ constexpr MatchMenu menuOf(const MatchEvent (&events)[N]) {
 }  // namespace
 
 bool MatchLifecycle::apply(const MatchEvent event) {
-  const MatchState to = next(current, event);
+  const MatchState to = next(current, event, hidden, pausedFrom);
   if (to == current) return false;
+  if (to == MatchState::Paused) pausedFrom = current;
   current = to;
   return true;
 }
 
-MatchState MatchLifecycle::next(const MatchState from, const MatchEvent event) {
+MatchState MatchLifecycle::next(const MatchState from, const MatchEvent event, const bool hiddenPass,
+                                const MatchState resumesTo) {
   if (from == MatchState::Leaving) return from;
   if (event == MatchEvent::ForcedExit) return MatchState::Leaving;
+  // Where a hidden pass match's round starts: the device is handed to the first mover.
+  const MatchState roundStart = hiddenPass ? MatchState::HandOff : MatchState::Playing;
   switch (from) {
     case MatchState::Starting:
-      if (event == MatchEvent::Started) return MatchState::Playing;
+      if (event == MatchEvent::Started) return roundStart;
       if (event == MatchEvent::ScriptError) return MatchState::Error;
       return from;
     case MatchState::Playing:
       if (event == MatchEvent::Back || event == MatchEvent::Home) return MatchState::Paused;
       if (event == MatchEvent::RoundOver) return MatchState::Over;
+      if (event == MatchEvent::TurnChanged && hiddenPass) return MatchState::Result;
       if (event == MatchEvent::ScriptError) return MatchState::Error;
       return from;
     case MatchState::Paused:
-      if (event == MatchEvent::Resume || event == MatchEvent::Back) return MatchState::Playing;
+      if (event == MatchEvent::Resume || event == MatchEvent::Back) {
+        // Only the hidden pass machine pauses from Result or HandOff; the solo one always resumes play.
+        const bool handOffState = resumesTo == MatchState::Result || resumesTo == MatchState::HandOff;
+        return hiddenPass && handOffState ? resumesTo : MatchState::Playing;
+      }
       if (event == MatchEvent::Leave) return MatchState::Leaving;
       if (event == MatchEvent::ScriptError) return MatchState::Error;
       return from;
     case MatchState::Over:
-      if (event == MatchEvent::PlayAgain) return MatchState::Playing;
+      if (event == MatchEvent::PlayAgain) return roundStart;
       if (event == MatchEvent::Leave) return MatchState::Leaving;
       if (event == MatchEvent::ScriptError) return MatchState::Error;
       return from;
@@ -49,6 +58,20 @@ MatchState MatchLifecycle::next(const MatchState from, const MatchEvent event) {
       if (event == MatchEvent::Back) return MatchState::Leaving;
       return from;
     case MatchState::Leaving:
+      return from;
+    case MatchState::Result:
+      // The solo machine has no Result row: only ForcedExit, above, leaves it.
+      if (!hiddenPass) return from;
+      if (event == MatchEvent::Back || event == MatchEvent::Home) return MatchState::Paused;
+      if (event == MatchEvent::Tap) return MatchState::HandOff;
+      if (event == MatchEvent::ScriptError) return MatchState::Error;
+      return from;
+    case MatchState::HandOff:
+      // The solo machine has no HandOff row: only ForcedExit, above, leaves it.
+      if (!hiddenPass) return from;
+      if (event == MatchEvent::Back || event == MatchEvent::Home) return MatchState::Paused;
+      if (event == MatchEvent::Tap) return MatchState::Playing;
+      if (event == MatchEvent::ScriptError) return MatchState::Error;
       return from;
   }
   return from;
@@ -65,6 +88,8 @@ MatchMenu MatchLifecycle::menuFor(const MatchState state) {
     case MatchState::Starting:
     case MatchState::Playing:
     case MatchState::Leaving:
+    case MatchState::Result:
+    case MatchState::HandOff:
       return MatchMenu{};
   }
   return MatchMenu{};
@@ -84,6 +109,10 @@ const char* MatchLifecycle::name(const MatchState state) {
       return "Error";
     case MatchState::Leaving:
       return "Leaving";
+    case MatchState::Result:
+      return "Result";
+    case MatchState::HandOff:
+      return "HandOff";
   }
   return "?";
 }
@@ -108,6 +137,10 @@ const char* MatchLifecycle::name(const MatchEvent event) {
       return "ScriptError";
     case MatchEvent::ForcedExit:
       return "ForcedExit";
+    case MatchEvent::TurnChanged:
+      return "TurnChanged";
+    case MatchEvent::Tap:
+      return "Tap";
   }
   return "?";
 }

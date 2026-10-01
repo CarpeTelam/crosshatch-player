@@ -39,7 +39,7 @@ enum class CheckReason : uint8_t {
   None,
   BadFields,            // Invalid: a field breaks a parse rule (not from a successful parse)
   SoloNeedsOneSeat,     // Invalid: solo with seats.min other than 1
-  NearbyNeedsTwoSeats,  // Invalid: nearby with seats.max below 2
+  NearbyNeedsTwoSeats,  // Invalid: pass or nearby with seats.max below 2
   ApiTooOld,            // Unavailable: api below the host's minApi
   ApiTooNew,            // Unavailable: api above the host's api
   TooManySeats,         // Unavailable: seats.min above the host's maxSeats

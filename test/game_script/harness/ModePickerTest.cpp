@@ -245,14 +245,24 @@ TEST_F(PickerTest, AGameWhoseOnlyStartableModeIsPassGoesStraightToAPassMatch) {
   EXPECT_FALSE(logHas("plays solo"));
 }
 
-// A pass-only game whose seats leave no pass match on this host (one seat) starts nothing, and the list is repainted.
+// A pass-only game with one seat is an invalid manifest (pass needs seats.max 2): its row says why, and a tap starts
+// nothing and repaints the list without ever trying a pass match.
 TEST_F(PickerTest, APassOnlyGameWithOneSeatStartsNothingFromTheLauncher) {
   installCounter("\"pass\"", 1);
   openLauncher();
+  EXPECT_TRUE(logHas("Unavailable counter: pass and nearby need seats.max 2 or more"));
+  // The row draws its name and then its reason under it.
+  const std::vector<screen::DrawnText>& drawn = ui().drawn;
+  const auto row =
+      std::find_if(drawn.begin(), drawn.end(), [](const screen::DrawnText& d) { return d.text == "Counter"; });
+  ASSERT_NE(row, drawn.end()) << ui().joined();
+  ASSERT_NE(row + 1, drawn.end()) << ui().joined();
+  EXPECT_EQ((row + 1)->text, tr(STR_GAMES_UNAVAILABLE_INVALID));
   tapRow("Counter");
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_EQ(activityManager.asks.pushed, 0);
-  EXPECT_TRUE(logHas("Cannot start counter in pass"));
+  EXPECT_TRUE(logHas("Not starting counter: pass and nearby need seats.max 2 or more"));
+  EXPECT_FALSE(logHas("Cannot start"));
   EXPECT_TRUE(activityManager.updateRequested());
 }
 

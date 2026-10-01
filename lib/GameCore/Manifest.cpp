@@ -183,7 +183,7 @@ const char* describe(const CheckReason reason) {
     case CheckReason::SoloNeedsOneSeat:
       return "solo needs seats.min 1";
     case CheckReason::NearbyNeedsTwoSeats:
-      return "nearby needs seats.max 2 or more";
+      return "pass and nearby need seats.max 2 or more";
     case CheckReason::ApiTooOld:
       return "api older than this host supports";
     case CheckReason::ApiTooNew:
@@ -224,14 +224,15 @@ CheckResult verdict(const CheckStatus status, const CheckReason reason) { return
 CheckResult Manifest::check(const HostCaps& host) const {
   if (!fieldsValid(*this)) return verdict(CheckStatus::Invalid, CheckReason::BadFields);
   if (hasMode(MODE_SOLO) && seatsMin != 1) return verdict(CheckStatus::Invalid, CheckReason::SoloNeedsOneSeat);
-  if (hasMode(MODE_NEARBY) && seatsMax < 2) return verdict(CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+  if ((modes & (MODE_PASS | MODE_NEARBY)) != 0 && seatsMax < 2)
+    return verdict(CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
 
   if (api < host.minApi) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooOld);
   if (api > host.api) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooNew);
   if (seatsMin > host.maxSeats) return verdict(CheckStatus::Unavailable, CheckReason::TooManySeats);
 
-  // Solo starts whenever the rules above hold; pass needs the host's pass capability (no match
-  // can run it until epic-pass-and-play), and nearby needs the radio and a second seat.
+  // Solo starts whenever the rules above hold; pass needs the host's pass capability (its seats
+  // are passSeats' to fit when the match starts), and nearby needs the radio and a second seat.
   uint8_t startable = modes & MODE_SOLO;
   if (hasMode(MODE_PASS) && host.pass) startable |= MODE_PASS;
   if (hasMode(MODE_NEARBY) && host.nearby && host.maxSeats >= 2) startable |= MODE_NEARBY;

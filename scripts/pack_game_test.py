@@ -389,6 +389,11 @@ class BadPackageTest(PackerTestCase):
         for label, text in cases.items():
             with self.subTest(label):
                 self.assertRefused(self.project.game(manifest=text), 'manifest.json: ')
+        for modes in (['pass'], ['solo', 'pass']):
+            with self.subTest(modes=modes):
+                text = manifest_text(modes=modes, seats={'min': 1, 'max': 1})
+                self.assertRefused(self.project.game(manifest=text),
+                                   'error: manifest.json: a pass or nearby game needs seats.max of 2 or more')
 
 
 class LimitTest(PackerTestCase):
@@ -665,7 +670,7 @@ class ReadManifestTest(unittest.TestCase):
     def test_valid_manifests(self):
         self.assertEqual(self.read(manifest_text()), [])
         full = manifest_text(hidden=True, icon='game-controller', icon_weight='fill', modes=['solo', 'pass'],
-                             extra={'a': [1, {'b': None}]})
+                             seats={'min': 1, 'max': 2}, extra={'a': [1, {'b': None}]})
         self.assertEqual(self.read(full), [])
         self.assertEqual(self.read(manifest_text(seats={'min': 2, 'max': 4}, modes=['pass', 'nearby'])), [])
         self.assertEqual(self.read(manifest_text(icon_weight='regular')), [])
@@ -775,10 +780,14 @@ class ReadManifestTest(unittest.TestCase):
             with self.subTest(modes=modes):
                 self.assertEqual(self.read(manifest_text(modes=modes, seats={'min': 1, 'max': 2})), [])
 
-    def test_solo_and_nearby_seat_rules(self):
+    def test_solo_pass_and_nearby_seat_rules(self):
         self.refused(manifest_text(modes=['solo', 'pass'], seats={'min': 2, 'max': 2}), 'solo game needs seats.min 1')
         self.refused(manifest_text(modes=['nearby'], seats={'min': 1, 'max': 1}), 'nearby game needs seats.max')
         self.refused(manifest_text(modes=['solo', 'nearby'], seats={'min': 1, 'max': 1}), 'nearby game needs seats.max')
+        seat_rule = 'a pass or nearby game needs seats.max of 2 or more'
+        self.refused(manifest_text(modes=['pass'], seats={'min': 1, 'max': 1}), seat_rule)
+        self.refused(manifest_text(modes=['solo', 'pass'], seats={'min': 1, 'max': 1}), seat_rule)
+        self.assertEqual(self.read(manifest_text(modes=['solo', 'pass'], seats={'min': 1, 'max': 2})), [])
         self.assertEqual(self.read(manifest_text(modes=['pass'], seats={'min': 2, 'max': 2})), [])
         self.assertEqual(self.read(manifest_text(modes=['nearby'], seats={'min': 2, 'max': 2})), [])
 
