@@ -200,12 +200,13 @@ bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t&
       LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
       return false;
     }
-    // Why there is none, asked of the card again with a buffer of its own: the store's buffer and roster stay as they
-    // are, so the error view writes nothing and a new match writes its own roster.
+    // Why there is none, asked of the card again through the store's buffer (nothing references it after an empty
+    // load) and never its roster, so the error view writes nothing and a new match writes its own roster.
     switch (store.saves().peekResume(manifest, gameHostCaps())) {
       case GameSaveStore::SaveState::Unstartable:
-        // A save of this package whose mode or seats this host cannot start, or a later firmware's mode: a new match
-        // here would replace it with its first snapshot.
+        // A save of this package whose mode or seats this host cannot start, or a later firmware's (an unknown mode
+        // byte, a newer file or codec version, or an oversized snapshot): a new match here would replace it with its
+        // first snapshot.
         LOG_ERR("GAME", "%s: resume.bin is a save this host cannot start; not starting a new match over it",
                 manifest.id);
         refusal = StrId::STR_GAMES_RESUME_NOT_HERE;
@@ -547,8 +548,10 @@ void GameMatchActivity::loopPlaying() {
   GameCore::GameEvent event;
   if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
-    // With the frame on the panel, so the VM drops it if another seat has been drawn since (a pass match).
-    vm->postInput(event, frameDisplayed.load(std::memory_order_acquire));
+    // With the frame on the panel, so the VM drops it if another seat has been drawn since (a pass match). A frame
+    // number equal to GameVM::UNTAGGED, which the VM never drops, is posted one less, which can only drop.
+    const uint32_t shown = frameDisplayed.load(std::memory_order_acquire);
+    vm->postInput(event, shown == GameVM::UNTAGGED ? shown - 1 : shown);
   }
   vm->pollTimer();
   store.flushIfDue(millis());
@@ -707,21 +710,25 @@ void GameMatchActivity::renderCanvas() {
     viewOnScreen = true;
     return;
   }
+  // The match asks for a render only for a frame no render has taken yet, so a
+  // render without one is a repaint after something else drew (an overlay such
+  // as the light panel closed): the screen no longer shows the frame. The VM may publish a newer one before drawFront
+  // takes the front, which is why the frame on the panel is the number drawFront reports, not this. Read before the
+  // view's clearScreen below on purpose: that clear is the seam where PassMatchTest's frame-race test publishes, so
+  // moving this read below it would leave the test passing whatever frameDisplayed stored.
+  const uint32_t frame = vm->frameGen();
   if (viewOnScreen) {
     // A view covered the canvas; a game that never clears would keep its pixels.
     renderer.clearScreen();
     replay.forceFull();
     viewOnScreen = false;
   }
-  // The match asks for a render only for a frame no render has taken yet, so a
-  // render without one is a repaint after something else drew (an overlay such
-  // as the light panel closed): the screen no longer shows the frame.
-  const uint32_t frame = vm->frameGen();
   if (frame == renderedFrame.load(std::memory_order_relaxed)) replay.forceFull();
   renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
-  if (vm->drawFront(renderer, viewport, replay)) {
+  uint32_t taken = frame;  // drawFront's number of the frame it took; this one when there is none
+  if (vm->drawFront(renderer, viewport, replay, &taken)) {
     renderer.displayBuffer(replay.refreshMode());
     panel = Panel::Seat;
   }
@@ -729,7 +736,7 @@ void GameMatchActivity::renderCanvas() {
   // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so
   // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
   // that acquires it. The frame's number first, so a loop that sees the counts posts its touches with it.
-  frameDisplayed.store(frame, std::memory_order_release);
+  frameDisplayed.store(taken, std::memory_order_release);
   roundsDisplayed.store(started, std::memory_order_release);
   seatDisplayed.store(served, std::memory_order_release);
 }

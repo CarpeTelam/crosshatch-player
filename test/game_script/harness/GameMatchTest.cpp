@@ -1137,7 +1137,51 @@ TEST_F(PassMatchTest, TwoSeatsAlternateAndTheEndOfRoundMenuSitsOverTheFrameForEv
   EXPECT_EQ(saved[15], 2u) << "two seats";
 }
 
-// An open pass match never hands off (entry 4's Never): no Result, no HandOff, and no blank push.
+// The tag is the frame render drew, read under the frame mutex (cross-story fix review F2): when the VM publishes the
+// next seat's first frame after render read the frame count and before drawFront took the front, the panel shows the
+// next seat's frame, and that seat's tap is played, not dropped as one made under the last seat's frame. The seam is
+// renderCanvas's view clear, which comes after its frameGen() read: that order is load-bearing for this test (with the
+// read below the clear, the publish would land before it and the test would pass whatever frameDisplayed stored). The
+// steady path's window, inside drawFront, is covered by construction: the number is read under the frame mutex.
+TEST_F(PassMatchTest, AFramePublishedWhileRenderDrawsIsTheOneTheNextTapIsMadeUnder) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(cellX(2), cellY(2));  // seat 1's second tap, queued: dropped after the move, with a log line
+  frame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  input->click(Button::Back);  // Resume: the next render clears the screen and draws the canvas again
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  bool published = false;
+  bool cleared = false;
+  renderer->onClear = [&] {
+    if (cleared) return;  // render's own clear only, before drawFront takes the frame mutex
+    cleared = true;
+    fakertos::release();  // the move is played, seat 2's first frame published, the queued tap dropped
+    published = waitFor([] { return fakelog::anyLine("Dropped a touch"); });
+  };
+  render();
+  renderer->onClear = nullptr;
+  ASSERT_TRUE(published);
+  const std::vector<std::string>& pushed = renderer->shown.back().texts;
+  EXPECT_NE(std::find(pushed.begin(), pushed.end(), "Player 2 (O) to move"), pushed.end()) << "seat 2's frame";
+  tapCanvas(cellX(5), cellY(5));  // seat 2's move, made under the frame on the panel
+  frame();
+  ASSERT_TRUE(
+      waitFor([] { return fakelog::anyLine("apply seat 2 cell 5") || fakelog::countLines("Dropped a touch") >= 2u; }));
+  EXPECT_TRUE(logHas("apply seat 2 cell 5")) << "seat 2's tap was dropped as one made under seat 1's frame";
+  EXPECT_EQ(fakelog::countLines("Dropped a touch"), 1u);
+}
+
 // The loop posts each touch with the frame on the panel (cross-story review row 5): seat 1's second tap, made under its
 // frame while its turn-passing move is still being played, is dropped by the VM, never seat 2's move.
 TEST_F(PassMatchTest, ATapMadeUnderSeatOnesFrameBehindItsTurnPassingMoveNeverReachesSeatTwo) {
@@ -1183,6 +1227,7 @@ TEST_F(PassMatchTest, ATapMadeBehindTheRoundEndingMoveNeverReachesSeatZero) {
   EXPECT_FALSE(logHas("Script error"));
 }
 
+// An open pass match never hands off (entry 4's Never): no Result, no HandOff, and no blank push.
 TEST_F(PassMatchTest, AnOpenPassMatchNeverEntersResultOrHandOffNorPushesABlank) {
   installFixture("pass-open");
   enter("pass-open", "Pass open", GameCore::Roster::pass(2));
@@ -1235,6 +1280,22 @@ TEST_F(MatchTest, APushHoldsTheCanvasAndUiTextsDrawnSinceTheLastClearScreenAndNo
   renderer->forget();  // forgets the UI notes with the calls they were numbered by
   renderer->displayBuffer(HalDisplay::FULL_REFRESH);
   EXPECT_TRUE(renderer->shown[3].texts.empty());
+}
+
+// The screen renderer double's clear hook (fix review F2's seam): it runs after the screen is cleared, inside the call,
+// standing in for the VM task publishing on the other core while render draws.
+TEST(ScreenRendererDoubleTest, ClearScreenRunsTheHookAfterTheScreenIsCleared) {
+  GfxRenderer renderer(480, 800);
+  renderer.fillRect(0, 0, 10, 10, true);
+  int ran = 0;
+  renderer.onClear = [&] {
+    ++ran;
+    EXPECT_EQ(renderer.pixel(5, 5), GfxRenderer::PixelWhite) << "the hook ran before the clear";
+  };
+  renderer.clearScreen();
+  EXPECT_EQ(ran, 1);
+  ASSERT_FALSE(renderer.calls.empty());
+  EXPECT_EQ(renderer.calls.back().kind, GfxRenderer::Kind::ClearScreen);
 }
 
 // ---- a hidden pass match (epic-pass-and-play entry 4): pass-hidden, the hand-off between seats ----
@@ -2003,6 +2064,35 @@ TEST_F(HiddenPassTest, LeavingFromASeatsFramePushesTheBlankBeforeGamesAndTheExit
   EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
 }
 
+// Cross-story row 1's trigger (fix review F10): Games cannot open. The manager double's goToGames() replaces nothing,
+// as the device's does when makeUniqueNoThrow<GamesLauncherActivity> fails, so the match stays current in Leaving with
+// no VM. The blank Leave pushed stays the last push, a render pushes nothing, Home goes Home, and a later sleep pushes
+// nothing.
+TEST_F(HiddenPassTest, ALeaveWhoseGamesScreenCannotOpenLeavesTheBlankAndASleepPushesNothing) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  ASSERT_TRUE(holds(lastPush(), "apple"));
+  tapOption(tr(STR_GAMES_LEAVE));
+  ASSERT_EQ(state(), "Leaving");
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+  EXPECT_TRUE(activityManager.replacements.empty()) << "Games opened: the refusal was not staged";
+  EXPECT_EQ(lastPush().mode, HalDisplay::HALF_REFRESH);
+  EXPECT_TRUE(lastPush().texts.empty()) << "the seat's frame is still on the panel";
+  const size_t pushes = renderer->shown.size();
+  for (int i = 0; i < 5; ++i) frame();
+  render();
+  EXPECT_EQ(renderer->shown.size(), pushes) << "a match that let go pushed again";
+  EXPECT_FALSE(activity->handleHomeGesture()) << "Home goes Home from a match that let go";
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty()) << "the sleep pushed over the blank";
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
 // A Leave from a screen that holds no seat's private frame pushes nothing: the Over menu sits over seat 0's frame,
 // which is everyone's, and the blank's pause menu sits on no frame. The exit after it pushes nothing either.
 TEST_F(HiddenPassTest, LeavingFromOverOrTheBlanksPauseMenuPushesNothing) {
@@ -2099,6 +2189,7 @@ TEST_F(HiddenPassTest, AForcedExitWithNoVmOverASeatsFramePushesTheBlankAndNothin
   // The error view is asked for but not yet drawn: seat 1's frame is still on the panel.
   ASSERT_TRUE(holds(lastPush(), "apple"));
   const ExitRecord record = sleepRecordingPushes();
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit's no-VM push took the RenderLock the manager holds (12cc816)";
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
   EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD step ran before the blank";
   const size_t pushes = renderer->shown.size();

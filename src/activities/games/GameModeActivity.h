@@ -2,6 +2,7 @@
 
 #include <Manifest.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -60,8 +61,8 @@ class GameModeActivity final : public UiListActivity {
   // The rows for the save peek() found and the modes check left.
   void buildRows();
   // The roster a match in the mode of row kind `kind` (not Continue) plays: solo; pass with the fewest seats it can
-  // have; nearby solo until epic-play-nearby. False (logged) when that mode cannot start: Continue, or pass with no
-  // seat count this host fits.
+  // have; nearby solo until epic-play-nearby. False when that mode cannot start: Continue, or pass with no seat count
+  // this host fits. Logs nothing: Continue's search tries rows that may not start, so the callers log.
   bool rosterFor(RowKind kind, GameCore::Roster& roster) const;
   // Starts a New match in the mode of row kind `kind` (not Continue).
   void startNew(RowKind kind);
@@ -76,7 +77,8 @@ class GameModeActivity final : public UiListActivity {
   void confirmNew();
   bool handleConfirmInput();
   void answerConfirm(GameConfirmDialog::Answer answer);
-  void buildConfirmDialog(UiScreen& screen);
+  // The question about New row `row`, as buildScreen read it.
+  void buildConfirmDialog(UiScreen& screen, int row);
   static void onConfirmChoice(const freeink::ui::ActionEvent& event, void* user);
 
   static constexpr freeink::ui::ActionId ACTION_CONFIRM_CHOICE = ACTION_USER;
@@ -93,6 +95,9 @@ class GameModeActivity final : public UiListActivity {
   freeink::ui::ListItem rowItems[MAX_ROWS] = {};
   size_t rowCount = 0;
   // The New row the open confirmation asks about (-1: none), and the question (its focus: 0 Cancel, 1 New game).
-  int8_t confirmRow = -1;
+  // Written by the loop task, read once per build by the render task. Orders: openConfirm stores focus before it
+  // publishes the row with release, and render loads the row once with acquire; closers and loop-task reads may use
+  // the default order.
+  std::atomic<int8_t> confirmRow{-1};
   GameConfirmDialog confirm;
 };

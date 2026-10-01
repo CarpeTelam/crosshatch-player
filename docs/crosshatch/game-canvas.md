@@ -59,13 +59,13 @@ Entering with `Start::Resume` restores it (`Session::restore`), so the match con
 write it again until a move commits. The save is read before the VM is built, and its roster is the match's, whatever
 roster the caller passed (Continue plays the save's roster): a hidden pass save resumes on the blank hand-off screen
 (HandOff), whose tap shows the saved turn seat; an open pass save resumes in Playing on that seat's frame. When the load
-refuses the save, the match reads the file once more to learn why (`GameSaveStore::peekResume`, with a buffer of its
-own, so the store's buffer and roster do not change). A save of this package that this host cannot start (a mode or seat
-count it cannot start, or a mode byte it does not know) stops in the error view with its own reason, and the file is
-kept. So does a save that will not read, on either read. The title screen offers no Continue for such a save, but its
-New rows ask before a new match replaces it, as over any save; formats.md has the states. A Continue that finds no save
-at all starts a new match with the roster Continue passed: the title screen's first New row that can start (solo for a
-game that starts solo). The VM task never touches the card (AD-5).
+refuses the save, the match reads the file once more to learn why (`GameSaveStore::peekResume`, through the store's
+buffer, which nothing references then, and leaving its roster). A save of this package that this host cannot start (a
+mode or seat count it cannot start, or a later firmware's save) stops in the error view with its own reason, and the
+file is kept. So does a save that will not read, on either read. The title screen offers no Continue for such a save,
+but its New rows ask before a new match replaces it, as over any save; formats.md has the states. A Continue that finds
+no save at all starts a new match with the roster Continue passed: the title screen's first New row that can start (solo
+for a game that starts solo). The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -198,14 +198,16 @@ the match has moved on to the blank; HandOff draws no canvas, and neither does a
 frame never reaches the panel.
 
 **A touch made under another seat's frame.** Any pass match, open or hidden: the loop posts each touch with the frame
-the panel showed when it was made (`GameMatchActivity::frameDisplayed`, stored by `renderCanvas` after its push, through
-`GameVM::postInput`, in the event's `serial`, which only a timer reads). The VM notes the first frame of each seat it
-draws, and drops a touch made before the first frame of the seat it draws now: one made under seat 1's frame and still
-queued when seat 1's move passes the turn never becomes seat 2's move (open pass), and one queued behind the move that
-ends the round never reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made
-under the mover's frame and goes on, as above, and a timer is never dropped for this: it goes to the turn seat (R11).
-The tag is the frame number render read before `drawFront`, which may draw a newer frame, so a touch made in the one
-render that races a seat change may be dropped; it is never delivered to the wrong seat.
+the panel showed when it was made (`GameMatchActivity::frameDisplayed`, through `GameVM::postInput`, in the event's
+`serial`, which only a timer reads). `renderCanvas` stores the number of the frame `GameVM::drawFront` took, read under
+the frame mutex, so a frame the VM published while render ran is named when it is the one drawn. The VM notes the first
+frame of each seat it draws, and drops a touch made before the first frame of the seat it draws now, comparing the two
+numbers so that a wrapped count still orders them: one made under seat 1's frame and still queued when seat 1's move
+passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
+reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
+frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
+seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
+posting one less instead, which can only drop.
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,

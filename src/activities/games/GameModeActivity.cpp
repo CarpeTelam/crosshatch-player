@@ -116,8 +116,10 @@ void GameModeActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
-  if (confirmRow >= 0) {
-    buildConfirmDialog(screen);  // the list is not built under it, so none of its rows takes a touch
+  // The loop task opens and closes the question while this runs on the render task: read the row once.
+  const int confirming = confirmRow.load(std::memory_order_acquire);
+  if (confirming >= 0) {
+    buildConfirmDialog(screen, confirming);  // the list is not built under it, so none of its rows takes a touch
     return;
   }
   fui::ListProps props;
@@ -149,10 +151,7 @@ bool GameModeActivity::rosterFor(const RowKind kind, GameCore::Roster& roster) c
   static_assert(MODE_TEXTS[static_cast<size_t>(RowKind::Solo)].bit == Manifest::MODE_SOLO, "RowKind::Solo");
   static_assert(MODE_TEXTS[static_cast<size_t>(RowKind::Pass)].bit == Manifest::MODE_PASS, "RowKind::Pass");
   static_assert(MODE_TEXTS[static_cast<size_t>(RowKind::Nearby)].bit == Manifest::MODE_NEARBY, "RowKind::Nearby");
-  if (kind == RowKind::Continue) {
-    LOG_ERR("GAME", "Not a New row of %s: Continue", manifest.id);
-    return false;
-  }
+  if (kind == RowKind::Continue) return false;
   roster = GameCore::Roster::solo();
   switch (MODE_TEXTS[static_cast<size_t>(kind)].mode) {
     case GameCore::Mode::Solo:
@@ -160,11 +159,7 @@ bool GameModeActivity::rosterFor(const RowKind kind, GameCore::Roster& roster) c
     case GameCore::Mode::Pass: {
       // The fewest seats a pass match can have; the seat choice is deferred (deferred-work.md, ## e5-inception).
       const uint8_t seats = GameCore::passSeats(manifest.seatsMin, manifest.seatsMax, gameHostCaps().maxSeats);
-      if (seats == 0) {
-        LOG_ERR("GAME", "Cannot start %s in pass: seats %d..%d leave no pass match on this host", manifest.id,
-                static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax));
-        return false;
-      }
+      if (seats == 0) return false;
       roster = GameCore::Roster::pass(seats);
       return true;
     }
@@ -178,6 +173,12 @@ bool GameModeActivity::rosterFor(const RowKind kind, GameCore::Roster& roster) c
 void GameModeActivity::startNew(const RowKind kind) {
   GameCore::Roster roster;
   if (!rosterFor(kind, roster)) {
+    if (kind == RowKind::Continue) {
+      LOG_ERR("GAME", "Not a New row of %s: Continue", manifest.id);
+    } else {  // only pass can fail (rosterFor)
+      LOG_ERR("GAME", "Cannot start %s in pass: seats %d..%d leave no pass match on this host", manifest.id,
+              static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax));
+    }
     requestUpdate();  // the tap moved the selection here (or the confirmation closed); show it
     return;
   }
@@ -246,8 +247,10 @@ void GameModeActivity::onRowAction(const fui::ActionEvent& event) {
 
 void GameModeActivity::openConfirm(const int row) {
   app.clearTapFlash();
-  confirmRow = static_cast<int8_t>(row);
-  confirm.focus = 0;  // Cancel: a stray Confirm keeps the save
+  // Cancel first, so a stray Confirm keeps the save; then the row, released after it, so a render that sees the
+  // question open draws Cancel focused.
+  confirm.focus.store(0);
+  confirmRow.store(static_cast<int8_t>(row), std::memory_order_release);
   requestUpdate();
 }
 
@@ -300,9 +303,7 @@ void GameModeActivity::confirmNew() {
   startNew(rowKind[row]);
 }
 
-void GameModeActivity::buildConfirmDialog(UiScreen& screen) {
-  // The input task can close the dialog (confirmRow = -1) while this runs on the render task: read it once.
-  const int row = confirmRow;
+void GameModeActivity::buildConfirmDialog(UiScreen& screen, const int row) {
   if (row < 0 || static_cast<size_t>(row) >= rowCount) return;
   // The headline is the mode the new game is in.
   confirm.build(screen, renderer, ACTION_CONFIRM_CHOICE, tr(STR_GAMES_NEW_OVER_SAVE_TITLE), rowItems[row].label,

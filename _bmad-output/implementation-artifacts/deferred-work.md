@@ -793,3 +793,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
   summary: A `resume.bin` with a later file version, codec version, or a snapshot over today's limit is `None` (malformed) to `peek`, so the title screen's New and a Continue's fallback replace it without asking; e5-xr keeps only an unknown mode byte or an unstartable mode or seat count as `Unstartable`.
   evidence: Review of e5-xr (edge-case hunter): `GameSaveStore::readResume` returns the header status before the mode. Pre-existing; cross-story row 2 named modes, seats, and the mode byte only. Trigger: the first resume.bin format or codec version bump.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: Resolved in e5-xr's follow-up commit, not deferred any longer: the three entries above (`GameEvent::serial`'s comment, the dialogs' open flags, and a later firmware's resume.bin read as None), as rows F8, F3, and F1 of the fix commit's cross-story review.
+  evidence: `cross-story-review.md`, "Review of the fix commit"; the plan's Review Triage Log, pass 2.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: `GameMatchActivity::renderCanvas` stores `renderedFrame` from the `frameGen()` read before `drawFront`, so after a publish lands mid-render the loop asks for one redundant render, and an overlay closed before it may get no `forceFull`; store the number `drawFront` reports (as `frameDisplayed` now does).
+  evidence: Review of e5-xr's follow-up (blind hunter, edge-case hunter). Pre-existing since entry 4. Trigger: the next change to `renderCanvas`, or a device report of overlay pixels left after the light panel.

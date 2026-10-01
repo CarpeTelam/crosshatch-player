@@ -159,9 +159,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // store's buffer; valid until the store's next call), and makes its roster the match's (roster, lifecycle; logged).
   // True with `snapshot` empty when there is no usable save (logged: the match starts new with the caller's roster,
   // since nothing is lost). False, with the error view's reason in `refusal`, when a save is there and cannot be used
-  // now, because it would not read or this host cannot start it (GameSaveStore::peekResume, which changes neither the
-  // store's buffer nor its roster): the caller shows the error view and leaves the file, which a new match would
-  // replace.
+  // now, because it would not read or this host cannot start it (GameSaveStore::peekResume, which reads through the
+  // store's buffer and leaves its roster): the caller shows the error view and leaves the file, which a new match
+  // would replace.
   bool seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver, StrId& refusal);
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
@@ -283,10 +283,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // something else.
   enum class Panel : uint8_t { Other, Seat, Blank };
   Panel panel = Panel::Other;
-  // Written by render after renderCanvas's push: the frameGen() it read before drawing (the frame drawn is that one or
-  // a later one, so this never names a newer frame than the panel holds), which loopPlaying posts each touch with
-  // (GameVM::postInput), so the VM drops one made under another seat's frame. Stored before roundsDisplayed and
-  // seatDisplayed, so a loop that sees those sees this frame's number.
+  // Written by render after renderCanvas's push: the number of the frame it drew (GameVM::drawFront's, read under the
+  // frame mutex, so a frame the VM published while render ran is named when it is the one drawn), which loopPlaying
+  // posts each touch with (GameVM::postInput), so the VM drops one made under another seat's frame. Stored before
+  // roundsDisplayed and seatDisplayed, so a loop that sees those sees this frame's number.
   std::atomic<uint32_t> frameDisplayed{0};
   // Render task only: the view's dialog, a member since it is over 1 KB.
   freeink::ui::OptionDialogProps dialogProps;

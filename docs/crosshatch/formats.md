@@ -112,8 +112,11 @@ Every persisted codec blob starts with a 6-byte header (`lib/GameScript/BlobHead
 
 A reader checks, in order, that the header is whole (`truncated`), that the magic is its file's (`bad_magic`), that
 the file version is the one it reads (`unknown_file_version`), and that the codec version is this codec's
-(`unknown_codec_version`). Anything but `ok` is discarded with a log line and never decoded. The file's own fields
-and the codec payload follow at offset 6.
+(`unknown_codec_version`). Anything but `ok` is discarded with a log line and never decoded, with one exception:
+`resume.bin` keeps a save whose file or codec version is newer than this firmware's, as one this host cannot start
+(see [resume.bin](#resumebin)). The file's own fields and the codec payload follow at offset 6. A later layout of
+`resume.bin` keeps this 6-byte header, and a codec-only bump keeps the package hash at its offset, which that rule
+relies on.
 
 ## store.bin
 
@@ -180,32 +183,37 @@ accept a solo save only; no firmware code calls them (the host suites still do).
 `peek(game, pkgHash, host)` and `loadResume(ver, unreadable, game, host, saved)`, take the game's manifest and the
 host's caps. The game's title screen calls the new `peek` once, when it opens. The match's Continue calls the new
 `loadResume`; when that loads nothing, the match calls `peekResume(game, host)` to learn why (below). `peekResume` is
-the new `peek` for the store's own id and package hash: it reads into a buffer of its own, so the store's buffer and
-roster do not change, and it reads nothing without the package hash or with a nearby roster, as `loadResume` does. Both
-forms accept a save that game can start on that host: solo with n 1, or pass with n from max(2, `seats.min`) to the
-least of `seats.max`, the host's `maxSeats`, and 16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)`
-starts it. A pass game with no seat count that fits the host cannot start pass there, so its pass save is
-`mode not startable`. The new `loadResume` gives the saved roster in `saved` (`Roster::solo()` or `Roster::pass(n)`, and
-`Roster::solo()` when it loads nothing).
+the new `peek` for the store's own id and package hash. It reads through the store's buffer, which nothing references
+after a `loadResume` that loaded nothing, so it allocates nothing while the match holds its assets; it never changes the
+store's roster; and it reads nothing without the package hash or with a nearby roster, as `loadResume` does. Both forms
+accept a save that game can start on that host: solo with n 1, or pass with n from max(2, `seats.min`) to the least of
+`seats.max`, the host's `maxSeats`, and 16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)` starts
+it. A pass game with no seat count that fits the host cannot start pass there, so its pass save is `mode not startable`.
+The new `loadResume` gives the saved roster in `saved` (`Roster::solo()` or `Roster::pass(n)`, and `Roster::solo()` when
+it loads nothing).
 
 **Usable** is what `GameSaveStore::peek` answers `Valid` for, and it is exactly what the `loadResume` of the same form
 accepts: the header checks `ok`, the package hash is the installed package's, the mode and n are ones the form accepts
 (above; checked after the package hash, so another package's save is `other package` whatever its mode), and the
-snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is refused
-before it is read. `peek` reads the whole file into a buffer allocated for the call. It answers one of four things:
+snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. Of a file longer than 1,418 bytes only the
+fixed part is read. The static `peek` reads the whole file into a buffer allocated for the call. It answers one of four
+things:
 
 - `Valid`: the game's title screen offers its Continue row (the title screen calls `peek` once, when it opens);
-- `Unstartable`: a save of this package that the form, game, or host cannot resume: a well-formed mode or seat count
-  it cannot start (`mode not startable`, `seats not startable`), or a mode byte this firmware does not write
-  (`unknown mode`, 2 to 255: perhaps a later firmware's). One `LOG_INF` line says it is kept. The title screen offers
-  no Continue row for it, but it is a save: a New row asks before it replaces it, as over any save;
-- `None`: no file, or one that was read and is not usable for another reason (the header status, `other package`,
-  `bad seat count`, `empty snapshot`, `truncated`, `too large`, or the codec's error). `bad seat count` is a seat count
-  no save of its mode has (solo n other than 1, pass n below 2 or over 16), a malformed file. One log line names why,
-  at `LOG_ERR`, except a save of another package, which is `LOG_INF` because the title screen asks again each time it
-  opens and the save is not broken. `loadResume` logs these refusals at `LOG_ERR` ("discarded"), and an `Unstartable`
-  save at `LOG_INF`, as kept, as `peek` does. The file stays, so a save of another package, or a malformed one,
-  survives until the game's next match replaces it;
+- `Unstartable`: a save of this package that the form, game, or host cannot resume: a well-formed mode or seat count it
+  cannot start (`mode not startable`, `seats not startable`), or a later firmware's save: a mode byte this firmware does
+  not write (`unknown mode`, 2 to 255), a file version above 1 (`newer file version`; its layout is unknown, so its
+  package is not checked: it sits in this game's folder), or, with this package's hash, a codec version above this
+  firmware's (`newer codec version`) or a snapshot over 1,400 bytes (`too large`). One `LOG_INF` line says it is kept.
+  The title screen offers no Continue row for it, but it is a save: a New row asks before it replaces it, as over any
+  save;
+- `None`: no file, or one that was read and is not usable for another reason (the header status, an older or garbage
+  version included, `other package`, `bad seat count`, `empty snapshot`, `truncated`, or the codec's error).
+  `bad seat count` is a seat count no save of its mode has (solo n other than 1, pass n below 2 or over 16), a malformed
+  file. One log line names why, at `LOG_ERR`, except a save of another package, which is `LOG_INF` because the title
+  screen asks again each time it opens and the save is not broken. `loadResume` logs these refusals at `LOG_ERR`
+  ("discarded"), and an `Unstartable` save at `LOG_INF`, as kept, as `peek` does. The file stays, so a save of another
+  package, or a malformed one, survives until the game's next match replaces it;
 - `Unreadable`: a file is there and could not be checked, because it would not open (`cannot open`) or read
   (`cannot read`) or the buffer could not be allocated, whatever the save's mode. A card or heap fault may pass, so it
   is not `None`: the title screen still offers the Continue row, so that a new match is not the only choice offered

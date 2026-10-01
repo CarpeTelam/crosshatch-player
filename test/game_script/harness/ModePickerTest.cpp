@@ -1042,7 +1042,7 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   activityManager.markRendered();
   tapRow(tr(STR_GAMES_CONTINUE));
   EXPECT_EQ(activityManager.asks.replaced, 0);
-  EXPECT_TRUE(logHas("Cannot start counter in pass: seats 1..2 leave no pass match on this host"));
+  EXPECT_FALSE(logHas("Cannot start counter")) << "the search logs only its own failure";
   EXPECT_TRUE(logHas("Cannot continue counter: no New row this host can start"));
   EXPECT_TRUE(activityManager.updateRequested());
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
@@ -1060,7 +1060,7 @@ TEST_F(TitleScreenTest, AContinueWhoseFirstNewRowCannotStartTakesTheNextRowThatC
   const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
   ASSERT_EQ(rowsDrawn(), expected);
   tapRow(tr(STR_GAMES_CONTINUE));
-  EXPECT_TRUE(logHas("Cannot start counter in pass: seats 1..2 leave no pass match on this host"));
+  EXPECT_FALSE(logHas("Cannot start counter")) << "a row the search skips is no error";
   EXPECT_FALSE(logHas("Cannot continue counter"));
   EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_EQ(activityManager.asks.replaced, 1);

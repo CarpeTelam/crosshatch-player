@@ -1336,7 +1336,9 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));
-  EXPECT_EQ(fakelog::countLines("draw for seat "), fakelog::countLines("draw for seat 2")) << "only seat 2 is drawn";
+  // After the tap, exactly one draw, seat 2's: any draw before the blank's tap would make the count more than one.
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 1u);
+  EXPECT_EQ(fakelog::countLines("draw for seat "), 1u) << "another seat was drawn, or seat 2 before the tap";
   for (int i = 0; i < 20; ++i) frame();
   EXPECT_EQ(fakesd::bytesOf(resumePath("pass-hidden")), saved) << "the restored snapshot is not written again";
 }
@@ -1545,6 +1547,14 @@ TEST_F(PassResumeTest, ASaveThisHostCannotStartStopsInTheErrorViewWithItsOwnReas
     EXPECT_TRUE(logHas(" is a save that cannot be resumed here: " + std::string(c.reason) + "; the file is kept"));
     EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_NOT_HERE)));
     EXPECT_FALSE(logHas(tr(STR_GAMES_RESUME_FAILED))) << "the error view says the save cannot be continued here";
+    // The error view draws the whole reason, wrapped but never cut (fix review F13).
+    if (screen::RecordingTarget::newest()) screen::RecordingTarget::newest()->forget();
+    activity->render(RenderLock(*activity));
+    activityManager.markRendered();
+    ASSERT_NE(screen::RecordingTarget::newest(), nullptr);
+    std::string drawn = screen::RecordingTarget::newest()->joined();
+    std::replace(drawn.begin(), drawn.end(), '\n', ' ');
+    EXPECT_NE(drawn.find(tr(STR_GAMES_RESUME_NOT_HERE)), std::string::npos) << "the reason is cut: " << drawn;
     for (int i = 0; i < 10; ++i) {
       input->tap(CANVAS_X + 50, CANVAS_Y + 50);
       frame();

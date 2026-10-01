@@ -232,8 +232,10 @@ void GamesLauncherActivity::openRemoveDialog(const int row) {
   // A blank padding row, an empty list, or the note over the list is not a game to ask about.
   if (row < 0 || static_cast<size_t>(row) >= rowCount() || noteVisible) return;
   app.clearTapFlash();
-  removeIndex = row;
-  confirm.focus = 0;  // Cancel: a stray Confirm keeps the game
+  // Cancel first, so a stray Confirm keeps the game; then the index, released after it, so a render that sees the
+  // question open draws Cancel focused.
+  confirm.focus.store(0);
+  removeIndex.store(row, std::memory_order_release);
   requestUpdate();
 }
 
@@ -447,8 +449,10 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
-  if (removeIndex >= 0) {
-    buildRemoveDialog(screen);  // the list is not built under it, so none of its rows takes a touch
+  // The loop task opens and closes the question while this runs on the render task: read the index once.
+  const int removing = removeIndex.load(std::memory_order_acquire);
+  if (removing >= 0) {
+    buildRemoveDialog(screen, removing);  // the list is not built under it, so none of its rows takes a touch
     return;
   }
   if (listing.count == 0) {
@@ -552,9 +556,7 @@ void GamesLauncherActivity::activateIndex(const int row) {
   activityManager.pushActivity(std::move(title));
 }
 
-void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen) {
-  // The input task can close the dialog (removeIndex = -1) while this runs on the render task: read it once.
-  const int index = removeIndex;
+void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen, const int index) {
   if (index < 0 || static_cast<size_t>(index) >= listing.count) return;
   confirm.build(screen, renderer, ACTION_REMOVE_CHOICE, tr(STR_GAMES_REMOVE_TITLE),
                 listing.entries[index].manifest.name, tr(STR_GAMES_REMOVE_KEPT), tr(STR_GAMES_REMOVE));

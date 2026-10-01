@@ -9,8 +9,9 @@ route: 'full'
 route_source: 'auto'
 review: 'thorough'
 review_source: 'auto'
-lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment', 'blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
+followup_baseline_revision: '00ca40702f7b0ba3fb4cbfdcbc87c38d3e5ec16f'
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/cross-story-review.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play.md'
@@ -66,6 +67,21 @@ context:
 - [x] `docs/crosshatch/formats.md`, `docs/crosshatch/game-canvas.md` -- the four peek states and the match's refusal; Leave's blank, the no-VM exit, the hand-off repaint, input posted under another seat's frame.
 - [x] Tests -- SeatShownTest: drop the lifecycle tests, add a 3-seat roster with seats 1-2 local (turn 3 → NO_SEAT). GameSaveStoreTest: Unstartable for not-startable and unknown-mode rows (bad seat count stays None), solo-only peek of a pass save → Unstartable, `peekResume` leaves the store's roster. GameVmTest (gate at Log): open pass, a tap queued behind seat 1's turn-passing move never reaches seat 2; pass-open and pass-hidden, a tap queued behind the winning move gives no `tap for seat 0`; a timer still reaches the turn seat. HiddenPassTest: a repaint in HandOff is FAST with no texts; Leave from a seat's frame pushes one HALF blank before `goToGames` (onGoToGames hook) and onExit after it nothing; Leave from Over or the blank's pause menu pushes nothing; a forced exit with no VM after a stuck call pushes the blank before the error view is drawn and nothing after; the lag test (a tap queued behind a turn-passing move is played while the match is already in HandOff: no push holds the mover's text after the blank until the next seat's frame). ResumeMatchTest :1336 counts `"draw for seat "`; a Continue on an Unstartable save shows the new reason and Back leaves the bytes identical. TitleScreenTest: pass save on a host without pass, and an n=3 save on a 2-seat host: no Continue, New asks, Cancel keeps bytes; Continue with the save removed after the peek starts solo; end-to-end `pass-hidden` from disk through the launcher row and Pass to HandOff (FULL, no texts before any secret), Over, Play again → HandOff.
 
+**Follow-up execution (pass 2: the orchestrator's review of `ef46f8a5`, rows F1-F13 of `cross-story-review.md` "Review of the fix commit"; one follow-up commit; touches as above plus `lib/GameCore/GameEvent.h`, comment only):**
+- [x] F1 `src/games/GameSaveStore.cpp` `readResume` -- read the prefix even when the file is too large; classify as kept (Unstartable, logged INF): a `CHRS` header whose file version byte is above `RESUME_FILE_VERSION` (its layout is unknown, so no hash check: it sits in this game's folder); a codec version byte above `Codec::VERSION` with this package's hash; a header that checks `ok` with this package's hash and a snapshot over this firmware's limit ("too large"). Other header failures, and those of another package, stay None. Tests in `GameSaveStoreTest` (each kind, and an older or garbage version stays None); formats.md.
+- [x] F2 `src/games/GameVM.{h,cpp}`, `GameMatchActivity.cpp` -- `drawFront` also reports the `frameGen()` it drew, read inside `takeFront` under the frame mutex (publish bumps it under the same mutex), and `renderCanvas` stores that in `frameDisplayed`; `madeUnderAnotherSeat` compares wrap-safe (`static_cast<int32_t>(shownFrame - seatFrame) < 0`), `postInput`'s untagged default is a named constant checked first, and the loop never posts a real tag equal to it (it posts one less, which fails closed). Test: a publish between renderCanvas's `frameGen()` read and `drawFront` (gate the VM, or a hook) leaves the new seat's next tap delivered.
+- [x] F3 `GameModeActivity.{h,cpp}`, `GamesLauncherActivity.{h,cpp}` -- `confirmRow` and `removeIndex` become atomics; each opener stores `focus = 0` first, then the row with release; readers load acquire once.
+- [x] F4 `lib/GameScript/SoloRounds.cpp` -- `start`, `restart`, `step`: when `shownSeat()` is `NO_SEAT`, return Ok with no input and no draw. Test in `SoloRoundsTest` with a roster of two local seats out of three, turn on the third.
+- [x] F5 `src/games/GameVM.cpp` `showSeatNow` -- when the turn seat is not local (`seatShown(Playing, …)` is `NO_SEAT`), stay in HandOff and leave `seatServed` unchanged. Test in GameVmTest if a roster can be built (else note why not).
+- [x] F6 `src/games/GameSaveStore.{h,cpp}` -- `peekResume` (no longer const) checks through the store's own buffer (nothing references it after an empty `loadResume`), never allocates, never touches the roster; static `peek` keeps its own allocation; fix `peekStartable`'s comment; update `PeekResume...` test (buffer spent, roster kept, no allocation).
+- [x] F7 `test/game_script/harness/GameVmTest.cpp` -- open pass (`pass-open`): a timer queued behind the winning move reaches seat 0's `input` ("timer for seat 0"), the VM does not fail, and the match is over. Design Notes record the departure.
+- [x] F8 `lib/GameCore/GameEvent.h` -- `serial`'s comment: a touch carries GameVM's frame tag in transit, zeroed before `input`.
+- [x] F9 `GameModeActivity.cpp` -- `rosterFor` logs nothing; `startNew` logs its failure, `startResume` only when no row starts; tests follow.
+- [x] F10 `GameMatchTest.cpp` -- a Leave whose `goToGames()` refuses (the manager double's `goToGames` replaces nothing, as the device's does when `makeUniqueNoThrow` fails; say so in the double's comment and the test): the match stays Leaving, the last push is the blank, and a later sleep pushes nothing.
+- [x] F11 `GameMatchTest.cpp` -- `AForcedExitWithNoVm...` asserts `fakelock::selfDeadlocks == 0`.
+- [x] F12 `ResumeMatchTest.cpp` -- after the blank's tap, exactly one `draw for seat 2` (and none for any seat before it).
+- [x] F13 `ResumeMatchTest.cpp` -- the Unstartable error-view case asserts the whole `STR_GAMES_RESUME_NOT_HERE` text is drawn, untruncated.
+
 **Acceptance Criteria:**
 - Given any change above, when the host suites run, then every suite passes and the tests named above fail on the pre-fix code.
 - Given the firmware, when `x4pro` and `default` build and `pio check` runs on both envs, then no defect is reported and the flash delta over the base stays within 5,056 B and 32 B left.
@@ -84,6 +100,22 @@ context:
 - **Review patch: Continue takes the first New row whose `rosterFor` succeeds** (`TitleScreenTest.AContinueWhoseFirstNewRowCannotStartTakesTheNextRowThatCan`).
 - **Review patch: key renamed `STR_GAMES_RESUME_NOT_HERE`**, reworded "This saved game cannot be continued on this device. It is kept until you start a new game."
 - **Review patch: docs** rewritten and rewrapped at 120 (formats.md's `peekResume` and Continue paragraphs, game-canvas.md's Resume and Leaving paragraphs), and the touch note says the tag is the frame render read before `drawFront`.
+- **F1.** `readResume` reads the fixed part of any file; `newer file version` (CHRS, version above 1, no hash check), `newer codec version` (this package) and `too large` (header ok, this package) join `unstartableHere`. `ALaterFirmwaresSaveIsUnstartableAndKept` covers each kind and the older, garbage, and other-package versions that stay None; the three newer rows left `AResumeThatDoesNotFit...`, which gained the older versions.
+- **F2.** `drawFront(…, &taken)` reads `frameGen()` inside `takeFront`; `renderCanvas` stores it. To give the race a seam, `renderCanvas` reads its `frame` before the view-clear, so `clearScreen` falls between that read and `drawFront`; the screen renderer double's new `onClear` hook (the VM publishing on the other core mid-render; pinned by `ScreenRendererDoubleTest.ClearScreenRunsTheHookAfterTheScreenIsCleared`) places the publish there in `PassMatchTest.AFramePublishedWhileRenderDrawsIsTheOneTheNextTapIsMadeUnder`. `GameVM::UNTAGGED` is checked first, the compare is wrap-safe, and the loop posts `UNTAGGED - 1` for a real frame of that number. No test wraps the count (2^32 frames).
+- **F3.** `confirmRow` (`std::atomic<int8_t>`) and `removeIndex` (`std::atomic<int>`); openers store `focus` 0, then the row with release; `buildScreen` loads it once with acquire and hands it to `buildConfirmDialog` / `buildRemoveDialog`. No test: a race the host harness cannot stage (it renders on the test thread).
+- **F4.** `SoloRounds::drawShown()` (private) draws nothing for NO_SEAT; `step` reads no input for it. `PassRoundsTest.ATurnSeatThisDeviceDoesNotPlayGetsNoInputAndNoDraw`.
+- **F5.** `showSeatNow` returns before `handOffView` and `seatServed` when the turn seat is not local, with an INF line. `GameVmTest.AHiddenVmLeavesTheHandOffUnservedWhenTheTurnSeatIsNotThisDevices` builds a pass(3) roster with seats 1-2 local.
+- **F6.** `peekStartable` takes a scratch span (empty: allocate, the static peeks); `peekResume` (no longer const) passes `buffer`. The test arms the nothrow-new failure and checks it was never consumed, the buffer holds the snapshot, and the roster is kept.
+- **F7.** `GameVmTest.OpenPassATimerQueuedBehindTheWinningMoveReachesSeatZero` uses an inline game, not `pass-open`: pass-open's `over` handler cancels its timer, so a timer queued behind the winning move would be stale and dropped before any seat; the fixture is outside touches.
+- **F8.** `GameEvent::serial`'s comment names the touch tag in transit.
+- **F9.** `rosterFor` logs nothing; `startNew` logs its own failure (Continue, or pass with no seats); `startResume` logs only "no New row". Two `TitleScreenTest` assertions flipped to `EXPECT_FALSE("Cannot start counter")`.
+- **F10.** `HiddenPassTest.ALeaveWhoseGamesScreenCannotOpenLeavesTheBlankAndASleepPushesNothing`; the manager double's `goToGames` comment names the device's `makeUniqueNoThrow` failure it stands in for (the double already replaced nothing).
+- **F11.** `AForcedExitWithNoVm...` asserts `selfDeadlocks == 0` right after the exit.
+- **F12.** The resumed hidden match asserts exactly one `draw for seat 2` and one `draw for seat ` in all after the blank's tap.
+- **F13.** The Unstartable error-view case renders the view and finds the whole `STR_GAMES_RESUME_NOT_HERE` text in the drawn lines (joined across wraps).
+- **Pass-2 mutation check.** With F2 (`frameDisplayed` back to `frame`), F4, F5, and F6 (allocate in `peekResume`) reverted in place, their four tests failed; restored afterwards. F7, F10, F12, F13 pin behaviour the fix commit already had.
+- **Pass-2 review patch.** The F2 test's clear hook disarms with a local flag (no self-reset inside the running closure), and both the test and `renderCanvas` say the `frameGen()` read before the view clear is the test's seam; `ALaterFirmwaresSaveIsUnstartableAndKept` gained oversized other-package, bad-magic, and older-version rows (moving the `too large` check above the package check now fails it); the unused `big` left `AResumeThatDoesNotFit...`; stale comments fixed (`GameSaveStore.h` peek buffer, `seedResume`'s Unstartable kinds, `SoloRounds.h` class comment, the `confirmRow`/`removeIndex` orders), formats.md's blob-header paragraph names resume.bin's newer-version exception and the header/hash offsets it relies on; `ScreenRendererDoubleTest` moved to the doubles section and the race test got its own comment.
+- **Follow-up: `pio check -e x4pro` failure fixed.** `unstartableHere`'s raw loop drew cppcheck's low `useStlAlgorithm` (`GameSaveStore.cpp:82`); it is `std::any_of` over the same list now, and both `pio check` runs pass.
 
 ## Plan Change Log
 
@@ -115,6 +147,45 @@ context:
 | 20 | EC2 | `frameDisplayed` is the frame read before `drawFront`, so the new seat's first touches may drop until the next render | low | reject | Fails closed (drops, never misroutes) and the loop asks for the next render at once; documented in game-canvas.md (row 7). |
 | 21 | IA1 | Row 4: a Timer queued behind the winning move still reaches `input` with seat 0 | low | reject | R7 and game-api-seed §3 give `input` seat 0 after the round; the tag drops touches only, R11 keeps timers. Row 4's literal action (drop all seat-0 input) would end R7's clause (Design Notes). |
 
+**Pass 2 (2026-10-01, orchestrator-relayed cross-story findings on `ef46f8a5`; raw `xreview/fix-*.md`, checked against the code).** F1-F13 are verdict `fix` in `cross-story-review.md`; F14 (packet) and F15 (rejected) are not this change's. Verdicts: high 0, medium 3, low 10, false 0. All route to the follow-up commit (orchestrator's call; no loopback).
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| F1 | A2, EC3 | A later firmware's save (newer file or codec version, larger snapshot) reads as None and New replaces it unasked | medium | patch | Real: `readResume` returns the header status, and "too large" before reading, ahead of the hash and mode. Classified as Unstartable (Follow-up F1). Supersedes pass-1 deferral row 10. |
+| F2 | A1, EC4 | The touch tag can name an older frame than the one pushed; no wrap-safe compare; sentinel inside the range | medium | patch | Real: `renderCanvas` reads `frameGen()` before `drawFront`, and `madeUnderAnotherSeat` compares with `>=`. `drawFront` reports the generation it drew under the frame mutex; wrap-safe compare; sentinel kept out. |
+| F3 | A3 | `confirmRow` / `removeIndex` plain across tasks; row stored before `focus = 0` | medium | patch | Real: `openConfirm` sets `confirmRow` then `confirm.focus`, so a render between them draws the old focus. Atomics, focus first, row with release. Supersedes pass-1 deferral row 9. |
+| F4 | A4, EC1 | `SoloRounds` passes `NO_SEAT` to `play`/`draw` | low | patch | Real for a partly-local roster (epic-play-nearby); pass-1 row 11 rejected it as unreachable, the orchestrator asks for the guard. |
+| F5 | EC2 | `showSeatNow` opens the gate for a non-local turn seat | low | patch | Real, unreachable today: `drawShown` returns Ok without drawing and `seatServed` is stored. Stay in HandOff. |
+| F6 | A5 | `peekResume` allocates a second snapshot buffer while the match runs | low | patch | Real: `peekStartable` allocates `SNAPSHOT_LIMIT` with nothrow new; under low heap the generic text shows. Reuses the store's buffer. |
+| F7 | A7 | The timer path to seat 0 and the reversal of entry 1's plan row 3 are unrecorded and untested | low | patch | Real; Design Notes record it, a VM test pins the timer. |
+| F8 | A8 | `GameEvent.h` says `serial` is Timer only | low | patch | Real; comment updated (now in touches). Supersedes pass-1 deferral row 8. |
+| F9 | A9 | `rosterFor` logs an error for a row the search skips | low | patch | Real: `startResume`'s loop calls `rosterFor`, which logs `LOG_ERR`. Logging moves to the callers. |
+| F10 | A10 | No test drives `goToGames()` refusing | low | patch | Real; test added with the double's behaviour named. |
+| F11 | VG2 | The no-VM onExit push test does not assert no self-deadlock | low | patch | Real; assertion added. |
+| F12 | VG1 | The resumed hidden match's zero-draw check has no barrier | low | patch | Real; exact count after the tap. |
+| F13 | A12 | No test shows the new reason drawn untruncated | low | patch | Real; asserted in the error-view case. |
+
+**Pass 3 (2026-10-01, this build's own review of the follow-up diff `00ca4070..` working tree).** All four lenses ran as context-free subagents, launched together, and all four returned: blind-hunter (BH), edge-case-hunter (EC), verification-gap (VG), intent-alignment (IA, descriptive). Verdicts: high 0, medium 0, low 16, false 0. Routes: patch 8 entries, defer 1, reject the rest; no loopback.
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| P1 | VG1, BH8 | No row pins an oversized save of another package, or an oversized garbage file, as None | low | patch | Pre-verified: the only oversized fixtures carry `PKG` and a valid header; reordering the `tooLarge` return passes. Rows added. |
+| P2 | VG other | The F2 test clears `onClear` from inside the running `std::function` (UB) | low | patch | Real: assigning `nullptr` destroys the running closure. A flag inside, reset after `render()`. |
+| P3 | EC7, BH2, IA | The F2 race test's seam is the read-before-clear reorder; moved back, it would pass with the bug | low | patch | Real: on `ef46f8a5` the read came after the clear, so the hook's publish preceded it. Commented as load-bearing; the steady path is right by construction (generation read under the frame mutex). |
+| P4 | BH6, BH7, VG other, BH5 | Stale text: `GameSaveStore.h` peek comment, formats.md blob-header paragraph, seedResume's Unstartable comment, SoloRounds class comment; the newer-version rule's layout assumption unwritten | low | patch | Real; direct corrections. |
+| P5 | BH9, VG other, EC6 | Unused `big` in `AResumeThatDoesNotFit...` | low | patch | Real; deleted. |
+| P6 | BH12 | New tests under an unrelated comment; the double's test among PassMatchTest's | low | patch | Real; moved and commented. |
+| P7 | BH13 | `confirmRow` / `removeIndex` orders undocumented | low | patch | Real; one comment line each. |
+| P8 | BH1, EC1 | `renderedFrame` keeps the frame number read before `drawFront`, so an overlay repaint after a mid-render publish may skip `forceFull` | low | defer | Pre-existing since entry 4's `renderCanvas`; not caused by the follow-up. |
+| P9 | BH3, VG2 | The wrap-safe compare and `UNTAGGED - 1` are untested; `0` is still a sentinel elsewhere | low | reject | Needs 2^32 frames (years at e-ink rates); a seam on `FrameBuffers::generation` is outside touches. |
+| P10 | BH4 | `SoloRounds::step` drops a timer for a non-local turn seat | low | reject | No roster has a non-local turn seat in an open match today (F4's premise); the rows asked for no input there. |
+| P11 | BH5, EC2, EC3 | A round or hand-off that reaches a non-local turn seat waits forever | low | reject | Unreachable until epic-play-nearby; fails closed (no seat drawn), as F4/F5 asked; class comment now says so (P4). |
+| P12 | BH10, EC5 | `peekStartable`'s scratch size and `peekResume`'s call order are not enforced | low | reject | The one caller passes the store's buffer (`BUFFER_BYTES >= SNAPSHOT_LIMIT`, static_assert) after an empty load; a guard adds a branch for no caller. |
+| P13 | BH11, EC4 | `startNew` names pass for any `rosterFor` failure | low | reject | Only pass can fail today; cosmetic log. |
+| P14 | IA (F1) | A newer file version of another package is kept too | low | reject | By design: its layout, and so its hash, cannot be read; the file sits in this game's folder; keeping and asking is the safe side (F15's reasoning). |
+| P15 | IA (F6) | F6 reuses the store's buffer, reversing row 10's "store-free" for the buffer | low | reject | Row 10's harm was the roster adoption, which stays out; F6 named this option first. |
+| P16 | IA (F10, F11, F13) | F10 drives the double, not the device's OOM; F11 duplicates an existing check; F13 covers one screen | low | reject | The double's `goToGames` does what the device's does on OOM (named in its comment); the duplicate assert is harmless; the error view's wrap is the theme's, not the screen's, beyond the harness's one screen. |
+
 ## Design Notes
 
 - **Row 4 vs R7.** The row's action (drop every seat-0 input) would end R7's "from then on ... input get seat 0" and game-api-seed §3, which `PassRoundsTest` pins. The trigger is an event posted while a seat 1..n frame showed and played after the round ended; row 5's tag drops exactly that (the seat drawn changed since it was posted), so one mechanism fixes both and R7 stays: the Over menu posts no game input, and any input posted under seat 0's frame would still reach seat 0.
@@ -123,6 +194,7 @@ context:
 - **Row 3 option:** first New row's mode, not the error view: no new screen path, and the guard "a pass-only game with no pass seats starts nothing" stays in `rosterFor`.
 - **Row 9 option:** delete the overload; `canvasUnderView` keeps the Paused-from-HandOff rule, pinned by the lag test.
 - **Row 6/1 flag:** one render-side record of what the last push left on the panel, read under RenderLock by leave() and onExit; Over counts as Other, since seat 0's frame is everyone's.
+- **F7: the seat-0 departure, recorded.** Entry 1's plan (row 3 of its I/O matrix, pinned by `PassRoundsTest.ATapAfterThePassRoundEndsReachesSeatZeroAndItsMoveIsDiscarded`) had a tap queued after the round reach seat 0, its move discarded. Through `GameVM` that is reversed for touches: a touch made under a seat 1..n frame and played after the round ended is dropped (row 4's trigger), while the rounds layer still delivers seat 0 input (the test stays). Timers keep reaching seat 0's `input` after the round (R7's "input get seat 0", R11 has no turn seat to name); `GameVmTest` pins that a timer queued behind the winning move is delivered without error.
 - Guards kept: `stopVm`'s `!vm` return and its push-before-flushResume order (R6); `startResume`'s no-pass-seats return; `leave()`'s stop under its own RenderLock.
 
 ## Verification
@@ -142,4 +214,11 @@ context:
 - `sim.sh build x4pro`: SUCCESS. No screenshots: the Verification names none.
 - Flash (measured, `check_flash_budget.py` `build on`, `build off`, `compare --limit-kib 250 --ram-limit-bytes 1024`, `objects`, under the build lock): x4pro `firmware.bin` 5,920,640 B games on, 5,679,792 B off, +240,848 B (15,152 B under the gate); static internal RAM +784 B (`.dram0.bss` +16, `.iram0.text` +684, `.iram0.text_end` +84; 240 B under the gate); `objects` clean (43 objects, largest mutable static 4 B). Over the base at `c1902721` (+233,440 B, +784 B): +7,408 B flash and +0 B static RAM, within the 11,152 B and 32 B share; +1,312 B over entry 10's +6,096 B (both games-on minus games-off, measured the same way), leaving 3,744 B and 32 B of the share.
 - Test double extended: `fakesd::Card::onOpen` and its per-path open count (`test/game_script/harness/stubs/HalStorage.h`) stand in for a transient SD open fault or a file rewritten between two reads, pinned by `HarnessDoublesTest.OpeningCallsTheHookWithThePathsOpenCountBeforeTheOpenIsDecided`; it only injects, so it is no more permissive than the device.
+
+**Results of the follow-up (2026-10-01, pass 2 and 3 fixes; the tree measured is the follow-up commit's, whose firmware sources the commit does not change):**
+- Host suites: 1,521 of 1,521 pass. `scripts/*_test.py`, `check_layers.py` (496 edges), `check_upstream_touches.py` PASS, `./bin/clang-format-fix` clean twice.
+- `pio run -e default`: success. `pio check` (`default`) and `pio check -e x4pro`: no defects, PASSED (the first x4pro run failed on one low `useStlAlgorithm`, fixed as noted above, then both re-run).
+- `sim.sh build x4pro`: SUCCESS.
+- Flash (measured the same way, four steps under the build lock): x4pro `firmware.bin` 5,921,216 B games on, 5,679,792 B off, +241,424 B (14,576 B under the gate); static internal RAM +784 B (240 B under); `objects` clean. Over the base at `c1902721`: +7,984 B flash and +0 B static RAM, within the 11,152 B and 32 B share; +576 B over the fix commit `ef46f8a5`'s +240,848 B, leaving 3,168 B and 32 B of the share.
+- Test doubles extended: `screen_stubs/GfxRenderer.h` `onClear` (the VM publishing on the other core mid-render), pinned by `ScreenRendererDoubleTest.ClearScreenRunsTheHookAfterTheScreenIsCleared`; `screen_stubs/ActivityManager.h` comment only (its `goToGames` replaces nothing, as the device's does when `makeUniqueNoThrow` fails).
 

@@ -403,6 +403,85 @@ TEST_F(GameVmTest, HiddenPassATapQueuedBehindTheWinningMoveNeverReachesSeatZero)
   EXPECT_FALSE(vm->failed());
 }
 
+// A timer queued behind the move that ends the round is no touch, so the tag drops nothing (R11): it reaches seat 0's
+// input (R7: after the round, input gets seat 0), the VM does not fail, and the round is over (cross-story fix review
+// F7; the plan's Design Notes record the departure for touches). pass-open cancels its timer on `over`, which would
+// make the queued event stale, so this game keeps it armed.
+const char* const TIMER_AFTER_OVER_GAME = R"(
+local game = {}
+function game.setup(ctx) ch.timer.after(1000) return { moves = 0 } end
+function game.status(s)
+  if s.moves >= 1 then return { over = true, winners = {} } end
+  return { turn = 1 }
+end
+function game.apply(s, seat, move) ch.log("apply seat " .. seat) s.moves = s.moves + 1 return s end
+function game.input(s, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.log("tap for seat " .. seat)
+    ch.timer.after(1000)
+    return { tap = true }
+  elseif ev.kind == "timer" then
+    ch.log("timer for seat " .. seat)
+  elseif ev.kind == "over" then
+    ch.log("over for seat " .. seat)
+  end
+  return nil
+end
+function game.draw(s, seat, ui) ch.gfx.clear("white") end
+return game
+)";
+
+TEST_F(GameVmTest, OpenPassATimerQueuedBehindTheWinningMoveReachesSeatZero) {
+  installGame("timer-over", TIMER_AFTER_OVER_GAME);
+  ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::pass(2), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm(fakertos::At::Log,
+                1);  // past the move's "tap for seat 1": held at its "apply seat 1", the timer re-armed
+  vm->postInput(tapAt(100, 200), vm->frameGen());
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::advance(1000);
+  vm->pollTimer();  // due: queued behind the winning move
+  fakertos::release();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat"); }));
+  EXPECT_EQ(fakelog::countLines("timer for seat 0"), 1u);
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  EXPECT_EQ(vm->roundsEnded(), 1u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// A hidden pass VM whose turn seat is not this device's (a roster with some seats local, not all; no match has one yet:
+// cross-story fix review F5): the hand-off's request is left unserved and no seat is drawn, so the match keeps the
+// blank on the panel, and a tap reads nothing.
+TEST_F(GameVmTest, AHiddenVmLeavesTheHandOffUnservedWhenTheTurnSeatIsNotThisDevices) {
+  installGame("hidden-third", R"(
+local game = {}
+function game.setup(ctx) return { moves = 2 } end
+function game.status(s) return { turn = s.moves % 3 + 1 } end
+function game.apply(s, seat, move) s.moves = s.moves + 1 return s end
+function game.input(s, seat, ui, ev) ch.log("tap for seat " .. seat) return { tap = true } end
+function game.draw(s, seat, ui) ch.log("draw for seat " .. seat) ch.gfx.clear("white") end
+return game
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(3);
+  roster.localSeats = 0b011;
+  ASSERT_TRUE(prepareFor("hidden-third", roster, true));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Turn seat 3 is not this device's"); }));
+  vm->postInput(tapAt(100, 200), GameVM::UNTAGGED);
+  vm->showTurnSeat();  // its line comes after the tap was taken
+  ASSERT_TRUE(waitFor([] { return fakelog::countLines("Turn seat 3 is not this device's") == 2u; }));
+  EXPECT_EQ(vm->seatShownRequest(), 0u) << "the request was served with no seat drawn";
+  EXPECT_EQ(vm->frameGen(), 0u);
+  EXPECT_FALSE(logHas("draw for seat"));
+  EXPECT_FALSE(logHas("tap for seat"));
+  EXPECT_FALSE(vm->failed());
+}
+
 // ---- the watchdog's timing of one call (the GameVM::run deferred item) ----
 
 TEST_F(GameVmTest, RunningForTimesEachCallFromTheFirstPollThatSawIt) {

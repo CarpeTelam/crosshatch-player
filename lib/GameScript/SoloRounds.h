@@ -22,11 +22,13 @@ class InputQueue;
 // task; everything else runs on the VM task. Host-tested with a LuaGame.
 //
 // The name predates pass and play: the loop serves a roster with one local seat
-// (solo, nearby) or with every seat local (pass). It comes in two layers. The steps
-// (begin, beginAgain, play, draw) take the seat from their caller and never pick one.
-// The open match's composition (start, restart, step) runs them with the seat
-// GameCore::seatShown names: the one local seat, or in pass the turn seat, and seat 0
-// once the round is over.
+// (solo, nearby), with every seat local (pass), or with some local and not all. It
+// comes in two layers. The steps (begin, beginAgain, play, draw) take the seat from
+// their caller and never pick one. The open match's composition (start, restart, step)
+// runs them with the seat GameCore::seatShown names: the one local seat, or with
+// several the turn seat, and seat 0 once the round is over. A turn seat this device
+// does not play gets no input and no draw, so its round counts as started only at a
+// local seat's first frame.
 class SoloRounds {
  public:
   SoloRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
@@ -66,6 +68,8 @@ class SoloRounds {
 
   // ---- the open match (VM task): the steps with the seat seatShown names ----
 
+  // When seatShown names NO_SEAT (a turn seat this device does not play), each of these
+  // reads no input, draws nothing, and returns Ok.
   // begin, then draw.
   GameCore::Outcome start(GameCore::Session& session);
   // beginAgain, then draw.
@@ -79,6 +83,8 @@ class SoloRounds {
 
  private:
   GameCore::Outcome beginRound();
+  // draw(shownSeat()), or nothing (Ok) for NO_SEAT.
+  GameCore::Outcome drawShown();
   void countRoundEnd();
 
   GameTimer& timer;

@@ -91,7 +91,8 @@ class GamesLauncherActivity final : public UiListActivity {
   void confirmRemove();
   bool handleRemoveInput();
   void answerRemove(GameConfirmDialog::Answer answer);
-  void buildRemoveDialog(UiScreen& screen);
+  // The question about listing index `index`, as buildScreen read it.
+  void buildRemoveDialog(UiScreen& screen, int index);
   static void onRemoveChoice(const freeink::ui::ActionEvent& event, void* user);
 
   // Fixed-size arrays sized once per visit: growing containers would abort on OOM.
@@ -118,6 +119,9 @@ class GamesLauncherActivity final : public UiListActivity {
   std::atomic<uint16_t> pageRows{1};
   // The listing index (not a row) the open remove confirmation asks about (-1: none), and the question (its focus: 0
   // Cancel, 1 Remove).
-  int removeIndex = -1;
+  // Written by the loop task, read once per build by the render task. Orders: openRemoveDialog stores focus before it
+  // publishes the index with release, and render loads the index once with acquire; closers and loop-task reads may
+  // use the default order.
+  std::atomic<int> removeIndex{-1};
   GameConfirmDialog confirm;
 };

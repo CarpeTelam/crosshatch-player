@@ -60,6 +60,8 @@ class GameVM {
   // How long abandon() waits, counted in millis() from when it began, for the stuck
   // task to be safely deletable (late by its last iteration; see STOP_POLL_MS).
   static constexpr uint32_t ABANDON_WAIT_MS = 500;
+  // postInput's shownFrame for a touch made under no particular frame (a direct caller): never dropped.
+  static constexpr uint32_t UNTAGGED = UINT32_MAX;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
@@ -97,9 +99,10 @@ class GameVM {
   // showed when it was made (in GameEvent::serial, which only a Timer reads; the VM zeroes it
   // before the game sees the event): the VM drops a touch made before the first frame of the
   // seat it now draws, since that touch was aimed at another seat's view (a tap queued behind
-  // the move that passed the turn or ended the round). UINT32_MAX, the default, is never
-  // dropped. A Timer keeps its own serial and is never dropped for this.
-  void postInput(const GameScript::InputEvent& event, uint32_t shownFrame = UINT32_MAX);
+  // the move that passed the turn or ended the round). UNTAGGED, the default, is never
+  // dropped, so a caller with a real frame number never posts that value. A Timer keeps its own
+  // serial and is never dropped for this.
+  void postInput(const GameScript::InputEvent& event, uint32_t shownFrame = UNTAGGED);
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.
   void pollTimer();
@@ -136,8 +139,11 @@ class GameVM {
   // Hands the front frame, with the largest refresh request of the frames
   // coalesced into it, to `replay` under the frame mutex. False when nothing was
   // drawn: before the first frame, or when replay skipped a frame identical to
-  // the one on screen. Render task only.
-  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay);
+  // the one on screen. Render task only. `takenFrame`, when given, is set to the frameGen() of the
+  // frame taken (read under the frame mutex, which publish holds while it counts a frame), whether
+  // or not replay drew it, and left as it was when there is none.
+  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay,
+                 uint32_t* takenFrame = nullptr);
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }

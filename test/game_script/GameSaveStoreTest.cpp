@@ -549,7 +549,6 @@ TEST_F(GameSaveStoreTest, NothingIsSavedOrLoadedBeforeThePackageHashIsKnown) {
 }
 
 TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAndKept) {
-  const Bytes big = bigTable(GameCore::SNAPSHOT_BYTES - 8);  // 1,401 bytes
   const struct {
     Bytes file;
     const char* reason;
@@ -558,13 +557,13 @@ TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAnd
       {firstBytes(resumeFile(TAPS3), 12), "truncated"},
       {firstBytes(resumeFile(TAPS3), 17), "truncated"},
       {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX"), "bad_magic"},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "unknown_file_version"},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "unknown_codec_version"},
-      // An unknown mode byte is a save this host cannot start, not a malformed file (AnUnknownModeIsUnstartable...).
+      // An older or garbage version is malformed; a newer one, or a snapshot over the limit, or an unknown mode byte,
+      // is a later firmware's save this host cannot start (ALaterFirmwaresSaveIsUnstartableAndKept).
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version"},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version"},
       {resumeFile(TAPS3, 7, PKG, 0, 2), "bad seat count"},
       {resumeFile(TAPS3, 7, PKG, 0, 0), "bad seat count"},
       {resumeFile(Bytes{}), "empty snapshot"},
-      {resumeFile(big), "too large"},
   };
   for (const auto& c : cases) {
     SetUp();
@@ -1125,10 +1124,69 @@ TEST_F(GameSaveStoreTest, AnUnknownModeIsUnstartableAndKept) {
   }
 }
 
-// peekResume, the match's refusal check (cross-story review row 10): the static peek's answer for the store's own id
-// and package, read with a buffer of its own, so neither the store's buffer nor its roster (what its next save writes)
-// changes, where a loadResume that loads the save adopts the save's roster.
-TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekAndLeavesTheStoresBufferAndRoster) {
+// A later firmware's save (cross-story fix review F1): a newer file version (its layout unknown, so no package check:
+// it sits in this game's folder), a newer codec version or a snapshot over this firmware's limit with this package's
+// hash. Each is Unstartable to both peeks, refused by loadResume, logged quietly as kept, and kept. The same versions
+// or size on another package's save, and an older or garbage version, are not.
+TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
+  const Bytes big = bigTable(GameCore::SNAPSHOT_BYTES - 8);  // 1,401 bytes
+  const struct {
+    Bytes file;
+    const char* reason;
+    bool kept;  // Unstartable; else None with an error line
+  } cases[] = {
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "newer file version", true},
+      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 255), "newer file version", true},
+      {firstBytes(resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), 6), "newer file version", true},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "newer codec version", true},
+      {resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2, "CHRS", 1, 9), "newer codec version", true},
+      {resumeFile(big), "too large", true},
+      {resumeFile(big, 7, PKG, PASS_BYTE, 2), "too large", true},
+      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 2), "unknown_codec_version", false},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX", 2), "bad_magic", false},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
+      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
+      // Oversized but not this package's, or with a header this firmware refuses: the header or package reason, never
+      // `too large`, which only a save of this package with a good header gets.
+      {resumeFile(big, 7, OTHER_PKG), "other package", false},
+      {resumeFile(big, 7, PKG, 0, 1, "XXXX"), "bad_magic", false},
+      {resumeFile(big, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
+      {resumeFile(big, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
+  };
+  for (const auto& c : cases) {
+    SetUp();
+    fakesd::addFile(RESUME, c.file);
+    openResume();
+    const std::string label = std::string(c.reason) + " (" + std::to_string(c.file.size()) + " bytes)";
+    const GameSaveStore::SaveState want =
+        c.kept ? GameSaveStore::SaveState::Unstartable : GameSaveStore::SaveState::None;
+    EXPECT_EQ(GameSaveStore::peek("counter", PKG), want) << label;
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), want) << label;
+    uint16_t ver = 5;
+    bool unreadable = true;
+    Roster saved = Roster::pass(3);
+    EXPECT_TRUE(saves->loadResume(ver, unreadable, counterGame(), PASS_HOST, saved).empty()) << label;
+    EXPECT_FALSE(unreadable) << label;
+    const std::string keptLine = std::string("INF GAME: counter: ") + RESUME +
+                                 " is a save that cannot be resumed here: " + c.reason + "; the file is kept";
+    EXPECT_EQ(std::count(fakelog::lines.begin(), fakelog::lines.end(), keptLine), c.kept ? 3 : 0) << label;
+    EXPECT_EQ(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason), !c.kept) << label;
+    if (std::string(c.reason) == "other package") {
+      // Another package's save is a quiet line in peek, at any size.
+      EXPECT_TRUE(
+          fakelog::any(std::string("INF GAME: counter: ") + RESUME + " is another package's save: other package"))
+          << label;
+    }
+    if (!c.kept) EXPECT_FALSE(fakelog::any(": too large")) << label << ": refused as too large";
+    EXPECT_EQ(fakesd::bytesOf(RESUME), c.file) << label << ": kept";
+  }
+}
+
+// peekResume, the match's refusal check (cross-story review row 10, fix review F6): the static peek's answer for the
+// store's own id and package, read through the store's buffer (which nothing references after an empty loadResume) with
+// no allocation, and the roster (what its next save writes) unchanged, where a loadResume that loads the save adopts
+// the save's roster.
+TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekThroughTheStoresBufferAndLeavesItsRoster) {
   const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);
   open();
@@ -1137,10 +1195,15 @@ TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekAndLeavesTheStoresBufferAndRost
   openResume();
   std::fill(buffer.begin(), buffer.end(), 0xAB);
   const Bytes before = buffer;
+  // Through the store's own buffer, with no allocation: a nothrow array new would fail here, and is never made.
+  failNextNothrowNew = true;
   EXPECT_EQ(saves->peekResume(counterGame(), PASS_HOST), GameSaveStore::SaveState::Valid);
   EXPECT_EQ(saves->peekResume(counterGame(), hostOf(4, false)), GameSaveStore::SaveState::Unstartable);
   EXPECT_EQ(saves->peekResume(counterGame(Manifest::MODE_SOLO), PASS_HOST), GameSaveStore::SaveState::Unstartable);
-  EXPECT_EQ(buffer, before) << "peekResume read into the store's buffer";
+  EXPECT_TRUE(failNextNothrowNew) << "peekResume allocated";
+  failNextNothrowNew = false;
+  EXPECT_NE(buffer, before) << "the snapshot was read through the store's buffer";
+  EXPECT_TRUE(std::equal(TAPS3.begin(), TAPS3.end(), buffer.begin())) << "the snapshot it checked";
   EXPECT_EQ(fakesd::bytesOf(RESUME), passSave);
   // The store's roster is still solo: its next save is mode 0, n 1, not the pass save's roster.
   ASSERT_TRUE(saves->saveResume(TAPS4, 8));

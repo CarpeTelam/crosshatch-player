@@ -68,12 +68,20 @@ constexpr char BAD_SEAT_COUNT[] = "bad seat count";
 // A mode byte this firmware does not write (2..255): a later firmware's mode, perhaps, so the save is kept as one this
 // host cannot start, not taken for a malformed file.
 constexpr char UNKNOWN_MODE[] = "unknown mode";
+// A later firmware's save: a resume.bin whose file version is newer than this firmware's (its layout is unknown, so
+// its package cannot be read; it sits in this game's folder), one of this package whose codec version is newer, or one
+// of this package whose snapshot is larger than this firmware's limit. Kept as one this host cannot start, as an
+// unknown mode byte is. An older or garbage version, or another package's, stays a refusal that is not.
+constexpr char NEWER_FILE_VERSION[] = "newer file version";
+constexpr char NEWER_CODEC_VERSION[] = "newer codec version";
+constexpr char TOO_LARGE[] = "too large";
 
 // Whether a refusal makes the save Unstartable, which peek and loadResume log at LOG_INF as kept: a save of this
 // package that is fine, or may be, only not this host's to resume, which a new match must not replace without asking.
 bool unstartableHere(const char* problem) {
-  return std::strcmp(problem, MODE_NOT_STARTABLE) == 0 || std::strcmp(problem, SEATS_NOT_STARTABLE) == 0 ||
-         std::strcmp(problem, UNKNOWN_MODE) == 0;
+  const std::initializer_list<const char*> kept = {MODE_NOT_STARTABLE, SEATS_NOT_STARTABLE, UNKNOWN_MODE,
+                                                   NEWER_FILE_VERSION, NEWER_CODEC_VERSION, TOO_LARGE};
+  return std::any_of(kept.begin(), kept.end(), [problem](const char* each) { return std::strcmp(problem, each) == 0; });
 }
 
 // The mode resume.bin's mode byte names; false for a byte no mode is written as (a nearby match saves nothing).
@@ -160,8 +168,9 @@ GameSaveStore::Startable GameSaveStore::startableFor(const GameCore::Manifest& g
 // file could not be opened or read at all, a card or device fault that a later try may
 // not repeat, as against a file that was read and is not a usable save. The snapshot (1 to Codec::SNAPSHOT_LIMIT
 // bytes after the fixed part) is read into `out` and checked as a codec value, and
-// `length` is its length. `ver` is the file's once the fixed part was read and its mode and seats accepted.
-// `saved` is the save's roster when it is accepted, Roster::solo() otherwise.
+// `length` is its length; of a larger file only the fixed part is read (a later firmware's save, or a malformed one).
+// `ver` is the file's once the fixed part was read and its mode and seats accepted. `saved` is the save's roster when
+// it is accepted, Roster::solo() otherwise.
 const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES],
                                       const Startable& startable, uint16_t& ver, const std::span<uint8_t> out,
                                       size_t& length, GameCore::Roster& saved, bool* unreadable) {
@@ -182,9 +191,10 @@ const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)
   uint8_t prefix[RESUME_PREFIX_BYTES] = {};
   const size_t prefixBytes = std::min(size, RESUME_PREFIX_BYTES);
   const size_t snapshotBytes = size - prefixBytes;
-  const bool read = !tooLarge && readExactly(file, prefix, prefixBytes) && readExactly(file, out.data(), snapshotBytes);
+  // The prefix is read whatever the size, so a later firmware's larger save is told from a malformed file below.
+  const bool read =
+      readExactly(file, prefix, prefixBytes) && (tooLarge || readExactly(file, out.data(), snapshotBytes));
   file.close();
-  if (tooLarge) return "too large";
   if (!read) {
     if (unreadable) *unreadable = true;
     return "cannot read";
@@ -192,10 +202,21 @@ const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)
 
   const BlobHeaderStatus status = checkBlobHeader(prefix, std::min(prefixBytes, BLOB_HEADER_BYTES),
                                                   GameSaveStore::RESUME_MAGIC, GameSaveStore::RESUME_FILE_VERSION);
+  const bool thisPackage = prefixBytes == RESUME_PREFIX_BYTES &&
+                           std::memcmp(prefix + RESUME_HASH_AT, pkgHash, GameSaveStore::PACKAGE_HASH_BYTES) == 0;
+  // checkBlobHeader reads the file version only after the magic matched, and the codec version only after the file
+  // version did, so the layout below the codec version is this firmware's and its package hash can be read.
+  if (status == BlobHeaderStatus::UnknownFileVersion && prefix[BLOB_MAGIC_BYTES] > GameSaveStore::RESUME_FILE_VERSION) {
+    return NEWER_FILE_VERSION;
+  }
+  if (status == BlobHeaderStatus::UnknownCodecVersion && prefix[BLOB_MAGIC_BYTES + 1] > Codec::VERSION && thisPackage) {
+    return NEWER_CODEC_VERSION;
+  }
   if (status != BlobHeaderStatus::Ok) return blobHeaderStatusName(status);
   if (prefixBytes < RESUME_PREFIX_BYTES) return "truncated";
   // Before the mode: another package's save is that package's whatever its mode, and stays a quiet line in peek.
-  if (std::memcmp(prefix + RESUME_HASH_AT, pkgHash, GameSaveStore::PACKAGE_HASH_BYTES) != 0) return OTHER_PACKAGE;
+  if (!thisPackage) return OTHER_PACKAGE;
+  if (tooLarge) return TOO_LARGE;
   Mode mode = Mode::Solo;
   if (!modeOfByte(prefix[RESUME_MODE_AT], mode)) return UNKNOWN_MODE;
   const uint8_t seats = prefix[RESUME_SEATS_AT];
@@ -347,39 +368,41 @@ bool GameSaveStore::flush(GameScript::StoreSlot& slot, const uint32_t nowMs) {
 }
 
 GameSaveStore::SaveState GameSaveStore::peek(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES]) {
-  return peekStartable(gameId, pkgHash, SOLO_ONLY);
+  return peekStartable(gameId, pkgHash, SOLO_ONLY, {});
 }
 
 GameSaveStore::SaveState GameSaveStore::peek(const GameCore::Manifest& game,
                                              const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES],
                                              const GameCore::HostCaps& host) {
-  return peekStartable(game.id, pkgHash, startableFor(game, host));
+  return peekStartable(game.id, pkgHash, startableFor(game, host), {});
 }
 
 GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const uint8_t (&pkgHash)[PACKAGE_HASH_BYTES],
-                                                      const Startable& startable) {
+                                                      const Startable& startable, std::span<uint8_t> scratch) {
   char path[GamePaths::DATA_PATH_BYTES];
   snprintf(path, sizeof(path), "%s/%s/resume.bin", GamePaths::GAMES_DATA_DIR, gameId);
   if (!Storage.exists(path)) {
     snprintf(path, sizeof(path), "%s/%s/resume.bin.tmp", GamePaths::GAMES_DATA_DIR, gameId);
     if (!Storage.exists(path)) return SaveState::None;
   }
-  // A static call has no store buffer: one snapshot's worth, allocated for this call only
-  // (the title screen asks once, when it opens, never while it draws or a match runs).
-  std::unique_ptr<uint8_t[]> snapshot(new (std::nothrow) uint8_t[GameScript::Codec::SNAPSHOT_LIMIT]);
-  if (!snapshot) {
-    // A file is there and could not be checked: not the same as no save, or the title screen would hide a good one.
-    LOG_ERR("GAME", "%s: OOM: %u bytes to check %s", gameId, static_cast<unsigned>(GameScript::Codec::SNAPSHOT_LIMIT),
-            path);
-    return SaveState::Unreadable;
+  // The static peeks have no store buffer: one snapshot's worth, allocated for this call only (the title screen asks
+  // once, when it opens, never while it draws). peekResume, which a match calls, passes its store's buffer instead.
+  std::unique_ptr<uint8_t[]> owned;
+  if (scratch.empty()) {
+    owned.reset(new (std::nothrow) uint8_t[GameScript::Codec::SNAPSHOT_LIMIT]);
+    if (!owned) {
+      // A file is there and could not be checked: not the same as no save, or the title screen would hide a good one.
+      LOG_ERR("GAME", "%s: OOM: %u bytes to check %s", gameId, static_cast<unsigned>(GameScript::Codec::SNAPSHOT_LIMIT),
+              path);
+      return SaveState::Unreadable;
+    }
+    scratch = {owned.get(), GameScript::Codec::SNAPSHOT_LIMIT};
   }
   uint16_t ver = 0;
   size_t length = 0;
   bool unreadable = false;
   GameCore::Roster saved;
-  if (const char* problem =
-          readResume(path, pkgHash, startable, ver, {snapshot.get(), GameScript::Codec::SNAPSHOT_LIMIT}, length, saved,
-                     &unreadable)) {
+  if (const char* problem = readResume(path, pkgHash, startable, ver, scratch, length, saved, &unreadable)) {
     // The title screen asks again each time it opens, so a save of another package (which stays) is not an error, and
     // nor is a well-formed save this form, game, or host cannot resume (it stays too).
     if (std::strcmp(problem, OTHER_PACKAGE) == 0) {
@@ -397,11 +420,12 @@ GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const 
   return SaveState::Valid;
 }
 
-GameSaveStore::SaveState GameSaveStore::peekResume(const GameCore::Manifest& game,
-                                                   const GameCore::HostCaps& host) const {
+GameSaveStore::SaveState GameSaveStore::peekResume(const GameCore::Manifest& game, const GameCore::HostCaps& host) {
   // As loadResume: without the package hash no file here is known to be this package's, and a nearby match has none.
   if (!resumeOn()) return SaveState::None;
-  return peekStartable(id, packageHash, startableFor(game, host));
+  // Through the store's own buffer, which nothing references after a loadResume that loaded nothing: no allocation
+  // while the match holds its assets.
+  return peekStartable(id, packageHash, startableFor(game, host), buffer);
 }
 
 void GameSaveStore::setPackageHash(const uint8_t (&hash)[PACKAGE_HASH_BYTES]) {

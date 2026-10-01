@@ -265,6 +265,12 @@ GameScript::Outcome GameVM::showSeatNow() {
     const GameScript::Outcome drained = stepHandOff(queued);
     if (drained != GameScript::Outcome::Ok) return drained;
   }
+  // A turn seat this device does not play (a roster with some seats local, not all): no seat takes the device, so the
+  // view stays HandOff and the request stays unserved, and the match keeps the blank on the panel.
+  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover) == GameCore::NO_SEAT) {
+    LOG_INF("GAME", "Turn seat %u is not this device's; no seat shown", static_cast<unsigned>(playing->status().turn));
+    return GameScript::Outcome::Ok;
+  }
   handOffView = GameCore::MatchState::Playing;
   GameScript::Outcome outcome = drawShown();
   if (outcome != GameScript::Outcome::Ok) return outcome;
@@ -327,7 +333,10 @@ bool GameVM::madeUnderAnotherSeat(GameScript::InputEvent& event) {
   if (event.kind == GameCore::EventKind::Timer) return false;  // its serial is the timer's own (GameTimer::accepts)
   const uint32_t shownFrame = event.serial;
   event.serial = 0;
-  if (shownFrame >= seatFrame) return false;
+  if (shownFrame == UNTAGGED) return false;
+  // Wrap-safe: frame numbers count up from the seat's first frame, so a difference read as signed says which came
+  // first even after the count wraps.
+  if (static_cast<int32_t>(shownFrame - seatFrame) >= 0) return false;
   LOG_INF("GAME", "Dropped a touch made under frame %u, before seat %u's first frame %u",
           static_cast<unsigned>(shownFrame), static_cast<unsigned>(drawnSeat), static_cast<unsigned>(seatFrame));
   return true;
@@ -348,10 +357,13 @@ void GameVM::pollTimer() {
   if (game.timer().takeDueEvent(clock.nowMs(), event)) postInput(event);
 }
 
-bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay) {
+bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay,
+                       uint32_t* takenFrame) {
   if (frameBuffers.frameGen() == 0) return false;
   bool drawn = false;
   frameBuffers.takeFront([&](const GameScript::DisplayList& frame, const GameScript::Refresh hint) {
+    // Under the frame mutex, which publish holds while it counts a frame: this is the front frame's number.
+    if (takenFrame) *takenFrame = frameBuffers.frameGen();
     drawn = replay.draw(renderer, viewport, frame, hint, assets.images());
   });
   return drawn;
