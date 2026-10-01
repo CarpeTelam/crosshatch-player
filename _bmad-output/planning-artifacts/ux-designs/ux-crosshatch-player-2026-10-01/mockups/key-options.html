@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Options</title>
+<style>
+/* Governed by: DESIGN.md Components: Options row, List row, Header bar; EXPERIENCE.md Component Patterns: Options row; State Patterns: Several startable modes, Remembered choices; Interaction Primitives: Tap cycles a setting; Key Flow 3.
+   The spines (DESIGN.md, EXPERIENCE.md) win over this mock on any conflict. */
+
+:root { --ink: #000000; --paper: #FFFFFF; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--paper); color: var(--ink); font-family: Ubuntu, "Ubuntu Sans", system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px; }
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+p.lede { font-size: 14px; max-width: 1100px; margin-bottom: 20px; line-height: 1.4; }
+.cols { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+.col { width: 482px; }
+.col h2 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.cap { font-size: 13px; line-height: 1.4; margin-top: 10px; }
+/* device: X4 Pro 480 x 800 at 1x, 1-bit */
+.dev { position: relative; width: 480px; height: 800px; background: var(--paper); outline: 1px solid var(--ink); outline-offset: 0; overflow: hidden; }
+.abs { position: absolute; }
+/* the selection: dither-25, one ink pixel per 2 x 2 cell */
+.sel { background-color: var(--paper);
+  background-image: linear-gradient(to bottom, transparent 1px, var(--paper) 1px), linear-gradient(to right, var(--ink) 1px, var(--paper) 1px);
+  background-size: 2px 2px; }
+/* status strip and header bar */
+.status { position: absolute; top: 9px; right: 44px; font-size: 17px; }
+.batt { position: absolute; top: 15px; right: 24px; width: 16px; height: 9px; border: 2px solid var(--ink); }
+.batt::after { content: ""; position: absolute; right: -4px; top: 1px; width: 2px; height: 3px; background: var(--ink); }
+.back { position: absolute; left: 16px; top: 54px; width: 24px; height: 20px; }
+.htitle { position: absolute; left: 50px; top: 46px; font-size: 24px; font-weight: 700; line-height: 32px; }
+.rule { position: absolute; left: 0; top: 91px; width: 480px; height: 3px; background: var(--ink); }
+/* list rows */
+.row { position: absolute; left: 24px; width: 432px; border-radius: 6px; padding-left: 7px; }
+.row .l { font-size: 24px; line-height: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { font-size: 20px; line-height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* frames: option dialog, banner, hand-off text box */
+.frame { position: absolute; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); }
+.center { text-align: center; }
+.note { font-style: italic; }
+
+</style>
+</head>
+<body>
+<h1>Options</h1>
+<p class="lede">The Options screen, and the title screen it returns to. A tap on a row moves its value to the next one in place; Back returns to the title screen. X4 Pro, 480 x 800 at 1x, 1-bit: ink #000000 and paper #FFFFFF only; the selection is the 25 % dither. Icons are drawn approximations of the Phosphor library icons named. The spines win over this mock.</p>
+<div class="cols"><div class="col"><h2>Options</h2><div class="dev" role="img" aria-label="Options"><div class="status">100%</div><div class="batt"></div><svg class="back" viewBox="0 0 24 20" aria-hidden="true"><path d="M22 10H3M10 2L2 10l8 8" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="htitle">Options</div><div class="rule"></div><div class="row sel" style="top:110px;height:69px;padding-top:8px;padding-left:7px"><div class="l">Mode</div><div class="s">Pass and play</div></div><div class="row" style="top:184px;height:69px;padding-top:8px;padding-left:7px"><div class="l">Difficulty</div><div class="s">Easy</div></div></div><p class="cap">Mode first (shown only with more than one startable mode), its current value under it; then one row per game setting. <strong>"Difficulty" / "Easy" is an illustrative sample setting</strong>, not a real game's: setting names and values come from the game's manifest.</p></div><div class="col"><h2>Back on the title screen</h2><div class="dev" role="img" aria-label="Back on the title screen"><div class="status">100%</div><div class="batt"></div><svg class="back" viewBox="0 0 24 20" aria-hidden="true"><path d="M22 10H3M10 2L2 10l8 8" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="htitle">Pass open</div><div class="rule"></div><svg class="abs" style="left:176px;top:210px" width="128" height="128" viewBox="0 0 64 64" aria-hidden="true"><path d="M20 16h24c7 0 11 4 12 10l3 16c1 6-3 10-8 10-4 0-7-3-9-7l-2-4H24l-2 4c-2 4-5 7-9 7-5 0-9-4-8-10l3-16c1-6 5-10 12-10z" fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round"/><path d="M17 29h10M22 24v10M38 29h10" stroke="#000" stroke-width="4" stroke-linecap="round"/></svg><div class="row" style="top:470px;height:69px;padding-top:8px;padding-left:7px"><div class="l">New game</div><div class="s">Pass and play · Easy</div></div><div class="row" style="top:544px;height:69px;padding-top:19px;padding-left:7px"><div class="l">Options</div></div></div><p class="cap">New game's second line now names the chosen mode and the setting's value, joined by " · ". Pass open (no save) is used for the header; it ships no settings, so the Difficulty value is illustrative. Which row is selected on return is not decided, so no selection is drawn.</p></div></div>
+</body>
+</html>

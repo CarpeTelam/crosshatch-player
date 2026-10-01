@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand-off and Result</title>
+<style>
+/* Governed by: DESIGN.md Components: Hand-off screen (default, with a developer image), Hand-off text box, Result banner; EXPERIENCE.md Component Patterns: Result banner, Hand-off screen; State Patterns: Hidden pass, Result, HandOff, Sleep blank; Developer overrides; Key Flow 2.
+   The spines (DESIGN.md, EXPERIENCE.md) win over this mock on any conflict. */
+
+:root { --ink: #000000; --paper: #FFFFFF; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--paper); color: var(--ink); font-family: Ubuntu, "Ubuntu Sans", system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px; }
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+p.lede { font-size: 14px; max-width: 1100px; margin-bottom: 20px; line-height: 1.4; }
+.cols { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+.col { width: 482px; }
+.col h2 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.cap { font-size: 13px; line-height: 1.4; margin-top: 10px; }
+/* device: X4 Pro 480 x 800 at 1x, 1-bit */
+.dev { position: relative; width: 480px; height: 800px; background: var(--paper); outline: 1px solid var(--ink); outline-offset: 0; overflow: hidden; }
+.abs { position: absolute; }
+/* the selection: dither-25, one ink pixel per 2 x 2 cell */
+.sel { background-color: var(--paper);
+  background-image: linear-gradient(to bottom, transparent 1px, var(--paper) 1px), linear-gradient(to right, var(--ink) 1px, var(--paper) 1px);
+  background-size: 2px 2px; }
+/* status strip and header bar */
+.status { position: absolute; top: 9px; right: 44px; font-size: 17px; }
+.batt { position: absolute; top: 15px; right: 24px; width: 16px; height: 9px; border: 2px solid var(--ink); }
+.batt::after { content: ""; position: absolute; right: -4px; top: 1px; width: 2px; height: 3px; background: var(--ink); }
+.back { position: absolute; left: 16px; top: 54px; width: 24px; height: 20px; }
+.htitle { position: absolute; left: 50px; top: 46px; font-size: 24px; font-weight: 700; line-height: 32px; }
+.rule { position: absolute; left: 0; top: 91px; width: 480px; height: 3px; background: var(--ink); }
+/* list rows */
+.row { position: absolute; left: 24px; width: 432px; border-radius: 6px; padding-left: 7px; }
+.row .l { font-size: 24px; line-height: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { font-size: 20px; line-height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* frames: option dialog, banner, hand-off text box */
+.frame { position: absolute; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); }
+.center { text-align: center; }
+.note { font-style: italic; }
+
+</style>
+</head>
+<body>
+<h1>Hand-off and Result</h1>
+<p class="lede">The hidden pass match between seats. A tap anywhere, or Confirm, moves on; nothing of one seat's frame reaches the next seat. X4 Pro, 480 x 800 at 1x, 1-bit: ink #000000 and paper #FFFFFF only; the selection is the 25 % dither. Icons are drawn approximations of the Phosphor library icons named. The spines win over this mock.</p>
+<div class="cols"><div class="col"><h2>Hand-off, default</h2><div class="dev" role="img" aria-label="Hand-off, default"><svg class="abs" style="left:176px;top:336px" width="128" height="128" viewBox="0 0 64 64" aria-hidden="true"><path d="M12 26c12 12 28 12 40 0M18 31l-5 6M27 34l-1 7M37 34l1 7M46 31l5 6" fill="none" stroke="#000" stroke-width="3" stroke-linecap="round"/></svg><div class="abs center" style="left:0;top:476px;width:480px;font-size:24px;line-height:30px">Player 2, tap when ready</div></div><p class="cap">The runtime's hand-off: the eye-closed icon at 128 px centred, "Player N, tap when ready" under it (N the next seat, from 1). The text's type is not decided; drawn as the banner's. The sleep blank is this screen without the text.</p></div><div class="col"><h2>Hand-off, with the game's handoff.png</h2><div class="dev" role="img" aria-label="Hand-off, with the game's handoff.png"><div class="abs center note" style="left:16px;top:16px;width:448px;height:768px;border:2px dashed #000;padding-top:300px;font-size:16px;line-height:1.5">handoff.png<br>the developer's own page, at most 480 x 800,<br>drawn centred and clipped</div><div class="frame center" style="left:50px;top:649px;width:378px;height:131px;padding-top:48px;font-size:24px;line-height:30px">Player 2, tap when ready</div></div><p class="cap">The dashed box stands for the developer's image. The runtime draws the same text in a framed paper box at the manifest's handoff_text position, here bottom (the default). The box's size is drawn as the Result banner's [ASSUMPTION]. No script draws during the hand-off.</p></div><div class="col"><h2>Result banner, as built</h2><div class="dev" role="img" aria-label="Result banner, as built"><div class="abs" style="left:43px;top:56px;font-size:36px;line-height:44px">Player 1</div><div class="abs" style="left:43px;top:130px;font-size:24px;line-height:30px">Player 1's secret: apple</div><div class="abs" style="left:43px;top:180px;font-size:24px;line-height:30px">Moves: 1</div><div class="frame center" style="left:50px;top:649px;width:378px;height:131px;padding-top:48px;font-size:24px;line-height:30px">Tap to pass to player 2</div></div><p class="cap">After seat 1's move: seat 1's own frame (the pass-hidden fixture's text) with "Tap to pass to player 2" in a framed box about 4/5 of the width, near the bottom. Unchanged from story-hand-off-screenshots/3-result-banner.png.</p></div></div>
+</body>
+</html>
