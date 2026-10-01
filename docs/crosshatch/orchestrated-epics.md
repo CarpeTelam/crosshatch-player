@@ -96,18 +96,30 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
 9. **Delete finished trees (O7).** Remove a lane's worktree (`git worktree remove`) once its last story is merged, and
    each `{scratch}/<ref>/` fresh clone or archive tree once its gate has run. A worktree takes about 1.5 GB and a fresh
    clone about 1.8 GB; in epic-script-runtime a full disk half-installed `~/.platformio/packages` mid-build.
+10. **After a container restart, check before resuming (epic-install-and-launcher retro AI-8).** Before resuming any
+    build agent, look at each lane's worktree (`git status`, `git log`, the plan's `status`) and at which of its
+    subagents are still running, and resume only from what is there. Record the restart and what was recovered, or
+    redone, in that builder's plan. In epic-install-and-launcher, 4.10's implementation subagent was cut off and the
+    plan's author implemented it from the plan, and no record of either restart reached the repo (retro proc-4).
 
 ### Owner hand-offs
 
 - **Stories marked `hitl = true`** in `tickets.toml` (device runs, a release dry run) stop where their plan says. Give
   the owner the firmware commit, the steps (for game work, the fixtures README), and what to record; put the result in
   the plan's Verification.
+- **Calibrate timing-dependent fixtures before a device-run packet (epic-install-and-launcher retro AI-5).** Before
+  building a packet, give every fault fixture whose outcome depends on device timing (a watchdog band, a budget band,
+  a replay timing) a tethered calibration run on the device, or list it in the packet as "uncalibrated: expected
+  outcome estimated from the host ratio". The `loop` fixture's "Slow C calls forever" band was sized from host
+  arithmetic and was abandoned, not cancelled, at its first device run (retro proc-3, e4-z1).
 - **Decisions.** Give the owner the options, what each means, and a recommendation. Record the answer, dated, in the
   epic file's Notes, and in the architecture spine when it changes a decision there.
 - **Measure before quoting (O8).** A memory, flash, or timing figure goes to the owner as a measurement with its method,
   or labelled "unmeasured". In epic-script-runtime about 320 KiB was quoted for Lua's region; the measurement was 448
   KiB. A delta is two measurements made the same way, one at each commit. The base is the one measured before the first
-  story, re-measured when a story changes how a gate measures (epic-icon-library retro O3).
+  story, re-measured when a story changes how a gate measures (epic-icon-library retro O3). A measurement is taken on
+  the commit it cites, after the last squash or amend; one taken before a history rewrite is void and is repeated
+  (epic-install-and-launcher retro AI-7, proc-7).
 
 ### Before the epic PR
 
@@ -217,7 +229,16 @@ them:
   the end of the file, each entry in the file's existing format (`- source_plan:`, `summary:`, `evidence:`). The file
   merges with `merge=union`; a distinct first line per story keeps two lanes' appends from interleaving line by line.
 - A memory, flash, or timing figure in your plan or report is a measurement with its method, or says "unmeasured"
-  (deltas as AGENTS.md's Known pitfalls say).
+  (deltas as AGENTS.md's Known pitfalls say). Take it on the commit it cites, after your last amend.
+- Test doubles (epic-install-and-launcher retro AI-4): a double your story adds or extends names, in a comment and in
+  the plan, the device behaviour it stands in for, and a test pins that the two agree; where it is more permissive
+  than the device, say so. A screen double records raw `text()` calls and never lays text out on `\n` unless the
+  renderer does. A host timing bound is derived from the device ratio (about 95x host to device, `plan-e4-z1` M1) and
+  labelled an estimate until a device run measures it. In epic-install-and-launcher the doubles were more permissive
+  than the device three times, and each time a fix passed every test (retro proc-2).
+- A flake fix is proven at a stated repeat count: 20 full `ctest` runs plus `--repeat until-fail:200` on each flaky
+  test is the bar (epic-install-and-launcher entry 13; retro AI-7, proc-5). A failing test is never called a flake
+  without that proof.
 - Before moving or rewriting an existing function, say in Design Notes what each guard or early return in it protects
   (AGENTS.md's `git log -L` pitfall).
 - Formatting as AGENTS.md says, review fixes and plan edits included; name any formatting-only change it makes outside
