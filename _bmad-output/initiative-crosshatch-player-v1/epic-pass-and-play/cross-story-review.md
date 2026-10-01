@@ -120,3 +120,17 @@ The findings concern how far H7's back-dating reaches on the device, and its tes
 | J6 | VG | H7's after-the-refresh stamp is unpinned, because the fake `displayBuffer` takes no time. | fix | In the H7 test, use `onDisplay` to advance the clock during the push. |
 | J7 | VG | H4's removal of the latch reset in `handle()` is unpinned. | fix | Add a hidden test that holds a contact from Playing through Result and HandOff into seat 2's first Playing pass, then long-presses; assert "Dropped a touch". |
 | J8 | VG | The double reports a long press only on the first read of a pass, while the device reports it for the whole update, and `InputDoubleTest` pins the "once" behaviour. | fix | Match the device and fix the test. |
+
+## Review of the fifth fix commit
+
+**What was reviewed:** `0c35be0d` (rows J1–J8; diff `2ae3587f..0c35be0d`; production change 12 lines), checked by the same three context-free lenses on 2026-10-01. Raw reports are in `xreview/` (`fix5-*`, summarised here).
+
+**Overall result:** verification-gap found nothing material, and each of J1, J2 and J6–J8 has a test that fails on revert. Edge-case found no gap in the production change. Adversarial confirmed that:
+- `HalGPIO::lastTouchHeldMs()` is the tap's own hold and cannot be stale;
+- touch is sampled only in `update()` on the loop task;
+- the double's per-update sampling matches the device.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| K1 | A | `game-canvas.md` and a test comment overstate H7's back-dating. Each early return in `loopPlaying` (Back, a VM check, RoundOver, TurnChanged) moves the match out of Playing, so it never covers a tap "sampled on a pass that returned early". What it covers is the same-pass race: the push completes between a pass's `update()` and its latch. The second "What remains" bullet names a nearly unreachable path and leaves out the reachable one: a swipe or long press first sampled before the push completed, but latched after it in the same pass, carries the next seat's frame. | fix (docs and comments) | Restate the coverage as the same-pass race, replace the bullet with the reachable gap, and fix the test comment. Back-dating the latch itself through `InputManager::isTouchTapCandidate` would close the long-press half; it is deferred under `## e5-xr`. The change is documentation and comments only, so it does not get another three-lens round: the orchestrator checks the wording against this row before the merge. |
+| K2 | EC, VG, A | The input double has three gaps. `liftWithoutTap()` reports a raw release for a contact no update sampled. Touch queries sample when no `update()` preceded them, earlier than the device would. `ResumeMatchTest`'s `frame()` skips `input->update()`. No current test depends on any of them. | defer | `deferred-work.md` `## e5-xr`, with the trigger "the next change to the input double or a held-contact test in `ResumeMatchTest`". |
