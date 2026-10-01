@@ -319,6 +319,14 @@ TEST_F(GameVmTest, OpenPassATapQueuedBehindTheTurnPassingMoveNeverReachesTheNext
   vm->postInput(cellTap(5), seatTwosFrame);
   ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5"); }));
   EXPECT_EQ(fakelog::countLines("tap for seat 2"), 1u);
+  // The compare is wrap-safe (fix review G6): once seat 1's next frame is out, a tag 2^31 ahead of it reads as made
+  // before seat 1's first frame (after a wrap), so it is dropped, where a plain `>=` would play it.
+  ASSERT_TRUE(waitFor([this, seatTwosFrame] { return vm->frameGen() > seatTwosFrame; }));
+  vm->postInput(cellTap(6), vm->frameGen() + 0x80000000u);
+  ASSERT_TRUE(waitFor([] { return fakelog::countLines("Dropped a touch") >= 2 || fakelog::anyLine("cell 6"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a touch"), 2u);
+  EXPECT_TRUE(logHas("before seat 1's first frame")) << "the second drop is this tag's, against seat 1's frame";
+  EXPECT_FALSE(logHas("apply seat 1 cell 6"));
 }
 
 // Open pass: a timer that falls due while seat 1's move is played is not dropped with the touch beside it: it reaches

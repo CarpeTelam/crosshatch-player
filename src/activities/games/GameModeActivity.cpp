@@ -175,9 +175,10 @@ void GameModeActivity::startNew(const RowKind kind) {
   if (!rosterFor(kind, roster)) {
     if (kind == RowKind::Continue) {
       LOG_ERR("GAME", "Not a New row of %s: Continue", manifest.id);
-    } else {  // only pass can fail (rosterFor)
-      LOG_ERR("GAME", "Cannot start %s in pass: seats %d..%d leave no pass match on this host", manifest.id,
-              static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax));
+    } else {  // the row's mode has no seat count this host fits (only pass, today)
+      const char* mode = MODE_TEXTS[static_cast<size_t>(kind)].log;
+      LOG_ERR("GAME", "Cannot start %s in %s: seats %d..%d leave no %s match on this host", manifest.id, mode,
+              static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax), mode);
     }
     requestUpdate();  // the tap moved the selection here (or the confirmation closed); show it
     return;

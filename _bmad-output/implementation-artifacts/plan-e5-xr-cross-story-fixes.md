@@ -9,9 +9,10 @@ route: 'full'
 route_source: 'auto'
 review: 'thorough'
 review_source: 'auto'
-lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment', 'blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment', 'blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment', 'blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
 followup_baseline_revision: '00ca40702f7b0ba3fb4cbfdcbc87c38d3e5ec16f'
+last_round_baseline_revision: 'e47e33d9'
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/cross-story-review.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play.md'
@@ -82,6 +83,14 @@ context:
 - [x] F12 `ResumeMatchTest.cpp` -- after the blank's tap, exactly one `draw for seat 2` (and none for any seat before it).
 - [x] F13 `ResumeMatchTest.cpp` -- the Unstartable error-view case asserts the whole `STR_GAMES_RESUME_NOT_HERE` text is drawn, untruncated.
 
+**Last round (pass 4: the review of `723f08fb`, rows G1-G6 of `cross-story-review.md` "Review of the follow-up fix commit"; one more commit, implemented directly):**
+- [x] G1 `_bmad-output/implementation-artifacts/deferred-work.md` -- a `## e5-xr` entry that blocks epic-play-nearby, naming the four partly-local-roster paths and the F5 test's second `showTurnSeat()` call.
+- [x] G2 `GameMatchActivity.{h,cpp}`, `docs/crosshatch/game-canvas.md` -- latch `frameDisplayed` at the touch-down the loop sees (`touchDownFrame`), reset when the contact's gesture is read and on every transition; restore the caveat naming both windows. Test: `PassMatchTest.AContactBegunUnderSeatOnesFrameAndLiftedUnderSeatTwosIsDropped`.
+- [x] G3 `GameSaveStore.cpp` -- a newer codec version of another package's save is `other package` (None, INF line); test row changed.
+- [x] G4 `GameSaveStore.cpp` -- `too large` is checked after the mode and seat count; test row for an oversized file with a bad seat count (None).
+- [x] G5 `GameModeActivity.cpp` -- `startNew`'s failure line names the row's mode (`MODE_TEXTS[kind].log`).
+- [x] G6 `GameVmTest.cpp`, `GameVM.h` -- a tag 2^31 ahead of the seat's frame is dropped (pins the wrap-safe compare); a comment that the counter cannot reach `UNTAGGED` in practice.
+
 **Acceptance Criteria:**
 - Given any change above, when the host suites run, then every suite passes and the tests named above fail on the pre-fix code.
 - Given the firmware, when `x4pro` and `default` build and `pio check` runs on both envs, then no defect is reported and the flash delta over the base stays within 5,056 B and 32 B left.
@@ -116,6 +125,7 @@ context:
 - **Pass-2 mutation check.** With F2 (`frameDisplayed` back to `frame`), F4, F5, and F6 (allocate in `peekResume`) reverted in place, their four tests failed; restored afterwards. F7, F10, F12, F13 pin behaviour the fix commit already had.
 - **Pass-2 review patch.** The F2 test's clear hook disarms with a local flag (no self-reset inside the running closure), and both the test and `renderCanvas` say the `frameGen()` read before the view clear is the test's seam; `ALaterFirmwaresSaveIsUnstartableAndKept` gained oversized other-package, bad-magic, and older-version rows (moving the `too large` check above the package check now fails it); the unused `big` left `AResumeThatDoesNotFit...`; stale comments fixed (`GameSaveStore.h` peek buffer, `seedResume`'s Unstartable kinds, `SoloRounds.h` class comment, the `confirmRow`/`removeIndex` orders), formats.md's blob-header paragraph names resume.bin's newer-version exception and the header/hash offsets it relies on; `ScreenRendererDoubleTest` moved to the doubles section and the race test got its own comment.
 - **Follow-up: `pio check -e x4pro` failure fixed.** `unstartableHere`'s raw loop drew cppcheck's low `useStlAlgorithm` (`GameSaveStore.cpp:82`); it is `std::any_of` over the same list now, and both `pio check` runs pass.
+- **Last round (G2-G6, then pass 5's patches):** implemented directly; mutation checks: the wrap compare reverted to `>=`, the latch removed, the latch re-taken on every pass, and the other-package codec branch reverted each fail their test (the store, VM, and match tests above).
 
 ## Plan Change Log
 
@@ -186,6 +196,32 @@ context:
 | P15 | IA (F6) | F6 reuses the store's buffer, reversing row 10's "store-free" for the buffer | low | reject | Row 10's harm was the roster adoption, which stays out; F6 named this option first. |
 | P16 | IA (F10, F11, F13) | F10 drives the double, not the device's OOM; F11 duplicates an existing check; F13 covers one screen | low | reject | The double's `goToGames` does what the device's does on OOM (named in its comment); the duplicate assert is harmless; the error view's wrap is the theme's, not the screen's, beyond the harness's one screen. |
 
+**Pass 4 (2026-10-01, orchestrator-relayed review of `723f08fb`; raw `xreview/fix2-*.md`, checked against the code).** G1 defer, G2-G6 fix (the orchestrator's verdicts). Verdicts: high 0, medium 1 (G2), low 4, deferred 1 (G1, medium if reachable, unreachable today).
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| G1 | EC, A | Partly-local rosters stall on four paths | medium (unreachable) | defer | Real in code (`SoloRounds::step`/`drawShown`, `GameVM::showSeatNow`); no roster has it until epic-play-nearby. `deferred-work.md` `## e5-xr` entry blocks that epic. |
+| G2 | A | The tag is read at release, not touch-down; the caveat was deleted | medium | patch | Real: `readGesture` sees the release; a contact spanning the next seat's push went to that seat. Latched at touch-down (Design Notes), caveat restored with both remaining windows. |
+| G3 | EC, A | Another package's newer-codec save logs ERR "discarded" each title-screen open | low | patch | Real: it fell through to `unknown_codec_version`. Now `other package`. |
+| G4 | EC | An oversized file with a bad seat count is kept as Unstartable | low | patch | Real: `tooLarge` came before the mode. Moved after the seat checks. |
+| G5 | A | `startNew` names pass for any failure | low | patch | Real; names the row's mode. |
+| G6 | VG, A | The wrap-safe compare is unpinned; the sentinel is remapped, not out of range | low | patch | Real: `>=` failed no test. Pinned with a tag 2^31 ahead; comment on `UNTAGGED`. |
+
+**Pass 5 (2026-10-01, this build's own review of the last-round diff `e47e33d9..` working tree).** All four lenses ran as context-free subagents, launched together, and all four returned: blind-hunter (BH), edge-case-hunter (EC), verification-gap (VG), intent-alignment (IA, descriptive). Verdicts: high 0, medium 1, low 9, false 0. Routes: patch 6, reject the rest; no loopback.
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| Q1 | VG, EC | The device's `wasScreenTouchDown` is a level (true each update of a still hold past 90 ms), so the latch re-took the next seat's frame; the stub modelled an edge | medium | patch | Real: `MappedInputManager.cpp` `TOUCH_DOWN_SELECT_DELAY_MS` over `isTouchTapCandidate`. Latch only at the first pass; the input double's `holdTouch`/`liftTouch` report the level across `clear()` (pinned by `InputDoubleTest.AHeldContactReportsItsTouchDownOnEveryFrameUntilItLifts`); the G2 test holds through the push and two more passes and fails with the re-latch. |
+| Q2 | BH, VG, EC | A lift with no gesture leaves the latch set | low | patch | Real: cleared only on a gesture. Cleared on any `touchReleased`. |
+| Q3 | BH, EC, IA | The doc's windows undercount (a tap under 90 ms is tagged at its lift; the latch semantics) | low | patch | Real; game-canvas.md names three windows and the 90 ms rule. |
+| Q4 | BH | G3 left another package's older-codec save at ERR "discarded" | low | patch | Real; any codec version of another package is `other package`; row added. |
+| Q5 | BH | `too large` docs do not name `bad seat count` or the startable checks before it; constant comment stale | low | patch | Real; formats.md and the constant's comment. |
+| Q6 | BH | The G6 drop is not tied to the cell-6 tag | low | patch | Real; asserts the drop names seat 1's first frame. |
+| Q7 | BH | The wrap's accept side (a tag past a `seatFrame` near `UINT32_MAX`) is untested | low | reject | Needs `FrameBuffers::generation` near 2^32 (outside touches, unreachable in use). |
+| Q8 | BH | The `handle()` reset and the no-touch-down fallback are untested | low | reject | VG found removing the reset unobservable on the device's input; the fallback is every short tap, which every existing tap test exercises. |
+| Q9 | EC | This package's newer-codec save with a malformed mode is kept, unlike its oversized twin | low | reject | A codec-only bump keeps the layout (formats.md); keeping a file of this package is the safe side (F15's reasoning). |
+| Q10 | BH, IA | G5's line omits the host's seat limit; "only pass today" is unenforced; G4 tested at the store only | low | reject | Cosmetic log detail; the Unstartable-to-UI mapping is pinned by the title-screen tests. |
+
 ## Design Notes
 
 - **Row 4 vs R7.** The row's action (drop every seat-0 input) would end R7's "from then on ... input get seat 0" and game-api-seed §3, which `PassRoundsTest` pins. The trigger is an event posted while a seat 1..n frame showed and played after the round ended; row 5's tag drops exactly that (the seat drawn changed since it was posted), so one mechanism fixes both and R7 stays: the Over menu posts no game input, and any input posted under seat 0's frame would still reach seat 0.
@@ -195,6 +231,7 @@ context:
 - **Row 9 option:** delete the overload; `canvasUnderView` keeps the Paused-from-HandOff rule, pinned by the lag test.
 - **Row 6/1 flag:** one render-side record of what the last push left on the panel, read under RenderLock by leave() and onExit; Over counts as Other, since seat 0's frame is everyone's.
 - **F7: the seat-0 departure, recorded.** Entry 1's plan (row 3 of its I/O matrix, pinned by `PassRoundsTest.ATapAfterThePassRoundEndsReachesSeatZeroAndItsMoveIsDiscarded`) had a tap queued after the round reach seat 0, its move discarded. Through `GameVM` that is reversed for touches: a touch made under a seat 1..n frame and played after the round ended is dropped (row 4's trigger), while the rounds layer still delivers seat 0 input (the test stays). Timers keep reaching seat 0's `input` after the round (R7's "input get seat 0", R11 has no turn seat to name); `GameVmTest` pins that a timer queued behind the winning move is delivered without error.
+- **G2: latch at touch-down, chosen because it stayed small** (three loop-task members: the first pass that sees `touchPressed` latches, since the device's `wasScreenTouchDown` is a level reported on every pass of a hold past 90 ms; freed on any release, gesture or not, and in `handle()`). It closes the contact that begins under one seat's frame and lifts under the next (now dropped, was delivered). It cannot close the touch-down made while the loop is blocked, which is seen at the next pass, nor a touch during the refresh; both stay documented in game-canvas.md. Latching at the touch itself needs the input layer's timestamps (upstream `MappedInputManager`).
 - Guards kept: `stopVm`'s `!vm` return and its push-before-flushResume order (R6); `startResume`'s no-pass-seats return; `leave()`'s stop under its own RenderLock.
 
 ## Verification
@@ -221,4 +258,11 @@ context:
 - `sim.sh build x4pro`: SUCCESS.
 - Flash (measured the same way, four steps under the build lock): x4pro `firmware.bin` 5,921,216 B games on, 5,679,792 B off, +241,424 B (14,576 B under the gate); static internal RAM +784 B (240 B under); `objects` clean. Over the base at `c1902721`: +7,984 B flash and +0 B static RAM, within the 11,152 B and 32 B share; +576 B over the fix commit `ef46f8a5`'s +240,848 B, leaving 3,168 B and 32 B of the share.
 - Test doubles extended: `screen_stubs/GfxRenderer.h` `onClear` (the VM publishing on the other core mid-render), pinned by `ScreenRendererDoubleTest.ClearScreenRunsTheHookAfterTheScreenIsCleared`; `screen_stubs/ActivityManager.h` comment only (its `goToGames` replaces nothing, as the device's does when `makeUniqueNoThrow` fails).
+
+**Results of the last round (2026-10-01, G2-G6 and pass 5's patches; the tree measured is this commit's, whose firmware sources the commit does not change):**
+- Host suites: 1,523 of 1,523 pass; the three timing-sensitive new or changed tests passed 30 repeats each.
+- `scripts/*_test.py`, `check_layers.py` (496 edges), `check_upstream_touches.py` PASS, `./bin/clang-format-fix` clean.
+- `pio run -e default`: success. `pio check` (`default`) and `pio check -e x4pro`: no defects, PASSED. `sim.sh build x4pro`: SUCCESS.
+- Flash (four steps under the build lock): x4pro `firmware.bin` 5,921,312 B games on, 5,679,792 B off, +241,520 B (14,480 B under the gate); static internal RAM +784 B (240 B under); `objects` clean. Over the base at `c1902721`: +8,080 B flash and +0 B static RAM; +96 B over `723f08fb`'s +241,424 B; 3,072 B and 32 B of the share left.
+- Test double extended: the screen input double's `holdTouch`/`liftTouch` (`screen_stubs/MappedInputManager.h`) model the device's touch-down level, pinned by `InputDoubleTest.AHeldContactReportsItsTouchDownOnEveryFrameUntilItLifts`.
 

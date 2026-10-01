@@ -193,8 +193,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
                      uint8_t count) const;
   // The view's translated headline; null for a state with no view.
   const char* viewHeadline(MatchState state) const;
-  // This loop pass's touch gesture on the logical screen, if any.
-  GameTouch::Gesture readGesture() const;
+  // This loop pass's touch gesture on the logical screen, if any; latches frameDisplayed at a touch-down.
+  GameTouch::Gesture readGesture();
 
   GameCore::Manifest manifest;
   GameCore::Roster roster;
@@ -288,6 +288,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // posts each touch with (GameVM::postInput), so the VM drops one made under another seat's frame. Stored before
   // roundsDisplayed and seatDisplayed, so a loop that sees those sees this frame's number.
   std::atomic<uint32_t> frameDisplayed{0};
+  // Loop task: frameDisplayed at the first pass that saw the contact's touch-down (the input layer reports it once a
+  // still finger has been down 90 ms), until the contact ends (or handle() changes state), so a contact begun under one
+  // seat's frame and lifted after the next seat's was pushed carries the first. A shorter tap is tagged at its lift.
+  uint32_t touchDownFrame = 0;
+  bool touchDownLatched = false;
+  // Loop task: readGesture saw this pass's contact end (a release, with or without a gesture).
+  bool contactEnded = false;
   // Render task only: the view's dialog, a member since it is over 1 KB.
   freeink::ui::OptionDialogProps dialogProps;
   // Render task only: Result's banner and its text, members since the props are over 256 bytes.

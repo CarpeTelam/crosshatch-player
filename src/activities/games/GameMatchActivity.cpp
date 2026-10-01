@@ -278,6 +278,8 @@ void GameMatchActivity::handle(const MatchEvent event) {
   closeRouting();
   // The next screen's tap passes nothing until render has pushed that screen.
   passScreenShown.store(MatchState::Starting);
+  // A contact that began in the last state is not latched for the next.
+  touchDownLatched = false;
   selected.store(0);
   // Before shown: a render already queued must not see Playing with the old count.
   if (event == MatchEvent::PlayAgain) roundsStartedAwaited.store(vm->roundsStarted() + 1);
@@ -548,11 +550,14 @@ void GameMatchActivity::loopPlaying() {
   GameCore::GameEvent event;
   if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
-    // With the frame on the panel, so the VM drops it if another seat has been drawn since (a pass match). A frame
-    // number equal to GameVM::UNTAGGED, which the VM never drops, is posted one less, which can only drop.
-    const uint32_t shown = frameDisplayed.load(std::memory_order_acquire);
+    // With the frame on the panel when the contact began (or now, for one whose touch-down this loop did not see), so
+    // the VM drops it if another seat has been drawn since (a pass match). A frame number equal to GameVM::UNTAGGED,
+    // which the VM never drops, is posted one less, which can only drop.
+    const uint32_t shown = touchDownLatched ? touchDownFrame : frameDisplayed.load(std::memory_order_acquire);
     vm->postInput(event, shown == GameVM::UNTAGGED ? shown - 1 : shown);
   }
+  // The contact is over, posted, dropped, or no gesture at all: the next one latches its own.
+  if (contactEnded || gesture.kind != GameTouch::Kind::None) touchDownLatched = false;
   vm->pollTimer();
   store.flushIfDue(millis());
   flushResume();
@@ -648,11 +653,21 @@ void GameMatchActivity::choose(const GameCore::MatchMenu& menu, const int index)
   handle(menu.events[index]);
 }
 
-GameTouch::Gesture GameMatchActivity::readGesture() const {
+GameTouch::Gesture GameMatchActivity::readGesture() {
   GameTouch::Gesture gesture;
   // Canvas taps and long presses bypass the FreeInkUI interaction table (AD-20).
   // Consuming a long press suppresses the rest of the contact, so its lift is no tap.
   const auto snap = touchSnapshotFrom(mappedInput, /*withLongPress=*/true);
+  // MappedInputManager reports a touch-down on every pass while a still finger has been down 90 ms or more (a level,
+  // not an edge): the first pass that sees it latches the frame on the panel, which the touch is posted with when it
+  // ends.
+  if (snap.touchPressed && !touchDownLatched) {
+    touchDownFrame = frameDisplayed.load(std::memory_order_acquire);
+    touchDownLatched = true;
+  }
+  // Any end of the contact, a lift that makes no gesture included, frees the latch for the next one (loopPlaying reads
+  // this pass's latch first).
+  contactEnded = snap.touchReleased;
   if (snap.touchReleased && snap.touchX >= 0) {
     gesture.kind = snap.longPress ? GameTouch::Kind::LongPress : GameTouch::Kind::Tap;
     gesture.x = snap.touchX;

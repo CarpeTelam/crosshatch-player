@@ -1134,6 +1134,9 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
     Bytes file;
     const char* reason;
     bool kept;  // Unstartable; else None with an error line
+    // The kept lines that name `reason`: one per call (the solo-only peek, peek, loadResume), but the solo-only peek
+    // refuses a pass save as `mode not startable`, which is checked before the size.
+    int keptLines = 3;
   } cases[] = {
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "newer file version", true},
       {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 255), "newer file version", true},
@@ -1141,8 +1144,9 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "newer codec version", true},
       {resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2, "CHRS", 1, 9), "newer codec version", true},
       {resumeFile(big), "too large", true},
-      {resumeFile(big, 7, PKG, PASS_BYTE, 2), "too large", true},
-      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 2), "unknown_codec_version", false},
+      {resumeFile(big, 7, PKG, PASS_BYTE, 2), "too large", true, 2},
+      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 2), "other package", false},
+      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 0), "other package", false},  // an older codec, too
       {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX", 2), "bad_magic", false},
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
       {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
@@ -1152,6 +1156,8 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
       {resumeFile(big, 7, PKG, 0, 1, "XXXX"), "bad_magic", false},
       {resumeFile(big, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
       {resumeFile(big, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
+      // This package's oversized save with a malformed seat count: a refusal that is not kept, size aside.
+      {resumeFile(big, 7, PKG, 0, 2), "bad seat count", false},
   };
   for (const auto& c : cases) {
     SetUp();
@@ -1169,7 +1175,7 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
     EXPECT_FALSE(unreadable) << label;
     const std::string keptLine = std::string("INF GAME: counter: ") + RESUME +
                                  " is a save that cannot be resumed here: " + c.reason + "; the file is kept";
-    EXPECT_EQ(std::count(fakelog::lines.begin(), fakelog::lines.end(), keptLine), c.kept ? 3 : 0) << label;
+    EXPECT_EQ(std::count(fakelog::lines.begin(), fakelog::lines.end(), keptLine), c.kept ? c.keptLines : 0) << label;
     EXPECT_EQ(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason), !c.kept) << label;
     if (std::string(c.reason) == "other package") {
       // Another package's save is a quiet line in peek, at any size.

@@ -1203,6 +1203,36 @@ TEST_F(PassMatchTest, ATapMadeUnderSeatOnesFrameBehindItsTurnPassingMoveNeverRea
   EXPECT_EQ(fakelog::countLines("apply seat 1 cell 1"), 1u);
 }
 
+// A contact begun under seat 1's frame and lifted after seat 2's frame was pushed carries the frame of its touch-down
+// (fix-review G2), so it is dropped rather than played as seat 2's move.
+TEST_F(PassMatchTest, AContactBegunUnderSeatOnesFrameAndLiftedUnderSeatTwosIsDropped) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move
+  frame();
+  // The next finger comes down while seat 1's frame is still the one on the panel (no render since the move), and is
+  // held: the input layer reports the touch-down on every pass of the hold, as the device's does.
+  input->holdTouch(CANVAS_X + cellX(2), CANVAS_Y + cellY(2));
+  frame();
+  renderer->forget();
+  showFrame();  // seat 2's frame is pushed while the finger is down
+  ASSERT_TRUE(drew("Player 2 (O) to move"));
+  frame();  // a pass of the hold under seat 2's frame, which must not re-latch
+  frame();
+  // The finger lifts, under seat 2's frame; any drop logged from here on is this contact's.
+  fakelog::clearLines();
+  input->liftTouch();
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("tap for seat 2"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a touch"), 1u) << "the lift is dropped, tagged with seat 1's frame";
+  EXPECT_FALSE(logHas("tap for seat 2")) << "a contact begun under seat 1's frame became seat 2's input";
+  // Seat 2's own tap, begun under its frame, is played.
+  tapCanvas(cellX(5), cellY(5));
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5"); }));
+}
+
 // The same behind the move that ends the round (cross-story review row 4): the tap never reaches seat 0, which is a
 // frame, never an input seat.
 TEST_F(PassMatchTest, ATapMadeBehindTheRoundEndingMoveNeverReachesSeatZero) {
@@ -1284,6 +1314,31 @@ TEST_F(MatchTest, APushHoldsTheCanvasAndUiTextsDrawnSinceTheLastClearScreenAndNo
 
 // The screen renderer double's clear hook (fix review F2's seam): it runs after the screen is cleared, inside the call,
 // standing in for the VM task publishing on the other core while render draws.
+// The input double's held contact stands in for the device's touch-down level (wasScreenTouchDown true on every update
+// while a still finger stays down past 90 ms): reported on every frame across clear(), and released by liftTouch().
+TEST(InputDoubleTest, AHeldContactReportsItsTouchDownOnEveryFrameUntilItLifts) {
+  HalGPIO gpio;
+  const GfxRenderer renderer(480, 800);
+  MappedInputManager input(gpio, renderer);
+  int x = 0;
+  int y = 0;
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
+  input.holdTouch(12, 34);
+  for (int frame = 0; frame < 3; ++frame) {
+    ASSERT_TRUE(input.wasScreenTouchDown(x, y)) << "frame " << frame;
+    EXPECT_EQ(x, 12);
+    EXPECT_EQ(y, 34);
+    EXPECT_FALSE(input.wasScreenTapped(x, y)) << "no release while held";
+    input.clear();
+  }
+  input.liftTouch();
+  EXPECT_TRUE(input.wasScreenTapped(x, y));
+  EXPECT_EQ(x, 12);
+  EXPECT_TRUE(input.wasScreenTouchReleased());
+  input.clear();
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "the contact is over";
+}
+
 TEST(ScreenRendererDoubleTest, ClearScreenRunsTheHookAfterTheScreenIsCleared) {
   GfxRenderer renderer(480, 800);
   renderer.fillRect(0, 0, 10, 10, true);

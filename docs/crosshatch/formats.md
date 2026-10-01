@@ -204,7 +204,10 @@ things:
   cannot start (`mode not startable`, `seats not startable`), or a later firmware's save: a mode byte this firmware does
   not write (`unknown mode`, 2 to 255), a file version above 1 (`newer file version`; its layout is unknown, so its
   package is not checked: it sits in this game's folder), or, with this package's hash, a codec version above this
-  firmware's (`newer codec version`) or a snapshot over 1,400 bytes (`too large`). One `LOG_INF` line says it is kept.
+  firmware's (`newer codec version`; another package's save is `other package` whatever its codec version) or a
+  snapshot over 1,400 bytes (`too large`, checked after the mode and seat count: an oversized save with a `bad seat
+  count` is `None`, and one with a mode or seat count this host cannot start is kept under that reason). One `LOG_INF`
+  line says it is kept.
   The title screen offers no Continue row for it, but it is a save: a New row asks before it replaces it, as over any
   save;
 - `None`: no file, or one that was read and is not usable for another reason (the header status, an older or garbage

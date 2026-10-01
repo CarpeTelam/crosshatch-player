@@ -88,7 +88,17 @@ class MappedInputManager {
   bool hasTouch() const { return true; }
 
   bool wasScreenTapped(int& x, int& y) const { return touch.tapped ? at(x, y) : false; }
-  bool wasScreenTouchDown(int& x, int& y) const { return touch.down ? at(x, y) : false; }
+  // The device's is a level, not an edge: true on every update while a still finger has been down 90 ms or more
+  // (MappedInputManager.cpp's TOUCH_DOWN_SELECT_DELAY_MS over InputManager::isTouchTapCandidate). `touch.down` scripts
+  // it for one frame; holdTouch() keeps it reported on every frame, across clear(), until liftTouch().
+  bool wasScreenTouchDown(int& x, int& y) const {
+    if (contact.held) {
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.down ? at(x, y) : false;
+  }
   bool wasScreenLongPress(int& x, int& y) const { return touch.longPress ? at(x, y) : false; }
   bool isScreenTouchHeld(int& x, int& y) const { return touch.held ? at(x, y) : false; }
   bool wasScreenTouchReleased() const { return touch.released; }
@@ -177,6 +187,15 @@ class MappedInputManager {
     touch.x = x;
     touch.y = y;
   }
+  // A finger held still at (x, y) from now on, reported by wasScreenTouchDown on every frame (the device's level) until
+  // liftTouch(), which releases it there as a tap this frame.
+  void holdTouch(const int x, const int y) { contact = {true, x, y}; }
+  void liftTouch() {
+    touch.tapped = touch.released = true;
+    touch.x = contact.x;
+    touch.y = contact.y;
+    contact = {};
+  }
   void longPress(const int x, const int y) {
     touch.longPress = true;
     touch.x = x;
@@ -213,6 +232,12 @@ class MappedInputManager {
   std::set<Button> longPressed;
   unsigned long heldMs = 0;
   Touch touch;
+  // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event.
+  struct Contact {
+    bool held = false;
+    int x = 0;
+    int y = 0;
+  } contact;
   SwipeDir swipeDir = SwipeDir::None;
   bool backGesture = false;
   bool homeGesture = false;

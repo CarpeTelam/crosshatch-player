@@ -60,7 +60,9 @@ class GameVM {
   // How long abandon() waits, counted in millis() from when it began, for the stuck
   // task to be safely deletable (late by its last iteration; see STOP_POLL_MS).
   static constexpr uint32_t ABANDON_WAIT_MS = 500;
-  // postInput's shownFrame for a touch made under no particular frame (a direct caller): never dropped.
+  // postInput's shownFrame for a touch made under no particular frame (a direct caller): never dropped. A real frame
+  // number reaches it only after 2^32 publishes, which no match makes (years of frames); the loop posts one less if it
+  // ever does, which can only drop.
   static constexpr uint32_t UNTAGGED = UINT32_MAX;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;

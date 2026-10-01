@@ -207,7 +207,16 @@ passes the turn never becomes seat 2's move (open pass), and one queued behind t
 reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
 frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
 seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
-posting one less instead, which can only drop.
+posting one less instead, which can only drop (a real frame number reaches it only after 2^32 publishes). The tag is
+the frame on the panel at the first loop pass that sees the contact's touch-down (`GameMatchActivity::touchDownFrame`;
+the input layer reports a still finger once it has been down 90 ms, on every pass of the hold, and only the first pass
+latches), freed when the contact ends; a contact the loop saw no touch-down for (a tap shorter than 90 ms, or one begun
+before the match's last state change) is tagged when its lift is read. So a contact held across the next seat's push
+is dropped, and three windows remain: a touch made while the panel is still refreshing to the next seat's frame
+carries the frame before it and is dropped; a touch-down first seen after the loop was blocked (in `flushResume`'s
+write after a move) carries the frame render pushed meanwhile, and so may reach the next seat; and a tap shorter than
+90 ms is tagged at its lift, with the same outcome if the next seat's frame was pushed while it was down. Each is
+about a refresh, an SD write, or 90 ms long. Latching at the touch itself would need the input layer's own timestamps.
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
