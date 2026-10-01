@@ -306,6 +306,36 @@ class ContinueTest : public match::ScreenTest {
     return rows(names);
   }
 
+  // Entry 7 of epic-pass-and-play: a game's own row pushes its title screen (GameModeActivity) instead of starting the
+  // match. A case that needs the row's match opens the pushed screen as the manager would, taps its first New row (and
+  // New game when the screen asks first, over a save), and lets the screen go as the manager lets a replaced one go, so
+  // the match is the replacement the case reads, as when the row started it.
+  void startNewOnTitle() {
+    ASSERT_EQ(activityManager.pushedActivities.size(), 1u) << "the row pushes the game's title screen";
+    Activity& title = *activityManager.pushedActivities.back();
+    ASSERT_NE(dynamic_cast<GameModeActivity*>(&title), nullptr);
+    title.onEnter();
+    screen::RecordingTarget& target = *screen::RecordingTarget::newest();  // the title screen's: built last
+    const auto tapFirst = [&](const std::vector<std::string>& labels) {
+      target.forget();
+      title.render(RenderLock(title));
+      for (const screen::DrawnText& drawn : target.drawn) {
+        if (std::find(labels.begin(), labels.end(), drawn.text) == labels.end()) continue;
+        input->tap(drawn.rect.x + drawn.rect.width / 2, drawn.rect.y + drawn.rect.height / 2);
+        title.loop();
+        input->clear();
+        return true;
+      }
+      return false;
+    };
+    ASSERT_TRUE(tapFirst({tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)}))
+        << target.joined();
+    if (activityManager.replacements.empty()) ASSERT_TRUE(tapFirst({tr(STR_GAMES_NEW_GAME)})) << target.joined();
+    activityManager.exitHolding(title);
+    activityManager.destroyHolding(activityManager.pushedActivities.back());
+    activityManager.pushedActivities.pop_back();
+  }
+
   GameMatchActivity* enterReplacement() {
     if (activityManager.replacements.empty()) return nullptr;
     auto* match = dynamic_cast<GameMatchActivity*>(activityManager.replacements.back().get());
@@ -463,6 +493,7 @@ TEST_F(ContinueTest, TheGamesOwnRowStillStartsANewMatchAndTwoModesStillAskWhichO
   save("beta");
   open();
   tapAt(gameRowOf("Alpha"));
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_FALSE(logHas("Resuming"));
@@ -495,10 +526,12 @@ TEST_F(ContinueTest, ALongPressOrAHoldOnAContinueRowDoesNothingAndTheGamesOwnRow
   longPressAt(continueLine());
   EXPECT_FALSE(dialogUp());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   input->holdLong(Button::Confirm);  // the selection is on the Continue row
   frame();
   EXPECT_FALSE(dialogUp());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 
   longPressAt(gameRowOf("Game 01"));
   EXPECT_TRUE(dialogUp());
@@ -518,6 +551,7 @@ TEST_F(ContinueTest, ATapOnAContinueRowUnderTheConfirmationOrTheNoteStartsNothin
   input->tap(x, y);  // under the install note
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   input->tap(240, 400);  // dismisses the note
   frame();
 
@@ -526,6 +560,7 @@ TEST_F(ContinueTest, ATapOnAContinueRowUnderTheConfirmationOrTheNoteStartsNothin
   input->tap(x, y);  // the confirmation is drawn: the tap is outside its buttons
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_TRUE(dialogUp());
   tapAt(findAll(tr(STR_CANCEL)).back());
 
@@ -537,6 +572,7 @@ TEST_F(ContinueTest, ATapOnAContinueRowUnderTheConfirmationOrTheNoteStartsNothin
   activity().loop();
   input->clear();
   EXPECT_TRUE(activityManager.replacements.empty()) << "the tap opened a resume under the confirmation";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   render();
   EXPECT_TRUE(dialogUp());
 }
@@ -553,6 +589,7 @@ TEST_F(ContinueTest, ALongPressOnAContinueRowUnderTheNoteMovesNoSelectionAndOpen
   ASSERT_EQ(findAll(tr(STR_GAMES_CONTINUE)).size(), 2u);
   longPressAt(continueLine(1));
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_FALSE(dialogUp());
   input->tap(240, 400);  // dismisses the note
   frame();
@@ -600,6 +637,7 @@ TEST_F(ContinueTest, TheKeysWalkContinueRowsThenGamesAndWrap) {
   open();  // rows: Continue 02, Continue 03, Game 01, 02, 03
   key(Button::NavNext, 2);
   key(Button::Confirm);  // Game 01's own row
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-01"));
@@ -612,6 +650,7 @@ TEST_F(ContinueTest, TheKeysWalkContinueRowsThenGamesAndWrap) {
   fakelog::clearLines();
   key(Button::NavPrevious, 3);
   key(Button::Confirm);
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-03"));
@@ -626,6 +665,7 @@ TEST_F(ContinueTest, AStepBackFromTheFirstRowWrapsToTheLastGameNotToABlankPaddin
   ASSERT_NE((5 + games) % rows(games).size(), 0u) << "this page size leaves padding to test";
   key(Button::NavPrevious);
   key(Button::Confirm);
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-10"));
@@ -704,6 +744,7 @@ TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
   ASSERT_GT(page, 2u);
   key(Button::NavNext, 20);  // row 20 is Game 20's own row
   key(Button::Confirm);
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-20"));
@@ -715,6 +756,7 @@ TEST_F(ContinueTest, AfterLeavingAGameWithNoSaveItsOwnRowIsSelectedOnItsPage) {
   ASSERT_GE(first, 1u);
   EXPECT_EQ(rows(25).front(), (Row{nameOf(static_cast<int>(first)), false}));
   key(Button::Confirm);
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-20"));
@@ -729,6 +771,7 @@ TEST_F(ContinueTest, ANewMatchLeftAfterAMoveHasAContinueRowSelectedAndConfirmRes
   open();  // no saves: Game 01, 02, 03
   key(Button::NavNext);
   key(Button::Confirm);  // Game 02's own row: a New match
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   ASSERT_TRUE(pumpMatchTo("setup ran"));
@@ -784,6 +827,7 @@ TEST_F(ContinueTest, RemovingAGameDropsItsContinueRowAndKeepsTheOthers) {
 
   // The selection took the next game's place, on its own row: Confirm opens Game 03 as a new match.
   key(Button::Confirm);
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-03"));
@@ -823,6 +867,7 @@ TEST_F(ContinueTest, RemovingAGameWithNoSaveKeepsTheOtherGamesContinueRowsAndThe
       {"Game 01", true}, {"Game 04", true}, {"Game 01", false}, {"Game 03", false}, {"Game 04", false}};
   EXPECT_EQ(rows(4), expected) << "a game with no save gained no row, and none of the others lost theirs";
   key(Button::Confirm);  // the selection took Game 02's place on Game 03's own row
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-03"));
@@ -854,6 +899,7 @@ TEST_F(ContinueTest, RemovingTheOnlyGameLeavesTheEmptyListWithoutItsContinueRow)
   EXPECT_TRUE(findAll(tr(STR_GAMES_CONTINUE)).empty());
   key(Button::Confirm);
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 // The Continue list is a member array of GameRegistry::MAX_GAMES entries, so it cannot fail to allocate (the test that

@@ -18,6 +18,7 @@
 #include "InstallerScript.h"
 #include "MatchSupport.h"
 #include "activities/games/GameMatchActivity.h"
+#include "activities/games/GameModeActivity.h"
 #include "activities/games/GamesLauncherActivity.h"
 #include "util/ButtonNavigator.h"
 
@@ -266,6 +267,36 @@ class ListTest : public match::ScreenTest {
     return found;
   }
 
+  // Entry 7 of epic-pass-and-play: a game's own row pushes its title screen (GameModeActivity) instead of starting the
+  // match. A case that needs the row's match opens the pushed screen as the manager would, taps its first New row (and
+  // New game when the screen asks first, over a save), and lets the screen go as the manager lets a replaced one go, so
+  // the match is the replacement the case reads, as when the row started it.
+  void startNewOnTitle() {
+    ASSERT_EQ(activityManager.pushedActivities.size(), 1u) << "the row pushes the game's title screen";
+    Activity& title = *activityManager.pushedActivities.back();
+    ASSERT_NE(dynamic_cast<GameModeActivity*>(&title), nullptr);
+    title.onEnter();
+    screen::RecordingTarget& target = *screen::RecordingTarget::newest();  // the title screen's: built last
+    const auto tapFirst = [&](const std::vector<std::string>& labels) {
+      target.forget();
+      title.render(RenderLock(title));
+      for (const screen::DrawnText& drawn : target.drawn) {
+        if (std::find(labels.begin(), labels.end(), drawn.text) == labels.end()) continue;
+        input->tap(drawn.rect.x + drawn.rect.width / 2, drawn.rect.y + drawn.rect.height / 2);
+        title.loop();
+        input->clear();
+        return true;
+      }
+      return false;
+    };
+    ASSERT_TRUE(tapFirst({tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)}))
+        << target.joined();
+    if (activityManager.replacements.empty()) ASSERT_TRUE(tapFirst({tr(STR_GAMES_NEW_GAME)})) << target.joined();
+    activityManager.exitHolding(title);
+    activityManager.destroyHolding(activityManager.pushedActivities.back());
+    activityManager.pushedActivities.pop_back();
+  }
+
   // Runs the match the list replaced itself with, so the game it was given is the one that starts.
   GameMatchActivity* enterReplacement() {
     if (activityManager.replacements.empty()) return nullptr;
@@ -341,6 +372,7 @@ TEST_F(ListTest, AConfirmOrATapOnAnEmptyListDoesNothing) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 TEST_F(ListTest, GamesAreListedByNameWhateverOrderTheFoldersAreIn) {
@@ -379,6 +411,7 @@ TEST_F(ListTest, OnlyAFolderWithAValidPkgAndAManifestOfItsOwnIdIsListed) {
   EXPECT_TRUE(logHas("Found 1 games"));
   // Opening the only row opens Good, not one of the folders that were skipped.
   tapRow("Good");
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started good"));
@@ -427,6 +460,7 @@ TEST_F(ListTest, AGameWrittenForAnOlderApiThanTheHostKeepsSaysSo) {
   EXPECT_TRUE(logHas("Unavailable old-game: "));
   tapRow("OldGame");
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
@@ -436,6 +470,7 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
   tapRow("TooNew");
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_TRUE(logHas("Not starting too-new: "));
 
   // The tap moved the selection to TooNew; Confirm acts on it.
@@ -443,10 +478,12 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_EQ(activityManager.asks.goHome, 0) << "the row's own screen stays up";
 
   // The available row beside it still opens.
   tapRow("Alpha");
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started alpha"));
@@ -465,8 +502,8 @@ TEST_F(ListTest, AGameOnlyAnotherModeCanStartOpensItsMatchAndAGameWithTwoModesOp
   EXPECT_EQ(lineAfter(ui(), "PassOnly"), "SoloAndPass") << "a game the host can start has no reason under it";
   EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "");
   tapRow("PassOnly");
-  ASSERT_EQ(activityManager.replacements.size(), 1u) << "one mode: the match, without a picker";
-  EXPECT_EQ(activityManager.asks.pushed, 0);
+  startNewOnTitle();
+  ASSERT_EQ(activityManager.replacements.size(), 1u) << "one mode: the match, from its title screen's one row";
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started pass-only"));
   reopen();
@@ -516,6 +553,7 @@ TEST_F(ListTest, ManyGamesPageAndEveryDrawnRowDrawsOneIcon) {
   EXPECT_TRUE(ui().drewLine("Game 25"));
   // The rows on the last page open the game they name.
   tapRow("Game 25");
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   EXPECT_TRUE(activityManager.replacements.back() != nullptr);
 }
@@ -538,6 +576,7 @@ TEST_F(ListTest, PageKeysMoveTheSelectionPastTheFirstScreen) {
   EXPECT_FALSE(ui().drewLine("Game 01"));
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-25"));
@@ -597,6 +636,7 @@ TEST_F(ListTest, ANextKeyHeldPagesTheListAndItsReleaseIsNotOneStepMore) {
   frame();
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-01"));
@@ -621,6 +661,7 @@ TEST_F(ListTest, AKeyHeldOverAShortListWrapsWithinTheGames) {
   frame();
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-01"));
@@ -638,6 +679,7 @@ TEST_F(ListTest, APreviousKeyHeldFromTheFirstGameWrapsToTheLastGame) {
   frame();
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started game-02"));
@@ -728,6 +770,7 @@ TEST_F(ListTest, WhenTheIconCacheCannotBeAllocatedTheRowsUseLibraryIcons) {
   EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("boat", false));
   EXPECT_TRUE(logHas("Icon for a-first: library dice-six fill"));
   tapRow("B Second");
+  startNewOnTitle();
   EXPECT_EQ(activityManager.replacements.size(), 1u) << "the row still opens";
 }
 
@@ -774,6 +817,7 @@ TEST_F(ListTest, ATapOnARowReplacesTheListWithThatGamesMatch) {
   ASSERT_TRUE(ui().drewLine("Timer"));
   ASSERT_TRUE(ui().drewLine("Tracer"));
   tapRow("Tracer");
+  startNewOnTitle();
   EXPECT_EQ(activityManager.asks.replaced, 1);
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr) << "what the list opens is a GameMatchActivity";
@@ -795,6 +839,7 @@ TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelectio
   frame();
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started timer"));  // 0 -> 1 -> 2 -> 1
@@ -805,6 +850,7 @@ TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelectio
   reopen();
   input->click(Button::Confirm);
   frame();
+  startNewOnTitle();
   ASSERT_EQ(activityManager.replacements.size(), 1u);
   ASSERT_NE(enterReplacement(), nullptr);
   EXPECT_TRUE(logHas("Started counter"));
@@ -859,6 +905,7 @@ TEST_F(ListTest, ConfirmAndATapAlsoDismissTheNoteWithoutOpeningARow) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty())
       << "the Confirm that dismisses the note must not open the game under it";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   render();
   EXPECT_EQ(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
 
@@ -866,6 +913,7 @@ TEST_F(ListTest, ConfirmAndATapAlsoDismissTheNoteWithoutOpeningARow) {
   ASSERT_NE(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
   tapRow("Alpha");  // a tap on the row under the note dismisses the note; it does not open the row
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   render();
   EXPECT_EQ(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
 }
