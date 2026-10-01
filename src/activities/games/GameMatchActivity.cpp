@@ -278,8 +278,6 @@ void GameMatchActivity::handle(const MatchEvent event) {
   closeRouting();
   // The next screen's tap passes nothing until render has pushed that screen.
   passScreenShown.store(MatchState::Starting);
-  // A contact that began in the last state is not latched for the next.
-  touchDownLatched = false;
   selected.store(0);
   // Before shown: a render already queued must not see Playing with the old count.
   if (event == MatchEvent::PlayAgain) roundsStartedAwaited.store(vm->roundsStarted() + 1);
@@ -550,14 +548,21 @@ void GameMatchActivity::loopPlaying() {
   GameCore::GameEvent event;
   if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
-    // With the frame on the panel when the contact began (or now, for one whose touch-down this loop did not see), so
-    // the VM drops it if another seat has been drawn since (a pass match). A frame number equal to GameVM::UNTAGGED,
-    // which the VM never drops, is posted one less, which can only drop.
-    const uint32_t shown = touchDownLatched ? touchDownFrame : frameDisplayed.load(std::memory_order_acquire);
+    // With the frame on the panel when the loop first saw the finger down (or now, for a contact it never saw down), so
+    // the VM drops it if another seat has been drawn since (a pass match). A tap also has its held time, so it is
+    // back-dated to its touch-down against the last push (frameAt), and the older of the two frames is posted: a tap
+    // whose finger came down while the loop was blocked (an SD write) before the next seat's push carries the frame
+    // before it. A frame number equal to GameVM::UNTAGGED, which the VM never drops, is posted one less, which can only
+    // drop.
+    uint32_t shown = touchDownLatched ? touchDownFrame : frameDisplayed.load(std::memory_order_acquire);
+    if (gesture.kind == GameTouch::Kind::Tap) {
+      const uint32_t atTouchDown = frameAt(static_cast<uint32_t>(millis() - mappedInput.getHeldTime()));
+      if (static_cast<int32_t>(atTouchDown - shown) < 0) shown = atTouchDown;
+    }
     vm->postInput(event, shown == GameVM::UNTAGGED ? shown - 1 : shown);
   }
-  // The contact is over, posted, dropped, or no gesture at all: the next one latches its own.
-  if (contactEnded || gesture.kind != GameTouch::Kind::None) touchDownLatched = false;
+  // No finger down: the contact is over, posted, dropped, or no gesture at all, and the next one latches its own.
+  if (!contactHeld) touchDownLatched = false;
   vm->pollTimer();
   store.flushIfDue(millis());
   flushResume();
@@ -653,21 +658,29 @@ void GameMatchActivity::choose(const GameCore::MatchMenu& menu, const int index)
   handle(menu.events[index]);
 }
 
+uint32_t GameMatchActivity::frameAt(const uint32_t atMs) const {
+  std::lock_guard<std::mutex> lock(pushMutex);
+  // Wrap-safe, as millis() is: before the last push completed, the frame before it was on the panel.
+  if (lastPush.doneMs != 0 && static_cast<int32_t>(atMs - lastPush.doneMs) < 0) return lastPush.before;
+  return frameDisplayed.load(std::memory_order_acquire);
+}
+
 GameTouch::Gesture GameMatchActivity::readGesture() {
   GameTouch::Gesture gesture;
   // Canvas taps and long presses bypass the FreeInkUI interaction table (AD-20).
   // Consuming a long press suppresses the rest of the contact, so its lift is no tap.
   const auto snap = touchSnapshotFrom(mappedInput, /*withLongPress=*/true);
-  // MappedInputManager reports a touch-down on every pass while a still finger has been down 90 ms or more (a level,
-  // not an edge): the first pass that sees it latches the frame on the panel, which the touch is posted with when it
-  // ends.
-  if (snap.touchPressed && !touchDownLatched) {
+  // The first pass that sees a finger down (isScreenTouchHeld, from the contact's first sample; MappedInputManager's
+  // touch-down waits 90 ms and drops a contact that slid) latches the frame on the panel, which the touch is posted
+  // with when it ends.
+  if ((snap.touchHeld || snap.touchPressed) && !touchDownLatched) {
     touchDownFrame = frameDisplayed.load(std::memory_order_acquire);
     touchDownLatched = true;
   }
-  // Any end of the contact, a lift that makes no gesture included, frees the latch for the next one (loopPlaying reads
-  // this pass's latch first).
-  contactEnded = snap.touchReleased;
+  // Whether a finger is still down on this pass; the latch is freed on any pass without one (loopPlaying reads this
+  // pass's latch first): the lift, with a gesture or none, a long press that suppressed the rest of the contact, or a
+  // contact that ended where this loop did not see it (the light panel's swipe, a state the loop left).
+  contactHeld = snap.touchHeld;
   if (snap.touchReleased && snap.touchX >= 0) {
     gesture.kind = snap.longPress ? GameTouch::Kind::LongPress : GameTouch::Kind::Tap;
     gesture.x = snap.touchX;
@@ -746,6 +759,10 @@ void GameMatchActivity::renderCanvas() {
   if (vm->drawFront(renderer, viewport, replay, &taken)) {
     renderer.displayBuffer(replay.refreshMode());
     panel = Panel::Seat;
+    // displayBuffer returns once the panel's refresh has completed (the blocking push), so a touch down before now was
+    // made under the frame before this one (frameAt).
+    std::lock_guard<std::mutex> lock(pushMutex);
+    lastPush = LastPush{frameDisplayed.load(std::memory_order_relaxed), static_cast<uint32_t>(millis())};
   }
   // Every way out of here past the gate stores these, a frame replay skipped as identical to the one on screen included
   // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so

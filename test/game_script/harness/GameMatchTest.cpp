@@ -1214,6 +1214,7 @@ TEST_F(PassMatchTest, AContactBegunUnderSeatOnesFrameAndLiftedUnderSeatTwosIsDro
   // The next finger comes down while seat 1's frame is still the one on the panel (no render since the move), and is
   // held: the input layer reports the touch-down on every pass of the hold, as the device's does.
   input->holdTouch(CANVAS_X + cellX(2), CANVAS_Y + cellY(2));
+  fakertos::advance(100);  // past the 90 ms before the input layer reports a touch-down
   frame();
   renderer->forget();
   showFrame();  // seat 2's frame is pushed while the finger is down
@@ -1231,6 +1232,120 @@ TEST_F(PassMatchTest, AContactBegunUnderSeatOnesFrameAndLiftedUnderSeatTwosIsDro
   tapCanvas(cellX(5), cellY(5));
   frame();
   ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5"); }));
+}
+
+// A contact latched under seat 1's frame that ends where the match's loop never reads it (the light panel's swipe,
+// which ActivityManager takes first): the next pass with no finger down frees the latch, so seat 2's tap after its
+// frame carries seat 2's frame and is played (fix review H1).
+TEST_F(PassMatchTest, ALatchWhoseContactEndedUnseenIsFreedForTheNextTap) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move
+  frame();
+  input->holdTouch(CANVAS_X + cellX(4), CANVAS_Y + cellY(4));
+  frame();  // latched under seat 1's frame, still on the panel
+  // The finger lifted under the light panel: no frame of the match read the release.
+  input->contact = {};
+  renderer->forget();
+  showFrame();  // seat 2's frame; no gesture is read on the way
+  ASSERT_TRUE(drew("Player 2 (O) to move"));
+  fakertos::advance(200);
+  fakelog::clearLines();
+  input->quickTap(CANVAS_X + cellX(5), CANVAS_Y + cellY(5));
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5") || fakelog::anyLine("Dropped a touch"); }));
+  EXPECT_TRUE(logHas("apply seat 2 cell 5"));
+  EXPECT_FALSE(logHas("Dropped a touch")) << "seat 2's tap carried the unseen contact's latch";
+}
+
+// A tap whose finger came down under seat 1's frame while the loop did not run (blocked in an SD write), and lifted
+// after seat 2's frame was pushed, is back-dated by its held time to the frame before that push and dropped (fix
+// review H7).
+TEST_F(PassMatchTest, ATapDownBeforeTheNextSeatsPushAndSeenOnlyAtItsLiftIsDropped) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move
+  frame();
+  ASSERT_TRUE(pumpToRender());  // seat 2's frame is published and asked for
+  fakertos::advance(100);
+  input->holdTouch(CANVAS_X + cellX(2), CANVAS_Y + cellY(2));  // down under seat 1's frame; no loop pass sees it
+  fakertos::advance(30);
+  renderer->forget();
+  render();  // seat 2's frame is pushed, completing now
+  ASSERT_TRUE(drew("Player 2 (O) to move"));
+  fakertos::advance(30);
+  fakelog::clearLines();
+  input->liftTouch();  // the loop first sees the contact at its lift, under seat 2's frame
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("tap for seat 2"); }));
+  EXPECT_TRUE(logHas("Dropped a touch")) << "the tap was not back-dated to seat 1's frame";
+  EXPECT_FALSE(logHas("tap for seat 2"));
+}
+
+// The same contact held until it is a long press (500 ms) after seat 2's frame was pushed: the long press carries seat
+// 1's frame and is dropped, and the lift after it is no tap (the long press suppressed the rest of the contact).
+TEST_F(PassMatchTest, AContactBegunUnderSeatOnesFrameThatBecomesALongPressUnderSeatTwosIsDropped) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move
+  frame();
+  input->holdTouch(CANVAS_X + cellX(2), CANVAS_Y + cellY(2));
+  fakertos::advance(100);
+  frame();  // latched under seat 1's frame
+  renderer->forget();
+  showFrame();  // seat 2's frame is pushed while the finger is down
+  ASSERT_TRUE(drew("Player 2 (O) to move"));
+  fakelog::clearLines();
+  fakertos::advance(500);  // the hold becomes a long press
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a touch") || fakelog::anyLine("for seat 2"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a touch"), 1u) << "the long press is dropped, tagged with seat 1's frame";
+  input->liftTouch();
+  frame();
+  frame();
+  // Seat 2's own tap, made after its frame, is played: everything queued before it has been handled.
+  fakertos::advance(200);
+  tapCanvas(cellX(5), cellY(5));
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a touch"), 1u) << "the lift after a long press is no tap";
+  EXPECT_EQ(fakelog::countLines("tap for seat 2"), 1u) << "only seat 2's own tap reached seat 2";
+}
+
+// A tap shorter than 90 ms reports no touch-down (the device clears its press on the release update), so it carries the
+// frame on the panel when its lift is read, never an earlier contact's latch: seat 2's quick tap after seat 1's held
+// move, and after a contact of seat 1's that ended with no gesture, is played.
+TEST_F(PassMatchTest, AQuickTapWithNoTouchDownCarriesTheFrameAtItsLift) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  // A contact of seat 1's that ends with no gesture (it slid past the tap slop): nothing is posted.
+  input->holdTouch(CANVAS_X + cellX(4), CANVAS_Y + cellY(4));
+  fakertos::advance(100);
+  frame();
+  input->liftWithoutTap();
+  frame();
+  EXPECT_FALSE(logHas("tap for seat 1"));
+  // Seat 1 moves with a held tap (latched under its own frame), and seat 2's frame is drawn.
+  input->holdTouch(CANVAS_X + cellX(1), CANVAS_Y + cellY(1));
+  fakertos::advance(100);
+  frame();
+  input->liftTouch();
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 1 cell 1"); }));
+  renderer->forget();
+  showFrame();
+  ASSERT_TRUE(drew("Player 2 (O) to move"));
+  fakertos::advance(200);  // seat 2's tap begins after its frame's push completed
+  fakelog::clearLines();
+  input->quickTap(CANVAS_X + cellX(5), CANVAS_Y + cellY(5));
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("apply seat 2 cell 5") || fakelog::anyLine("Dropped a touch"); }));
+  EXPECT_TRUE(logHas("apply seat 2 cell 5"));
+  EXPECT_FALSE(logHas("Dropped a touch"));
 }
 
 // The same behind the move that ends the round (cross-story review row 4): the tap never reaches seat 0, which is a
@@ -1312,33 +1427,89 @@ TEST_F(MatchTest, APushHoldsTheCanvasAndUiTextsDrawnSinceTheLastClearScreenAndNo
   EXPECT_TRUE(renderer->shown[3].texts.empty());
 }
 
-// The screen renderer double's clear hook (fix review F2's seam): it runs after the screen is cleared, inside the call,
-// standing in for the VM task publishing on the other core while render draws.
-// The input double's held contact stands in for the device's touch-down level (wasScreenTouchDown true on every update
-// while a still finger stays down past 90 ms): reported on every frame across clear(), and released by liftTouch().
-TEST(InputDoubleTest, AHeldContactReportsItsTouchDownOnEveryFrameUntilItLifts) {
+// The input double's held contact, pinned to the device's touch path (src/MappedInputManager.cpp, freeink-sdk's
+// InputManager.cpp): the touch-down is a level, reported on every frame once a still finger has been down 90 ms
+// (TOUCH_DOWN_SELECT_DELAY_MS over isTouchTapCandidate) and not before; the finger reads as held while down
+// (isTouchHeldAt); at 500 ms (TOUCH_LONG_PRESS_MS) a long press fires once, and reading it suppresses the rest of the
+// contact (suppressTouchContact: no touch-down, held contact, release, or tap after it); a lift before that reports the
+// release and the tap but no touch-down on its frame (the device clears its press on the release update).
+TEST(InputDoubleTest, AHeldContactFollowsTheDevicesTouchPath) {
+  fakertos::reset();
   HalGPIO gpio;
   const GfxRenderer renderer(480, 800);
   MappedInputManager input(gpio, renderer);
   int x = 0;
   int y = 0;
-  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
   input.holdTouch(12, 34);
+  EXPECT_TRUE(input.isScreenTouchHeld(x, y)) << "held from the touch itself";
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "no touch-down before 90 ms";
+  fakertos::advance(90);
   for (int frame = 0; frame < 3; ++frame) {
     ASSERT_TRUE(input.wasScreenTouchDown(x, y)) << "frame " << frame;
     EXPECT_EQ(x, 12);
     EXPECT_EQ(y, 34);
     EXPECT_FALSE(input.wasScreenTapped(x, y)) << "no release while held";
+    EXPECT_FALSE(input.wasScreenLongPress(x, y)) << "no long press before 500 ms";
     input.clear();
   }
   input.liftTouch();
   EXPECT_TRUE(input.wasScreenTapped(x, y));
   EXPECT_EQ(x, 12);
   EXPECT_TRUE(input.wasScreenTouchReleased());
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "the release frame reports no touch-down";
+  EXPECT_FALSE(input.isScreenTouchHeld(x, y));
   input.clear();
-  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "the contact is over";
+  // Held to a long press: it fires once, then nothing more of the contact is reported.
+  input.holdTouch(5, 6);
+  fakertos::advance(500);
+  EXPECT_TRUE(input.wasScreenLongPress(x, y));
+  EXPECT_FALSE(input.wasScreenLongPress(x, y)) << "once";
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "suppressed";
+  EXPECT_FALSE(input.isScreenTouchHeld(x, y)) << "suppressed";
+  input.liftTouch();
+  EXPECT_FALSE(input.wasScreenTapped(x, y)) << "the lift after a long press is no tap";
+  EXPECT_FALSE(input.wasScreenTouchReleased()) << "a suppressed contact's release is not reported";
+  input.clear();
+  // A quick tap: the release and the tap on one frame, no touch-down, and its held time on that frame.
+  input.quickTap(7, 8, 40);
+  EXPECT_TRUE(input.wasScreenTapped(x, y));
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
+  EXPECT_EQ(input.getHeldTime(), 40u);
+  input.clear();
+  // The 90 ms boundary, a held contact kept across clear(), and a lift's held time.
+  input.holdTouch(1, 2);
+  fakertos::advance(89);
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y)) << "89 ms";
+  input.clear();
+  fakertos::advance(1);
+  EXPECT_TRUE(input.wasScreenTouchDown(x, y)) << "90 ms, after a clear()";
+  input.liftTouch();
+  EXPECT_EQ(input.getHeldTime(), 90u);
+  input.clear();
+  // A lift with no gesture: a raw release only.
+  input.holdTouch(3, 4);
+  input.liftWithoutTap();
+  EXPECT_TRUE(input.wasScreenTouchReleased());
+  EXPECT_FALSE(input.wasScreenTapped(x, y));
+  input.clear();
+  EXPECT_FALSE(input.isScreenTouchHeld(x, y));
+  // A long press not read on the frame it falls due is lost, as the device's one-update event is: the contact is not
+  // suppressed, and its lift taps.
+  input.holdTouch(9, 9);
+  fakertos::advance(500);
+  input.clear();  // the frame ends unread
+  EXPECT_FALSE(input.wasScreenLongPress(x, y)) << "lost";
+  EXPECT_TRUE(input.isScreenTouchHeld(x, y)) << "not suppressed";
+  input.liftTouch();
+  EXPECT_TRUE(input.wasScreenTapped(x, y)) << "its lift taps";
+  // A lift with no held contact scripts nothing.
+  input.clear();
+  input.liftTouch();
+  EXPECT_FALSE(input.wasScreenTapped(x, y));
 }
 
+// The screen renderer double's clear hook (fix review F2's seam): it runs after the screen is cleared, inside the call,
+// standing in for the VM task publishing on the other core while render draws.
 TEST(ScreenRendererDoubleTest, ClearScreenRunsTheHookAfterTheScreenIsCleared) {
   GfxRenderer renderer(480, 800);
   renderer.fillRect(0, 0, 10, 10, true);
@@ -1561,6 +1732,38 @@ class HiddenPassTest : public MatchTest {
     EXPECT_TRUE(holds(lastPush(), "Tap to pass to player " + std::to_string(next)));
   }
 };
+
+// A contact of seat 1's latched in Playing and lifted in Result, where the match's loop does not read gestures (as the
+// light panel's swipe also ends a contact the loop never sees): the first Playing pass with no finger down frees the
+// latch, so seat 2's quick tap carries seat 2's frame and is played (fix review H1).
+TEST_F(HiddenPassTest, ALatchFromAContactThatEndedOutsidePlayingIsFreedForTheNextSeat) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(100, 300);  // seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);  // another finger of seat 1's, under its frame
+  fakertos::advance(100);
+  frame();  // latched under seat 1's frame
+  fakertos::release();
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  render();            // the banner over the mover's frame
+  input->liftTouch();  // lifted in Result: its tap passes the device
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  showSeat(2);
+  fakertos::advance(200);  // seat 2's tap begins after its frame's push completed
+  fakelog::clearLines();
+  input->quickTap(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("tap for seat 2") || fakelog::anyLine("Dropped a touch"); }));
+  EXPECT_TRUE(logHas("tap for seat 2"));
+  EXPECT_FALSE(logHas("Dropped a touch")) << "seat 2's tap carried seat 1's latched frame";
+}
 
 TEST_F(HiddenPassTest, EachSeatIsShownOnlyAfterABlankAndNoSecretCrossesIt) {
   enterHidden();

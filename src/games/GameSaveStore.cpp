@@ -70,9 +70,10 @@ constexpr char BAD_SEAT_COUNT[] = "bad seat count";
 constexpr char UNKNOWN_MODE[] = "unknown mode";
 // A later firmware's save: a resume.bin whose file version is newer than this firmware's (its layout is unknown, so
 // its package cannot be read; it sits in this game's folder), one of this package whose codec version is newer, or one
-// of this package whose snapshot is larger than this firmware's limit (checked after its mode and seat count, so a
-// malformed one stays `bad seat count`, and one this host cannot start names that). Kept as one this host cannot
-// start, as an unknown mode byte is. An older or garbage version, or another package's, stays a refusal that is not.
+// of this package whose snapshot is larger than this firmware's limit (the last two checked after its mode and seat
+// count, so a malformed one stays `bad seat count`, and one this host cannot start names that). Kept as one this host
+// cannot start, as an unknown mode byte is. An older or garbage version, or another package's, stays a refusal that is
+// not.
 constexpr char NEWER_FILE_VERSION[] = "newer file version";
 constexpr char NEWER_CODEC_VERSION[] = "newer codec version";
 constexpr char TOO_LARGE[] = "too large";
@@ -210,13 +211,15 @@ const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)
   if (status == BlobHeaderStatus::UnknownFileVersion && prefix[BLOB_MAGIC_BYTES] > GameSaveStore::RESUME_FILE_VERSION) {
     return NEWER_FILE_VERSION;
   }
+  // This package's save with a newer codec is a later firmware's, kept, once its mode and seat count (whose layout a
+  // codec-only bump keeps) are checked below, as an oversized one is.
+  bool newerCodec = false;
   if (status == BlobHeaderStatus::UnknownCodecVersion && prefixBytes == RESUME_PREFIX_BYTES) {
-    // Another package's save is that package's whatever its codec, a quiet line in peek as below; this package's with a
-    // newer codec is a later firmware's, kept.
+    // Another package's save is that package's whatever its codec, a quiet line in peek as below.
     if (!thisPackage) return OTHER_PACKAGE;
-    if (prefix[BLOB_MAGIC_BYTES + 1] > Codec::VERSION) return NEWER_CODEC_VERSION;
+    newerCodec = prefix[BLOB_MAGIC_BYTES + 1] > Codec::VERSION;
   }
-  if (status != BlobHeaderStatus::Ok) return blobHeaderStatusName(status);
+  if (status != BlobHeaderStatus::Ok && !newerCodec) return blobHeaderStatusName(status);
   if (prefixBytes < RESUME_PREFIX_BYTES) return "truncated";
   // Before the mode: another package's save is that package's whatever its mode, and stays a quiet line in peek.
   if (!thisPackage) return OTHER_PACKAGE;
@@ -239,7 +242,9 @@ const char* GameSaveStore::readResume(const char* path, const uint8_t (&pkgHash)
     case Mode::Nearby:  // modeOfByte never gives it: a nearby match saves nothing (AD-17)
       return MODE_NOT_STARTABLE;
   }
-  // After the mode and seat count, so a malformed one stays a refusal that is not kept, whatever the file's size.
+  // After the mode and seat count, so a malformed one stays a refusal that is not kept, whatever the file's size or
+  // codec.
+  if (newerCodec) return NEWER_CODEC_VERSION;
   if (tooLarge) return TOO_LARGE;
   ver = static_cast<uint16_t>(prefix[RESUME_VER_AT] | (prefix[RESUME_VER_AT + 1] << 8));
   if (snapshotBytes == 0) return "empty snapshot";

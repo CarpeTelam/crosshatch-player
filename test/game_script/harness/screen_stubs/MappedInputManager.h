@@ -18,6 +18,7 @@
 // calls and a test that drives an activity's loop() calls itself). `holdLong` is the older shortcut: a hold that
 // crosses any threshold, with no suppression.
 
+#include <Arduino.h>
 #include <HalGPIO.h>
 
 #include <climits>
@@ -88,19 +89,46 @@ class MappedInputManager {
   bool hasTouch() const { return true; }
 
   bool wasScreenTapped(int& x, int& y) const { return touch.tapped ? at(x, y) : false; }
-  // The device's is a level, not an edge: true on every update while a still finger has been down 90 ms or more
-  // (MappedInputManager.cpp's TOUCH_DOWN_SELECT_DELAY_MS over InputManager::isTouchTapCandidate). `touch.down` scripts
-  // it for one frame; holdTouch() keeps it reported on every frame, across clear(), until liftTouch().
+  // A held contact (holdTouch) is modelled on the device's touch path (src/MappedInputManager.cpp over freeink-sdk's
+  // InputManager.cpp), on the harness clock (millis()): wasScreenTouchDown is a level, true on every frame while the
+  // still finger has been down TOUCH_DOWN_SELECT_DELAY_MS (90) or more (isTouchTapCandidate); wasScreenLongPress fires
+  // once when it has been down TOUCH_LONG_PRESS_MS (500), and reading it suppresses the rest of the contact
+  // (suppressTouchContact): no touch-down, no held contact, no release, no tap after it; isScreenTouchHeld is true
+  // while the finger is down and not suppressed (isTouchHeldAt); liftTouch() releases it on a frame that reports the
+  // release and the tap (unless suppressed) but no touch-down, since the device clears its press on the release update.
+  // A scripted `touch` (tap(), quickTap(), longPress()) is one frame's events, as the test sets them. Not modelled: tap
+  // slop, multi-touch, and the override's 250 ms life (the device-run packet holds them). The device's long press is a
+  // one-update event: one not read on the frame it fell due is lost (clear() ends that frame), the contact goes on
+  // unsuppressed, and its lift taps. getHeldTime() answers a tap's held time on its frame.
+  static constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
+  static constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
   bool wasScreenTouchDown(int& x, int& y) const {
-    if (contact.held) {
+    if (contact.held && !contact.suppressed && millis() - contact.sinceMs >= TOUCH_DOWN_SELECT_DELAY_MS) {
       x = contact.x;
       y = contact.y;
       return true;
     }
     return touch.down ? at(x, y) : false;
   }
-  bool wasScreenLongPress(int& x, int& y) const { return touch.longPress ? at(x, y) : false; }
-  bool isScreenTouchHeld(int& x, int& y) const { return touch.held ? at(x, y) : false; }
+  bool wasScreenLongPress(int& x, int& y) const {
+    if (contact.held && !contact.suppressed && !contact.longPressFired &&
+        millis() - contact.sinceMs >= TOUCH_LONG_PRESS_MS) {
+      contact.longPressFired = true;
+      contact.suppressed = true;  // the real wasScreenLongPress consumes it: suppressTouchContact()
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.longPress ? at(x, y) : false;
+  }
+  bool isScreenTouchHeld(int& x, int& y) const {
+    if (contact.held && !contact.suppressed) {
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.held ? at(x, y) : false;
+  }
   bool wasScreenTouchReleased() const { return touch.released; }
   // A tap released inside the rectangle.
   bool wasTapInRect(const int x, const int y, const int width, const int height) const {
@@ -140,7 +168,9 @@ class MappedInputManager {
   bool wasLightPanelGesture() const { return false; }
   bool wasAnyPressed() const { return !pressed.empty(); }
   bool wasAnyReleased() const { return !released.empty(); }
-  unsigned long getHeldTime() const { return heldMs; }
+  // A tap's frame answers its contact's held time, as the device's getHeldTime() does for 250 ms after wasScreenTapped
+  // (rememberTouchHeldTime, with no button pressed or released); otherwise the button hold a test set.
+  unsigned long getHeldTime() const { return touch.tapped ? touch.heldMs : heldMs; }
   const GfxRenderer& getRenderer() const { return *renderer; }
   Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const {
     return {back, confirm, previous, next};
@@ -162,6 +192,7 @@ class MappedInputManager {
     bool released = false;   // wasScreenTouchReleased
     int x = 0;
     int y = 0;
+    unsigned long heldMs = 0;  // getHeldTime() on a tap's frame
   };
 
   void press(const Button button) { pressed.insert(button); }
@@ -187,14 +218,44 @@ class MappedInputManager {
     touch.x = x;
     touch.y = y;
   }
-  // A finger held still at (x, y) from now on, reported by wasScreenTouchDown on every frame (the device's level) until
-  // liftTouch(), which releases it there as a tap this frame.
-  void holdTouch(const int x, const int y) { contact = {true, x, y}; }
+  // A finger put down still at (x, y) now, held across frames (and clear()) until liftTouch(): see wasScreenTouchDown.
+  void holdTouch(const int x, const int y) {
+    contact = Contact{};
+    contact.held = true;
+    contact.x = x;
+    contact.y = y;
+    contact.sinceMs = millis();
+  }
+  // The held finger lifts: the release this frame, and a tap at its touch-down point (with its held time) unless the
+  // contact was suppressed. Nothing without a held contact.
   void liftTouch() {
+    if (!contact.held) return;
+    if (!contact.suppressed) {
+      touch.tapped = touch.released = true;
+      touch.x = contact.x;
+      touch.y = contact.y;
+      touch.heldMs = millis() - contact.sinceMs;
+    }
+    contact = Contact{};
+  }
+  // A tap shorter than 90 ms, as the device reports it: the release and the tap on one frame, and never a touch-down
+  // (tap() also scripts the touch-down, as a screen double needs for rowTouch's Down).
+  void quickTap(const int x, const int y, const unsigned long heldMs = 50) {
     touch.tapped = touch.released = true;
-    touch.x = contact.x;
-    touch.y = contact.y;
-    contact = {};
+    touch.x = x;
+    touch.y = y;
+    touch.heldMs = heldMs;
+  }
+  // A contact (held, or this frame's) that ends with no gesture: on the device, one whose excursion passed the 59 px
+  // tap-release slop and that made no swipe (it came back, or took longer than a swipe may). A raw release only (none
+  // for a suppressed contact).
+  void liftWithoutTap() {
+    if (!contact.suppressed) {
+      touch.released = true;
+      touch.x = -1;
+      touch.y = -1;
+    }
+    contact = Contact{};
   }
   void longPress(const int x, const int y) {
     touch.longPress = true;
@@ -217,6 +278,10 @@ class MappedInputManager {
   }
   // The frame is over: nothing is pressed or touched any more.
   void clear() {
+    // A long press due this frame and not read is lost, as the device's one-update event is.
+    if (contact.held && !contact.suppressed && millis() - contact.sinceMs >= TOUCH_LONG_PRESS_MS) {
+      contact.longPressFired = true;
+    }
     pressed.clear();
     released.clear();
     longPressed.clear();
@@ -232,12 +297,17 @@ class MappedInputManager {
   std::set<Button> longPressed;
   unsigned long heldMs = 0;
   Touch touch;
-  // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event.
+  // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event. Mutable: the real manager's
+  // long-press read suppresses the contact from a const method.
   struct Contact {
     bool held = false;
+    bool suppressed = false;
+    bool longPressFired = false;
     int x = 0;
     int y = 0;
-  } contact;
+    unsigned long sinceMs = 0;
+  };
+  mutable Contact contact;
   SwipeDir swipeDir = SwipeDir::None;
   bool backGesture = false;
   bool homeGesture = false;

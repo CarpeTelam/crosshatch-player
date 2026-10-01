@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <span>
 
 #include "activities/Activity.h"
@@ -193,8 +194,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
                      uint8_t count) const;
   // The view's translated headline; null for a state with no view.
   const char* viewHeadline(MatchState state) const;
-  // This loop pass's touch gesture on the logical screen, if any; latches frameDisplayed at a touch-down.
+  // This loop pass's touch gesture on the logical screen, if any; latches frameDisplayed at the first pass that sees a
+  // finger down, and notes whether a finger is still down.
   GameTouch::Gesture readGesture();
+  // Loop task: the frame on the panel at millis() `atMs`, as far as the last push tells: the frame before it when
+  // `atMs` is before that push completed, else frameDisplayed.
+  uint32_t frameAt(uint32_t atMs) const;
 
   GameCore::Manifest manifest;
   GameCore::Roster roster;
@@ -288,13 +293,23 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // posts each touch with (GameVM::postInput), so the VM drops one made under another seat's frame. Stored before
   // roundsDisplayed and seatDisplayed, so a loop that sees those sees this frame's number.
   std::atomic<uint32_t> frameDisplayed{0};
-  // Loop task: frameDisplayed at the first pass that saw the contact's touch-down (the input layer reports it once a
-  // still finger has been down 90 ms), until the contact ends (or handle() changes state), so a contact begun under one
-  // seat's frame and lifted after the next seat's was pushed carries the first. A shorter tap is tagged at its lift.
+  // Loop task: frameDisplayed at the first Playing pass that saw the finger down (isScreenTouchHeld), kept until a pass
+  // with no finger down, so a contact held from under one seat's frame until after the next seat's was pushed carries
+  // the first. A contact the loop never saw down (it lifted while the loop was blocked) is tagged when its lift is
+  // read, and a tap is also back-dated (frameAt).
   uint32_t touchDownFrame = 0;
   bool touchDownLatched = false;
-  // Loop task: readGesture saw this pass's contact end (a release, with or without a gesture).
-  bool contactEnded = false;
+  // Loop task: readGesture saw a finger down on this pass (isScreenTouchHeld).
+  bool contactHeld = false;
+  // The last canvas push that changed the panel, written by render after displayBuffer returned (which it does once
+  // the panel's refresh has completed) and read by the loop task (frameAt), under pushMutex: the frame on the panel
+  // before it, and millis() when it completed. Lock order: RenderLock, then pushMutex; the loop takes pushMutex alone.
+  struct LastPush {
+    uint32_t before = 0;
+    uint32_t doneMs = 0;
+  };
+  mutable std::mutex pushMutex;
+  LastPush lastPush;
   // Render task only: the view's dialog, a member since it is over 1 KB.
   freeink::ui::OptionDialogProps dialogProps;
   // Render task only: Result's banner and its text, members since the props are over 256 bytes.
