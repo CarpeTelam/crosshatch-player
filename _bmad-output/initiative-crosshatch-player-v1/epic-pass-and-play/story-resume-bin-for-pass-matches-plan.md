@@ -3,7 +3,7 @@ title: 'resume.bin for pass matches'
 type: 'feature'
 ticket: '5'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'dbc964f7f5283988f64947afb25851c95d137645'
