@@ -30,6 +30,7 @@ bool GameHash::finish(uint8_t (&digest)[DIGEST_BYTES]) {
 
 #else
 
+// cppcheck-suppress uninitMemberVar // mbedtls_sha256_init sets context; cppcheck takes finish's digest for a member
 GameHash::GameHash() {
   mbedtls_sha256_init(&context);
   started = mbedtls_sha256_starts(&context, /*is224=*/0) == 0;

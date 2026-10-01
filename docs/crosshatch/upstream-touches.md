@@ -127,6 +127,9 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_layers.py` -- the layer check job's check of the spine's layer table (retro AI-5).
 - `scripts/check_layers_test.py`
 - `scripts/sim_sh_test.py` -- tests the simulator skill's `sim.sh` (epic-icon-library retrospective, AI-11).
+- `scripts/dev_setup.py` -- the idempotent container setup the cloud SessionStart hook runs.
+- `scripts/dev_setup_test.py`
+- `.claude/hooks` -- the SessionStart hook that runs `scripts/dev_setup.py` in cloud sessions.
 
 ## Running the check locally
 
