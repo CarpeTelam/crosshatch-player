@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ApiLevel.h"
@@ -16,6 +18,7 @@
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
 #include "MatchSupport.h"
+#include "RemoveScript.h"
 #include "activities/games/GameMatchActivity.h"
 #include "activities/games/GameModeActivity.h"
 #include "activities/games/GamesLauncherActivity.h"
@@ -82,7 +85,7 @@ Bytes snapshotOf(const uint8_t taps) {
 }
 
 // resume.bin as GameSaveStore lays it out for a match of PKG's package in `mode` with `seats` seats
-// (ContinueLauncherTest's helper, which fixes them at solo and one).
+// (the helper of the Continue rows' suite that entry 8 retired, which fixed them at solo and one).
 Bytes resumeBytes(const uint8_t taps, const uint16_t ver, const uint8_t mode = SAVED_SOLO, const uint8_t seats = 1) {
   Bytes out = {'C', 'H', 'R', 'S', 1, 1};
   out.insert(out.end(), HASH, HASH + GamePkg::HASH_BYTES);
@@ -96,7 +99,7 @@ Bytes resumeBytes(const uint8_t taps, const uint16_t ver, const uint8_t mode = S
 }
 
 // A game of five taps that logs its setup and every draw, so a resumed match shows which snapshot it drew and whether
-// setup ran (ContinueLauncherTest's).
+// setup ran (from the Continue rows' suite that entry 8 retired).
 const char* const COUNTING_GAME = R"(
 local game = {}
 function game.setup(ctx)
@@ -220,8 +223,8 @@ class TitleScreenTest : public match::ScreenTest {
     startTitle();
   }
 
-  // The launcher, a tap on `game`'s own row, and the title screen it pushed, opened. The own row is the last one drawn
-  // with the game's name: the launcher's Continue row of a solo save (until entry 8) is drawn above it.
+  // The launcher, a tap on `game`'s row, and the title screen it pushed, opened. A game has one row (entry 8 took the
+  // launcher's Continue rows away), the one drawn with its name.
   void openTitleThroughLauncher(const std::string& game) {
     openLauncher();
     const screen::DrawnText* own = nullptr;
@@ -426,13 +429,26 @@ TEST_F(TitleScreenTest, AGameThisHostCannotStartOpensNeitherTheMatchNorTheTitleS
   EXPECT_TRUE(logHas("Not starting counter: "));
 }
 
-// The launcher's Continue rows stay until entry 8: a tap on one resumes at once, with no title screen.
-TEST_F(TitleScreenTest, TheLaunchersContinueRowStillResumesDirectly) {
+// Entry 8: the launcher has one row per game and no Continue row; a game with a save offers it on the title screen its
+// row opens, first, where the selection starts.
+TEST_F(TitleScreenTest, AGameWithASaveHasOneRowThatOpensItsTitleScreenWithContinueFirst) {
   addCountingGame("alpha", "Alpha", "\"solo\"", 1, 1);
   save("alpha");
   openLauncher();
-  tapRow(tr(STR_GAMES_CONTINUE));
-  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE))) << ui().joined();
+  EXPECT_EQ(std::count_if(ui().drawn.begin(), ui().drawn.end(),
+                          [](const screen::DrawnText& drawn) { return drawn.text == "Alpha"; }),
+            1)
+      << "one row: " << ui().joined();
+  tapRow("Alpha");
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Alpha"));
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(rowsDrawn(), expected);
+  input->click(Button::Confirm);
+  frame();
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
@@ -947,6 +963,395 @@ TEST(HostCapsDouble, DefaultsAreTheDevicesValues) {
   EXPECT_EQ(caps.maxSeats, HostCapsValues::MAX_SEATS);
   EXPECT_EQ(caps.nearby, HostCapsValues::NEARBY_BUILT);
   EXPECT_EQ(caps.pass, HostCapsValues::PASS);
+}
+
+// ---- one launcher row per game (entry 8): the launcher reads no save, and a game's row opens its title screen ----
+
+// The cases ContinueLauncherTest held for the launcher's Continue rows (ticket 12 of epic-install-and-launcher), moved
+// here when entry 8 took those rows away: a save is now found, offered, and resumed by the title screen a game's one
+// row opens. The fixture adds to TitleScreenTest what the moved cases need: many games, a remove, and the launcher
+// built again after a match is left, as goToGames() builds it.
+
+std::string idOf(const int number) {
+  char id[24];
+  std::snprintf(id, sizeof(id), "game-%02d", number);
+  return id;
+}
+std::string nameOf(const int number) {
+  char name[24];
+  std::snprintf(name, sizeof(name), "Game %02d", number);
+  return name;
+}
+
+class OneRowPerGameTest : public TitleScreenTest {
+ protected:
+  void SetUp() override {
+    TitleScreenTest::SetUp();
+    removescript::reset();
+    // The real remove takes the game's folder off the card.
+    removescript::script().onRemove = [] { takeGameOffTheCard(removescript::script().ids.back()); };
+  }
+  void TearDown() override {
+    TitleScreenTest::TearDown();
+    removescript::reset();
+  }
+
+  // Solo games of the counting Lua, Game 01 to Game `count`.
+  static void addGames(const int count) {
+    for (int i = 1; i <= count; ++i) addCountingGame(idOf(i), nameOf(i), "\"solo\"", 1, 1);
+  }
+  static void takeGameOffTheCard(const std::string& id) {
+    for (const char* file : {".pkg", "manifest.json", "main.lua"}) fakesd::removeEntry("/.games/" + id + "/" + file);
+    fakesd::removeEntry("/.games/" + id);
+  }
+  // Every card operation on a path under /.games-data/ (an existence check, an open, a listing), where the saves are.
+  static size_t gamesDataOps() {
+    size_t total = 0;
+    for (const std::string& op : fakesd::sim().ops)
+      if (op.find(" /.games-data/") != std::string::npos) ++total;
+    return total;
+  }
+
+  void key(const Button button, const int times = 1) {
+    for (int i = 0; i < times; ++i) {
+      input->click(button);
+      frame();
+    }
+  }
+  void swipeUp() {
+    input->swipeDirection(MappedInputManager::SwipeDir::Up);
+    frame();
+    render();
+  }
+  // The games of Game 01 to Game `total` whose names the screen drew, top to bottom.
+  std::vector<std::string> shown(const int total) {
+    std::vector<std::string> found;
+    for (const screen::DrawnText& drawn : ui().drawn)
+      for (int i = 1; i <= total; ++i)
+        if (drawn.text == nameOf(i)) found.push_back(drawn.text);
+    return found;
+  }
+  // The launcher's note, its wrapped lines read as one.
+  std::string flatText() {
+    std::string text = ui().joined();
+    std::replace(text.begin(), text.end(), '\n', ' ');
+    return text;
+  }
+
+  // Every screen goes as the manager lets it go: the match (`saves` says what becomes of the save its exit writes), the
+  // title screen, and the launcher.
+  void closeScreens(const match::Saves saves) {
+    match::letStartedMatchesGo([this] { dropMatch(); }, saves);
+    dropTitle();
+    if (list) {
+      activityManager.exitHolding(*list);
+      activityManager.destroyHolding(list);
+    }
+    activityManager.reset();
+    theme().reset();
+    taps = 0;
+  }
+  // Leave, or the match ended: goToGames() builds a fresh launcher.
+  void reopenLauncher(const match::Saves saves) {
+    closeScreens(saves);
+    openLauncher();
+  }
+};
+
+// The launcher with saves on the card: one row for each game, no Continue line, and not one card operation under
+// /.games-data/ when it opens, scrolls, or reloads after a remove (the title screen peeks a game's save when it opens).
+TEST_F(OneRowPerGameTest, WithSavesOnTheCardTheLauncherIsOneRowPerGameAndReadsNoSave) {
+  addCountingGame("bravo", "Bravo", "\"solo\"", 1, 1);
+  addCountingGame("charlie", "Charlie", "\"solo\"", 1, 1);
+  addCountingGame("alpha", "Alpha", "\"solo\"", 1, 1);
+  save("alpha");
+  save("charlie");
+  const size_t before = gamesDataOps();
+  openLauncher();
+  const std::vector<std::string> names{"Alpha", "Bravo", "Charlie"};
+  std::vector<std::string> drawn;
+  for (const screen::DrawnText& line : ui().drawn)
+    if (std::find(names.begin(), names.end(), line.text) != names.end()) drawn.push_back(line.text);
+  EXPECT_EQ(drawn, names) << "one row a game: " << ui().joined();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE)));
+  EXPECT_EQ(gamesDataOps(), before) << "entry";
+
+  swipeUp();
+  render();
+  EXPECT_EQ(gamesDataOps(), before) << "a redraw (three games fit one page; TwentyFiveGames... scrolls)";
+
+  const screen::DrawnText* bravo = nullptr;
+  for (const screen::DrawnText& line : ui().drawn)
+    if (line.text == "Bravo") bravo = &line;
+  ASSERT_NE(bravo, nullptr) << ui().joined();
+  input->longPress(bravo->rect.x + bravo->rect.width / 2, bravo->rect.y + bravo->rect.height / 2);
+  frame();
+  render();
+  tapRow(tr(STR_GAMES_REMOVE));
+  render();
+  EXPECT_EQ(removescript::script().ids, std::vector<std::string>{"bravo"});
+  EXPECT_TRUE(ui().drewLine("Alpha"));
+  EXPECT_FALSE(ui().drewLine("Bravo"));
+  EXPECT_TRUE(ui().drewLine("Charlie"));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE)));
+  EXPECT_EQ(gamesDataOps(), before) << "the reload after a remove";
+  EXPECT_TRUE(fakesd::has(resumePath("alpha")));
+  EXPECT_TRUE(fakesd::has(resumePath("charlie")));
+
+  // The control: the title screen a row opens does peek the save, and the count sees it.
+  tapRow("Alpha");
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_GT(gamesDataOps(), before);
+}
+
+TEST_F(OneRowPerGameTest, TwentyFiveGamesWithSavesPageAsOneRowPerGame) {
+  addGames(25);
+  for (const int n : {3, 11, 24}) save(idOf(n));
+  openLauncher();
+  const size_t page = shown(25).size();
+  ASSERT_GE(page, 2u);
+  ASSERT_LT(page, 25u) << "the list must not fit one screen";
+  std::vector<std::string> seen;
+  const size_t pages = (25 + page - 1) / page;
+  for (size_t p = 0; p < pages; ++p) {
+    if (p > 0) swipeUp();
+    const std::vector<std::string> rows = shown(25);
+    EXPECT_EQ(rows.size(), std::min(page, 25 - p * page)) << "page " << p + 1 << " holds what is left, once";
+    EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE))) << "page " << p + 1;
+    seen.insert(seen.end(), rows.begin(), rows.end());
+  }
+  std::vector<std::string> all;
+  for (int i = 1; i <= 25; ++i) all.push_back(nameOf(i));
+  EXPECT_EQ(seen, all);
+  EXPECT_EQ(gamesDataOps(), 0u);
+}
+
+// #9 of ContinueLauncherTest: a Confirm on the game's row opens its title screen, and a Confirm there resumes.
+TEST_F(OneRowPerGameTest, ConfirmOnTheGamesRowThenConfirmResumesItsSave) {
+  addGames(2);
+  save("game-02");
+  openLauncher();
+  key(Button::NavNext);  // Game 02's row
+  key(Button::Confirm);
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Game 02"));
+  key(Button::Confirm);  // Continue: the first row, where the selection starts
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-02"));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+  EXPECT_FALSE(logHas("setup ran"));
+}
+
+// #3: a save written for the package as it was before the game was reinstalled is no save of the game installed now.
+TEST_F(OneRowPerGameTest, ASaveOfAChangedPackageOffersNoContinueAndIsLeftOnTheCard) {
+  addGames(2);
+  save("game-01");
+  Bytes stale = resumeBytes(2, 3);
+  stale[6 + GamePkg::HASH_BYTES - 1] ^= 0x03;  // the package hash follows the 6-byte header
+  fakesd::addFile(resumePath("game-02"), stale);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 02"));
+  const std::vector<std::string> newOnly{tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(rowsDrawn(), newOnly);
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), stale) << "the screens only look";
+
+  // The installer replaces Game 01 with a build whose package hash differs: its title screen has no Continue either.
+  fakesd::addFile("/.games/game-01/.pkg", std::string("v1\n0530a15766e91bf2\n"));
+  closeScreens(match::Saves::Discard);  // no match ran
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
+  EXPECT_EQ(rowsDrawn(), newOnly);
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-01")), resumeBytes(2, 3));
+}
+
+// #5: a file that is not a resume (text, or cut short) offers no Continue; a valid one beside it does.
+TEST_F(OneRowPerGameTest, ASaveThatIsNotAValidResumeOffersNoContinue) {
+  addGames(3);
+  fakesd::addFile(resumePath("game-01"), std::string("resume of game-01"));
+  Bytes truncated = resumeBytes(2, 3);
+  truncated.resize(12);
+  fakesd::addFile(resumePath("game-02"), truncated);
+  save("game-03");
+  const std::vector<std::string> newOnly{tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::pair<std::string, std::vector<std::string>>> cases{
+      {"Game 01", newOnly}, {"Game 02", newOnly}, {"Game 03", withSave}};
+  for (const auto& [name, expected] : cases) {
+    SCOPED_TRACE(name);
+    closeScreens(match::Saves::Discard);
+    ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher(name));
+    EXPECT_EQ(rowsDrawn(), expected);
+  }
+}
+
+// #7: resume.bin.tmp alone (the rename to resume.bin was cut off) is a save the title screen offers.
+TEST_F(OneRowPerGameTest, ASaveWhoseRenameWasInterruptedStillOffersContinue) {
+  addGames(1);
+  fakesd::addFile(resumePath("game-01") + ".tmp", resumeBytes(2, 3));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(rowsDrawn(), expected);
+}
+
+// #11: the save was valid when the title screen opened and is not when Continue is tapped: the match finds no usable
+// resume and starts a new one (a save that will not read is the error view: ASoloGamesUnreadableSave...).
+TEST_F(OneRowPerGameTest, ASaveThatWentBadBetweenTheScreenAndTheTapStartsANewMatch) {
+  addGames(1);
+  save("game-01");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  ASSERT_EQ(rowsDrawn(), expected);
+  fakesd::addFile(resumePath("game-01"), std::string("garbage"));
+  tapRow(tr(STR_GAMES_CONTINUE));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  ASSERT_TRUE(pumpMatchTo("setup ran"));
+}
+
+// #18: after a match resumed from Continue is left, the next launcher shows the whole page holding the game's row and
+// selects it, so a Confirm opens its title screen and another resumes.
+TEST_F(OneRowPerGameTest, LeavingAMatchStartedFromContinueSelectsTheGamesRowOnThePageHoldingIt) {
+  addGames(25);
+  // Saves of the games above Game 20 too: they once put Continue rows ahead of its row, and now shift no row.
+  for (int i = 1; i <= 10; ++i) save(idOf(i));
+  save("game-20");
+  openLauncher();
+  const size_t page = shown(25).size();
+  ASSERT_GT(page, 2u);
+  ASSERT_LT(page, 20u) << "Game 20 is not on the first page";
+  key(Button::NavNext, 19);  // Game 20's row
+  key(Button::Confirm);
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  key(Button::Confirm);  // Continue
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+
+  reopenLauncher(match::Saves::Keep);  // Leave: Game 20's save is on the card, as it was
+  fakelog::clearLines();
+  const size_t first = 19 / page * page;  // the first row of the page holding row 19, Game 20's
+  ASSERT_GE(first, 1u);
+  const std::vector<std::string> rows = shown(25);
+  ASSERT_FALSE(rows.empty());
+  EXPECT_EQ(rows.front(), nameOf(static_cast<int>(first) + 1)) << "the whole page holding the row, from its first row";
+  EXPECT_EQ(rows.size(), std::min(page, 25 - first));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE)));
+  key(Button::Confirm);  // the selection is on Game 20's row
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Game 20"));
+  key(Button::Confirm);
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-20"));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+}
+
+// #19 (A12): after a Continue match is left, two Confirms resume it again, and none starts a New match over the save.
+TEST_F(OneRowPerGameTest, TwoConfirmsAfterLeavingAContinueMatchResumeAgainAndLeaveTheSaveAlone) {
+  addGames(3);
+  save("game-01");
+  save("game-03");
+  openLauncher();
+  key(Button::NavNext, 2);  // Game 03
+  key(Button::Confirm);
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  key(Button::Confirm);  // Continue
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+
+  reopenLauncher(match::Saves::Keep);  // Leave: Game 03's save stays, rewritten by the forced exit
+  fakelog::clearLines();
+  key(Button::Confirm);  // the first press, with nothing chosen since: Game 03's row
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Game 03"));
+  key(Button::Confirm);  // the second: Continue
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-03"));
+  ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
+  EXPECT_TRUE(logHas("Resuming at ver 3"));
+  EXPECT_FALSE(logHas("setup ran")) << "not a New match";
+  for (int i = 0; i < 20; ++i) {
+    entered->loop();
+    input->clear();
+  }
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-03")), resumeBytes(2, 3)) << "the save is as it was";
+}
+
+// #21, the everyday path: a New match, one move, Leave. The forced exit writes resume.bin, the next launcher selects
+// the game's row, and its Confirm and the title screen's Confirm on Continue resume the saved move.
+TEST_F(OneRowPerGameTest, ANewMatchLeftAfterAMoveIsResumedByConfirmOnItsRowAndConfirmOnContinue) {
+  addGames(3);
+  openLauncher();        // no saves
+  key(Button::NavNext);  // Game 02
+  key(Button::Confirm);
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  ASSERT_EQ(rowsDrawn(), std::vector<std::string>{tr(STR_GAMES_MODE_SOLO)});
+  key(Button::Confirm);  // Solo: with no save, a New match at once
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("setup ran"));
+  // The match drops a tap until its first frame is on the panel.
+  ASSERT_TRUE(match::waitFor([&] {
+    entered->loop();
+    input->clear();
+    return activityManager.updateRequested();
+  }));
+  entered->render(RenderLock(*entered));
+  activityManager.markRendered();
+  input->tap(3 + 50, 6 + 50);  // the canvas sits at (3, 6)
+  ASSERT_TRUE(pumpMatchTo("draw\t1")) << "the tap was applied and drawn";
+
+  reopenLauncher(match::Saves::Keep);  // Leave: the forced exit writes the round in progress, and it stays
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), resumeBytes(1, 2)) << "the round's last snapshot: one tap, ver 2";
+  const std::vector<std::string> games{"Game 01", "Game 02", "Game 03"};
+  EXPECT_EQ(shown(3), games) << "still one row a game";
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE)));
+  fakelog::clearLines();
+  key(Button::Confirm);  // Game 02's row, selected
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Game 02"));
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(rowsDrawn(), withSave);
+  key(Button::Confirm);  // Continue
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Started game-02"));
+  ASSERT_TRUE(pumpMatchTo("Round started at ver 2"));
+  EXPECT_TRUE(logHas("Resuming at ver 2"));
+  EXPECT_TRUE(logHas("draw\t1")) << "the saved move is what is drawn";
+  EXPECT_FALSE(logHas("setup ran")) << "not a New match";
+}
+
+// rev-11: under the install note, the first Confirm dismisses it and the second opens the selected game's title screen,
+// whose Continue is first; nothing starts a match until a choice is made there.
+TEST_F(OneRowPerGameTest, UnderTheInstallNoteConfirmsOpenTheTitleScreenAndNeverANewMatch) {
+  addGames(2);
+  save("game-01");
+  installerscript::script().report.failed = 1;
+  installerscript::script().report.firstError = GamePackageInstaller::Error::NotAPackage;
+  openLauncher();
+  ASSERT_NE(flatText().find(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)), std::string::npos) << ui().joined();
+  key(Button::Confirm);  // dismisses the note
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  render();
+  EXPECT_EQ(flatText().find(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)), std::string::npos);
+  key(Button::Confirm);  // Game 01's row
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "the launcher starts no match";
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(theme().drew("drawHeader", "Game 01"));
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(rowsDrawn(), withSave);
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "no match until a choice on the title screen";
+  key(Button::Confirm);  // that choice: Continue
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Continue game-01: a solo match"));
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
 }
 
 }  // namespace

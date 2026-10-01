@@ -9,7 +9,7 @@
 
 add_library(game_launcher_src STATIC
   ${REPO_ROOT}/src/activities/games/GamesLauncherActivity.cpp
-  # The launcher opens the mode picker, which mode_picker.cmake tests.
+  # The launcher opens the title screen, which mode_picker.cmake tests.
   ${REPO_ROOT}/src/activities/games/GameModeActivity.cpp
   ${HARNESS_DIR}/list_stubs/GamePackageInstallerDouble.cpp
   # The launcher's Remove calls GamePackageInstaller::remove; remove_game.cmake tests the launcher over this script.
