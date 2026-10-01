@@ -3,7 +3,7 @@ title: 'The hidden hand-off in the match'
 type: 'feature'
 ticket: '4'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: '084199873b70c5d071d65a468ba657a83210a5fe'
