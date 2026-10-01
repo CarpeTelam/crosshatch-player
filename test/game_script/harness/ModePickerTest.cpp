@@ -2,11 +2,14 @@
 #include <Manifest.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "ApiLevel.h"
+#include "GameHostCaps.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
 #include "MatchSupport.h"
@@ -104,10 +107,12 @@ class PickerTest : public match::ScreenTest {
     render();
   }
 
-  // The picker as it is built for a game offering `modes`, opened as the manager would (onEnter), and drawn.
-  void openPickerFor(const uint8_t modes) {
+  // The picker as it is built for game `id` (counter unless named) with seats 1..`seatsMax` offering `modes`, opened as
+  // the manager would (onEnter), and drawn. Two seats by default, so a pass row has a pass match to start.
+  void openPickerFor(const uint8_t modes, const int seatsMax = 2, const std::string& id = "counter",
+                     const std::string& name = "Counter") {
     auto made = std::make_unique<GameModeActivity>(*renderer, *input,
-                                                   parsed(manifestJson("counter", "Counter", "\"solo\"", 1, 1)), modes);
+                                                   parsed(manifestJson(id, name, "\"solo\"", 1, seatsMax)), modes);
     picker = made.get();
     activityManager.pushedActivities.push_back(std::move(made));
     startPicker();
@@ -178,6 +183,27 @@ class PickerTest : public match::ScreenTest {
     return match;
   }
 
+  // Waits for the started match's first round, then draws the match: true when its frame drew `text`.
+  bool matchDrew(GameMatchActivity& match, const std::string& text) {
+    if (!match::waitFor([] { return match::roundStarted(); })) return false;
+    renderer->forget();
+    match.render(RenderLock(match));
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    return std::find(texts.begin(), texts.end(), text) != texts.end();
+  }
+
+  // Taps canvas point (x, y) of the started match (the canvas sits at (3, 6) on the harness screen) and runs its loop
+  // until it asks to draw the frame the VM published after the tap.
+  bool tapMatchCanvas(GameMatchActivity& match, const int x, const int y) {
+    activityManager.markRendered();
+    input->tap(3 + x, 6 + y);
+    return match::waitFor([&] {
+      match.loop();
+      input->clear();
+      return activityManager.updateRequested();
+    });
+  }
+
   std::unique_ptr<GamesLauncherActivity> list;
   GameModeActivity* picker = nullptr;  // owned by activityManager.pushedActivities
   Activity* current = nullptr;         // the screen frame() and render() drive
@@ -197,25 +223,37 @@ TEST_F(PickerTest, AGameWithOneModeGoesStraightToItsMatch) {
 }
 
 TEST_F(PickerTest, ASoloAndPassGameHasOneModeWhileTheHostHasNoPassAndSkipsThePicker) {
-  installCounter("\"solo\",\"pass\"", 2);  // the real host: pass is off, so Manifest::check leaves solo
+  hostcaps::script().pass = false;  // a host without pass: Manifest::check leaves solo
+  installCounter("\"solo\",\"pass\"", 2);
   openLauncher();
   tapRow("Counter");
   EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_EQ(activityManager.asks.replaced, 1);
 }
 
-// The solo start of a game with no solo mode is a placeholder: epic-pass-and-play passes the mode in, and this test
-// changes with it.
-TEST_F(PickerTest, AGameWhoseOnlyStartableModeIsPassAlsoGoesStraightToItsMatch) {
-  hostcaps::script().pass = true;
+// A game whose one startable mode is pass goes straight to a pass match with the fewest seats it can have.
+TEST_F(PickerTest, AGameWhoseOnlyStartableModeIsPassGoesStraightToAPassMatch) {
   installCounter("\"pass\"", 2);
   openLauncher();
   tapRow("Counter");
   EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started counter")) << "today's match plays solo whatever the mode";
-  EXPECT_TRUE(logHas("counter offers only pass: the match plays solo until it can run pass"));
+  EXPECT_TRUE(logHas("Started counter"));
+  EXPECT_TRUE(logHas("counter offers only pass: a 2-seat pass match"));
+  EXPECT_TRUE(logHas("counter: pass match; no resume.bin"));
+  EXPECT_FALSE(logHas("plays solo"));
+}
+
+// A pass-only game whose seats leave no pass match on this host (one seat) starts nothing, and the list is repainted.
+TEST_F(PickerTest, APassOnlyGameWithOneSeatStartsNothingFromTheLauncher) {
+  installCounter("\"pass\"", 1);
+  openLauncher();
+  tapRow("Counter");
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_TRUE(logHas("Cannot start counter in pass"));
+  EXPECT_TRUE(activityManager.updateRequested());
 }
 
 TEST_F(PickerTest, AGameThisHostCannotStartOpensNeitherTheMatchNorThePicker) {
@@ -322,15 +360,36 @@ TEST_F(PickerTest, ATapOnSoloReplacesThePickerWithTheMatch) {
   EXPECT_FALSE(logHas("the match plays solo"));
 }
 
-// A placeholder like the test above: epic-pass-and-play passes the picked mode into the match.
-TEST_F(PickerTest, ATapOnPassStartsTheSoloMatchAndSaysSo) {
-  installCounter("\"solo\",\"pass\"", 2);
-  openPickerFor(SOLO | PASS);
+// The Pass row starts an open pass match with the fewest seats it can have (two), and seat 1 is drawn first.
+TEST_F(PickerTest, ATapOnPassStartsATwoSeatPassMatchThatDrawsSeatOneFirst) {
+  match::installFixture("pass-open");
+  fakesd::addFile("/.games/pass-open/.pkg", PKG);
+  openPickerFor(SOLO | PASS, 2, "pass-open", "Pass open");
   tapRow(tr(STR_GAMES_MODE_PASS));
   EXPECT_EQ(activityManager.asks.replaced, 1);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started counter"));
-  EXPECT_TRUE(logHas("Mode pass picked for counter: the match plays solo until it can run pass"));
+  GameMatchActivity* match = enterReplacement();
+  ASSERT_NE(match, nullptr);
+  EXPECT_TRUE(logHas("Mode pass picked for pass-open: 2 seats"));
+  EXPECT_TRUE(logHas("Started pass-open"));
+  EXPECT_FALSE(logHas("plays solo"));
+  EXPECT_TRUE(logHas("pass-open: pass match; no resume.bin")) << "the match was given the pass roster";
+  EXPECT_TRUE(matchDrew(*match, "Player 1 (X) to move"));
+  // Seat 1 takes cell 1 (centred at canvas (97, 270)): seat 2's board follows, which no solo match draws.
+  ASSERT_TRUE(tapMatchCanvas(*match, 97, 270));
+  EXPECT_TRUE(matchDrew(*match, "Player 2 (O) to move"));
+}
+
+// A pass whose seats leave no pass match on this host (a one-seat game) starts nothing; the picker repaints.
+TEST_F(PickerTest, APassThatCannotFitStartsNothing) {
+  installCounter("\"solo\",\"pass\"", 1);
+  openPickerFor(SOLO | PASS, 1);
+  activityManager.markRendered();
+  tapRow(tr(STR_GAMES_MODE_PASS));
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_TRUE(logHas("Cannot start counter in pass: seats 1..1 leave no pass match on this host"));
+  EXPECT_FALSE(logHas("Mode pass picked"));
+  EXPECT_TRUE(activityManager.updateRequested());
 }
 
 TEST_F(PickerTest, ConfirmStartsTheSelectedRowAndNextMovesTheSelection) {
@@ -389,6 +448,22 @@ TEST(ModeCount, ThePickerIsNeededFromTwoModes) {
   EXPECT_FALSE(GameModeActivity::needed(PASS));
   EXPECT_TRUE(GameModeActivity::needed(SOLO | PASS));
   EXPECT_TRUE(GameModeActivity::needed(SOLO | PASS | NEARBY));
+}
+
+// ---- the host-caps double (list_stubs/GameHostCapsDouble.cpp) ----
+
+// The double stands in for the device's gameHostCaps(): after a reset it must answer what the device answers
+// (GameHostCapsTest pins the real function to the same HostCapsValues), so a suite here sees the device's host.
+TEST(HostCapsDouble, DefaultsAreTheDevicesValues) {
+  hostcaps::script().pass = !HostCapsValues::PASS;
+  hostcaps::script().minApi = API_MIN_LEVEL + 1;
+  hostcaps::reset();
+  const GameCore::HostCaps caps = gameHostCaps();
+  EXPECT_EQ(caps.api, API_LEVEL);
+  EXPECT_EQ(caps.minApi, API_MIN_LEVEL);
+  EXPECT_EQ(caps.maxSeats, HostCapsValues::MAX_SEATS);
+  EXPECT_EQ(caps.nearby, HostCapsValues::NEARBY_BUILT);
+  EXPECT_EQ(caps.pass, HostCapsValues::PASS);
 }
 
 }  // namespace

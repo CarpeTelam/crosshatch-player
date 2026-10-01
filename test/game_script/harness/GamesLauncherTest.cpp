@@ -395,6 +395,7 @@ std::string lineAfter(const screen::RecordingTarget& target, const std::string& 
 
 // ## 4.4 (the host-caps item): what Manifest::check says about a game is on its row; it is not left off the list.
 TEST_F(ListTest, AGameThisHostCannotStartIsListedWithItsOwnReasonAndDoesNotStart) {
+  hostcaps::script().pass = false;  // a host without pass, so a pass-only game has no mode here
   addGame("solo-game", "SoloGame");
   addGame("too-new", "TooNew", "\"solo\"", 2);                     // api 2 on an api 1 host
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);           // no pass capability on this host

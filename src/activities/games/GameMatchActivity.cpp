@@ -94,8 +94,13 @@ static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
               "resume.bin records the package hash .pkg holds (GameSaveStore builds without GameHash.h)");
 
 GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                     const GameCore::Manifest& manifest, const Start start)
-    : Activity("GameMatch", renderer, mappedInput), UiAppHost(renderer), manifest(manifest), start(start) {}
+                                     const GameCore::Manifest& manifest, const GameCore::Roster& roster,
+                                     const Start start)
+    : Activity("GameMatch", renderer, mappedInput),
+      UiAppHost(renderer),
+      manifest(manifest),
+      roster(roster),
+      start(start) {}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -118,7 +123,10 @@ void GameMatchActivity::onEnter() {
   // resume.bin is saved and read only for an installed package: its hash says whether the
   // save is this package's (AD-16). A game without a valid .pkg plays without one.
   uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
-  if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
+  if (roster.mode == GameCore::Mode::Pass) {
+    // Without the hash GameSaveStore reads, writes, and deletes no resume.bin.
+    LOG_INF("GAME", "%s: pass match; no resume.bin until pass saves (epic-pass-and-play entry 9)", manifest.id);
+  } else if (GameRegistry::readPackageHash(manifest.id, pkgHash)) {
     store.saves().setPackageHash(pkgHash);
   } else if (start == Start::Resume) {
     // Continue was offered for a save of this package, so its .pkg was readable a moment ago. A match started new here
@@ -137,7 +145,7 @@ void GameMatchActivity::onEnter() {
     return;
   }
   replay.loadFonts(renderer);
-  auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot());
+  auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster);
   if (created && start == Start::Resume && !seedResume(*created)) {
     // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
     // match stops here instead, with resumeWritable still false (Error never writes resume.bin).

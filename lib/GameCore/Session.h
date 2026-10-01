@@ -16,16 +16,18 @@ inline constexpr size_t MOVE_BYTES = 256;
 // A rejection's reason, as REJECT carries it (AD-13) and input() receives it in every mode.
 inline constexpr size_t REJECT_REASON_BYTES = 64;
 
-// One match's session on the authority (AD-9, AD-11), for one local seat: the
-// roster, the encoded snapshot that is the source of truth, its version, the
-// status computed after each snapshot, and the one pending move. It drives the
-// rules and holds no game logic. About 1.8 KB, so the owner allocates it from the
-// VM arena (AD-5); confined to the VM task.
+// One match's session on the authority (AD-9, AD-11), for the roster's local seats
+// (one in solo, every seat in pass): the roster, the encoded snapshot that is the
+// source of truth, its version, the status computed after each snapshot, and the one
+// pending move. The caller names the seat of each input and draw; the Session never
+// picks one. It drives the rules and holds no game logic. About 1.8 KB, so the owner
+// allocates it from the VM arena (AD-5); confined to the VM task.
 //
-// Moves are applied strictly one at a time: a move returned while one is pending,
-// after the round is over, off-turn, or in answer to a Rejected or Over event is
-// discarded (the last also keeps a game that answers every rejection with a move
-// from looping inside one step).
+// Moves are applied strictly one at a time, and only from the turn seat: a move
+// returned while one is pending, after the round is over, by any seat but the turn
+// seat (or a turn seat that is not local), or in answer to a Rejected or Over event is
+// discarded (the last also keeps a game that answers every rejection with a move from
+// looping inside one step).
 class Session {
  public:
   Session(const Roster& roster, IGameRules& rules);
@@ -41,14 +43,15 @@ class Session {
   // is already over; or, after restore(), the restored state's status alone. Called
   // again for a rematch, it runs setup and keeps counting ver.
   Outcome start();
-  // Delivers an event to the local seat's input and keeps the move it returns,
+  // Delivers an event to `seat`'s input and keeps the move it returns, as `seat`'s,
   // unless the rules above discard it.
-  Outcome handle(const GameEvent& event);
+  Outcome handle(const GameEvent& event, uint8_t seat);
   // Applies the pending move, if any. Accepted: the new snapshot, ver + 1, its
-  // status, and Over once when the round ends. Rejected: input gets Rejected.
+  // status, and Over once a round to each local seat, in seat order, when the round
+  // ends. Rejected: the mover's input gets Rejected.
   Outcome applyPending();
-  // Draws the snapshot for the local seat.
-  Outcome draw();
+  // Draws the snapshot for `seat` (0: the frame for everyone).
+  Outcome draw(uint8_t seat);
 
   const Roster& roster() const { return seats; }
   // Increases with every snapshot and never resets, rematches included (AD-13).
@@ -64,17 +67,17 @@ class Session {
   uint32_t discardedMoves() const { return discarded; }
 
  private:
-  // A new snapshot is in place: compute its status and deliver Over once.
+  // A new snapshot is in place: compute its status and deliver Over once a round to
+  // each local seat.
   Outcome afterSnapshot();
   // Copies an accepted state; false (never for a rules adapter that enforces the
   // limit) when it does not fit.
   bool keepState(std::span<const uint8_t> bytes);
-  // Delivers a runtime event (Rejected, Over) to the local seat; any move is discarded.
-  Outcome deliver(const GameEvent& event);
+  // Delivers a runtime event (Rejected, Over) to `seat`; any move is discarded.
+  Outcome deliver(const GameEvent& event, uint8_t seat);
 
   Roster seats;
   IGameRules& rules;
-  uint8_t localSeat;
   uint32_t version = 0;
   uint32_t settled = 0;
   Status current;

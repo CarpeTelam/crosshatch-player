@@ -637,8 +637,8 @@ TEST_F(InstallerTest, ACardFailureInTheLastStepOfAReinstallIsRetried) {
 // The fixtures README says these pack with pack_game.py and install; a stored zip of the same
 // members (the folder's manifest.json and .lua files) stands in for the packer here.
 TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStartSolo) {
-  const char* fixtures[] = {"counter",      "gallery", "icons",  "limits", "loop",
-                            "slow-restart", "timer",   "timing", "tracer"};
+  const char* fixtures[] = {"counter",   "gallery",      "icons", "limits", "loop",
+                            "pass-open", "slow-restart", "timer", "timing", "tracer"};
   for (const char* fixture : fixtures) {
     const std::string dir = std::string(GAME_FIXTURES_DIR) + "/" + fixture;
     std::vector<Member> members;

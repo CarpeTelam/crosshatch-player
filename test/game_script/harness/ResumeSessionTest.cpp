@@ -96,7 +96,7 @@ TEST(ResumeSessionTest, ARestoredSessionStartsFromTheSnapshotWithoutRunningSetup
   EXPECT_FALSE(session.status().over);
   EXPECT_EQ(session.status().turn, 1);
 
-  ASSERT_EQ(session.draw(), Outcome::Ok);
+  ASSERT_EQ(session.draw(1), Outcome::Ok);
   EXPECT_EQ(rules.drawn, 5);
 }
 
@@ -106,7 +106,7 @@ TEST(ResumeSessionTest, TheNextMoveAdvancesFromTheRestoredVer) {
   const uint8_t saved[] = {5};
   ASSERT_TRUE(session.restore(saved, 9));
   ASSERT_EQ(session.start(), Outcome::Ok);
-  ASSERT_EQ(session.handle(tap()), Outcome::Ok);
+  ASSERT_EQ(session.handle(tap(), 1), Outcome::Ok);
   ASSERT_EQ(session.applyPending(), Outcome::Ok);
   EXPECT_EQ(session.ver(), 10u);
   EXPECT_EQ(session.snapshot()[0], 6);
@@ -175,7 +175,7 @@ TEST(ResumeSessionTest, SettledVerFollowsTheSnapshotsWhoseStatusWasComputed) {
   EXPECT_EQ(session.settledVer(), 0u);
   ASSERT_EQ(session.start(), Outcome::Ok);
   EXPECT_EQ(session.settledVer(), session.ver());
-  ASSERT_EQ(session.handle(tap()), Outcome::Ok);
+  ASSERT_EQ(session.handle(tap(), 1), Outcome::Ok);
   ASSERT_EQ(session.applyPending(), Outcome::Ok);
   EXPECT_EQ(session.ver(), 2u);
   EXPECT_EQ(session.settledVer(), 2u);
@@ -196,7 +196,7 @@ TEST(ResumeSessionTest, AMoveWhoseStatusIsCancelledIsCommittedButNotSettled) {
   Session session(Roster::solo(), rules);
   ASSERT_EQ(session.start(), Outcome::Ok);
   rules.cancelStatusFrom = 2;
-  ASSERT_EQ(session.handle(tap()), Outcome::Ok);
+  ASSERT_EQ(session.handle(tap(), 1), Outcome::Ok);
   EXPECT_EQ(session.applyPending(), Outcome::Cancelled);
   EXPECT_EQ(session.ver(), 2u) << "the move was committed";
   EXPECT_EQ(session.settledVer(), 1u) << "but its status never was";

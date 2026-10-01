@@ -3,6 +3,7 @@
 #include <I18n.h>
 #include <Manifest.h>
 #include <MatchLifecycle.h>
+#include <Roster.h>
 
 #include <atomic>
 #include <cstdint>
@@ -16,7 +17,7 @@
 #include "games/GameViewport.h"
 #include "games/MatchStore.h"
 
-// One solo match (AD-20): owns the GameVM task and, through it, the game's assets,
+// One match, solo or an open pass match (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers, and owns ch.store (MatchStore): its slot, which
 // outlives the VM, and the GameSaveStore that restores it and writes it to
 // store.bin. It reaches lib/GameScript only through src/games (the spine's layer
@@ -25,6 +26,9 @@
 // GameViewport (GameTouch.h) and by due ch.timer timers; the UiAppHost draws the
 // runtime's own views: the pause menu, the end-of-round menu, and the error view
 // (docs/crosshatch/game-canvas.md).
+//
+// A pass match plays the turn seat's frame and input on this one device, and seat 0's frame (everyone's) once the
+// round is over (GameCore::seatShown); it keeps no resume.bin until pass saves (epic-pass-and-play entry 9).
 //
 // A solo match with a .pkg also saves its latest snapshot as resume.bin (GameSaveStore):
 // the VM hands each committed one to the loop through GameVM::committed(), the loop
@@ -47,8 +51,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // and rename, whose time is the card's. Leave has no deadline.
   static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = 1500;
 
+  // `roster` is who plays: GameCore::Roster::solo(), or Roster::pass(n) for an open pass match.
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
-                    Start start = Start::New);
+                    const GameCore::Roster& roster, Start start = Start::New);
   ~GameMatchActivity() override;
 
   void onEnter() override;
@@ -142,6 +147,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   GameTouch::Gesture readGesture() const;
 
   GameCore::Manifest manifest;
+  GameCore::Roster roster;
   GameViewport viewport;
   FrameReplay replay;
   // ch.store's slot and store.bin's reader and writer in one PSRAM block (AD-17):
