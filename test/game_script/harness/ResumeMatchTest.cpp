@@ -1329,11 +1329,16 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   EXPECT_TRUE(logHas("pass-hidden: resuming the save's roster: pass, 2 seat(s)"));
   EXPECT_TRUE(logHas("pass-hidden: Starting -> HandOff on Started"));
   ASSERT_TRUE(pump([&] { return logHas("Resuming at ver 2"); }));
+  for (int i = 0; i < 20; ++i) frame();
+  // Every seat's draws, the saved turn seat's (2) included: none before the blank's tap.
+  EXPECT_EQ(fakelog::countLines("draw for seat "), 0u) << "a seat was drawn before the blank's tap";
   ASSERT_NO_FATAL_FAILURE(passTheBlank());
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));
-  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 0u) << "no seat is drawn before the blank's tap";
+  // After the tap, exactly one draw, seat 2's: any draw before the blank's tap would make the count more than one.
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 1u);
+  EXPECT_EQ(fakelog::countLines("draw for seat "), 1u) << "another seat was drawn, or seat 2 before the tap";
   for (int i = 0; i < 20; ++i) frame();
   EXPECT_EQ(fakesd::bytesOf(resumePath("pass-hidden")), saved) << "the restored snapshot is not written again";
 }
@@ -1494,31 +1499,126 @@ TEST_F(PassResumeTest, AResumedHiddenMatchPlayedToOverDeletesItsSaveAndPlayAgain
   EXPECT_EQ(state(), "HandOff");
 }
 
-// A save only a host with more seats can start (n 3 of a 2..3 game on this two-seat host) is not replaced by a new
-// match: the match stops in the error view and the file stays as it was.
-TEST_F(PassResumeTest, ASaveOnlyAnotherHostCanStartStopsInTheErrorViewAndIsKept) {
+// A save of this package this host cannot start (GameSaveStore's Unstartable: cross-story review rows 2 and 10) is not
+// replaced by a new match: the match stops in the error view with its own reason, the file stays as it was, and Back
+// from the error view (Leave) and the forced exit after it keep it too. The refusal reads the card with a buffer of its
+// own, so the store's roster is never the save's.
+TEST_F(PassResumeTest, ASaveThisHostCannotStartStopsInTheErrorViewWithItsOwnReasonAndIsKept) {
   installGame("trio", countingGame(5));
   installPkg("trio");
-  const Bytes saved = passResumeBytes(snapshotOf(2), 3, 3);
-  fakesd::addFile(resumePath("trio"), saved);
-  GameCore::Manifest manifest = match::manifestOf("trio");
-  manifest.seatsMin = 2;
-  manifest.seatsMax = 3;
-  manifest.modes = GameCore::Manifest::MODE_PASS;
-  enterWith(manifest, GameCore::Roster::pass(2), GameMatchActivity::Start::Resume);
-  EXPECT_EQ(state(), "Error");
-  EXPECT_TRUE(logHas("trio: resume.bin is a save this host cannot start; not starting a new match over it"));
-  EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
-  for (int i = 0; i < 10; ++i) {
-    input->tap(CANVAS_X + 50, CANVAS_Y + 50);
+  GameCore::Manifest trio = match::manifestOf("trio");
+  trio.seatsMin = 2;
+  trio.seatsMax = 3;
+  trio.modes = GameCore::Manifest::MODE_PASS;
+  match::installFixture("pass-open");
+  installPkg("pass-open");
+  GameCore::Manifest openGame = match::manifestOf("pass-open");
+  openGame.seatsMax = 2;
+  openGame.modes = GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS;
+  match::installFixture("pass-hidden");
+  installPkg("pass-hidden");
+  GameCore::Manifest hidden = match::manifestOf("pass-hidden");
+  hidden.seatsMin = 2;
+  hidden.seatsMax = 2;
+  hidden.modes = GameCore::Manifest::MODE_PASS;
+  hidden.hidden = true;
+  Bytes unknownMode = passResumeBytes(snapshotOf(2), 3, 2);
+  unknownMode[14] = 7;
+  struct Case {
+    const char* name;
+    const GameCore::Manifest* game;
+    Bytes file;
+    const char* reason;  // what peek logs as kept
+  };
+  const Case cases[] = {
+      {"n 3 of a 2..3 game on this two-seat host", &trio, passResumeBytes(snapshotOf(2), 3, 3), "seats not startable"},
+      {"more seats than the game has", &openGame, passResumeBytes(snapshotOf(2), 3, 3), "seats not startable"},
+      {"an unknown mode byte", &openGame, unknownMode, "unknown mode"},
+      {"a solo save of a pass-only game", &hidden, resumeBytes(snapshotOf(2), 3), "mode not startable"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.name);
+    fakelog::clearLines();
+    const std::string id = c.game->id;
+    fakesd::addFile(resumePath(id), c.file);
+    enterWith(*c.game, GameCore::Roster::pass(2), GameMatchActivity::Start::Resume);
+    EXPECT_EQ(state(), "Error");
+    EXPECT_TRUE(logHas(id + ": resume.bin is a save this host cannot start; not starting a new match over it"));
+    EXPECT_TRUE(logHas(" is a save that cannot be resumed here: " + std::string(c.reason) + "; the file is kept"));
+    EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_NOT_HERE)));
+    EXPECT_FALSE(logHas(tr(STR_GAMES_RESUME_FAILED))) << "the error view says the save cannot be continued here";
+    // The error view draws the whole reason, wrapped but never cut (fix review F13).
+    if (screen::RecordingTarget::newest()) screen::RecordingTarget::newest()->forget();
+    activity->render(RenderLock(*activity));
+    activityManager.markRendered();
+    ASSERT_NE(screen::RecordingTarget::newest(), nullptr);
+    std::string drawn = screen::RecordingTarget::newest()->joined();
+    std::replace(drawn.begin(), drawn.end(), '\n', ' ');
+    EXPECT_NE(drawn.find(tr(STR_GAMES_RESUME_NOT_HERE)), std::string::npos) << "the reason is cut: " << drawn;
+    for (int i = 0; i < 10; ++i) {
+      input->tap(CANVAS_X + 50, CANVAS_Y + 50);
+      frame();
+    }
+    EXPECT_FALSE(logHas("setup ran")) << "no game ran";
+    EXPECT_FALSE(logHas("Round started"));
+    EXPECT_FALSE(logHas("Resuming at ver"));
+    EXPECT_EQ(fakesd::bytesOf(resumePath(id)), c.file);
+    EXPECT_EQ(tmpOpens(), 0u);
+    input->click(Button::Back);  // Leave from the error view
     frame();
+    EXPECT_EQ(state(), "Leaving");
+    EXPECT_EQ(fakesd::bytesOf(resumePath(id)), c.file) << "Back from the error view keeps it";
+    sleep();
+    EXPECT_EQ(fakesd::bytesOf(resumePath(id)), c.file) << "and the forced exit after it";
+    EXPECT_EQ(tmpOpens(), 0u);
   }
-  EXPECT_FALSE(logHas("setup ran")) << "no game ran";
-  EXPECT_FALSE(logHas("Resuming at ver"));
-  EXPECT_EQ(fakesd::bytesOf(resumePath("trio")), saved);
-  EXPECT_EQ(tmpOpens(), 0u);
-  sleep();
-  EXPECT_EQ(fakesd::bytesOf(resumePath("trio")), saved) << "and the forced exit keeps it";
+}
+
+// The refusal's second read (GameSaveStore::peekResume) does not see what the first saw: a card fault on that read
+// (Unreadable), or a file rewritten between the two into a save that reads (Valid). Neither rules out a save, so the
+// match refuses, "could not be checked again", and the file is kept through the match, Back, and the forced exit.
+TEST_F(PassResumeTest, ASecondReadThatFaultsOrFindsAChangedSaveStopsInTheErrorViewAndKeepsIt) {
+  const Bytes valid = passResumeBytes(snapshotOf(2), 3, 2);
+  for (const bool faults : {true, false}) {
+    SCOPED_TRACE(faults ? "the second read faults" : "the file changed between the reads");
+    fakelog::clearLines();
+    const std::string path = resumePath("pass-open");
+    // Refused by the first read and kept: a save this host cannot start, or a malformed one (one seat in pass).
+    fakesd::addFile(path, passResumeBytes(snapshotOf(2), 3, faults ? 3 : 1));
+    fakesd::sim().opens.erase(path);
+    fakesd::sim().onOpen = [&](const std::string& opened, const int count) {
+      if (opened != path || count != 2) return;  // the first open is loadResume's, the second peekResume's
+      if (faults) {
+        fakesd::sim().failOpen.insert(path);
+      } else {
+        fakesd::addFile(path, valid);
+      }
+    };
+    enterPass("pass-open", false, GameMatchActivity::Start::Resume);
+    fakesd::sim().onOpen = nullptr;
+    fakesd::sim().failOpen.clear();
+    EXPECT_EQ(fakesd::sim().opens[path], 2);
+    const Bytes saved = fakesd::bytesOf(path);
+    EXPECT_EQ(state(), "Error");
+    EXPECT_TRUE(logHas("pass-open: resume.bin could not be checked again; not starting a new match over it"));
+    EXPECT_TRUE(logHas(tr(STR_GAMES_RESUME_FAILED)));
+    EXPECT_FALSE(logHas("no usable resume.bin"));
+    for (int i = 0; i < 10; ++i) {
+      input->tap(CANVAS_X + 50, CANVAS_Y + 50);
+      frame();
+    }
+    EXPECT_FALSE(logHas("Round started")) << "no game ran";
+    EXPECT_FALSE(logHas("tap for seat"));
+    EXPECT_EQ(fakesd::bytesOf(path), saved);
+    EXPECT_EQ(tmpOpens(), 0u);
+    input->click(Button::Back);  // Leave from the error view
+    frame();
+    EXPECT_EQ(state(), "Leaving");
+    EXPECT_EQ(fakesd::bytesOf(path), saved) << "Back from the error view keeps it";
+    sleep();
+    EXPECT_EQ(fakesd::bytesOf(path), saved) << "and the forced exit after it";
+    EXPECT_EQ(tmpOpens(), 0u);
+  }
 }
 
 TEST_F(PassResumeTest, AnUnreadablePassSaveStopsInTheErrorViewAndIsKept) {
@@ -1536,21 +1636,18 @@ TEST_F(PassResumeTest, AnUnreadablePassSaveStopsInTheErrorViewAndIsKept) {
   EXPECT_EQ(fakesd::bytesOf(resumePath("pass-open")), saved);
 }
 
-// No usable save: none, another package's, a malformed one, and one no host can start (more seats than the game has)
-// each start a new match with the caller's pass roster, whose first snapshot replaces the file.
+// No usable save: none, another package's, and a malformed one (a seat count no pass save has) each start a new match
+// with the caller's pass roster, whose first snapshot replaces the file. A save this host cannot start is refused
+// instead (ASaveThisHostCannotStartStopsInTheErrorViewWithItsOwnReasonAndIsKept).
 TEST_F(PassResumeTest, WithNoUsableSaveContinueStartsANewMatchWithTheCallersRoster) {
   struct Case {
     const char* name;
     Bytes file;  // empty: no file
     const char* logged;
   };
-  Bytes unknownMode = passResumeBytes(snapshotOf(2), 3, 2);
-  unknownMode[14] = 7;
   const Case cases[] = {
       {"none", {}, nullptr},
       {"other package", passResumeBytes(snapshotOf(2), 3, 2, HASH_B), ": other package"},
-      {"malformed", unknownMode, ": unknown mode"},
-      {"more seats than the game has", passResumeBytes(snapshotOf(2), 3, 3), ": seats not startable"},
       {"a pass save of one seat", passResumeBytes(snapshotOf(2), 3, 1), ": bad seat count"},
   };
   for (const Case& c : cases) {

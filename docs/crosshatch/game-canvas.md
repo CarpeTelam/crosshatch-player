@@ -36,8 +36,8 @@ the only place that changes state and runs what entering a state requires. Any e
 
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
-| Starting | the VM started | Playing | The first frame replaces the Games list; gestures made before it is published and drawn are read and dropped, as after Play again (a tap that opened the game, lifted late, is not the game's first input). With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver, with the roster the save records (solo, or an open pass match on its saved turn seat; a hidden pass save goes to HandOff, below), and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts with the roster it was given. A save that is there but cannot be read, that only a host with Pass and Play or more seats could start, or that the VM refuses does not start a new match over it: see the next row. |
-| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read, is a save of this package that only a host with Pass and Play or more seats could start, or was refused by the VM ("The saved match could not be resumed"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
+| Starting | the VM started | Playing | The first frame replaces the Games list; gestures made before it is published and drawn are read and dropped, as after Play again (a tap that opened the game, lifted late, is not the game's first input). With `Start::Resume` and a usable `resume.bin` the VM continues from the saved snapshot at its saved ver, with the roster the save records (solo, or an open pass match on its saved turn seat; a hidden pass save goes to HandOff, below), and `setup` does not run; otherwise (no `.pkg`, no save, a save that is not usable: logged) a new match starts with the roster it was given. A save that is there but cannot be read, that this host cannot start, or that the VM refuses does not start a new match over it: see the next row. |
+| Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read or was refused by the VM ("The saved match could not be resumed"), or is a save of this package this host cannot start (`GameSaveStore`'s `Unstartable`: "This saved game cannot be continued on this device"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
 | Playing | Back or Home | Paused | The pause menu (Resume, Leave) opens over the frame; the game gets no input or timers. |
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; `resume.bin` and its tmp are deleted (an over snapshot is never written, and one still pending deletes the file instead); the end-of-round menu (Play again, Leave) opens over the last frame. A round that ends while the pause menu is open deletes the file at once, from the pause menu's loop pass. |
 | Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. A pause menu opened in the gap says so: its line "Starting the next round" sits under the headline, and the menu is drawn again without it once the round's first frame is published (`GameMatchActivity::gapWhenPaused`). The last round's board, which would take no taps, is never shown. |
@@ -50,19 +50,22 @@ the only place that changes state and runs what entering a state requires. Any e
 ### Resume
 
 A match with an installed package (`.pkg`) keeps `resume.bin` (docs/crosshatch/formats.md) so a solo or pass match
-survives sleep; the save records the match's mode and, for pass, its seat count. The VM hands each snapshot it commits to
-the loop task through a latest-wins mailbox (`GameVM::committed()`), and in Playing and Paused (and a hidden pass
-match's Result and HandOff) every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the forced
-exit write the last pending one, once more, after the VM has stopped and before it is freed (a write that failed less than
-5 s before is not retried then either). Only Over
-deletes the file; Leave and the forced exit keep it. Entering with `Start::Resume` restores it (`Session::restore`), so
-the match continues from the snapshot and does not write it again until a move commits. The save is read before the VM
-is built, and its roster is the match's, whatever roster the caller passed (Continue plays the save's roster): a hidden
-pass save resumes on the blank hand-off screen (HandOff), whose tap shows the saved turn seat; an open pass save resumes
-in Playing on that seat's frame. A save of this package that this host cannot start but a host with Pass and Play or more
-seats could (`GameMatchActivity::savedForAnotherHost`, which also refuses when its second read faults) stops in the error
-view with the file kept, as an unreadable one does. Such a save is not offered as Continue, so a New match (the title
-screen's explicit choice) still replaces it, as formats.md says. The VM task never touches the card (AD-5).
+survives sleep; the save records the match's mode and, for pass, its seat count. The VM hands each snapshot it commits
+to the loop task through a latest-wins mailbox (`GameVM::committed()`), and in Playing and Paused (and a hidden pass
+match's Result and HandOff) every loop pass writes the newest one (a failed write is retried 5 s later). Leave and the
+forced exit write the last pending one, once more, after the VM has stopped and before it is freed (a write that failed
+less than 5 s before is not retried then either). Only Over deletes the file; Leave and the forced exit keep it.
+Entering with `Start::Resume` restores it (`Session::restore`), so the match continues from the snapshot and does not
+write it again until a move commits. The save is read before the VM is built, and its roster is the match's, whatever
+roster the caller passed (Continue plays the save's roster): a hidden pass save resumes on the blank hand-off screen
+(HandOff), whose tap shows the saved turn seat; an open pass save resumes in Playing on that seat's frame. When the load
+refuses the save, the match reads the file once more to learn why (`GameSaveStore::peekResume`, through the store's
+buffer, which nothing references then, and leaving its roster). A save of this package that this host cannot start (a
+mode or seat count it cannot start, or a later firmware's save) stops in the error view with its own reason, and the
+file is kept. So does a save that will not read, on either read. The title screen offers no Continue for such a save,
+but its New rows ask before a new match replaces it, as over any save; formats.md has the states. A Continue that finds
+no save at all starts a new match with the roster Continue passed: the title screen's first New row that can start (solo
+for a game that starts solo). The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -82,12 +85,16 @@ is deferred (`deferred-work.md`, 3.7).
 
 ### Leaving
 
-A user exit runs from `loop()`: take `RenderLock`, cancel the VM and join it for up to 500 ms or abandon it (writing the
-last pending snapshot as `resume.bin` between the two, unless the round is over), release the lock, flush a dirty
-`ch.store`, then `goToGames()`. When an abandon leaves the task alive (the simulator always does,
-since it cannot stop a thread), the slot is still flushed, then leaked with the task when the match is destroyed: the
-slot's mutex is held only for a copy inside a locked binding, which an abandon never deletes or leaves suspended, so
-the flush waits at most one copy and saves every set made before the leak.
+A user exit runs from `loop()`. It takes `RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it,
+writing the last pending snapshot as `resume.bin` between the two unless the round is over. In a hidden pass match whose
+panel holds a seat's frame (a pause menu over it), it then pushes the blank hand-off screen with a half refresh (logged
+"leave: blank hand-off screen pushed"). It releases the lock, flushes a dirty `ch.store`, and calls `goToGames()`. The
+blank goes up before Games is asked for: if `goToGames()` runs out of memory, the match stays current in Leaving with no
+VM, and the seat's frame must not stay on the panel. A Leave from the end-of-round menu (over seat 0's frame, which is
+everyone's) or from the blank's pause menu (on no frame) pushes nothing. When an abandon leaves the task alive (the
+simulator always does, since it cannot stop a thread), the slot is still flushed, then leaked with the task when the
+match is destroyed: the slot's mutex is held only for a copy inside a locked binding, which an abandon never deletes or
+leaves suspended, so the flush waits at most one copy and saves every set made before the leak.
 
 ### The forced exit
 
@@ -100,8 +107,11 @@ never takes it again (pitfall 12cc816). It notes `millis()` at its very start, a
    pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the device sleeps (AD-12, AD-20).
    The match is Leaving, so render draws nothing, and the render task is not inside `render()` while the lock is held,
    so the loop task may use `replay` and the framebuffer here. Any state with a VM gets it, the error view of a script
-   error included (only a stuck call frees the VM on the way to Error). Solo and open pass matches, a user Leave, and an
-   exit with no VM (Error after a stuck call, or after Leave) push nothing. The half refresh is AD-12's choice, where
+   error included (only a stuck call frees the VM on the way to Error). With no VM there is no wait, so the blank comes
+   first, before any SD step, and only when the last push left a seat's frame on the panel
+   (`GameMatchActivity::panel`): after a stuck call freed the VM on the way to Error and before the error view was
+   drawn. Once the error view is drawn, or after a Leave (which pushed its own blank over a seat's frame), the exit
+   pushes nothing. Solo and open pass matches push nothing. The half refresh is AD-12's choice, where
    the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
    (epic-pass-and-play entry 11);
 3. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
@@ -162,12 +172,15 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 | Over | Play again | HandOff | The VM begins the new round (`setup`) and draws nothing; the blank shows at once, and its tap shows the new round's first seat. The Play-again gap's rules hold on top of the seat gate: no frame of the last round is drawn after the blank. |
 
 **The blank.** `FrameReplay::drawBlank` clears the screen and draws the `eye-closed` library icon at 128 px, black, centred
-on the canvas, and no game command; the hand-off screen has no other text. The match pushes it with a full refresh, so
-nothing of the last seat's frame stays on the panel, and only then publishes its tap zone (`fui::tapZones` over the safe
-area, routed by `routeTouch`).
+on the canvas, and no game command; the hand-off screen has no other text. The match pushes it with a full refresh when
+it replaces anything else on the panel, so nothing of the last seat's frame stays there, and only then publishes its tap
+zone (`fui::tapZones` over the safe area, routed by `routeTouch`). A render in HandOff with the blank already on the
+panel (after the light panel closes, or any repaint) pushes it again with a fast refresh: the match records what its
+last push left on the panel (`GameMatchActivity::panel`: a seat's frame, the blank, or anything else), under
+`RenderLock`.
 
-A forced exit (sleep, any Replace) pushes the blank too, with a half refresh, from any state with a VM: see The forced
-exit, step 2.
+A forced exit (sleep, any Replace) pushes the blank too, with a half refresh, from any state with a VM, and with no VM
+while a seat's frame is on the panel: see The forced exit, step 2. So does a Leave from a seat's frame: see Leaving.
 
 **Taps.** The banner's screen and the blank accept a tap anywhere and Confirm, and only once render has pushed that
 state's own screen (`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): a tap or a Confirm
@@ -180,7 +193,45 @@ own `input` (its `ui` may change, and the match redraws the banner over the new 
 discarded by the Session, since the mover is no longer the turn seat. While the match is in Result or HandOff, and until
 the next seat's frame is on the panel, it posts no game input, so before the VM draws the next seat it plays whatever is
 still queued under the view it was meant for (the mover, or on the hand-off screen nobody): no queued tap reaches the
-next seat.
+next seat. The VM's view may lag the match: such a tap may be played, and the mover's frame published again, after
+the match has moved on to the blank; HandOff draws no canvas, and neither does a pause menu opened from it, so that
+frame never reaches the panel.
+
+**A touch made under another seat's frame.** Any pass match, open or hidden: the loop posts each touch with the frame
+the panel showed when it was made (`GameMatchActivity::frameDisplayed`, through `GameVM::postInput`, in the event's
+`serial`, which only a timer reads). `renderCanvas` stores the number of the frame `GameVM::drawFront` took, read under
+the frame mutex, so a frame the VM published while render ran is named when it is the one drawn. The VM notes the first
+frame of each seat it draws, and drops a touch made before the first frame of the seat it draws now, comparing the two
+numbers so that a wrapped count still orders them: one made under seat 1's frame and still queued when seat 1's move
+passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
+reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
+frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
+seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
+posting one less instead, which can only drop (a real frame number reaches it only after 2^32 publishes). The tag is the
+frame on the panel at the first Playing pass that sees the finger down (`GameMatchActivity::touchDownFrame`, from
+`isScreenTouchHeld`, true from the contact's first sample), freed on the first Playing pass with no finger down (the
+lift, a long press that suppressed the rest of the contact, or a contact that ended where the loop did not read it, such
+as in Result or under the light panel). A contact the loop never saw down is tagged when its lift is read. A tap also
+carries its touch-only held time (`HalGPIO::lastTouchHeldMs()`; `MappedInputManager::getHeldTime()` would answer a
+button's hold on a pass with a button edge), so it is back-dated to its first touch sample against the last canvas push
+(`frameAt`: render notes when `displayBuffer` returned, which it does once the panel's refresh has completed, and the
+frame before it), and the older of the two frames is posted. Each early return in `loopPlaying` (Back, a VM check, a
+round or turn change) leaves Playing, so what this covers is the same-pass race: a tap whose first sample came in a
+pass's `update()` before the next seat's push completed, and whose latch was taken in the same pass after it. Touch is
+sampled only in `update()` on the loop task, once a pass, so a contact's first sample is the first update after it
+lands. A contact made under one seat's frame therefore never reaches the next seat when a Playing pass latched it before
+the next seat's push completed, or when it is a tap sampled before that push completed. What remains:
+
+- a touch whose finger came down while the loop task was blocked in an SD step after a move (the resume write, the
+  `ch.store` flush, or the delete retry), during which the next seat's push completed, is first sampled after both and
+  may reach that seat, whether a tap, a swipe, or a long press (closing it needs touch sampled off the loop task, in
+  upstream input code; the device run, epic-pass-and-play entry 11, measures it);
+- a swipe or long press whose first sample came in a pass's `update()` before the next seat's push completed, but whose
+  latch was taken in the same pass after it, carries the next seat's frame and may reach that seat (only a tap carries
+  a held time; back-dating the latch itself is deferred, deferred-work.md `## e5-xr`);
+- the back-dating anchors to the loop's read, a few milliseconds after the release sample, whose time is not exposed;
+- a finger already down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet
+  freed, so its touch is dropped (fails closed).
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,

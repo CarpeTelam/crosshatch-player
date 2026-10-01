@@ -154,6 +154,7 @@ void GameVM::run() {
       outcome = rounds.begin(*session);
     } else {
       outcome = rounds.start(*session);
+      if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
     }
     publishCommitted(mailbox, *session, published, outcome);
     // A hidden round has drawn nothing yet: it logs its start at its first seat's frame.
@@ -180,6 +181,7 @@ void GameVM::run() {
         outcome = rounds.beginAgain();
       } else {
         outcome = rounds.restart();
+        if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
       }
       publishCommitted(mailbox, *session, published, outcome);
       if (outcome == Outcome::Ok) logRound(*session, rounds, endedBefore, !handOff);
@@ -198,7 +200,15 @@ void GameVM::run() {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
-    outcome = handOff ? stepHandOff(event) : rounds.step(event);
+    if (handOff) {
+      outcome = stepHandOff(event);
+    } else {
+      // A touch made under another seat's frame is dropped before the game sees it (postInput); a timer goes on.
+      if (madeUnderAnotherSeat(event)) continue;
+      outcome = rounds.step(event);
+      // The seat step drew, when it drew (a stale timer draws nothing and leaves the seat as it was).
+      if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
+    }
     publishCommitted(mailbox, *session, published, outcome);
     if (outcome == Outcome::Ok) {
       logRound(*session, rounds, endedBefore, handOff && rounds.roundsStarted() != startedBefore);
@@ -241,7 +251,9 @@ GameScript::Outcome GameVM::drawShown() {
   const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
   // The hand-off (or a Result without a mover this device plays): no seat's frame.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
-  return rounds.draw(seat);
+  const GameScript::Outcome outcome = rounds.draw(seat);
+  if (outcome == GameScript::Outcome::Ok) noteSeatDrawn(seat);
+  return outcome;
 }
 
 GameScript::Outcome GameVM::showSeatNow() {
@@ -252,6 +264,12 @@ GameScript::Outcome GameVM::showSeatNow() {
   while (queue.pop(queued)) {
     const GameScript::Outcome drained = stepHandOff(queued);
     if (drained != GameScript::Outcome::Ok) return drained;
+  }
+  // A turn seat this device does not play (a roster with some seats local, not all): no seat takes the device, so the
+  // view stays HandOff and the request stays unserved, and the match keeps the blank on the panel.
+  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover) == GameCore::NO_SEAT) {
+    LOG_INF("GAME", "Turn seat %u is not this device's; no seat shown", static_cast<unsigned>(playing->status().turn));
+    return GameScript::Outcome::Ok;
   }
   handOffView = GameCore::MatchState::Playing;
   GameScript::Outcome outcome = drawShown();
@@ -264,7 +282,7 @@ GameScript::Outcome GameVM::showSeatNow() {
   return stepHandOff(heldTimer);
 }
 
-GameScript::Outcome GameVM::stepHandOff(const GameScript::InputEvent& event) {
+GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
   // A stale timer is dropped before anything, with no draw (as SoloRounds::step drops it).
   if (!game.timer().accepts(event)) return GameScript::Outcome::Ok;
   if (handOffView != GameCore::MatchState::Playing) {
@@ -283,6 +301,9 @@ GameScript::Outcome GameVM::stepHandOff(const GameScript::InputEvent& event) {
   const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
   // Fails closed, as seatShown does: no seat this device plays, so no input is read.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
+  // A touch made under another seat's frame never reaches this one: seat 0's after the move that ended the round, or
+  // the next seat's (postInput). The mover's own late tap in Result was made under the mover's frame and goes on.
+  if (madeUnderAnotherSeat(event)) return GameScript::Outcome::Ok;
   const bool wasPlaying = handOffView == GameCore::MatchState::Playing;
   GameScript::Outcome outcome = rounds.play(event, seat);
   if (outcome != GameScript::Outcome::Ok) return outcome;
@@ -301,6 +322,26 @@ GameScript::Outcome GameVM::stepHandOff(const GameScript::InputEvent& event) {
   return outcome;
 }
 
+void GameVM::noteSeatDrawn(const uint8_t seat) {
+  if (seat == drawnSeat) return;
+  drawnSeat = seat;
+  // The VM task alone publishes, so this is the frame just drawn.
+  seatFrame = frameBuffers.frameGen();
+}
+
+bool GameVM::madeUnderAnotherSeat(GameScript::InputEvent& event) {
+  if (event.kind == GameCore::EventKind::Timer) return false;  // its serial is the timer's own (GameTimer::accepts)
+  const uint32_t shownFrame = event.serial;
+  event.serial = 0;
+  if (shownFrame == UNTAGGED) return false;
+  // Wrap-safe: frame numbers count up from the seat's first frame, so a difference read as signed says which came
+  // first even after the count wraps.
+  if (static_cast<int32_t>(shownFrame - seatFrame) >= 0) return false;
+  LOG_INF("GAME", "Dropped a touch made under frame %u, before seat %u's first frame %u",
+          static_cast<unsigned>(shownFrame), static_cast<unsigned>(drawnSeat), static_cast<unsigned>(seatFrame));
+  return true;
+}
+
 uint32_t GameVM::runningForMs(const uint32_t nowMs) {
   if (!busy()) return 0;
   const uint32_t call = game.callSerial();
@@ -316,17 +357,23 @@ void GameVM::pollTimer() {
   if (game.timer().takeDueEvent(clock.nowMs(), event)) postInput(event);
 }
 
-bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay) {
+bool GameVM::drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay,
+                       uint32_t* takenFrame) {
   if (frameBuffers.frameGen() == 0) return false;
   bool drawn = false;
   frameBuffers.takeFront([&](const GameScript::DisplayList& frame, const GameScript::Refresh hint) {
+    // Under the frame mutex, which publish holds while it counts a frame: this is the front frame's number.
+    if (takenFrame) *takenFrame = frameBuffers.frameGen();
     drawn = replay.draw(renderer, viewport, frame, hint, assets.images());
   });
   return drawn;
 }
 
-void GameVM::postInput(const GameScript::InputEvent& event) {
-  if (queue.push(event)) LOG_INF("GAME", "Input queue full; dropped the oldest non-timer event");
+void GameVM::postInput(const GameScript::InputEvent& event, const uint32_t shownFrame) {
+  GameScript::InputEvent posted = event;
+  // A touch's serial is unused (only a Timer's is read), so it carries the frame it was made under to the VM task.
+  if (posted.kind != GameCore::EventKind::Timer) posted.serial = shownFrame;
+  if (queue.push(posted)) LOG_INF("GAME", "Input queue full; dropped the oldest non-timer event");
   notifyTask();
 }
 

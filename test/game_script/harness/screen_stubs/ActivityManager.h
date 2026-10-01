@@ -88,6 +88,9 @@ class ActivityManager {
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
 #if FREEINK_CAP_GAMES
+  // Records the ask and replaces nothing: the calling screen stays current, as on the device when goToGames()'s
+  // makeUniqueNoThrow<GamesLauncherActivity> fails (it logs and returns). A test of that failure reads what the
+  // screen does next; a test that needs the launcher opens it itself.
   void goToGames();
 #endif
   void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE, bool cleanInitialRefresh = false);

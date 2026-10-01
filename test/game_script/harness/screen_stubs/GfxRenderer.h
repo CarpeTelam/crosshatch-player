@@ -39,6 +39,12 @@ class GfxRenderer : public GfxRendererRecorder {
     // not returned, so the match must still be dropping gestures.
     if (onDisplay) onDisplay();
   }
+  // The base's clearScreen, then onClear. On the device the VM task runs on the other core while the render task draws,
+  // so it may publish a frame between any two of render's steps; onClear lets a test place that publish at a clear.
+  void clearScreen(const uint8_t color = 0xFF) const {
+    GfxRendererRecorder::clearScreen(color);
+    if (onClear) onClear();
+  }
   void tapToLogical(const float x, const float y, int& logicalX, int& logicalY) const {
     logicalX = static_cast<int>(x);
     logicalY = static_cast<int>(y);
@@ -121,6 +127,8 @@ class GfxRenderer : public GfxRendererRecorder {
 
   // Runs inside every displayBuffer call, after it is recorded; empty by default.
   mutable std::function<void()> onDisplay;
+  // Runs inside every clearScreen call, after the screen is cleared; empty by default.
+  mutable std::function<void()> onClear;
   mutable std::vector<Shown> shown;
   mutable std::vector<IconDrawn> icons;
 

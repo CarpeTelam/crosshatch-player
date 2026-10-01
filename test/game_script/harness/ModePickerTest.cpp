@@ -29,8 +29,9 @@
 // caps (list_stubs/), on the pattern of GamesLauncherTest.cpp: the fixture opens a screen, draws it, and finds a row by
 // the text it drew. What the title screen promises: its header is the game's name; a Continue row first when the card
 // holds a save (Valid or Unreadable); then one New row per mode the host can start, solo, pass, nearby; a New over a
-// save asks first, Cancel focused; a Continue on a pass save, or on a two-mode game's Unreadable save, never starts a
-// solo match that would replace the save; Back returns to the launcher.
+// save asks first, Cancel focused, a save this host cannot start (Unstartable) included, which gets no Continue; a
+// Continue on a pass save, or on a two-mode game's Unreadable save, never starts a solo match that would replace the
+// save, and one that finds no usable save starts the first New row's mode; Back returns to the launcher.
 
 // A nothrow allocation of exactly this many bytes fails while it is non-zero: how a test makes the title screen's
 // makeUniqueNoThrow<GameMatchActivity> return null (GamesLauncherTest does the same for arrays). Every other allocation
@@ -325,6 +326,11 @@ class TitleScreenTest : public match::ScreenTest {
       return logHas(part);
     });
   }
+
+  // A Continue on a two-mode game's pass save that was removed (`removed`) or went bad after the screen peeked it.
+  void continueAfterTheSaveChanged(bool removed);
+  // The title screen of "counter" over a save this host cannot start: `rows` drawn, and a tap on `newRow` asks first.
+  void expectAnUnstartableSaveAsksBeforeNew(const std::string& newRow, const std::vector<std::string>& rows);
 
   // Plays the entered counting game to its end: five taps, each once the frame before it is drawn, then the match's
   // Over.
@@ -671,10 +677,10 @@ TEST_F(TitleScreenTest, ATapOnContinueResumesATwoModeGamesSoloSaveSolo) {
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("counter: resuming the save's roster: solo, 1 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
-  EXPECT_FALSE(logHas("resuming the save's roster: pass")) << "the save's roster wins over the one Continue passed";
+  EXPECT_FALSE(logHas("resuming the save's roster: pass"));
 }
 
 // A pass save (mode 1, n 2) gets its Continue row, and the tap resumes it as a pass match: the saved snapshot is drawn,
@@ -690,7 +696,8 @@ TEST_F(TitleScreenTest, ContinueOnAPassSaveResumesItAsAPassMatch) {
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  // Continue passes the first New row's roster, solo; the save's pass roster wins over it.
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
   EXPECT_TRUE(logHas("Resuming at ver 3"));
@@ -742,9 +749,9 @@ TEST_F(TitleScreenTest, ASoloGamesUnreadableSaveIsOfferedAndItsContinueEndsInThe
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// A two-mode game's Unreadable save may be a pass save, which a solo match would replace: its Continue starts a pass
-// match, which stops in the error view as any save that will not read does, and the file's bytes are unchanged through
-// the match and its exit.
+// A two-mode game's Unreadable save may be a pass save: its Continue passes the first New row's roster (solo), and the
+// match stops in the error view as on any save that will not read, whatever roster it was passed, so the file's bytes
+// are unchanged through the match and its exit.
 TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAlone) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
@@ -756,8 +763,7 @@ TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAl
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
-  EXPECT_FALSE(logHas("a solo roster"));
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
   EXPECT_TRUE(logHas("counter: Starting -> Error on ScriptError"));
   for (int i = 0; i < 20; ++i) {
@@ -767,6 +773,127 @@ TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAl
   EXPECT_FALSE(logHas("setup ran")) << "no game ran";
   match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Keep);
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
+}
+
+// ---- a save this host cannot start (cross-story review rows 2 and 13) ----
+
+// A pass save on a host without Pass and Play (or with fewer seats than the save) is a save all the same: no Continue
+// row, since this host cannot resume it, but a New row asks before it replaces the file, and Cancel keeps its bytes.
+void TitleScreenTest::expectAnUnstartableSaveAsksBeforeNew(const std::string& newRow,
+                                                           const std::vector<std::string>& rows) {
+  const Bytes saved = fakesd::bytesOf(resumePath("counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_TRUE(logHas("Title screen of counter: save unstartable"));
+  EXPECT_EQ(rowsDrawn(), rows) << "no Continue for a save this host cannot start";
+  tapRow(newRow);
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "New started over the save without asking";
+  render();
+  ASSERT_TRUE(dialogUp());
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_NEW_OVER_SAVE)));
+  tapRow(tr(STR_CANCEL));
+  render();
+  EXPECT_FALSE(dialogUp());
+  EXPECT_EQ(rowsDrawn(), rows);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
+}
+
+TEST_F(TitleScreenTest, APassSaveOnAHostWithoutPassOffersNoContinueAndNewAsksFirst) {
+  hostcaps::script().pass = false;
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
+  save("counter", SAVED_PASS, 2);
+  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_MODE_SOLO), {tr(STR_GAMES_MODE_SOLO)});
+}
+
+TEST_F(TitleScreenTest, AThreeSeatSaveOnATwoSeatHostOffersNoContinueAndNewAsksFirst) {
+  ASSERT_EQ(hostcaps::script().maxSeats, 2);
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 3);
+  save("counter", SAVED_PASS, 3);
+  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_MODE_PASS), {tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)});
+}
+
+// ---- pass-hidden end to end (cross-story review row 12): its own manifest.json (hidden: true) from the card ----
+
+// From the launcher's row through the title screen's Pass row to the match: the first screen is the blank, a full
+// refresh with no text, and no push before the first seat's frame holds any text; the round's four moves go through
+// Result and the blank to Over, and Play again starts the next round on the blank.
+TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPlayAgain) {
+  match::installFixture("pass-hidden");
+  fakesd::addFile("/.games/pass-hidden/.pkg", PKG);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Pass hidden"));
+  const std::vector<std::string> rows{tr(STR_GAMES_MODE_PASS)};
+  ASSERT_EQ(rowsDrawn(), rows);
+  tapRow(tr(STR_GAMES_MODE_PASS));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_TRUE(logHas("Mode pass picked for pass-hidden: 2 seats"));
+  ASSERT_NE(enterReplacement(), nullptr);
+  current = entered;  // frame(), render(), and tapRow() now drive the match
+  EXPECT_TRUE(logHas("pass-hidden: Starting -> HandOff on Started")) << "the manifest's hidden: true reached the match";
+  const auto holds = [](const GfxRenderer::Shown& push, const std::string& part) {
+    return std::any_of(push.texts.begin(), push.texts.end(),
+                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
+  };
+  const auto expectBlank = [&] {
+    const size_t pushes = renderer->shown.size();
+    render();
+    ASSERT_EQ(renderer->shown.size(), pushes + 1);
+    EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_TRUE(renderer->shown.back().texts.empty());
+  };
+  const auto tapScreen = [&] {
+    input->tap(240, 400);
+    frame();
+  };
+  const auto pumpTo = [&](const std::string& part, const size_t times) {
+    return match::waitFor([&] {
+      frame();
+      return fakelog::countLines(part) >= times;
+    });
+  };
+  const size_t matchFrom = renderer->shown.size();
+  ASSERT_NO_FATAL_FAILURE(expectBlank());
+  for (size_t move = 1; move <= 4; ++move) {
+    const int seat = static_cast<int>((move - 1) % 2 + 1);
+    tapScreen();
+    ASSERT_EQ(fakelog::countLines("pass-hidden: HandOff -> Playing on Tap"), move);
+    ASSERT_TRUE(match::waitFor([&] {
+      frame();
+      return activityManager.updateRequested();
+    }));
+    render();
+    EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_TRUE(holds(renderer->shown.back(), "Player " + std::to_string(seat) + "'s secret: ")) << move;
+    if (move == 1) {
+      // Every push of the match before the first seat's frame was the blank: no text at all.
+      for (size_t i = matchFrom; i + 1 < renderer->shown.size(); ++i) {
+        EXPECT_TRUE(renderer->shown[i].texts.empty()) << "push " << i << " before the first seat's frame";
+      }
+    }
+    activityManager.markRendered();
+    input->tap(3 + 100, 6 + 300);
+    frame();
+    if (move == 4) break;
+    ASSERT_TRUE(pumpTo("pass-hidden: Playing -> Result on TurnChanged", move));
+    render();
+    EXPECT_TRUE(holds(renderer->shown.back(), "Tap to pass to player " + std::to_string(3 - seat)));
+    tapScreen();
+    ASSERT_EQ(fakelog::countLines("pass-hidden: Result -> HandOff on Tap"), move);
+    ASSERT_NO_FATAL_FAILURE(expectBlank());
+  }
+  ASSERT_TRUE(pumpTo("pass-hidden: Playing -> Over on RoundOver", 1));
+  render();
+  EXPECT_TRUE(holds(renderer->shown.back(), "Everyone: the secrets were apple and river"));
+  tapRow(tr(STR_GAMES_PLAY_AGAIN));
+  EXPECT_TRUE(logHas("pass-hidden: Over -> HandOff on PlayAgain"));
+  ASSERT_NO_FATAL_FAILURE(expectBlank());
+  tapScreen();
+  ASSERT_TRUE(match::waitFor([&] {
+    frame();
+    return activityManager.updateRequested();
+  }));
+  render();
+  EXPECT_TRUE(holds(renderer->shown.back(), "Player 1's secret: apple"));
+  EXPECT_TRUE(holds(renderer->shown.back(), "Moves: 0")) << "the next round's first frame";
 }
 
 // ---- New over a save: a second confirm, Cancel focused ----
@@ -915,9 +1042,28 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   activityManager.markRendered();
   tapRow(tr(STR_GAMES_CONTINUE));
   EXPECT_EQ(activityManager.asks.replaced, 0);
-  EXPECT_TRUE(logHas("Cannot continue counter in pass: seats 1..2 leave no pass match on this host"));
+  EXPECT_FALSE(logHas("Cannot start counter")) << "the search logs only its own failure";
+  EXPECT_TRUE(logHas("Cannot continue counter: no New row this host can start"));
   EXPECT_TRUE(activityManager.updateRequested());
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
+}
+
+// A game whose first New row cannot start (pass with no seat count this host fits) continues with the next one that
+// can, in the rows' order: nearby, which plays solo until epic-play-nearby. Only a game with no such row starts
+// nothing.
+TEST_F(TitleScreenTest, AContinueWhoseFirstNewRowCannotStartTakesTheNextRowThatCan) {
+  hostcaps::script().maxSeats = 1;
+  addCountingGame("counter", "Counter", "\"pass\"");
+  save("counter", SAVED_PASS, 2);
+  fakesd::sim().failOpen.insert(resumePath("counter"));
+  openTitleFor(PASS | NEARBY);
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
+  ASSERT_EQ(rowsDrawn(), expected);
+  tapRow(tr(STR_GAMES_CONTINUE));
+  EXPECT_FALSE(logHas("Cannot start counter")) << "a row the search skips is no error";
+  EXPECT_FALSE(logHas("Cannot continue counter"));
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
+  EXPECT_EQ(activityManager.asks.replaced, 1);
 }
 
 // The same host and save for a game that also starts solo: its Continue passes the solo roster, and the match stops in
@@ -939,26 +1085,40 @@ TEST_F(TitleScreenTest, AContinueWithNoPassSeatsOfAGameThatStartsSoloPassesTheSo
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// A two-mode game's save that went bad after the screen peeked it: the new match Continue starts plays the roster
-// Continue passed, pass with the fewest seats, and its first snapshot is saved as mode 1, n 2.
-TEST_F(TitleScreenTest, ATwoModeGamesSaveThatWentBadContinuesAsANewPassMatch) {
+// A two-mode game's pass save that went bad, or went, after the screen peeked it (cross-story review row 3): the new
+// match Continue starts plays the first New row's roster, solo, never a pass match nobody chose, and its first
+// snapshot is saved as mode 0, n 1.
+void TitleScreenTest::continueAfterTheSaveChanged(const bool removed) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
-  save("counter");
+  save("counter", SAVED_PASS, 2);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  fakesd::addFile(resumePath("counter"), std::string("garbage"));
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  ASSERT_EQ(rowsDrawn(), expected);
+  if (removed) {
+    fakesd::removeEntry(resumePath("counter"));
+  } else {
+    fakesd::addFile(resumePath("counter"), std::string("garbage"));
+  }
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  EXPECT_TRUE(logHas("counter: Starting -> Playing on Started")) << "a solo match: no hand-off";
   ASSERT_TRUE(match::waitFor([&] {
     entered->loop();
     input->clear();
     return fakesd::bytesOf(resumePath("counter")).size() > 15;
   }));
   const Bytes firstSave = fakesd::bytesOf(resumePath("counter"));
-  EXPECT_EQ(firstSave[14], SAVED_PASS);
-  EXPECT_EQ(firstSave[15], 2u);
+  EXPECT_EQ(firstSave[14], SAVED_SOLO);
+  EXPECT_EQ(firstSave[15], 1u);
+}
+
+TEST_F(TitleScreenTest, ATwoModeGamesSaveThatWentBadContinuesAsANewSoloMatch) { continueAfterTheSaveChanged(false); }
+
+TEST_F(TitleScreenTest, ATwoModeGamesSaveRemovedAfterThePeekContinuesAsANewSoloMatch) {
+  continueAfterTheSaveChanged(true);
 }
 
 TEST_F(TitleScreenTest, ATitleScreenThatCannotBeAllocatedOpensNothingAndRepaintsTheLauncher) {

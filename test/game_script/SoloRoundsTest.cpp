@@ -5,6 +5,7 @@
 #include "GameInput.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
+#include "SeatShown.h"
 #include "SoloRounds.h"
 
 // The solo round loop as the GameVM task runs it (AD-21): the ended-round count
@@ -486,6 +487,33 @@ TEST_F(PassRoundsTest, BeginPublishesNoFrameAndARoundStartsAtItsFirstDraw) {
   EXPECT_EQ(game.rounds.roundsStarted(), 1u);
   ASSERT_EQ(game.rounds.draw(1), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(game.rounds.roundsStarted(), 2u);
+}
+
+// A roster with two of three seats local (cross-story fix review F4; epic-play-nearby's shape, which no match has yet):
+// with the turn on the third seat, seatShown names NO_SEAT, and start, restart, and step neither read input nor draw.
+TEST_F(PassRoundsTest, ATurnSeatThisDeviceDoesNotPlayGetsNoInputAndNoDraw) {
+  useSource("main", R"(
+return {
+  setup = function(ctx) return { moves = 2 } end,
+  status = function(s) return { turn = s.moves % 3 + 1 } end,
+  apply = function(s, seat) ch.log('apply ' .. seat) s.moves = s.moves + 1 return s end,
+  draw = function(s, seat, ui) ch.log('draw ' .. seat) ch.gfx.text(0, 0, 'seat ' .. seat, 'small', 'black') end,
+  input = function(s, seat, ui, ev) ch.log('input ' .. seat) return {} end }
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(3);
+  roster.localSeats = 0b011;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->status().turn, 3);
+  EXPECT_EQ(game.rounds.shownSeat(), GameCore::NO_SEAT);
+  EXPECT_EQ(frames.frameGen(), 0u) << "start drew another device's seat";
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), 0u) << "step or restart drew another device's seat";
+  EXPECT_EQ(logged("input "), 0u);
+  EXPECT_EQ(logged("draw "), 0u);
+  EXPECT_EQ(logged("apply "), 0u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 0u) << "no frame, so no round counts as started";
 }
 
 }  // namespace

@@ -134,105 +134,26 @@ TEST(SeatShownTest, EveryStateShowsItsSeatWithTheMover) {
   }
 }
 
-// A built lifecycle in `state` through its own transitions; a hidden one's Paused is entered
-// from `pausedFrom` (Playing, Result, or HandOff), a solo one's from Playing.
-MatchLifecycle lifecycleIn(const bool hiddenPass, const MatchState state,
-                           const MatchState pausedFrom = MatchState::Playing) {
-  MatchLifecycle lifecycle(hiddenPass);
-  const auto enter = [&lifecycle, hiddenPass](const MatchState target) {
-    if (target == MatchState::Starting) return;
-    if (target == MatchState::Error) {
-      lifecycle.apply(MatchEvent::ScriptError);
-      return;
-    }
-    if (target == MatchState::Leaving) {
-      lifecycle.apply(MatchEvent::ForcedExit);
-      return;
-    }
-    lifecycle.apply(MatchEvent::Started);  // hidden: HandOff; solo: Playing
-    if (target == MatchState::HandOff) return;
-    if (hiddenPass) lifecycle.apply(MatchEvent::Tap);  // Playing
-    if (target == MatchState::Over) lifecycle.apply(MatchEvent::RoundOver);
-    if (target == MatchState::Result) lifecycle.apply(MatchEvent::TurnChanged);
-  };
-  if (state == MatchState::Paused) {
-    enter(pausedFrom);
-    lifecycle.apply(MatchEvent::Back);
-  } else {
-    enter(state);
-  }
-  EXPECT_EQ(lifecycle.state(), state);
-  if (state == MatchState::Paused) {
-    EXPECT_EQ(lifecycle.resumesTo(), pausedFrom);
-  }
-  return lifecycle;
+// A three-seat roster this device plays seats 1 and 2 of: several local seats, but not every one.
+Roster firstTwoOfThree() {
+  Roster roster;
+  roster.mode = Mode::Nearby;
+  roster.seats = 3;
+  roster.localSeats = 0b011;
+  return roster;
 }
 
-constexpr MatchState UNPAUSED_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Over,
-                                          MatchState::Error,    MatchState::Leaving, MatchState::Result,
-                                          MatchState::HandOff};
-
-// The lifecycle form: a hidden pass match paused from Result keeps the mover's view and one
-// paused from HandOff draws no seat, never the next seat's view.
-TEST(SeatShownTest, AHiddenPassMatchPausedShowsWhatItWasPausedFrom) {
-  for (const uint8_t seats : {uint8_t{2}, uint8_t{3}}) {
-    const Roster roster = Roster::pass(seats);
-    const Status nextTurn = playing(seats);  // the turn already passed to the last seat
-    const uint8_t mover = 1;
-    EXPECT_EQ(seatShown(lifecycleIn(true, MatchState::Paused, MatchState::Playing), roster, nextTurn, mover), seats)
-        << seats << " seats, paused from playing: the turn seat";
-    EXPECT_EQ(seatShown(lifecycleIn(true, MatchState::Paused, MatchState::Result), roster, nextTurn, mover), mover)
-        << seats << " seats, paused from result: the mover";
-    EXPECT_EQ(seatShown(lifecycleIn(true, MatchState::Paused, MatchState::Result), roster, nextTurn), NO_SEAT)
-        << seats << " seats, paused from result with no mover";
-    EXPECT_EQ(seatShown(lifecycleIn(true, MatchState::Paused, MatchState::HandOff), roster, nextTurn, mover), NO_SEAT)
-        << seats << " seats, paused from hand-off";
-  }
-}
-
-// One match paused twice: each pause shows what it was paused from.
-TEST(SeatShownTest, EachPauseOfAHiddenPassMatchShowsItsOwnState) {
-  const Roster roster = Roster::pass(2);
-  const Status nextTurn = playing(2);
-  const uint8_t mover = 1;
-  MatchLifecycle lifecycle = lifecycleIn(true, MatchState::Paused, MatchState::Result);
-  EXPECT_EQ(seatShown(lifecycle, roster, nextTurn, mover), mover) << "paused from result";
-  ASSERT_TRUE(lifecycle.apply(MatchEvent::Resume));
-  ASSERT_TRUE(lifecycle.apply(MatchEvent::Tap));
-  ASSERT_EQ(lifecycle.state(), MatchState::HandOff);
-  ASSERT_TRUE(lifecycle.apply(MatchEvent::Back));
-  ASSERT_EQ(lifecycle.state(), MatchState::Paused);
-  EXPECT_EQ(seatShown(lifecycle, roster, nextTurn, mover), NO_SEAT) << "later paused from hand-off";
-}
-
-TEST(SeatShownTest, AnUnpausedLifecycleShowsWhatItsStateShows) {
-  const Roster rosters[] = {Roster::pass(2), Roster::pass(3), secondSeatOnly(), Roster::solo()};
-  const Status statuses[] = {playing(1), playing(2), over(0b01)};
-  for (const bool hiddenPass : {false, true}) {
-    for (const MatchState state : UNPAUSED_STATES) {
-      const bool soloReaches = state != MatchState::Result && state != MatchState::HandOff;
-      if (!hiddenPass && !soloReaches) continue;
-      const MatchLifecycle lifecycle = lifecycleIn(hiddenPass, state);
-      for (const Roster& roster : rosters) {
-        for (const Status& status : statuses) {
-          for (const uint8_t mover : {uint8_t{1}, uint8_t{2}, NO_SEAT}) {
-            EXPECT_EQ(seatShown(lifecycle, roster, status, mover), seatShown(state, roster, status, mover))
-                << (hiddenPass ? "hidden " : "solo ") << MatchLifecycle::name(state) << ", mover " << int{mover};
-          }
-        }
-      }
-    }
-  }
-}
-
-// An open pass or solo match's lifecycle paused shows the turn seat, or its one seat, as today.
-TEST(SeatShownTest, AnOpenPassOrSoloMatchPausedShowsItsSeat) {
-  const MatchLifecycle paused = lifecycleIn(false, MatchState::Paused);
-  EXPECT_EQ(seatShown(paused, Roster::pass(2), playing(2)), 2) << "open pass 2";
-  EXPECT_EQ(seatShown(paused, Roster::pass(3), playing(3)), 3) << "open pass 3";
-  EXPECT_EQ(seatShown(paused, Roster::pass(2), over(0b01)), 0) << "open pass 2, the status over";
-  EXPECT_EQ(seatShown(paused, Roster::solo(), playing(1)), 1) << "solo";
-  EXPECT_EQ(seatShown(paused, secondSeatOnly(), playing(1)), 2) << "seat 2 only";
+// Cross-story review row 8: Playing fails closed as Result does, so a turn seat this device does not play draws
+// nothing and reads no input, rather than relying on LuaGame to refuse it.
+TEST(SeatShownTest, ATurnSeatThisDeviceDoesNotPlayShowsNoSeat) {
+  const Roster roster = firstTwoOfThree();
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(1)), 1);
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2)), 2);
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3)), NO_SEAT) << "seat 3 is another device's";
+  EXPECT_EQ(seatShown(MatchState::Paused, roster, playing(3)), NO_SEAT) << "paused shows what playing shows";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(0)), NO_SEAT) << "seat 0 is never a turn seat";
+  EXPECT_EQ(seatShown(MatchState::Over, roster, over(0b100)), 0) << "over: the frame for everyone";
+  EXPECT_EQ(seatShown(MatchState::Playing, Roster::pass(2), playing(3)), NO_SEAT) << "a turn past n";
 }
 
 TEST(SeatShownTest, NoSeatIsNoRosterSeat) {

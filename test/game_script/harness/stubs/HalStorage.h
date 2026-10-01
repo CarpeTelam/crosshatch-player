@@ -89,6 +89,12 @@ struct Card {
   // so a test can change the card between a reader's passes.
   std::function<void(const std::string& dir, int rewinds)> onRewind;
   std::map<std::string, int> rewinds;
+  // Called at the start of every open with the path and how many opens it has had (this one included), before the
+  // failures above are read and before the file is looked up: a test can make one open of a file fail (failOpen) or
+  // change the file under it. It stands in for a card fault that comes and goes between two reads of one file (a
+  // transient SD open or read error), and for a file rewritten between them.
+  std::function<void(const std::string& path, int opens)> onOpen;
+  std::map<std::string, int> opens;
 };
 
 inline Card& sim() {
@@ -348,6 +354,8 @@ class HalStorage {
     auto& card = fakesd::sim();
     const bool writing = (oflag & O_ACCMODE) != O_RDONLY;
     card.ops.push_back("open " + p);
+    const int opens = ++card.opens[p];
+    if (card.onOpen) card.onOpen(p, opens);
     if (card.failOpen.count(p) != 0 || (writing && card.failOpenWrite.count(p) != 0)) return HalFile();
     if (p == "/") return writing ? HalFile() : HalFile(p, true, oflag);  // the card's root always exists
     fakesd::Entry* entry = fakesd::find(p);

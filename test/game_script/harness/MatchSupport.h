@@ -311,6 +311,7 @@ class ScreenTest : public harness::HarnessTest {
     UITheme::getInstance().getTheme().reset();
     UITheme::getInstance().coverGridHome = false;
     gpio.swipe = HalGPIO::Swipe{};
+    gpio.touchHeldMs = 0;
     renderer = std::make_unique<GfxRenderer>(480, 800);
     addFonts(*renderer);
     input = std::make_unique<MappedInputManager>(gpio, *renderer);

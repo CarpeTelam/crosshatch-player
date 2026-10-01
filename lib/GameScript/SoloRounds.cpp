@@ -50,22 +50,33 @@ Outcome SoloRounds::draw(const uint8_t seat) {
 Outcome SoloRounds::start(GameCore::Session& played) {
   const Outcome outcome = begin(played);
   if (outcome != Outcome::Ok) return outcome;
-  return draw(shownSeat());
+  return drawShown();
 }
 
 Outcome SoloRounds::restart() {
   const Outcome outcome = beginAgain();
   if (outcome != Outcome::Ok) return outcome;
-  return draw(shownSeat());
+  return drawShown();
 }
 
 Outcome SoloRounds::step(const GameCore::GameEvent& event) {
   // A stale timer is dropped before anything, with no draw (play would drop it too,
   // but the draw after it would publish a frame nothing changed).
   if (!timer.accepts(event)) return Outcome::Ok;
-  const Outcome outcome = play(event, shownSeat());
+  // No seat this device plays has the turn: nothing reads the event.
+  const uint8_t seat = shownSeat();
+  if (seat == GameCore::NO_SEAT) return Outcome::Ok;
+  const Outcome outcome = play(event, seat);
   if (outcome != Outcome::Ok) return outcome;
-  return draw(shownSeat());
+  return drawShown();
+}
+
+Outcome SoloRounds::drawShown() {
+  // A turn seat this device does not play (a roster with some seats local, not all) is never drawn: the frame on
+  // screen stays, and no other device's seat is drawn here.
+  const uint8_t seat = shownSeat();
+  if (seat == GameCore::NO_SEAT) return Outcome::Ok;
+  return draw(seat);
 }
 
 Outcome SoloRounds::beginRound() {

@@ -18,8 +18,10 @@ struct GameEvent {
   int16_t y = 0;
   // Rejected only: the reason apply gave, NUL-terminated; valid during the call.
   const char* reason = nullptr;
-  // Timer only: which arming of the timer fired, so an event that a later
+  // Timer: which arming of the timer fired, so an event that a later
   // ch.timer.after or cancel made stale is dropped before input() sees it.
+  // A touch carries GameVM's frame tag here in transit (GameVM::postInput), which
+  // the VM reads and zeroes before input() sees the event.
   uint32_t serial = 0;
   // Swipe only.
   SwipeDir dir = SwipeDir::None;

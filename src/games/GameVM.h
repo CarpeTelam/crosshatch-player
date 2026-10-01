@@ -60,6 +60,10 @@ class GameVM {
   // How long abandon() waits, counted in millis() from when it began, for the stuck
   // task to be safely deletable (late by its last iteration; see STOP_POLL_MS).
   static constexpr uint32_t ABANDON_WAIT_MS = 500;
+  // postInput's shownFrame for a touch made under no particular frame (a direct caller): never dropped. A real frame
+  // number reaches it only after 2^32 publishes, which no match makes (years of frames); the loop posts one less if it
+  // ever does, which can only drop.
+  static constexpr uint32_t UNTAGGED = UINT32_MAX;
   // Size of errorMessage()'s buffer, for callers that copy it.
   static constexpr size_t ERROR_CAPACITY = GameScript::LuaGame::ERROR_CAPACITY;
 
@@ -93,8 +97,14 @@ class GameVM {
   SnapshotMailbox& committed() { return mailbox; }
   // Queues an event for input(): a touch event (GameTouch.h), or pollTimer's Timer
   // event. A full queue drops its oldest event that is not a Timer (InputQueue),
-  // with a log line.
-  void postInput(const GameScript::InputEvent& event);
+  // with a log line. A touch carries `shownFrame`, the frameGen() of the frame the panel
+  // showed when it was made (in GameEvent::serial, which only a Timer reads; the VM zeroes it
+  // before the game sees the event): the VM drops a touch made before the first frame of the
+  // seat it now draws, since that touch was aimed at another seat's view (a tap queued behind
+  // the move that passed the turn or ended the round). UNTAGGED, the default, is never
+  // dropped, so a caller with a real frame number never posts that value. A Timer keeps its own
+  // serial and is never dropped for this.
+  void postInput(const GameScript::InputEvent& event, uint32_t shownFrame = UNTAGGED);
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.
   void pollTimer();
@@ -131,8 +141,11 @@ class GameVM {
   // Hands the front frame, with the largest refresh request of the frames
   // coalesced into it, to `replay` under the frame mutex. False when nothing was
   // drawn: before the first frame, or when replay skipped a frame identical to
-  // the one on screen. Render task only.
-  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay);
+  // the one on screen. Render task only. `takenFrame`, when given, is set to the frameGen() of the
+  // frame taken (read under the frame mutex, which publish holds while it counts a frame), whether
+  // or not replay drew it, and left as it was when there is none.
+  bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay,
+                 uint32_t* takenFrame = nullptr);
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
@@ -211,7 +224,14 @@ class GameVM {
   // One event in the hand-off flow: a stale timer is dropped; in Result or HandOff a timer is
   // held and, in HandOff, every other event dropped; otherwise the event goes to the seat
   // shown, and a move that passes the turn makes the view Result with that seat as the mover.
-  GameScript::Outcome stepHandOff(const GameScript::InputEvent& event);
+  GameScript::Outcome stepHandOff(GameScript::InputEvent event);
+  // VM task, after `seat`'s frame is published: when it is another seat than the one drawn
+  // before, that frame is the first of `seat`'s, so a touch made before it was aimed elsewhere.
+  void noteSeatDrawn(uint8_t seat);
+  // VM task: whether touch `event` was made before the first frame of the seat drawn now
+  // (postInput's shownFrame, below seatFrame), logged; false for a Timer. Zeroes the touch's
+  // tag either way, so the game never sees it.
+  bool madeUnderAnotherSeat(GameScript::InputEvent& event);
   // errorMessage() without its gate: for run(), the task that writes it, which
   // logs it before it publishes `done`.
   const char* failureText() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
@@ -250,6 +270,10 @@ class GameVM {
   GameScript::InputEvent heldTimer;
   uint32_t seatTaken = 0;
   bool seatPending = false;
+  // VM task, any match: the seat whose frame was published last (NO_SEAT before the first), and
+  // the frameGen() of that seat's first frame since another seat's (noteSeatDrawn).
+  uint8_t drawnSeat = GameCore::NO_SEAT;
+  uint32_t seatFrame = 0;
   // Loop task to VM task: showTurnSeat()'s requests. VM task to any: the request served,
   // the moves that passed the turn, and the seat the last one passed to (stored first).
   std::atomic<uint32_t> seatRequests{0};
