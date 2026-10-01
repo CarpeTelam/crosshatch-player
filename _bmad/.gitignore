@@ -1,0 +1,2 @@
+# render_skill.py writes per-checkout skill snapshots here; each run re-renders them.
+render/
