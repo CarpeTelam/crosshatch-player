@@ -212,15 +212,24 @@ frame on the panel at the first Playing pass that sees the finger down (`GameMat
 `isScreenTouchHeld`, true from the contact's first sample), freed on the first Playing pass with no finger down (the
 lift, a long press that suppressed the rest of the contact, or a contact that ended where the loop did not read it, such
 as in Result or under the light panel). A contact the loop never saw down is tagged when its lift is read. A tap also
-carries its held time (`MappedInputManager::getHeldTime()`), so it is back-dated to its touch-down against the last
-canvas push (`frameAt`: render notes when `displayBuffer` returned, which it does once the panel's refresh has
-completed, and the frame before it), and the older of the two frames is posted. So a contact made under one seat's frame
-never reaches the next seat when the loop saw it down, or when it is a tap whose touch-down came before the next seat's
-push completed. What remains: a swipe or a long press first seen after a loop pass that ran past the next seat's push
-(blocked in `flushResume`'s SD write) carries the frame then on the panel and may reach that seat; a tap the loop never
-saw down whose contact spanned two pushes is back-dated to the frame before the later one only; and a finger already
-down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet freed, so its
-touch is dropped (fails closed).
+carries its touch-only held time (`HalGPIO::lastTouchHeldMs()`; `MappedInputManager::getHeldTime()` would answer a
+button's hold on a pass with a button edge), so it is back-dated to its first touch sample against the last canvas push
+(`frameAt`: render notes when `displayBuffer` returned, which it does once the panel's refresh has completed, and the
+frame before it), and the older of the two frames is posted; this reaches a tap first sampled on a pass that returned
+before reading gestures (Back, a VM check, a round or turn change). Touch is sampled only in `update()` on the loop
+task, once a pass, so a contact's first sample is the first update after it lands. A contact made under one seat's frame
+therefore never reaches the next seat when an update sampled it before the next seat's push completed and either a
+Playing pass read it then or it is a tap. What remains:
+
+- a touch whose finger came down while the loop task was blocked in an SD step after a move (the resume write, the
+  `ch.store` flush, or the delete retry), during which the next seat's push completed, is first sampled after both and
+  may reach that seat, whether a tap, a swipe, or a long press (closing it needs touch sampled off the loop task, in
+  upstream input code; the device run, epic-pass-and-play entry 11, measures it);
+- a swipe or long press first sampled on a pass that returned before reading gestures, and first read after the next
+  seat's push, may reach that seat (only a tap carries a held time);
+- the back-dating anchors to the loop's read, a few milliseconds after the release sample, whose time is not exposed;
+- a finger already down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet
+  freed, so its touch is dropped (fails closed).
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,

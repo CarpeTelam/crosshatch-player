@@ -805,3 +805,6 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
   summary: The screen input double's touch thresholds (90 ms touch-down, 500 ms long press) and its suppression and one-update long-press rules are copies of `src/MappedInputManager.cpp` and freeink-sdk's `InputManager.cpp` that no host test can check against the device code (`TOUCH_DOWN_SELECT_DELAY_MS` is file-local, `TOUCH_LONG_PRESS_MS` private).
   evidence: Review of e5-xr's H round (verification gap). Trigger: an SDK or `MappedInputManager` change to the touch classifier; the device-run packet (cross-story review row 16) checks them on an X4 Pro.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-xr-cross-story-fixes.md`
+  summary: The screen input double's 90 ms touch-down and 500 ms long-press thresholds are copied numbers; the real constants are private to upstream `src/MappedInputManager.cpp` (file-local) and freeink-sdk's `InputManager.h` (private), so no host test or CI check reads them (fix review J5).
+  evidence: Review of e5-xr's fourth fix commit (`cross-story-review.md` J5). A check that reads them would be a new gate over upstream-owned files. Trigger: a change to either constant upstream; the device-run packet checks both thresholds on an X4 Pro meanwhile.

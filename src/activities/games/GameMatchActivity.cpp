@@ -549,14 +549,14 @@ void GameMatchActivity::loopPlaying() {
   if (!awaitingDisplay &&
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
     // With the frame on the panel when the loop first saw the finger down (or now, for a contact it never saw down), so
-    // the VM drops it if another seat has been drawn since (a pass match). A tap also has its held time, so it is
-    // back-dated to its touch-down against the last push (frameAt), and the older of the two frames is posted: a tap
-    // whose finger came down while the loop was blocked (an SD write) before the next seat's push carries the frame
-    // before it. A frame number equal to GameVM::UNTAGGED, which the VM never drops, is posted one less, which can only
-    // drop.
+    // the VM drops it if another seat has been drawn since (a pass match). A tap is also back-dated by its touch-only
+    // held time (HalGPIO::lastTouchHeldMs; MappedInputManager::getHeldTime answers a button's hold on a pass with a
+    // button edge) to its first touch sample against the last push (frameAt), and the older frame is posted. What this
+    // cannot reach is in game-canvas.md. A frame number equal to GameVM::UNTAGGED, which the VM never drops, is posted
+    // one less, which can only drop.
     uint32_t shown = touchDownLatched ? touchDownFrame : frameDisplayed.load(std::memory_order_acquire);
     if (gesture.kind == GameTouch::Kind::Tap) {
-      const uint32_t atTouchDown = frameAt(static_cast<uint32_t>(millis() - mappedInput.getHeldTime()));
+      const uint32_t atTouchDown = frameAt(static_cast<uint32_t>(millis() - gpio.lastTouchHeldMs()));
       if (static_cast<int32_t>(atTouchDown - shown) < 0) shown = atTouchDown;
     }
     vm->postInput(event, shown == GameVM::UNTAGGED ? shown - 1 : shown);

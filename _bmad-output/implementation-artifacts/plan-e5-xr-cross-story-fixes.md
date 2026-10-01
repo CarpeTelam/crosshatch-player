@@ -14,6 +14,7 @@ review_loop_iteration: 0
 followup_baseline_revision: '00ca40702f7b0ba3fb4cbfdcbc87c38d3e5ec16f'
 last_round_baseline_revision: 'e47e33d9'
 h_round_baseline_revision: '0c18e437'
+j_round_baseline_revision: '2ae3587f'
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/cross-story-review.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play.md'
@@ -100,6 +101,15 @@ context:
 - [x] H7 `GameMatchActivity.{h,cpp}` -- render records the frame before each canvas push and when the push returned (`LastPush`, `pushMutex`); a tap is back-dated by `getHeldTime()` (`frameAt`) and posted with the older frame; the latch starts at the first pass with the finger down. The input double answers a tap's held time. Tests: `PassMatchTest.ATapDownBeforeTheNextSeatsPushAndSeenOnlyAtItsLiftIsDropped`, `...ALatchWhoseContactEndedUnseenIsFreedForTheNextTap`.
 - [x] H8 `GameMatchTest.cpp` -- the renderer double's comment is back above its test.
 
+**J round (pass 8: the review of `4fbb9a87`, rows J1-J8 of `cross-story-review.md` "Review of the fourth fix commit"; one more commit, implemented directly):**
+- [x] J1 `screen_stubs/MappedInputManager.h`, `GameMatchTest.cpp`, comments, `game-canvas.md` -- the double stamps a contact's touch-down at its first read (the device samples touch only in `update()` on the loop task); the H7 test becomes `PassMatchTest.ATapWhoseFingerCameDownWhileTheLoopWasBlockedReachesTheSeatPushedMeanwhile`, showing the window open; "What remains" lists it, for taps too.
+- [x] J2 `GameMatchActivity.cpp`, `screen_stubs/HalGPIO.h` -- back-dating reads the touch-only `HalGPIO::lastTouchHeldMs()` (already public; no upstream edit); the double models `getHeldTime()`'s button precedence. Test: `PassMatchTest.ATapReadWithAButtonEdgeIsBackDatedByItsOwnHeldTime`.
+- [x] J3 -- not reachable without an upstream edit (the release sample's time is not exposed); noted beside J1 in the comment and game-canvas.md.
+- [x] J5 `deferred-work.md` -- the copied thresholds, under `## e5-xr`.
+- [x] J6 `GameMatchTest.cpp` -- `PassMatchTest.ATapSampledDuringTheNextSeatsPushIsBackDatedToTheFrameBeforeIt` makes the push take 300 ms (`onDisplay`) and samples the finger during it.
+- [x] J7 `GameMatchTest.cpp` -- `HiddenPassTest.AFingerHeldFromSeatOnesTurnIntoSeatTwosKeepsItsLatchAndIsDropped`.
+- [x] J8 `screen_stubs/MappedInputManager.h` -- a long press is reported on every read of its frame; `InputDoubleTest` follows.
+
 **Acceptance Criteria:**
 - Given any change above, when the host suites run, then every suite passes and the tests named above fail on the pre-fix code.
 - Given the firmware, when `x4pro` and `default` build and `pio check` runs on both envs, then no defect is reported and the flash delta over the base stays within 5,056 B and 32 B left.
@@ -136,6 +146,7 @@ context:
 - **Follow-up: `pio check -e x4pro` failure fixed.** `unstartableHere`'s raw loop drew cppcheck's low `useStlAlgorithm` (`GameSaveStore.cpp:82`); it is `std::any_of` over the same list now, and both `pio check` runs pass.
 - **Last round (G2-G6, then pass 5's patches):** implemented directly; mutation checks: the wrap compare reverted to `>=`, the latch removed, the latch re-taken on every pass, and the other-package codec branch reverted each fail their test (the store, VM, and match tests above).
 - **H round:** implemented directly; mutation checks: freeing the latch on a gesture only (the old rule; both the light-panel and the hidden test fail), the fallback taking the stale latch, removing the back-dating, and the newer-codec early return each fail their test.
+- **J round:** implemented directly (pass 9's patches too); mutation checks: restoring `handle()`'s reset, back-dating with `getHeldTime()`, and stamping the push before `displayBuffer` each fail their test.
 
 ## Plan Change Log
 
@@ -262,6 +273,34 @@ context:
 | R11 | BH, VG | The quick-tap and long-press tests pin the double more than a production regression | low | reject | They pin the fallback and the long-press path against the device-modelled double; the production rules each have a failing mutation (Implementation Notes). |
 | R12 | IA | The `Assumption for entry 11:` line for H7 is not written | low | reject | H7 is now done; no assumption is needed. |
 
+**Pass 8 (2026-10-01, orchestrator-relayed review of `4fbb9a87`; raw `xreview/fix4-*.md`, checked against `src/main.cpp`'s loop, `src/MappedInputManager.cpp`, and freeink-sdk's `InputManager.cpp`).** J1, J2, J6, J7, J8 fix; J3 fix if small; J4 packet; J5 defer. Verdicts: high 0, medium 2 (J1, J2), low 5, deferred 1.
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| J1 | EC, A | A finger landing during the SD write is first sampled after it; the H7 test passed only because the double stamped at `holdTouch` | medium | patch (+ entry 11) | Real: `InputManager` stamps `touchDownPoint.timestamp` at its first poll in `update()`. The double stamps at first read; the test now shows the window open; docs and comment corrected; proposed `Assumption for entry 11:` line in Design Notes. |
+| J2 | EC, A, VG | `getHeldTime()` answers a button's hold on a pass with a button edge, 0 with a mapped home action | medium | patch | Real (`MappedInputManager.cpp:390-398`). Reads `HalGPIO::lastTouchHeldMs()`, public, so no upstream edit. Double models the precedence; test fails with `getHeldTime()`. |
+| J3 | EC | The anchor is `millis()` at read, not the release sample | low | patch (note) | Real, a few ms; the release sample's time is not exposed without an upstream edit. Noted beside J1. |
+| J4 | A | The drop window runs to `displayBuffer`'s return, after post-waveform work | -- | packet | The orchestrator's; not this change's. |
+| J5 | A | The double's thresholds are copied numbers | low | defer | Recorded under `## e5-xr`. |
+| J6 | VG | The after-the-refresh stamp is unpinned | low | patch | Real; a 300 ms push in the test; it fails with the stamp taken before `displayBuffer`. |
+| J7 | VG | `handle()`'s reset removal is unpinned | low | patch | Real; the hidden test fails with the reset restored. |
+| J8 | VG | The double reports a long press on the first read only | low | patch | Real (`InputManager.cpp` `touchLongPressEvent` holds for the update); every read of its frame now. |
+
+**Pass 9 (2026-10-01, this build's own review of the J-round diff `2ae3587f..` working tree).** All four lenses ran as context-free subagents, launched together, and all four returned: blind-hunter (BH), edge-case-hunter (EC), verification-gap (VG, no gaps), intent-alignment (IA, descriptive). Verdicts: high 0, medium 2, low 8, false 0. Routes: patch 7, reject 3; no loopback.
+
+| # | Lens | Finding | Verdict | Route | Evidence / action |
+|---|---|---|---|---|---|
+| S1 | BH, VG, EC | `gpio.touchHeldMs` goes stale: `tap()` never sets it, `SetUp` never resets it, a suppressed or gesture-less lift skips it | medium | patch | Real (process-global `gpio`). `tap()` sets it, `ScreenTest::SetUp` resets it, every sampled release sets it, as the device's release update does. |
+| S2 | IA, VG, EC | The double's "first sample is the lift" path does not exist on the device; it samples only on reads, not every pass | medium | patch | Real (`main.cpp` runs `update()` each pass; a release needs an earlier sample). `update()` samples and `frame()` calls it; an unsampled contact's lift is never seen; the J1 test samples after the block; `InputDoubleTest` pins both. |
+| S3 | EC | The J6 test clears `onDisplay` inside its own call (UB) | low | patch | Real; a flag inside, reset after `render()`. |
+| S4 | BH | The two-push clause in "What remains" contradicts J1's model | low | patch | Real; removed; the list is now bullets, one window each. |
+| S5 | BH, EC | Back-dating's device path is unnamed; the doc's guarantee overstates swipes and long presses | low | patch | Real: it serves a tap first sampled on a pass that returned before `readGesture`; named in the doc and the J6 test; the swipe/long-press case listed. |
+| S6 | BH | The window names one SD write; the pass has three | low | patch | Real (`flushIfDue`, `flushResume`, `retryResumeDelete`); all named. |
+| S7 | BH | "entry 11" unqualified; the loop comment duplicates the doc | low | patch | Real; qualified as the device run that measures it; the comment trimmed to the mechanism with a pointer. |
+| S8 | BH, EC | The double's `pressed` is a level, the device's an edge | low | reject | Production no longer calls `getHeldTime()`; noted in the double's comment as more permissive. |
+| S9 | BH | No test for a swipe or long press in the SD-step window; the home-action case | low | reject | Documented as open; production reads `lastTouchHeldMs`, so the home action has no consumer. |
+| S10 | IA | J6's path is the latch's second line on the device | low | reject | By design: the test names the early-return path it stands for. |
+
 ## Design Notes
 
 - **Row 4 vs R7.** The row's action (drop every seat-0 input) would end R7's "from then on ... input get seat 0" and game-api-seed §3, which `PassRoundsTest` pins. The trigger is an event posted while a seat 1..n frame showed and played after the round ended; row 5's tag drops exactly that (the seat drawn changed since it was posted), so one mechanism fixes both and R7 stays: the Over menu posts no game input, and any input posted under seat 0's frame would still reach seat 0.
@@ -274,6 +313,7 @@ context:
 - **G2: latch at touch-down, chosen because it stayed small** (three loop-task members: the first pass that sees `touchPressed` latches, since the device's `wasScreenTouchDown` is a level reported on every pass of a hold past 90 ms; freed on any release, gesture or not, and in `handle()`). It closes the contact that begins under one seat's frame and lifts under the next (now dropped, was delivered). It cannot close the touch-down made while the loop is blocked, which is seen at the next pass, nor a touch during the refresh; both stay documented in game-canvas.md. Latching at the touch itself needs the input layer's timestamps (upstream `MappedInputManager`).
 - **H7: back-dating done for taps (it stayed small).** `displayBuffer` blocks until the panel's refresh completes (`Ssd1677Driver::display`, `waitRefreshComplete` unless async), so render notes the frame before each canvas push and `millis()` when the push returned (`LastPush` under `pushMutex`, ~15 lines), and a tap, whose held time `getHeldTime()` gives on its frame, is back-dated to `now - held` and posted with the older of that frame and its latch. The latch itself now starts at the first pass with the finger down (`isScreenTouchHeld`, no 90 ms delay, no slop gate), so a slid contact and a short tap are latched too. Left: a swipe or long press first seen after a loop pass that ran past the push (no held time; a long press needs a 500 ms hold, which the loop sees unless blocked that long), and a tap the loop never saw down that spanned two pushes (one push of history). The earlier note here, that `displayBuffer` returns before the refresh, was wrong.
 - **H4: `handle()`'s latch reset removed.** The touch-down is a level, so a finger still held would be re-latched on the first Playing pass anyway; the no-finger-down rule frees a latch whose contact ended outside Playing, and a finger held through a state change keeps the earlier latch (dropped if the seat changed: fails closed; it was put down before the new seat's frame was shown).
+- **J1: the SD-write window stays open.** Touch is sampled only by `mappedInputManager.update()` on the loop task, so a finger that lands while the loop is blocked in `flushResume`'s SD write is first sampled after the block; if the next seat's push completed meanwhile, neither the latch nor back-dating reaches before it, and the tap, swipe, or long press may reach that seat. Closing it needs touch sampled off the loop task (upstream input code). Proposed line: "Assumption for entry 11 (e5-xr's plan, 2026-10-01): a touch made while the loop task is blocked in an SD step after a move (the resume write, the ch.store flush, or the delete retry), during which the next seat's frame finished pushing, can reach the next seat in an open pass match; the device run times those steps after a move and checks how often a quick tap in that window lands on the next seat. Closing it needs touch sampled off the loop task (upstream `MappedInputManager`/`InputManager`)." J3's few milliseconds (the anchor is the loop's read, not the release sample) sit beside it.
 - Guards kept: `stopVm`'s `!vm` return and its push-before-flushResume order (R6); `startResume`'s no-pass-seats return; `leave()`'s stop under its own RenderLock.
 
 ## Verification
@@ -314,4 +354,11 @@ context:
 - `pio run -e default`: success. `pio check` (`default`) and `pio check -e x4pro`: no defects, PASSED. `sim.sh build x4pro`: SUCCESS.
 - Flash (four steps under the build lock): x4pro `firmware.bin` 5,921,504 B games on, 5,679,792 B off, +241,712 B (14,288 B under the gate); static internal RAM +784 B (240 B under); `objects` clean. Over the base at `c1902721`: +8,272 B flash and +0 B static RAM; +192 B over `df63158f`'s +241,520 B; 2,880 B and 32 B of the share left.
 - Test double extended: the screen input double models the device's touch path (90 ms touch-down level, held flag, one-update 500 ms long press with suppression, a lift frame without touch-down, a tap's held time), pinned by `InputDoubleTest.AHeldContactFollowsTheDevicesTouchPath`; not modelled: tap slop, multi-touch, the held-time override's 250 ms life (deferred-work.md, the packet).
+
+**Results of the J round (2026-10-01, J1-J8 and pass 9's patches; the tree measured is this commit's, whose firmware sources the commit does not change):**
+- Host suites: 1,531 of 1,531 pass; the touch-latch tests passed 20 repeats each.
+- `scripts/*_test.py`, `check_layers.py` (497 edges), `check_upstream_touches.py` PASS, `./bin/clang-format-fix` clean twice.
+- `pio run -e default`: success. `pio check` (`default`) and `pio check -e x4pro`: no defects, PASSED. `sim.sh build x4pro`: SUCCESS.
+- Flash (four steps under the build lock): x4pro `firmware.bin` 5,921,504 B games on, 5,679,792 B off, +241,712 B (14,288 B under the gate); static internal RAM +784 B (240 B under); `objects` clean. Over the base at `c1902721`: +8,272 B flash and +0 B static RAM; +0 B over `4fbb9a87`'s +241,712 B; 2,880 B and 32 B of the share left.
+- Test doubles extended: the screen input double samples a held contact on `update()` (which the match tests' `frame()` calls) or its first read, never sees a contact no update sampled, and sets the touch-only held time on every sampled release; the HalGPIO double gains `lastTouchHeldMs()`; pinned by `InputDoubleTest.AHeldContactFollowsTheDevicesTouchPath`.
 
