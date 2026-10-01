@@ -194,7 +194,7 @@ bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t&
   snapshot = store.saves().loadResume(ver, unreadable, manifest, gameHostCaps(), saved);
   if (snapshot.empty()) {
     if (unreadable) {
-      // A save is there and would not read, a fault that may pass (the launcher offered Continue for it).
+      // A save is there and would not read, a fault that may pass (the title screen offered Continue for it).
       LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
       return false;
     }

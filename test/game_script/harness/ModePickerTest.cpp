@@ -402,7 +402,7 @@ TEST_F(TitleScreenTest, ASoloAndPassGameIsOneSoloRowWhileTheHostHasNoPass) {
 TEST_F(TitleScreenTest, APassOnlyGameWithOneSeatOpensNothingFromTheLauncher) {
   installCounter("\"pass\"", 1);
   openLauncher();
-  EXPECT_TRUE(logHas("Unavailable counter: pass and nearby need seats.max 2 or more"));
+  EXPECT_TRUE(logHas("Invalid counter: pass and nearby need seats.max 2 or more"));
   const std::vector<screen::DrawnText>& drawn = ui().drawn;
   const auto row =
       std::find_if(drawn.begin(), drawn.end(), [](const screen::DrawnText& d) { return d.text == "Counter"; });
@@ -502,7 +502,6 @@ TEST_F(TitleScreenTest, WithNoSaveTheHeaderIsTheGamesNameAndTheRowsAreItsModes) 
   installCounter("\"solo\",\"pass\"");
   openTitleFor(SOLO | PASS);
   EXPECT_TRUE(theme().drew("drawHeader", "Counter"));
-  EXPECT_FALSE(theme().drew("drawHeader", tr(STR_GAMES_MODE_TITLE))) << "\"Choose a mode\" goes";
   const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
   EXPECT_EQ(rowsDrawn(), expected) << "no Continue row: there is no save";
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_SOLO_DESC)));
@@ -657,14 +656,14 @@ TEST_F(TitleScreenTest, ConfirmWithNothingMovedResumesTheSoloSave) {
   frame();
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a solo match"));
+  EXPECT_TRUE(logHas("counter: resuming the save's roster: solo, 1 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
   EXPECT_TRUE(logHas("Resuming at ver 3"));
   EXPECT_TRUE(logHas("draw\t2")) << "the saved snapshot is what is drawn";
   EXPECT_FALSE(logHas("setup ran"));
 }
 
-// A game that can start solo and pass resumes solo when the solo-only peek finds a valid solo save.
+// A game that can start solo and pass resumes its solo save solo: the match plays the roster the save records.
 TEST_F(TitleScreenTest, ATapOnContinueResumesATwoModeGamesSoloSaveSolo) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter");
@@ -672,9 +671,10 @@ TEST_F(TitleScreenTest, ATapOnContinueResumesATwoModeGamesSoloSaveSolo) {
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a solo match (solo-only peek: valid)"));
+  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  EXPECT_TRUE(logHas("counter: resuming the save's roster: solo, 1 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
-  EXPECT_FALSE(logHas("pass match"));
+  EXPECT_FALSE(logHas("resuming the save's roster: pass")) << "the save's roster wins over the one Continue passed";
 }
 
 // A pass save (mode 1, n 2) gets its Continue row, and the tap resumes it as a pass match: the saved snapshot is drawn,
@@ -690,7 +690,7 @@ TEST_F(TitleScreenTest, ContinueOnAPassSaveResumesItAsAPassMatch) {
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: none)"));
+  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
   EXPECT_TRUE(logHas("Resuming at ver 3"));
@@ -715,7 +715,7 @@ TEST_F(TitleScreenTest, ContinueOnAPassOnlyGamesSaveResumesIt) {
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: -)"));
+  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
   EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
   EXPECT_FALSE(logHas("setup ran"));
@@ -736,7 +736,7 @@ TEST_F(TitleScreenTest, ASoloGamesUnreadableSaveIsOfferedAndItsContinueEndsInThe
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a solo match"));
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
   EXPECT_FALSE(logHas("setup ran"));
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
@@ -756,8 +756,8 @@ TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAl
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue counter: a 2-seat pass match (solo-only peek: unreadable)"));
-  EXPECT_FALSE(logHas("a solo match"));
+  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  EXPECT_FALSE(logHas("a solo roster"));
   EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
   EXPECT_TRUE(logHas("counter: Starting -> Error on ScriptError"));
   for (int i = 0; i < 20; ++i) {
@@ -841,11 +841,24 @@ TEST_F(TitleScreenTest, TheDirectionKeysMoveTheFocusAndConfirmOnNewGameStartsNew
   frame();
   render();
   ASSERT_TRUE(dialogUp());
+  input->click(Button::Right);  // New game
+  frame();
+  input->click(Button::Left);  // back to Cancel
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  render();
+  EXPECT_FALSE(dialogUp()) << "Left took the focus back to Cancel";
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  input->click(Button::Confirm);  // the Solo row, still selected: the question again, Cancel focused
+  frame();
+  render();
+  ASSERT_TRUE(dialogUp());
   input->click(Button::Down);
   frame();
   input->click(Button::Up);  // back to Cancel
   frame();
-  input->click(Button::Down);
+  input->click(Button::Right);  // New game
   frame();
   input->click(Button::Confirm);
   frame();
@@ -890,12 +903,12 @@ TEST_F(TitleScreenTest, ANewRowOverAnUnreadableSaveAsksFirst) {
   EXPECT_TRUE(dialogUp());
 }
 
-// The Continue tap's pass seat guard: a two-mode game's Unreadable save on a one-seat host (where check still leaves
+// The Continue tap's pass seat guard: a pass-only game's Unreadable save on a one-seat host (where check still leaves
 // pass for a 1..2 game) has no pass match to start. Nothing starts, the screen is drawn again, and the save is kept.
 TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   hostcaps::script().maxSeats = 1;
-  addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
-  save("counter");
+  addCountingGame("counter", "Counter", "\"pass\"");
+  save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   fakesd::sim().failOpen.insert(resumePath("counter"));
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
@@ -905,6 +918,47 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   EXPECT_TRUE(logHas("Cannot continue counter in pass: seats 1..2 leave no pass match on this host"));
   EXPECT_TRUE(activityManager.updateRequested());
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
+}
+
+// The same host and save for a game that also starts solo: its Continue passes the solo roster, and the match stops in
+// its error view on the save it cannot read, the file kept.
+TEST_F(TitleScreenTest, AContinueWithNoPassSeatsOfAGameThatStartsSoloPassesTheSoloRoster) {
+  hostcaps::script().maxSeats = 1;
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
+  save("counter");
+  const Bytes saved = fakesd::bytesOf(resumePath("counter"));
+  fakesd::sim().failOpen.insert(resumePath("counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  tapRow(tr(STR_GAMES_CONTINUE));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
+  EXPECT_FALSE(logHas("Cannot continue counter"));
+  EXPECT_TRUE(logHas("resume.bin could not be read; not starting a new match over it"));
+  EXPECT_FALSE(logHas("setup ran"));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
+}
+
+// A two-mode game's save that went bad after the screen peeked it: the new match Continue starts plays the roster
+// Continue passed, pass with the fewest seats, and its first snapshot is saved as mode 1, n 2.
+TEST_F(TitleScreenTest, ATwoModeGamesSaveThatWentBadContinuesAsANewPassMatch) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
+  save("counter");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  fakesd::addFile(resumePath("counter"), std::string("garbage"));
+  tapRow(tr(STR_GAMES_CONTINUE));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Continue counter: a pass roster of 2 seat(s) unless the save says otherwise"));
+  EXPECT_TRUE(logHas("no usable resume.bin; starting a new match"));
+  ASSERT_TRUE(match::waitFor([&] {
+    entered->loop();
+    input->clear();
+    return fakesd::bytesOf(resumePath("counter")).size() > 15;
+  }));
+  const Bytes firstSave = fakesd::bytesOf(resumePath("counter"));
+  EXPECT_EQ(firstSave[14], SAVED_PASS);
+  EXPECT_EQ(firstSave[15], 2u);
 }
 
 TEST_F(TitleScreenTest, ATitleScreenThatCannotBeAllocatedOpensNothingAndRepaintsTheLauncher) {
@@ -1365,7 +1419,7 @@ TEST_F(OneRowPerGameTest, UnderTheInstallNoteConfirmsOpenTheTitleScreenAndNeverA
   key(Button::Confirm);  // that choice: Continue
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Continue game-01: a solo match"));
+  EXPECT_TRUE(logHas("game-01: resuming the save's roster: solo, 1 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
 }
 

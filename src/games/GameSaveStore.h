@@ -28,7 +28,8 @@ class StoreSlot;
 // document, written the same way (resume.bin.tmp, then a rename) and read the same way
 // (a whole tmp is read when resume.bin is missing). A save records its mode and seat
 // count; the forms of peek and loadResume that take the game's manifest and the host's
-// caps accept one that game can start on that host, and the older forms a solo one only.
+// caps accept one that game can start on that host, and the older forms a solo one only. The firmware
+// calls only the newer forms; the older ones stay for the host suites, so a new caller takes the newer.
 class GameSaveStore final : public GameCore::ISnapshotStore {
  public:
   static constexpr char STORE_MAGIC[] = "CHST";

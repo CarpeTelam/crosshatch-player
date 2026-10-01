@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "GameModeActivity.h"
 #include "activities/UiListActivity.h"
 #include "games/GameRegistry.h"
 #include "games/GameRowIcon.h"
@@ -89,6 +90,7 @@ class GamesLauncherActivity final : public UiListActivity {
   void closeRemoveDialog();
   void confirmRemove();
   bool handleRemoveInput();
+  void answerRemove(GameConfirmDialog::Answer answer);
   void buildRemoveDialog(UiScreen& screen);
   static void onRemoveChoice(const freeink::ui::ActionEvent& event, void* user);
 
@@ -114,10 +116,8 @@ class GamesLauncherActivity final : public UiListActivity {
   bool noteVisible = false;
   // Rows a page holds, as the last build measured them (1 until the first build); listCount() pads to it.
   std::atomic<uint16_t> pageRows{1};
-  // The listing index (not a row) the open remove confirmation asks about (-1: none), and its focused button (0 Cancel,
-  // 1 Remove).
+  // The listing index (not a row) the open remove confirmation asks about (-1: none), and the question (its focus: 0
+  // Cancel, 1 Remove).
   int removeIndex = -1;
-  uint8_t removeFocus = 0;
-  // The confirmation's props, filled by each buildRemoveDialog (about 700 B: too big for the render task's stack).
-  freeink::ui::OptionDialogProps dialogProps;
+  GameConfirmDialog confirm;
 };

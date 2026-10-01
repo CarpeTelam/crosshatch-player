@@ -56,6 +56,68 @@ const char* saveName(const SaveState state) {
 
 }  // namespace
 
+GameConfirmDialog::Answer GameConfirmDialog::readButtons(const MappedInputManager& input) {
+  using Button = MappedInputManager::Button;
+  if (input.wasReleased(Button::Back)) return Answer::Cancel;
+  if (input.wasReleased(Button::Up) || input.wasReleased(Button::Left) || input.wasReleased(Button::NavPrevious)) {
+    focus = 0;
+    return Answer::Repaint;
+  }
+  if (input.wasReleased(Button::Down) || input.wasReleased(Button::Right) || input.wasReleased(Button::NavNext)) {
+    focus = 1;
+    return Answer::Repaint;
+  }
+  if (input.wasReleased(Button::Confirm)) return focus == 1 ? Answer::Confirm : Answer::Cancel;
+  return Answer::None;
+}
+
+GameConfirmDialog::Answer GameConfirmDialog::answerTap(const fui::ActionEvent& event) {
+  focus = event.value == 1 ? 1 : 0;
+  return focus == 1 ? Answer::Confirm : Answer::Cancel;
+}
+
+void GameConfirmDialog::build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const fui::ActionId action,
+                              const char* title, const char* headline, const char* message, const char* actionLabel) {
+  fui::DialogOption options[2];
+  options[0].label = tr(STR_CANCEL);
+  options[1].label = actionLabel;
+  for (int i = 0; i < 2; ++i) {
+    options[i].action = action;
+    options[i].value = static_cast<int16_t>(i);
+    options[i].state = focus == i ? fui::StateFocused : fui::StateNormal;
+  }
+  props.title = title;
+  props.headline = headline;
+  props.message = message;
+  props.options = options;
+  props.optionCount = 2;
+  props.verticalOptions = true;
+  props.titleText = screen.theme().smallText;
+  props.titleText.bold = true;
+  props.headlineText = screen.theme().bodyText;
+  props.headlineText.maxLines = 2;  // a long name wraps; the dialog grows to fit
+  props.messageText = screen.theme().smallText;
+  props.messageText.maxLines = 2;
+  props.buttonText = screen.theme().smallText;
+  props.inputMask = fui::InputTouch;  // physical buttons stay in readButtons()
+  // A framed panel, as OptionPopup draws it.
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  props.styles = fui::defaultPopupStyles();
+  props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+  props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
+  props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
+  props.styles.selected = props.styles.normal;
+  props.styles.focused = props.styles.normal;
+  props.styles.active = props.styles.normal;
+  props.styles.disabled = props.styles.normal;
+
+  const fui::Rect body = screen.body();
+  int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);
+  if (width > body.width) width = body.width;
+  const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
+  fui::optionDialog(screen.frame(), fui::centeredRect(body, fui::Size{width, height}), props);
+}
+
 GameModeActivity::GameModeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                    const GameRegistry::Entry& game)
     : UiListActivity(NAME, renderer, mappedInput), manifest(game.manifest), modes(game.check.modes) {
@@ -179,38 +241,25 @@ void GameModeActivity::startNew(const RowKind kind) {
 }
 
 void GameModeActivity::startResume() {
-  // peek() gives no mode, and GameMatchActivity resumes only a solo save until epic-pass-and-play entry 9. A solo
-  // roster on a pass save would refuse it and start a solo match whose first snapshot replaces it; a pass roster
-  // leaves the file alone, since a pass match sets no package hash, and without one GameSaveStore reads, writes, and
-  // deletes no resume.bin. So a game that can start both resumes solo only when the solo-only peek finds a valid solo
-  // save: its None or Unreadable may be a pass save. A game that cannot start pass holds no pass save of this package
-  // (the hash ties a save to the manifest), so its Unreadable stays solo and ends in the match's error view. Entry 9
-  // builds the roster from the save, and this second peek goes.
-  const bool canSolo = (modes & Manifest::MODE_SOLO) != 0;
-  const bool canPass = (modes & Manifest::MODE_PASS) != 0;
-  bool solo = !canPass;
-  // What the tap-time solo-only peek found, in the log; "-" when it did not run.
-  const char* soloPeek = "-";
-  if (canSolo && canPass) {
-    const SaveState soloSave = GameSaveStore::peek(manifest.id, pkgHash);
-    solo = soloSave == SaveState::Valid;
-    soloPeek = saveName(soloSave);
-  }
+  // The match plays the roster the save records, whatever this passes, and stops in its error view, the file kept, on
+  // a save it cannot read or only another host can start (GameMatchActivity::seedResume). This roster is played when
+  // the match's load finds no usable save (it went bad or was removed after the screen peeked), as a new match: pass
+  // with the fewest seats for a game that starts pass; solo for a game that starts only solo, or that also starts solo
+  // when no pass match fits this host; and a pass-only game with no pass seats starts nothing.
   GameCore::Roster roster = GameCore::Roster::solo();
-  if (solo) {
-    LOG_INF("GAME", "Continue %s: a solo match (solo-only peek: %s)", manifest.id, soloPeek);
-  } else {
+  if ((modes & Manifest::MODE_PASS) != 0) {
     const uint8_t seats = GameCore::passSeats(manifest.seatsMin, manifest.seatsMax, gameHostCaps().maxSeats);
-    if (seats == 0) {
+    if (seats > 0) {
+      roster = GameCore::Roster::pass(seats);
+    } else if ((modes & Manifest::MODE_SOLO) == 0) {
       LOG_ERR("GAME", "Cannot continue %s in pass: seats %d..%d leave no pass match on this host", manifest.id,
               static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax));
       requestUpdate();  // the tap moved the selection here; show it
       return;
     }
-    roster = GameCore::Roster::pass(seats);
-    LOG_INF("GAME", "Continue %s: a %u-seat pass match (solo-only peek: %s)", manifest.id, static_cast<unsigned>(seats),
-            soloPeek);
   }
+  LOG_INF("GAME", "Continue %s: a %s roster of %u seat(s) unless the save says otherwise", manifest.id,
+          GameCore::modeName(roster.mode), static_cast<unsigned>(roster.seats));
   startMatch(roster, true);
 }
 
@@ -245,7 +294,7 @@ void GameModeActivity::onRowAction(const fui::ActionEvent& event) {
 void GameModeActivity::openConfirm(const int row) {
   app.clearTapFlash();
   confirmRow = static_cast<int8_t>(row);
-  confirmFocus = 0;  // Cancel: a stray Confirm keeps the save
+  confirm.focus = 0;  // Cancel: a stray Confirm keeps the save
   requestUpdate();
 }
 
@@ -256,40 +305,34 @@ void GameModeActivity::closeConfirm() {
 }
 
 bool GameModeActivity::handleConfirmInput() {
-  using Button = MappedInputManager::Button;
   // Touch: render() registered the dialog's buttons; onConfirmChoice runs for a tap on one.
   const auto route = UiAppHost::routeTouch(mappedInput);
   if (route.routed && app.invalidated()) requestUpdate();
   if (route) return true;
-  if (mappedInput.wasReleased(Button::Back)) {
-    closeConfirm();
-  } else if (mappedInput.wasReleased(Button::Up) || mappedInput.wasReleased(Button::Left) ||
-             mappedInput.wasReleased(Button::NavPrevious)) {
-    confirmFocus = 0;
-    requestUpdate();
-  } else if (mappedInput.wasReleased(Button::Down) || mappedInput.wasReleased(Button::Right) ||
-             mappedInput.wasReleased(Button::NavNext)) {
-    confirmFocus = 1;
-    requestUpdate();
-  } else if (mappedInput.wasReleased(Button::Confirm)) {
-    if (confirmFocus == 1) {
-      confirmNew();
-    } else {
-      closeConfirm();
-    }
-  }
+  answerConfirm(confirm.readButtons(mappedInput));
   return true;  // the confirmation owns every pass while it is open
+}
+
+void GameModeActivity::answerConfirm(const GameConfirmDialog::Answer answer) {
+  switch (answer) {
+    case GameConfirmDialog::Answer::None:
+      break;
+    case GameConfirmDialog::Answer::Repaint:
+      requestUpdate();
+      break;
+    case GameConfirmDialog::Answer::Cancel:
+      closeConfirm();
+      break;
+    case GameConfirmDialog::Answer::Confirm:
+      confirmNew();
+      break;
+  }
 }
 
 void GameModeActivity::onConfirmChoice(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<GameModeActivity*>(user);
-  if (self->confirmRow < 0) return;
-  self->confirmFocus = event.value == 1 ? 1 : 0;
-  if (self->confirmFocus == 1) {
-    self->confirmNew();
-  } else {
-    self->closeConfirm();
-  }
+  if (self->confirmRow < 0) return;  // closed: a tap routed by the table built while it was open
+  self->answerConfirm(self->confirm.answerTap(event));
 }
 
 void GameModeActivity::confirmNew() {
@@ -308,45 +351,9 @@ void GameModeActivity::buildConfirmDialog(UiScreen& screen) {
   // The input task can close the dialog (confirmRow = -1) while this runs on the render task: read it once.
   const int row = confirmRow;
   if (row < 0 || static_cast<size_t>(row) >= rowCount) return;
-  fui::DialogOption options[2];
-  options[0].label = tr(STR_CANCEL);
-  options[1].label = tr(STR_GAMES_NEW_GAME);
-  for (int i = 0; i < 2; ++i) {
-    options[i].action = ACTION_CONFIRM_CHOICE;
-    options[i].value = static_cast<int16_t>(i);
-    options[i].state = confirmFocus == i ? fui::StateFocused : fui::StateNormal;
-  }
-  fui::OptionDialogProps& props = dialogProps;
-  props.title = tr(STR_GAMES_NEW_OVER_SAVE_TITLE);
-  props.headline = rowItems[row].label;  // the mode the new game is in
-  props.message = tr(STR_GAMES_NEW_OVER_SAVE);
-  props.options = options;
-  props.optionCount = 2;
-  props.verticalOptions = true;
-  props.titleText = screen.theme().smallText;
-  props.titleText.bold = true;
-  props.headlineText = screen.theme().bodyText;
-  props.headlineText.maxLines = 2;
-  props.messageText = screen.theme().smallText;
-  props.messageText.maxLines = 2;
-  props.buttonText = screen.theme().smallText;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in handleConfirmInput()
-  // A framed panel, as OptionPopup draws it.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  props.styles = fui::defaultPopupStyles();
-  props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
-  props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = props.styles.normal;
-  props.styles.focused = props.styles.normal;
-  props.styles.active = props.styles.normal;
-  props.styles.disabled = props.styles.normal;
-
-  const fui::Rect body = screen.body();
-  int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);
-  if (width > body.width) width = body.width;
-  const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
-  fui::optionDialog(screen.frame(), fui::centeredRect(body, fui::Size{width, height}), props);
+  // The headline is the mode the new game is in.
+  confirm.build(screen, renderer, ACTION_CONFIRM_CHOICE, tr(STR_GAMES_NEW_OVER_SAVE_TITLE), rowItems[row].label,
+                tr(STR_GAMES_NEW_OVER_SAVE), tr(STR_GAMES_NEW_GAME));
 }
 
 #endif  // FREEINK_CAP_GAMES

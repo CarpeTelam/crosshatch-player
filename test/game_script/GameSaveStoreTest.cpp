@@ -605,7 +605,7 @@ TEST_F(GameSaveStoreTest, PeekIsUnreadableWithALogLineWhenItCannotAllocateItsBuf
       << "the same save is valid when memory is there";
   fakelog::lines.clear();
   failNextNothrowNew = true;
-  // Not None: a file is there that could not be checked, and the launcher must not take it for no save.
+  // Not None: a file is there that could not be checked, and the title screen must not take it for no save.
   EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unreadable);
   failNextNothrowNew = false;
   EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: OOM: 1400 bytes to check ") + RESUME));
@@ -658,8 +658,8 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
   EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
 }
 
-// The launcher asks again on every build, and a save of another package stays, so peek does not log it as an error;
-// the match that would resume it still does (loadResume).
+// The title screen asks again each time it opens, and a save of another package stays, so peek does not log it as an
+// error; the match that would resume it still does (loadResume).
 TEST_F(GameSaveStoreTest, ASaveOfAnotherPackageIsLoggedQuietlyByPeekAndAtErrorByLoad) {
   fakesd::addFile(RESUME, resumeFile(TAPS3, 7, OTHER_PKG));
   openResume();
@@ -992,8 +992,8 @@ TEST_F(GameSaveStoreTest, APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeI
   EXPECT_FALSE(fakelog::any("ERR"));
 }
 
-// The launcher's Continue and the match call the two-argument forms today (the title screen and the match's Continue
-// move to the new ones): a pass save is not theirs to offer or resume, so it is None to them, and the file stays.
+// The older, solo-only forms (no firmware code calls them; the title screen and the match's Continue use the new
+// ones): a pass save is not theirs to offer or resume, so it is None to them, and the file stays.
 TEST_F(GameSaveStoreTest, APassSaveIsNoneToTheSoloOnlyFormsAndIsKept) {
   const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);

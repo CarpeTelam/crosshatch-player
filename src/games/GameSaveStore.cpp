@@ -58,7 +58,7 @@ static_assert(GameSaveStore::BUFFER_BYTES >= GameScript::Codec::SNAPSHOT_LIMIT,
 constexpr char OTHER_PACKAGE[] = "other package";
 
 // Why readResume refuses a save this game or host cannot start: its mode, or its seat count for that mode. The
-// file stays, and peek logs it quietly: the launcher asks again on every build, and the same game on another
+// file stays, and peek logs it quietly: the title screen asks again each time it opens, and the same game on another
 // host, or after an update, may start it.
 constexpr char MODE_NOT_STARTABLE[] = "mode not startable";
 constexpr char SEATS_NOT_STARTABLE[] = "seats not startable";
@@ -360,10 +360,10 @@ GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const 
     if (!Storage.exists(path)) return SaveState::None;
   }
   // A static call has no store buffer: one snapshot's worth, allocated for this call only
-  // (the launcher asks once per startable game when it builds its listing, never while it draws or a match runs).
+  // (the title screen asks once, when it opens, never while it draws or a match runs).
   std::unique_ptr<uint8_t[]> snapshot(new (std::nothrow) uint8_t[GameScript::Codec::SNAPSHOT_LIMIT]);
   if (!snapshot) {
-    // A file is there and could not be checked: not the same as no save, or the launcher would hide a good one.
+    // A file is there and could not be checked: not the same as no save, or the title screen would hide a good one.
     LOG_ERR("GAME", "%s: OOM: %u bytes to check %s", gameId, static_cast<unsigned>(GameScript::Codec::SNAPSHOT_LIMIT),
             path);
     return SaveState::Unreadable;
@@ -375,8 +375,8 @@ GameSaveStore::SaveState GameSaveStore::peekStartable(const char* gameId, const 
   if (const char* problem =
           readResume(path, pkgHash, startable, ver, {snapshot.get(), GameScript::Codec::SNAPSHOT_LIMIT}, length, saved,
                      &unreadable)) {
-    // Every launcher build asks again, so a save of another package (which stays) is not an error, and nor is a
-    // well-formed save this form, game, or host cannot resume (it stays too).
+    // The title screen asks again each time it opens, so a save of another package (which stays) is not an error, and
+    // nor is a well-formed save this form, game, or host cannot resume (it stays too).
     if (std::strcmp(problem, OTHER_PACKAGE) == 0) {
       LOG_INF("GAME", "%s: %s is another package's save: %s", gameId, path, problem);
     } else if (keptQuietly(problem)) {
