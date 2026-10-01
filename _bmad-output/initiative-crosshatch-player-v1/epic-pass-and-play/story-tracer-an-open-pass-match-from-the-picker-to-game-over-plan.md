@@ -3,7 +3,7 @@ title: 'Tracer: an open pass match from the picker to game over'
 type: 'feature'
 ticket: '1'
 created: '2026-10-01'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'c1902721a82d6e4b3dabda6337a1e5dc0ccc85c2'
