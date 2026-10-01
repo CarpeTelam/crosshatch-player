@@ -81,3 +81,20 @@ Accepted for the fix story: rows 1–14. Row 15 goes to the owner, rows 16–17 
 | G6 | VG, A | Nothing pins the wrap-safe compare: reverting to `>=` fails no test, though a tag about 2^31 ahead of the seat's frame pins it cheaply. Separately, the sentinel is remapped rather than kept out of the counter's range. | fix | Add the cheap pin. A comment states that the counter cannot reach `UNTAGGED` in practice (2^32 publishes). |
 
 **Who fixes them:** the build agent fixes G2–G6 in one more commit, and records G1's deferral. That commit gets a last pass from the same three lenses before the merge.
+
+## Review of the third fix commit
+
+**What was reviewed:** `df63158f` (rows G2–G6; diff `e47e33d9..df63158f`), checked by the same three context-free lenses on 2026-10-01. Raw reports are in `xreview/fix3-*.md`.
+
+**Overall result:** all three lenses found G3–G6 right and their pins effective. The findings below concern G2's touch-down latch, its test double, and one save case G4 missed.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| H1 | EC, A | A contact that latched and then opened the light panel by a top-edge swipe ends without the match's loop seeing its release. `ActivityManager` handles the swipe first and `handle()` is not called, so the latch survives. The first tap after the panel closes carries the pre-panel frame and can be dropped wrongly. | fix | Clear the latch on any pass with no contact present. |
+| H2 | EC | This package's newer-codec save with a bad seat count or unknown mode byte returns before the mode and seat checks, so it is kept as Unstartable and New asks every time. G4's rule covered only the oversized case. | fix | Run the mode and seat checks before the newer-codec return. |
+| H3 | VG, A | Two paths are untested. The no-latch fallback is never driven, because the double's `tap()` reports a touch-down and a tap on the same pass, which the device never does. A lift that makes no gesture is never driven either. | fix | The double's `tap()` stops reporting a touch-down, as the device does, or a `quickTap()` is added. Add a release with no gesture. Test both paths. |
+| H4 | VG, A | `handle()`'s latch reset on a state change is untested and does almost nothing: touch-down is a level, so a finger still held re-latches on the first Playing pass. | fix | Remove the reset, or test it. Either way, word the comment for what the code does. |
+| H5 | VG, A | `holdTouch`/`liftTouch` lack the device's 500 ms long press, which fires during a still hold and suppresses the rest of the contact, and `isScreenTouchHeld` reads false while held. `InputDoubleTest` checks the double only against its own comment. | fix | Model the long press and the held flag against `MappedInputManager.cpp`/`InputManager.cpp`, name them in the double's comment, and add a G2 variant whose long press lands after the push. What still cannot be pinned on the host goes to the packet (row 16). |
+| H6 | A | The new `game-canvas.md` paragraph and comments mis-state the latch. A still-held finger is re-latched at the first Playing pass, not tagged at lift. The 90 ms delay applies to every contact, so the "dropped" window is wrong for touches in the refresh's last 90 ms. | fix | Reword to match the code. |
+| H7 | A | The premise that closing the remaining windows (a touch-down first seen after an SD write; a tap under 90 ms) needs upstream input timestamps is false. `MappedInputManager::getHeldTime()` already gives a tap's held duration for 250 ms after it, so a contact can be back-dated to `now - getHeldTime()` against a per-frame display time. | fix | Back-date the contact if that stays small, closing the windows in which a touch reaches the next seat. Otherwise record the real reason (a display time per frame) in the plan and `game-canvas.md`, and this goes to entry 11 as an `Assumption for entry 11:` line. |
+| H8 | A | The new `InputDoubleTest` was inserted between `ScreenRendererDoubleTest` and its comment. | fix | Move the comment back. |
