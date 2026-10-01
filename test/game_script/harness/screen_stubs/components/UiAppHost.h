@@ -87,6 +87,9 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
     // (GfxRenderer::wrappedText does not break on '\n', where layoutText below does), so a test that cares about a line
     // break reads this list: a message that needs its own line must be its own call.
     if (text) textCalls.push_back({text, rect});
+    // The device's FreeInkUIGfxRenderer::text draws into the renderer's framebuffer, the one the canvas is drawn in, so
+    // the renderer double's push (GfxRenderer::displayBuffer, Shown::texts) shows it too.
+    renderer.noteUiText(text);
     freeink::ui::layoutText(*this, rect, text, style, [this, &style](const char* line, const freeink::ui::Rect where) {
       drawn.push_back({line, where, style.color});
     });

@@ -5,6 +5,7 @@
 #include <HalMemory.h>
 #include <LuaGame.h>
 #include <Roster.h>
+#include <SeatShown.h>
 #include <SoloRounds.h>
 #include <VmFailure.h>
 #include <freertos/FreeRTOS.h>
@@ -40,6 +41,13 @@ class GfxRenderer;
 // (or before start()); otherwise it hands it to abandon(). Each snapshot the Session
 // commits goes to the loop task through committed() (latest wins), which writes
 // resume.bin; setResume() starts the Session from a saved one instead of setup.
+//
+// A hidden pass match's VM (create's `handOff`) draws only the seat the match asks for, so no
+// frame of one seat is ever published while the device is on its way to another: nothing after
+// a round begins (the match shows the blank hand-off screen), the turn seat once the match asks
+// with showTurnSeat(), and, after a move that passes the turn, the mover again, which it counts
+// (turnsPassed) so the match enters Result. Meanwhile it holds a timer that falls due until the
+// next seat is shown. Solo and open pass VMs run SoloRounds' start, restart, and step as before.
 class GameVM {
  public:
   static constexpr uint32_t TASK_STACK_BYTES = GameScript::VM_STACK_BYTES;
@@ -59,11 +67,12 @@ class GameVM {
   // snapshot mailbox's storage after them) in PSRAM. The game sees `viewport`'s canvas
   // size as ch.screen and measures ch.text_width with `replay`'s text metrics (after
   // FrameReplay::loadFonts); `gameId` tags its log lines, `store` (which must outlive
-  // the task, see MatchStore) backs ch.store, and the Session plays `roster` (solo, or an
-  // open pass match). Null (logged) when memory runs out.
+  // the task, see MatchStore) backs ch.store, and the Session plays `roster` (solo, or a
+  // pass match). `handOff` is a hidden pass match's (the class comment). Null (logged) when
+  // memory runs out.
   static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                         const char* gameId, GameScript::StoreSlot& store,
-                                        const GameCore::Roster& roster);
+                                        const GameCore::Roster& roster, bool handOff = false);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -103,6 +112,22 @@ class GameVM {
   void playAgain();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
+
+  // ---- a hidden pass match (create's `handOff`); all 0 for any other ----
+
+  // Loop task: asks the VM to draw the turn seat (the one that takes the device after the
+  // hand-off), ahead of any queued event, and returns the request's number. A request made
+  // after playAgain() is served in the new round.
+  uint32_t showTurnSeat();
+  // The last request whose frame is published: once it reaches a request's number, the front
+  // frame is that seat's (or a later one of the same seat; no other is drawn before the next
+  // turn change). Any task.
+  uint32_t seatShownRequest() const { return seatServed.load(std::memory_order_acquire); }
+  // Moves that passed the turn so far: the VM counts one after it has drawn the mover's frame
+  // again. Any task.
+  uint32_t turnsPassed() const { return turnChanges.load(std::memory_order_acquire); }
+  // The turn seat the last counted move passed to; read after turnsPassed() moved. Any task.
+  uint8_t passedTo() const { return nextSeat.load(std::memory_order_acquire); }
   // Hands the front frame, with the largest refresh request of the frames
   // coalesced into it, to `replay` under the frame mutex. False when nothing was
   // drawn: before the first frame, or when replay skipped a frame identical to
@@ -171,9 +196,22 @@ class GameVM {
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
-         GameScript::StoreSlot& store, const GameCore::Roster& roster);
+         GameScript::StoreSlot& store, const GameCore::Roster& roster, bool handOff);
   static void taskEntry(void* param);
   void run();
+  // ---- a hidden pass match's steps (VM task) ----
+  // Draws the seat GameCore::seatShown names for handOffView, the status, and mover; nothing
+  // (Ok) for NO_SEAT, the hand-off.
+  GameScript::Outcome drawShown();
+  // Serves seatTaken: the events still queued are played under the old view first (each was
+  // posted before the hand-off), then the view becomes Playing and the turn seat is drawn; the
+  // request counts as served once that frame is published. Then a held timer is delivered, to
+  // that seat.
+  GameScript::Outcome showSeatNow();
+  // One event in the hand-off flow: a stale timer is dropped; in Result or HandOff a timer is
+  // held and, in HandOff, every other event dropped; otherwise the event goes to the seat
+  // shown, and a move that passes the turn makes the view Result with that seat as the mover.
+  GameScript::Outcome stepHandOff(const GameScript::InputEvent& event);
   // errorMessage() without its gate: for run(), the task that writes it, which
   // logs it before it publishes `done`.
   const char* failureText() const { return sessionOutOfMemory ? "not enough memory" : game.errorMessage(); }
@@ -199,6 +237,25 @@ class GameVM {
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
   GameScript::SoloRounds rounds{game.timer(), queue};
+  // A hidden pass match's VM (create's `handOff`); fixed for its life.
+  const bool handOff;
+  // VM task, a hidden pass match only: the Session run() plays; the state whose seat the VM
+  // draws (HandOff: none, Playing: the turn seat, Result: the mover); the seat that last
+  // passed the turn; a timer event held until the next seat is shown; and the request being
+  // served (seatTaken, pending until drawn).
+  GameCore::Session* playing = nullptr;
+  GameCore::MatchState handOffView = GameCore::MatchState::HandOff;
+  uint8_t mover = GameCore::NO_SEAT;
+  bool timerHeld = false;
+  GameScript::InputEvent heldTimer;
+  uint32_t seatTaken = 0;
+  bool seatPending = false;
+  // Loop task to VM task: showTurnSeat()'s requests. VM task to any: the request served,
+  // the moves that passed the turn, and the seat the last one passed to (stored first).
+  std::atomic<uint32_t> seatRequests{0};
+  std::atomic<uint32_t> seatServed{0};
+  std::atomic<uint32_t> turnChanges{0};
+  std::atomic<uint8_t> nextSeat{0};
   TaskHandle_t task = nullptr;
   std::mutex taskMutex;    // guards taskAlive against the task's exit
   bool taskAlive = false;  // true from start() until run() is about to end

@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "ArenaSize.h"
 #include "FrameReplay.h"
@@ -53,13 +55,15 @@ class GameVmTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
-  // The store, the assets, and the VM of game `id` (its folder is on the card), not started.
-  bool prepare(const std::string& id) {
+  // The store, the assets, and the VM of game `id` (its folder is on the card), not started: solo, or with
+  // `hiddenPass` a hidden pass match's VM for two seats.
+  bool prepare(const std::string& id, const bool hiddenPass = false) {
     store = std::make_unique<MatchStore>();
     if (!store->allocate(id.c_str(), static_cast<uint32_t>(fakertos::S().nowMs.load()))) return false;
     GameAssets assets;
     if (assets.load(id.c_str(), store->saves(), store->slot()) != GameAssets::LoadResult::Ok) return false;
-    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), GameCore::Roster::solo());
+    const GameCore::Roster roster = hiddenPass ? GameCore::Roster::pass(2) : GameCore::Roster::solo();
+    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), roster, hiddenPass);
     return vm != nullptr;
   }
 
@@ -202,6 +206,84 @@ TEST_F(GameVmTest, ATimerEventPolledBeforeTheGameRearmsItIsDropped) {
   ASSERT_TRUE(tapAndWaitFrame(100, 200));
   EXPECT_EQ(vm->frameGen(), 3u);
   EXPECT_EQ(fakelog::countLines("tick at"), 0u) << "the stale timer event reached the game";
+}
+
+// ---- a hidden pass match's VM (epic-pass-and-play entry 4): only the seat the match asks for is drawn ----
+
+// Where the first log line holding `part` is, or the log's size when none does.
+size_t lineOf(const std::string& part) {
+  const std::vector<std::string> lines = fakelog::snapshot();
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (lines[i].find(part) != std::string::npos) return i;
+  }
+  return lines.size();
+}
+
+TEST_F(GameVmTest, AHiddenVmPublishesNoFrameUntilTheMatchAsksForTheTurnSeat) {
+  installFixture("pass-hidden");
+  ASSERT_TRUE(prepare("pass-hidden", true));
+  ASSERT_TRUE(vm->start());
+  // The round has begun once its first snapshot is handed over (setup, then status); nothing is drawn.
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  // No seat holds the device: the tap is dropped, whether the VM takes it now or drains it before seat 1's frame.
+  vm->postInput(tapAt(100, 200));
+  EXPECT_EQ(vm->frameGen(), 0u);
+  EXPECT_EQ(vm->roundsStarted(), 0u);
+  EXPECT_EQ(vm->seatShownRequest(), 0u);
+  EXPECT_FALSE(logHas("draw for seat"));
+  EXPECT_FALSE(logHas("Round started"));
+  const uint32_t request = vm->showTurnSeat();
+  EXPECT_EQ(request, 1u);
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
+  EXPECT_EQ(vm->frameGen(), 1u);
+  EXPECT_EQ(vm->roundsStarted(), 1u);
+  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 1u);
+  EXPECT_FALSE(logHas("tap for seat")) << "the tap made before any seat was shown reached a seat";
+  ASSERT_TRUE(vm->drawFront(*renderer, viewport, replay));
+  const std::vector<std::string> texts = match::drawnTexts(*renderer);
+  EXPECT_NE(std::find(texts.begin(), texts.end(), "Player 1's secret: apple"), texts.end());
+  // Seat 1 moves: the turn passes, the VM draws seat 1 again and counts it, naming seat 2.
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 200));
+  ASSERT_TRUE(waitFor([&] { return vm->turnsPassed() == 1u; }));
+  EXPECT_EQ(vm->passedTo(), 2u);
+  EXPECT_EQ(vm->frameGen(), before + 1);
+  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 2u);
+  EXPECT_FALSE(logHas("draw for seat 2"));
+}
+
+TEST_F(GameVmTest, ATimerPolledDuringTheHandOffIsHeldUntilTheSeatsFirstFrame) {
+  installFixture("pass-hidden");
+  ASSERT_TRUE(prepare("pass-hidden", true));  // setup arms a 5000 ms timer at 1000 ms
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  fakertos::advance(5000);
+  // Due: queued, and held by the VM, which shows no seat yet, whether it takes the event now or drains it before seat
+  // 1's frame. A timer the VM did not hold would reach no seat at all (no seat is shown), so the wait below fails.
+  vm->pollTimer();
+  vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return logHas("timer for seat 1"); }));
+  EXPECT_LT(lineOf("draw for seat 1"), lineOf("timer for seat 1"));
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 1u);
+}
+
+// A timer that falls due while the mover's Result shows is the next seat's: held, then delivered after its first frame.
+TEST_F(GameVmTest, ATimerDueInResultIsHeldForTheNextSeat) {
+  installFixture("pass-hidden");
+  ASSERT_TRUE(prepare("pass-hidden", true));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  const uint32_t first = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == first; }));
+  vm->postInput(tapAt(100, 200));  // seat 1 moves; its tap re-arms the 5000 ms timer at 1000 ms
+  ASSERT_TRUE(waitFor([&] { return vm->turnsPassed() == 1u; }));
+  fakertos::advance(5000);
+  vm->pollTimer();  // due in Result: held, never seat 1's or seat 2's before seat 2 is shown
+  const uint32_t second = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return logHas("timer for seat 2"); }));
+  EXPECT_EQ(vm->seatShownRequest(), second);
+  EXPECT_LT(lineOf("draw for seat 2"), lineOf("timer for seat 2"));
+  EXPECT_FALSE(logHas("timer for seat 1")) << "the timer reached the mover";
 }
 
 // ---- the watchdog's timing of one call (the GameVM::run deferred item) ----

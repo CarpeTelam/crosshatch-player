@@ -8,6 +8,7 @@ Writes `<out-dir>/` (created if missing):
   counter.chgame, loop.chgame, timing.chgame, pack-images.chgame   the fixtures of the same names
   counter-changed.chgame       test/game_script/fixtures/changed/counter: the same id at version 1.0.1, "Counter v2"
   pass-open.chgame             the fixture of the same name: noughts and crosses, solo or an open pass match
+  pass-hidden.chgame           the fixture of the same name: a hidden pass match's hand-off
   invalid-binary-lua.chgame    the hardening generator's `binary-lua-stored` case, which the installer must set aside
   package_vector.chgame        the shared hash vector, copied: the file package_vectors.json's `hash_vector.package` names,
                                next to it (test/game_core/package_vector.chgame)
@@ -50,6 +51,7 @@ GAMES = (
     ('pack-images', 'pack-images'),
     ('changed/counter', 'counter-changed'),
     ('pass-open', 'pass-open'),
+    ('pass-hidden', 'pass-hidden'),
 )
 INVALID_CASE = 'binary-lua-stored.chgame'
 INVALID_EXPECTED = 'BinaryLua'  # what cases.txt says the installer must do with it

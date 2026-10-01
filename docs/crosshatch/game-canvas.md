@@ -1,8 +1,8 @@
 # The game canvas and the match's views
 
 How `GameMatchActivity` (`src/activities/games/`) takes input and what each of its views does. It records the one
-declared exception to [touch-and-ui.md](../contributing/touch-and-ui.md) (spine AD-20) and the solo match states
-(AD-21).
+declared exception to [touch-and-ui.md](../contributing/touch-and-ui.md) (spine AD-20), the solo match states
+(AD-21), and the hidden pass match's hand-off states.
 
 ## The canvas exception
 
@@ -40,7 +40,7 @@ the only place that changes state and runs what entering a state requires. Any e
 | Starting | a load or start failure | Error | The error view names the reason in `tr()` text. So does a `Start::Resume` whose `resume.bin` could not be read or was refused by the VM ("The saved match could not be resumed"): the file is left as it was ([resume.bin](formats.md#resumebin)). |
 | Playing | Back or Home | Paused | The pause menu (Resume, Leave) opens over the frame; the game gets no input or timers. |
 | Playing | the status the game shipped is over | Over | `Session` has delivered `over` once; `ch.store` is flushed; `resume.bin` and its tmp are deleted (an over snapshot is never written, and one still pending deletes the file instead); the end-of-round menu (Play again, Leave) opens over the last frame. A round that ends while the pause menu is open deletes the file at once, from the pause menu's loop pass. |
-| Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. The last round's board, which would take no taps, is never shown. |
+| Paused | Resume, or Back | Playing | The frame is redrawn on a cleared screen with a full refresh; a timer that fell due meanwhile fires now. In the Play-again gap (Play again, then Back and Resume before the new round's first frame is published) nothing is redrawn: the pause menu stays on screen but is inert (its routing is closed, and `loopPlaying` drops every gesture), and an overlay closed in the gap likewise leaves its pixels on screen, until the new round's first frame is drawn on a cleared screen with a full refresh. A pause menu opened in the gap says so: its line "Starting the next round" sits under the headline, and the menu is drawn again without it once the round's first frame is published (`GameMatchActivity::gapWhenPaused`). The last round's board, which would take no taps, is never shown. |
 | Paused, Over | Leave | Leaving | See Leaving. |
 | Over | Play again | Playing | The new round's snapshots are written to `resume.bin` again. The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::SoloRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published, and then until the render task has drawn it and handed it to the panel (`displayBuffer` has returned, `GameMatchActivity::roundsDisplayed`), are read and dropped (`GameMatchActivity::loopPlaying`). |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
@@ -113,6 +113,50 @@ only what starts before the deadline: each is one tmp write and rename, the card
 poll divides into, so a late poll shows), counts elapsed time under a thread that advances the clock faster than the
 polls do, and checks the order and the skipped steps.
 
+## Hidden pass states
+
+A pass match whose manifest says `hidden` (each seat's frame is its own: cards, a fleet) never shows one seat's frame to
+another. `MatchLifecycle(true)` runs the hidden pass machine (`lib/GameCore/MatchLifecycle.h`), and the match builds its
+`GameVM` with the hand-off flag, so the VM draws only the seat the match asks for (`GameVM::drawShown`, never
+`GameCore::NO_SEAT`): nothing after a round begins, the turn seat after `GameVM::showTurnSeat()`, and the mover after a
+move that passes the turn. Solo and open pass matches run the solo machine above and never reach these states.
+
+| State | Event | Next | What the match does |
+| --- | --- | --- | --- |
+| Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the blank hand-off screen replaces the Games list. |
+| HandOff | a tap anywhere, or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the blank on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
+| Playing | a move that passes the turn | Result | The VM draws the mover's own frame again and counts the move (`GameVM::turnsPassed`, `passedTo`); the match shows that frame with the banner "Tap to pass to player N" (a fast refresh, no button hints). |
+| Playing | the status the game shipped is over | Over | As in solo: a move that ends the round is RoundOver, never a turn change, and the end-of-round menu sits over seat 0's frame, the one for everyone. |
+| Result | a tap anywhere, or Confirm | HandOff | The blank hand-off screen. |
+| Result, HandOff | Back or Home | Paused | The pause menu. From Result it sits over the mover's frame; from HandOff it sits on no frame (a cleared screen), since the device is between players. |
+| Paused | Resume, or Back | Result, HandOff, or Playing | The state the menu was opened from: Result redraws the mover's frame and banner, HandOff the blank. |
+| Result, HandOff | a ScriptError or a stuck call | Error | As in solo: the loop watches the VM there as in a menu. |
+| Over | Play again | HandOff | The VM begins the new round (`setup`) and draws nothing; the blank shows at once, and its tap shows the new round's first seat. The Play-again gap's rules hold on top of the seat gate: no frame of the last round is drawn after the blank. |
+
+**The blank.** `FrameReplay::drawBlank` clears the screen and draws the `eye-closed` library icon at 128 px, black, centred
+on the canvas, and no game command; the hand-off screen has no other text. The match pushes it with a full refresh, so
+nothing of the last seat's frame stays on the panel, and only then publishes its tap zone (`fui::tapZones` over the safe
+area, routed by `routeTouch`).
+
+**Taps.** The banner's screen and the blank accept a tap anywhere and Confirm, and only once render has pushed that
+state's own screen (`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): a tap or a Confirm
+press made before the banner or the blank is on the panel, or while it is being pushed, is read and dropped, so a double
+tap cannot skip either. Result's banner is a framed panel at the bottom of the screen; the tap zone under it covers the
+whole safe area.
+
+**Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
+own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is
+discarded by the Session, since the mover is no longer the turn seat. While the match is in Result or HandOff, and until
+the next seat's frame is on the panel, it posts no game input, so before the VM draws the next seat it plays whatever is
+still queued under the view it was meant for (the mover, or on the hand-off screen nobody): no queued tap reaches the
+next seat.
+
+**Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
+delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
+as anywhere else. Play again drops a held timer with the last round.
+
+A hidden pass match keeps no `resume.bin` (pass does not save until epic-pass-and-play entry 9).
+
 ## The views
 
 Each view is one framed option dialog: the game's name as a small caption, a `tr()` headline, and large touch targets.
@@ -126,6 +170,11 @@ and holds the room rule; `GameViewIconsTest` checks every name against the libra
 | Pause menu | `pause`; rows `play`, `sign-out` | Paused | -- | Resume, Leave | Back resumes; Up and Down move; Confirm chooses |
 | End-of-round menu | `flag-checkered`; rows `arrows-clockwise`, `sign-out` | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
 | Error view | `warning`; row `sign-out` | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
+| Result banner (hidden pass) | -- | -- | "Tap to pass to player N" in a framed panel at the bottom, over the mover's frame | a tap anywhere | Confirm passes; Back pauses; no hints |
+| Hand-off screen (hidden pass) | `eye-closed`, 128 px, centred on the blank canvas | -- | -- | a tap anywhere | Confirm passes; Back pauses |
+
+The pause menu opened in the Play-again gap adds the line "Starting the next round" under its headline (see Paused ->
+Playing above).
 
 The error view's reasons for a failed start are `tr()` keys: not enough memory (also when the Session does not fit in
 the arena), the game's folder is missing, no Lua files, a Lua file name that is not valid (the only `.lua` files have

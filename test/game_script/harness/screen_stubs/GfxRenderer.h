@@ -2,12 +2,14 @@
 
 // The harness's recording renderer (../stubs/GfxRenderer.h) plus what the match asks of a
 // renderer and the games double does not model: displayBuffer (recorded with the calls
-// made before it) and tapToLogical (the identity: the harness screen is portrait and the
-// touch already logical). The shared double is renamed for the include and derived from,
-// so it stays as it is; every source of a suite that includes this header is built with it
-// (a source built against the shared double has another GfxRenderer layout).
+// made before it, and the texts the framebuffer holds then) and tapToLogical (the identity:
+// the harness screen is portrait and the touch already logical). The shared double is renamed for the include and
+// derived from, so it stays as it is; every source of a suite that includes this header is built with it (a source
+// built against the shared double has another GfxRenderer layout).
 
 #include <functional>
+#include <string>
+#include <vector>
 
 #define GfxRenderer GfxRendererRecorder
 #include "../stubs/GfxRenderer.h"
@@ -21,14 +23,18 @@ class GfxRenderer : public GfxRendererRecorder {
   enum class Orientation { Portrait, LandscapeClockwise, PortraitInverted, LandscapeCounterClockwise };
   Orientation getOrientation() const { return Orientation::Portrait; }
 
-  // One displayBuffer call: the refresh mode, and how many renderer calls came before it.
+  // One displayBuffer call: the refresh mode, how many renderer calls came before it, and every text on the
+  // framebuffer it pushed (textsOnScreen).
   struct Shown {
     HalDisplay::RefreshMode mode;
     size_t callsBefore;
+    std::vector<std::string> texts;
   };
 
+  // The device's displayBuffer pushes the whole framebuffer to the panel, whatever drew into it, and its clearScreen
+  // wipes it: so what a push shows is everything drawn since the last clearScreen and nothing before it.
   void displayBuffer(const HalDisplay::RefreshMode mode = HalDisplay::FAST_REFRESH, const bool = false) const {
-    shown.push_back({mode, calls.size()});
+    shown.push_back({mode, calls.size(), keepCalls ? textsOnScreen() : std::vector<std::string>{}});
     // What a test does while the panel is being refreshed (retro deferral e3r-2): the frame is drawn and this call has
     // not returned, so the match must still be dropping gestures.
     if (onDisplay) onDisplay();
@@ -53,6 +59,59 @@ class GfxRenderer : public GfxRendererRecorder {
   bool copyRegionToBuffer(int, int, int, int, uint8_t*, size_t) const { return true; }
   bool copyBufferToRegion(int, int, int, int, const uint8_t*, size_t) const { return true; }
 
+  // A text a FreeInkUI view drew (screen_stubs/components/UiAppHost.h's RecordingTarget::text): on the device,
+  // FreeInkUIGfxRenderer::text draws it into this same framebuffer, so a push shows it beside the canvas's text.
+  // Recorded at the current call, so a later clearScreen wipes it.
+  void noteUiText(const char* text) const {
+    if (text) uiTexts.push_back({calls.size(), text});
+  }
+
+  // The texts the framebuffer holds now: the canvas's DrawText runs (joined into one string a ch.gfx.text, as
+  // match::drawnTexts joins them) and the UI texts noted, in the order they were drawn, since the last clearScreen.
+  // Needs keepCalls (it aborts without it, and a push then records no texts); a forget() drops what came before it as
+  // a clearScreen would.
+  std::vector<std::string> textsOnScreen() const {
+    if (!keepCalls) {
+      std::fprintf(stderr, "GfxRenderer double: textsOnScreen needs keepCalls\n");
+      std::abort();
+    }
+    size_t from = 0;
+    for (size_t i = calls.size(); i > 0; --i) {
+      if (calls[i - 1].kind == Kind::ClearScreen) {
+        from = i;
+        break;
+      }
+    }
+    std::vector<std::string> texts;
+    size_t note = 0;
+    while (note < uiTexts.size() && uiTexts[note].at < from) ++note;
+    bool joining = false;
+    int lineY = 0;
+    for (size_t i = from; i <= calls.size(); ++i) {
+      for (; note < uiTexts.size() && uiTexts[note].at == i; ++note) {
+        texts.push_back(uiTexts[note].text);
+        joining = false;
+      }
+      if (i == calls.size()) break;
+      const Call& call = calls[i];
+      if (call.kind != Kind::DrawText) {
+        joining = false;
+        continue;
+      }
+      if (!joining || call.y != lineY) texts.emplace_back();
+      texts.back() += call.text;
+      joining = true;
+      lineY = call.y;
+    }
+    return texts;
+  }
+
+  // The base's forget(), and the UI texts noted, whose call indices it resets.
+  void forget() const {
+    GfxRendererRecorder::forget();
+    uiTexts.clear();
+  }
+
   // Forgets the recorded calls, the screen model, and the displays.
   void forgetAll() const {
     forget();
@@ -64,4 +123,11 @@ class GfxRenderer : public GfxRendererRecorder {
   mutable std::function<void()> onDisplay;
   mutable std::vector<Shown> shown;
   mutable std::vector<IconDrawn> icons;
+
+ private:
+  struct UiText {
+    size_t at;  // calls.size() when it was drawn: after call at - 1, before call at
+    std::string text;
+  };
+  mutable std::vector<UiText> uiTexts;
 };
