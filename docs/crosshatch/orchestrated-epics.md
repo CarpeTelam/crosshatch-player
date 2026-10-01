@@ -18,11 +18,13 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   2 → 3 → 5 → 17, beside the runtime lane). Stories in one lane touch shared files in order; lanes run in parallel.
   `tickets.py next` shows what is ready.
 - **One worktree per lane**, branched from the epic branch. Each needs `git submodule update --init --recursive`.
-- **One build lock.** Create `{lock}`, a lock file in your scratchpad `{scratch}` (which also holds each story's
-  `{scratch}/<ref>/` scratch files and fresh trees), and give it to every build agent. Every `pio run`, `pio check`,
-  `pio project metadata`, `sim.sh setup`/`build`, and host-test CMake configure and build, the orchestrator's own
-  included, runs as `flock {lock} sh -c '<commands>'` (a bare `flock {lock} a && b` locks only `a`); two builds at
-  once can wipe a build directory mid-build or race on the shared `~/.platformio/packages`.
+- **Two fixed locks.** Every `pio run`, `pio check`, `pio project metadata`, and `sim.sh setup`/`build`, the
+  orchestrator's own included, runs as `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test
+  CMake configure and build as `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'` (a bare `flock <lock> a && b`
+  locks only `a`); two builds at once can wipe a build directory mid-build or race on the shared
+  `~/.platformio/packages`. The session-start warm builds (`scripts/dev_setup.py --warm`) take the same locks, so the
+  first build waits for them. Your scratchpad `{scratch}` holds each story's `{scratch}/<ref>/` scratch files and
+  fresh trees.
 - **Nested review subagents.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3, Claude
   Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own review
   subagents (the cause of O1). The build agents' review lenses need only 2. Before the first story, start
@@ -32,8 +34,9 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   (`git fetch --no-tags upstream +refs/heads/develop:refs/remotes/upstream/develop`), and, when
   `git rev-parse --is-shallow-repository` prints `true`, unshallow the clone (`git fetch --unshallow`, which fails on a
   complete clone) before any agent runs `scripts/check_upstream_touches.py`.
-- **Toolchain and base measurement.** On the epic's base commit, under the lock, apply AGENTS.md's certifi steps, build
-  all five envs, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
+- **Toolchain and base measurement.** Run `python3 scripts/dev_setup.py` (a cloud session's SessionStart hook has
+  already run it; its output says whether a step failed). On the epic's base commit, under the build lock, build
+  `x4pro` and `default`, and run `scripts/check_flash_budget.py` `build on`, `build off`, and `compare`. Record the flash and
   static-RAM figures, with the commit, as a dated `Measurement` line in the epic Notes. Every delta in the epic
   subtracts this measurement, not a figure an earlier epic recorded. In epic-icon-library, `sticky` and `default`
   stopped mid-story on the certifi step, and the flash cost was first quoted against a figure recorded before the gate
@@ -70,7 +73,7 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
    conflict (O10); when two branches edited the same existing entry, union keeps both versions, so read the result.
 5. **Record out-of-session fixes.** A fix that lands outside its story's session, such as one that changes an earlier
    story's code, records its verification in the plan of the story it changes (O5).
-6. **Re-run the host suites on the combined tree before every push** (under the lock), plus
+6. **Re-run the host suites on the combined tree before every push** (under the host-test lock), plus
    `python3 scripts/<name>_test.py` for each fork script. In epic-script-runtime a parallel fix (c25a2ff6) broke another
    story's tests, and only this run caught it (O5).
 7. **Show the screenshots.** Right after merging a story whose verify names screenshots, send its
@@ -105,9 +108,11 @@ AI-12), and the finding ids below (O1, O5, and so on) point there.
   triage table. A build agent fixes what is accepted, and that fix commit gets the same review before the push. A story
   that lands after the review gets its own combined-diff pass. In epic-icon-library this pass found a medium data race
   that every per-story review missed (retro O2).
-- On the combined tree, under the lock: build all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`), run
-  `pio check` as AGENTS.md gives it, the host suites, the fork script tests, `sim.sh build x4pro` when `src/games` or a
-  screen changed, and `./bin/clang-format-fix` twice with nothing new in `git status`.
+- On the combined tree, in AGENTS.md's verification order and under the locks: the host suites, the fork script
+  tests, and `./bin/clang-format-fix` twice with nothing new in `git status`; then build `x4pro` and `default`, run
+  `pio check` as AGENTS.md gives it (with `-e x4pro` too when games code changed), and `sim.sh build x4pro` when
+  `src/games` or a screen changed. CI builds all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`) on the
+  epic PR.
 - Open one PR for the epic into `develop` with a Conventional Commit title, and never merge it with a red check
   (AGENTS.md, Policy).
 
@@ -117,7 +122,6 @@ Before handing this section to a build agent, replace:
 
 - `{epic-folder}`: the epic's folder, such as `_bmad-output/initiative-crosshatch-player-v1/epic-script-runtime`;
 - `{ref}`: the story's ref, such as `2.7`, or the id of work that is not a ticket;
-- `{lock}`: the shared lock file in the orchestrator's scratchpad;
 - `{scratch}`: the orchestrator's scratchpad directory.
 
 Everything from here to the end of the file is the brief.
@@ -155,7 +159,8 @@ them:
   despite the flag (the icon epic's follow-up reviewer, 2026-09-28), so if your turn ends early anyway, say at the top
   of the report that it is interim and which subagents are still running; you resume when they return. Wait for every
   lens subagent, and any implementation subagent, to return before you triage or give a final report. The Review Triage
-  Log names the lenses that returned.
+  Log names the lenses that returned. Run the review after the host tests and fast checks and before any firmware
+  build or `pio check` (AGENTS.md's verification order), so a review fix costs one round of firmware builds.
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
@@ -165,9 +170,10 @@ them:
 
 - Run `git submodule update --init --recursive` in your worktree before any firmware, simulator, or host-test build.
 - **One build at a time across all agents.** Wrap every `pio run`, `pio check`, `pio project metadata`, `sim.sh setup`,
-  `sim.sh build`, and host-test CMake configure and build in the shared lock: `flock {lock} sh -c '<commands>'`, so
-  the lock covers the whole chain (a bare `flock {lock} a && b` locks only `a`). Firmware builds take minutes: use a
-  long timeout, or run in the background and wait.
+  and `sim.sh build` in `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test CMake configure and
+  build in `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'`, so the lock covers the whole chain (a bare
+  `flock <lock> a && b` locks only `a`). The session-start warm builds hold the same locks, so your first build may
+  wait for one. Firmware builds take minutes: use a long timeout, or run in the background and wait.
 - Host tests build in your worktree's `build/test`, with the commands in AGENTS.md.
 - Scratch files, logs, and fresh trees go under `{scratch}/{ref}/`; delete fresh trees when you are done (disk is
   limited).
@@ -212,8 +218,9 @@ them:
   (review fixes and plan edits included), then run it a second time and confirm `git status` shows nothing new. Keep
   any formatting-only change it makes to fork files outside your paths in your commit (never revert it) and name it
   in your report; if it changes an upstream file the ledger does not list, stop and report it as a blocking question.
-- For C/C++ changes build `x4pro` and `default` (C3) at least; for `src/games` or screens also `sim.sh build x4pro`.
-  The orchestrator builds all five envs before the PR.
+- For C/C++ changes build `x4pro`, plus `default` (C3) when the diff touches code outside `FREEINK_CAP_GAMES`, and run
+  `pio check -e x4pro` (AGENTS.md's flags) for games code; for `src/games` or screens also `sim.sh build x4pro`. CI
+  builds all five envs on the epic PR.
 
 ### Final report
 

@@ -11,6 +11,9 @@
 #   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
 #   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2).
 #   scripts/check_flash_budget.py holds the logic and how to run it locally.
+# - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
+#   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
+#   Run it locally with the same command (AGENTS.md); scripts/dev_setup.py installs libpcre3, which cppcheck needs.
 # - Simulator build: builds the desktop simulator for the X4 Pro and the Sticky, both of which turn FREEINK_CAP_GAMES
 #   on, so game code that only builds on the device fails here and not in a later session. Device-only files guard
 #   themselves with !defined(SIMULATOR); .claude/skills/run-crosshatch-player/ has the simulator and how to run it.
@@ -146,6 +149,60 @@ jobs:
       - name: Check game objects
         if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}
         run: python3 scripts/check_flash_budget.py objects
+
+  x4pro-static-analysis:
+    name: x4pro static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Toolchain setup (checkout through the penv pin) copied from the flash budget job.
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          # platform-espressif32's builder/main.py imports these unconditionally (see the flash budget job).
+          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
+            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
+            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
+            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+
+      # Same key as ci.yml's x4pro build and the flash budget job, so all three share one package cache.
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-v3-${{ runner.os }}-x4pro-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-v3-${{ runner.os }}-x4pro-
+
+      - name: Pin pioarduino core inside the platform penv
+        run: |
+          set -euo pipefail
+          # As in the flash budget job: keep the penv core on the outer core's version (see ci.yml).
+          pio pkg install -e x4pro
+          uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
+          ~/.platformio/penv/bin/pio --version
+
+      - name: Install cppcheck runtime dependency
+        run: |
+          # pioarduino's Linux cppcheck binary links against libpcre.so.3 (as ci.yml's cppcheck job).
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpcre3
+
+      - name: Run cppcheck on x4pro
+        run: pio check -e x4pro --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
   simulator-build:
     name: Simulator build
@@ -315,6 +372,7 @@ jobs:
     needs:
       - upstream-ledger
       - flash-budget
+      - x4pro-static-analysis
       - simulator-build
       - fork-script-tests
       - api-freeze

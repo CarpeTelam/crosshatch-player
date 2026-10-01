@@ -292,11 +292,11 @@ bool hasRemovingMarker(const char* id) {
 // not fit the buffer is left to removeDir, which takes the marker in its own order; that is not a name a game has.
 // (noinline: its name and path buffers and two handles must not join removeFolder's frame.)
 [[gnu::noinline]] bool removeFolderMarkerLast(const char* dirPath) {
-  // A member's name, ".pkg", ".removing", and ".xlink" all fit; the buffer is small to keep this frame under 256 B.
-  char name[GameCore::MEMBER_NAME_BYTES + 3];
   char path[GamePaths::PATH_BYTES];
   bool skipped = false;
   {
+    // A member's name, ".pkg", ".removing", and ".xlink" all fit; the buffer is small to keep this frame under 256 B.
+    char name[GameCore::MEMBER_NAME_BYTES + 3];
     auto dir = Storage.open(dirPath);
     if (!dir || !dir.isDirectory()) return false;
     dir.rewindDirectory();

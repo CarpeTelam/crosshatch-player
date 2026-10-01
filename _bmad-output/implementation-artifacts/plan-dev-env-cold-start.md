@@ -3,12 +3,12 @@ title: 'Faster cloud cold start and a shorter verification loop'
 type: 'chore'
 ticket: ''
 created: '2026-10-01'
-status: 'in-progress'
+status: 'in-review'
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'a84f54b4ed291318fb84afeb848f51b2dd473a2a'
-review: ''
-review_source: ''
+review: 'thorough'
+review_source: 'auto'
 lenses_ran: []
 review_loop_iteration: 0
 context:
@@ -81,7 +81,7 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `scripts/dev_setup.py` -- the steps, in order:
+- [x] `scripts/dev_setup.py` -- the steps, in order:
   1. submodules;
   2. uv tools;
   3. CA into the uv tool bundle;
@@ -91,20 +91,20 @@ context:
   7. `--warm`.
 
   The docstring gives the exit codes and the local usage.
-- [ ] `scripts/dev_setup_test.py` -- one test per matrix row, with fake `uv`/`pio`/`git`/`apt-get`/`flock` on PATH, a temp HOME and a temp CA. Assert the exit codes, the commands run, and that the CA is appended exactly once over two runs.
-- [ ] `.claude/hooks/session-start.sh` -- run `python3 "$CLAUDE_PROJECT_DIR/scripts/dev_setup.py" --warm` when remote, then `exit 0`.
-- [ ] `.claude/settings.json` -- register the hook with `"timeout": 900`.
-- [ ] `docs/crosshatch/upstream-touches.md` -- the three Game paths.
-- [ ] `AGENTS.md`:
+- [x] `scripts/dev_setup_test.py` -- one test per matrix row, with fake `uv`/`pio`/`git`/`apt-get`/`flock` on PATH, a temp HOME and a temp CA. Assert the exit codes, the commands run, and that the CA is appended exactly once over two runs.
+- [x] `.claude/hooks/session-start.sh` -- run `python3 "$CLAUDE_PROJECT_DIR/scripts/dev_setup.py" --warm` when remote, then `exit 0`.
+- [x] `.claude/settings.json` -- register the hook with `"timeout": 900`.
+- [x] `docs/crosshatch/upstream-touches.md` -- the three Game paths.
+- [x] `AGENTS.md`:
   - the setup bullets become one pointer to the script (keep the 6.1.19 reason in a clause);
   - while testing, build `x4pro`, plus `default` when the diff touches code outside `FREEINK_CAP_GAMES`;
   - CI builds all five and gates the merge;
   - verification order: host tests and fast checks, then the review lens, then firmware;
   - `pio check -e x4pro` for games code;
   - lock paths `/tmp/crosshatch-build.lock` (pio, sim) and `/tmp/crosshatch-hosttest.lock` (host-test CMake).
-- [ ] `docs/crosshatch/orchestrated-epics.md` -- the same envs, order, and lock paths; replace `{lock}` with the fixed paths.
-- [ ] `.github/workflows/crosshatch-ci.yml` -- the `x4pro-static-analysis` job, named `x4pro static analysis`, and its `needs` entry.
-- [ ] `src/games/GameHash.cpp` and `src/games/GamePackageInstaller.cpp` -- the two defect fixes.
+- [x] `docs/crosshatch/orchestrated-epics.md` -- the same envs, order, and lock paths; replace `{lock}` with the fixed paths.
+- [x] `.github/workflows/crosshatch-ci.yml` -- the `x4pro-static-analysis` job, named `x4pro static analysis`, and its `needs` entry.
+- [x] `src/games/GameHash.cpp` and `src/games/GamePackageInstaller.cpp` -- the two defect fixes.
 
 **Acceptance Criteria:**
 - Given this branch, when `pio check -e x4pro --fail-on-defect low --fail-on-defect medium --fail-on-defect high` runs, then it passes.
@@ -126,3 +126,29 @@ context:
 - Host tests (AGENTS.md command) -- expected: all pass.
 - `python3 scripts/check_upstream_touches.py` -- expected: PASS.
 - `./bin/clang-format-fix` twice -- expected: nothing new.
+
+**Results (2026-10-01, implementation session):**
+- `python3 scripts/dev_setup_test.py -v`: 20 tests pass; every `scripts/*_test.py` passes with a `Ran <n>` line. Mutations
+  (no penv patch before the retry, appending every certificate, no build lock, no stamp check) each fail a test.
+- Base `pio check -e x4pro` (flags above) at bb3c0c62 reports exactly the two defects (`GameHash.cpp:33`
+  `uninitMemberVar`, `GamePackageInstaller.cpp:296` `variableScope`); with the fixes it passes ("No defects found").
+  `pio run -e x4pro` passes on the working tree.
+- Cold start, measured: a shallow (`--depth 1`) `file://` clone of an uncommitted-work commit, so the git steps had a
+  repository to unshallow (a `git archive` tree has none, and the git and submodule steps would fail there), with
+  `~/.platformio` and the pioarduino and clang-format uv tools (and their `~/.local/bin` links) moved aside, the uv
+  cache's certifi entry cleaned (an earlier in-place append had reached it through uv's hardlinks), `libpcre3`
+  removed, and `freeink-sdk` empty. `time CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh`: exit 0 in
+  3 min 32 s. Every step ran: submodule checkout, both uv tools, 13 certificates into the tool bundle, the first
+  `pio pkg install` failing TLS, 13 certificates and the pin into the penv, a passing retry, unshallow, `upstream`
+  added and fetched, `libpcre3` installed, both warm builds started. Second run: exit 0 in 0.9 s, both certifi
+  bundles byte-identical (md5), the install skipped by its stamp. The warm `pio run -e x4pro` then passed (6 min 11 s
+  cold), the warm host-test build passed, and in that tree `ctest` passed 1363/1363, `./bin/clang-format-fix` (21.1.8
+  from the uv tool) changed nothing, and `pio check -e x4pro` (the new CI job's command) passed.
+- Found in the first cold attempt and fixed: a second hook run's `pio pkg install` beside the first run's warm build
+  left `toolchain-xtensa-esp-elf` half copied (no `lib/`), and both warm x4pro builds failed ("Dynconfig for target
+  esp32s3 is not exist"). The install also took 45-65 s on every run, because `-e default` reinstalls the C3 tools
+  until a `default` build has run. The install now holds `/tmp/crosshatch-build.lock` and writes
+  `~/.platformio/crosshatch-pkg-install.stamp` (envs, pioarduino version, platformio.ini hash), and a run whose stamp
+  matches skips it. The warm logs are now appended to, not truncated under a running build.
+- Host tests on the working tree: 1363/1363 pass. `python3 scripts/check_upstream_touches.py --ref <commit of the
+  working tree>`: PASS. `./bin/clang-format-fix` twice: nothing new.
