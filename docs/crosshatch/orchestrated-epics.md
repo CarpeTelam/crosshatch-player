@@ -175,7 +175,6 @@ them:
 - Commit: exactly one local commit on your worktree's branch (a follow-up commit is fine when the orchestrator sends
   review findings). Do not push, do not open a PR, and never run `tickets.py mark` or `pull`; the orchestrator marks
   the ticket. End the commit message with the attribution lines your session's system gives.
-- No model names in code or docs; the session's attribution lines are the only exception.
 
 ### Environment
 

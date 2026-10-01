@@ -124,7 +124,9 @@ TEST_F(RemoveTest, ARemoveOfAGameThatIsNotThereIsDoneAndMakesNothing) {
   EXPECT_TRUE(exists("/.games/other/.pkg"));
   expectDataKept("g");
   for (const std::string& op : fakesd::sim().ops) {
-    EXPECT_TRUE(op.rfind("open ", 0) == 0 || op.rfind("close ", 0) == 0 || op.rfind("list ", 0) == 0) << op;
+    EXPECT_TRUE(op.rfind("open ", 0) == 0 || op.rfind("close ", 0) == 0 || op.rfind("list ", 0) == 0 ||
+                op.rfind("exists ", 0) == 0)
+        << op;
   }
 }
 
@@ -153,7 +155,8 @@ TEST_F(RemoveTest, TheMarkerGoesBeforeTheOtherFiles) {
   EXPECT_LT(pkg, manifest) << "a stop partway must leave an unlisted folder, never a listed game with files missing";
 }
 
-TEST_F(RemoveTest, AMarkerThatWillNotGoLeavesTheGameListedAndWhole) {
+// e4-r1: the launcher says "Could not remove it", so the game the person still sees must not vanish at the next visit.
+TEST_F(RemoveTest, APkgThatWillNotGoLeavesTheGameListedWholeAndUnmarked) {
   install("g");
   placeData("g");
   fakesd::sim().failRemove.insert("/.games/g/.pkg");
@@ -163,14 +166,83 @@ TEST_F(RemoveTest, AMarkerThatWillNotGoLeavesTheGameListedAndWhole) {
   EXPECT_TRUE(exists("/.games/g/.pkg"));
   EXPECT_TRUE(exists("/.games/g/manifest.json"));
   EXPECT_TRUE(exists("/.games/g/main.lua"));
-  EXPECT_EQ(opIndex("remove /.games/g/manifest.json"), -1) << "no file is deleted once the marker will not go";
+  EXPECT_FALSE(exists("/.games/g/.removing")) << "the marker this call wrote goes again";
+  EXPECT_EQ(opIndex("remove /.games/g/manifest.json"), -1) << "no file is deleted once the .pkg will not go";
   EXPECT_EQ(listed(), 1u) << "the registry and the card agree: the game is still there";
   expectDataKept("g");
+  EXPECT_TRUE(fakelog::any("Cannot remove /.games/g/.pkg"));
 
-  // The card recovers: the same call finishes.
+  // A visit with the card back keeps the game the person was told is still there.
   fakesd::sim().failRemove.clear();
+  visit();
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_TRUE(exists("/.games/g/main.lua"));
+  EXPECT_EQ(listed(), 1u);
+  expectDataKept("g");
+
+  // The person asks again, and the same call finishes.
   EXPECT_EQ(GamePackageInstaller::remove("g"), Error::None);
   EXPECT_FALSE(exists("/.games/g"));
+  expectDataKept("g");
+}
+
+// SdFat's remove can report failure after the entry went (a failed sync): the folder is then unlisted, and only the
+// marker lets the next visit finish it, so it stays.
+TEST_F(RemoveTest, APkgDeleteThatFailsAfterTheEntryWentKeepsTheMarkerForTheNextVisit) {
+  install("g");
+  placeData("g");
+  fakesd::sim().failRemoveDone.insert("/.games/g/.pkg");
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_FALSE(exists("/.games/g/.pkg"));
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_TRUE(fakesd::bytesOf("/.games/g/.removing").empty()) << "the marker remove writes is an empty file";
+  EXPECT_TRUE(exists("/.games/g/main.lua"));
+  EXPECT_EQ(listed(), 0u);
+
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  expectDataKept("g");
+}
+
+// When the marker will not go either, it stays on the listed game, and the next visit finishes the remove (as a
+// marker whose close failed and would not go, in AMarkerThatWillNotBeWrittenChangesNothing).
+TEST_F(RemoveTest, APkgAndAMarkerThatWillNotGoLeaveTheMarkerForTheNextVisit) {
+  install("g");
+  placeData("g");
+  fakesd::sim().failRemove.insert("/.games/g/.pkg");
+  fakesd::sim().failRemove.insert("/.games/g/.removing");
+
+  EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+  EXPECT_TRUE(exists("/.games/g/.removing"));
+  EXPECT_TRUE(fakelog::any("Cannot remove /.games/g/.removing"));
+
+  fakesd::sim().failRemove.clear();
+  visit();
+  EXPECT_FALSE(exists("/.games/g"));
+  EXPECT_EQ(listed(), 0u);
+  expectDataKept("g");
+}
+
+// The probe's order on the remove path: its file is made and closed in /.games-tmp/g, then looked for in /.games/g,
+// then removed. Looking after the remove would never see it, and a shared cluster chain would be taken for two folders.
+TEST_F(RemoveTest, TheProbeLooksForItsFileBeforeItRemovesIt) {
+  fakesd::addFile("/.games-tmp/g/main.lua", std::string("scratch"));
+  fakesd::addFile("/.games/g/main.lua", std::string("leftover"));
+  fakesd::sim().ops.clear();
+  ASSERT_EQ(GamePackageInstaller::remove("g"), Error::None);
+  const int opened = opIndex("open /.games-tmp/g/.xlink");
+  const int closed = opIndex("close /.games-tmp/g/.xlink");
+  const int looked = opIndex("exists /.games/g/.xlink");
+  const int removed = opIndex("remove /.games-tmp/g/.xlink");
+  ASSERT_GE(opened, 0);
+  ASSERT_GE(closed, 0);
+  ASSERT_GE(looked, 0);
+  ASSERT_GE(removed, 0);
+  EXPECT_LT(opened, closed);
+  EXPECT_LT(closed, looked);
+  EXPECT_LT(looked, removed);
 }
 
 TEST_F(RemoveTest, ADeleteThatStopsPartwayLeavesAnUnlistedFolderAndTheDataWhole) {
@@ -316,23 +388,29 @@ TEST_F(RemoveTest, TheRemovingMarkerIsWrittenBeforeThePkgGoesAndThePkgBeforeTheF
   EXPECT_EQ(lastRemove, "remove /.games/g") << "the folder goes last";
 }
 
-TEST_F(RemoveTest, AStopAfterTheMarkerIsFinishedOnTheNextVisit) {
+// A stop right after the marker was written leaves it on a listed, whole game. A remove or a visit that then cannot
+// delete the .pkg keeps that marker (it stands for the earlier request), and the next visit with the card back
+// finishes.
+TEST_F(RemoveTest, AMarkerFromAnEarlierRemoveStaysWhenThePkgWillNotGoAndTheNextVisitFinishes) {
   install("g");
   install("other");
   placeData("g");
+  fakesd::addFile("/.games/g/.removing", std::string());
   fakesd::sim().failRemove.insert("/.games/g/.pkg");
 
   EXPECT_EQ(GamePackageInstaller::remove("g"), Error::SdCard);
-  ASSERT_TRUE(exists("/.games/g/.removing"));
+  ASSERT_TRUE(exists("/.games/g/.removing")) << "a marker that was there before the call stays";
   EXPECT_TRUE(fakesd::bytesOf("/.games/g/.removing").empty()) << "the marker is an empty file";
   EXPECT_TRUE(exists("/.games/g/.pkg"));
   EXPECT_EQ(listed(), 2u);
 
-  // A card that still refuses: the visit tries and changes nothing.
+  // A card that still refuses: the visit tries and changes nothing, and keeps the marker too.
   fakesd::sim().ops.clear();
   EXPECT_EQ(visit().failed, 0) << "a resume that fails is logged, not reported as an inbox failure";
   EXPECT_TRUE(exists("/.games/g/manifest.json"));
+  EXPECT_TRUE(exists("/.games/g/.removing"));
   EXPECT_EQ(opIndex("remove /.games/g/manifest.json"), -1);
+  EXPECT_EQ(opIndex("remove /.games/g/.removing"), -1);
   EXPECT_TRUE(fakelog::any("Could not finish removing g"));
 
   // The card recovers, and nobody calls remove again.
