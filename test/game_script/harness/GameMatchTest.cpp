@@ -301,6 +301,19 @@ TEST_F(MatchTest, AForcedExitStopsTheVmAndWritesTheStoreWithoutTakingTheRenderLo
   EXPECT_EQ(activityManager.asks.goToGames, 0);  // a forced exit does not navigate
 }
 
+// A solo match's forced exit pushes nothing: the blank is a hidden pass match's only (epic-pass-and-play entry 6).
+TEST_F(MatchTest, AForcedExitOfASoloMatchPushesNothing) {
+  installFixture("tracer");
+  enter("tracer");
+  showFrame();
+  const size_t pushes = renderer->shown.size();
+  exited = true;
+  activityManager.exitHolding(*activity);
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_EQ(renderer->shown.size(), pushes);
+  EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+}
+
 TEST_F(MatchTest, HomePausesARoundInPlayAndIsIgnoredWhileAMenuIsUpUntilTheMatchLetsGo) {
   installFixture("tracer");
   enter("tracer");
@@ -1134,6 +1147,20 @@ TEST_F(PassMatchTest, AnOpenPassMatchNeverEntersResultOrHandOffNorPushesABlank) 
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(push.texts.empty()) << "a blank was pushed";
 }
 
+// The forced exit's blank is a hidden pass match's only (entry 6): an open pass match's exit pushes nothing.
+TEST_F(PassMatchTest, TheForcedExitOfAnOpenPassMatchPushesNothing) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  tapCell(1);
+  const size_t pushes = renderer->shown.size();
+  exited = true;
+  activityManager.exitHolding(*activity);
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_EQ(renderer->shown.size(), pushes);
+  EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+}
+
 // ---- the renderer double's push (screen_stubs/GfxRenderer.h, entry 4): what the device's displayBuffer shows ----
 
 // The device pushes the whole framebuffer, which clearScreen wipes and both the canvas and FreeInkUI draw into: a push
@@ -1162,6 +1189,47 @@ TEST_F(MatchTest, APushHoldsTheCanvasAndUiTextsDrawnSinceTheLastClearScreenAndNo
 
 // ---- a hidden pass match (epic-pass-and-play entry 4): pass-hidden, the hand-off between seats ----
 
+// A hidden pass game that writes ch.store on every move, for the forced exit's order against the store flush (entry
+// 6). Each seat makes two moves a turn, so the first move leaves the match in Playing with the store dirty and the
+// second passes the turn (Result). Seat 1's frame shows its secret, "apple".
+const char* const HIDDEN_STORE_GAME = R"(
+local game = {}
+function game.setup(ctx) return { seats = ctx.seats, moves = 0, turn = 1 } end
+function game.status(state) return { turn = state.turn } end
+function game.apply(state, seat, move)
+  state.moves = state.moves + 1
+  if state.moves % 2 == 0 then state.turn = state.turn % state.seats + 1 end
+  ch.store.set({ moves = state.moves })
+  ch.log("stored " .. state.moves)
+  return state
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+  if seat == 1 then ch.gfx.text(40, 120, "Player 1's secret: apple", "medium", "black") end
+  if seat == 2 then ch.gfx.text(40, 120, "Player 2's secret: river", "medium", "black") end
+end
+return game
+)";
+
+// A hidden pass game whose first move's input fails with a script error (the error view then keeps the VM).
+const char* const HIDDEN_ERROR_GAME = R"(
+local game = {}
+function game.setup(ctx) return { seats = ctx.seats } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then error("hidden boom") end
+end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+  ch.gfx.text(40, 120, "Player " .. seat .. "'s secret: apple", "medium", "black")
+end
+return game
+)";
+
 class HiddenPassTest : public MatchTest {
  protected:
   void SetUp() override {
@@ -1169,16 +1237,115 @@ class HiddenPassTest : public MatchTest {
     installFixture("pass-hidden");
   }
 
-  // Enters pass-hidden as the launcher would start it: its manifest says hidden, and pass(2) plays it.
-  void enterHidden() {
-    gameId = "pass-hidden";
-    GameCore::Manifest manifest = match::manifestOf("pass-hidden", "Pass hidden");
+  // Enters game `id` (pass-hidden unless named) as the launcher would start a hidden pass match: its manifest says
+  // hidden, and pass(2) plays it.
+  void enterHidden(const std::string& id = "pass-hidden") {
+    gameId = id;
+    GameCore::Manifest manifest = match::manifestOf(id, "Pass hidden");
     manifest.seatsMin = 2;
     manifest.seatsMax = 2;
     manifest.modes = GameCore::Manifest::MODE_PASS;
     manifest.hidden = true;
     activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::pass(2));
     activity->onEnter();
+  }
+
+  // The screen goes (sleep, or any Replace): onExit under the RenderLock the manager holds, as ActivityManager does it.
+  void sleep() {
+    exited = true;
+    activityManager.exitHolding(*activity);
+  }
+
+  // One push made during the forced exit, and what had happened by then, recorded inside its displayBuffer.
+  struct ExitPush {
+    HalDisplay::RefreshMode mode;
+    std::vector<std::string> texts;
+    uint64_t sinceExitMs;  // the clock since onExit() began
+    size_t sdOps;          // the fake card's ops so far
+    bool abandonLogged;    // "did not stop within" was logged
+    bool storeOnCard;      // store.bin had been written
+    size_t callsBefore;    // the renderer calls made before it (GfxRenderer::Shown::callsBefore)
+  };
+  struct ExitRecord {
+    std::vector<ExitPush> pushes;
+    size_t sdOpsBefore = 0;
+    uint64_t tookMs = 0;  // the clock across the whole exit
+  };
+
+  // sleep(), recording each push the exit makes; `during` runs inside each push, after it is recorded. The double's
+  // displayBuffer moves no clock by itself: a device's half refresh takes time this does not model (entry 11 measures
+  // it), so a test that needs the push to cost time moves the clock in `during`.
+  ExitRecord sleepRecordingPushes(const std::function<void()>& during = nullptr) {
+    ExitRecord record;
+    record.sdOpsBefore = fakesd::sim().ops.size();
+    const uint64_t began = fakertos::S().nowMs.load();
+    renderer->onDisplay = [&] {
+      const GfxRenderer::Shown& push = renderer->shown.back();
+      record.pushes.push_back({push.mode, push.texts, fakertos::S().nowMs.load() - began, fakesd::sim().ops.size(),
+                               logHas("did not stop within"), fakesd::has(storePath(gameId)), push.callsBefore});
+      if (during) during();
+    };
+    sleep();
+    renderer->onDisplay = nullptr;
+    record.tookMs = fakertos::S().nowMs.load() - began;
+    return record;
+  }
+
+  // The forced exit pushed the blank once, and logged it: a half refresh of a cleared screen holding the eye-closed
+  // icon drawn as FrameReplay::drawBlank draws it (the same fills as TheBlankIsOnlyTheEyeClosedIconCentredOnTheCanvas
+  // expects) and nothing else, so a seat's frame drawn without text cannot pass as the blank. Callers wrap it in
+  // ASSERT_NO_FATAL_FAILURE, since they read pushes[0] after it.
+  void expectOneBlankPush(const ExitRecord& record) {
+    EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit took the RenderLock the manager holds (12cc816)";
+    ASSERT_EQ(record.pushes.size(), 1u);
+    EXPECT_EQ(record.pushes[0].mode, HalDisplay::HALF_REFRESH);
+    EXPECT_TRUE(record.pushes[0].texts.empty()) << record.pushes[0].texts.front();
+    EXPECT_EQ(fakelog::countLines(gameId + ": forced exit: blank hand-off screen pushed (half refresh)"), 1u);
+    // What the framebuffer held at the push: every drawing call since the last clearScreen before it.
+    std::vector<GfxRenderer::Call> drawn;
+    for (size_t i = 0; i < record.pushes[0].callsBefore && i < renderer->calls.size(); ++i) {
+      const GfxRenderer::Call& call = renderer->calls[i];
+      if (call.kind == GfxRenderer::Kind::ClearScreen) drawn.clear();
+      if (call.kind == GfxRenderer::Kind::FillRect || call.kind == GfxRenderer::Kind::DrawText ||
+          call.kind == GfxRenderer::Kind::FillRectDither || call.kind == GfxRenderer::Kind::DrawLine) {
+        drawn.push_back(call);
+      }
+    }
+    GfxRenderer expected(480, 800);
+    expected.clearScreen();
+    // The canvas is 474 x 788 at (3, 6).
+    ASSERT_TRUE(drawGameIcon(expected, "eye-closed", 3 + (474 - 128) / 2, 6 + (788 - 128) / 2, 128, true));
+    std::vector<GfxRenderer::Call> icon;
+    for (const GfxRenderer::Call& call : expected.calls) {
+      if (call.kind == GfxRenderer::Kind::FillRect) icon.push_back(call);
+    }
+    ASSERT_EQ(drawn.size(), icon.size()) << "the forced exit's push held more or less than the blank";
+    for (size_t i = 0; i < icon.size(); ++i) {
+      EXPECT_EQ(drawn[i].kind, GfxRenderer::Kind::FillRect) << i;
+      EXPECT_EQ(drawn[i].x, icon[i].x) << i;
+      EXPECT_EQ(drawn[i].y, icon[i].y) << i;
+      EXPECT_EQ(drawn[i].w, icon[i].w) << i;
+      EXPECT_EQ(drawn[i].black, icon[i].black) << i;
+    }
+  }
+
+  // HIDDEN_STORE_GAME in Result after seat 1's two moves, both stored, and the store not yet flushed.
+  void reachResultWithADirtyStore() {
+    installGame("hidden-store", HIDDEN_STORE_GAME);
+    enterHidden("hidden-store");
+    expectBlank();
+    tapScreen();
+    showFrame();
+    tapCanvas(100, 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return logHas("stored 1") && activityManager.updateRequested(); }));
+    render();
+    tapCanvas(100, 300);  // the second move passes the turn
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+    ASSERT_TRUE(logHas("stored 2"));
+    render();
+    ASSERT_FALSE(fakesd::has(storePath("hidden-store")));
   }
 
   // A tap at the middle of the screen: on the blank or the Result banner's screen, it passes the device on.
@@ -1585,6 +1752,189 @@ TEST_F(HiddenPassTest, ACallStuckInResultIsStoppedIntoTheErrorView) {
   EXPECT_EQ(state(), "Error");
   expectErrorView(tr(STR_GAMES_ERROR), tr(STR_GAMES_NOT_RESPONDING));
   fakertos::release();
+  // Sleep from the error view: the VM is gone, so no seat's frame is on the panel, and the exit pushes nothing.
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_TRUE(record.pushes.empty()) << "the forced exit from the error view pushed the blank";
+  EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+}
+
+// ---- the forced exit's blank hand-off (epic-pass-and-play entry 6; AD-12, AD-20) ----
+
+// Sleep on a seat's frame: the exit pushes the blank once, a half refresh with no text, after the VM's stop and
+// before any SD op, so the store flush comes after it. The double's push moves no clock; the device's half refresh
+// is measured by entry 11.
+TEST_F(HiddenPassTest, TheForcedExitOnASeatsFramePushesTheBlankAfterTheJoinAndBeforeTheStore) {
+  installGame("hidden-store", HIDDEN_STORE_GAME);
+  enterHidden("hidden-store");
+  expectBlank();
+  tapScreen();
+  ASSERT_EQ(state(), "Playing");
+  showFrame();
+  EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple"));
+  tapCanvas(100, 300);  // the first of seat 1's two moves: the store is dirty, and the turn stays
+  frame();
+  ASSERT_TRUE(pump([&] { return logHas("stored 1") && activityManager.updateRequested(); }));
+  render();
+  ASSERT_EQ(state(), "Playing");
+  EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple")) << "seat 1's frame is on the panel";
+  ASSERT_FALSE(fakesd::has(storePath("hidden-store")));
+
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD op ran before the blank was pushed";
+  EXPECT_FALSE(record.pushes[0].storeOnCard) << "the store was flushed before the blank was pushed";
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush after the push";
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_EQ(state(), "Leaving");
+  EXPECT_EQ(activityManager.asks.goToGames, 0);  // a forced exit does not navigate
+}
+
+// Sleep in Result (the banner over the mover's frame): the same push, which holds nothing of the mover's frame.
+TEST_F(HiddenPassTest, TheForcedExitInResultPushesTheBlank) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);
+  ASSERT_EQ(state(), "Result");
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_FALSE(record.pushes[0].abandonLogged);
+}
+
+// Sleep on the blank (HandOff): the blank is pushed again.
+TEST_F(HiddenPassTest, TheForcedExitOnTheBlankPushesTheBlankAgain) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  moveAndPass(1, 2);
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  expectBlank();
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+}
+
+// A VM held inside ch.log (a locked binding) neither joins nor can be deleted: the blank goes up once the stop's wait
+// has run out, before the abandon begins its own wait, and the whole exit stays within the bound.
+TEST_F(HiddenPassTest, TheForcedExitWithAStuckVmPushesTheBlankBetweenTheJoinAndTheAbandon) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  expectCleanPsram = false;                   // the abandon leaks the VM and the store slot on purpose
+  fakertos::arm(fakertos::At::Log);           // seat 1's input logs first: held there
+  tapCanvas(100, 300);
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_GE(record.pushes[0].sinceExitMs, 500u) << "the blank was pushed before the stop's wait ran out";
+  EXPECT_LT(record.pushes[0].sinceExitMs, 1000u);
+  EXPECT_FALSE(record.pushes[0].abandonLogged) << "the abandon began before the blank was pushed";
+  EXPECT_TRUE(logHas("did not stop within"));
+  // docs/crosshatch/game-canvas.md, The forced exit's bound: two waits of 500 ms, each late by at most an iteration.
+  EXPECT_LE(record.tookMs, 1030u);
+  fakertos::release();  // the leaked task ends at its next hook: the cancel flag is set
+  EXPECT_TRUE(fakertos::waitNoTasks());
+}
+
+// The push is not an SD step, but its time counts against the SD steps' deadline. The double's push moves no clock, so
+// these tests move it by hand inside the push: one that ends 1 ms short of FORCED_EXIT_DEADLINE_MS after onExit()
+// began leaves the store flush in time, and one that ends on it skips the flush, as any step that would start late.
+TEST_F(HiddenPassTest, TheBlanksRefreshCountsAgainstTheSdStepsDeadline) {
+  reachResultWithADirtyStore();
+  ASSERT_FALSE(HasFatalFailure());
+  const uint64_t began = fakertos::S().nowMs.load();
+  const ExitRecord record = sleepRecordingPushes([] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); });
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_GE(fakertos::S().nowMs.load() - began, uint64_t{GameMatchActivity::FORCED_EXIT_DEADLINE_MS});
+  EXPECT_TRUE(logHas("skipped the ch.store flush"));
+  EXPECT_FALSE(fakesd::has(storePath("hidden-store")));
+}
+
+TEST_F(HiddenPassTest, ABlankPushThatEndsInsideTheDeadlineLeavesTheStoreFlushInTime) {
+  reachResultWithADirtyStore();
+  ASSERT_FALSE(HasFatalFailure());
+  const uint64_t began = fakertos::S().nowMs.load();
+  const ExitRecord record = sleepRecordingPushes([began] {
+    const uint64_t spent = fakertos::S().nowMs.load() - began;
+    fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS - 1 - spent);
+  });
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush started 1 ms before the deadline";
+}
+
+// The deadline gates the SD steps only: a stop that has already run past it (a slow card from the stop's wake on) still
+// pushes the blank, and only the store flush after it is skipped.
+TEST_F(HiddenPassTest, TheBlankIsPushedEvenPastTheDeadline) {
+  reachResultWithADirtyStore();
+  ASSERT_FALSE(HasFatalFailure());
+  bool slow = false;
+  fakertos::S().onLoopNotify = [&] {
+    if (!slow) fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS + 100);
+    slow = true;
+  };
+  const ExitRecord record = sleepRecordingPushes();
+  fakertos::S().onLoopNotify = nullptr;
+  ASSERT_TRUE(slow) << "the stop did not wake the VM";
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+  EXPECT_GT(record.pushes[0].sinceExitMs, uint64_t{GameMatchActivity::FORCED_EXIT_DEADLINE_MS});
+  EXPECT_TRUE(logHas("skipped the ch.store flush"));
+  EXPECT_FALSE(fakesd::has(storePath("hidden-store")));
+}
+
+// Sleep with the pause menu over a seat's frame: the blank replaces both.
+TEST_F(HiddenPassTest, TheForcedExitFromThePauseMenuOverASeatsFramePushesTheBlank) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  ASSERT_TRUE(holds(lastPush(), "apple")) << "the pause menu sits over seat 1's frame";
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+}
+
+// A script error keeps the VM (only a stuck call frees it on the way to Error), so a forced exit from that error view
+// still pushes the blank: the rule is any forced exit of a hidden pass match with a VM, whatever the panel shows.
+TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmStillPushesTheBlank) {
+  installGame("hidden-error", HIDDEN_ERROR_GAME);
+  enterHidden("hidden-error");
+  expectBlank();
+  tapScreen();
+  showFrame();
+  tapCanvas(100, 300);
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Error"; }));
+  expectErrorView(tr(STR_GAMES_ERROR), "hidden boom");
+  const ExitRecord record = sleepRecordingPushes();
+  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+}
+
+// A user Leave stops the VM itself, with no forced exit: it pushes no blank, and the exit after it finds no VM.
+TEST_F(HiddenPassTest, LeavingAHiddenMatchPushesNoHalfRefresh) {
+  enterHidden();
+  expectBlank();
+  showSeat(1);
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  const size_t pushes = renderer->shown.size();
+  tapOption(tr(STR_GAMES_LEAVE));
+  ASSERT_EQ(state(), "Leaving");
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty());
+  EXPECT_EQ(renderer->shown.size(), pushes) << "Leave pushed a screen";
+  EXPECT_FALSE(logHas("blank hand-off screen pushed"));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
 }
 
 // The blank is the eye-closed library icon at 128 px, black, centred on the canvas, and nothing else: drawn as

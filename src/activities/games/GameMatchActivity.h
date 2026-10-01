@@ -34,7 +34,9 @@
 // with a GameVM that draws only the seat it is asked for: each round begins on the blank hand-off screen (HandOff:
 // FrameReplay::drawBlank, a full refresh), whose tap asks the VM for the turn seat (GameVM::showTurnSeat) and shows
 // no canvas until that seat's frame is published; a move that passes the turn shows the mover's own frame with the
-// "Tap to pass" banner (Result), whose tap goes back to the blank. docs/crosshatch/game-canvas.md has the states.
+// "Tap to pass" banner (Result), whose tap goes back to the blank. A forced exit (sleep, any Replace) pushes the blank
+// too, after the VM's stop and before the SD steps, so no seat's frame stays on the panel.
+// docs/crosshatch/game-canvas.md has the states.
 //
 // A solo match with a .pkg also saves its latest snapshot as resume.bin (GameSaveStore):
 // the VM hands each committed one to the loop through GameVM::committed(), the loop
@@ -64,8 +66,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
 
   void onEnter() override;
   // The forced exit (AD-20) when the match did not leave on its own (sleep, any
-  // Replace): stops the VM and flushes ch.store under the RenderLock
-  // ActivityManager holds, which it never takes again (12cc816).
+  // Replace): stops the VM, in a hidden pass match pushes the blank hand-off screen,
+  // and flushes ch.store under the RenderLock ActivityManager holds, which it never
+  // takes again (12cc816).
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
@@ -115,9 +118,15 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A user exit (Leave, or Back from the error view), from loop().
   void leave();
   // Cancels the VM, joins it or abandons it (AD-5), and writes its last pending
-  // snapshot before it is freed. The caller holds RenderLock, since render reads vm
-  // and the frames an abandon frees.
+  // snapshot before it is freed; in a hidden pass match's forced exit it pushes the
+  // blank between the wait and that write (pushForcedExitBlank). The caller holds
+  // RenderLock, since render reads vm and the frames an abandon frees.
   void stopVm();
+  // A hidden pass match's forced exit only (AD-12, AD-20): draws the blank hand-off screen (FrameReplay::drawBlank)
+  // and pushes it with a half refresh, so no seat's frame stays on the panel while the device sleeps; logged.
+  // Nothing otherwise, a user Leave included. The caller holds RenderLock, so the render task is idle and replay and
+  // the framebuffer are safe to use from the loop task here.
+  void pushForcedExitBlank();
   // Writes a dirty ch.store now (round end, Leave, onExit; AD-17).
   void flushStore();
   // Playing and Paused: writes the VM's latest committed snapshot as resume.bin (not

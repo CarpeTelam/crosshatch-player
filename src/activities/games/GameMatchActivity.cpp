@@ -202,9 +202,11 @@ void GameMatchActivity::onExit() {
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
-  // order: cancel and join, the last snapshot written while the VM that holds it still
+  // order: cancel and join, a hidden pass match's blank hand-off screen pushed (stopVm,
+  // pushForcedExitBlank), the last snapshot written while the VM that holds it still
   // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
-  // finish, then the store. The SD steps stop starting once the deadline has passed.
+  // finish, then the store. The SD steps stop starting once the deadline has passed,
+  // which counts the blank's push.
   handle(MatchEvent::ForcedExit);
   stopVm();
   retryResumeDelete(true);
@@ -317,6 +319,8 @@ void GameMatchActivity::leave() {
 void GameMatchActivity::stopVm() {
   if (!vm) return;
   const bool joined = vm->stop(STOP_TIMEOUT_MS);
+  // After the wait (joined or not), before the first SD step and any abandon's wait (AD-12).
+  pushForcedExitBlank();
   // After the wait, before the VM is freed or abandoned (the snapshot is in its memory).
   // A task that did not join may still publish one on its way out; abandonVm looks again.
   flushResume();
@@ -325,6 +329,18 @@ void GameMatchActivity::stopVm() {
     return;
   }
   abandonVm();
+}
+
+void GameMatchActivity::pushForcedExitBlank() {
+  // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave goes to
+  // Games, which draws its own screen.
+  if (!forcedExit || !lifecycle.hiddenPass()) return;
+  // The caller holds RenderLock (ActivityManager's, never taken here: 12cc816), so the render task is not inside
+  // render() and replay and the framebuffer are this task's for now. Not an SD step: the deadline does not gate it,
+  // but its time counts against the SD steps that follow.
+  replay.drawBlank(renderer, viewport);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  LOG_INF("GAME", "%s: forced exit: blank hand-off screen pushed (half refresh)", manifest.id);
 }
 
 bool GameMatchActivity::sdStepAllowed(const char* what) {
