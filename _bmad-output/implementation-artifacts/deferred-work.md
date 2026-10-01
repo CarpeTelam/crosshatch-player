@@ -460,7 +460,7 @@
   summary: Resolved by `plan-dw114-install-count-matches-registry.md`: the count and the replacement test both use `GameRegistry::readGame`, the registry's own per-folder test (`GameLimitTest.OnlyFoldersTheRegistryListsCount`, `APackageIntoAFolderTheRegistrySkipsAddsAGame`). It read: The 65th-game check counts folders whose `.pkg` parses, but `GameRegistry::load` also skips a folder whose manifest is missing, invalid, or names another id, so a card with such a folder can refuse an install while fewer than 64 games are listed.
   evidence: Review (edge case, blind hunter), e4-x. Conservative by design: the count can only be high, so it never lets a hidden game through. Exactness needs a manifest read of up to 64 folders on every install (or sharing the registry's per-folder test); trigger: a report of a refusal with fewer than 64 games listed (the folder is not listed, so only a computer clears it).
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-x-cross-story-fixes.md`
-  summary: An installed inbox file that would not delete is renamed `<name>.cpgame.installed` and nothing cleans these up, tells the person, or retries the delete on a later visit.
+  summary: An installed inbox file that would not delete is renamed `<name>.chgame.installed` and nothing cleans these up, tells the person, or retries the delete on a later visit.
   evidence: Review (edge case, blind hunter), e4-x. The brief asked for the rename, a log line, and a reported error only when the rename also fails; `formats.md` says renaming the file back installs it again and that it may be deleted from a computer. Trigger: cards that fill with these (each up to `PACKAGE_BYTES`), which needs a card that refuses deletes repeatedly.
 
 ## e4-y
@@ -488,7 +488,7 @@
   evidence: The serial log in the plan's step 9 and 10 rows. The Slow C calls band was abandoned rather than cancelled, and is recalibrated by e4-z1.
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md`
   summary: The on-device recheck of e4-z1 (the `loop` fixture), e4-z2 (the `.removing` marker), and e4-z3 ("and N more"), and A8 (Games from Home lands on the last game's page), deferred by the owner to the epic-install-and-launcher retrospective.
-  evidence: The owner closed entry 14 before the three fixes merged. The plan's "Deferred to the retro session" section lists each check. Trigger: the retrospective session.
+  evidence: The owner closed entry 14 before the three fixes merged. The plan's "Deferred to the retro session" section lists each check. Trigger: the retrospective session (fired 2026-09-30 and still open: retrospective AI-1, `epic-install-and-launcher/device-run-packet.md` R1–R4 at firmware `b83dfbe2`); epic-pass-and-play's device run, entry 5.11, carries it if it is still open when its packet is built.
 
 ## e4-z1
 
@@ -567,3 +567,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e4-r1-remove-marker-and-installer-seams.md`
   summary: The OOM sweep covers only the install's four nothrow allocations (`installAll`'s inbox list and `Job`, `install`'s `ZipScratch`, `extract`'s `GameHash`). Not swept: the PNG converter's allocations, whose failure the converter reports as a failed image (`BadImage`); and `ZipFile::readFileToStream`'s and `InflateStream`'s buffers, which are `malloc` and whose failure `judge` reads as `BadSize`. So a valid package that meets a failed stream or inflate buffer on a low heap is renamed `.chgame.bad` today: pre-existing, the rev-4 bug class through `malloc`.
   evidence: `lib/ZipFile/ZipFile.cpp` (`readFileToStream`'s three `malloc` buffers), `lib/miniz/src/InflateStream.cpp` (state and window), `GamePackageInstaller.cpp` `judge` and `convertImage`'s comment; `GameInstallerOomTest.cpp`'s header. The fix is in upstream `lib/ZipFile` or in how the installer reads a failed stream, so it waits for the AI-12 installer split. Trigger: that split, or a device log "a member is not the size it declares" on a package that installs on retry.
+
+## e5-inception
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play.md` (Notes, owner Decision 2026-10-01, the seat-choice rows)
+  summary: The title screen's seat-choice rows for `pass`: offer each `n` in `max(2, seats.min)`..`min(seats.max, host maxSeats)` and pass the chosen one into the match. Deferred: with pass needing at least 2 seats and a v1 host's `MAX_SEATS` of 2 (`seats_max 2` in `api-level-1.txt`), only `n` = 2 is possible, so the rows would never show, and the Non-goals ship the UI with 2.
+  evidence: `GameHostCaps.cpp` `MAX_SEATS = 2`; spine AD-11 (amended 2026-10-01). The match already takes any `n` (epic-pass-and-play entry 5.1). Trigger: a host whose `seats_max` is above 2.

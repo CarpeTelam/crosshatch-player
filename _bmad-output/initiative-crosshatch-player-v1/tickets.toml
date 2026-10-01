@@ -31,7 +31,7 @@ after = [{ epic = 2, needs = "Manifest::parse, GameSaveStore, GameMatchActivity,
 id = 5
 slug = "epic-pass-and-play"
 title = "One device passes between players and hidden information stays hidden"
-covers = ["CAP-5", "CAP-6", "CAP-7"]
+covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7"]
 after = [{ epic = 2, needs = "Session and the match lifecycle" }, { epic = 4, needs = "the mode picker and resume" }]
 
 [[epic]]
