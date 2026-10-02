@@ -162,7 +162,7 @@ step that names a tap names the button press too.
    frontlight on, as shipped: click power on the banner (Confirm comes half a second after the click), then click it
    once more while the hand-off screen is being drawn: it stays; a single click about a second or more after it is up
    passes it. A click begun within about 0.55 s of the screen being up is dropped by design (fails closed: its Confirm
-   comes half a second after the click, and passes only `POWER_CLICK_HELD_MS`, 1,050 ms, after the screen was drawn);
+   comes half a second after the click, and passes only `POWER_CLICK_HELD_MS`, 1,051 ms, after the screen was drawn);
    click again. Afterwards set the power button back from Confirm.
 6. Press "I'm ready": seat 2's frame. On it, put the device to sleep, once with each Sleep Screen mode (Settings, Display, Sleep Screen:
    Dark, Light, Custom, Cover, Cover + Custom, None, Quick Resume, Transparent): the screen first goes plain white (no

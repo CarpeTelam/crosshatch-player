@@ -77,31 +77,34 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // would start later is skipped and logged. A step that starts in time is one tmp write
   // and rename, whose time is the card's. Leave has no deadline.
   static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = 1500;
-  // freeink-sdk's InputManager::HOME_KEY_LONG_PRESS_MS, private there (so copied): a home-key press held this long
-  // reports its long-press action then, and a shorter one ends in a tap.
+  // freeink-sdk's InputManager::HOME_KEY_LONG_PRESS_MS, private there (so copied; CopiedConstantsTest checks the copy):
+  // a home-key press held this long reports its long-press action then, and a shorter one ends in a tap.
   static constexpr uint32_t HOME_KEY_LONG_PRESS_MS = 700;
   // Slack in the two bounds below for a loop pass that reads an action later than the update that made it; a pass
   // stalled longer than this is not covered.
   static constexpr uint32_t LATE_PASS_MS = 250;
+  static_assert(LATE_PASS_MS > 0, "the two bounds below need slack for a loop pass that reads an action late");
   // How long before the pass that reads it a home-key action's first contact may have begun: up to 1,750 ms (a tap
   // just short of a long press, HomeButtonInput's wait for a second tap after its release, then a second contact just
   // short of a long press, whose double tap reports at its release and whose long press 700 ms into it), plus
   // LATE_PASS_MS. loopHandOff dates a Confirm on such a pass this far back.
   static constexpr uint32_t HOME_ACTION_HELD_MS =
       HOME_KEY_LONG_PRESS_MS + HomeButtonInput::DOUBLE_TAP_MS + HOME_KEY_LONG_PRESS_MS + LATE_PASS_MS;
-  // src/main.cpp's two constants of these names, in its anonymous namespace (so copied): with the power button set to
+  // src/main.cpp's two constants of these names, in its anonymous namespace (so copied; CopiedConstantsTest checks the
+  // copies, and that main.cpp's double-click wait is still a strict '>'): with the power button set to
   // Confirm and the X4 Pro's double-click frontlight on, a click held at most X4PRO_POWER_CLICK_MAX_HOLD_MS becomes
   // Confirm on the first update more than X4PRO_POWER_DOUBLE_CLICK_MS after its release, an update with no button edge
   // (setPowerConfirmClickFrame). A longer click becomes Confirm on its release's update, which has the edge, so its
   // own hold dates it.
   static constexpr uint32_t X4PRO_POWER_DOUBLE_CLICK_MS = 500;
   static constexpr uint32_t X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
-  // How long before the pass that reads it a Confirm with no button edge (that power click) may have begun.
-  // loopHandOff dates such a Confirm this far back. Not covered: a pass stalled longer than LATE_PASS_MS, and a power
-  // click whose Confirm comes on a pass where another button is released too (it has an edge, so getHeldTime(),
-  // InputManager's last whole press of any button, dates it).
+  // How long before the pass that reads it a Confirm with no button edge (that power click) may have begun: up to the
+  // click's longest hold, then 1 ms more than the double-click window (main.cpp waits for more than it), plus
+  // LATE_PASS_MS (PowerClickBoundTest). loopHandOff dates such a Confirm this far back. Not covered: a pass
+  // stalled longer than LATE_PASS_MS, and a power click whose Confirm comes on a pass where another button is released
+  // too (it has an edge, so getHeldTime(), InputManager's span of the last press of the buttons, dates it).
   static constexpr uint32_t POWER_CLICK_HELD_MS =
-      X4PRO_POWER_CLICK_MAX_HOLD_MS + X4PRO_POWER_DOUBLE_CLICK_MS + LATE_PASS_MS;
+      X4PRO_POWER_CLICK_MAX_HOLD_MS + X4PRO_POWER_DOUBLE_CLICK_MS + 1 + LATE_PASS_MS;
 
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).

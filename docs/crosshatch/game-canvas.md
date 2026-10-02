@@ -230,11 +230,13 @@ late (2,000 ms; a pass stalled longer is not covered). So such a Confirm fails c
 more has gone by since the push completed, and one sooner is read and dropped (press again). The same holds for a
 Confirm on a pass with no button edge: the X4 Pro's power click, with the power button set to Confirm and its
 double-click frontlight on, becomes Confirm on the first pass more than 500 ms after the release of a click held at most
-300 ms (`src/main.cpp`), when `getHeldTime()` is InputManager's last whole press of any button, long over. It is dated
-back `GameMatchActivity::POWER_CLICK_HELD_MS` (the two, plus `LATE_PASS_MS`: 1,050 ms). A power click held longer
-becomes Confirm on its release's pass, which has the button edge, and its own hold dates it. Two cases are not covered:
-a power-click Confirm on a pass where another button is released too has a button edge, so `getHeldTime()` (that last
-press) dates it; and a loop pass that reads either action more than `LATE_PASS_MS` late (deferred-work.md `## 5.12`).
+300 ms (`src/main.cpp`), when `getHeldTime()` is InputManager's span of the last press of the buttons, long over. It is dated
+back `GameMatchActivity::POWER_CLICK_HELD_MS` (the two, 1 ms more since `main.cpp` waits for more than 500 ms, plus
+`LATE_PASS_MS`: 1,051 ms; `PowerClickBoundTest` times it, and `CopiedConstantsTest` checks the copied constants against
+`src/main.cpp` and the SDK's `InputManager.h`). A power click held longer becomes Confirm on its release's pass, which
+has the button edge, and its own hold dates it. Two cases are not covered: a power-click Confirm on a pass where another
+button is released too has a button edge, so `getHeldTime()` (InputManager's span of the last press of the buttons) dates it; and a loop pass that
+reads either action more than `LATE_PASS_MS` late (deferred-work.md `## 5.12`).
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is

@@ -670,8 +670,9 @@ void GameMatchActivity::loopHandOff() {
   // the key's press time is not latched on every board (GT911 does not). It fails closed, dated HOME_ACTION_HELD_MS
   // (the key's slowest double tap or tap-then-long-press, plus a late pass) before this pass. So does a Confirm on a
   // pass with no button edge (the X4 Pro's power click, reported 500 ms after its release, whose getHeldTime is
-  // InputManager's last whole press of any button, long over), dated POWER_CLICK_HELD_MS back. Not covered: such a
-  // Confirm on a pass where another button is released too (getHeldTime dates it), and a pass later than LATE_PASS_MS.
+  // InputManager's span of the last press of the buttons, long over), dated POWER_CLICK_HELD_MS back. Not covered: such
+  // a Confirm on a pass where another button is released too (getHeldTime dates it), and a pass later than
+  // LATE_PASS_MS.
   const auto route = routeTouch(mappedInput);
   const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool tapped = route && route.event.action == ACTION_PASS;

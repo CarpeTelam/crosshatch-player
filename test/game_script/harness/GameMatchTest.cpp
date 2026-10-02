@@ -1772,6 +1772,19 @@ class HiddenPassTest : public MatchTest {
     ASSERT_FALSE(fakesd::has(storePath("hidden-store")));
   }
 
+  // Time passes with the loop running, `ms` in all: it only advances the clock, a pass every 10 ms (or less), as the
+  // device's main loop runs one every few milliseconds while nothing blocks it. A jump of the clock between two passes
+  // would be a stall of the loop task (an SD step), which loopHandOff does not date a press across (left to entry 11;
+  // deferred-work.md ## 5.12, the residuals entry, review row N1).
+  void idle(const uint32_t ms) {
+    for (uint32_t left = ms; left > 0;) {
+      const uint32_t step = std::min<uint32_t>(left, 10);
+      fakertos::advance(step);
+      left -= step;
+      frame();
+    }
+  }
+
   // A tap on the hand-off screen's "I'm ready" button (in the splash menu's second row, as the title screen lays it
   // out), or on Result's banner (at the bottom: TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom pins both
   // places); each passes the device on once its screen is on the panel. tapToPass taps the one the match's state shows.
@@ -2895,7 +2908,7 @@ TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterT
   input->homeKey(HomeButtonAction::Confirm);
   frame();
   EXPECT_EQ(state(), "Result") << "a home-key Confirm right after the banner's push passed it";
-  fakertos::advance(BOUND);
+  idle(BOUND);
   input->homeKey(HomeButtonAction::Confirm);
   frame();
   ASSERT_EQ(state(), "HandOff") << "a home-key Confirm the bound after the banner's push";
@@ -2906,7 +2919,7 @@ TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterT
   ASSERT_TRUE(renderHandOff());
   renderer->onDisplay = nullptr;
   EXPECT_EQ(state(), "HandOff");
-  fakertos::advance(BOUND - 1);  // the key pressed during the push: its action comes after it, within the bound
+  idle(BOUND - 1);  // the key pressed during the push: its action comes after it, within the bound
   input->homeKey(HomeButtonAction::Confirm);
   frame();
   EXPECT_EQ(state(), "HandOff") << "a home-key Confirm within its bound of the push passed the hand-off screen";
@@ -2948,14 +2961,43 @@ TEST(HomeActionBoundTest, HomeActionHeldMsReachesBackToTheKeysSlowestActionsFirs
   }
 }
 
+// The X4 Pro's power click as Confirm (src/main.cpp, with the power button set to Confirm and the double-click
+// frontlight on), timed from the copied constants on a loop that updates every millisecond (millis()' resolution): a
+// click is a press held at most X4PRO_POWER_CLICK_MAX_HOLD_MS (handleX4ProFrontlightDoubleClick drops one held longer
+// from the click tracking), its release's update stamps lastX4ProPowerClickAt, and its Confirm frame comes on the
+// first update more than X4PRO_POWER_DOUBLE_CLICK_MS after that stamp (a strict '>'). The slowest click's Confirm
+// comes MAX_HOLD + DOUBLE_CLICK + 1 ms after its press, which POWER_CLICK_HELD_MS less its slack for a late loop pass
+// covers. The lambda models main.cpp's rule, which it cannot call (an anonymous namespace there);
+// CopiedConstantsTest.MainCppStampsTheClickOnItsReleaseAndWaitsStrictlyLongerThanTheWindow checks main.cpp still
+// stamps the click on its release and compares with that strict '>'.
+TEST(PowerClickBoundTest, PowerClickHeldMsReachesBackToTheSlowestClicksPress) {
+  constexpr uint32_t MAX_HOLD = GameMatchActivity::X4PRO_POWER_CLICK_MAX_HOLD_MS;
+  constexpr uint32_t DOUBLE_CLICK = GameMatchActivity::X4PRO_POWER_DOUBLE_CLICK_MS;
+  constexpr uint32_t BOUND = GameMatchActivity::POWER_CLICK_HELD_MS - GameMatchActivity::LATE_PASS_MS;
+  // The press at 0, held `held` ms: the update its Confirm frame is set on (main.cpp's rule), or 0 for none.
+  const auto confirmAt = [&](const uint32_t held) -> uint32_t {
+    if (held > MAX_HOLD) return 0;  // no click: a longer press is Confirm on its own release, with the edge
+    const uint32_t lastClickAt = held;
+    for (uint32_t now = held + 1; now <= held + 2 * DOUBLE_CLICK; ++now) {
+      if (now - lastClickAt > DOUBLE_CLICK) return now;
+    }
+    return 0;
+  };
+  EXPECT_EQ(confirmAt(MAX_HOLD + 1), 0u) << "a press held past the click's limit is no delayed click";
+  uint32_t slowest = 0;
+  for (uint32_t held = 0; held <= MAX_HOLD; ++held) slowest = std::max(slowest, confirmAt(held));
+  EXPECT_EQ(slowest, MAX_HOLD + DOUBLE_CLICK + 1);
+  EXPECT_LE(slowest, BOUND) << "the power-click Confirm would read as begun after its press";
+}
+
 // A Confirm on a pass with no button edge: the double's powerConfirmClick() stands in for the X4 Pro's power click as
 // Confirm (src/main.cpp, setPowerConfirmClickFrame), reported more than X4PRO_POWER_DOUBLE_CLICK_MS after a click held
-// at most X4PRO_POWER_CLICK_MAX_HOLD_MS, on an update whose getHeldTime() is InputManager's last whole press (any
-// button's), long over. It passes neither screen until POWER_CLICK_HELD_MS has gone by since the push completed.
+// at most X4PRO_POWER_CLICK_MAX_HOLD_MS, on an update whose getHeldTime() is InputManager's span of the last press of
+// the buttons, long over. It passes neither screen until POWER_CLICK_HELD_MS has gone by since the push completed.
 TEST_F(HiddenPassTest, AConfirmWithNoButtonEdgePassesOnlyItsBoundAfterThePush) {
   constexpr uint32_t BOUND = GameMatchActivity::POWER_CLICK_HELD_MS;
   ASSERT_NO_FATAL_FAILURE(reachResult());
-  fakertos::advance(BOUND - 1);  // the click began during the banner's push
+  idle(BOUND - 1);  // the click began during the banner's push
   input->powerConfirmClick(100);
   frame();
   EXPECT_EQ(state(), "Result") << "a power-click Confirm within its bound of the push passed the banner";
@@ -2964,7 +3006,7 @@ TEST_F(HiddenPassTest, AConfirmWithNoButtonEdgePassesOnlyItsBoundAfterThePush) {
   frame();
   ASSERT_EQ(state(), "HandOff") << "a power-click Confirm at its bound after the banner's push";
   ASSERT_TRUE(renderHandOff());
-  fakertos::advance(BOUND - 1);
+  idle(BOUND - 1);
   input->powerConfirmClick(100);
   frame();
   EXPECT_EQ(state(), "HandOff") << "a power-click Confirm within its bound of the push passed the hand-off screen";

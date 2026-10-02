@@ -246,7 +246,7 @@ class MappedInputManager {
   // and the double-click frontlight on (src/main.cpp, setPowerConfirmClickFrame; MappedInputManager.cpp
   // wasPowerConfirmClick): a click held at most 300 ms becomes Confirm on the first update more than 500 ms after its
   // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, wasAnyPressed and
-  // wasAnyReleased false, and getHeldTime() answers InputManager's last whole press of any button
+  // wasAnyReleased false, and getHeldTime() answers InputManager's span of the last press of the buttons
   // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over.
   void powerConfirmClick(const unsigned long staleHeldMs) {
     powerClick = true;
