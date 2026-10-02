@@ -51,3 +51,12 @@ Walked every IA surface: Home, launcher, title screen, Options, New-over-save co
 - [ASSUMPTION] remains in two places only, both from memlog entries still typed assumption: the launcher modes line's order and startable-only filter (entry 22), and the remembered-value fallback (entry 29).
 - Options row behaviour aligned with spine AD-17's amendment: the choice holds at once and is written when Options closes (it read "remembered at once" against State Patterns' "written when Options closes").
 - Frontmatter `updated` set to 2026-10-02 in both spines; all mocks' `<div>` tags balance; renders checked at 1600 x 1100 with no overlap or cut-off frame.
+
+## Resolution (owner approval, 2026-10-02)
+
+The owner approved the design ("I approve, make it so!") with no change to the open items, so the facilitator's recommendations stand:
+
+- The "I'm ready" button is `{spacing.view-width}` wide and `{spacing.option-row}` tall, drawn without the focus dither; Confirm presses it. Closed.
+- No Key Flow is added for the Play-again gap; Component and State Patterns cover it. Closed.
+- The launcher's remove progress and failure and the install note are unchanged from what is built and stay out of this design. Closed.
+- The remembered-value fallback is decided (spine AD-17); its [ASSUMPTION] tag and the launcher modes line's are removed. Closed.

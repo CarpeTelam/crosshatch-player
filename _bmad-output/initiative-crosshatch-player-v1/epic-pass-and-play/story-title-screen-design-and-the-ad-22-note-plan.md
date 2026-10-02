@@ -3,7 +3,7 @@ title: 'Title screen design and the AD-22 note'
 type: 'design'
 ticket: '3'
 created: '2026-10-01'
-status: in-review
+status: done
 route: 'bmad-ux'
 context:
   - '{project-root}/docs/contributing/touch-and-ui.md'
@@ -20,7 +20,11 @@ context:
 
 ## The owner's approval
 
-APPROVAL-PENDING
+Owner, 2026-10-02, word for word: "I approve, make it so!"
+
+Given on the design files listed below and the spine and SPEC amendments listed further down, after the owner saw the revised mocks. The owner asked for no change to the coverage check's four open items, so the recommendations made with them stand. They are recorded in `review-rubric-walker.md`'s Resolution.
+
+For the epic's Notes, the orchestrator copies a dated Decision line: "Decision (owner, 2026-10-02): entry 3's title-screen, launcher-row, hand-off, and pause-menu design is approved ("I approve, make it so!") as `_bmad-output/planning-artifacts/ux-designs/ux-crosshatch-player-2026-10-01/` `DESIGN.md`, `EXPERIENCE.md`, and `mockups/`, with spine AD-8, AD-12, AD-15, AD-17, AD-22, the Capability map, and SPEC CAP-4 amended; the changes are built as one follow-up story in this PR (`story-title-screen-design-and-the-ad-22-note-plan.md`, Changes for a follow-up story)."
 
 ## Design files
 
