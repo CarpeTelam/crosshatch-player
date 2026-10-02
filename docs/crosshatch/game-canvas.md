@@ -65,8 +65,9 @@ of this package that this host cannot start (a mode or seat count it cannot star
 the error view with its own reason, and the file is kept. So does a save that will not read, on either read. The title
 screen offers no Continue for such a save, but its New rows ask before a new match replaces it, as over any save;
 formats.md has the states. A Continue that finds no save at all starts a new match with the roster Continue passed: the
-title screen's first New row that can start (solo for a game that starts solo). The VM task never touches the card
-(AD-5).
+title screen's first New row that can start (solo for a game that starts solo). A save records no settings, so a Play
+again after Continue runs `setup` with the title screen's current choices as `ctx.settings` (api-level-1.txt), which
+may differ from those of the saved round. The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -217,7 +218,14 @@ the panel, or while it is being pushed, is read and dropped. And a tap or Confir
 the push that first showed that screen completed (`passScreenShownMs`, stored with `passScreenShown`; a repaint keeps
 it): the loop pass's `millis()`, taken before its SD steps, less the tap's touch-only held time
 (`HalGPIO::lastTouchHeldMs()`, as `loopPlaying` back-dates a tap) or Confirm's hold (`getHeldTime()`). So the second tap
-or press of a double one, begun while the screen was being pushed and released after, is dropped too.
+or press of a double one, begun while the screen was being pushed and released after, is dropped too. On a board with
+a home key, a Confirm on a pass where the key reports an action (its own Confirm action, or a front button's Confirm
+released on the same pass as any other action) has no hold to read: `getHeldTime()` answers 0 while a home action is
+mapped, and the key's press time is not latched on every board (GT911 does not). The action comes at most
+`GameMatchActivity::HOME_ACTION_HELD_MS` after the press began: a long press reports at 700 ms
+(`InputManager::HOME_KEY_LONG_PRESS_MS`), a shorter press ends in a tap, and a tap's action waits up to
+`HomeButtonInput::DOUBLE_TAP_MS` after its release for a second tap. So such a Confirm fails closed: it passes only when
+that bound or more has gone by since the push completed, and one sooner is read and dropped (press again).
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is

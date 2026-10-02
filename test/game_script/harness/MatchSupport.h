@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "FakeRtos.h"
+#include "GameIconDraw.h"
 #include "GameVM.h"
 #include "HarnessSupport.h"
 #include "Logging.h"
@@ -331,6 +332,91 @@ inline freeink::ui::Point readyButtonMiddle(const GfxRenderer& renderer) {
   const freeink::ui::Rect ready = splashMenuRows(renderer, 2)[1];
   return freeink::ui::Point{static_cast<int16_t>(ready.x + ready.width / 2),
                             static_cast<int16_t>(ready.y + ready.height / 2)};
+}
+
+// ---- the hidden hand-off screen as a push holds it (GameMatchTest's HiddenPassTest, ResumeMatchTest's PassResumeTest)
+// ----
+
+// The middle of the splash band on the logical screen: it starts under the header, where the title screen's does
+// (GameSplashLayout::bandTop), and is 480 px tall.
+inline int bandMiddleY(const GfxRenderer& renderer) {
+  return GameSplashLayout::bandTop(renderer) + GameSplashLayout::BAND / 2;
+}
+
+// The fills `icon` makes at 128 px with its middle at the band's (240, bandMiddleY), in its fill weight when `fill`,
+// drawn as drawGameIcon draws it there.
+inline std::vector<GfxRenderer::Call> iconFills(const char* icon, const bool fill = false) {
+  GfxRenderer expected(480, 800);
+  EXPECT_TRUE(drawGameIcon(expected, icon, 240 - 64, bandMiddleY(expected) - 64, 128, true, fill)) << icon;
+  std::vector<GfxRenderer::Call> fills;
+  for (const GfxRenderer::Call& call : expected.calls) {
+    if (call.kind == GfxRenderer::Kind::FillRect) fills.push_back(call);
+  }
+  return fills;
+}
+
+// Whether `drawn` is exactly the fills `want`, call by call.
+inline void expectSameFills(const std::vector<GfxRenderer::Call>& drawn, const std::vector<GfxRenderer::Call>& want) {
+  ASSERT_FALSE(want.empty());
+  ASSERT_EQ(drawn.size(), want.size()) << "the hand-off screen drew more or less than the game's icon";
+  for (size_t i = 0; i < want.size(); ++i) {
+    EXPECT_EQ(drawn[i].kind, GfxRenderer::Kind::FillRect) << i;
+    EXPECT_EQ(drawn[i].x, want[i].x) << i;
+    EXPECT_EQ(drawn[i].y, want[i].y) << i;
+    EXPECT_EQ(drawn[i].w, want[i].w) << i;
+    EXPECT_EQ(drawn[i].h, want[i].h) << i;
+    EXPECT_EQ(drawn[i].black, want[i].black) << i;
+  }
+}
+
+// Black pixels the renderer holds in (x, y, w, h).
+inline size_t blackIn(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
+  size_t black = 0;
+  for (int py = y; py < y + h; ++py)
+    for (int px = x; px < x + w; ++px)
+      if (renderer.pixel(px, py) == GfxRenderer::PixelBlack) ++black;
+  return black;
+}
+
+// Whether the band shows `white` (a page of the band's full size) pixel for pixel, sampled every 7 px, and nothing
+// black is drawn on the renderer outside the band (the turn line and the button are FreeInkUI's, which the recording
+// target does not paint).
+inline void expectBandShows(const GfxRenderer& renderer, const std::function<bool(int, int)>& white) {
+  const int top = GameSplashLayout::bandTop(renderer);
+  int wrong = 0;
+  for (int y = 0; y < GameSplashLayout::BAND && wrong < 5; y += 7) {
+    for (int x = 0; x < GameSplashLayout::BAND && wrong < 5; x += 7) {
+      const auto want = white(x, y) ? GfxRenderer::PixelWhite : GfxRenderer::PixelBlack;
+      if (renderer.pixel(x, top + y) != want) {
+        ADD_FAILURE() << "band pixel " << x << "," << y;
+        ++wrong;
+      }
+    }
+  }
+  EXPECT_EQ(blackIn(renderer, 0, 0, 480, 800), blackIn(renderer, 0, top, 480, GameSplashLayout::BAND))
+      << "ink outside the band";
+}
+
+// What the framebuffer held at a push: every drawing call since the last clearScreen before it (`callsBefore`,
+// GfxRenderer::Shown::callsBefore), and whether a clearScreen came before them at all.
+struct Held {
+  bool cleared = false;
+  std::vector<GfxRenderer::Call> drawn;
+};
+inline Held heldAt(const GfxRenderer& renderer, const size_t callsBefore) {
+  Held held;
+  for (size_t i = 0; i < callsBefore && i < renderer.calls.size(); ++i) {
+    const GfxRenderer::Call& call = renderer.calls[i];
+    if (call.kind == GfxRenderer::Kind::ClearScreen) {
+      held.cleared = true;
+      held.drawn.clear();
+    }
+    if (call.kind == GfxRenderer::Kind::FillRect || call.kind == GfxRenderer::Kind::DrawText ||
+        call.kind == GfxRenderer::Kind::FillRectDither || call.kind == GfxRenderer::Kind::DrawLine) {
+      held.drawn.push_back(call);
+    }
+  }
+  return held;
 }
 
 // The state every test starts from: an empty card and log, no PSRAM blocks, the fake clock

@@ -665,13 +665,20 @@ void GameMatchActivity::loopHandOff() {
   // the tap's touch-only held time (HalGPIO::lastTouchHeldMs, as loopPlaying back-dates a tap) or Confirm's hold
   // (getHeldTime, a button's on a pass with a button edge). The banner and the button may overlap on the screen, so the
   // second tap (or press) of a double one, begun while the hand-off screen was being pushed and released after, is
-  // dropped too.
+  // dropped too. On a pass where the home key reports an action, a Confirm (the key's own Confirm action, or a front
+  // button's release on the same pass) has no hold to read: getHeldTime answers 0 while a home action is mapped, and
+  // the key's press time is not latched on every board (GT911 does not). It fails closed, dated HOME_ACTION_HELD_MS
+  // (the key's longest press that still ends in an action, plus the double-tap wait after its release) before this
+  // pass.
   const auto route = routeTouch(mappedInput);
   const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool tapped = route && route.event.action == ACTION_PASS;
   if ((tapped || confirmed) && passScreenShown.load(std::memory_order_acquire) == state) {
     // After the acquire above, which orders render's store of the push's time before it.
-    const unsigned long held = tapped ? gpio.lastTouchHeldMs() : mappedInput.getHeldTime();
+    const bool homeKey = !tapped && mappedInput.homeButtonAction() != HomeButtonAction::Ignore;
+    const unsigned long held = tapped    ? gpio.lastTouchHeldMs()
+                               : homeKey ? HOME_ACTION_HELD_MS
+                                         : mappedInput.getHeldTime();
     const auto began = static_cast<uint32_t>(now - held);
     if (static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed)) >= 0) {
       app.clearTapFlash();  // the tap leaves this screen

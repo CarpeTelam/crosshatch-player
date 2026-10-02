@@ -19,6 +19,7 @@
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
 #include "games/MatchStore.h"
+#include "util/HomeButtonInput.h"
 
 // One match, solo or pass, open or hidden (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers, and owns ch.store (MatchStore): its slot, which
@@ -41,7 +42,9 @@
 // a cleared screen, a full refresh), whose button asks the VM for the turn seat (GameVM::showTurnSeat) and shows no
 // canvas until that seat's frame is published; a move that passes the turn shows the mover's own frame with the "Tap to
 // pass" banner (Result), whose tap goes to the hand-off screen. Each is passed by its button or Confirm only, never a
-// tap elsewhere, and only by a tap whose touch began after that screen's push completed. A forced exit (sleep, any
+// tap elsewhere, and only by a tap or press that began after that screen's push completed (a Confirm on a pass where
+// the home key reports an action, whose press time is not known on every board, only HOME_ACTION_HELD_MS or more after
+// it). A forced exit (sleep, any
 // Replace) pushes a plain white blank (FrameReplay::drawBlank), after the VM's stop and before the SD steps, and so
 // does a Leave whose panel holds a seat's frame, before it goes to Games; a forced exit after the VM is gone (a Leave
 // whose Games screen ran out of memory, a stuck VM stopped on the way to Error) pushes it while a seat's frame is still
@@ -74,6 +77,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // would start later is skipped and logged. A step that starts in time is one tmp write
   // and rename, whose time is the card's. Leave has no deadline.
   static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = 1500;
+  // freeink-sdk's InputManager::HOME_KEY_LONG_PRESS_MS, private there (so copied): a home-key press held this long
+  // reports its long-press action then, and a shorter one ends in a tap.
+  static constexpr uint32_t HOME_KEY_LONG_PRESS_MS = 700;
+  // How long before the pass that reads it a home-key action's press may have begun: the longest press (a long press,
+  // or a tap just short of one) plus HomeButtonInput's wait for a second tap after a tap's release. loopHandOff dates a
+  // Confirm on such a pass this far back.
+  static constexpr uint32_t HOME_ACTION_HELD_MS = HomeButtonInput::DOUBLE_TAP_MS + HOME_KEY_LONG_PRESS_MS;
 
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
@@ -298,6 +308,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // a tap or Confirm press begun at or after it (the pass's time less the touch-only held time, as loopPlaying
   // back-dates a tap, or Confirm's hold), so the second tap of a double tap on the banner, which may land where the
   // hand-off's button is, never passes the hand-off screen too, even when it began while the screen was being pushed.
+  // A Confirm on a pass where the home key reports an action has no hold to read: it passes only HOME_ACTION_HELD_MS
+  // or more after it (fails closed).
   std::atomic<uint32_t> passScreenShownMs{0};
   // Loop task: GameVM::turnsPassed() when the match last entered Result.
   uint32_t turnsSeen = 0;

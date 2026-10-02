@@ -13,6 +13,7 @@
 #include "FrameReplay.h"
 #include "GameAssets.h"
 #include "GameHash.h"
+#include "GameRowIcon.h"
 #include "GameSaveStore.h"
 #include "GameViewport.h"
 #include "MatchStore.h"
@@ -1326,8 +1327,9 @@ TEST_F(PassResumeTest, AHiddenPassMatchsWriteThatFailedInResultIsWrittenOnTheBla
   EXPECT_EQ(state(), "HandOff");
 }
 
-// The save's roster wins over the caller's: a solo caller's Continue on a hidden pass save shows the blank first, and
-// its tap shows seat 2 at the saved move.
+// The save's roster wins over the caller's: a solo caller's Continue on a hidden pass save shows the hand-off screen
+// first, with the game's own picture in its band (pass-hidden has no handoff.bmp, title.bmp, or icon.png, so its 128 px
+// fallback icon: the art is read once the save has set the roster), and its tap shows seat 2 at the saved move.
 TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTurnSeat) {
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
   ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
@@ -1346,7 +1348,12 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   for (int i = 0; i < 20; ++i) frame();
   // Every seat's draws, the saved turn seat's (2) included: none before the blank's tap.
   EXPECT_EQ(fakelog::countLines("draw for seat "), 0u) << "a seat was drawn before the blank's tap";
+  const size_t handOffPush = renderer->shown.size();
   ASSERT_NO_FATAL_FAILURE(passTheBlank(2));
+  ASSERT_GT(renderer->shown.size(), handOffPush);
+  const match::Held handOff = match::heldAt(*renderer, renderer->shown[handOffPush].callsBefore);
+  EXPECT_TRUE(handOff.cleared);
+  match::expectSameFills(handOff.drawn, match::iconFills(GameRowIcon::FALLBACK_NAME));
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));
@@ -1355,6 +1362,38 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   EXPECT_EQ(fakelog::countLines("draw for seat "), 1u) << "another seat was drawn, or seat 2 before the tap";
   for (int i = 0; i < 20; ++i) frame();
   EXPECT_EQ(fakesd::bytesOf(resumePath("pass-hidden")), saved) << "the restored snapshot is not written again";
+}
+
+// Continue on a hidden pass save of a game with a handoff.bmp: the resumed match's hand-off screen shows the page in
+// its band, though the caller passed a solo roster (the art is read once the save has set the roster).
+TEST_F(PassResumeTest, AContinuedHiddenPassSaveShowsTheGamesHandoffPageOnItsHandOffScreen) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pumpToPassSave(2));
+  sleep();
+  ASSERT_TRUE(savedPassAt(2));
+
+  // Black where (x / 40 + y / 40) is odd: a checkerboard of 40 px squares, so a shifted page shows.
+  const auto white = [](const int x, const int y) { return (x / 40 + y / 40) % 2 == 0; };
+  fakesd::addFile("/.games/pass-hidden/handoff.bmp", harness::bmpFile(480, 480, white));
+  fakelog::clearLines();
+  enterPass("pass-hidden", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+  EXPECT_TRUE(logHas("pass-hidden: resuming the save's roster: pass, 2 seat(s)"));
+  EXPECT_TRUE(logHas("Page /.games/pass-hidden/handoff.bmp: 480x480"));
+  ASSERT_TRUE(pump([&] { return logHas("Resuming at ver 2"); }));
+  ASSERT_EQ(state(), "HandOff");
+  const size_t pushes = renderer->shown.size();
+  showFrame();
+  if (renderer->shown.size() == pushes) showFrame();  // the render waits for the VM to name the turn seat
+  ASSERT_EQ(renderer->shown.size(), pushes + 1) << "no hand-off screen was pushed";
+  ASSERT_EQ(lastPush().texts.size(), 2u);
+  EXPECT_EQ(lastPush().texts[0], "Player 2's turn");
+  match::expectBandShows(*renderer, white);
+  tapScreen();
+  ASSERT_EQ(state(), "Playing");
+  showFrame();
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
 }
 
 TEST_F(PassResumeTest, AnOpenPassSaveResumesInPlayOnTheSavedTurnSeatsFrame) {

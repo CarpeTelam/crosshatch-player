@@ -20,6 +20,7 @@
 
 #include <Arduino.h>
 #include <HalGPIO.h>
+#include <util/HomeButtonInput.h>
 
 #include <climits>
 #include <cstdint>
@@ -61,8 +62,20 @@ class MappedInputManager {
   // The device's per-pass sample (main.cpp calls it before the activity's loop): a held contact's first sample stamps
   // its touch-down time, whether or not anything reads touch on that pass.
   void update(bool = false) const { sample(); }
-  bool wasPressed(const Button button) const { return pressed.count(button) != 0; }
-  bool wasReleased(const Button button) const { return released.count(button) != 0; }
+  bool wasPressed(const Button button) const {
+    return (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) || pressed.count(button) != 0;
+  }
+  bool wasReleased(const Button button) const {
+    return (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) || released.count(button) != 0;
+  }
+  // The home key's action this frame (homeKey()). It stands in for the device's MappedInputManager on a board with a
+  // home key: update() runs the key through HomeButtonInput, which reports the configured action for one update (a
+  // tap's at its release, or HomeButtonInput::DOUBLE_TAP_MS after it when a double-tap action is set; a long press's
+  // 700 ms into the press); a Confirm action
+  // makes wasPressed and wasReleased(Confirm) true on that update (MappedInputManager.cpp, wasPressed and wasReleased),
+  // and any action but Ignore makes getHeldTime() 0 (the key's press time is not latched on every board: GT911 does
+  // not).
+  HomeButtonAction homeButtonAction() const { return homeAction; }
   bool wasLongPressed(const Button button, const unsigned long thresholdMs) const {
     if (longPressed.count(button) != 0) return true;
     if (pressed.count(button) == 0) {
@@ -104,8 +117,9 @@ class MappedInputManager {
   // suppressed) but no touch-down, since the device clears its press on the release update, and sets the touch-only
   // held time (HalGPIO::lastTouchHeldMs). getHeldTime() is MappedInputManager's: a button's hold on a frame with a
   // button pressed or released, else a tap's held time on its frame. A scripted `touch` (tap(), quickTap(),
-  // longPress()) is one frame's events, as the test sets them. Not modelled: tap slop, multi-touch, a mapped home
-  // action (getHeldTime 0), and the held-time override's 250 ms life (the device-run packet holds them).
+  // longPress()) is one frame's events, as the test sets them. Not modelled: tap slop, multi-touch, the held-time
+  // override's 250 ms life, and the home key's timing (InputManager's 700 ms long press, HomeButtonInput's double-tap
+  // wait): homeKey() scripts only the frame its action is reported on (the device-run packet holds them).
   static constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
   static constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
   bool wasScreenTouchDown(int& x, int& y) const {
@@ -184,6 +198,7 @@ class MappedInputManager {
   // hold a test set); else a tap's frame answers its contact's held time (rememberTouchHeldTime); else the button hold.
   // More permissive than the device: the double's `pressed` is a level too (hold()), where the device's is an edge.
   unsigned long getHeldTime() const {
+    if (homeAction != HomeButtonAction::Ignore) return 0;  // a mapped action has no contact duration
     if (!pressed.empty() || !released.empty()) return heldMs;
     return touch.tapped ? touch.heldMs : heldMs;
   }
@@ -223,6 +238,8 @@ class MappedInputManager {
     pressed.insert(button);
     heldMs = ms;
   }
+  // The home key reports `action` this frame, as HomeButtonInput hands it to the device's manager (homeButtonAction).
+  void homeKey(const HomeButtonAction action) { homeAction = action; }
   // The button is let go: its release edge this frame, and it is no longer held.
   void release(const Button button) {
     released.insert(button);
@@ -310,6 +327,7 @@ class MappedInputManager {
     released.clear();
     longPressed.clear();
     heldMs = 0;
+    homeAction = HomeButtonAction::Ignore;
     touch = Touch{};
     swipeDir = SwipeDir::None;
     backGesture = homeGesture = menuGesture = false;
@@ -320,6 +338,7 @@ class MappedInputManager {
   std::set<Button> released;
   std::set<Button> longPressed;
   unsigned long heldMs = 0;
+  HomeButtonAction homeAction = HomeButtonAction::Ignore;
   Touch touch;
   // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event. Mutable: the real manager's
   // long-press read suppresses the contact from a const method.

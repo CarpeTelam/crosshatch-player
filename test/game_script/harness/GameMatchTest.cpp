@@ -29,6 +29,11 @@
 
 namespace {
 
+using match::bandMiddleY;
+using match::blackIn;
+using match::expectBandShows;
+using match::expectSameFills;
+using match::iconFills;
 using match::installFixture;
 using match::installGame;
 using match::waitFor;
@@ -1718,27 +1723,9 @@ class HiddenPassTest : public MatchTest {
     return record;
   }
 
-  // What the framebuffer held at a push: every drawing call since the last clearScreen before it (`callsBefore`,
-  // GfxRenderer::Shown::callsBefore), and whether a clearScreen came before them at all.
-  struct Held {
-    bool cleared = false;
-    std::vector<GfxRenderer::Call> drawn;
-  };
-  Held heldAt(const size_t callsBefore) const {
-    Held held;
-    for (size_t i = 0; i < callsBefore && i < renderer->calls.size(); ++i) {
-      const GfxRenderer::Call& call = renderer->calls[i];
-      if (call.kind == GfxRenderer::Kind::ClearScreen) {
-        held.cleared = true;
-        held.drawn.clear();
-      }
-      if (call.kind == GfxRenderer::Kind::FillRect || call.kind == GfxRenderer::Kind::DrawText ||
-          call.kind == GfxRenderer::Kind::FillRectDither || call.kind == GfxRenderer::Kind::DrawLine) {
-        held.drawn.push_back(call);
-      }
-    }
-    return held;
-  }
+  // What the framebuffer held at a push (match::heldAt).
+  using Held = match::Held;
+  Held heldAt(const size_t callsBefore) const { return match::heldAt(*renderer, callsBefore); }
 
   // The forced exit pushed the blank once, and logged it: a half refresh of a cleared screen with nothing drawn on it
   // (FrameReplay::drawBlank, plain white: no icon, no text, never the game's page), so a seat's frame drawn without
@@ -2687,38 +2674,6 @@ TEST_F(HiddenPassTest, AMoversFramePlayedWhileTheMatchIsOnTheBlankNeverReachesTh
 // ---- the hand-off screen (epic-pass-and-play entry 12, as the owner redesigned it 2026-10-02; DESIGN.md
 // hand-off-screen, ready-button) ----
 
-// The middle of the splash band on the logical screen: it starts under the header, where the title screen's does
-// (GameSplashLayout::bandTop), and is 480 px tall.
-int bandMiddleY(const GfxRenderer& renderer) {
-  return GameSplashLayout::bandTop(renderer) + GameSplashLayout::BAND / 2;
-}
-
-// The fills `icon` makes at 128 px with its middle at the band's (240, bandMiddleY), in its fill weight when `fill`,
-// drawn as drawGameIcon draws it there.
-std::vector<GfxRenderer::Call> iconFills(const char* icon, const bool fill = false) {
-  GfxRenderer expected(480, 800);
-  EXPECT_TRUE(drawGameIcon(expected, icon, 240 - 64, bandMiddleY(expected) - 64, 128, true, fill)) << icon;
-  std::vector<GfxRenderer::Call> fills;
-  for (const GfxRenderer::Call& call : expected.calls) {
-    if (call.kind == GfxRenderer::Kind::FillRect) fills.push_back(call);
-  }
-  return fills;
-}
-
-// Whether `drawn` is exactly the fills `want`, call by call.
-void expectSameFills(const std::vector<GfxRenderer::Call>& drawn, const std::vector<GfxRenderer::Call>& want) {
-  ASSERT_FALSE(want.empty());
-  ASSERT_EQ(drawn.size(), want.size()) << "the hand-off screen drew more or less than the game's icon";
-  for (size_t i = 0; i < want.size(); ++i) {
-    EXPECT_EQ(drawn[i].kind, GfxRenderer::Kind::FillRect) << i;
-    EXPECT_EQ(drawn[i].x, want[i].x) << i;
-    EXPECT_EQ(drawn[i].y, want[i].y) << i;
-    EXPECT_EQ(drawn[i].w, want[i].w) << i;
-    EXPECT_EQ(drawn[i].h, want[i].h) << i;
-    EXPECT_EQ(drawn[i].black, want[i].black) << i;
-  }
-}
-
 // The drawn line that is exactly `text`, or null.
 const screen::DrawnText* drawnLine(const screen::RecordingTarget& target, const std::string& text) {
   for (const screen::DrawnText& drawn : target.drawn)
@@ -2907,6 +2862,96 @@ TEST_F(HiddenPassTest, ATapStraddlingARepaintOfTheHandOffScreenPassesIt) {
   EXPECT_EQ(state(), "Playing") << "a repaint made a tap begun on the screen's first push look early";
 }
 
+// The same for Result: a repaint of the banner already on the panel (here an unchanged frame drawn again) keeps the
+// time of the push that first showed it, so a finger that came down on the banner after that push and lifted after the
+// repaint passes it.
+TEST_F(HiddenPassTest, ATapStraddlingARepaintOfTheBannerPassesIt) {
+  ASSERT_NO_FATAL_FAILURE(reachResult());  // the push that first shows the banner
+  fakertos::advance(10);
+  input->holdTouch(BANNER_X, BANNER_Y);
+  frame();  // the touch begins after the first push
+  fakertos::advance(30);
+  const size_t pushes = renderer->shown.size();
+  render();  // a repaint
+  ASSERT_EQ(renderer->shown.size(), pushes + 1) << "no repaint";
+  EXPECT_TRUE(holds(lastPush(), "Tap to pass to player 2")) << "not the banner";
+  fakertos::advance(70);
+  frame();
+  input->liftTouch();
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a repaint made a tap begun on the banner's first push look early";
+}
+
+// A Confirm on a pass where the home key reports an action. The double's homeKey() stands in for the device's
+// MappedInputManager on a board with a home key: HomeButtonInput reports the action on one update, at most
+// GameMatchActivity::HOME_ACTION_HELD_MS after the key's press began (a long press at 700 ms, a tap at its release or
+// the double-tap wait after it); on that update getHeldTime() is 0, and a Confirm action makes wasReleased(Confirm)
+// true. Such a Confirm, the key's own or a front button's released on the same update, passes neither screen until
+// that bound has gone by since the screen's push completed: a key pressed during the push is dropped.
+TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterThePush) {
+  constexpr uint32_t BOUND = GameMatchActivity::HOME_ACTION_HELD_MS;
+  ASSERT_NO_FATAL_FAILURE(reachResult());
+  input->homeKey(HomeButtonAction::Confirm);
+  frame();
+  EXPECT_EQ(state(), "Result") << "a home-key Confirm right after the banner's push passed it";
+  fakertos::advance(BOUND);
+  input->homeKey(HomeButtonAction::Confirm);
+  frame();
+  ASSERT_EQ(state(), "HandOff") << "a home-key Confirm the bound after the banner's push";
+  renderer->onDisplay = [&] {
+    input->homeKey(HomeButtonAction::Confirm);  // the key's action while the hand-off screen is being pushed
+    frame();
+  };
+  ASSERT_TRUE(renderHandOff());
+  renderer->onDisplay = nullptr;
+  EXPECT_EQ(state(), "HandOff");
+  fakertos::advance(BOUND - 1);  // the key pressed during the push: its action comes after it, within the bound
+  input->homeKey(HomeButtonAction::Confirm);
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a home-key Confirm within its bound of the push passed the hand-off screen";
+  input->homeKey(HomeButtonAction::NextPage);  // another home action, on the pass a front button's Confirm releases
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a front Confirm with no hold to read passed the hand-off screen";
+  fakertos::advance(1);
+  input->homeKey(HomeButtonAction::Confirm);
+  frame();
+  EXPECT_EQ(state(), "Playing");
+}
+
+// millis() is 32 bits on the device and wraps after about 49.7 days: loopHandOff compares the tap's start with the
+// push's completion as a signed difference. Here the hand-off screen's push completes 70 ms before the wrap: a finger
+// held through it and lifted after the wrap is dropped, and a fresh tap after the wrap passes (an unsigned compare
+// would read it as before the push).
+TEST_F(HiddenPassTest, ThePushTimeComparesAcrossTheClocksWrap) {
+  constexpr uint64_t WRAP = uint64_t{1} << 32;
+  // The match runs from 2 s before the wrap, so the jump to 100 ms before it below is short of the 3 s watchdog.
+  fakertos::S().nowMs = WRAP - 2000;
+  ASSERT_NO_FATAL_FAILURE(reachResult());
+  tapBanner();
+  ASSERT_EQ(state(), "HandOff");
+  ASSERT_LT(fakertos::S().nowMs.load(), WRAP - 100);
+  fakertos::S().nowMs = WRAP - 100;
+  const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
+  input->holdTouch(ready.x, ready.y);
+  frame();  // the touch begins 100 ms before the wrap
+  fakertos::advance(30);
+  ASSERT_TRUE(renderHandOff());  // the push completes 70 ms before the wrap
+  fakertos::advance(100);        // 30 ms after it
+  frame();
+  input->liftTouch();
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a touch begun before the push passed the screen across the wrap";
+  fakertos::advance(10);
+  tapReady();  // a fresh tap, 40 ms after the wrap
+  ASSERT_EQ(state(), "Playing") << "a tap after the wrap read as before the push";
+  showFrame();
+  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  // The host's millis() is 64 bits, so the stop's waits (GameVM's join and abandon, 32-bit starts) would not wrap as
+  // the device's do: the clock goes back under the wrap before the screen goes.
+  fakertos::S().nowMs = WRAP - 1000;
+}
+
 // The second tap of a double tap on the banner lands where the hand-off screen's button is (inside the second menu
 // row) before that screen is on the panel, and again while it is being pushed: both are read and dropped, and the
 // hand-off screen stays until a tap made once it is up.
@@ -3079,34 +3124,6 @@ TEST_F(HiddenPassTest, TheHandOffScreenWaitsForTheRoundsFirstTurnSeat) {
   expectHandOffTexts(lastPush(), 1);
   EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
   showSeat(1);
-}
-
-// Black pixels the renderer holds in (x, y, w, h).
-size_t blackIn(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
-  size_t black = 0;
-  for (int py = y; py < y + h; ++py)
-    for (int px = x; px < x + w; ++px)
-      if (renderer.pixel(px, py) == GfxRenderer::PixelBlack) ++black;
-  return black;
-}
-
-// Whether the band shows `white` (a page of the band's full size) pixel for pixel, sampled every 7 px, and nothing
-// black is drawn on the renderer outside the band (the turn line and the button are FreeInkUI's, which the recording
-// target does not paint).
-void expectBandShows(const GfxRenderer& renderer, const std::function<bool(int, int)>& white) {
-  const int top = GameSplashLayout::bandTop(renderer);
-  int wrong = 0;
-  for (int y = 0; y < GameSplashLayout::BAND && wrong < 5; y += 7) {
-    for (int x = 0; x < GameSplashLayout::BAND && wrong < 5; x += 7) {
-      const auto want = white(x, y) ? GfxRenderer::PixelWhite : GfxRenderer::PixelBlack;
-      if (renderer.pixel(x, top + y) != want) {
-        ADD_FAILURE() << "band pixel " << x << "," << y;
-        ++wrong;
-      }
-    }
-  }
-  EXPECT_EQ(blackIn(renderer, 0, 0, 480, 800), blackIn(renderer, 0, top, 480, GameSplashLayout::BAND))
-      << "ink outside the band";
 }
 
 // A converted handoff.bmp (480 x 480, the largest allowed) in the game's folder fills the band, centred and clipped as
