@@ -181,3 +181,23 @@ Verification-gap pinned every hunk except M2, M6 and M7.
 | M6 | VG | The mode merge line in `rememberChoices` is unpinned. | fix | Test: the file holds PASS on a solo+pass game whose default is solo, only Level changes, and the remembered mode stays PASS. |
 | M7 | VG | The `RenderLock` move above `rememberChoices` is unpinned. | fix | In `…ReadsAgain…`, hook the "saved prefs.bin" log line and assert `fakelock::held()`. |
 | M8 | VG | `AContinueWhoseFirstModeCannotStartTakesTheNextModeThatCan` no longer reaches `startResume`'s skip path, and its name and comment overclaim. | fix | Rename it and correct the comment to say what it guards. |
+
+## Review of the second 5.12 fix commit
+
+**What was reviewed:** `8f680fe5` (rows M1, M2, M6–M8; diff `9bee85ef..8f680fe5`), checked by the same three context-free lenses on 2026-10-02. The raw reports are in `xreview/` (`e12fix2-*`) and are summarised here. The builder measured +19,984 B flash over base and +0 B static RAM, which leaves 16 B of the share.
+
+**Overall result:**
+- **Adversarial:** found no blocking defect. Every Confirm source is dated to fail closed, no front Confirm is taken for a power click, and no press is dropped for good.
+- **Edge-case:** found the branches handled on every board and setting.
+- **Verification-gap:** pinned every behavioural hunk. M6's and M7's tests are not vacuous.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| N1 | A, EC, VG | The 250 ms slack is consumed by stalls that `loopHandOff` itself causes: its `flushResume`, `flushIfDue` and `retryResumeDelete` SD steps, where `ch.store` flushes every 5 s. A press sampled late because of such a stall (detected late, or its action read late) can pass the hand-off screen. | fix if it fits, else entry 11 | Record the gap between loop passes and widen the dating by a recent stall (EC's guard), or date from the previous pass (A's guard), whichever covers both late detection and late reading in fewer bytes. If it does not fit in the 16 B left, it stays with entry 11's input-dating assumption, and the packet logs `New max loop duration` during the hand-off with a store flush landing inside the window. |
+| N2 | A | A power click whose Confirm pass also carries another button's release is dated by that button's hold (residual 1). | fix if it fits after N1, else defer | Key the no-edge branch on Confirm's own edge (`frontButtonConfirm` or `BTN_POWER` released), not any edge. It is rare, since the two edges must land in one ~10 ms pass. |
+| N3 | VG | `POWER_CLICK_HELD_MS` is tested only against itself. | fix | Add a timeline test built from the constants: the Confirm arrives at most `MAX_HOLD + DOUBLE_CLICK + 1` ms after the press, and that time is within `POWER_CLICK_HELD_MS − LATE_PASS_MS`. |
+| N4 | VG, A | The copied constants are not checked against their sources: `HOME_KEY_LONG_PRESS_MS` from the SDK's `InputManager.h`, and `X4PRO_POWER_DOUBLE_CLICK_MS` and `X4PRO_POWER_CLICK_MAX_HOLD_MS` from `main.cpp`. | fix | Add a fork-only host test that reads both files, in the `ForkReleaseTest.cpp` precedent, and compares the parsed values with the copies. |
+| N5 | VG | `LATE_PASS_MS` = 0 passes every test. | fix | Add `static_assert(LATE_PASS_MS > 0)`, which costs 0 B. The packet's loop-duration check (N1) is its measurement. |
+| N6 | EC | A card fault that makes `Storage.exists(prefs.bin)` return false reads as None, not Unreadable, so an Options change can overwrite good preferences. | defer | It needs a card fault that answers `exists` falsely, and it loses preferences only, never a save. `deferred-work.md` `## 5.12`. |
+| N7 | EC | If the hand-off screen stays up for more than 2^31 ms (24.8 days, with sleep off on USB), every tap is dropped. | defer | This predates entry 12. `deferred-work.md` `## 5.12`. |
+| N8 | EC | On the Sticky, the SDK overwrites the confirm/power key's press start when Up or Down is pressed on the same tick. | defer | This predates entry 12 and lives in the SDK, so it is proposed upstream and the fork does not move the pointer. `deferred-work.md` `## 5.12`. |
