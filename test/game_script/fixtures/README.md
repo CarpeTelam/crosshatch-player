@@ -132,7 +132,7 @@ only with the label; adding another label does nothing there and reruns nothing 
 ## Title screen, Options, and hand-off run
 
 Epic-pass-and-play's device run (entry 11) checks entry 12's screens on an X4 Pro with `pass-art.chgame`,
-`pass-hidden.chgame`, and `counter.chgame` from the packet, and `slow-restart` (packed by hand, above), starting from
+`pass-hidden.chgame`, and `counter.chgame` from the packet, and `slow-restart.chgame` (all from `pack_device_run.py`), starting from
 no `/.games-data/pass-art/`. A device that kept an earlier `pass-art` install (its `handoff.png` was 480 x 800, which
 the hand-off screen now skips for `title.bmp`) first removes `pass-art` (a long press on its launcher row) and installs
 the packet's copy. Each step is done once by touch and once with the front buttons alone (Up, Down, Confirm, Back); a
