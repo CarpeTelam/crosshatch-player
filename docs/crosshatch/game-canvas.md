@@ -65,8 +65,9 @@ of this package that this host cannot start (a mode or seat count it cannot star
 the error view with its own reason, and the file is kept. So does a save that will not read, on either read. The title
 screen offers no Continue for such a save, but its New rows ask before a new match replaces it, as over any save;
 formats.md has the states. A Continue that finds no save at all starts a new match with the roster Continue passed: the
-title screen's first New row that can start (solo for a game that starts solo). The VM task never touches the card
-(AD-5).
+title screen's first New row that can start (solo for a game that starts solo). A save records no settings, so a Play
+again after Continue runs `setup` with the title screen's current choices as `ctx.settings` (api-level-1.txt), which
+may differ from those of the saved round. The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
 nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
@@ -217,7 +218,25 @@ the panel, or while it is being pushed, is read and dropped. And a tap or Confir
 the push that first showed that screen completed (`passScreenShownMs`, stored with `passScreenShown`; a repaint keeps
 it): the loop pass's `millis()`, taken before its SD steps, less the tap's touch-only held time
 (`HalGPIO::lastTouchHeldMs()`, as `loopPlaying` back-dates a tap) or Confirm's hold (`getHeldTime()`). So the second tap
-or press of a double one, begun while the screen was being pushed and released after, is dropped too.
+or press of a double one, begun while the screen was being pushed and released after, is dropped too. On a board with
+a home key, a Confirm on a pass where the key reports an action (its own Confirm action, or a front button's Confirm
+released on the same pass as any other action) has no hold to read: `getHeldTime()` answers 0 while a home action is
+mapped, and the key's press time is not latched on every board (GT911 does not). The action comes up to 1,750 ms after
+the key's first contact: a long press reports at 700 ms (`InputManager::HOME_KEY_LONG_PRESS_MS`) and a shorter press
+ends in a tap, a tap's action waits up to `HomeButtonInput::DOUBLE_TAP_MS` (350 ms) after its release for a second
+tap, and a second contact then reports its double tap at its release or its long press 700 ms into it.
+`GameMatchActivity::HOME_ACTION_HELD_MS` is that plus `LATE_PASS_MS` (250 ms) for a loop pass that reads the action
+late (2,000 ms; a pass stalled longer is not covered). So such a Confirm fails closed: it passes only when that bound or
+more has gone by since the push completed, and one sooner is read and dropped (press again). The same holds for a
+Confirm on a pass with no button edge: the X4 Pro's power click, with the power button set to Confirm and its
+double-click frontlight on, becomes Confirm on the first pass more than 500 ms after the release of a click held at most
+300 ms (`src/main.cpp`), when `getHeldTime()` is InputManager's span of the last press of the buttons, long over. It is dated
+back `GameMatchActivity::POWER_CLICK_HELD_MS` (the two, 1 ms more since `main.cpp` waits for more than 500 ms, plus
+`LATE_PASS_MS`: 1,051 ms; `PowerClickBoundTest` times it, and `CopiedConstantsTest` checks the copied constants against
+`src/main.cpp` and the SDK's `InputManager.h`). A power click held longer becomes Confirm on its release's pass, which
+has the button edge, and its own hold dates it. Two cases are not covered: a power-click Confirm on a pass where another
+button is released too has a button edge, so `getHeldTime()` (InputManager's span of the last press of the buttons) dates it; and a loop pass that
+reads either action more than `LATE_PASS_MS` late (deferred-work.md `## 5.12`).
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is

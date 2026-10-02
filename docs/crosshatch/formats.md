@@ -261,7 +261,9 @@ is the file's, so a match that has passed 65,535 snapshots wraps in the file (th
 last started and the value chosen for each setting the manifest declares (AD-15). `src/games/GameSaveStore` is its only
 reader and writer (`loadPrefs`, `savePrefs`), on the loop task only, never in `render()` or `onExit()`; the game's
 title screen reads it when it opens and writes it when its Options screen closes with a change and when New game starts
-a mode other than the one the file holds (a missing file holds none). The match never touches it. It is not a codec
+a mode other than the one the file holds (a missing file holds none), unless the file holds a mode this host does not
+offer: a remembered pass on a host that fits no pass seat count (below) is kept for a host that can, and New game in the
+mode it fell back to writes nothing. The match never touches it. It is not a codec
 blob, so it has no blob header.
 
 | Offset | Size | Field |
@@ -288,14 +290,21 @@ answer but `Loaded` leaves the choices empty, and the file stays until the next 
 **Resolving** (`GameSaveStore::resolvePrefs`) turns what the file holds into the title screen's current choices, value
 by value: the mode is `Manifest::startMode` (the remembered mode when this host can start it, else `default_mode` when
 it can, else the first it can start in solo, pass, nearby order; a mode byte that is not one bit is never one it can
-start), and each setting the manifest declares takes the value stored under its id when the manifest still lists that
-value, else its default. A stored setting the manifest no longer declares is ignored. Each fallback is logged at
-`LOG_DBG`.
+start). The title screen counts pass as one it can start only when this host fits a pass seat count for the game
+(`GameCore::passSeats`), unless pass is the game's only mode, and its Options screen offers the same modes. Each
+setting the manifest declares takes the value stored under its id when the manifest still lists that value, else its
+default. A stored setting the manifest no longer declares is ignored. Each fallback is logged at `LOG_DBG`.
 
 **Writing** (`savePrefs`) is `store.bin`'s: the bytes go to `prefs.bin.tmp`, which is closed, then `prefs.bin` is
 removed and the tmp renamed over it, and a write that finds only the tmp renames it first. A failed write is logged at
 `LOG_ERR` and leaves `prefs.bin` as it was; the title screen keeps the choice until it closes. Removing the game keeps
 the file, as it keeps the rest of `/.games-data/<id>/`.
+
+**After `Unreadable`.** A file that would not read when the title screen opened may be a good one (a card fault that
+has passed): New game does not write over it, and an Options change reads it again before writing. When it now reads,
+each choice the player left as the screen opened it (the mode, and each setting, at the defaults the screen fell back
+to) takes the file's resolved value, the player's changes are kept, and that merge is written (and shown on New
+game's line). When it still will not read, or is now missing or `Malformed`, the choices are written as they are.
 
 ## Game package (`.chgame`)
 

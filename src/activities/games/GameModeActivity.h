@@ -30,14 +30,18 @@ struct Roster;
 // selection starts on the first row, so a Confirm with nothing moved resumes when there is a save to continue.
 //
 // The current mode is the remembered one when this host can start it, else the manifest's default_mode when it can,
-// else the first it can in solo, pass, nearby order (Manifest::startMode), and each setting's value the remembered one
-// when the manifest still declares it, else its default (GameSaveStore::resolvePrefs). Options (GameOptionsActivity,
-// pushed for its result) cycles them in place; when it closes with a change, prefs.bin is written, and the New game
-// line shows the new choice with the Options row selected. Options left by a Replace (the Home gesture, sleep) runs no
-// result handler, and its change is not written: prefs.bin is never written from onExit() (AD-17; deferred-work.md
-// ## 5.12). prefs.bin is written too when New game starts a mode other than the one the file holds (a missing
-// file holds none; one that would not read is left alone). A failed write is logged, and the choice lasts until the
-// screen closes. Nothing is written while the manifest's settings could not be read: it would wipe their values.
+// else the first it can in solo, pass, nearby order (Manifest::startMode; pass counts only with a pass seat count this
+// host fits, onEnter), and each setting's value the remembered one when the manifest still declares it, else its
+// default (GameSaveStore::resolvePrefs). Options (GameOptionsActivity, pushed for its result) cycles them in place;
+// when it closes with a change, prefs.bin is written, and the New game line shows the new choice with the Options row
+// selected. Options left by a Replace (the Home gesture, sleep) runs no result handler, and its change is not written:
+// prefs.bin is never written from onExit() (AD-17; deferred-work.md ## 5.12). prefs.bin is written too when New game
+// starts a mode other than the one the file holds (a missing file holds none; one that would not read is left alone). A
+// failed write is logged, and the choice lasts until the screen closes. Nothing is written, and no match starts, while
+// the manifest's settings could not be read: a write would wipe their values, and a match would lack the ctx.settings
+// its manifest declares. An Options change after a prefs.bin that would not read reads it again before writing, so the
+// choices the player did not touch keep its values when it reads now. New game does not write over a remembered mode
+// this host does not offer.
 //
 // A tap or Confirm on Continue or New game replaces this screen with the game's match, given the chosen settings
 // (GameCore::SettingValues, ctx.settings). Continue resumes the save (Start::Resume): the match plays the roster the
@@ -91,7 +95,7 @@ class GameModeActivity final : public UiListActivity {
   void onRowAction(const freeink::ui::ActionEvent& event) override;
 
   // Reads the settings from the installed manifest (the registry's entry keeps only their count); none, logged, when
-  // it cannot.
+  // it cannot, and then no match starts (startMatch).
   void loadSettings();
   // The rows for the save peek() found, and New game's line for the current choices.
   void buildRows();
@@ -104,11 +108,13 @@ class GameModeActivity final : public UiListActivity {
   void startNew();
   // Starts the match from the save.
   void startResume();
-  // Replaces this screen with the match; repaints this screen when the activity cannot be allocated. A New match in a
-  // mode other than the one prefs.bin holds writes it first.
+  // Replaces this screen with the match; repaints this screen, logged, when the manifest's settings were not read
+  // (loadSettings) or the activity cannot be allocated. A New match in a mode other than the one prefs.bin holds writes
+  // it first.
   void startMatch(const GameCore::Roster& roster, bool resume);
   // Writes the current choices as prefs.bin (logged when it cannot, and skipped, logged, when the manifest's settings
-  // were not read); `saved` follows a write that succeeds.
+  // were not read); `saved` follows a write that succeeds. A prefs.bin that was Unreadable is read again first, and
+  // when it reads, the choices still as the screen opened them take its values.
   void rememberChoices();
   // Pushes Options for the current choices, and handles its close (onOptionsClosed).
   void openOptions();
@@ -127,7 +133,9 @@ class GameModeActivity final : public UiListActivity {
   static constexpr freeink::ui::ActionId ACTION_CONFIRM_CHOICE = ACTION_USER;
 
   GameCore::Manifest manifest;
-  uint8_t modes = 0;  // Manifest::Mode bits: CheckResult::modes of the game's check on this host
+  // Manifest::Mode bits: CheckResult::modes of the game's check on this host, less pass (onEnter) when this host fits
+  // no pass seat count, unless pass is the only one. What the current mode may be and what Options offers.
+  uint8_t modes = 0;
   uint8_t pkgHash[GamePkg::HASH_BYTES] = {};
   // What peek() found when the screen opened: a save to continue (Valid or Unreadable: the Continue row), and any save
   // at all (those or Unstartable: New game asks before it replaces the file).

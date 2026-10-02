@@ -125,6 +125,11 @@ void GameModeActivity::onEnter() {
   loadSettings();
   saved = GameSaveStore::Prefs{};
   prefsState = GameSaveStore::loadPrefs(manifest.id, saved);  // anything but Loaded leaves it empty: the defaults
+  // Pass counts only with a pass seat count this host fits (rosterFor), unless it is the only mode (New game then names
+  // it and logs why it cannot): the current mode falls back from it, and Options does not offer it.
+  GameCore::Roster roster;
+  const auto others = static_cast<uint8_t>(modes & ~Manifest::MODE_PASS);
+  if (others != 0 && !rosterFor(Manifest::MODE_PASS, roster)) modes = others;
   choices = GameSaveStore::resolvePrefs(saved, manifest, settings, modes);
   optionsChanged = false;
   picture.loadPage(manifest.id, "title", GameCore::TITLE_IMAGE_WIDTH, GameCore::TITLE_IMAGE_HEIGHT);
@@ -140,16 +145,16 @@ void GameModeActivity::loadSettings() {
   if (manifest.settingsCount == 0) return;  // nothing to read
   auto read = makeUniqueNoThrow<ManifestRead>();
   if (!read) {
-    LOG_ERR("GAME", "OOM: %u B to read the settings of %s; the game starts with its defaults",
+    LOG_ERR("GAME", "OOM: %u B to read the settings of %s; it does not start",
             static_cast<unsigned>(sizeof(ManifestRead)), manifest.id);
     return;
   }
   // The same manifest the launcher listed, unless it changed on the card since: then its settings are not this
-  // screen's, and the match starts with none rather than another manifest's.
+  // screen's, and no match starts (startMatch) rather than one with another manifest's settings or none.
   if (!GameRegistry::readGame(manifest.id, read->reader, read->entry) ||
       read->entry.manifest.settingsCount != manifest.settingsCount ||
       std::memcmp(read->entry.pkgHash, pkgHash, sizeof(pkgHash)) != 0) {
-    LOG_ERR("GAME", "Cannot read the settings of %s; the game starts with none", manifest.id);
+    LOG_ERR("GAME", "Cannot read the settings of %s; it does not start", manifest.id);
     return;
   }
   settings = read->reader.settings();
@@ -315,6 +320,13 @@ void GameModeActivity::startResume() {
 
 void GameModeActivity::startMatch(const GameCore::Roster& roster, const bool resume) {
   app.clearTapFlash();  // the row leaves this screen
+  // Settings that were not read (loadSettings: no memory, a card fault, or a manifest changed since the launcher read
+  // it) would start the game without the ctx.settings its manifest declares: no match starts, and nothing is written.
+  if (settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "Cannot start %s: its settings were not read", manifest.id);
+    requestUpdate();  // the tap flash was cleared; repaint this screen
+    return;
+  }
   // Continue passes the current settings too: a resume runs no setup (AD-8), so they reach only a Play again after it.
   auto match = makeUniqueNoThrow<GameMatchActivity>(
       renderer, mappedInput, manifest, roster,
@@ -324,9 +336,14 @@ void GameModeActivity::startMatch(const GameCore::Roster& roster, const bool res
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
     return;
   }
-  // A New match in a mode other than the one prefs.bin holds makes it the remembered one (a missing file holds none).
-  // A file that would not read (a card fault) may be a good one: New game leaves it for an Options change to replace.
-  if (!resume && prefsState != GameSaveStore::PrefsState::Unreadable && choices.mode != saved.mode) rememberChoices();
+  // A New match in a mode other than the one prefs.bin holds makes it the remembered one (a missing file holds none),
+  // unless the file's mode is one this host does not offer (a remembered pass here with no pass seats): it is kept for
+  // a host that can. A file that would not read (a card fault) may be a good one: New game leaves it for an Options
+  // change to replace.
+  if (!resume && prefsState != GameSaveStore::PrefsState::Unreadable && choices.mode != saved.mode &&
+      (saved.mode & ~modes) == 0) {
+    rememberChoices();
+  }
   activityManager.replaceActivity(std::move(match));
 }
 
@@ -335,6 +352,20 @@ void GameModeActivity::rememberChoices() {
   if (settings.count != manifest.settingsCount) {
     LOG_ERR("GAME", "The choices for %s are not remembered: its settings were not read", manifest.id);
     return;
+  }
+  // A prefs.bin that would not read when the screen opened (a card fault, which may have passed) is read again first:
+  // when it reads now, the choices the player left as the screen opened them (the defaults, `saved` being empty) take
+  // its values, so the write keeps them; still unreadable, the choices are written as they are.
+  if (prefsState == GameSaveStore::PrefsState::Unreadable) {
+    const GameSaveStore::Choices opened = GameSaveStore::resolvePrefs(saved, manifest, settings, modes);
+    prefsState = GameSaveStore::loadPrefs(manifest.id, saved);
+    if (prefsState == GameSaveStore::PrefsState::Loaded) {
+      const GameSaveStore::Choices read = GameSaveStore::resolvePrefs(saved, manifest, settings, modes);
+      if (choices.mode == opened.mode) choices.mode = read.mode;
+      for (size_t i = 0; i < settings.count; ++i) {
+        if (choices.valueIndex[i] == opened.valueIndex[i]) choices.valueIndex[i] = read.valueIndex[i];
+      }
+    }
   }
   const GameSaveStore::Prefs prefs = GameSaveStore::prefsOf(choices, settings);
   if (!GameSaveStore::savePrefs(manifest.id, prefs)) {
@@ -362,10 +393,11 @@ void GameModeActivity::openOptions() {
 }
 
 void GameModeActivity::onOptionsClosed() {
-  // The card is written here, on the loop task, once Options has closed; never from Options' onExit().
+  // The card is written here, on the loop task, once Options has closed; never from Options' onExit(). Under the lock:
+  // rememberChoices may merge a re-read prefs.bin into the choices the render task reads.
+  RenderLock lock(*this);
   if (optionsChanged) rememberChoices();
   optionsChanged = false;
-  RenderLock lock(*this);
   buildRows();  // New game's line names the new choice
   for (size_t row = 0; row < rowCount; ++row) {
     if (rowKind[row] == RowKind::Options) activeNav().requestSelection(static_cast<int>(row));
