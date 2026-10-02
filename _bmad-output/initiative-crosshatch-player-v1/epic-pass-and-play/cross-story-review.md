@@ -157,3 +157,27 @@ Verification-gap found every change pinned except L7–L9 below, and confirmed `
 | L7 | VG | Nothing checks a resumed hidden match's hand-off picture, so moving the art load above `seedResume` would fail no test. | fix | In `AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTurnSeat`, assert the hand-off push's fills equal the icon fallback's; add a Continue case with `handoff.bmp` on the card. |
 | L8 | VG | Result's keep-the-stamp-on-repaint rule (F3) is tested for HandOff only. | fix | Add a Result copy of `ATapStraddlingARepaintOfTheHandOffScreenPassesIt`. |
 | L9 | VG | The wrap-safe compare in `loopHandOff` is unpinned. | fix | Add a hidden test with the fake clock just under 2^32 across the push. |
+
+## Review of the 5.12 fix commit
+
+**What was reviewed:** `42e277b2` (rows L1–L9; diff `cf13c377..42e277b2`), checked by the same three context-free lenses on 2026-10-02. The raw reports are in `xreview/` (`e12fix-*`) and are summarised here. The builder measured +19,952 B flash over base and +0 B static RAM, which leaves 48 B of the share.
+
+**Overall result:** adversarial confirmed:
+- L1's home-key dating, and that a front Confirm on the same pass fails closed;
+- the `RenderLock` move (the handler runs after `ActivityManager` unlocks);
+- the ordering of `passScreenShown`;
+- the prefs.bin paths, and that no match can start with missing settings;
+- the repo rules.
+
+Verification-gap pinned every hunk except M2, M6 and M7.
+
+| # | Lens | Finding | Verdict | Reason / action |
+|---|---|---|---|---|
+| M1 | A, EC | An X4 Pro power-button Confirm arrives about 500 ms after its click, on a pass with no button edge. `getHeldTime()` then returns a stale hold, so a click begun up to about 500 ms before the push completed passes the hand-off screen. The deferral (G3) assumed an upstream getter was needed, but a Confirm on a pass where `!tapped && !homeKey && !wasAnyReleased()` already marks one with no hold to read. | fix | Fork-only: date such a Confirm back by `X4PRO_POWER_DOUBLE_CLICK_MS` plus the click's longest hold plus slack, so it fails closed. Model the no-edge Confirm in the double and test it. Replace G3 in `deferred-work.md` with a pointer to this row. The owner chose a device-run check over the upstream getter; that check stays. |
+| M2 | A, EC, VG | `HOME_ACTION_HELD_MS` (1,050 ms) is below the double-tap worst case (700 + 350 + 700 = 1,750 ms from the first contact) and has no slack for a late loop pass. Its value is tested only against itself. | fix | Raise it to cover the double-tap worst case plus a margin (0 B flash). Pin it with a `HomeButtonInputTest` timeline (down 0, up 690, down 1,030, up 1,720, `doubleTap = Confirm`) asserting the action time is within the bound. Correct the "at most" wording in the header and `game-canvas.md`. A loop pass stalled longer than the margin goes to entry 11 as an `Assumption for entry 11:` line. |
+| M3 | A, EC | After a failed settings read, New game and Continue are silent no-ops, with no retry until the screen is reopened (G7). | fix if it fits | In `startMatch`, re-run `loadSettings` once before refusing. Show the existing `STR_GAMES_START_FAILED` if the share still has room after M1; otherwise G7 keeps that part. Continue staying blocked is kept, since it fails safe. |
+| M4 | A, EC | A remembered pass on a host with no pass seats is overwritten with solo by any Options change. A garbage mode byte in a readable prefs.bin is never rewritten by New game. | defer | No host has fewer than two pass seats, and a garbage byte needs a corrupt file that still reads as Loaded. `deferred-work.md` `## 5.12`. |
+| M5 | EC | After an Unreadable-then-readable prefs.bin, a choice cycled back to the value the screen opened with counts as untouched and takes the file's value. | defer | Low; it needs a transient card fault at open. `deferred-work.md` `## 5.12`. |
+| M6 | VG | The mode merge line in `rememberChoices` is unpinned. | fix | Test: the file holds PASS on a solo+pass game whose default is solo, only Level changes, and the remembered mode stays PASS. |
+| M7 | VG | The `RenderLock` move above `rememberChoices` is unpinned. | fix | In `…ReadsAgain…`, hook the "saved prefs.bin" log line and assert `fakelock::held()`. |
+| M8 | VG | `AContinueWhoseFirstModeCannotStartTakesTheNextModeThatCan` no longer reaches `startResume`'s skip path, and its name and comment overclaim. | fix | Rename it and correct the comment to say what it guards. |
