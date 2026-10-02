@@ -60,13 +60,14 @@ class GameVmTest : public match::ScreenTest {
   bool prepare(const std::string& id, const bool hiddenPass = false) {
     return prepareFor(id, hiddenPass ? GameCore::Roster::pass(2) : GameCore::Roster::solo(), hiddenPass);
   }
-  // The same for `roster`, with a hidden pass match's VM when `handOff`.
-  bool prepareFor(const std::string& id, const GameCore::Roster& roster, const bool handOff) {
+  // The same for `roster`, with a hidden pass match's VM when `handOff`, and `settings` as ctx.settings.
+  bool prepareFor(const std::string& id, const GameCore::Roster& roster, const bool handOff,
+                  const GameCore::SettingValues& settings = {}) {
     store = std::make_unique<MatchStore>();
     if (!store->allocate(id.c_str(), static_cast<uint32_t>(fakertos::S().nowMs.load()))) return false;
     GameAssets assets;
     if (assets.load(id.c_str(), store->saves(), store->slot()) != GameAssets::LoadResult::Ok) return false;
-    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), roster, handOff);
+    vm = GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), roster, handOff, settings);
     return vm != nullptr;
   }
 
@@ -253,6 +254,172 @@ TEST_F(GameVmTest, AHiddenVmPublishesNoFrameUntilTheMatchAsksForTheTurnSeat) {
   EXPECT_EQ(vm->frameGen(), before + 1);
   EXPECT_EQ(fakelog::countLines("draw for seat 1"), 2u);
   EXPECT_FALSE(logHas("draw for seat 2"));
+}
+
+// Each hidden round's first turn seat is announced as soon as the round has begun, before any seat is drawn, so the
+// hand-off screen can name it ("Player N's turn"): the new match's, and Play again's. A turn change names its seat too.
+TEST_F(GameVmTest, AHiddenVmAnnouncesEachRoundsFirstTurnSeatBeforeAnySeatIsDrawn) {
+  installFixture("pass-hidden");
+  ASSERT_TRUE(prepare("pass-hidden", true));
+  EXPECT_EQ(vm->turnAnnouncements(), 0u);
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->turnAnnouncements() == 1u; }));
+  EXPECT_EQ(vm->passedTo(), 1u);
+  EXPECT_EQ(vm->frameGen(), 0u) << "announced, not drawn";
+  EXPECT_EQ(vm->turnsPassed(), 0u);
+  // Four moves end the round; each turn change names the next seat.
+  for (uint32_t move = 1; move <= 4; ++move) {
+    const uint32_t request = vm->showTurnSeat();
+    ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
+    vm->postInput(tapAt(100, 200), vm->frameGen());
+    if (move < 4) {
+      ASSERT_TRUE(waitFor([&] { return vm->turnsPassed() == move; }));
+      EXPECT_EQ(vm->passedTo(), move % 2 + 1);
+    }
+  }
+  ASSERT_TRUE(waitFor([&] { return vm->roundsEnded() == 1u; }));
+  EXPECT_EQ(vm->turnAnnouncements(), 1u) << "a turn change is no round's announcement";
+  // Play again begins a new round on the hand-off screen: announced again, seat 1 first, and nothing drawn for it.
+  const uint32_t framesBefore = vm->frameGen();
+  vm->playAgain();
+  ASSERT_TRUE(waitFor([&] { return vm->turnAnnouncements() == 2u; }));
+  EXPECT_EQ(vm->passedTo(), 1u);
+  EXPECT_EQ(vm->frameGen(), framesBefore);
+  EXPECT_FALSE(vm->failed());
+}
+
+// A resumed hidden save announces its saved turn seat: the match's hand-off screen names the seat whose turn it is.
+TEST_F(GameVmTest, AResumedHiddenVmAnnouncesTheSavedTurnSeat) {
+  installFixture("pass-hidden");
+  ASSERT_TRUE(prepare("pass-hidden", true));
+  ASSERT_TRUE(vm->start());
+  const uint32_t request = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
+  vm->postInput(tapAt(100, 200), vm->frameGen());  // seat 1 moves: seat 2's turn
+  ASSERT_TRUE(waitFor([&] { return vm->turnsPassed() == 1u; }));
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  std::vector<uint8_t> saved(GameCore::SNAPSHOT_BYTES);
+  SnapshotMailbox::Taken taken;
+  ASSERT_TRUE(vm->committed().take(saved, taken));
+  saved.resize(taken.length);
+  ASSERT_TRUE(vm->stop(5000));
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  vm.reset();
+
+  ASSERT_TRUE(prepare("pass-hidden", true));
+  ASSERT_TRUE(vm->setResume(saved, static_cast<uint16_t>(taken.ver)));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->turnAnnouncements() == 1u; }));
+  EXPECT_EQ(vm->passedTo(), 2u);
+  EXPECT_EQ(vm->frameGen(), 0u);
+  EXPECT_FALSE(logHas("Cannot restore"));
+}
+
+// Solo and open pass VMs have no hand-off: they announce nothing.
+TEST_F(GameVmTest, AVmWithoutAHandOffAnnouncesNoTurnSeat) {
+  installFixture("pass-open");
+  ASSERT_TRUE(prepareFor("pass-open", GameCore::Roster::pass(2), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  EXPECT_EQ(vm->turnAnnouncements(), 0u);
+}
+
+// The VM hands its settings to every setup as ctx.settings (AD-8, as amended 2026-10-02): the same table after Play
+// again, and an empty one when the game declares none.
+TEST_F(GameVmTest, TheSettingsReachEverySetupAsCtxSettings) {
+  installGame("settings-vm", R"(
+local game = {}
+function game.setup(ctx)
+  local keys = {}
+  for k, v in pairs(ctx.settings) do keys[#keys + 1] = k .. "=" .. v end
+  table.sort(keys)
+  ch.log("settings [" .. table.concat(keys, ",") .. "]")
+  return { taps = 0 }
+end
+function game.status(s)
+  if s.taps >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(s) s.taps = s.taps + 1 return s end
+function game.draw() ch.gfx.clear("white") end
+function game.input(s, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+return game
+)");
+  GameCore::SettingValues settings;
+  settings.count = 2;
+  std::snprintf(settings.entries[0].id, sizeof(settings.entries[0].id), "level");
+  std::snprintf(settings.entries[0].value, sizeof(settings.entries[0].value), "Hard");
+  std::snprintf(settings.entries[1].id, sizeof(settings.entries[1].id), "sound");
+  std::snprintf(settings.entries[1].value, sizeof(settings.entries[1].value), "Off");
+  ASSERT_TRUE(prepareFor("settings-vm", GameCore::Roster::solo(), false, settings));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("settings [level=Hard,sound=Off]"); }));
+  ASSERT_TRUE(tapAndWaitFrame(100, 200));
+  ASSERT_TRUE(waitFor([&] { return vm->roundsEnded() == 1u; }));
+  vm->playAgain();
+  ASSERT_TRUE(waitFor([] { return fakelog::countLines("settings [level=Hard,sound=Off]") == 2u; }));
+  ASSERT_TRUE(vm->stop(5000));
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  vm.reset();
+  fakelog::clearLines();
+
+  ASSERT_TRUE(prepareFor("settings-vm", GameCore::Roster::solo(), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("settings ["); }));
+  EXPECT_TRUE(fakelog::anyLine("settings []")) << "no settings: an empty table";
+}
+
+// resume.bin records no settings: a resumed VM runs no setup, and the Play again after it hands setup the settings the
+// VM was built with (the title screen's current choices, which Continue passes), not those of the saved round.
+TEST_F(GameVmTest, APlayAgainAfterAResumeGetsTheSettingsTheVmWasGiven) {
+  installGame("settings-resume", R"(
+local game = {}
+function game.setup(ctx)
+  local keys = {}
+  for k, v in pairs(ctx.settings) do keys[#keys + 1] = k .. "=" .. v end
+  table.sort(keys)
+  ch.log("settings [" .. table.concat(keys, ",") .. "]")
+  return { taps = 0 }
+end
+function game.status(s)
+  if s.taps >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(s) s.taps = s.taps + 1 return s end
+function game.draw() ch.gfx.clear("white") end
+function game.input(s, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+return game
+)");
+  const auto level = [](const char* value) {
+    GameCore::SettingValues settings;
+    settings.count = 1;
+    std::snprintf(settings.entries[0].id, sizeof(settings.entries[0].id), "level");
+    std::snprintf(settings.entries[0].value, sizeof(settings.entries[0].value), "%s", value);
+    return settings;
+  };
+  ASSERT_TRUE(prepareFor("settings-resume", GameCore::Roster::solo(), false, level("Hard")));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("settings [level=Hard]"); }));
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  std::vector<uint8_t> saved(GameCore::SNAPSHOT_BYTES);
+  SnapshotMailbox::Taken taken;
+  ASSERT_TRUE(vm->committed().take(saved, taken));
+  saved.resize(taken.length);
+  ASSERT_TRUE(vm->stop(5000));
+  ASSERT_TRUE(fakertos::waitNoTasks());
+  vm.reset();
+  fakelog::clearLines();
+
+  ASSERT_TRUE(prepareFor("settings-resume", GameCore::Roster::solo(), false, level("Easy")));
+  ASSERT_TRUE(vm->setResume(saved, static_cast<uint16_t>(taken.ver)));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  EXPECT_FALSE(fakelog::anyLine("settings [")) << "a resume runs no setup";
+  ASSERT_TRUE(tapAndWaitFrame(100, 200));
+  ASSERT_TRUE(waitFor([&] { return vm->roundsEnded() == 1u; }));
+  vm->playAgain();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("settings [level=Easy]"); }));
+  EXPECT_FALSE(fakelog::anyLine("settings [level=Hard]"));
 }
 
 TEST_F(GameVmTest, ATimerPolledDuringTheHandOffIsHeldUntilTheSeatsFirstFrame) {
@@ -631,6 +798,31 @@ TEST_F(GameVmTest, AScriptErrorIsAScriptFailureThatStartedTheGame) {
   EXPECT_FALSE(vm->failedToStart());  // the script's own error says it stopped, not that it could not start
   EXPECT_NE(std::string(vm->errorMessage()).find("boom"), std::string::npos);
   EXPECT_EQ(std::string(vm->failureDetail(texts())), vm->errorMessage());
+}
+
+// The reserved pages are the runtime's (AD-15, as amended 2026-10-02): a game that ships title.png and handoff.png
+// draws its own images beside them, and ch.gfx.image of either page's name stops it as any unknown name does.
+TEST_F(GameVmTest, ADrawOfAReservedPageIsAnUnknownImage) {
+  for (const std::string page : {"title", "handoff"}) {
+    SCOPED_TRACE(page);
+    const std::string id = "pages-" + page;
+    installGame(id,
+                "local game = {}\nfunction game.setup() return {} end\n"
+                "function game.status() return { turn = 1 } end\n"
+                "function game.draw() ch.gfx.image('badge', 0, 0, 'black') ch.gfx.image('" +
+                    page + "', 0, 0, 'black') end\nreturn game\n");
+    fakesd::addFile("/.games/" + id + "/badge.bmp", harness::bmpFile(8, 8, [](int, int) { return true; }));
+    fakesd::addFile("/.games/" + id + "/title.bmp", harness::bmpFile(480, 480, [](int, int) { return true; }));
+    fakesd::addFile("/.games/" + id + "/handoff.bmp", harness::bmpFile(480, 480, [](int, int) { return true; }));
+    ASSERT_TRUE(prepare(id));
+    ASSERT_TRUE(vm->start());
+    ASSERT_TRUE(waitFor([&] { return vm->finished(); }));
+    EXPECT_EQ(vm->failure(), GameVM::Failure::Script);
+    EXPECT_NE(std::string(vm->errorMessage()).find("ch.gfx.image: unknown image \"" + page + "\""), std::string::npos)
+        << vm->errorMessage();
+    vm.reset();
+    store.reset();
+  }
 }
 
 TEST_F(GameVmTest, ASessionThatDoesNotFitIsNoSessionAndCouldNotStart) {

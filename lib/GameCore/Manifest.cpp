@@ -3,6 +3,7 @@
 #include <Memory.h>
 
 #include <cstring>
+#include <initializer_list>
 
 namespace GameCore {
 
@@ -64,6 +65,31 @@ bool parseIconWeight(const std::string_view text, uint8_t& out) {
   return true;
 }
 
+// default_mode's three values, as Manifest::Mode bits (modes' own names).
+bool parseMode(const std::string_view text, uint8_t& out) {
+  if (text == "solo") {
+    out = Manifest::MODE_SOLO;
+  } else if (text == "pass") {
+    out = Manifest::MODE_PASS;
+  } else if (text == "nearby") {
+    out = Manifest::MODE_NEARBY;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+// A setting's id: [a-z][a-z0-9_]{0,15}, the API list's `name setting_id`. scripts/pack_game.py's SETTING_ID is the
+// same rule.
+bool validSettingId(const std::string_view text) {
+  if (text.empty() || text.size() > ManifestSetting::MAX_ID_BYTES) return false;
+  if (text[0] < 'a' || text[0] > 'z') return false;
+  for (const char c : text) {
+    if (!isLowerDigit(c) && c != '_') return false;
+  }
+  return true;
+}
+
 // Copies text into a fixed field; false when it does not fit.
 template <size_t N>
 bool copyField(char (&field)[N], const std::string_view text) {
@@ -81,18 +107,25 @@ std::string_view innerOf(const std::string_view path) {
   return dot == std::string_view::npos ? std::string_view() : path.substr(dot + 1);
 }
 
-// Every MANIFEST_KEYS entry is one onKey reads: a Seats entry has a seat and a
-// dotted path, any other entry neither.
+// Every MANIFEST_KEYS entry is one onKey reads: a Seats entry has a seat and a dotted path; a
+// Settings entry has a setting exactly when its path is dotted ("settings" itself has none); any
+// other entry has neither.
 constexpr bool manifestKeysAreReadable() {
   for (const ManifestKey& entry : MANIFEST_KEYS) {
     const bool seats = entry.key == ManifestReader::Key::Seats;
+    const bool settings = entry.key == ManifestReader::Key::Settings;
     const bool hasSeat = entry.seat != ManifestReader::SeatKey::None;
+    const bool hasSetting = entry.setting != ManifestReader::SettingKey::None;
     const bool dotted = entry.path.find('.') != std::string_view::npos;
-    if (hasSeat != seats || dotted != seats) return false;
+    if (hasSeat != seats || (seats && !dotted)) return false;
+    if (hasSetting != (settings && dotted)) return false;
+    if (dotted && !seats && !settings) return false;
   }
   return true;
 }
-static_assert(manifestKeysAreReadable(), "MANIFEST_KEYS: a seat and a dotted path exactly for Key::Seats entries");
+static_assert(
+    manifestKeysAreReadable(),
+    "MANIFEST_KEYS: a seat and a dotted path for Key::Seats entries, a setting for dotted Key::Settings ones");
 
 // The top-level key MANIFEST_KEYS names `name`, or Unknown.
 ManifestReader::Key topLevelKey(const std::string_view name) {
@@ -111,6 +144,17 @@ ManifestReader::SeatKey seatKeyNamed(const std::string_view name) {
     }
   }
   return ManifestReader::SeatKey::Unknown;
+}
+
+// The settings key MANIFEST_KEYS names `name`, or Unknown.
+ManifestReader::SettingKey settingKeyNamed(const std::string_view name) {
+  for (const ManifestKey& entry : MANIFEST_KEYS) {
+    if (entry.key == ManifestReader::Key::Settings && entry.setting != ManifestReader::SettingKey::None &&
+        innerOf(entry.path) == name) {
+      return entry.setting;
+    }
+  }
+  return ManifestReader::SettingKey::Unknown;
 }
 
 ManifestReader* self(void* ctx) { return static_cast<ManifestReader*>(ctx); }
@@ -162,6 +206,10 @@ const char* describe(const ManifestError error) {
       return "invalid icon";
     case ManifestError::BadIconWeight:
       return "invalid icon_weight";
+    case ManifestError::BadDefaultMode:
+      return "invalid default_mode";
+    case ManifestError::BadSettings:
+      return "invalid settings";
   }
   return "unknown error";
 }
@@ -207,6 +255,9 @@ std::string_view fieldText(const char (&field)[N]) {
   return std::string_view(field, end ? static_cast<size_t>(static_cast<const char*>(end) - field) : N);
 }
 
+// True for exactly one Mode bit.
+bool oneMode(const uint8_t bits) { return bits != 0 && (bits & (bits - 1)) == 0 && (bits & ~ALL_MODES) == 0; }
+
 // The rules Manifest::parse enforces, for a Manifest that did not come from it.
 bool fieldsValid(const Manifest& m) {
   const std::string_view name = fieldText(m.name);
@@ -214,7 +265,9 @@ bool fieldsValid(const Manifest& m) {
   return validId(fieldText(m.id)) && !name.empty() && name.size() <= Manifest::MAX_NAME_BYTES &&
          fieldText(m.version).size() <= Manifest::MAX_VERSION_BYTES && (icon.empty() || validIcon(icon)) &&
          m.iconWeight <= Manifest::ICON_FILL && m.api >= 1 && m.seatsMin >= 1 && m.seatsMax >= m.seatsMin &&
-         m.modes != 0 && (m.modes & ~ALL_MODES) == 0;
+         m.modes != 0 && (m.modes & ~ALL_MODES) == 0 &&
+         (m.defaultMode == 0 || (oneMode(m.defaultMode) && (m.defaultMode & m.modes) != 0)) &&
+         m.settingsCount <= Manifest::MAX_SETTINGS;
 }
 
 CheckResult verdict(const CheckStatus status, const CheckReason reason) { return CheckResult{status, reason, 0}; }
@@ -240,6 +293,42 @@ CheckResult Manifest::check(const HostCaps& host) const {
   return CheckResult{CheckStatus::Ok, CheckReason::None, startable};
 }
 
+uint8_t Manifest::startMode(const uint8_t remembered, const uint8_t hostModes) const {
+  if (oneMode(remembered) && (remembered & hostModes) != 0) return remembered;
+  if (oneMode(defaultMode) && (defaultMode & hostModes) != 0) return defaultMode;
+  // The bits carry no list order, so "the first listed" is read in solo, pass, nearby order.
+  for (const uint8_t mode : {MODE_SOLO, MODE_PASS, MODE_NEARBY}) {
+    if ((hostModes & mode) != 0) return mode;
+  }
+  return 0;
+}
+
+int ManifestSetting::indexOf(const std::string_view value) const {
+  for (uint8_t i = 0; i < count && i < MAX_VALUES; ++i) {
+    if (fieldText(values[i]) == value) return i;
+  }
+  return -1;
+}
+
+int ManifestSettings::indexOf(const std::string_view id) const {
+  for (uint8_t i = 0; i < count && i < MAX_SETTINGS; ++i) {
+    if (fieldText(settings[i].id) == id) return i;
+  }
+  return -1;
+}
+
+SettingValues ManifestSettings::valuesAt(const uint8_t (&chosen)[MAX_SETTINGS]) const {
+  SettingValues out;
+  for (uint8_t i = 0; i < count && i < MAX_SETTINGS; ++i) {
+    const ManifestSetting& setting = settings[i];
+    const uint8_t index = chosen[i] < setting.count ? chosen[i] : setting.defaultIndex;
+    copyField(out.entries[i].id, fieldText(setting.id));
+    copyField(out.entries[i].value, fieldText(setting.values[index]));
+    out.count = static_cast<uint8_t>(i + 1);
+  }
+  return out;
+}
+
 ManifestReader::ManifestReader() : parser(callbacksFor(this)) {}
 
 void ManifestReader::begin() {
@@ -257,6 +346,11 @@ void ManifestReader::begin() {
   seatsMinSeen = false;
   seatsMaxSeen = false;
   objectBits = 0;
+  parsedSettings = ManifestSettings{};
+  settingKey = SettingKey::None;
+  settingKeyPending = false;
+  settingSeen = 0;
+  settingDefault[0] = '\0';
 }
 
 void ManifestReader::feed(const char* data, const size_t len) {
@@ -340,8 +434,96 @@ void ManifestReader::onKey(const std::string_view name) {
       seatKey = SeatKey::Max;
     }
     seatKeyPending = true;
+    return;
   }
+  if (depth == 3 && key == Key::Settings) onSettingKey(name);
   // Keys deeper than that belong to ignored values.
+}
+
+// A key inside one settings object: one of MANIFEST_KEYS' settings keys, each at most once. Unlike a
+// top-level key, an unknown one makes the manifest invalid (AD-15: "anything else"), so a key the JSON
+// parser dropped for length does too (its value arrives with no key pending).
+void ManifestReader::onSettingKey(const std::string_view name) {
+  if (settingKeyPending) {
+    fail(ManifestError::Syntax);
+    return;
+  }
+  const SettingKey named = settingKeyNamed(name);
+  if (named == SettingKey::Unknown) {
+    fail(ManifestError::BadSettings);
+    return;
+  }
+  const auto bit = static_cast<uint8_t>(1u << static_cast<unsigned>(named));
+  if ((settingSeen & bit) != 0) {
+    fail(ManifestError::DuplicateKey);
+    return;
+  }
+  settingSeen |= bit;
+  settingKey = named;
+  settingKeyPending = true;
+}
+
+// A string inside settings: a field of one setting (depth 3) or one of its values (depth 4). Any
+// string elsewhere in settings is invalid.
+void ManifestReader::onSettingString(const std::string_view value) {
+  ManifestSetting& setting = parsedSettings.settings[parsedSettings.count - 1];
+  if (depth == 4) {
+    // Only a values array reaches depth 4 (onContainerStart).
+    const bool fits = !value.empty() && value.size() <= ManifestSetting::MAX_VALUE_BYTES;
+    if (!fits || setting.count == ManifestSetting::MAX_VALUES || setting.indexOf(value) >= 0 ||
+        !copyField(setting.values[setting.count], value)) {
+      fail(ManifestError::BadSettings);
+      return;
+    }
+    ++setting.count;
+    return;
+  }
+  if (depth != 3 || !settingKeyPending) {
+    fail(ManifestError::BadSettings);
+    return;
+  }
+  settingKeyPending = false;
+  bool ok = false;
+  switch (settingKey) {
+    case SettingKey::Id:
+      // Unique among the settings before it, which are complete.
+      ok = validSettingId(value) && parsedSettings.indexOf(value) < 0 && copyField(setting.id, value);
+      break;
+    case SettingKey::Name:
+      ok = !value.empty() && value.size() <= ManifestSetting::MAX_NAME_BYTES && copyField(setting.name, value);
+      break;
+    case SettingKey::Default:
+      // Resolved against the values when the setting's object closes.
+      ok = !value.empty() && copyField(settingDefault, value);
+      break;
+    default:  // values must be an array
+      break;
+  }
+  settingKey = SettingKey::None;
+  if (!ok) fail(ManifestError::BadSettings);
+}
+
+// One settings object has closed: it needs an id, a name, and 2 to 6 values, and its default (when
+// given) is one of them.
+void ManifestReader::finishSetting() {
+  ManifestSetting& setting = parsedSettings.settings[parsedSettings.count - 1];
+  const auto has = [this](const SettingKey k) { return (settingSeen & (1u << static_cast<unsigned>(k))) != 0; };
+  if (!has(SettingKey::Id) || !has(SettingKey::Name) || !has(SettingKey::Values) ||
+      setting.count < ManifestSetting::MIN_VALUES) {
+    fail(ManifestError::BadSettings);
+    return;
+  }
+  if (has(SettingKey::Default)) {
+    const int index = setting.indexOf(fieldText(settingDefault));
+    if (index < 0) {
+      fail(ManifestError::BadSettings);
+      return;
+    }
+    setting.defaultIndex = static_cast<uint8_t>(index);
+  }
+  settingKey = SettingKey::None;
+  settingSeen = 0;
+  settingDefault[0] = '\0';
 }
 
 void ManifestReader::onString(const std::string_view value) {
@@ -363,6 +545,10 @@ void ManifestReader::onString(const std::string_view value) {
         break;
       case Key::IconWeight:
         if (!parseIconWeight(value, result.iconWeight)) fail(ManifestError::BadIconWeight);
+        break;
+      case Key::DefaultMode:
+        // Checked against modes in finish(), so the two keys may come in either order.
+        if (!parseMode(value, result.defaultMode)) fail(ManifestError::BadDefaultMode);
         break;
       case Key::Unknown:
         break;
@@ -389,6 +575,15 @@ void ManifestReader::onString(const std::string_view value) {
     if (!takeSeatKey()) return;
     if (seatKey != SeatKey::Unknown) fail(ManifestError::WrongType);
     seatKey = SeatKey::None;
+    return;
+  }
+  if (depth >= 2 && key == Key::Settings) {
+    // A string straight in the settings array is no setting.
+    if (depth == 2) {
+      fail(ManifestError::BadSettings);
+      return;
+    }
+    onSettingString(value);
   }
 }
 
@@ -413,7 +608,10 @@ void ManifestReader::onNumber(const std::string_view value) {
     if (seatKey == SeatKey::Min && !parseCount(value, result.seatsMin)) fail(ManifestError::BadSeats);
     if (seatKey == SeatKey::Max && !parseCount(value, result.seatsMax)) fail(ManifestError::BadSeats);
     seatKey = SeatKey::None;
+    return;
   }
+  // Settings hold only objects, strings, and the values arrays.
+  if (depth >= 2 && key == Key::Settings) fail(ManifestError::BadSettings);
 }
 
 void ManifestReader::onBool(const bool value) {
@@ -448,6 +646,10 @@ void ManifestReader::onOtherScalar() {
     fail(ManifestError::BadModes);
     return;
   }
+  if (key == Key::Settings) {
+    fail(ManifestError::BadSettings);
+    return;
+  }
   if (depth == 2 && key == Key::Seats) {
     if (!takeSeatKey()) return;
     if (seatKey != SeatKey::Unknown) fail(ManifestError::WrongType);
@@ -465,11 +667,33 @@ void ManifestReader::onContainerStart(const bool isObject) {
     rootSeen = true;
   } else if (depth == 1) {
     if (!takeTopLevelKey()) return;
-    const bool accepted = key == Key::Unknown || (key == Key::Seats && isObject) || (key == Key::Modes && !isObject);
+    const bool accepted = key == Key::Unknown || (key == Key::Seats && isObject) ||
+                          ((key == Key::Modes || key == Key::Settings) && !isObject);
     if (!accepted) {
       fail(ManifestError::WrongType);
       return;
     }
+  } else if (depth == 2 && key == Key::Settings) {
+    // One setting: an object, at most MAX_SETTINGS of them.
+    if (!isObject || parsedSettings.count == ManifestSettings::MAX_SETTINGS) {
+      fail(ManifestError::BadSettings);
+      return;
+    }
+    ++parsedSettings.count;
+    settingKey = SettingKey::None;
+    settingKeyPending = false;
+    settingSeen = 0;
+    settingDefault[0] = '\0';
+  } else if (depth == 3 && key == Key::Settings) {
+    // Only values holds a container: an array of strings.
+    if (!settingKeyPending || settingKey != SettingKey::Values || isObject) {
+      fail(ManifestError::BadSettings);
+      return;
+    }
+    settingKeyPending = false;
+  } else if (depth == 4 && key == Key::Settings) {
+    fail(ManifestError::BadSettings);
+    return;
   } else if (depth == 2 && key == Key::Modes) {
     fail(ManifestError::BadModes);
     return;
@@ -502,7 +726,8 @@ void ManifestReader::onContainerEnd(const bool isObject) {
   // match its opener, is malformed.
   const bool knownKeyPending = depth == 0 && keyPending && key != Key::Unknown;
   const bool knownSeatKeyPending = depth == 1 && key == Key::Seats && seatKeyPending && seatKey != SeatKey::Unknown;
-  if (wasObject != isObject || knownKeyPending || knownSeatKeyPending) {
+  const bool settingKeyLeftPending = depth == 2 && key == Key::Settings && settingKeyPending;
+  if (wasObject != isObject || knownKeyPending || knownSeatKeyPending || settingKeyLeftPending) {
     fail(ManifestError::Syntax);
     return;
   }
@@ -512,6 +737,10 @@ void ManifestReader::onContainerEnd(const bool isObject) {
     key = Key::None;  // the container value of a top-level key is complete
   } else if (depth == 2 && key == Key::Seats) {
     seatKey = SeatKey::None;
+  } else if (depth == 2 && key == Key::Settings) {
+    finishSetting();  // one setting's object
+  } else if (depth == 3 && key == Key::Settings) {
+    settingKey = SettingKey::None;  // its values array
   }
 }
 
@@ -527,6 +756,8 @@ ManifestError ManifestReader::finish(Manifest& out) {
     return ManifestError::BadSeats;
   }
   if (result.modes == 0) return ManifestError::BadModes;
+  if (has(Key::DefaultMode) && (result.defaultMode & result.modes) == 0) return ManifestError::BadDefaultMode;
+  result.settingsCount = parsedSettings.count;
   out = result;
   return ManifestError::None;
 }

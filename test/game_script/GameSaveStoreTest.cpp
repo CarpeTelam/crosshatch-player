@@ -1383,4 +1383,257 @@ TEST_F(GameSaveStoreTest, TheFakeCardRenamesAndTearsWritesAsSdFatDoes) {
   EXPECT_EQ(fakesd::bytesOf("/d/t.bin"), (Bytes{10, 11, 12}));
 }
 
+// ---- prefs.bin (AD-17, as amended 2026-10-02): the remembered mode and settings ----
+
+constexpr const char* PREFS = "/.games-data/counter/prefs.bin";
+constexpr const char* PREFS_TMP = "/.games-data/counter/prefs.bin.tmp";
+constexpr size_t PREFS_HEAD_BYTES = 7;
+
+// prefs.bin's bytes: "CHPF", the version, the mode, the count, then each id and value after its length byte.
+Bytes prefsFile(const uint8_t mode, const std::vector<std::pair<std::string, std::string>>& settings,
+                const uint8_t version = 1, const char* magic = "CHPF") {
+  Bytes out(magic, magic + 4);
+  out.push_back(version);
+  out.push_back(mode);
+  out.push_back(static_cast<uint8_t>(settings.size()));
+  for (const auto& [id, value] : settings) {
+    out.push_back(static_cast<uint8_t>(id.size()));
+    out.insert(out.end(), id.begin(), id.end());
+    out.push_back(static_cast<uint8_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+  }
+  return out;
+}
+
+GameSaveStore::Prefs prefsWith(const uint8_t mode, const std::vector<std::pair<std::string, std::string>>& settings) {
+  GameSaveStore::Prefs prefs;
+  prefs.mode = mode;
+  for (const auto& [id, value] : settings) {
+    GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];
+    std::snprintf(entry.id, sizeof(entry.id), "%s", id.c_str());
+    std::snprintf(entry.value, sizeof(entry.value), "%s", value.c_str());
+  }
+  return prefs;
+}
+
+// A game that declares two settings: level (Easy, Normal, Hard; default Normal) and sound (On, Off).
+struct SettingsGame {
+  GameCore::Manifest manifest;
+  GameCore::ManifestSettings settings;
+
+  SettingsGame() {
+    auto reader = std::make_unique<GameCore::ManifestReader>();
+    const std::string json =
+        R"({"id": "counter", "name": "Counter", "version": "1", "api": 1, "seats": {"min": 1, "max": 2},)"
+        R"( "modes": ["solo", "pass"], "settings": [)"
+        R"({"id": "level", "name": "Level", "values": ["Easy", "Normal", "Hard"], "default": "Normal"},)"
+        R"({"id": "sound", "name": "Sound", "values": ["On", "Off"]}]})";
+    reader->begin();
+    reader->feed(json.data(), json.size());
+    EXPECT_EQ(reader->finish(manifest), GameCore::ManifestError::None);
+    settings = reader->settings();
+  }
+};
+
+constexpr uint8_t SOLO = GameCore::Manifest::MODE_SOLO;
+constexpr uint8_t PASS = GameCore::Manifest::MODE_PASS;
+
+std::string prefsText(const GameSaveStore::Prefs& prefs) {
+  std::string text = std::to_string(prefs.mode);
+  for (uint8_t i = 0; i < prefs.settings.count; ++i) {
+    text += std::string(" ") + prefs.settings.entries[i].id + "=" + prefs.settings.entries[i].value;
+  }
+  return text;
+}
+
+TEST_F(GameSaveStoreTest, PrefsRoundTripThroughTheExactBytes) {
+  const GameSaveStore::Prefs written = prefsWith(PASS, {{"level", "Hard"}, {"sound", "Off"}});
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", written));
+  EXPECT_EQ(fakesd::bytesOf(PREFS), prefsFile(PASS, {{"level", "Hard"}, {"sound", "Off"}}));
+  EXPECT_EQ(fakesd::bytesOf(PREFS), (Bytes{'C', 'H', 'P', 'F', 1, 2,   2,   5,   'l', 'e', 'v', 'e', 'l', 4,
+                                           'H', 'a', 'r', 'd', 5, 's', 'o', 'u', 'n', 'd', 3,   'O', 'f', 'f'}));
+  EXPECT_FALSE(fakesd::has(PREFS_TMP));
+  GameSaveStore::Prefs read;
+  EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Loaded);
+  EXPECT_EQ(prefsText(read), "2 level=Hard sound=Off");
+
+  // No mode and no settings: the 7-byte head alone.
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", GameSaveStore::Prefs{}));
+  EXPECT_EQ(fakesd::bytesOf(PREFS), prefsFile(0, {}));
+  EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Loaded);
+  EXPECT_EQ(prefsText(read), "0");
+}
+
+TEST_F(GameSaveStoreTest, ThePrefsAtTheLimitAreTheLongestFile) {
+  const std::string id(GameCore::ManifestSetting::MAX_ID_BYTES, 'i');
+  const std::string value(GameCore::ManifestSetting::MAX_VALUE_BYTES, 'v');
+  GameSaveStore::Prefs full = prefsWith(SOLO, {{id, value}, {id, value}, {id, value}, {id, value}});
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", full));
+  EXPECT_EQ(fakesd::bytesOf(PREFS).size(), GameSaveStore::PREFS_MAX_BYTES);
+  GameSaveStore::Prefs read;
+  EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Loaded);
+  EXPECT_EQ(read.settings.count, 4);
+  EXPECT_STREQ(read.settings.entries[3].value, value.c_str());
+}
+
+TEST_F(GameSaveStoreTest, APrefsWriteGoesThroughTheTmpThenARename) {
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefsWith(SOLO, {})));
+  fakesd::sim().ops.clear();
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefsWith(PASS, {{"level", "Easy"}})));
+  const std::vector<std::string> ops = cardOps();
+  const auto at = [&ops](const std::string& op) { return std::find(ops.begin(), ops.end(), op) - ops.begin(); };
+  ASSERT_LT(at(std::string("open ") + PREFS_TMP), static_cast<long>(ops.size()));
+  EXPECT_LT(at(std::string("close ") + PREFS_TMP), at(std::string("remove ") + PREFS));
+  EXPECT_LT(at(std::string("remove ") + PREFS), at(std::string("rename ") + PREFS_TMP + " " + PREFS));
+}
+
+TEST_F(GameSaveStoreTest, NoPrefsIsNoneWithoutALogLine) {
+  GameSaveStore::Prefs read = prefsWith(PASS, {{"level", "Easy"}});
+  EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::None);
+  EXPECT_EQ(prefsText(read), "0");
+  EXPECT_TRUE(fakelog::lines.empty());
+}
+
+TEST_F(GameSaveStoreTest, AMalformedPrefsFileIsIgnoredQuietlyAndKept) {
+  Bytes lengthPastTheEnd = prefsFile(SOLO, {{"level", "Hard"}});
+  lengthPastTheEnd.pop_back();
+  Bytes longId = prefsFile(SOLO, {{std::string(17, 'i'), "Hard"}});
+  const std::pair<const char*, Bytes> cases[] = {
+      {"bad magic", prefsFile(SOLO, {}, 1, "CHPX")},
+      {"unknown file version", prefsFile(SOLO, {}, 2)},
+      {"truncated", Bytes{'C', 'H', 'P', 'F', 1, 1}},
+      {"too many settings", prefsFile(SOLO, {{"a", "1"}, {"b", "1"}, {"c", "1"}, {"d", "1"}, {"e", "1"}})},
+      {"malformed setting", prefsFile(SOLO, {{"", "Hard"}})},
+      {"malformed setting", prefsFile(SOLO, {{"level", ""}})},
+      {"malformed setting", lengthPastTheEnd},
+      {"malformed setting", longId},
+      {"trailing bytes", cat(prefsFile(SOLO, {{"level", "Hard"}}), Bytes{0})},
+      {"too large", Bytes(GameSaveStore::PREFS_MAX_BYTES + 1, 'C')},
+  };
+  for (const auto& [why, file] : cases) {
+    SCOPED_TRACE(why);
+    fakesd::reset();
+    fakelog::lines.clear();
+    fakesd::addFile(PREFS, file);
+    GameSaveStore::Prefs read = prefsWith(PASS, {{"x", "y"}});
+    EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Malformed);
+    EXPECT_EQ(prefsText(read), "0") << "nothing of a malformed file is used";
+    EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ignored ") + PREFS + ": " + why));
+    EXPECT_FALSE(fakelog::any("ERR"));
+    EXPECT_EQ(fakesd::bytesOf(PREFS), file) << "the file stays until the next write replaces it";
+  }
+}
+
+TEST_F(GameSaveStoreTest, APrefsFileThatCannotBeOpenedOrReadIsUnreadableAndKept) {
+  for (const bool failOpen : {true, false}) {
+    SCOPED_TRACE(failOpen ? "open" : "read");
+    fakesd::reset();
+    fakelog::lines.clear();
+    const Bytes file = prefsFile(PASS, {{"level", "Hard"}});
+    fakesd::addFile(PREFS, file);
+    if (failOpen) {
+      fakesd::sim().failOpen.insert(PREFS);
+    } else {
+      fakesd::sim().failReadAt[PREFS] = 0;
+    }
+    GameSaveStore::Prefs read;
+    EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Unreadable);
+    EXPECT_EQ(prefsText(read), "0");
+    EXPECT_TRUE(fakelog::any("INF GAME: counter: could not read"));
+    clearFailures();
+    EXPECT_EQ(fakesd::bytesOf(PREFS), file);
+  }
+}
+
+TEST_F(GameSaveStoreTest, AWholePrefsTmpIsReadWhenPrefsBinIsMissing) {
+  fakesd::addFile(PREFS_TMP, prefsFile(PASS, {{"sound", "Off"}}));
+  GameSaveStore::Prefs read;
+  EXPECT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Loaded);
+  EXPECT_EQ(prefsText(read), "2 sound=Off");
+  // The next write makes the tmp prefs.bin first, then replaces it.
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefsWith(SOLO, {})));
+  EXPECT_EQ(fakesd::bytesOf(PREFS), prefsFile(SOLO, {}));
+  EXPECT_FALSE(fakesd::has(PREFS_TMP));
+}
+
+TEST_F(GameSaveStoreTest, AFailedPrefsWriteKeepsThePreviousFileAndLeavesNoTmp) {
+  const Bytes before = prefsFile(SOLO, {{"level", "Easy"}});
+  for (const WriteFault fault : WRITE_FAULTS) {
+    SCOPED_TRACE(static_cast<int>(fault));
+    fakesd::reset();
+    fakelog::lines.clear();
+    fakesd::addFile(PREFS, before);
+    failWriteOf(PREFS_TMP, fault, PREFS_HEAD_BYTES);
+    EXPECT_FALSE(GameSaveStore::savePrefs("counter", prefsWith(PASS, {{"level", "Hard"}})));
+    EXPECT_TRUE(fakelog::any("ERR GAME: counter: cannot write " + std::string(PREFS_TMP)));
+    EXPECT_EQ(fakesd::bytesOf(PREFS), before);
+    EXPECT_FALSE(fakesd::has(PREFS_TMP));
+  }
+  // Out of memory for its buffer: logged, nothing written.
+  fakesd::reset();
+  failNextNothrowNew = true;
+  EXPECT_FALSE(GameSaveStore::savePrefs("counter", prefsWith(PASS, {})));
+  EXPECT_TRUE(fakelog::any("OOM"));
+  EXPECT_FALSE(fakesd::has(PREFS));
+  EXPECT_FALSE(fakesd::has(PREFS_TMP));
+}
+
+TEST_F(GameSaveStoreTest, PrefsNoFileCanHoldAreRefusedWithoutWriting) {
+  GameSaveStore::Prefs emptyId = prefsWith(SOLO, {{"", "Hard"}});
+  EXPECT_FALSE(GameSaveStore::savePrefs("counter", emptyId));
+  GameSaveStore::Prefs tooMany = prefsWith(SOLO, {});
+  tooMany.settings.count = GameCore::SettingValues::MAX_SETTINGS + 1;
+  EXPECT_FALSE(GameSaveStore::savePrefs("counter", tooMany));
+  GameSaveStore::Prefs unterminated = prefsWith(SOLO, {{"level", "Hard"}});
+  std::memset(unterminated.settings.entries[0].value, 'v', sizeof(unterminated.settings.entries[0].value));
+  EXPECT_FALSE(GameSaveStore::savePrefs("counter", unterminated));
+  EXPECT_FALSE(fakesd::has(PREFS));
+  EXPECT_FALSE(fakesd::has(PREFS_TMP));
+}
+
+// A stale file falls back value by value (Design Notes): the mode this host cannot start, a value the manifest no
+// longer declares, and a setting it no longer has each take the manifest's default, and only those.
+TEST_F(GameSaveStoreTest, StalePrefsFallBackToTheManifestsDefaultsValueByValue) {
+  const SettingsGame game;
+  ASSERT_EQ(game.settings.count, 2);
+  const GameSaveStore::Prefs saved = prefsWith(PASS, {{"gone", "1"}, {"sound", "Loud"}, {"level", "Hard"}});
+
+  GameSaveStore::Choices choices = GameSaveStore::resolvePrefs(saved, game.manifest, game.settings, SOLO | PASS);
+  EXPECT_EQ(choices.mode, PASS) << "remembered and startable";
+  EXPECT_EQ(choices.valueIndex[0], 2) << "level: Hard, remembered";
+  EXPECT_EQ(choices.valueIndex[1], 0) << "sound: Loud is no value, so the default, On";
+  EXPECT_TRUE(fakelog::any("DBG GAME: counter: the remembered sound \"Loud\" is not one of its values"));
+  EXPECT_FALSE(fakelog::any("ERR"));
+
+  fakelog::lines.clear();
+  choices = GameSaveStore::resolvePrefs(saved, game.manifest, game.settings, SOLO);
+  EXPECT_EQ(choices.mode, SOLO) << "pass cannot start here: the first startable";
+  EXPECT_EQ(choices.valueIndex[0], 2) << "the settings resolve on their own";
+  EXPECT_TRUE(fakelog::any("DBG GAME: counter: the remembered mode 0x2 cannot start here"));
+
+  // Nothing remembered: every default (level's is Normal).
+  choices = GameSaveStore::resolvePrefs(GameSaveStore::Prefs{}, game.manifest, game.settings, SOLO | PASS);
+  EXPECT_EQ(choices.mode, SOLO);
+  EXPECT_EQ(choices.valueIndex[0], 1);
+  EXPECT_EQ(choices.valueIndex[1], 0);
+}
+
+// What the title screen writes is what it reads back: prefsOf, savePrefs, loadPrefs, resolvePrefs.
+TEST_F(GameSaveStoreTest, ChoicesSurviveTheirOwnPrefsFile) {
+  const SettingsGame game;
+  GameSaveStore::Choices chosen;
+  chosen.mode = PASS;
+  chosen.valueIndex[0] = 0;
+  chosen.valueIndex[1] = 1;
+  const GameSaveStore::Prefs prefs = GameSaveStore::prefsOf(chosen, game.settings);
+  EXPECT_EQ(prefsText(prefs), "2 level=Easy sound=Off");
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  GameSaveStore::Prefs read;
+  ASSERT_EQ(GameSaveStore::loadPrefs("counter", read), GameSaveStore::PrefsState::Loaded);
+  const GameSaveStore::Choices back = GameSaveStore::resolvePrefs(read, game.manifest, game.settings, SOLO | PASS);
+  EXPECT_EQ(back.mode, PASS);
+  EXPECT_EQ(back.valueIndex[0], 0);
+  EXPECT_EQ(back.valueIndex[1], 1);
+}
+
 }  // namespace

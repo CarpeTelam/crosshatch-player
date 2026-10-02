@@ -179,6 +179,20 @@ TEST(ManifestCheckTest, BrokenFieldsAreInvalid) {
   Manifest unterminatedIcon = solo();
   std::memset(unterminatedIcon.icon, 'x', sizeof(unterminatedIcon.icon));
   expectVerdict(unterminatedIcon.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  // default_mode is one of the modes, one bit; settingsCount at most MAX_SETTINGS.
+  Manifest otherDefault = solo();
+  otherDefault.defaultMode = Manifest::MODE_PASS;
+  expectVerdict(otherDefault.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest twoDefaults = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+  twoDefaults.defaultMode = Manifest::MODE_SOLO | Manifest::MODE_PASS;
+  expectVerdict(twoDefaults.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest tooManySettings = solo();
+  tooManySettings.settingsCount = Manifest::MAX_SETTINGS + 1;
+  expectVerdict(tooManySettings.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest fine = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+  fine.defaultMode = Manifest::MODE_PASS;
+  fine.settingsCount = Manifest::MAX_SETTINGS;
+  EXPECT_TRUE(fine.check(HOST).ok());
 }
 
 TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {

@@ -141,19 +141,21 @@ components:
     bottom: '{spacing.banner-bottom}'
     text: '{typography.banner-text}'
   hand-off-screen:
+    amended: '2026-10-02 (owner, hand-off redesign): laid out as the title screen'
     background: '{colors.paper}'
-    icon: 'the game''s icon at {spacing.icon-hero}, {colors.ink}, centred in the upper half'
-    text: '{typography.handoff-text}, under the icon'
+    band: '{components.title-splash} band, in the same place; no header, no status strip'
+    picture: 'handoff.png (at most 480 x 480), else title.png, else the game''s icon at {spacing.icon-hero}; centred, clipped'
+    text: '{typography.handoff-text}, plain, centred in the first {components.title-menu-row} place'
     button: '{components.ready-button}'
-    override: 'handoff.png, at most 480 x 800, centred, clipped; replaces the icon and the text, never the button'
   ready-button:
+    amended: '2026-10-02 (owner, hand-off redesign): fills the title screen''s second two-line row place (as with a save)'
     frame: '{spacing.frame} {colors.ink}'
     radius: '{rounded.md}'
     background: '{colors.paper}'
-    width: '{spacing.view-width}'
-    height: '{spacing.option-row}'
+    width: 'the {components.title-menu-row} width'
+    height: '{spacing.row-two-line}'
     label: '{typography.button-label}'
-    place: 'centred on the screen (its middle at y = 400)'
+    place: 'the title screen''s second two-line menu row''s place (Continue, New game: as with a save), under the band'
   forced-exit-blank:
     background: '{colors.paper}'
     content: 'none: no icon, no text'
@@ -172,7 +174,7 @@ Where a mock and a spine differ, the spine wins. Mocks: [title screen](mockups/k
 
 The games area is part of an e-reader, and it looks like one: black ink on white paper, the same header, list and dialog that the reader's own settings and library use. It inherits FreeInkUI (`docs/contributing/touch-and-ui.md`) wholesale; this file names only what the games area adds on top of it.
 
-What it adds is one moment of invitation. The owner's review found that the built title screen, a plain list, did not draw the player in, so the title screen becomes a splash: the game's own picture large above a short menu. Everywhere else the games area stays plain, so the splash band and the hand-off screen (the game's icon, or the developer's own page) are the only places where a game's own art appears outside its canvas and its 64 px launcher icon.
+What it adds is one moment of invitation. The owner's review found that the built title screen, a plain list, did not draw the player in, so the title screen becomes a splash: the game's own picture large above a short menu. Everywhere else the games area stays plain, so the splash band, on the title screen and on the hand-off screen (the game's icon, or the developer's own picture; amended 2026-10-02, owner, hand-off redesign), is the only place where a game's own art appears outside its canvas and its 64 px launcher icon.
 
 ## Colors
 
@@ -199,7 +201,7 @@ The X4 Pro screen is 480 x 800, portrait. Measured from the built screens:
 - **Title screen**: under the header, a 480 x 480 splash band (`{spacing.splash-band}` tall, the largest `title.png` allowed under AD-15), with the image or the game's icon centred in it. The band's height is fixed, so the menu does not move between games. The menu rows follow directly under the band, which leaves 226 px (y = 574 to 800): room for the three two-line rows (3 x `{spacing.row-two-line}` = 222 px) and no more, so the title screen never scrolls.
 - **Runtime views** (pause, end-of-round, error): one framed dialog `{spacing.view-width}` wide (about 4/5 of the width), centred on the screen. The title screen's own confirm is `{spacing.list-dialog-width}` wide, centred in the content area under the header, as FreeInkUI builds it in a list screen.
 - **Result banner**: `{spacing.view-width}` wide, `{spacing.banner-height}` tall, `{spacing.banner-bottom}` above the bottom edge, centred.
-- **Hand-off screen**: the game's icon centred in the upper half (its middle at y = 200), "Player N's turn" under it, and the "I'm ready" button centred on the screen (its middle at y = 400). The banner sits at the bottom and the "I'm ready" button in the middle, so a double tap on one cannot land on the other.
+- **Hand-off screen** (*Amended 2026-10-02 (owner, hand-off redesign)*): the title screen's layout with no header: the 480 x 480 splash band at the title screen's place, "Player N's turn" centred in the first menu row's place, and the "I'm ready" button filling the second's (the title screen's two two-line rows, as with a save).
 - Padding inside every frame is `{spacing.inset}`.
 
 ## Elevation & Depth
@@ -224,9 +226,8 @@ FreeInkUI's header, list, option dialog, scrollbar, tap flash and tap zones are 
 - **Options row (name + current value)**: a two-line list row, the name ("Mode", or the game's setting name) on the first line and its current value on the second. Nothing marks it as cycling (no arrows, no toggle). [Mock](mockups/key-options.html).
 - **Option / confirm dialog**: `{components.option-dialog}`, an ink frame at `{rounded.md}` with paper inside and `{spacing.inset}` padding. Inside, top to bottom: an optional caption (`{typography.dialog-caption}`, centred), the headline (`{typography.dialog-headline}`), message lines, an optional 64 px library icon centred between text and options, then the options, each `{spacing.option-row}` tall with an optional 32 px icon at its left, the focused one on the dither. The New-over-save confirm (headline, the mode's name, message, Cancel, New game) is as built (`story-sweep-screenshots/new-over-save-cancel-focused.png`).
 - **Result banner**: `{components.result-banner}` over the mover's own frame: an ink border, paper inside, "Tap to pass to player N" centred in `{typography.banner-text}`. No button hints. Look and wording as built (`story-hand-off-screenshots/3-result-banner.png`). [Mock](mockups/key-hand-off.html), third column.
-- **Hand-off screen, default**: a paper screen with no status strip, showing the game's own icon (its `icon.png`, or its library icon) at `{spacing.icon-hero}` centred in the upper half, "Player N's turn" centred under it in `{typography.handoff-text}`, and `{components.ready-button}` in the middle of the screen. No `eye-closed` icon. [Mock](mockups/key-hand-off.html), first column.
-- **Hand-off screen with a developer image**: the game's `handoff.png` (at most 480 x 800), centred and clipped, takes the place of the icon and the text; the runtime then draws only `{components.ready-button}`, in the same place as on the default screen. The runtime draws nothing else on it, so the page cannot name the next seat. [Mock](mockups/key-hand-off.html), second column.
-- **"I'm ready" button**: `{components.ready-button}`, framed like a FreeInkUI option (an ink frame at `{rounded.md}`, paper inside), with "I'm ready" centred in `{typography.button-label}`; the button is centred on the screen. [Mock](mockups/key-hand-off.html), first and second columns.
+- **Hand-off screen** (*Amended 2026-10-02 (owner, hand-off redesign)*; replaces the default and developer-image screens): a paper screen with no header and no status strip, laid out as the title screen. Its splash band, at the title screen's place, shows the game's `handoff.png` (at most 480 x 480), else its `title.png`, else its own icon (its `icon.png`, or its library icon) at `{spacing.icon-hero}`, each centred and clipped as on the title screen. Where the title screen's first menu row is, "Player N's turn" in `{typography.handoff-text}`, plain text centred in the row, whichever picture the band shows; where its second two-line row is (as with a save), `{components.ready-button}`. No `eye-closed` icon; a developer's picture cannot name the next seat. [Mock](mockups/key-hand-off.html), first and second columns.
+- **"I'm ready" button** (*Amended 2026-10-02 (owner, hand-off redesign)*): `{components.ready-button}`, framed like the Result banner (an ink frame at `{rounded.md}`, paper inside), with "I'm ready" centred in `{typography.button-label}`; it fills the place of the title screen's second two-line menu row (as with a save). [Mock](mockups/key-hand-off.html), first and second columns.
 - **Forced-exit blank**: `{components.forced-exit-blank}`, a plain paper screen with no icon, no text, and never the developer's image, so an overlay sleep mode draws over white. Not drawn in the mocks (a blank page); the hand-off mock's introduction names it.
 - **Pause menu**: an option dialog `{spacing.view-width}` wide over the game's frame, with a caption (the game's name), the headline "Paused", the `pause` icon, Resume (`play` icon) and Leave (`sign-out` icon). Opened in the Play-again gap, it adds "Starting the next round" under the headline, **centred** like the caption and headline. [Mock](mockups/key-gap-pause.html).
 - **End-of-round menu**: the same dialog, with the headline "Game over", the `flag-checkered` icon, Play again (`arrows-clockwise`) and Leave. Unchanged.
@@ -237,9 +238,9 @@ FreeInkUI's header, list, option dialog, scrollbar, tap flash and tap zones are 
 | Do | Don't |
 |---|---|
 | Ink and paper only; selection by the 25% dither | Grey text, grey fills, or a denser dither behind text |
-| Only the framed "I'm ready" button over a developer's `handoff.png` | Runtime text, a seat's name, or any other drawing on `handoff.png` or `title.png` |
+| The runtime's turn line and "I'm ready" button under a developer's `handoff.png` (amended 2026-10-02, owner, hand-off redesign) | Runtime text, a seat's name, or any other drawing on `handoff.png` or `title.png` |
 | The game's picture only in the splash band and on the hand-off screen | Game art in the launcher beyond the 64 px row icon, or on Options |
-| The Result banner at the bottom, "I'm ready" in the middle | A tap anywhere that dismisses the banner or the hand-off screen |
+| The Result banner at the bottom, "I'm ready" in the title screen's second row's place (amended 2026-10-02, owner, hand-off redesign) | A tap anywhere that dismisses the banner or the hand-off screen |
 | A plain white push before a hidden match's forced exit | A player's view left on the panel under a sleep screen or during the exit's SD steps |
 | FreeInkUI's header, list rows and option dialog as they are | A custom row or a hand-rolled hit area for any games screen |
 | Centre the dialog caption, headline and the gap line | Mix left- and centre-aligned lines above a dialog's icon |

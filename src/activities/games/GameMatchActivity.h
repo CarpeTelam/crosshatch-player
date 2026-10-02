@@ -11,6 +11,7 @@
 #include <mutex>
 #include <span>
 
+#include "GamePicture.h"
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 #include "games/FrameReplay.h"
@@ -34,15 +35,18 @@
 // roster.
 //
 // A hidden pass match (a pass roster and manifest.hidden) runs the hidden pass machine (MatchLifecycle's hiddenPass)
-// with a GameVM that draws only the seat it is asked for: each round begins on the blank hand-off screen (HandOff:
-// FrameReplay::drawBlank, a full refresh), whose tap asks the VM for the turn seat (GameVM::showTurnSeat) and shows
-// no canvas until that seat's frame is published; a move that passes the turn shows the mover's own frame with the
-// "Tap to pass" banner (Result), whose tap goes back to the blank. A forced exit (sleep, any Replace) pushes the blank
-// too, after the VM's stop and before the SD steps, and so does a Leave whose panel holds a seat's frame, before it
-// goes to Games; a forced exit after the VM is gone (a Leave whose Games screen ran out of memory, a stuck VM stopped
-// on the way to Error) pushes it while a seat's frame is still on the panel. So no seat's frame stays on the panel.
-// The hand-off screen is pushed with a full refresh when it replaces anything else, and repainted without one.
-// docs/crosshatch/game-canvas.md has the states.
+// with a GameVM that draws only the seat it is asked for: each round begins on the hand-off screen (HandOff: laid out
+// as the title screen, GameSplashLayout: the game's handoff.bmp, else its title.bmp, else its icon in the splash band,
+// "Player N's turn" in the first row's place and the "I'm ready" button in the second's, drawn by the runtime alone on
+// a cleared screen, a full refresh), whose button asks the VM for the turn seat (GameVM::showTurnSeat) and shows no
+// canvas until that seat's frame is published; a move that passes the turn shows the mover's own frame with the "Tap to
+// pass" banner (Result), whose tap goes to the hand-off screen. Each is passed by its button or Confirm only, never a
+// tap elsewhere, and only by a tap whose touch began after that screen's push completed. A forced exit (sleep, any
+// Replace) pushes a plain white blank (FrameReplay::drawBlank), after the VM's stop and before the SD steps, and so
+// does a Leave whose panel holds a seat's frame, before it goes to Games; a forced exit after the VM is gone (a Leave
+// whose Games screen ran out of memory, a stuck VM stopped on the way to Error) pushes it while a seat's frame is still
+// on the panel. So no seat's frame stays on the panel. The hand-off screen is pushed with a full refresh when it
+// replaces anything else, and repainted without one. docs/crosshatch/game-canvas.md has the states.
 //
 // A touch reaches the VM with the frame the panel showed when it was made (GameVM::postInput), so one made under a
 // seat's frame never reaches another seat (or seat 0) after the move that passed the turn or ended the round.
@@ -51,8 +55,8 @@
 // the VM hands each committed one to the loop through GameVM::committed(), the loop
 // writes it every pass in Playing, Paused, Result, and HandOff, the forced exit and Leave write the last
 // pending one, and entering Over deletes the file. Start::Resume restores it with the roster the save records, whatever
-// roster the caller passed: a hidden pass save resumes on the blank hand-off screen (HandOff), whose tap shows the
-// saved turn seat; any other at Playing, on that seat's frame.
+// roster the caller passed: a hidden pass save resumes on the hand-off screen (HandOff), whose button shows the saved
+// turn seat; any other at Playing, on that seat's frame.
 //
 // The match follows AD-21's solo states, or the hidden pass ones (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing (or a hidden match's first HandOff) until Leaving, or until a stuck VM is
@@ -73,13 +77,16 @@ class GameMatchActivity final : public Activity, private UiAppHost {
 
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
+  // `settings` (copied) is the chosen value of each setting the manifest declares, which the VM gives the game as
+  // ctx.settings at every setup (a resumed match runs none until Play again).
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
-                    const GameCore::Roster& roster, Start start = Start::New);
+                    const GameCore::Roster& roster, Start start = Start::New,
+                    const GameCore::SettingValues& settings = {});
   ~GameMatchActivity() override;
 
   void onEnter() override;
   // The forced exit (AD-20) when the match did not leave on its own (sleep, any
-  // Replace): stops the VM, in a hidden pass match pushes the blank hand-off screen,
+  // Replace): stops the VM, in a hidden pass match pushes the plain white blank,
   // and flushes ch.store under the RenderLock ActivityManager holds, which it never
   // takes again (12cc816).
   void onExit() override;
@@ -105,7 +112,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A call into Lua still running after this long is a stuck script (AD-5).
   static constexpr uint32_t WATCHDOG_MS = 3000;
   static constexpr freeink::ui::ActionId ACTION_OPTION = 1;
-  // A tap anywhere on the Result banner's screen or the hand-off screen.
+  // A tap on the Result banner or on the hand-off screen's "I'm ready" button.
   static constexpr freeink::ui::ActionId ACTION_PASS = 2;
   // The most options a view offers (the pause and end-of-round menus).
   static constexpr uint8_t MAX_OPTIONS = 2;
@@ -121,7 +128,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void loopPlaying();
   // The pause menu, the end-of-round menu, and the error view.
   void loopView();
-  // A hidden pass match's Result and HandOff: a tap (or Confirm) once that screen is on the panel passes the device on.
+  // A hidden pass match's Result and HandOff: a tap on the banner or the button (or Confirm) once that screen is on the
+  // panel passes the device on.
   void loopHandOff();
   // Play again's steps on the way into the new round (Playing, or a hidden match's HandOff).
   void startNextRound();
@@ -138,7 +146,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A hidden pass match's forced exit only (AD-12, AD-20): pushBlank, so no seat's frame stays on the panel while the
   // device sleeps. Nothing otherwise; a user Leave pushes its own (leave).
   void pushForcedExitBlank();
-  // Draws the blank hand-off screen (FrameReplay::drawBlank) and pushes it with a half refresh; logged with `when`.
+  // Draws the plain white blank (FrameReplay::drawBlank) and pushes it with a half refresh; logged with `when`.
   // The caller holds RenderLock (its own, or ActivityManager's in onExit, never taken again: 12cc816), so the render
   // task is idle and replay, the framebuffer, and `panel` are this task's for now.
   void pushBlank(const char* when);
@@ -173,15 +181,20 @@ class GameMatchActivity final : public Activity, private UiAppHost {
 
   void renderCanvas();
   void renderView(MatchState state);
-  // The blank hand-off screen, pushed before its tap zone is published: with a full refresh when it replaces anything
-  // else on the panel, and a fast one when it repaints the blank already there (panel).
+  // The hand-off screen (the splash band with the game's page or its icon, "Player N's turn", and the "I'm ready"
+  // button, where the title screen has its band and its first two rows: GameSplashLayout), pushed with a full refresh
+  // when it replaces anything else on the panel, and a fast one when it repaints the hand-off screen already there
+  // (panel). Nothing, the screen before it staying, until the VM has named the round's first turn seat
+  // (announcementAwaited).
   void renderHandOff();
   // Render task: whether a view in `state` sits over the canvas. Not the error view, nor a pause menu entered from
   // HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match).
   bool canvasUnderView(MatchState state) const;
   static void viewScreen(UiScreen& screen, void* user);
   void buildView(UiScreen& screen);
-  // Result and HandOff: a tap zone over the whole safe area, and in Result the framed "Tap to pass" banner.
+  // Result's framed "Tap to pass" banner at the bottom, or HandOff's "Player N's turn" (plain text in the title
+  // screen's first row's place) and its "I'm ready" button (filling the second row's): each the screen's one tap target
+  // (ACTION_PASS).
   void buildHandOffView(UiScreen& screen, MatchState state);
   // Render task: a pause menu that returns to play while the new round has not published its first frame (the
   // Play-again gap: after a Play again, never before a match's first frame), which loopView redraws (gapWhenPaused)
@@ -203,8 +216,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
 
   GameCore::Manifest manifest;
   GameCore::Roster roster;
+  GameCore::SettingValues settings;  // ctx.settings, handed to GameVM::create
   GameViewport viewport;
   FrameReplay replay;
+  // A hidden pass match's hand-off art, the band's picture: handoff.bmp, else title.bmp, else the game's icon. Loaded
+  // by onEnter (loop task, before the VM), drawn by renderHandOff; nothing for any other match.
+  GamePicture picture;
   // ch.store's slot and store.bin's reader and writer in one PSRAM block (AD-17):
   // periodic flushes in loop(), and flushStore() at round end, on Leave, and in
   // onExit(). Declared before vm, so it is destroyed after the VM that posts to
@@ -252,12 +269,23 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A hidden pass match's seat gate, the same two counts for the hand-off: the GameVM::showTurnSeat() request the
   // match waits for (stored by handle() before it shows Playing), and the GameVM::seatShownRequest() render saw when
   // it last got through the gate and had pushed the frame. Until the VM has served the request the loop asks for no
-  // render and drops gestures, and renderCanvas draws nothing, so no frame of the last seat follows the blank; until
+  // render and drops gestures, and renderCanvas draws nothing, so no frame of the last seat follows the hand-off; until
   // render has displayed it, gestures are still dropped. Both 0 (the gate open) for any other match.
   std::atomic<uint32_t> seatAwaited{0};
   std::atomic<uint32_t> seatDisplayed{0};
   // The seat the last turn-passing move passed to, for the Result banner (loop task writes, render reads).
   std::atomic<uint8_t> passTo{0};
+  // A hidden pass match's hand-off names the round's first turn seat, which the VM knows only once the round has begun
+  // (setup, or the restored save): the GameVM::turnAnnouncements() count the hand-off screen waits for, 1 at first and
+  // Play again's count plus one after it (loop task writes, before shown). Until it is reached renderHandOff pushes
+  // nothing and the screen before stays (the title screen at the match's start, the end-of-round menu after Play
+  // again, a pause menu opened meanwhile until the seat is named), so no tap passes it; the loop asks for a render once
+  // it is (handOffHeldBack). Result's hand-off needs no wait: the VM stores the next seat before it
+  // counts the turn change.
+  std::atomic<uint32_t> announcementAwaited{1};
+  // Written by render: it skipped the hand-off screen for want of the announcement, so the loop asks for a render when
+  // the count arrives; cleared by a render that drew it.
+  std::atomic<bool> handOffHeldBack{false};
   // MatchLifecycle::resumesTo() as handle() last stored it: render's view of where a pause menu returns.
   std::atomic<MatchState> resumesTo{MatchState::Playing};
   // Written by render after it has pushed Result's or HandOff's own screen (that state), and reset to Starting by
@@ -265,6 +293,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // a tap or Confirm made before that screen is on the panel is dropped, and a render that pushed the last state's
   // screen after a transition never opens the next one.
   std::atomic<MatchState> passScreenShown{MatchState::Starting};
+  // Written by render with passScreenShown, before it (its release orders this too): millis() when the push that first
+  // showed that screen completed (displayBuffer returned; a repaint keeps it). loopHandOff passes the device on only by
+  // a tap or Confirm press begun at or after it (the pass's time less the touch-only held time, as loopPlaying
+  // back-dates a tap, or Confirm's hold), so the second tap of a double tap on the banner, which may land where the
+  // hand-off's button is, never passes the hand-off screen too, even when it began while the screen was being pushed.
+  std::atomic<uint32_t> passScreenShownMs{0};
   // Loop task: GameVM::turnsPassed() when the match last entered Result.
   uint32_t turnsSeen = 0;
   // Loop task: the pause menu was opened in the Play-again gap (its "Starting the next round" line is on screen), so
@@ -280,12 +314,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   bool viewOnScreen = false;
   // Render task only: the state whose view renderView is drawing.
   MatchState viewState = MatchState::Starting;
-  // What the last push left on the panel: a seat's frame (Seat: the canvas, or a view over a seat's frame), the blank
-  // hand-off screen (Blank), or anything else (Other: nothing yet, a view with no canvas under it, the error view, or
-  // the Over menu over seat 0's frame, which is everyone's). Every push sets it under RenderLock (render, and the
-  // loop task's pushBlank under the lock it holds), and the loop task reads it under the lock: Leave and the forced
-  // exit push the blank only over a seat's frame, and the hand-off screen is refreshed in full only when it replaces
-  // something else.
+  // What the last push left on the panel: a seat's frame (Seat: the canvas, or a view over a seat's frame), no seat's
+  // (Blank: the hand-off screen, or the plain white blank of a Leave or the forced exit), or anything else (Other:
+  // nothing yet, a view with no canvas under it, the error view, or the Over menu over seat 0's frame, which is
+  // everyone's). Every push sets it under RenderLock (render, and the loop task's pushBlank under the lock it holds),
+  // and the loop task reads it under the lock: Leave and the forced exit push the blank only over a seat's frame, and
+  // the hand-off screen is refreshed in full only when it replaces something else.
   enum class Panel : uint8_t { Other, Seat, Blank };
   Panel panel = Panel::Other;
   // Written by render after renderCanvas's push: the number of the frame it drew (GameVM::drawFront's, read under the
@@ -312,9 +346,15 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   LastPush lastPush;
   // Render task only: the view's dialog, a member since it is over 1 KB.
   freeink::ui::OptionDialogProps dialogProps;
-  // Render task only: Result's banner and its text, members since the props are over 256 bytes.
+  // Render task only: Result's banner or the hand-off's "I'm ready" button, and the banner's or the hand-off's line
+  // ("Player N's turn"), members since the props are over 256 bytes.
   freeink::ui::ButtonProps bannerProps;
   char bannerText[96] = {};
+  // Render task only: the seat the hand-off screen names (GameVM::passedTo when renderHandOff drew it).
+  uint8_t handOffSeat = 0;
+  // Render task only: GameSplashLayout::rowRect's scratch, the resolved props it measures the hand-off screen's rows
+  // with (rowRect still builds a by-value ListProps temporary, as syncListViewport does).
+  freeink::ui::ListProps menuProps;
   // The error view's text, written once before the match enters Error.
   StrId errorHeadline = StrId::STR_GAMES_ERROR;
   char errorDetail[GameVM::ERROR_CAPACITY] = {};

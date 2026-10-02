@@ -462,12 +462,12 @@ TEST_F(ListTest, AGameThisHostCannotStartIsListedWithItsOwnReasonAndDoesNotStart
   const std::vector<std::string> all{"SoloGame", "TooNew", "PassOnly", "TooManySeats", "BadSolo"};
   const std::vector<std::string> byName{"BadSolo", "PassOnly", "SoloGame", "TooManySeats", "TooNew"};
   ASSERT_EQ(rows(all), byName) << "every registry game is a row, in the registry's order";
-  // Each reason is under its own game, and the game that can start has none: the next line is the next name.
+  // Each reason is under its own game, in place of the modes line the game that can start has.
   EXPECT_EQ(lineAfter(ui(), "TooNew"), tr(STR_GAMES_UNAVAILABLE_NEWER));
   EXPECT_EQ(lineAfter(ui(), "TooManySeats"), tr(STR_GAMES_UNAVAILABLE_SEATS));
   EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_UNAVAILABLE_MODE));
   EXPECT_EQ(lineAfter(ui(), "BadSolo"), tr(STR_GAMES_UNAVAILABLE_INVALID));
-  EXPECT_EQ(lineAfter(ui(), "SoloGame"), "TooManySeats");
+  EXPECT_EQ(lineAfter(ui(), "SoloGame"), tr(STR_GAMES_MODE_SOLO));
   // The reason is logged for each one, from the check's own verdict.
   EXPECT_TRUE(logHas("Unavailable too-new: "));
   EXPECT_TRUE(logHas("Unavailable pass-only: "));
@@ -512,7 +512,8 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
 
 // ## 4.8 (the mode-step item), resolved by entry 9: a game whose check is Ok has a mode to start, so with `pass` on a
 // pass-only game is listed without a reason. Since entry 7 of epic-pass-and-play every row of a game the host can
-// start, one mode or two, opens the game's title screen, which ModePickerTest.cpp tests.
+// start, one mode or two, opens the game's title screen, which ModePickerTest.cpp tests. Since entry 12 its second line
+// names the modes this host can start.
 TEST_F(ListTest, AGameOnlyAnotherModeCanStartHasNoReasonAndEveryStartableRowOpensItsTitleScreen) {
   hostcaps::script().pass = true;
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);
@@ -520,8 +521,9 @@ TEST_F(ListTest, AGameOnlyAnotherModeCanStartHasNoReasonAndEveryStartableRowOpen
   open();
   const std::vector<std::string> expected{"PassOnly", "SoloAndPass"};
   EXPECT_EQ(rows({"PassOnly", "SoloAndPass"}), expected);
-  EXPECT_EQ(lineAfter(ui(), "PassOnly"), "SoloAndPass") << "a game the host can start has no reason under it";
-  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "");
+  EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_MODE_PASS)) << "its modes line, no reason";
+  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"),
+            std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 " + tr(STR_GAMES_MODE_PASS));
   tapRow("PassOnly");
   EXPECT_EQ(activityManager.asks.pushed, 1);
   EXPECT_EQ(openedTitle(), "PassOnly") << "one mode: its title screen";
@@ -1298,7 +1300,29 @@ TEST_F(ListTest, NoFailureShowsNoNote) {
   installerscript::script().report.installed = 1;
   addGame("alpha", "Alpha");
   open();
-  EXPECT_EQ(ui().drawn.size(), 1u) << ui().joined();  // just the one row
+  const std::vector<std::string> row{"Alpha", tr(STR_GAMES_MODE_SOLO)};
+  std::vector<std::string> drawn;
+  for (const screen::DrawnText& line : ui().drawn) drawn.push_back(line.text);
+  EXPECT_EQ(drawn, row) << "just the one row, its name and modes line";
+}
+
+// Row 9 of entry 3's changes (DESIGN.md, Launcher game row): the second line of a game this host can start names the
+// modes it can start here, in solo, pass, nearby order, joined by " · ", from the manifest's check; a mode the manifest
+// lists that this host cannot start (nearby with no radio, pass with no pass) is not named.
+TEST_F(ListTest, TheModesLineNamesTheModesThisHostCanStartInOrder) {
+  hostcaps::script().pass = true;
+  addGame("all-three", "AllThree", "\"nearby\",\"pass\",\"solo\"", 1, 1, 2);
+  addGame("pass-nearby", "PassNearby", "\"pass\",\"nearby\"", 1, 2, 2);
+  open();
+  const std::string dot = " \xC2\xB7 ";
+  EXPECT_EQ(lineAfter(ui(), "AllThree"), std::string(tr(STR_GAMES_MODE_SOLO)) + dot + tr(STR_GAMES_MODE_PASS))
+      << "no nearby: the host has no radio";
+  EXPECT_EQ(lineAfter(ui(), "PassNearby"), tr(STR_GAMES_MODE_PASS));
+  hostcaps::script().pass = false;
+  reopen();
+  EXPECT_EQ(lineAfter(ui(), "AllThree"), tr(STR_GAMES_MODE_SOLO));
+  EXPECT_EQ(lineAfter(ui(), "PassNearby"), tr(STR_GAMES_UNAVAILABLE_MODE))
+      << "a game with no mode here gives its reason";
 }
 
 // Every Error the installer can report reads as its own words (reasonText): a swapped label would

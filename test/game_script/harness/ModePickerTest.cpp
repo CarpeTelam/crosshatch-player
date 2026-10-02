@@ -21,17 +21,24 @@
 #include "RemoveScript.h"
 #include "activities/games/GameMatchActivity.h"
 #include "activities/games/GameModeActivity.h"
+#include "activities/games/GameOptionsActivity.h"
+#include "activities/games/GamePicture.h"
+#include "activities/games/GameSplashLayout.h"
 #include "activities/games/GamesLauncherActivity.h"
+#include "games/GameSaveStore.h"
 #include "util/ButtonNavigator.h"
 
 // The real GameModeActivity, a game's title screen (entry 7 of epic-pass-and-play), and the real GamesLauncherActivity
 // whose game rows push it, over the screen doubles (screen_stubs/), the fake card, and the scripted installer and host
 // caps (list_stubs/), on the pattern of GamesLauncherTest.cpp: the fixture opens a screen, draws it, and finds a row by
-// the text it drew. What the title screen promises: its header is the game's name; a Continue row first when the card
-// holds a save (Valid or Unreadable); then one New row per mode the host can start, solo, pass, nearby; a New over a
-// save asks first, Cancel focused, a save this host cannot start (Unstartable) included, which gets no Continue; a
-// Continue on a pass save, or on a two-mode game's Unreadable save, never starts a solo match that would replace the
-// save, and one that finds no usable save starts the first New row's mode; Back returns to the launcher.
+// the text it drew. What the title screen promises (entry 12 of epic-pass-and-play, the approved design): its header is
+// the game's name; under it a 480 x 480 splash band with title.bmp or the game's icon at 128 px; a Continue row first
+// when the card holds a save (Valid or Unreadable); then New game, in the current mode and settings, which its second
+// line names; then Options, when there is a mode or setting to choose; a New game over a save asks first, Cancel
+// focused, a save this host cannot start (Unstartable) included, which gets no Continue; a Continue on a pass save, or
+// on a two-mode game's Unreadable save, never starts a solo match that would replace the save, and one that finds no
+// usable save starts the first mode the host can start; the choices are remembered in prefs.bin; Back returns to the
+// launcher.
 
 // A nothrow allocation of exactly this many bytes fails while it is non-zero: how a test makes the title screen's
 // makeUniqueNoThrow<GameMatchActivity> return null (GamesLauncherTest does the same for arrays). Every other allocation
@@ -59,11 +66,12 @@ struct NameOf : Activity {
   static const std::string& of(const Activity& activity) { return activity.*(&NameOf::name); }
 };
 
+// `extra` is more of the manifest's members, each after a comma (",\"default_mode\":\"pass\"").
 std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int seatsMin,
-                         const int seatsMax) {
+                         const int seatsMax, const std::string& extra = "") {
   return "{\"id\":\"" + id + "\",\"name\":\"" + name +
          "\",\"version\":\"1.0.0\",\"api\":1,\"seats\":{\"min\":" + std::to_string(seatsMin) +
-         ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" + modes + "]}";
+         ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" + modes + "]" + extra + "}";
 }
 
 Manifest parsed(const std::string& json) {
@@ -125,7 +133,47 @@ end
 return game
 )";
 
+// A game of the counting Lua's rules whose setup logs ctx.settings, sorted ("settings\t[board=Small,level=Hard]").
+const char* const SETTINGS_GAME = R"(
+local game = {}
+function game.setup(ctx)
+  local keys = {}
+  for k, v in pairs(ctx.settings) do keys[#keys + 1] = k .. "=" .. v end
+  table.sort(keys)
+  ch.log("settings", "[" .. table.concat(keys, ",") .. "]")
+  return { taps = 0 }
+end
+function game.status(state)
+  if state.taps >= 5 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(state, seat, move)
+  state.taps = state.taps + 1
+  return state
+end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+return game
+)";
+
+// Two settings, in manifest order: level (Easy, Hard; default Hard) and board (Small, Large; default Small).
+const std::string TWO_SETTINGS =
+    ",\"settings\":[{\"id\":\"level\",\"name\":\"Level\",\"values\":[\"Easy\",\"Hard\"],\"default\":\"Hard\"},"
+    "{\"id\":\"board\",\"name\":\"Board\",\"values\":[\"Small\",\"Large\"]}]";
+
 std::string resumePath(const std::string& id) { return "/.games-data/" + id + "/resume.bin"; }
+std::string prefsPath(const std::string& id) { return "/.games-data/" + id + "/prefs.bin"; }
+
+// What prefs.bin holds for game `id`, read as the title screen reads it (mode 0 and no settings for no usable file).
+GameSaveStore::Prefs prefsOf(const std::string& id) {
+  GameSaveStore::Prefs prefs;
+  GameSaveStore::loadPrefs(id.c_str(), prefs);
+  return prefs;
+}
 
 class TitleScreenTest : public match::ScreenTest {
  protected:
@@ -152,12 +200,15 @@ class TitleScreenTest : public match::ScreenTest {
 
   // What the manager does when a screen goes: onExit under the lock, then the destructor under it.
   void dropTitle() {
-    for (auto& pushed : activityManager.pushedActivities) {
-      if (pushed.get() == title) activityManager.exitHolding(*pushed);
-      activityManager.destroyHolding(pushed);
+    // Options first, as the manager lets a stack go: the current screen, then the one under it.
+    for (auto pushed = activityManager.pushedActivities.rbegin(); pushed != activityManager.pushedActivities.rend();
+         ++pushed) {
+      if (pushed->get() == title || pushed->get() == options) activityManager.exitHolding(**pushed);
+      activityManager.destroyHolding(*pushed);
     }
     activityManager.pushedActivities.clear();
     title = nullptr;
+    options = nullptr;
   }
 
   void dropMatch() {
@@ -179,12 +230,13 @@ class TitleScreenTest : public match::ScreenTest {
     fakesd::addFile("/.games/counter/manifest.json", manifestJson("counter", "Counter", modes, 1, seatsMax));
     fakesd::addFile("/.games/counter/.pkg", PKG);
   }
-  // An installed game of the counting Lua.
+  // An installed game of the counting Lua (or `lua`), its manifest given `extra` members (manifestJson).
   static void addCountingGame(const std::string& id, const std::string& name, const std::string& modes,
-                              const int seatsMin = 1, const int seatsMax = 2) {
+                              const int seatsMin = 1, const int seatsMax = 2, const std::string& extra = "",
+                              const char* lua = COUNTING_GAME) {
     const std::string dir = "/.games/" + id;
-    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, seatsMin, seatsMax));
-    fakesd::addFile(dir + "/main.lua", std::string(COUNTING_GAME));
+    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, seatsMin, seatsMax, extra));
+    fakesd::addFile(dir + "/main.lua", std::string(lua));
     fakesd::addFile(dir + "/.pkg", PKG);
   }
   // A save of game `id`'s match, {taps = 2} at ver 3, in `mode` with `seats` seats.
@@ -274,10 +326,9 @@ class TitleScreenTest : public match::ScreenTest {
     FAIL() << "the screen does not draw a row \"" << label << "\": " << ui().joined();
   }
 
-  // The rows the screen drew, top to bottom: Continue and the mode names.
+  // The rows the screen drew, top to bottom: Continue, New game, Options.
   std::vector<std::string> rowsDrawn() {
-    static const std::vector<std::string> names{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO),
-                                                tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
+    static const std::vector<std::string> names{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
     std::vector<std::string> found;
     for (const screen::DrawnText& drawn : ui().drawn)
       for (const std::string& name : names)
@@ -285,6 +336,47 @@ class TitleScreenTest : public match::ScreenTest {
     return found;
   }
   bool dialogUp() { return ui().drewLine(tr(STR_GAMES_NEW_OVER_SAVE_TITLE)); }
+  // The line drawn right after `label` (a row's second line), or "" when there is none.
+  std::string lineUnder(const std::string& label) {
+    const std::vector<screen::DrawnText>& drawn = ui().drawn;
+    for (size_t i = 0; i + 1 < drawn.size(); ++i)
+      if (drawn[i].text == label) return drawn[i + 1].text;
+    return "";
+  }
+  // New game's second line: the current mode and settings.
+  std::string newGameLine() { return lineUnder(tr(STR_GAMES_NEW_GAME)); }
+
+  // prefs.bin for game `id` remembering `mode` (a Manifest::Mode bit) and no setting, as a title screen wrote it.
+  static void remember(const std::string& id, const uint8_t mode) {
+    GameSaveStore::Prefs prefs;
+    prefs.mode = mode;
+    ASSERT_TRUE(GameSaveStore::savePrefs(id.c_str(), prefs));
+  }
+
+  // Taps Options on the title screen and opens the Options screen it pushed, as the manager would, and draws it.
+  void openOptions() {
+    const size_t before = activityManager.pushedActivities.size();
+    tapRow(tr(STR_GAMES_OPTIONS));
+    ASSERT_EQ(activityManager.pushedActivities.size(), before + 1) << "Options is pushed over the title screen";
+    options = dynamic_cast<GameOptionsActivity*>(activityManager.pushedActivities.back().get());
+    ASSERT_NE(options, nullptr) << "what the title screen pushes is a GameOptionsActivity";
+    current = options;
+    current->onEnter();
+    render();
+  }
+  // Back on Options, then the manager's Pop: Options goes and the title screen's result handler runs; the title
+  // screen is drawn again.
+  void closeOptions() {
+    ASSERT_NE(options, nullptr);
+    const int popped = activityManager.asks.popped;
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(activityManager.asks.popped, popped + 1) << "Back finishes Options";
+    activityManager.popForResult(*title, *options);
+    options = nullptr;
+    current = title;
+    render();
+  }
 
   // Runs the match a screen replaced itself with, so the game it was given is the one that starts.
   GameMatchActivity* enterReplacement() {
@@ -352,10 +444,11 @@ class TitleScreenTest : public match::ScreenTest {
   }
 
   std::unique_ptr<GamesLauncherActivity> list;
-  GameModeActivity* title = nullptr;  // owned by activityManager.pushedActivities
-  Activity* current = nullptr;        // the screen frame() and render() drive
-  Activity* entered = nullptr;        // the replacement enterReplacement() started, which needs its onExit
-  int taps = 0;                       // the taps tapRow made
+  GameModeActivity* title = nullptr;       // owned by activityManager.pushedActivities
+  GameOptionsActivity* options = nullptr;  // the same, while it is open
+  Activity* current = nullptr;             // the screen frame() and render() drive
+  Activity* entered = nullptr;             // the replacement enterReplacement() started, which needs its onExit
+  int taps = 0;                            // the taps tapRow made
 };
 
 // ---- the launcher: every startable game row opens the title screen ----
@@ -381,26 +474,37 @@ TEST_F(TitleScreenTest, ConfirmOnTheLauncherRowPushesTheTitleScreenToo) {
   EXPECT_EQ(activityManager.asks.replaced, 0);
 }
 
-TEST_F(TitleScreenTest, APassOnlyGameRowPushesItsTitleScreenWithItsOnePassRow) {
+TEST_F(TitleScreenTest, APassOnlyGameRowPushesItsTitleScreenWhoseNewGameIsPass) {
   installCounter("\"pass\"");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_PASS)};
-  EXPECT_EQ(rowsDrawn(), expected);
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME)};
+  EXPECT_EQ(rowsDrawn(), expected) << "one mode and no settings: no Options";
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS)) << "a pass-only game's current mode is pass";
 }
 
-TEST_F(TitleScreenTest, TheRowsAreTheModesCheckLeavesForThisHost) {
+TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
   installCounter("\"solo\",\"pass\",\"nearby\"");  // nearby stays off: the host has no radio
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
-  EXPECT_EQ(rowsDrawn(), expected) << "solo first, then pass; no nearby row: the host cannot start it";
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
+  EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO)) << "no remembered mode and no default_mode: solo";
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past pass: the host cannot start nearby";
 }
 
-TEST_F(TitleScreenTest, ASoloAndPassGameIsOneSoloRowWhileTheHostHasNoPass) {
+TEST_F(TitleScreenTest, ASoloAndPassGameIsSoloWithNoOptionsWhileTheHostHasNoPass) {
   hostcaps::script().pass = false;  // a host without pass: Manifest::check leaves solo
   installCounter("\"solo\",\"pass\"");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
 }
 
 // A pass-only game with one seat is an invalid manifest (pass needs seats.max 2): its row says why, and a tap opens
@@ -451,7 +555,7 @@ TEST_F(TitleScreenTest, AGameWithASaveHasOneRowThatOpensItsTitleScreenWithContin
   EXPECT_EQ(activityManager.asks.replaced, 0);
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
   EXPECT_TRUE(theme().drew("drawHeader", "Alpha"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), expected);
   input->click(Button::Confirm);
   frame();
@@ -460,14 +564,14 @@ TEST_F(TitleScreenTest, AGameWithASaveHasOneRowThatOpensItsTitleScreenWithContin
   ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
 }
 
-// Home → Games is one tap; the game's row and a start are the other two.
+// Home → Games is one tap; the game's row and a start (New game, in the current mode) are the other two (AD-22).
 TEST_F(TitleScreenTest, ASoloGameAndAPassGameEachStartInTwoTapsFromTheLauncher) {
   addCountingGame("one-solo", "One solo", "\"solo\"", 1, 1);
   addCountingGame("two-pass", "Two pass", "\"pass\"", 2, 2);
   openLauncher();
   tapRow("One solo");
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(taps, 2);
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
@@ -485,7 +589,7 @@ TEST_F(TitleScreenTest, ASoloGameAndAPassGameEachStartInTwoTapsFromTheLauncher) 
   openLauncher();
   tapRow("Two pass");
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(taps, 2);
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
@@ -504,39 +608,51 @@ TEST_F(TitleScreenTest, ASoloGameAndAPassGameEachStartInTwoTapsFromTheLauncher) 
 
 // ---- the screen: its header and rows ----
 
-TEST_F(TitleScreenTest, WithNoSaveTheHeaderIsTheGamesNameAndTheRowsAreItsModes) {
+TEST_F(TitleScreenTest, WithNoSaveTheHeaderIsTheGamesNameAndTheRowsAreNewGameAndOptions) {
   installCounter("\"solo\",\"pass\"");
   openTitleFor(SOLO | PASS);
   EXPECT_TRUE(theme().drew("drawHeader", "Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected) << "no Continue row: there is no save";
-  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_SOLO_DESC)));
-  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_PASS_DESC)));
-  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_MODE_NEARBY_DESC)));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO)) << "the current mode, and no setting";
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_MODE_PASS))) << "one New game row, not one row per mode";
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_OPTIONS)), "") << "Options is one line";
   ASSERT_FALSE(theme().hints.empty());
   EXPECT_EQ(theme().hints.back().btn1, tr(STR_BACK));
   EXPECT_EQ(theme().hints.back().btn2, tr(STR_SELECT));
 }
 
-TEST_F(TitleScreenTest, AllThreeModesAreThreeRowsInTheOrderSoloPassNearby) {
+TEST_F(TitleScreenTest, OptionsCyclesAllThreeModesInTheOrderSoloPassNearby) {
   openTitleFor(SOLO | PASS | NEARBY);
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
-  EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  EXPECT_TRUE(theme().drew("drawHeader", tr(STR_GAMES_OPTIONS))) << "headed Options";
+  std::vector<std::string> seen{lineUnder(tr(STR_GAMES_MODE))};
+  for (int i = 0; i < 3; ++i) {
+    tapRow(tr(STR_GAMES_MODE));
+    render();
+    seen.push_back(lineUnder(tr(STR_GAMES_MODE)));
+  }
+  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY),
+                                          tr(STR_GAMES_MODE_SOLO)};
+  EXPECT_EQ(seen, expected) << "the next value in place, wrapping after the last";
 }
 
-TEST_F(TitleScreenTest, OnlyTheModesGivenAreRows) {
+TEST_F(TitleScreenTest, WithoutSoloTheCurrentModeIsTheFirstOfTheModesGiven) {
   openTitleFor(PASS | NEARBY);
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS));
 }
 
 TEST_F(TitleScreenTest, ASoloSaveIsAContinueRowFirstAndSaysWhatItDoes) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter");
   openTitleFor(SOLO | PASS);
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected);
-  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_CONTINUE_DESC)));
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_CONTINUE)), tr(STR_GAMES_CONTINUE_DESC));
+  EXPECT_EQ(std::string(tr(STR_GAMES_CONTINUE_DESC)), "Load the previous game");
   EXPECT_TRUE(theme().drew("drawHeader", "Counter"));
 }
 
@@ -557,10 +673,10 @@ TEST_F(TitleScreenTest, TheSaveIsPeekedOnceWhenTheScreenOpensAndNotWhileItIsDraw
 
 // ---- New with no save ----
 
-TEST_F(TitleScreenTest, ATapOnSoloReplacesTheScreenWithANewSoloMatch) {
+TEST_F(TitleScreenTest, ATapOnNewGameReplacesTheScreenWithANewSoloMatch) {
   installCounter("\"solo\",\"pass\"");
   openTitleFor(SOLO | PASS);
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 1);
   EXPECT_EQ(activityManager.asks.popped, 0);
   ASSERT_NE(enterReplacement(), nullptr) << "what the title screen opens is a GameMatchActivity";
@@ -569,29 +685,32 @@ TEST_F(TitleScreenTest, ATapOnSoloReplacesTheScreenWithANewSoloMatch) {
   EXPECT_FALSE(logHas("the match plays solo"));
 }
 
-// Rows are looked up by their place on the screen, not by the mode bit's place among all three.
-TEST_F(TitleScreenTest, TheFirstRowOfAPassAndNearbyScreenStartsPass) {
+TEST_F(TitleScreenTest, NewGameOfAPassAndNearbyGameStartsPass) {
   installCounter("\"pass\",\"nearby\"");
   openTitleFor(PASS | NEARBY);
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_TRUE(logHas("Mode pass picked"));
   EXPECT_FALSE(logHas("Mode nearby picked"));
 }
 
-TEST_F(TitleScreenTest, TheSecondRowOfAPassAndNearbyScreenStartsNearbyAsSolo) {
+TEST_F(TitleScreenTest, NewGameInARememberedNearbyStartsNearbyAsSolo) {
   installCounter("\"pass\",\"nearby\"");
+  remember("counter", NEARBY);
   openTitleFor(PASS | NEARBY);
-  tapRow(tr(STR_GAMES_MODE_NEARBY));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_NEARBY));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_TRUE(logHas("Mode nearby picked for counter: the match plays solo until it can run nearby"));
   EXPECT_FALSE(logHas("Mode pass picked"));
 }
 
-// The Pass row starts an open pass match with the fewest seats it can have (two), and seat 1 is drawn first.
+// New game in pass starts an open pass match with the fewest seats it can have (two), and seat 1 is drawn first.
 TEST_F(TitleScreenTest, ATapOnPassStartsATwoSeatPassMatchThatDrawsSeatOneFirst) {
   match::installFixture("pass-open");
   fakesd::addFile("/.games/pass-open/.pkg", PKG);
+  remember("pass-open", PASS);
   openTitleFor(SOLO | PASS, 2, "pass-open", "Pass open");
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 1);
   GameMatchActivity* match = enterReplacement();
   ASSERT_NE(match, nullptr);
@@ -604,16 +723,18 @@ TEST_F(TitleScreenTest, ATapOnPassStartsATwoSeatPassMatchThatDrawsSeatOneFirst) 
   EXPECT_TRUE(matchDrew(*match, "Player 2 (O) to move"));
 }
 
-// ## 5.2: the pass row's seat guard (passSeats 0), reached on a one-seat host, where Manifest::check still leaves pass
-// for a 1..2 game: the tap starts nothing, is logged, and repaints the screen.
+// ## 5.2: pass's seat guard (passSeats 0), reached on a one-seat host, where Manifest::check still leaves pass for a
+// 1..2 game: New game in pass starts nothing, is logged, and repaints the screen.
 TEST_F(TitleScreenTest, APassThatCannotFitStartsNothing) {
   hostcaps::script().maxSeats = 1;
   installCounter("\"solo\",\"pass\"");
+  remember("counter", PASS);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   ASSERT_EQ(rowsDrawn(), expected) << "check leaves pass on a one-seat host";
+  ASSERT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS));
   activityManager.markRendered();
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_TRUE(logHas("Cannot start counter in pass: seats 1..2 leave no pass match on this host"));
@@ -621,15 +742,17 @@ TEST_F(TitleScreenTest, APassThatCannotFitStartsNothing) {
   EXPECT_TRUE(activityManager.updateRequested());
 }
 
-TEST_F(TitleScreenTest, ConfirmStartsTheSelectedRowAndNextMovesTheSelection) {
+TEST_F(TitleScreenTest, ConfirmActsOnTheSelectedRowAndNextMovesTheSelectionToOptions) {
   installCounter("\"solo\",\"pass\"");
   openTitleFor(SOLO | PASS);
   input->click(Button::NavNext);
   frame();
   input->click(Button::Confirm);
   frame();
-  EXPECT_EQ(activityManager.asks.replaced, 1);
-  EXPECT_TRUE(logHas("Mode pass picked"));
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "Options starts no match";
+  ASSERT_EQ(activityManager.pushedActivities.size(), 2u);
+  EXPECT_NE(dynamic_cast<GameOptionsActivity*>(activityManager.pushedActivities.back().get()), nullptr);
+  EXPECT_EQ(NameOf::of(*activityManager.pushedActivities.back()), std::string(GameOptionsActivity::NAME));
 }
 
 TEST_F(TitleScreenTest, ConfirmWithNothingMovedStartsTheFirstRow) {
@@ -646,7 +769,7 @@ TEST_F(TitleScreenTest, AMatchThatCannotBeAllocatedStartsNothingAndRepaints) {
   openTitleFor(SOLO, 1);
   oom::failSize = sizeof(GameMatchActivity);
   activityManager.markRendered();
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_TRUE(logHas("OOM: "));
   EXPECT_TRUE(activityManager.updateRequested()) << "the tap flash was cleared: the screen is drawn again";
@@ -691,12 +814,12 @@ TEST_F(TitleScreenTest, ContinueOnAPassSaveResumesItAsAPassMatch) {
   save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   ASSERT_EQ(rowsDrawn(), expected) << "the pass save is offered";
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
-  // Continue passes the first New row's roster, solo; the save's pass roster wins over it.
+  // Continue passes the first startable mode's roster, solo; the save's pass roster wins over it.
   EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
   EXPECT_TRUE(logHas("counter: resuming the save's roster: pass, 2 seat(s)"));
   ASSERT_TRUE(pumpMatchTo("Round started at ver 3"));
@@ -738,7 +861,7 @@ TEST_F(TitleScreenTest, ASoloGamesUnreadableSaveIsOfferedAndItsContinueEndsInThe
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   fakesd::sim().failOpen.insert(resumePath("counter"));
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   ASSERT_EQ(rowsDrawn(), expected);
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
@@ -749,16 +872,16 @@ TEST_F(TitleScreenTest, ASoloGamesUnreadableSaveIsOfferedAndItsContinueEndsInThe
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// A two-mode game's Unreadable save may be a pass save: its Continue passes the first New row's roster (solo), and the
-// match stops in the error view as on any save that will not read, whatever roster it was passed, so the file's bytes
-// are unchanged through the match and its exit.
+// A two-mode game's Unreadable save may be a pass save: its Continue passes the first startable mode's roster (solo),
+// and the match stops in the error view as on any save that will not read, whatever roster it was passed, so the file's
+// bytes are unchanged through the match and its exit.
 TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAlone) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   fakesd::sim().failReadAt[resumePath("counter")] = 0;
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   ASSERT_EQ(rowsDrawn(), expected);
   tapRow(tr(STR_GAMES_CONTINUE));
   ASSERT_EQ(activityManager.asks.replaced, 1);
@@ -778,7 +901,7 @@ TEST_F(TitleScreenTest, ATwoModeGamesUnreadableSaveEndsInTheErrorViewAndIsLeftAl
 // ---- a save this host cannot start (cross-story review rows 2 and 13) ----
 
 // A pass save on a host without Pass and Play (or with fewer seats than the save) is a save all the same: no Continue
-// row, since this host cannot resume it, but a New row asks before it replaces the file, and Cancel keeps its bytes.
+// row, since this host cannot resume it, but New game asks before it replaces the file, and Cancel keeps its bytes.
 void TitleScreenTest::expectAnUnstartableSaveAsksBeforeNew(const std::string& newRow,
                                                            const std::vector<std::string>& rows) {
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
@@ -802,28 +925,31 @@ TEST_F(TitleScreenTest, APassSaveOnAHostWithoutPassOffersNoContinueAndNewAsksFir
   hostcaps::script().pass = false;
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
-  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_MODE_SOLO), {tr(STR_GAMES_MODE_SOLO)});
+  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_NEW_GAME), {tr(STR_GAMES_NEW_GAME)});
 }
 
 TEST_F(TitleScreenTest, AThreeSeatSaveOnATwoSeatHostOffersNoContinueAndNewAsksFirst) {
   ASSERT_EQ(hostcaps::script().maxSeats, 2);
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 3);
   save("counter", SAVED_PASS, 3);
-  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_MODE_PASS), {tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)});
+  expectAnUnstartableSaveAsksBeforeNew(tr(STR_GAMES_NEW_GAME), {tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)});
 }
 
 // ---- pass-hidden end to end (cross-story review row 12): its own manifest.json (hidden: true) from the card ----
 
-// From the launcher's row through the title screen's Pass row to the match: the first screen is the blank, a full
-// refresh with no text, and no push before the first seat's frame holds any text; the round's four moves go through
-// Result and the blank to Over, and Play again starts the next round on the blank.
+// From the launcher's row through the title screen's New game (pass, the game's one mode) to the match: the first
+// screen is the hand-off screen ("Player 1's turn", "I'm ready"), a full refresh, and no push before the first seat's
+// frame holds anything of a seat's frame; the round's four moves go through Result (passed by its banner) and the
+// hand-off screen (passed by its button) to Over, and Play again starts the next round on the hand-off screen. (The
+// test's name predates entry 12, when that screen was a blank.)
 TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPlayAgain) {
   match::installFixture("pass-hidden");
   fakesd::addFile("/.games/pass-hidden/.pkg", PKG);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Pass hidden"));
-  const std::vector<std::string> rows{tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> rows{tr(STR_GAMES_NEW_GAME)};
   ASSERT_EQ(rowsDrawn(), rows);
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  ASSERT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   EXPECT_TRUE(logHas("Mode pass picked for pass-hidden: 2 seats"));
   ASSERT_NE(enterReplacement(), nullptr);
@@ -833,15 +959,33 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
     return std::any_of(push.texts.begin(), push.texts.end(),
                        [&](const std::string& text) { return text.find(part) != std::string::npos; });
   };
-  const auto expectBlank = [&] {
+  // The hand-off screen naming `seat`, pushed in full: it waits for the VM to name a round's first turn seat, so a
+  // render before that pushes nothing and the loop asks again.
+  const auto expectHandOff = [&](const int seat) {
     const size_t pushes = renderer->shown.size();
     render();
+    if (renderer->shown.size() == pushes) {
+      ASSERT_TRUE(match::waitFor([&] {
+        frame();
+        return activityManager.updateRequested();
+      }));
+      render();
+    }
     ASSERT_EQ(renderer->shown.size(), pushes + 1);
     EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
-    EXPECT_TRUE(renderer->shown.back().texts.empty());
+    EXPECT_EQ(renderer->shown.back().texts,
+              (std::vector<std::string>{"Player " + std::to_string(seat) + "'s turn", tr(STR_GAMES_READY)}));
   };
-  const auto tapScreen = [&] {
-    input->tap(240, 400);
+  // The one tap target of the screen on the panel: Result's banner at the bottom, or the hand-off screen's "I'm ready"
+  // in the splash menu's second row (HiddenPassTest.TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom pins
+  // both places).
+  const auto tapBanner = [&] {
+    input->tap(240, 740);
+    frame();
+  };
+  const auto tapReady = [&] {
+    const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
+    input->tap(ready.x, ready.y);
     frame();
   };
   const auto pumpTo = [&](const std::string& part, const size_t times) {
@@ -851,10 +995,10 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
     });
   };
   const size_t matchFrom = renderer->shown.size();
-  ASSERT_NO_FATAL_FAILURE(expectBlank());
+  ASSERT_NO_FATAL_FAILURE(expectHandOff(1));
   for (size_t move = 1; move <= 4; ++move) {
     const int seat = static_cast<int>((move - 1) % 2 + 1);
-    tapScreen();
+    tapReady();
     ASSERT_EQ(fakelog::countLines("pass-hidden: HandOff -> Playing on Tap"), move);
     ASSERT_TRUE(match::waitFor([&] {
       frame();
@@ -864,9 +1008,10 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
     EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
     EXPECT_TRUE(holds(renderer->shown.back(), "Player " + std::to_string(seat) + "'s secret: ")) << move;
     if (move == 1) {
-      // Every push of the match before the first seat's frame was the blank: no text at all.
+      // Every push of the match before the first seat's frame was the hand-off screen: nothing of a seat's frame.
       for (size_t i = matchFrom; i + 1 < renderer->shown.size(); ++i) {
-        EXPECT_TRUE(renderer->shown[i].texts.empty()) << "push " << i << " before the first seat's frame";
+        EXPECT_FALSE(holds(renderer->shown[i], "secret")) << "push " << i << " before the first seat's frame";
+        EXPECT_TRUE(holds(renderer->shown[i], tr(STR_GAMES_READY))) << "push " << i << " before the first seat's frame";
       }
     }
     activityManager.markRendered();
@@ -876,17 +1021,17 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
     ASSERT_TRUE(pumpTo("pass-hidden: Playing -> Result on TurnChanged", move));
     render();
     EXPECT_TRUE(holds(renderer->shown.back(), "Tap to pass to player " + std::to_string(3 - seat)));
-    tapScreen();
+    tapBanner();
     ASSERT_EQ(fakelog::countLines("pass-hidden: Result -> HandOff on Tap"), move);
-    ASSERT_NO_FATAL_FAILURE(expectBlank());
+    ASSERT_NO_FATAL_FAILURE(expectHandOff(3 - seat));
   }
   ASSERT_TRUE(pumpTo("pass-hidden: Playing -> Over on RoundOver", 1));
   render();
   EXPECT_TRUE(holds(renderer->shown.back(), "Everyone: the secrets were apple and river"));
   tapRow(tr(STR_GAMES_PLAY_AGAIN));
   EXPECT_TRUE(logHas("pass-hidden: Over -> HandOff on PlayAgain"));
-  ASSERT_NO_FATAL_FAILURE(expectBlank());
-  tapScreen();
+  ASSERT_NO_FATAL_FAILURE(expectHandOff(1));
+  tapReady();
   ASSERT_TRUE(match::waitFor([&] {
     frame();
     return activityManager.updateRequested();
@@ -898,22 +1043,24 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
 
 // ---- New over a save: a second confirm, Cancel focused ----
 
-TEST_F(TitleScreenTest, ANewRowOverASaveAsksFirstAndATapOnCancelKeepsTheSave) {
+TEST_F(TitleScreenTest, NewGameOverASaveAsksFirstAndATapOnCancelKeepsTheSave) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter");
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   openTitleFor(SOLO | PASS);
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0) << "nothing starts before the answer";
   render();
   ASSERT_TRUE(dialogUp());
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_SOLO))) << "the second line is the current mode's name";
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_NEW_OVER_SAVE)));
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_NEW_GAME)));
   EXPECT_TRUE(ui().drewLine(tr(STR_CANCEL)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_OPTIONS))) << "the list is not built under the question";
   tapRow(tr(STR_CANCEL));
   render();
   EXPECT_FALSE(dialogUp());
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected) << "the screen is as it was";
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
@@ -923,7 +1070,7 @@ TEST_F(TitleScreenTest, BackAndAConfirmOnTheFocusedCancelCloseTheQuestionAndKeep
   addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
   save("counter");
   openTitleFor(SOLO, 1);
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   render();
   ASSERT_TRUE(dialogUp());
   input->click(Button::Back);
@@ -932,7 +1079,7 @@ TEST_F(TitleScreenTest, BackAndAConfirmOnTheFocusedCancelCloseTheQuestionAndKeep
   EXPECT_FALSE(dialogUp());
   EXPECT_EQ(activityManager.asks.popped, 0) << "Back closes the question, not the screen";
 
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   render();
   ASSERT_TRUE(dialogUp());
   input->click(Button::Confirm);  // the focus starts on Cancel
@@ -943,14 +1090,16 @@ TEST_F(TitleScreenTest, BackAndAConfirmOnTheFocusedCancelCloseTheQuestionAndKeep
   EXPECT_TRUE(fakesd::has(resumePath("counter")));
 }
 
-TEST_F(TitleScreenTest, NewGameStartsANewMatchInTheModeTapped) {
+TEST_F(TitleScreenTest, NewGameOverASaveStartsANewMatchInTheCurrentMode) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter");
+  remember("counter", PASS);
   openTitleFor(SOLO | PASS);
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   render();
   ASSERT_TRUE(dialogUp());
-  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_PASS))) << "the question names the mode";
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_PASS))) << "the question names the current mode";
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_MODE_SOLO)));
   tapRow(tr(STR_GAMES_NEW_GAME));
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
@@ -962,7 +1111,7 @@ TEST_F(TitleScreenTest, TheDirectionKeysMoveTheFocusAndConfirmOnNewGameStartsNew
   addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
   save("counter");
   openTitleFor(SOLO, 1);
-  input->click(Button::NavNext);  // the Solo row, under Continue
+  input->click(Button::NavNext);  // New game, under Continue
   frame();
   input->click(Button::Confirm);
   frame();
@@ -977,7 +1126,7 @@ TEST_F(TitleScreenTest, TheDirectionKeysMoveTheFocusAndConfirmOnNewGameStartsNew
   render();
   EXPECT_FALSE(dialogUp()) << "Left took the focus back to Cancel";
   EXPECT_EQ(activityManager.asks.replaced, 0);
-  input->click(Button::Confirm);  // the Solo row, still selected: the question again, Cancel focused
+  input->click(Button::Confirm);  // New game, still selected: the question again, Cancel focused
   frame();
   render();
   ASSERT_TRUE(dialogUp());
@@ -1000,31 +1149,32 @@ TEST_F(TitleScreenTest, ATapOnARowBeforeTheQuestionIsDrawnStartsNothing) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter");
   openTitleFor(SOLO | PASS);
-  tapRow(tr(STR_GAMES_MODE_SOLO));  // opens the question; the screen is not drawn again
-  tapRow(tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_NEW_GAME));  // opens the question; the screen is not drawn again
+  tapRow(tr(STR_GAMES_OPTIONS));
   tapRow(tr(STR_GAMES_CONTINUE));
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.pushedActivities.size(), 1u) << "no Options";
   render();
   EXPECT_TRUE(dialogUp()) << "still asking";
-  // The stale taps moved no selection: closed, a Confirm asks about Solo again (the question names its mode).
+  // The stale taps moved no selection: closed, a Confirm asks about New game again (the question names its mode).
   input->click(Button::Back);
   frame();
   input->click(Button::Confirm);
   frame();
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.pushedActivities.size(), 1u);
   render();
   ASSERT_TRUE(dialogUp());
   EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_MODE_SOLO)));
-  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_MODE_PASS)));
 }
 
 // An Unreadable save asks too: it may be a good save.
-TEST_F(TitleScreenTest, ANewRowOverAnUnreadableSaveAsksFirst) {
+TEST_F(TitleScreenTest, NewGameOverAnUnreadableSaveAsksFirst) {
   addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
   save("counter");
   fakesd::sim().failOpen.insert(resumePath("counter"));
   openTitleFor(SOLO, 1);
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0);
   render();
   EXPECT_TRUE(dialogUp());
@@ -1043,21 +1193,21 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   tapRow(tr(STR_GAMES_CONTINUE));
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_FALSE(logHas("Cannot start counter")) << "the search logs only its own failure";
-  EXPECT_TRUE(logHas("Cannot continue counter: no New row this host can start"));
+  EXPECT_TRUE(logHas("Cannot continue counter: no mode this host can start"));
   EXPECT_TRUE(activityManager.updateRequested());
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// A game whose first New row cannot start (pass with no seat count this host fits) continues with the next one that
-// can, in the rows' order: nearby, which plays solo until epic-play-nearby. Only a game with no such row starts
+// A game whose first mode cannot start (pass with no seat count this host fits) continues with the next one that can,
+// in solo, pass, nearby order: nearby, which plays solo until epic-play-nearby. Only a game with no such mode starts
 // nothing.
-TEST_F(TitleScreenTest, AContinueWhoseFirstNewRowCannotStartTakesTheNextRowThatCan) {
+TEST_F(TitleScreenTest, AContinueWhoseFirstModeCannotStartTakesTheNextModeThatCan) {
   hostcaps::script().maxSeats = 1;
   addCountingGame("counter", "Counter", "\"pass\"");
   save("counter", SAVED_PASS, 2);
   fakesd::sim().failOpen.insert(resumePath("counter"));
   openTitleFor(PASS | NEARBY);
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_PASS), tr(STR_GAMES_MODE_NEARBY)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   ASSERT_EQ(rowsDrawn(), expected);
   tapRow(tr(STR_GAMES_CONTINUE));
   EXPECT_FALSE(logHas("Cannot start counter")) << "a row the search skips is no error";
@@ -1086,13 +1236,16 @@ TEST_F(TitleScreenTest, AContinueWithNoPassSeatsOfAGameThatStartsSoloPassesTheSo
 }
 
 // A two-mode game's pass save that went bad, or went, after the screen peeked it (cross-story review row 3): the new
-// match Continue starts plays the first New row's roster, solo, never a pass match nobody chose, and its first
+// match Continue starts plays the first startable mode's roster, solo, never a pass match nobody chose, whatever the
+// current mode (pass, remembered, here), and its first
 // snapshot is saved as mode 0, n 1.
 void TitleScreenTest::continueAfterTheSaveChanged(const bool removed) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"");
   save("counter", SAVED_PASS, 2);
+  remember("counter", PASS);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO), tr(STR_GAMES_MODE_PASS)};
+  ASSERT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS));
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   ASSERT_EQ(rowsDrawn(), expected);
   if (removed) {
     fakesd::removeEntry(resumePath("counter"));
@@ -1147,12 +1300,12 @@ TEST_F(TitleScreenTest, AContinueWhoseMatchCannotBeAllocatedStartsNothingAndKeep
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// The question through the launcher: a game with a save, its own row, and its title screen's New row.
-TEST_F(TitleScreenTest, ANewRowReachedFromTheLauncherAsksFirstOverASave) {
+// The question through the launcher: a game with a save, its own row, and its title screen's New game.
+TEST_F(TitleScreenTest, NewGameReachedFromTheLauncherAsksFirstOverASave) {
   addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
   save("counter");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
-  tapRow(tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0);
   render();
   EXPECT_TRUE(dialogUp());
@@ -1175,6 +1328,538 @@ TEST_F(TitleScreenTest, TheScreenIsNamedGameModeAndNotTheLaunchersName) {
   EXPECT_EQ(NameOf::of(*title), std::string(GameModeActivity::NAME));
   EXPECT_STREQ(GameModeActivity::NAME, "GameMode") << "ledger row 5: goHome maps this name to Home's Games row";
   EXPECT_STRNE(GameModeActivity::NAME, GamesLauncherActivity::NAME);
+}
+
+// ---- the splash band (DESIGN.md, Title-screen splash): title.bmp, else the icon at 128 px ----
+
+// The band is 480 x 480 under the header (topPadding 5 and headerHeight 84 of the base metrics, on the harness's
+// portrait screen whose safe area starts at 0), so the icon's 128 x 128 box is centred at (240, 89 + 240).
+constexpr int BAND_TOP = 5 + 84;
+constexpr int ICON_LEFT = 240 - 64;
+constexpr int ICON_TOP = BAND_TOP + 240 - 64;
+
+// Black pixels the renderer holds in (x, y, w, h).
+size_t blackIn(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
+  size_t black = 0;
+  for (int py = y; py < y + h; ++py)
+    for (int px = x; px < x + w; ++px)
+      if (renderer.pixel(px, py) == GfxRenderer::PixelBlack) ++black;
+  return black;
+}
+
+TEST_F(TitleScreenTest, WithNoTitleImageTheBandShowsTheLibraryIconAt128CentredAndTheRowsFollowIt) {
+  installCounter("\"solo\"", 1);
+  openTitleFor(SOLO, 1);
+  const size_t inBox = blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128);
+  EXPECT_GT(inBox, 0u) << "game-controller, the fallback, at 128 px";
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), inBox) << "nothing else in the band";
+  ASSERT_FALSE(ui().drawn.empty());
+  const auto row = std::find_if(ui().drawn.begin(), ui().drawn.end(),
+                                [](const screen::DrawnText& d) { return d.text == tr(STR_GAMES_NEW_GAME); });
+  ASSERT_NE(row, ui().drawn.end()) << ui().joined();
+  EXPECT_GE(row->rect.y, BAND_TOP + GameSplashLayout::BAND) << "the rows start under the band";
+}
+
+TEST_F(TitleScreenTest, APackageIconIsDrawnAt128WithEachOfItsPixelsTwoByTwo) {
+  installCounter("\"solo\"", 1);
+  const auto white = [](const int x, const int y) { return !harness::speckle(x, y); };
+  fakesd::addFile("/.games/counter/icon.bmp", harness::bmpFile(64, 64, white));
+  openTitleFor(SOLO, 1);
+  int wrong = 0;
+  for (int y = 0; y < 128; ++y)
+    for (int x = 0; x < 128; ++x) {
+      const bool black = renderer->pixel(ICON_LEFT + x, ICON_TOP + y) == GfxRenderer::PixelBlack;
+      if (black == white(x / 2, y / 2)) ++wrong;
+    }
+  EXPECT_EQ(wrong, 0);
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128));
+}
+
+TEST_F(TitleScreenTest, ATitleImageIsDrawnCentredInTheBandInsteadOfTheIcon) {
+  installCounter("\"solo\"", 1);
+  const auto white = [](const int x, const int y) { return !harness::speckle(x, y, 3); };
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(100, 60, white));
+  openTitleFor(SOLO, 1);
+  const int left = (480 - 100) / 2;
+  const int top = BAND_TOP + (480 - 60) / 2;
+  int wrong = 0;
+  for (int y = 0; y < 60; ++y)
+    for (int x = 0; x < 100; ++x)
+      if ((renderer->pixel(left + x, top + y) == GfxRenderer::PixelBlack) == white(x, y)) ++wrong;
+  EXPECT_EQ(wrong, 0);
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), blackIn(*renderer, left, top, 100, 60))
+      << "the image alone: no icon, no text";
+  EXPECT_EQ(fakepsram::liveBlocks, 1u) << "its rows are held in PSRAM";
+}
+
+TEST_F(TitleScreenTest, AFullSizeTitleImageFillsTheBandExactly) {
+  installCounter("\"solo\"", 1);
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(480, 480, [](int, int) { return false; }));
+  openTitleFor(SOLO, 1);
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), 480u * 480u);
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP - 1, 480, 1), 0u) << "the header is left alone";
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP + 480, 480, 1), 0u) << "and the rows";
+}
+
+// GameSplashLayout::rowRect, which places the hidden hand-off screen's "Player N's turn" and "I'm ready", is where the
+// title screen's list lays out its two-line rows (Continue and New game, over a save): the list's own row fills (each
+// row's background, the selected one's dither) are the helper's rects, row for row, and the rows start right under the
+// band. The hand-off screen's suite (HiddenPassTest) pins its text and button to the same helper.
+TEST_F(TitleScreenTest, TheSplashLayoutsRowRectsAreTheRowsTheTitleScreensListDraws) {
+  installCounter("\"solo\",\"pass\"");
+  save("counter");
+  openTitleFor(SOLO | PASS);
+  ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_CONTINUE))) << ui().joined();
+  ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_OPTIONS))) << ui().joined();
+  const std::vector<freeink::ui::Rect> rows = match::splashMenuRows(*renderer, 2);
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0].y, BAND_TOP + GameSplashLayout::BAND) << "the first row starts right under the band";
+  std::vector<freeink::ui::Rect> drawn;
+  for (const freeink::ui::Rect& fill : ui().fillRects)
+    if (fill.y >= BAND_TOP + GameSplashLayout::BAND) drawn.push_back(fill);
+  ASSERT_GE(drawn.size(), 2u) << "the list drew no rows under the band";
+  for (size_t i = 0; i < 2; ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(drawn[i].x, rows[i].x);
+    EXPECT_EQ(drawn[i].y, rows[i].y);
+    EXPECT_EQ(drawn[i].width, rows[i].width);
+    EXPECT_EQ(drawn[i].height, rows[i].height);
+  }
+  // And the rows' texts sit inside them: Continue's in row 0, New game's in row 1.
+  for (const screen::DrawnText& text : ui().drawn) {
+    if (text.text == tr(STR_GAMES_CONTINUE)) {
+      EXPECT_TRUE(rows[0].contains(text.rect.x, text.rect.y)) << text.text;
+    }
+    if (text.text == tr(STR_GAMES_NEW_GAME)) {
+      EXPECT_TRUE(rows[1].contains(text.rect.x, text.rect.y)) << text.text;
+    }
+  }
+}
+
+// A title.bmp the screen cannot use is the icon, logged: one larger than 480 x 480 (only a hand-copied folder holds
+// one: the installer refuses it), one that will not open, and one that is not the converter's layout.
+TEST_F(TitleScreenTest, ATitleImageItCannotUseFallsBackToTheIconLogged) {
+  const auto expectIcon = [&](const std::string& why) {
+    SCOPED_TRACE(why);
+    openTitleFor(SOLO, 1);
+    EXPECT_GT(blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128), 0u);
+    EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128));
+    EXPECT_TRUE(logHas("title.bmp"));
+    EXPECT_TRUE(logHas("; skipped"));
+    EXPECT_EQ(fakepsram::liveBlocks, 0u) << "nothing held";
+    dropTitle();
+    fakelog::clearLines();
+  };
+  installCounter("\"solo\"", 1);
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(481, 10, [](int, int) { return false; }));
+  expectIcon("481 wide");
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(10, 481, [](int, int) { return false; }));
+  expectIcon("481 high");
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(480, 480, [](int, int) { return false; }));
+  fakesd::sim().failOpen.insert("/.games/counter/title.bmp");
+  expectIcon("will not open");
+  fakesd::sim().failOpen.clear();
+  fakesd::addFile("/.games/counter/title.bmp", std::string("not a bitmap at all, and long enough to be read as one"));
+  expectIcon("not a BMP");
+}
+
+TEST_F(TitleScreenTest, TheTitleImageAndThePrefsAreReadOnceWhenTheScreenOpens) {
+  installCounter("\"solo\",\"pass\"");
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(48, 48, [](int, int) { return false; }));
+  remember("counter", PASS);
+  // "open <path>" exactly: prefs.bin.tmp, which remember() wrote, is another file.
+  const auto opens = [](const std::string& path) {
+    return static_cast<size_t>(std::count(fakesd::sim().ops.begin(), fakesd::sim().ops.end(), "open " + path));
+  };
+  const size_t titleBefore = opens("/.games/counter/title.bmp");
+  const size_t prefsBefore = opens(prefsPath("counter"));
+  openTitleFor(SOLO | PASS);
+  const size_t title = opens("/.games/counter/title.bmp");
+  const size_t prefs = opens(prefsPath("counter"));
+  EXPECT_EQ(title, titleBefore + 1);
+  EXPECT_EQ(prefs, prefsBefore + 1);
+  for (int i = 0; i < 3; ++i) render();
+  input->click(Button::NavNext);
+  frame();
+  render();
+  EXPECT_EQ(opens("/.games/counter/title.bmp"), title) << "no read while the screen is drawn";
+  EXPECT_EQ(opens(prefsPath("counter")), prefs);
+}
+
+// The question is drawn as on a plain list screen: no splash band behind it.
+TEST_F(TitleScreenTest, TheSplashBandIsNotDrawnUnderTheNewOverSaveQuestion) {
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
+  save("counter");
+  fakesd::addFile("/.games/counter/title.bmp", harness::bmpFile(480, 480, [](int, int) { return false; }));
+  openTitleFor(SOLO, 1);
+  ASSERT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), 480u * 480u) << "the band, before the question";
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  render();
+  ASSERT_TRUE(dialogUp());
+  EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), 0u);
+}
+
+// ---- the current mode and the settings (Manifest::startMode, GameSaveStore::resolvePrefs) ----
+
+TEST_F(TitleScreenTest, DefaultModeIsTheCurrentModeUntilAnotherIsRemembered) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, ",\"default_mode\":\"pass\"");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_PASS)) << "the developer's default";
+  dropTitle();
+  activityManager.exitHolding(*list);
+  activityManager.destroyHolding(list);
+  activityManager.reset();
+  remember("counter", SOLO);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO)) << "the remembered mode wins";
+}
+
+TEST_F(TitleScreenTest, TheNewGameLineNamesTheModeAndEachSettingsValueAndTheGameGetsThemAsCtxSettings) {
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1, TWO_SETTINGS, SETTINGS_GAME);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  const std::vector<std::string> rows{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
+  EXPECT_EQ(rowsDrawn(), rows) << "one mode, but settings: Options";
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 Hard \xC2\xB7 Small")
+      << "the defaults, in manifest order";
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("settings\t[board=Small,level=Hard]"));
+}
+
+// The story's first acceptance criterion: a save and a remembered pass mode with settings. The rows are Continue
+// (selected), New game in the remembered mode and the settings' values, and Options; Confirm from there resumes the
+// save, three taps from Home (Games, the game, Continue).
+TEST_F(TitleScreenTest, ASaveAndARememberedPassModeWithSettingsAreContinueSelectedNewGameAndOptions) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS);
+  save("counter");
+  remember("counter", PASS);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  const std::vector<std::string> rows{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
+  EXPECT_EQ(rowsDrawn(), rows);
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 Hard \xC2\xB7 Small");
+  input->click(Button::Confirm);  // the selection starts on Continue
+  frame();
+  EXPECT_EQ(taps, 1) << "the game's row, then the start: with Games, three";
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("counter: resuming the save's roster: solo, 1 seat(s)"))
+      << "the save's roster, not the current mode";
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+}
+
+// prefs.bin out of date with the manifest falls back value by value: a mode this host cannot start takes the default,
+// a value the setting no longer has takes the setting's default, an id the manifest no longer declares is dropped, and
+// a value still declared is kept.
+TEST_F(TitleScreenTest, AStaleRememberedChoiceFallsBackValueByValue) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, ",\"default_mode\":\"pass\"" + TWO_SETTINGS,
+                  SETTINGS_GAME);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = NEARBY;  // the host has no radio
+  const std::pair<const char*, const char*> entries[] = {{"level", "Impossible"}, {"gone", "Yes"}, {"board", "Large"}};
+  for (const auto& [id, value] : entries) {
+    GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];
+    std::snprintf(entry.id, sizeof(entry.id), "%s", id);
+    std::snprintf(entry.value, sizeof(entry.value), "%s", value);
+  }
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 Hard \xC2\xB7 Large");
+}
+
+TEST_F(TitleScreenTest, ALongNewGameLineIsOneLineEndingInAnEllipsis) {
+  std::string settings = ",\"settings\":[";
+  for (int i = 0; i < 4; ++i) {
+    settings += std::string(i ? "," : "") + "{\"id\":\"s" + std::to_string(i) + "\",\"name\":\"Setting " +
+                std::to_string(i) + "\",\"values\":[\"abcdefghijklmnop\",\"b\"]}";
+  }
+  settings += "]";
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1, settings);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  const std::string full = std::string(tr(STR_GAMES_MODE_SOLO)) +
+                           " \xC2\xB7 abcdefghijklmnop \xC2\xB7 abcdefghijklmnop \xC2\xB7 abcdefghijklmnop \xC2\xB7 "
+                           "abcdefghijklmnop";
+  const std::string line = newGameLine();
+  EXPECT_NE(line, full);
+  EXPECT_EQ(line.rfind(tr(STR_GAMES_MODE_SOLO), 0), 0u) << line;
+  EXPECT_TRUE(line.size() >= 3 &&
+              (line.compare(line.size() - 3, 3, "...") == 0 || line.compare(line.size() - 3, 3, "\xE2\x80\xA6") == 0))
+      << line;
+  EXPECT_EQ(rowsDrawn(), (std::vector<std::string>{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)}));
+}
+
+// ---- Options (EXPERIENCE.md, Options row) ----
+
+TEST_F(TitleScreenTest, OptionsOfOneModeWithSettingsIsASettingRowEachAndNoModeRow) {
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1, TWO_SETTINGS);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  EXPECT_TRUE(theme().drew("drawHeader", tr(STR_GAMES_OPTIONS)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_MODE)));
+  EXPECT_EQ(lineUnder("Level"), "Hard");
+  EXPECT_EQ(lineUnder("Board"), "Small");
+}
+
+// A tap cycles the value in place and wraps; Back returns to the title screen with the Options row selected and New
+// game's line showing the choice, and prefs.bin holds it; the next New game starts with it.
+TEST_F(TitleScreenTest, OptionsCyclesInPlaceAndBackRemembersTheChoiceAndSelectsOptions) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS, SETTINGS_GAME);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  const std::vector<std::string> labels{tr(STR_GAMES_MODE), "Level", "Board"};
+  std::vector<std::string> drawn;
+  for (const screen::DrawnText& line : ui().drawn)
+    if (std::find(labels.begin(), labels.end(), line.text) != labels.end()) drawn.push_back(line.text);
+  EXPECT_EQ(drawn, labels) << "Mode first, then the settings in manifest order";
+  tapRow("Level");
+  render();
+  EXPECT_EQ(lineUnder("Level"), "Easy");
+  tapRow("Level");
+  render();
+  EXPECT_EQ(lineUnder("Level"), "Hard") << "wraps after the last";
+  tapRow("Level");
+  tapRow("Board");
+  input->click(Button::NavPrevious);  // up to Mode, by buttons
+  frame();
+  input->click(Button::NavPrevious);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_PASS));
+  EXPECT_EQ(lineUnder("Level"), "Easy");
+  EXPECT_EQ(lineUnder("Board"), "Large");
+  EXPECT_FALSE(fakesd::has(prefsPath("counter"))) << "nothing is written while Options is open";
+
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 Easy \xC2\xB7 Large");
+  const GameSaveStore::Prefs remembered = prefsOf("counter");
+  EXPECT_EQ(remembered.mode, PASS);
+  ASSERT_EQ(remembered.settings.count, 2u);
+  EXPECT_STREQ(remembered.settings.entries[0].id, "level");
+  EXPECT_STREQ(remembered.settings.entries[0].value, "Easy");
+  EXPECT_STREQ(remembered.settings.entries[1].id, "board");
+  EXPECT_STREQ(remembered.settings.entries[1].value, "Large");
+  // The Options row is selected: Confirm opens Options again.
+  input->click(Button::Confirm);
+  frame();
+  ASSERT_EQ(activityManager.pushedActivities.size(), 2u);
+  EXPECT_NE(dynamic_cast<GameOptionsActivity*>(activityManager.pushedActivities.back().get()), nullptr);
+  activityManager.popForResult(*title, *activityManager.pushedActivities.back());
+  current = title;
+  render();
+
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  EXPECT_TRUE(logHas("Mode pass picked for counter: 2 seats"));
+  ASSERT_TRUE(pumpMatchTo("settings\t[board=Large,level=Easy]"));
+}
+
+// Options left by a Replace (the Home gesture, sleep) runs no result handler: the real manager exits Options, then
+// calls onExit() of each screen stacked under it, RenderLock held. prefs.bin is never written from onExit() (AD-17), so
+// the change is not remembered (deferred-work.md ## 5.12) and nothing touches the card.
+TEST_F(TitleScreenTest, OptionsLeftByAReplaceWritesNothing) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));
+  // ActivityManager's Replace (goHome): the current screen exits and goes, then the stacked one exits.
+  auto& pushed = activityManager.pushedActivities;
+  ASSERT_EQ(pushed.back().get(), options);
+  activityManager.exitHolding(*options);
+  activityManager.destroyHolding(pushed.back());
+  pushed.pop_back();
+  options = nullptr;
+  activityManager.exitHolding(*title);
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit takes no RenderLock";
+}
+
+// The Mode row cycles from solo when the current mode is none of the host's, as nextMode documents.
+TEST(TitleScreenModes, NextModeStartsAtSoloWhenTheCurrentModeIsNoneOfThem) {
+  EXPECT_EQ(GameModeActivity::nextMode(0, SOLO | PASS), SOLO);
+  EXPECT_EQ(GameModeActivity::nextMode(NEARBY, SOLO | PASS), SOLO);
+  EXPECT_EQ(GameModeActivity::nextMode(0, PASS | NEARBY), PASS);
+  EXPECT_EQ(GameModeActivity::nextMode(SOLO, SOLO | PASS), PASS);
+  EXPECT_EQ(GameModeActivity::nextMode(PASS, SOLO | PASS), SOLO);
+  EXPECT_EQ(GameModeActivity::nextMode(SOLO, 0), 0);
+}
+
+// Settings the title screen could not read would be written as none, wiping every remembered value: while they are
+// not read, nothing is written, and prefs.bin stays as it was.
+TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadPrefsBinIsLeftAlone) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = NEARBY;  // not startable here: New game starts another mode, which would write the file
+  GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];
+  std::snprintf(entry.id, sizeof(entry.id), "level");
+  std::snprintf(entry.value, sizeof(entry.value), "Easy");
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  const Bytes before = fakesd::bytesOf(prefsPath("counter"));
+  openLauncher();
+  tapRow("Counter");
+  fakesd::sim().failOpen.insert("/.games/counter/manifest.json");  // the title screen's re-read fails
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  EXPECT_TRUE(logHas("Cannot read the settings of counter"));
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_TRUE(logHas("The choices for counter are not remembered: its settings were not read"));
+  EXPECT_EQ(fakesd::bytesOf(prefsPath("counter")), before);
+}
+
+// A prefs.bin that would not read (a card fault) may be a good one: New game does not replace it with defaults, but
+// an Options change, which the player made, does.
+TEST_F(TitleScreenTest, AnUnreadablePrefsBinIsNotReplacedByNewGame) {
+  installCounter("\"solo\",\"pass\"");
+  remember("counter", PASS);
+  const Bytes before = fakesd::bytesOf(prefsPath("counter"));
+  fakesd::sim().failOpen.insert(prefsPath("counter"));
+  openTitleFor(SOLO | PASS);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO)) << "unreadable: the defaults";
+  const size_t writes = fakesd::countOps("rename " + prefsPath("counter") + ".tmp");
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_EQ(fakesd::countOps("rename " + prefsPath("counter") + ".tmp"), writes);
+  EXPECT_EQ(fakesd::bytesOf(prefsPath("counter")), before);
+}
+
+TEST_F(TitleScreenTest, AnUnreadablePrefsBinIsReplacedByAnOptionsChange) {
+  installCounter("\"solo\",\"pass\"");
+  remember("counter", SOLO);
+  fakesd::sim().failOpen.insert(prefsPath("counter"));
+  openTitleFor(SOLO | PASS);
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  fakesd::sim().failOpen.clear();
+  EXPECT_EQ(prefsOf("counter").mode, PASS);
+}
+
+TEST_F(TitleScreenTest, OptionsClosedWithNoChangeWritesNothing) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
+  EXPECT_EQ(rowsDrawn(), (std::vector<std::string>{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)}));
+}
+
+// A write that fails is logged, and the choice lasts until the title screen closes: New game starts with it, and the
+// next title screen has the defaults again.
+TEST_F(TitleScreenTest, AFailedPrefsWriteIsLoggedAndTheChoiceLastsUntilTheScreenCloses) {
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1, TWO_SETTINGS, SETTINGS_GAME);
+  fakesd::sim().failOpenWrite.insert(prefsPath("counter") + ".tmp");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow("Level");
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  EXPECT_TRUE(logHas("The choices for counter are not remembered"));
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 Easy \xC2\xB7 Small");
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("settings\t[board=Small,level=Easy]"));
+  match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Discard);
+  dropTitle();
+  activityManager.exitHolding(*list);
+  activityManager.destroyHolding(list);
+  activityManager.reset();
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 Hard \xC2\xB7 Small");
+}
+
+// prefs.bin is written when New game starts a mode other than the one it holds (a missing file holds none), and only
+// then.
+TEST_F(TitleScreenTest, NewGameInAModeOtherThanTheRememberedOneRemembersIt) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_EQ(prefsOf("counter").mode, SOLO) << "a missing file holds no mode";
+  dropMatch();
+  dropTitle();
+  activityManager.reset();
+
+  const auto prefsWrites = [] { return fakesd::countOps("rename " + prefsPath("counter") + ".tmp"); };
+  const size_t writes = prefsWrites();
+  openTitleFor(SOLO | PASS);
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_EQ(prefsWrites(), writes) << "the mode the file holds: nothing written";
+}
+
+TEST_F(TitleScreenTest, ContinueWritesNoPrefs) {
+  addCountingGame("counter", "Counter", "\"solo\"", 1, 1);
+  save("counter");
+  openTitleFor(SOLO, 1);
+  tapRow(tr(STR_GAMES_CONTINUE));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+}
+
+TEST_F(TitleScreenTest, AnOptionsScreenThatCannotBeAllocatedOpensNothingAndRepaints) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
+  oom::failSize = sizeof(GameOptionsActivity);
+  activityManager.markRendered();
+  tapRow(tr(STR_GAMES_OPTIONS));
+  EXPECT_EQ(activityManager.pushedActivities.size(), 1u);
+  EXPECT_TRUE(logHas("OOM: " + std::to_string(sizeof(GameOptionsActivity)) + " byte Options screen"));
+  EXPECT_TRUE(activityManager.updateRequested());
+}
+
+// ---- GamePicture on its own: what the title screen's band and the hand-off page draw with ----
+
+class GamePictureTest : public match::ScreenTest {};
+
+// A page larger than the rect it is drawn in shows its middle, clipped to the rect: nothing is drawn outside it.
+TEST_F(GamePictureTest, APageLargerThanItsRectShowsItsMiddleClippedToIt) {
+  const auto white = [](const int x, const int y) { return !harness::speckle(x, y, 1); };
+  fakesd::addFile("/.games/demo/handoff.bmp", harness::bmpFile(100, 90, white));
+  GamePicture picture;
+  ASSERT_TRUE(picture.loadPage("demo", "handoff", 100, 90));
+  renderer->clearScreen();
+  picture.drawPage(*renderer, 10, 20, 40, 30);
+  int wrong = 0;
+  for (int y = 0; y < 30; ++y)
+    for (int x = 0; x < 40; ++x)
+      if ((renderer->pixel(10 + x, 20 + y) == GfxRenderer::PixelBlack) == white(x + 30, y + 30)) ++wrong;
+  EXPECT_EQ(wrong, 0) << "the image's (30, 30) is the rect's top-left";
+  EXPECT_EQ(renderer->fillsOutside(10, 20, 40, 30), 0u);
+}
+
+TEST_F(GamePictureTest, APageOverItsLimitOrWithNoMemoryIsNoPageAndLogged) {
+  fakesd::addFile("/.games/demo/handoff.bmp", harness::bmpFile(40, 30, [](int, int) { return false; }));
+  GamePicture picture;
+  EXPECT_FALSE(picture.loadPage("demo", "handoff", 39, 30));
+  EXPECT_TRUE(logHas("/.games/demo/handoff.bmp is 40x30, over 39x30"));
+  EXPECT_FALSE(picture.loadPage("demo", "handoff", 40, 29));
+  fakepsram::failNext = true;
+  EXPECT_FALSE(picture.loadPage("demo", "handoff", 40, 30));
+  EXPECT_TRUE(logHas("OOM: "));
+  EXPECT_FALSE(picture.hasPage());
+  ASSERT_TRUE(picture.loadPage("demo", "handoff", 40, 30));
+  EXPECT_TRUE(picture.hasPage());
+  fakelog::clearLines();
+  EXPECT_FALSE(picture.loadPage("demo", "title", 480, 480)) << "no title.bmp";
+  EXPECT_FALSE(picture.hasPage()) << "a load releases the page before it";
+  EXPECT_FALSE(logHas("title.bmp")) << "a page the package does not ship is no error";
+}
+
+TEST_F(GamePictureTest, TheIconIsTheLaunchersChoice) {
+  GameCore::Manifest manifest = parsed(manifestJson("demo", "Demo", "\"solo\"", 1, 1, ",\"icon\":\"dice-five\""));
+  GamePicture picture;
+  picture.loadIcon(manifest);
+  EXPECT_EQ(picture.iconSource(), GameRowIcon::Source::Library);
+  fakesd::addFile("/.games/demo/icon.bmp", harness::bmpFile(64, 64, [](int, int) { return true; }));
+  picture.loadIcon(manifest);
+  EXPECT_EQ(picture.iconSource(), GameRowIcon::Source::PackageBmp);
+  renderer->clearScreen();
+  picture.drawIcon(*renderer, 240, 400);
+  EXPECT_EQ(renderer->pixelCount(GfxRenderer::PixelBlack), 0u) << "an all-white icon.bmp draws no ink";
 }
 
 // ---- the host-caps double (list_stubs/GameHostCapsDouble.cpp) ----
@@ -1382,7 +2067,7 @@ TEST_F(OneRowPerGameTest, ASaveOfAChangedPackageOffersNoContinueAndIsLeftOnTheCa
   stale[6 + GamePkg::HASH_BYTES - 1] ^= 0x03;  // the package hash follows the 6-byte header
   fakesd::addFile(resumePath("game-02"), stale);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 02"));
-  const std::vector<std::string> newOnly{tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> newOnly{tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), newOnly);
   EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), stale) << "the screens only look";
 
@@ -1402,8 +2087,8 @@ TEST_F(OneRowPerGameTest, ASaveThatIsNotAValidResumeOffersNoContinue) {
   truncated.resize(12);
   fakesd::addFile(resumePath("game-02"), truncated);
   save("game-03");
-  const std::vector<std::string> newOnly{tr(STR_GAMES_MODE_SOLO)};
-  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> newOnly{tr(STR_GAMES_NEW_GAME)};
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   const std::vector<std::pair<std::string, std::vector<std::string>>> cases{
       {"Game 01", newOnly}, {"Game 02", newOnly}, {"Game 03", withSave}};
   for (const auto& [name, expected] : cases) {
@@ -1419,7 +2104,7 @@ TEST_F(OneRowPerGameTest, ASaveWhoseRenameWasInterruptedStillOffersContinue) {
   addGames(1);
   fakesd::addFile(resumePath("game-01") + ".tmp", resumeBytes(2, 3));
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), expected);
 }
 
@@ -1429,7 +2114,7 @@ TEST_F(OneRowPerGameTest, ASaveThatWentBadBetweenTheScreenAndTheTapStartsANewMat
   addGames(1);
   save("game-01");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
-  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   ASSERT_EQ(rowsDrawn(), expected);
   fakesd::addFile(resumePath("game-01"), std::string("garbage"));
   tapRow(tr(STR_GAMES_CONTINUE));
@@ -1517,8 +2202,8 @@ TEST_F(OneRowPerGameTest, ANewMatchLeftAfterAMoveIsResumedByConfirmOnItsRowAndCo
   key(Button::NavNext);  // Game 02
   key(Button::Confirm);
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
-  ASSERT_EQ(rowsDrawn(), std::vector<std::string>{tr(STR_GAMES_MODE_SOLO)});
-  key(Button::Confirm);  // Solo: with no save, a New match at once
+  ASSERT_EQ(rowsDrawn(), std::vector<std::string>{tr(STR_GAMES_NEW_GAME)});
+  key(Button::Confirm);  // New game: with no save, a New match at once
   ASSERT_EQ(activityManager.asks.replaced, 1);
   ASSERT_NE(enterReplacement(), nullptr);
   ASSERT_TRUE(pumpMatchTo("setup ran"));
@@ -1542,7 +2227,7 @@ TEST_F(OneRowPerGameTest, ANewMatchLeftAfterAMoveIsResumedByConfirmOnItsRowAndCo
   key(Button::Confirm);  // Game 02's row, selected
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
   EXPECT_TRUE(theme().drew("drawHeader", "Game 02"));
-  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), withSave);
   key(Button::Confirm);  // Continue
   ASSERT_EQ(activityManager.asks.replaced, 1);
@@ -1573,7 +2258,7 @@ TEST_F(OneRowPerGameTest, UnderTheInstallNoteConfirmsOpenTheTitleScreenAndNeverA
   EXPECT_EQ(activityManager.asks.replaced, 0) << "the launcher starts no match";
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
   EXPECT_TRUE(theme().drew("drawHeader", "Game 01"));
-  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_MODE_SOLO)};
+  const std::vector<std::string> withSave{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), withSave);
   EXPECT_EQ(activityManager.asks.replaced, 0) << "no match until a choice on the title screen";
   key(Button::Confirm);  // that choice: Continue

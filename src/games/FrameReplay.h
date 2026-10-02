@@ -32,11 +32,11 @@ class FrameReplay {
   // shown before: the screen shows something else now. Render task.
   void forceFull() { policy.forceFull(); }
 
-  // The blank hand-off screen of a hidden pass match: a cleared screen with the HandOff view's library icon
-  // (GameViewIcons::forView) at 128 px, black, centred on the canvas, and no game command at all. Forces the next
-  // frame in full, since the screen no longer shows one. The caller pushes it (displayBuffer) with its own refresh.
-  // Render task.
-  void drawBlank(const GfxRenderer& renderer, const GameViewport& viewport);
+  // A hidden pass match's blank: a plain white screen, with no game command and nothing else, which the forced exit and
+  // a Leave from a seat's frame push as it is and the hand-off screen draws its own page on. Forces the next frame in
+  // full, since the screen no longer shows one. The caller pushes it (displayBuffer) with its own refresh. Render task,
+  // or the loop task while it holds RenderLock.
+  void drawBlank(const GfxRenderer& renderer);
 
   // Draws the frame inside the viewport, clipped to it, unless it is identical to
   // the frame on screen and nothing forces it; `hint` is the largest refresh

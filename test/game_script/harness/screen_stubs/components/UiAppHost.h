@@ -46,16 +46,32 @@ struct DrawnText {
 
 class RecordingTarget final : public freeink::ui::DrawTarget {
  public:
-  explicit RecordingTarget(const GfxRenderer& renderer) : renderer(renderer) { newest() = this; }
+  explicit RecordingTarget(const GfxRenderer& renderer) : renderer(renderer) {
+    live().push_back(this);
+    newest() = this;
+  }
   ~RecordingTarget() override {
-    if (newest() == this) newest() = nullptr;
+    std::vector<RecordingTarget*>& all = live();
+    for (auto it = all.begin(); it != all.end(); ++it) {
+      if (*it != this) continue;
+      all.erase(it);
+      break;
+    }
+    // As on the device, where a screen pushed for a result goes and the screen under it draws again on its own target
+    // (ActivityManager's Pop): the newest one left alive takes its place, or none.
+    if (newest() == this) newest() = all.empty() ? nullptr : all.back();
   }
 
-  // The target of the UiAppHost constructed last, still alive: a screen's host is a private
-  // base, so a test reads what its screen drew through this.
+  // The target of the UiAppHost constructed last, still alive (or, once it is gone, the last constructed of those
+  // left): a screen's host is a private base, so a test reads what its screen drew through this.
   static RecordingTarget*& newest() {
     static RecordingTarget* target = nullptr;
     return target;
+  }
+  // Every target alive, in the order they were constructed.
+  static std::vector<RecordingTarget*>& live() {
+    static std::vector<RecordingTarget*> targets;
+    return targets;
   }
 
   freeink::ui::DeviceContext deviceContext() const {
@@ -75,7 +91,12 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
     return {static_cast<int16_t>(text ? std::strlen(text) * GLYPH_WIDTH : 0), LINE_HEIGHT};
   }
   int16_t lineHeight(freeink::ui::FontId) const override { return LINE_HEIGHT; }
-  void fill(freeink::ui::Rect, freeink::ui::Paint, uint8_t, uint8_t) override { ++fills; }
+  // The device's target paints the rect (a list row's background or its selection's dither, a button's face); here
+  // its place is recorded, so a test reads where a list laid a row out.
+  void fill(freeink::ui::Rect rect, freeink::ui::Paint, uint8_t, uint8_t) override {
+    ++fills;
+    fillRects.push_back(rect);
+  }
   void stroke(freeink::ui::Rect rect, freeink::ui::Paint, uint8_t width, uint8_t, uint8_t) override {
     ++strokes;
     strokeRects.push_back({rect, width});
@@ -125,6 +146,7 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
     drawn.clear();
     textCalls.clear();
     strokeRects.clear();
+    fillRects.clear();
     bitmapsDrawn.clear();
     fills = strokes = bitmaps = 0;
   }
@@ -139,7 +161,8 @@ class RecordingTarget final : public freeink::ui::DrawTarget {
     uint8_t width = 0;
   };
   std::vector<DrawnStroke> strokeRects;
-  std::vector<DrawnBitmap> bitmapsDrawn;  // in draw order; `bitmaps` counts them
+  std::vector<freeink::ui::Rect> fillRects;  // every fill's rect, in draw order; `fills` counts them
+  std::vector<DrawnBitmap> bitmapsDrawn;     // in draw order; `bitmaps` counts them
   int fills = 0;
   int strokes = 0;
   int bitmaps = 0;

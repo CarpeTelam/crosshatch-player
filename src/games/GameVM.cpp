@@ -47,7 +47,7 @@ void logRound(const GameCore::Session& session, const GameScript::SoloRounds& ro
 
 std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                        const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster,
-                                       const bool handOff) {
+                                       const bool handOff, const GameCore::SettingValues& settings) {
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
   // The two frames, then the mailbox's one snapshot: one block, since the mailbox lives
@@ -61,8 +61,8 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
   }
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
-  std::unique_ptr<GameVM> vm(
-      new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas, gameId, store, roster, handOff));
+  std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas, gameId,
+                                                       store, roster, handOff, settings));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -72,7 +72,8 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
 }
 
 GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas,
-               const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster, const bool handOff)
+               const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster, const bool handOff,
+               const GameCore::SettingValues& settings)
     : assets(std::move(loaded)),
       roster(roster),
       frameStorage(std::move(storage)),
@@ -81,7 +82,9 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       log(gameId),
       game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store}, canvas,
            assets.images()),
-      handOff(handOff) {}
+      handOff(handOff) {
+  game.setSettings(settings);
+}
 
 bool GameVM::start() {
   {
@@ -152,6 +155,7 @@ void GameVM::run() {
       playing = session;
       handOffView = GameCore::MatchState::HandOff;
       outcome = rounds.begin(*session);
+      announceTurnSeat(outcome);
     } else {
       outcome = rounds.start(*session);
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
@@ -179,6 +183,7 @@ void GameVM::run() {
         handOffView = GameCore::MatchState::HandOff;
         timerHeld = false;
         outcome = rounds.beginAgain();
+        announceTurnSeat(outcome);
       } else {
         outcome = rounds.restart();
         if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
@@ -320,6 +325,15 @@ GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
   nextSeat.store(status.turn, std::memory_order_release);
   turnChanges.fetch_add(1, std::memory_order_acq_rel);
   return outcome;
+}
+
+void GameVM::announceTurnSeat(const GameScript::Outcome outcome) {
+  if (outcome != GameScript::Outcome::Ok) return;
+  // The seat first, as stepHandOff stores it before it counts a turn change: a reader that sees the count moved reads
+  // this round's first seat. The round has begun (setup or the restored save, then status), so its turn seat is known
+  // before any seat is drawn; a round already over names no seat (turn 0).
+  nextSeat.store(playing->status().turn, std::memory_order_release);
+  roundAnnouncements.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void GameVM::noteSeatDrawn(const uint8_t seat) {

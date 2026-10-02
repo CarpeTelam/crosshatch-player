@@ -2,6 +2,7 @@
 
 #include <GameImages.h>
 #include <IGameRules.h>
+#include <Manifest.h>
 
 #include <atomic>
 #include <cstddef>
@@ -75,11 +76,15 @@ class LuaGame : public GameCore::IGameRules {
   // `ch`, and runs main.lua, which must return the game table.
   Outcome load();
 
+  // Before load(): the chosen value of each setting the manifest declares (copied), which every
+  // setup call passes as ctx.settings, so Play again sees the same table. None until called.
+  void setSettings(const GameCore::SettingValues& values) { settings = values; }
+
   // GameCore::IGameRules, each one call into Lua. setup gets ctx = {seats, mode,
-  // api}; status must return {turn = seat} or {over = true, winners = {seat...}};
-  // apply returns the new state, or nil and a reason (a string, or nil for "");
-  // draw draws into the back buffer and publishes it on success; input returns a
-  // move table or nil (a Timer event arrives as {kind = "timer"}).
+  // api, settings}, settings a fresh table from setSettings' values; status must return {turn = seat} or {over = true,
+  // winners = {seat...}}; apply returns the new state, or nil and a reason (a string, or nil for ""); draw draws into
+  // the back buffer and publishes it on success; input returns a move table or nil (a Timer event arrives as {kind =
+  // "timer"}).
   Outcome setup(const GameCore::GameContext& ctx, std::span<const uint8_t>& state) override;
   Outcome status(std::span<const uint8_t> state, const GameCore::Roster& roster, GameCore::Status& out) override;
   Outcome apply(std::span<const uint8_t> state, uint8_t seat, std::span<const uint8_t> move,
@@ -166,6 +171,7 @@ class LuaGame : public GameCore::IGameRules {
   const GameCore::GameImages& images;
   const HostPorts ports;
   const Canvas canvas;
+  GameCore::SettingValues settings;  // ctx.settings (setSettings)
   GameTimer pendingTimer;
   BindingContext bindings;
   CallGuard guard;

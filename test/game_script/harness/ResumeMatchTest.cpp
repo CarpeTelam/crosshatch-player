@@ -1206,9 +1206,16 @@ class PassResumeTest : public ResumeMatchTest {
     return std::find(texts.begin(), texts.end(), text) != texts.end();
   }
 
-  // pass-hidden: the screen the match asked for is drawn; then a tap anywhere on it passes the device on.
+  // pass-hidden: the screen the match asked for is drawn; then a tap on its one target passes the device on: the
+  // hand-off screen's "I'm ready" button (in the splash menu's second row), or Result's banner at the bottom
+  // (HiddenPassTest.TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom pins both places).
   void tapScreen() {
-    input->tap(240, 400);
+    if (state() == "Result") {
+      input->tap(240, 740);
+    } else {
+      const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
+      input->tap(ready.x, ready.y);
+    }
     frame();
   }
   const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }
@@ -1216,12 +1223,19 @@ class PassResumeTest : public ResumeMatchTest {
     return std::any_of(push.texts.begin(), push.texts.end(),
                        [&](const std::string& text) { return text.find(part) != std::string::npos; });
   }
-  // pass-hidden from the start or a resume: the blank drawn, its tap, and the turn seat's frame drawn.
-  void passTheBlank() {
+  // pass-hidden from the start or a resume: the hand-off screen drawn, naming `seat` (0: unchecked), its button, and
+  // the turn seat's frame drawn. The hand-off screen waits for the VM to name the round's first turn seat, so a render
+  // before that pushes nothing and the loop asks again.
+  void passTheBlank(const int seat = 0) {
     ASSERT_EQ(state(), "HandOff");
+    const size_t pushes = renderer->shown.size();
     showFrame();
+    if (renderer->shown.size() == pushes) showFrame();
+    ASSERT_EQ(renderer->shown.size(), pushes + 1) << "no hand-off screen was pushed";
     EXPECT_EQ(lastPush().mode, HalDisplay::FULL_REFRESH);
-    EXPECT_TRUE(lastPush().texts.empty()) << lastPush().texts.front();
+    ASSERT_EQ(lastPush().texts.size(), 2u) << (lastPush().texts.empty() ? "no text" : lastPush().texts.front());
+    if (seat > 0) EXPECT_EQ(lastPush().texts[0], "Player " + std::to_string(seat) + "'s turn");
+    EXPECT_EQ(lastPush().texts[1], tr(STR_GAMES_READY));
     tapScreen();
     ASSERT_EQ(state(), "Playing");
     showFrame();
@@ -1288,7 +1302,7 @@ TEST_F(PassResumeTest, AHiddenPassMatchWritesItsSnapshotsInHandOffAndResult) {
   ASSERT_EQ(state(), "HandOff");
   ASSERT_TRUE(pumpToPassSave(1)) << "setup's snapshot, written on the blank";
   EXPECT_EQ(state(), "HandOff");
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple"));
   ASSERT_NO_FATAL_FAILURE(moveToResult());
   ASSERT_TRUE(pumpToPassSave(2)) << "the move's snapshot, written in Result";
@@ -1299,7 +1313,7 @@ TEST_F(PassResumeTest, AHiddenPassMatchWritesItsSnapshotsInHandOffAndResult) {
 TEST_F(PassResumeTest, AHiddenPassMatchsWriteThatFailedInResultIsWrittenOnTheBlank) {
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
   ASSERT_TRUE(pumpToPassSave(1));
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
   ASSERT_NO_FATAL_FAILURE(moveToResult());
   ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
@@ -1316,7 +1330,7 @@ TEST_F(PassResumeTest, AHiddenPassMatchsWriteThatFailedInResultIsWrittenOnTheBla
 // its tap shows seat 2 at the saved move.
 TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTurnSeat) {
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   ASSERT_NO_FATAL_FAILURE(moveToResult());
   ASSERT_TRUE(pumpToPassSave(2));
   sleep();
@@ -1332,7 +1346,7 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   for (int i = 0; i < 20; ++i) frame();
   // Every seat's draws, the saved turn seat's (2) included: none before the blank's tap.
   EXPECT_EQ(fakelog::countLines("draw for seat "), 0u) << "a seat was drawn before the blank's tap";
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(2));
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));
@@ -1370,7 +1384,7 @@ TEST_F(PassResumeTest, AnOpenPassSaveResumesInPlayOnTheSavedTurnSeatsFrame) {
 TEST_F(PassResumeTest, AHiddenMatchSleptInResultContinuesAtTheSnapshotTheSleepWrote) {
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
   ASSERT_TRUE(pumpToPassSave(1));
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
   ASSERT_NO_FATAL_FAILURE(moveToResult());
   ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
@@ -1382,7 +1396,7 @@ TEST_F(PassResumeTest, AHiddenMatchSleptInResultContinuesAtTheSnapshotTheSleepWr
 
   fakelog::clearLines();
   enterPass("pass-hidden", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(2));
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1"));
   EXPECT_TRUE(logHas("Resuming at ver 2"));
@@ -1468,7 +1482,7 @@ TEST_F(PassResumeTest, AHiddenGamesSoloSaveResumesInPlayingNotHandOff) {
 // save from the blank.
 TEST_F(PassResumeTest, AResumedHiddenMatchPlayedToOverDeletesItsSaveAndPlayAgainSavesFromTheBlank) {
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   ASSERT_NO_FATAL_FAILURE(moveToResult());
   ASSERT_TRUE(pumpToPassSave(2));
   sleep();
@@ -1478,13 +1492,13 @@ TEST_F(PassResumeTest, AResumedHiddenMatchPlayedToOverDeletesItsSaveAndPlayAgain
   // Seat 2 and then seat 1 move, each through Result and the blank; seat 2's next move is the fourth and ends the
   // round.
   for (int turn = 0; turn < 2; ++turn) {
-    ASSERT_NO_FATAL_FAILURE(passTheBlank());
+    ASSERT_NO_FATAL_FAILURE(passTheBlank(2 - turn));
     ASSERT_NO_FATAL_FAILURE(moveToResult());
     showFrame();  // Result's banner, which the tap below passes
     tapScreen();
     ASSERT_EQ(state(), "HandOff");
   }
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(2));
   EXPECT_TRUE(holds(lastPush(), "Moves: 3"));
   input->tap(CANVAS_X + 100, CANVAS_Y + 300);
   frame();
@@ -1676,7 +1690,7 @@ TEST_F(PassResumeTest, AHiddenForcedExitPushesTheBlankBeforeAnyResumeOpAndThenWr
   fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
   ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); })) << "setup's snapshot";
-  ASSERT_NO_FATAL_FAILURE(passTheBlank());
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
   EXPECT_TRUE(holds(lastPush(), "Player 1's secret: apple"));
   ASSERT_FALSE(fakesd::has(resumePath("pass-hidden")));
   fakesd::sim().failOpenWrite.clear();

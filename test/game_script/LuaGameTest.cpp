@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <set>
 #include <string>
 #include <tuple>
@@ -42,6 +43,53 @@ TEST_F(LuaGameTest, TracerSetupAndDrawThroughTheTrampoline) {
 
   game.close();
   EXPECT_EQ(arena.bytesInUse(), 0u);  // lua_close and the scratch returned every block
+}
+
+// ctx.settings (AD-8, as amended 2026-10-02): each declared setting's chosen value as a string, a fresh table at every
+// setup, so Play again sees the same values even after the game changed its copy, and an empty table with none.
+const char* const SETTINGS_GAME = R"(
+local game = {}
+function game.setup(ctx)
+  local keys = {}
+  for k, v in pairs(ctx.settings) do keys[#keys + 1] = k .. "=" .. v .. ":" .. type(v) end
+  table.sort(keys)
+  local seen = "[" .. table.concat(keys, ",") .. "] " .. type(ctx.settings)
+  ctx.settings.level = "changed by the game"
+  return { seen = seen, taps = 0 }
+end
+function game.status(s)
+  if s.taps >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(s) s.taps = s.taps + 1 return s end
+function game.draw(s) ch.gfx.clear("white") ch.gfx.text(10, 10, s.seen, "small", "black") end
+function game.input(s, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+return game
+)";
+
+TEST_F(LuaGameTest, CtxSettingsHoldsTheChosenValuesAndIsTheSameAfterPlayAgain) {
+  useSource("main", SETTINGS_GAME);
+  SessionGame game(*this);
+  GameCore::SettingValues settings;
+  settings.count = 2;
+  std::snprintf(settings.entries[0].id, sizeof(settings.entries[0].id), "level");
+  std::snprintf(settings.entries[0].value, sizeof(settings.entries[0].value), "Hard");
+  std::snprintf(settings.entries[1].id, sizeof(settings.entries[1].id), "board_size");
+  std::snprintf(settings.entries[1].value, sizeof(settings.entries[1].value), "9 x 9");
+  game.game.setSettings(settings);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "[board_size=9 x 9:string,level=Hard:string] table");
+  ASSERT_EQ(game.tap(100, 200), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "[board_size=9 x 9:string,level=Hard:string] table") << "the game's change did not stay";
+}
+
+TEST_F(LuaGameTest, CtxSettingsIsAnEmptyTableWithoutSettings) {
+  useSource("main", SETTINGS_GAME);
+  SessionGame game(*this);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "[] table");
 }
 
 TEST_F(LuaGameTest, ATapComesBackAsAMoveInCodecBytes) {

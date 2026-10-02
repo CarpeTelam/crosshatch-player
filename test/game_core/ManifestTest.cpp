@@ -276,6 +276,215 @@ TEST(ManifestTest, RejectsMalformedJson) {
   EXPECT_EQ(parse(R"({"hidden": tru})"), ManifestError::Syntax);
 }
 
+// ---- default_mode and settings (AD-15, as amended 2026-10-02) ----
+
+// A minimal valid manifest for `modes` (seats 1 to 2) with `member` spliced in.
+std::string withModes(const std::string& modes, const std::string& member) {
+  return R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 2}, "modes": )" + modes +
+         (member.empty() ? std::string() : ", " + member) + "}";
+}
+
+// One settings object from its members, e.g. setting(R"("id": "a")").
+std::string setting(const std::string& members) { return "{" + members + "}"; }
+
+// A valid setting with id `id` and values `values` (a JSON array).
+std::string settingWith(const std::string& id, const std::string& values = R"(["Easy", "Hard"])") {
+  return setting(R"("id": ")" + id + R"(", "name": "Level", "values": )" + values);
+}
+
+ManifestError parseSettings(const std::string& settings) { return parse(withExtra("\"settings\": " + settings)); }
+
+TEST(ManifestTest, DefaultModeIsOneOfTheModesInEitherKeyOrder) {
+  Manifest m;
+  ASSERT_EQ(parse(withModes(R"(["solo", "pass"])", R"("default_mode": "pass")"), m), ManifestError::None);
+  EXPECT_EQ(m.defaultMode, Manifest::MODE_PASS);
+  // Before modes: checked in finish(), so key order is free.
+  ASSERT_EQ(parse(R"({"default_mode": "solo", "id": "g", "name": "G", "version": "", "api": 1,)"
+                  R"( "seats": {"min": 1, "max": 2}, "modes": ["pass", "solo"]})",
+                  m),
+            ManifestError::None);
+  EXPECT_EQ(m.defaultMode, Manifest::MODE_SOLO);
+  ASSERT_EQ(parse(withExtra(""), m), ManifestError::None);
+  EXPECT_EQ(m.defaultMode, 0) << "absent: none";
+}
+
+TEST(ManifestTest, RejectsADefaultModeOutsideTheModes) {
+  EXPECT_EQ(parse(withModes(R"(["solo"])", R"("default_mode": "pass")")), ManifestError::BadDefaultMode);
+  EXPECT_EQ(parse(R"({"default_mode": "nearby", "id": "g", "name": "G", "version": "", "api": 1,)"
+                  R"( "seats": {"min": 1, "max": 2}, "modes": ["solo", "pass"]})"),
+            ManifestError::BadDefaultMode);
+  for (const char* bad : {"", "Solo", "duo", "solo ", "online"}) {
+    EXPECT_EQ(parse(withModes(R"(["solo"])", std::string(R"("default_mode": ")") + bad + "\"")),
+              ManifestError::BadDefaultMode)
+        << bad;
+  }
+  EXPECT_EQ(parse(withExtra(R"("default_mode": 1)")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("default_mode": ["solo"])")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("default_mode": null)")), ManifestError::WrongType);
+  EXPECT_EQ(parse(withExtra(R"("default_mode": "solo", "default_mode": "solo")")), ManifestError::DuplicateKey);
+  EXPECT_STREQ(GameCore::describe(ManifestError::BadDefaultMode), "invalid default_mode");
+}
+
+TEST(ManifestTest, ParsesSettingsInOrderWithTheirDefaults) {
+  auto reader = std::make_unique<ManifestReader>();
+  const std::string json =
+      withExtra(R"("settings": [)"
+                R"({"id": "level", "name": "AI level", "values": ["Easy", "Normal", "Hard"], "default": "Hard"},)"
+                R"({"default": "Off", "values": ["On", "Off"], "name": "Sound", "id": "sound_2"},)"
+                R"({"id": "board", "name": "Board", "values": ["Small", "Large"]}])");
+  reader->begin();
+  reader->feed(json.data(), json.size());
+  Manifest m;
+  ASSERT_EQ(reader->finish(m), ManifestError::None);
+  EXPECT_EQ(m.settingsCount, 3);
+  const GameCore::ManifestSettings& settings = reader->settings();
+  ASSERT_EQ(settings.count, 3);
+  EXPECT_STREQ(settings.settings[0].id, "level");
+  EXPECT_STREQ(settings.settings[0].name, "AI level");
+  ASSERT_EQ(settings.settings[0].count, 3);
+  EXPECT_STREQ(settings.settings[0].values[1], "Normal");
+  EXPECT_EQ(settings.settings[0].defaultIndex, 2);
+  // Key order inside a setting is free: the default may come before its values.
+  EXPECT_STREQ(settings.settings[1].id, "sound_2");
+  EXPECT_EQ(settings.settings[1].defaultIndex, 1);
+  EXPECT_EQ(settings.settings[2].defaultIndex, 0) << "absent: the first value";
+  EXPECT_EQ(settings.indexOf("sound_2"), 1);
+  EXPECT_EQ(settings.indexOf("sound"), -1);
+  EXPECT_EQ(settings.settings[0].indexOf("Hard"), 2);
+  EXPECT_EQ(settings.settings[0].indexOf("hard"), -1);
+
+  // Each setting's value at an index, the default for one out of range.
+  const uint8_t chosen[GameCore::ManifestSettings::MAX_SETTINGS] = {1, 9, 1, 0};
+  const GameCore::SettingValues values = settings.valuesAt(chosen);
+  ASSERT_EQ(values.count, 3);
+  EXPECT_STREQ(values.entries[0].id, "level");
+  EXPECT_STREQ(values.entries[0].value, "Normal");
+  EXPECT_STREQ(values.entries[1].value, "Off");
+  EXPECT_STREQ(values.entries[2].value, "Large");
+
+  // A reused reader starts with no settings.
+  reader->begin();
+  const std::string plain = withExtra("");
+  reader->feed(plain.data(), plain.size());
+  ASSERT_EQ(reader->finish(m), ManifestError::None);
+  EXPECT_EQ(m.settingsCount, 0);
+  EXPECT_EQ(reader->settings().count, 0);
+}
+
+TEST(ManifestTest, SettingsLimitsHoldOnBothSides) {
+  const std::string four =
+      "[" + settingWith("a") + ", " + settingWith("b") + ", " + settingWith("c") + ", " + settingWith("d") + "]";
+  Manifest m;
+  ASSERT_EQ(parse(withExtra("\"settings\": " + four), m), ManifestError::None);
+  EXPECT_EQ(m.settingsCount, 4);
+  EXPECT_EQ(parseSettings(four.substr(0, four.size() - 1) + ", " + settingWith("e") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[]"), ManifestError::None);
+
+  // Values: 2 to 6.
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["1", "2"])") + "]"), ManifestError::None);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["1", "2", "3", "4", "5", "6"])") + "]"), ManifestError::None);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["1"])") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"([])") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["1", "2", "3", "4", "5", "6", "7"])") + "]"),
+            ManifestError::BadSettings);
+
+  // A value: 1 to 16 bytes.
+  const std::string v16(GameCore::ManifestSetting::MAX_VALUE_BYTES, 'v');
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["x", ")" + v16 + R"("])") + "]"), ManifestError::None);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["x", ")" + v16 + R"(v"])") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["x", ""])") + "]"), ManifestError::BadSettings);
+
+  // An id: 1 to 16 bytes of [a-z][a-z0-9_]*.
+  const std::string id16(GameCore::ManifestSetting::MAX_ID_BYTES, 'i');
+  EXPECT_EQ(parseSettings("[" + settingWith(id16) + "]"), ManifestError::None);
+  EXPECT_EQ(parseSettings("[" + settingWith(id16 + "i") + "]"), ManifestError::BadSettings);
+  for (const char* id : {"", "1a", "_a", "A", "a-b", "a b"}) {
+    EXPECT_EQ(parseSettings("[" + settingWith(id) + "]"), ManifestError::BadSettings) << id;
+  }
+
+  // A name: 1 to 24 bytes.
+  const std::string n24(GameCore::ManifestSetting::MAX_NAME_BYTES, 'n');
+  const auto named = [](const std::string& name) {
+    return "[" + setting(R"("id": "a", "name": ")" + name + R"(", "values": ["1", "2"])") + "]";
+  };
+  EXPECT_EQ(parseSettings(named(n24)), ManifestError::None);
+  EXPECT_EQ(parseSettings(named(n24 + "n")), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings(named("")), ManifestError::BadSettings);
+}
+
+TEST(ManifestTest, RejectsSettingsThatBreakTheirRules) {
+  // A duplicate id, or a duplicate value.
+  EXPECT_EQ(parseSettings("[" + settingWith("a") + ", " + settingWith("a") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + settingWith("a", R"(["x", "y", "x"])") + "]"), ManifestError::BadSettings);
+  // A default not in the values, before or after them.
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "name": "A", "values": ["x", "y"], "default": "z")") + "]"),
+            ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + setting(R"("default": "z", "id": "a", "name": "A", "values": ["x", "y"])") + "]"),
+            ManifestError::BadSettings);
+  // A missing id, name, or values.
+  EXPECT_EQ(parseSettings("[" + setting(R"("name": "A", "values": ["x", "y"])") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "values": ["x", "y"])") + "]"), ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "name": "A")") + "]"), ManifestError::BadSettings);
+  // An unknown key inside a setting, unlike one at the top level.
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "name": "A", "values": ["x", "y"], "note": "n")") + "]"),
+            ManifestError::BadSettings);
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "name": "A", "values": ["x", "y"], "x": {"y": 1})") + "]"),
+            ManifestError::BadSettings);
+  // A key the JSON parser drops for length is unknown too.
+  EXPECT_EQ(parseSettings("[" +
+                          setting(R"(")" + std::string(600, 'k') +
+                                  R"(": "v", "id": "a", "name": "A",)"
+                                  R"( "values": ["x", "y"])") +
+                          "]"),
+            ManifestError::BadSettings);
+  // A key twice in one setting.
+  EXPECT_EQ(parseSettings("[" + setting(R"("id": "a", "id": "b", "name": "A", "values": ["x", "y"])") + "]"),
+            ManifestError::DuplicateKey);
+  // Wrong shapes: settings not an array, a setting not an object, a field not a string, values not strings.
+  EXPECT_EQ(parseSettings("{}"), ManifestError::WrongType);
+  EXPECT_EQ(parseSettings(R"("level")"), ManifestError::WrongType);
+  for (const char* bad : {R"(["a"])", "[1]", "[null]", "[true]", "[[]]"}) {
+    EXPECT_EQ(parseSettings(bad), ManifestError::BadSettings) << bad;
+  }
+  for (const std::string& members : {std::string(R"("id": 1, "name": "A", "values": ["x", "y"])"),
+                                     std::string(R"("id": "a", "name": null, "values": ["x", "y"])"),
+                                     std::string(R"("id": "a", "name": "A", "values": "x")"),
+                                     std::string(R"("id": "a", "name": "A", "values": {"x": "y"})"),
+                                     std::string(R"("id": "a", "name": "A", "values": ["x", 2])"),
+                                     std::string(R"("id": "a", "name": "A", "values": ["x", ["y"]])"),
+                                     std::string(R"("id": "a", "name": "A", "values": ["x", "y"], "default": true)"),
+                                     std::string(R"("id": ["a"], "name": "A", "values": ["x", "y"])")}) {
+    EXPECT_EQ(parseSettings("[" + setting(members) + "]"), ManifestError::BadSettings) << members;
+  }
+  EXPECT_EQ(parse(withExtra(R"("settings": [], "settings": [])")), ManifestError::DuplicateKey);
+  EXPECT_STREQ(GameCore::describe(ManifestError::BadSettings), "invalid settings");
+}
+
+// The current mode (Design Notes): remembered if the host can start it, else default_mode if it can, else the first
+// startable of solo, pass, and nearby.
+TEST(ManifestTest, StartModeFallsBackRememberedThenDefaultThenTheFirstStartable) {
+  constexpr uint8_t SOLO = Manifest::MODE_SOLO;
+  constexpr uint8_t PASS = Manifest::MODE_PASS;
+  constexpr uint8_t NEARBY = Manifest::MODE_NEARBY;
+  Manifest m;
+  m.modes = SOLO | PASS | NEARBY;
+  EXPECT_EQ(m.startMode(0, SOLO | PASS), SOLO) << "no default, solo listed: solo";
+  EXPECT_EQ(m.startMode(PASS, SOLO | PASS), PASS) << "remembered wins";
+  EXPECT_EQ(m.startMode(NEARBY, SOLO | PASS), SOLO) << "remembered not startable here";
+  m.defaultMode = PASS;
+  EXPECT_EQ(m.startMode(0, SOLO | PASS), PASS) << "the default";
+  EXPECT_EQ(m.startMode(SOLO, SOLO | PASS), SOLO) << "remembered over the default";
+  EXPECT_EQ(m.startMode(0, SOLO), SOLO) << "a default the host cannot start";
+  EXPECT_EQ(m.startMode(0, PASS | NEARBY), PASS);
+  m.defaultMode = NEARBY;
+  EXPECT_EQ(m.startMode(0, PASS), PASS) << "pass-only on this host";
+  // A remembered byte that is not one mode bit is stale.
+  EXPECT_EQ(m.startMode(SOLO | PASS, SOLO | PASS), SOLO);
+  EXPECT_EQ(m.startMode(0x08, SOLO | PASS), SOLO);
+  EXPECT_EQ(m.startMode(0xFF, NEARBY), NEARBY);
+  EXPECT_EQ(m.startMode(SOLO, 0), 0) << "nothing startable";
+}
+
 // Every fixture game's manifest.json passes what GameRegistry requires to list a game,
 // and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
 // name, it passes Manifest::check against this host, and it offers solo (pass-hidden, the hidden hand-off, which

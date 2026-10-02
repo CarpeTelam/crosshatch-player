@@ -148,6 +148,21 @@ void ActivityManager::popActivity() {
   ++asks.popped;
 }
 
+void ActivityManager::popForResult(Activity& parent, Activity& child) {
+  calls.push_back("popForResult");
+  ActivityResult result = std::move(child.result);
+  for (auto it = pushedActivities.begin(); it != pushedActivities.end(); ++it) {
+    if (it->get() != &child) continue;
+    exitHolding(**it);
+    destroyHolding(*it);
+    pushedActivities.erase(it);
+    break;
+  }
+  ActivityResultHandler handler = std::move(parent.resultHandler);
+  parent.resultHandler = nullptr;
+  if (handler) handler(result);
+}
+
 void ActivityManager::exitHolding(Activity& activity) {
   RenderLock lock;
   activity.onExit();
