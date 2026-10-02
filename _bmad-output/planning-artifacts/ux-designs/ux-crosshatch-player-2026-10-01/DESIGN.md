@@ -3,7 +3,7 @@ name: crosshatch-player games
 description: The games area of the crosshatch-player e-reader firmware (launcher, title screen, Options, the match's runtime views) on 1-bit e-ink. FreeInkUI is the system; this file specifies only the games area's deltas.
 status: draft
 created: 2026-10-01
-updated: 2026-10-01
+updated: 2026-10-02
 sources:
   - _bmad-output/planning-artifacts/ux-designs/ux-crosshatch-player-2026-10-01/.memlog.md
   - docs/contributing/touch-and-ui.md
@@ -60,7 +60,12 @@ typography:
     fontFamily: Ubuntu
     fontWeight: '400'
     fontSize: 24px
-    note: '[ASSUMPTION] same as banner-text; not decided'
+    note: 'same as banner-text: UI_12_FONT_ID regular, centred ("Player N''s turn")'
+  button-label:
+    fontFamily: Ubuntu
+    fontWeight: '400'
+    fontSize: 24px
+    note: 'UI_12_FONT_ID regular, centred; the FreeInkUI option label ("I''m ready")'
 rounded:
   none: 0px
   sm: 6px
@@ -74,7 +79,7 @@ spacing:
   row-two-line: 74px
   row-icon: 86px
   option-row: 52px
-  splash-band: 360px
+  splash-band: 480px
   list-dialog-width: 360px
   view-width: 378px
   banner-height: 131px
@@ -107,8 +112,8 @@ components:
     selected: '{components.selection}'
   title-splash:
     band: '{spacing.splash-band}'
-    default: 'game icon at {spacing.icon-hero}, {colors.ink}, centred'
-    override: 'title.png, at most 480 x 360, centred, clipped'
+    default: 'game icon at {spacing.icon-hero}, {colors.ink}, centred in the band'
+    override: 'title.png, at most 480 x 480, centred, clipped'
   title-menu-row:
     base: '{components.list-row}'
   options-row:
@@ -137,17 +142,21 @@ components:
     text: '{typography.banner-text}'
   hand-off-screen:
     background: '{colors.paper}'
-    icon: 'eye-closed at {spacing.icon-hero}, {colors.ink}, centred'
-    text: '{typography.handoff-text}'
-  hand-off-text-box:
+    icon: 'the game''s icon at {spacing.icon-hero}, {colors.ink}, centred in the upper half'
+    text: '{typography.handoff-text}, under the icon'
+    button: '{components.ready-button}'
+    override: 'handoff.png, at most 480 x 800, centred, clipped; replaces the icon and the text, never the button'
+  ready-button:
     frame: '{spacing.frame} {colors.ink}'
     radius: '{rounded.md}'
     background: '{colors.paper}'
     width: '{spacing.view-width}'
-    text: '{typography.handoff-text}'
-  sleep-blank:
+    height: '{spacing.option-row}'
+    label: '{typography.button-label}'
+    place: 'centred on the screen (its middle at y = 400)'
+  forced-exit-blank:
     background: '{colors.paper}'
-    icon: 'eye-closed at {spacing.icon-hero}, {colors.ink}, centred'
+    content: 'none: no icon, no text'
   pause-menu:
     base: '{components.option-dialog}'
     gap-line: '{typography.dialog-message}, centred'
