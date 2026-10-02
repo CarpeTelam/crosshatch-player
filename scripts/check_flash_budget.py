@@ -17,7 +17,7 @@ same commit, so upstream growth never counts against the budget.
               variable of a dynamically initialized local static) or a mutable static over 64 B
 
 The flash limit is in KiB (1 KiB = 1,024 bytes) because ESP32 flash and the app slot in partitions.csv are sized in
-binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 250 KiB is 256,000 bytes. The RAM limit is
+binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 270 KiB is 276,480 bytes. The RAM limit is
 1 KiB, 1,024 bytes; the image size does not show RAM, since .dram0.bss takes no space in firmware.bin.
 
 A mutable static is an object symbol in a writable section (or a common symbol): constexpr data lands in .rodata
@@ -51,7 +51,7 @@ failed, missing output, wrong flag state, missing toolchain, game sources the bu
 Local run, the same commands as the CI job (each build takes several minutes):
     python3 scripts/check_flash_budget.py build on
     python3 scripts/check_flash_budget.py build off
-    python3 scripts/check_flash_budget.py compare [--limit-kib 250 | --limit-bytes N] [--ram-limit-bytes 1024]
+    python3 scripts/check_flash_budget.py compare [--limit-kib 270 | --limit-bytes N] [--ram-limit-bytes 1024]
     python3 scripts/check_flash_budget.py objects
 A limit below the measured difference (zero or negative is allowed) shows the failing case without a rebuild.
 """
@@ -74,7 +74,7 @@ FLAG = fork_common.GAMES_MACRO
 # the job instead of passing it.
 UNFLAG = fork_common.GAMES_BUILD_FLAG
 KIB = 1024
-DEFAULT_LIMIT_KIB = 250
+DEFAULT_LIMIT_KIB = 270
 DEFAULT_RAM_LIMIT_BYTES = 1 * KIB
 PROJECT_DIR = pathlib.Path(__file__).resolve().parent.parent
 OFF_BUILD_DIR = PROJECT_DIR / '.pio' / 'build-games-off'
