@@ -30,6 +30,9 @@ class StoreSlot;
 // count; the forms of peek and loadResume that take the game's manifest and the host's
 // caps accept one that game can start on that host, and the older forms a solo one only. The firmware
 // calls only the newer forms; the older ones stay for the host suites, so a new caller takes the newer.
+//
+// And of prefs.bin beside them: the game's remembered mode and settings (loadPrefs, savePrefs), which the title screen
+// reads when it opens and writes on the loop task, never the match or onExit().
 class GameSaveStore final : public GameCore::ISnapshotStore {
  public:
   static constexpr char STORE_MAGIC[] = "CHST";
@@ -134,6 +137,50 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // or the delete of a finished round's save. A try that left the old file in place is not counted. A caller that
   // must know whether the old file is gone compares it before and after.
   uint32_t resumeReplacements() const { return resumeReplaceCount; }
+
+  // ---- prefs.bin (AD-17, as amended 2026-10-02): a game's remembered choices ----
+
+  static constexpr char PREFS_MAGIC[] = "CHPF";
+  static constexpr uint8_t PREFS_FILE_VERSION = 1;
+  // The longest prefs.bin: magic, version, mode, count, then per setting an id and a value, each after its length.
+  static constexpr size_t PREFS_MAX_BYTES =
+      4 + 3 +
+      GameCore::SettingValues::MAX_SETTINGS *
+          (2 + GameCore::ManifestSetting::MAX_ID_BYTES + GameCore::ManifestSetting::MAX_VALUE_BYTES);
+
+  // What prefs.bin holds (docs/crosshatch/formats.md): the mode last started, as a GameCore::Manifest::Mode bit (0 for
+  // none), and each setting's chosen value by id, as the manifest spelled them when they were written.
+  struct Prefs {
+    uint8_t mode = 0;
+    GameCore::SettingValues settings;
+  };
+  // loadPrefs' answer. None: no file. Loaded: `out` holds it. Malformed: a file that was read and is not a prefs.bin
+  // this firmware reads (logged at LOG_INF). Unreadable: a file is there and would not open or read (logged at
+  // LOG_INF). Every answer but Loaded leaves `out` empty, and none is an error: the title screen falls back to the
+  // manifest's defaults (resolvePrefs), and the file stays until the next savePrefs replaces it.
+  enum class PrefsState : uint8_t { None, Loaded, Malformed, Unreadable };
+  // Loop task, never in render() or onExit(): reads /.games-data/<gameId>/prefs.bin (or a whole prefs.bin.tmp, when it
+  // is missing) straight into `out`, with no buffer of its own.
+  static PrefsState loadPrefs(const char* gameId, Prefs& out);
+  // Loop task, never in render() or onExit(): writes `prefs` as prefs.bin by way of prefs.bin.tmp and a rename, as
+  // saveResume writes resume.bin. False (logged) when it could not, or when `prefs` holds an entry no file can (an id
+  // or value empty or over its field, or more than MAX_SETTINGS); prefs.bin is then as it was.
+  static bool savePrefs(const char* gameId, const Prefs& prefs);
+
+  // The title screen's choices: the current mode (a Manifest::Mode bit; 0 when `hostModes` is empty) and, for each
+  // setting the manifest declares, the index of its chosen value.
+  struct Choices {
+    uint8_t mode = 0;
+    uint8_t valueIndex[GameCore::ManifestSettings::MAX_SETTINGS] = {};
+  };
+  // The choices `saved` makes for `game` on a host that can start `hostModes` (CheckResult::modes), value by value: the
+  // mode is game.startMode(saved.mode, hostModes); each declared setting takes the value saved under its id when the
+  // manifest still declares that value, else its default. A remembered choice that falls back is logged at LOG_DBG
+  // (a stale file is not an error). Pure but for the log.
+  static Choices resolvePrefs(const Prefs& saved, const GameCore::Manifest& game,
+                              const GameCore::ManifestSettings& settings, uint8_t hostModes);
+  // What prefs.bin should hold for `choices`: its mode and each declared setting's chosen value (valuesAt).
+  static Prefs prefsOf(const Choices& choices, const GameCore::ManifestSettings& settings);
 
  private:
   // The saved modes and seat counts a match may resume (defined in the .cpp).

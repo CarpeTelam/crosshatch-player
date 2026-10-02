@@ -36,6 +36,20 @@ static_assert(std::char_traits<char>::length(GamePaths::GAMES_DATA_DIR) + 1 + Ga
                   GamePaths::DATA_PATH_BYTES,
               "GamePaths::DATA_PATH_BYTES holds GAMES_DATA_DIR/<id>/resume.bin.tmp");
 
+static_assert(std::char_traits<char>::length(GamePaths::GAMES_DATA_DIR) + 1 + GameCore::Manifest::MAX_ID_BYTES +
+                      sizeof("/prefs.bin.tmp") <=
+                  GamePaths::DATA_PATH_BYTES,
+              "GamePaths::DATA_PATH_BYTES holds GAMES_DATA_DIR/<id>/prefs.bin.tmp");
+
+// prefs.bin's fixed part (docs/crosshatch/formats.md): the magic, the file version, the mode (a Manifest::Mode bit, 0
+// for none), and the count of settings that follow, each as an id and a value after a length byte.
+constexpr size_t PREFS_MAGIC_BYTES = 4;
+constexpr size_t PREFS_VERSION_AT = PREFS_MAGIC_BYTES;
+constexpr size_t PREFS_MODE_AT = PREFS_VERSION_AT + 1;
+constexpr size_t PREFS_COUNT_AT = PREFS_MODE_AT + 1;
+constexpr size_t PREFS_HEAD_BYTES = PREFS_COUNT_AT + 1;
+static_assert(GameSaveStore::PREFS_MAX_BYTES == 143, "prefs.bin is at most 143 bytes (formats.md)");
+
 // resume.bin's fixed part (docs/crosshatch/formats.md): the blob header, the package
 // hash, the mode (0 solo, 1 pass), the seat count n (1 for solo), and the ver as a u16,
 // little-endian. The mode bytes are the file's own, never GameCore::Mode's values.
@@ -559,6 +573,190 @@ bool GameSaveStore::flushResume(SnapshotMailbox& mailbox, const uint32_t nowMs) 
   resumeFailed = true;
   resumeFailedMs = nowMs;
   return false;
+}
+
+namespace {
+
+// Reads one length byte and that many bytes (1 to N - 1) into `field`, NUL-terminated; false (the file malformed or
+// unreadable, `readFailed` telling which) otherwise. `left` counts down the file's bytes.
+template <size_t N>
+bool readPrefsField(HalFile& file, char (&field)[N], size_t& left, bool& readFailed) {
+  uint8_t length = 0;
+  if (left < 1) return false;
+  if (!readExactly(file, &length, 1)) {
+    readFailed = true;
+    return false;
+  }
+  --left;
+  if (length == 0 || length >= N || length > left) return false;
+  if (!readExactly(file, reinterpret_cast<uint8_t*>(field), length)) {
+    readFailed = true;
+    return false;
+  }
+  field[length] = '\0';
+  left -= length;
+  return true;
+}
+
+// Why the prefs file at `path` is not one this firmware reads, or null with `out` filled; `readFailed` is set when it
+// would not open or read.
+const char* readPrefs(const char* path, GameSaveStore::Prefs& out, bool& readFailed) {
+  readFailed = false;
+  HalFile file;
+  if (!Storage.openFileForRead("GAME", path, file)) {
+    readFailed = true;
+    return "cannot open";
+  }
+  size_t left = file.fileSize();
+  if (left > GameSaveStore::PREFS_MAX_BYTES) {
+    file.close();
+    return "too large";
+  }
+  uint8_t head[PREFS_HEAD_BYTES] = {};
+  if (left < PREFS_HEAD_BYTES) {
+    file.close();
+    return "truncated";
+  }
+  if (!readExactly(file, head, PREFS_HEAD_BYTES)) {
+    file.close();
+    readFailed = true;
+    return "cannot read";
+  }
+  left -= PREFS_HEAD_BYTES;
+  if (std::memcmp(head, GameSaveStore::PREFS_MAGIC, PREFS_MAGIC_BYTES) != 0) {
+    file.close();
+    return "bad magic";
+  }
+  if (head[PREFS_VERSION_AT] != GameSaveStore::PREFS_FILE_VERSION) {
+    file.close();
+    return "unknown file version";
+  }
+  const uint8_t count = head[PREFS_COUNT_AT];
+  if (count > GameCore::SettingValues::MAX_SETTINGS) {
+    file.close();
+    return "too many settings";
+  }
+  for (uint8_t i = 0; i < count; ++i) {
+    GameCore::SettingValues::Entry& entry = out.settings.entries[i];
+    if (!readPrefsField(file, entry.id, left, readFailed) || !readPrefsField(file, entry.value, left, readFailed)) {
+      file.close();
+      out = GameSaveStore::Prefs{};
+      return readFailed ? "cannot read" : "malformed setting";
+    }
+  }
+  file.close();
+  if (left != 0) {
+    out = GameSaveStore::Prefs{};
+    return "trailing bytes";
+  }
+  out.mode = head[PREFS_MODE_AT];
+  out.settings.count = count;
+  return nullptr;
+}
+
+// Appends a length byte and `text` to `out` at `at`; false when `text` is empty or does not fit its field (N - 1).
+template <size_t N>
+bool writePrefsField(uint8_t* out, size_t& at, const char (&field)[N]) {
+  const void* end = std::memchr(field, '\0', N);
+  if (!end) return false;
+  const size_t length = static_cast<size_t>(static_cast<const char*>(end) - field);
+  if (length == 0) return false;
+  out[at++] = static_cast<uint8_t>(length);
+  std::memcpy(out + at, field, length);
+  at += length;
+  return true;
+}
+
+}  // namespace
+
+GameSaveStore::PrefsState GameSaveStore::loadPrefs(const char* gameId, Prefs& out) {
+  out = Prefs{};
+  char path[GamePaths::DATA_PATH_BYTES];
+  snprintf(path, sizeof(path), "%s/%s/prefs.bin", GamePaths::GAMES_DATA_DIR, gameId);
+  if (!Storage.exists(path)) {
+    // A write stopped between removing prefs.bin and the rename (see loadStore).
+    snprintf(path, sizeof(path), "%s/%s/prefs.bin.tmp", GamePaths::GAMES_DATA_DIR, gameId);
+    if (!Storage.exists(path)) return PrefsState::None;
+  }
+  bool readFailed = false;
+  if (const char* problem = readPrefs(path, out, readFailed)) {
+    // Not an error: the title screen falls back to the manifest's defaults, and the next write replaces the file.
+    LOG_INF("GAME", "%s: %s %s: %s; using the manifest's defaults", gameId, readFailed ? "could not read" : "ignored",
+            path, problem);
+    out = Prefs{};
+    return readFailed ? PrefsState::Unreadable : PrefsState::Malformed;
+  }
+  return PrefsState::Loaded;
+}
+
+bool GameSaveStore::savePrefs(const char* gameId, const Prefs& prefs) {
+  // On the heap, so this frame stays small beside its three paths (AGENTS.md's 256 B rule).
+  auto bytes = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[PREFS_MAX_BYTES]);
+  if (!bytes) {
+    LOG_ERR("GAME", "%s: OOM: %u bytes to write prefs.bin", gameId, static_cast<unsigned>(PREFS_MAX_BYTES));
+    return false;
+  }
+  uint8_t* out = bytes.get();
+  std::memcpy(out, PREFS_MAGIC, PREFS_MAGIC_BYTES);
+  out[PREFS_VERSION_AT] = PREFS_FILE_VERSION;
+  out[PREFS_MODE_AT] = prefs.mode;
+  out[PREFS_COUNT_AT] = prefs.settings.count;
+  size_t at = PREFS_HEAD_BYTES;
+  bool fits = prefs.settings.count <= GameCore::SettingValues::MAX_SETTINGS;
+  for (uint8_t i = 0; fits && i < prefs.settings.count; ++i) {
+    const GameCore::SettingValues::Entry& entry = prefs.settings.entries[i];
+    fits = writePrefsField(out, at, entry.id) && writePrefsField(out, at, entry.value);
+  }
+  if (!fits) {
+    LOG_ERR("GAME", "%s: refused prefs that no prefs.bin can hold", gameId);
+    return false;
+  }
+  char dir[GamePaths::DATA_PATH_BYTES];
+  char path[GamePaths::DATA_PATH_BYTES];
+  char tmp[GamePaths::DATA_PATH_BYTES];
+  snprintf(dir, sizeof(dir), "%s/%s", GamePaths::GAMES_DATA_DIR, gameId);
+  snprintf(path, sizeof(path), "%s/%s/prefs.bin", GamePaths::GAMES_DATA_DIR, gameId);
+  snprintf(tmp, sizeof(tmp), "%s/%s/prefs.bin.tmp", GamePaths::GAMES_DATA_DIR, gameId);
+  if (!replaceFile(gameId, dir, path, tmp, {out, PREFS_HEAD_BYTES}, {out + PREFS_HEAD_BYTES, at - PREFS_HEAD_BYTES})) {
+    return false;
+  }
+  LOG_DBG("GAME", "%s: saved prefs.bin (%u bytes)", gameId, static_cast<unsigned>(at));
+  return true;
+}
+
+GameSaveStore::Choices GameSaveStore::resolvePrefs(const Prefs& saved, const GameCore::Manifest& game,
+                                                   const GameCore::ManifestSettings& settings,
+                                                   const uint8_t hostModes) {
+  Choices choices;
+  choices.mode = game.startMode(saved.mode, hostModes);
+  if (saved.mode != 0 && choices.mode != saved.mode) {
+    LOG_DBG("GAME", "%s: the remembered mode 0x%x cannot start here; mode 0x%x", game.id,
+            static_cast<unsigned>(saved.mode), static_cast<unsigned>(choices.mode));
+  }
+  for (uint8_t i = 0; i < settings.count && i < GameCore::ManifestSettings::MAX_SETTINGS; ++i) {
+    const GameCore::ManifestSetting& setting = settings.settings[i];
+    choices.valueIndex[i] = setting.defaultIndex;
+    for (uint8_t j = 0; j < saved.settings.count && j < GameCore::SettingValues::MAX_SETTINGS; ++j) {
+      const GameCore::SettingValues::Entry& entry = saved.settings.entries[j];
+      if (std::strcmp(entry.id, setting.id) != 0) continue;
+      const int index = setting.indexOf(entry.value);
+      if (index >= 0) {
+        choices.valueIndex[i] = static_cast<uint8_t>(index);
+      } else {
+        LOG_DBG("GAME", "%s: the remembered %s \"%s\" is not one of its values; the default", game.id, setting.id,
+                entry.value);
+      }
+      break;
+    }
+  }
+  return choices;
+}
+
+GameSaveStore::Prefs GameSaveStore::prefsOf(const Choices& choices, const GameCore::ManifestSettings& settings) {
+  Prefs prefs;
+  prefs.mode = choices.mode;
+  prefs.settings = settings.valuesAt(choices.valueIndex);
+  return prefs;
 }
 
 #endif  // FREEINK_CAP_GAMES

@@ -418,9 +418,15 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
   const GameRegistry::Entry& game = self->listing.entries[index];
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
-  // A game this host cannot start gives the reason under its name, not a dimmed row: a disabled state would hide the
-  // selection, which can rest on this row.
-  if (!game.check.ok()) item.subtitle = unavailableText(game.check);
+  // Under the name, the modes this host can start ("Solo · Pass and play"), read from the manifest's check and never
+  // from a save; a game this host cannot start gives the reason instead, not a dimmed row: a disabled state would hide
+  // the selection, which can rest on this row. The modes line is written into the one scratch, as the library icon.
+  if (game.check.ok()) {
+    GameModeActivity::writeModesLine(game.check.modes, self->modesLine, sizeof(self->modesLine));
+    item.subtitle = self->modesLine;
+  } else {
+    item.subtitle = unavailableText(game.check);
+  }
 
   // The package's icon is read already; a library icon is decoded into the one scratch, which the list draws from
   // (measure and draw share one provider call) before it asks for the next row.
@@ -545,8 +551,8 @@ void GamesLauncherActivity::activateIndex(const int row) {
   }
   app.clearTapFlash();                           // the row leaves this screen
   lastOpened = fingerprintOf(game.manifest.id);  // the next launcher opens on this game's page
-  // The row opens the game's title screen (GameModeActivity), which offers its save and its modes. It is pushed, so its
-  // Back returns to this list as it is; the match replaces it, and with it the stack.
+  // The row opens the game's title screen (GameModeActivity), which offers its save, New game, and Options. It is
+  // pushed, so its Back returns to this list as it is; the match replaces it, and with it the stack.
   auto title = makeUniqueNoThrow<GameModeActivity>(renderer, mappedInput, game);
   if (!title) {
     LOG_ERR("GAME", "OOM: %u byte title screen", static_cast<unsigned>(sizeof(GameModeActivity)));

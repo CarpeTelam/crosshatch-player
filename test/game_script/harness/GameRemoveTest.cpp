@@ -18,9 +18,10 @@ using GamePackageInstaller::Error;
 
 namespace {
 
-// What a game's saved data holds: the two files the runtime writes, and a third the runtime does not know about,
-// so "keeps every file" is checked against the folder and not against a list of names.
-const char* const DATA_FILES[] = {"store.bin", "resume.bin", "notes.dat"};
+// What a game's saved data holds: the three files the runtime writes (prefs.bin, the remembered mode and settings,
+// since AD-17's amendment of 2026-10-02), and a fourth the runtime does not know about, so "keeps every file" is
+// checked against the folder and not against a list of names.
+const char* const DATA_FILES[] = {"store.bin", "resume.bin", "prefs.bin", "notes.dat"};
 
 class RemoveTest : public ::testing::Test {
  protected:

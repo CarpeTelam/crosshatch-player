@@ -416,6 +416,64 @@ TEST_F(InstallerTest, ConvertsAnImageToItsOwnSizeInTheLoadersLayout) {
   }
 }
 
+// The reserved pages (AD-15, as amended 2026-10-02): title.png at most 480 x 480 and handoff.png at most 480 x 800,
+// converted at their own size like any image; one a pixel over either side is BadImage, refused before converting.
+TEST_F(InstallerTest, TheReservedPagesInstallAtTheirLimitsBesideTheImages) {
+  drop("g.chgame", gamePackage("g", {{"title.png", bilevelPng(480, 480, true)},
+                                     {"handoff.png", bilevelPng(480, 800, false)},
+                                     {"badge.png", bilevelPng(20, 10, false)}}));
+  ASSERT_EQ(install().installed, 1);
+  const GameCore::ImageHeader title = headerOf("/.games/g/title.bmp");
+  EXPECT_EQ(title.width, 480u);
+  EXPECT_EQ(title.height, 480u);
+  const GameCore::ImageHeader handoff = headerOf("/.games/g/handoff.bmp");
+  EXPECT_EQ(handoff.width, 480u);
+  EXPECT_EQ(handoff.height, 800u);
+  EXPECT_EQ(fakesd::bytesOf("/.games/g/title.bmp").size(), 28862u);
+  EXPECT_EQ(fakesd::bytesOf("/.games/g/handoff.bmp").size(), 48062u);
+  EXPECT_FALSE(exists("/.games/g/title.png"));
+  EXPECT_TRUE(exists("/.games/g/badge.bmp"));
+  // Smaller pages are fine too: they are drawn centred.
+  drop("h.chgame",
+       gamePackage("h", {{"title.png", bilevelPng(100, 50, false)}, {"handoff.png", bilevelPng(1, 1, false)}}));
+  EXPECT_EQ(install().installed, 1);
+}
+
+TEST_F(InstallerTest, AReservedPageOverItsLimitEndsBad) {
+  const std::pair<const char*, std::pair<int, int>> cases[] = {
+      {"title.png", {481, 480}},
+      {"title.png", {480, 481}},
+      {"handoff.png", {481, 800}},
+      {"handoff.png", {480, 801}},
+  };
+  for (const auto& c : cases) {
+    SetUp();
+    const Bytes package = gamePackage("g", {{c.first, bilevelPng(c.second.first, c.second.second, true)}});
+    drop("g.chgame", package);
+    SCOPED_TRACE(std::string(c.first) + " " + std::to_string(c.second.first) + "x" + std::to_string(c.second.second));
+    expectRejected("g.chgame", package, Error::BadImage);
+    EXPECT_FALSE(HasFatalFailure());
+    EXPECT_TRUE(fakelog::any("it may be at most"));
+    EXPECT_FALSE(fakelog::any("Cannot convert"));
+  }
+}
+
+// Both pages count toward the converted-image budget, unlike icon.png: with two 480 x 480 game images (28,862 B
+// each) they come to 3 x 28,862 + 48,062 = 134,648 B, over the 131,072 B, while the same two images alone fit.
+TEST_F(InstallerTest, TheReservedPagesCountTowardTheImagesBudget) {
+  const Bytes over = gamePackage("o", {{"title.png", bilevelPng(480, 480, true)},
+                                       {"handoff.png", bilevelPng(480, 800, true)},
+                                       {"a.png", bilevelPng(480, 480, true)},
+                                       {"b.png", bilevelPng(480, 480, true)}});
+  drop("o.chgame", over);
+  expectRejected("o.chgame", over, Error::ImagesTooBig);
+  ASSERT_FALSE(HasFatalFailure());
+  drop("k.chgame", gamePackage("k", {{"a.png", bilevelPng(480, 480, true)},
+                                     {"b.png", bilevelPng(480, 480, true)},
+                                     {"icon.png", bilevelPng(64, 64, false)}}));
+  EXPECT_EQ(install().installed, 1);
+}
+
 TEST_F(InstallerTest, APngTheConverterRefusesEndsBad) {
   const std::pair<const char*, Bytes> cases[] = {
       {"not a png", toBytes("GIF89a, and enough bytes after it to fill a whole PNG header")},
@@ -650,6 +708,7 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStart) {
       {"icons", Manifest::MODE_SOLO},
       {"limits", Manifest::MODE_SOLO},
       {"loop", Manifest::MODE_SOLO},
+      {"pass-art", static_cast<uint8_t>(Manifest::MODE_SOLO | Manifest::MODE_PASS)},
       {"pass-hidden", Manifest::MODE_PASS},
       {"pass-open", static_cast<uint8_t>(Manifest::MODE_SOLO | Manifest::MODE_PASS)},
       {"slow-restart", Manifest::MODE_SOLO},

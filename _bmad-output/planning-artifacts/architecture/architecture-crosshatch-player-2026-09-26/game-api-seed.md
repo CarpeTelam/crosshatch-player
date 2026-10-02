@@ -3,7 +3,7 @@ title: 'crosshatch game API, level 1 (seed)'
 status: draft
 api: 1
 created: '2026-09-26'
-updated: '2026-09-28'
+updated: '2026-10-02'
 spine: 'ARCHITECTURE-SPINE.md'
 note: 'Seed for docs/crosshatch/game-api.md (with a LuaLS ch.d.lua stub); where this and the spine disagree, the spine wins. Drop this front matter when the doc moves to the starter repo.'
 ---
@@ -27,8 +27,10 @@ A game is one `.chgame` file: a zip archive with these files at its root and not
 | `<name>.lua` | no | Extra modules, named with lowercase letters, digits, and `_`. Load one with `require("name")`. |
 | `icon.png` | no | The launcher icon; must be non-interlaced. It is converted to 64×64 black and white. To use a library icon instead, set `icon` in the manifest. |
 | `<name>.png` | no | Your own images for `ch.gfx.image`, named with lowercase letters, digits, and `_`. Non-interlaced; converted to black and white at install. |
+| `title.png` | no | *(Preview; amended 2026-10-02.)* The game's splash on its title screen, at most 480×480, drawn centred and clipped in the 480×480 area under the header. Without one (or if it cannot be read), the game's icon is drawn there at 128 px. Only the device draws it: `ch.gfx.image("title")` does not find it. Non-interlaced; converted to black and white at install. |
+| `handoff.png` | no | *(Preview; amended 2026-10-02.)* The page shown between players in a `hidden` pass-and-play game (section 3), at most 480×800, drawn centred and clipped on the screen, with the device's own "I'm ready" button over its middle. One image for every player and match, so it cannot say whose turn it is; without one (or if it cannot be read), the device shows the game's icon and "Player N's turn". Only the device draws it: `ch.gfx.image("handoff")` does not find it. Non-interlaced; converted to black and white at install. |
 
-Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images. Lua files must be source text; the device refuses precompiled bytecode. Images must be `.png`: a package with a `.bmp`, or any other file not in the table above, is refused. *(Amended 2026-09-28.)*
+Limits: the whole package at most 256 KB, at most 32 files, each file at most 128 KB unpacked, and at most 128 KB of converted images (`title.png` and `handoff.png` count; `icon.png` does not). Lua files must be source text; the device refuses precompiled bytecode. Images must be `.png`: a package with a `.bmp`, or any other file not in the table above, is refused. *(Amended 2026-09-28.)*
 
 `manifest.json` (this is the manifest for the section 7 example):
 
@@ -56,6 +58,8 @@ Limits: the whole package at most 256 KB, at most 32 files, each file at most 12
 | `hidden` | Optional, default `false`. Set `true` if players must not see each other's screens (Battleship, Hangman); in pass-and-play, the runtime then adds a hand-off screen between turns (section 3). |
 | `icon` | Optional. The name of a library icon (section 5) to use as the game's icon when the package has no `icon.png`: lowercase letters and digits, starting with a letter, with single `-` between words (`dice-six`), at most 32 characters. A name the library doesn't have makes the package invalid. *(Amended 2026-09-28.)* |
 | `icon_weight` | Optional, default `"regular"`. The weight `icon` is drawn in: `"regular"` (outlines) or `"fill"` (solid), as for `ch.gfx.icon`. *(Amended 2026-09-28.)* |
+| `default_mode` | Optional. One of `modes`: the mode the title screen's New game starts until the player picks another in Options; after that, the mode the player last started wins. Absent, it is `solo` when `modes` lists it, else the first of `pass` and `nearby` the device can start. A value not in `modes` makes the package invalid; one the device cannot start falls back the same way. *(Preview; amended 2026-10-02.)* |
+| `settings` | Optional. Up to 4 choices the player makes on the game's Options screen before a New game, each an object with exactly these keys: `id` (lowercase letters, digits, and `_`, starting with a letter, at most 16 characters, unique), `name` (shown on Options, 1 to 24 bytes), `values` (2 to 6 unique strings of 1 to 16 bytes, shown as written; a tap moves to the next), and `default` (optional, one of `values`; absent, the first). Any other key in a setting, or a broken rule, makes the package invalid. The device remembers the player's choices per game; a choice the manifest no longer offers falls back to its default. The chosen values reach `setup` as `ctx.settings` (section 2). *(Preview; amended 2026-10-02.)* |
 
 Unknown keys are ignored.
 
@@ -93,7 +97,7 @@ return game
 
 | Name | Contents |
 | --- | --- |
-| `ctx` (in `setup`) | `ctx.seats` (number of players in this match), `ctx.mode` (`"solo"`, `"pass"`, or `"nearby"`) |
+| `ctx` (in `setup`) | `ctx.seats` (number of players in this match), `ctx.mode` (`"solo"`, `"pass"`, or `"nearby"`), `ctx.settings` (a table from each setting's `id` in the manifest to the value the player chose, a string; every declared setting is present, and a game with no `settings` gets an empty table). Play again passes the same table as the match's first `setup`, and a resumed match runs no `setup`, so keep in `state` whatever you derive from them. A save does not record the settings: a Play again after a resumed match gets the choices current on the title screen when Continue was tapped, which may differ from the saved round's. *(`ctx.settings`: preview; amended 2026-10-02.)* |
 | `seat` (in `draw`, `input`) | The seat this screen belongs to: `1` in solo; this device's seat in Play Nearby; in pass-and-play, the seat whose turn it is (with the hidden-game and game-over exceptions in section 3). Seat `0` has its own `ui` table. |
 | `ev` (in `input`) | `{kind = "tap", x = …, y = …}`, `{kind = "long_press", x = …, y = …}`, `{kind = "swipe", x = …, y = …, dir = …}` (`x`, `y` is where the swipe started; `dir` is `"left"`, `"right"`, `"up"`, or `"down"`), `{kind = "rejected", reason = "…"}`, `{kind = "over"}`, or `{kind = "timer"}` |
 

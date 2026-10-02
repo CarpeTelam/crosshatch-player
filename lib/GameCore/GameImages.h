@@ -20,6 +20,19 @@ inline constexpr size_t IMAGE_HEADER_BYTES = 62;
 // The longest image name, without ".bmp".
 inline constexpr size_t IMAGE_NAME_BYTES = 32;
 
+// The reserved images (AD-15, as amended 2026-10-02), which only the runtime draws and ch.gfx.image
+// never names: icon.bmp (the launcher's), title.bmp (the title screen's splash), and handoff.bmp (the
+// hidden hand-off page). The two pages count toward IMAGES_BYTES and MAX_IMAGES at install; icon.bmp
+// does not. The largest title.png and handoff.png a package may ship, in pixels:
+inline constexpr uint32_t TITLE_IMAGE_WIDTH = 480;
+inline constexpr uint32_t TITLE_IMAGE_HEIGHT = 480;
+inline constexpr uint32_t HANDOFF_IMAGE_WIDTH = 480;
+inline constexpr uint32_t HANDOFF_IMAGE_HEIGHT = 800;
+
+// True when the `length` bytes at `stem` (an image name without ".bmp", any letter case) name a
+// reserved image: "icon", "title", or "handoff".
+bool isReservedImage(const char* stem, size_t length);
+
 // checkImageHeader's verdict, in the order it checks (ImageBudget adds TooMany).
 enum class ImageCheck : uint8_t {
   Ok,
@@ -68,7 +81,8 @@ struct ImageBudget {
 };
 
 // Writes the image name of `fileName` ("badge" for "badge.bmp", `length` bytes, no
-// NUL needed) when it matches [a-z0-9_]{1,32}.bmp and is not icon.bmp; false otherwise.
+// NUL needed) when it matches [a-z0-9_]{1,32}.bmp and is not a reserved image
+// (isReservedImage); false otherwise.
 bool imageNameOf(const char* fileName, size_t length, char (&name)[IMAGE_NAME_BYTES + 1]);
 
 // True for a name ending in ".bmp" in any case, which a player means as an image.

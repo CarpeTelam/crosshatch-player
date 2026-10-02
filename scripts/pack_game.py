@@ -12,13 +12,16 @@ release workflow reads (`fork_release.py` `pack_one`). This is the only Python r
 decode: a PNG is checked through its IHDR and then chunk by chunk (every chunk's length and CRC, an IEND, and image
 data that inflates to exactly the bytes its IHDR's size, colour type, and bit depth call for; the pixels are left to the
 installer's converter), `icon.png` must be square and of a side the converter scales to exactly 64
-(`icon_scaled_side`; 41 is scaled to 63 and would install as `.bad`), the `.lua` members' bytes together stay within
+(`icon_scaled_side`; 41 is scaled to 63 and would install as `.bad`), `title.png` and `handoff.png` fit their pages
+(`PAGE_LIMITS`, 480 x 480 and 480 x 800), the `.lua` members' bytes together stay within
 `GameCore::LUA_SOURCES_BYTES`, a Lua file is checked only for a leading binary-chunk signature, and a manifest nests no
 deeper than the device's JSON parser reads (`MAX_NESTING`, 32). The `icon` grammar and the
 `icon_weight` values are R9's (the spine's AD-15 amendment) and `Manifest.cpp`'s `validIcon` and `parseIconWeight` apply
 the same rules: `ICON_NAME` and `MAX_ICON_BYTES` here, `test_icon_grammar` in the sidecar test, and the C++ table in
-`ManifestTest`. The name check against `assets/game-icons/names.txt` has no C++ twin in `GameCore`, which cannot see the
-library: the installer checks it through `GameIcons::find`.
+`ManifestTest`. `default_mode` and `settings` follow the spine's AD-15 amendment of 2026-10-02 as `Manifest::parse` does
+(`settings_problems`; `SETTING_ID` is `validSettingId`'s rule, and an unknown key inside a setting is refused). The name
+check against `assets/game-icons/names.txt` has no C++ twin in `GameCore`, which cannot see the library: the installer
+checks it through `GameIcons::find`.
 
 Exit codes: 0 packed. 1 the package is invalid: each problem is printed as `error: ...` on stderr, nothing is
 written, and a package an earlier run left at `<out_dir>/<id>.chgame` is deleted. 2 the packer could not run: `<dir>`
@@ -67,6 +70,9 @@ IMAGE_HEADER_BYTES = 62  # the converter's 1-bit BMP header (GameCore::IMAGE_HEA
 MAX_IMAGE_WIDTH = 2048  # PngToBmpConverter's safety limits
 MAX_IMAGE_HEIGHT = 3072
 ICON_PIXELS = 64  # GameCore::ICON_PIXELS: the side the installer scales icon.png to, and requires of the result
+# The reserved pages (GameCore::TITLE_IMAGE_* and HANDOFF_IMAGE_*): the largest title.png and handoff.png, which the
+# runtime alone draws and which count toward the images budget, unlike icon.png.
+PAGE_LIMITS = {'title.png': (480, 480), 'handoff.png': (480, 800)}
 
 # Manifest::parse's text caps.
 MAX_NAME_BYTES = 64
@@ -75,11 +81,22 @@ MAX_ICON_BYTES = 32
 MAX_MANIFEST_INT = 999_999_999
 MODES = ('solo', 'pass', 'nearby')
 ICON_WEIGHTS = ('regular', 'fill')
-KNOWN_KEYS = ('id', 'name', 'version', 'api', 'seats', 'modes', 'hidden', 'icon', 'icon_weight')
+KNOWN_KEYS = ('id', 'name', 'version', 'api', 'seats', 'modes', 'hidden', 'icon', 'icon_weight', 'default_mode',
+              'settings')
 REQUIRED_KEYS = ('id', 'name', 'version', 'api', 'seats', 'modes')
+# A setting's rules (Manifest.h's ManifestSetting and Manifest::MAX_SETTINGS); every key of a settings object is one of
+# SETTING_KEYS, and any other makes the package invalid, unlike an unknown top-level key.
+MAX_SETTINGS = 4
+MAX_SETTING_ID_BYTES = 16
+MAX_SETTING_NAME_BYTES = 24
+MAX_SETTING_VALUE_BYTES = 16
+MIN_SETTING_VALUES = 2
+MAX_SETTING_VALUES = 6
+SETTING_KEYS = ('id', 'name', 'values', 'default')
 
 GAME_ID = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
 ICON_NAME = re.compile(r'[a-z][a-z0-9]*(-[a-z0-9]+)*')
+SETTING_ID = re.compile(r'[a-z][a-z0-9_]{0,15}')
 LUA_MEMBER = re.compile(rf'[a-z0-9_]{{1,{MAX_MEMBER_NAME_CHARS}}}\.lua')
 PNG_MEMBER = re.compile(rf'[a-z0-9_]{{1,{MAX_MEMBER_NAME_CHARS}}}\.png')
 # A \u escape: an odd run of backslashes, then u. The device's StreamingJsonParser keeps `\uXXXX` as six literal
@@ -266,7 +283,69 @@ def read_manifest(data, dir_name, api_range, load_icons):
                 bad(f'icon {value!r} is not in the game icon library{hint}')
     if 'icon_weight' in manifest and manifest['icon_weight'] not in ICON_WEIGHTS:
         bad(f'icon_weight must be {" or ".join(repr(w) for w in ICON_WEIGHTS)}')
+    if 'default_mode' in manifest:
+        value = manifest['default_mode']
+        if not isinstance(value, str) or value not in MODES:
+            bad(f'default_mode must be one of {", ".join(MODES)}')
+        elif isinstance(modes, list) and value not in modes:
+            bad(f'default_mode {value!r} is not one of the manifest\'s modes')
+    if 'settings' in manifest:
+        for problem in settings_problems(manifest['settings']):
+            bad(problem)
     return manifest, problems
+
+
+def settings_problems(settings):
+    """Why a manifest's `settings` value breaks Manifest::parse's rules: an array of at most MAX_SETTINGS objects, each
+    with exactly the keys id, name, values, and an optional default; a unique id matching SETTING_ID; a name of 1 to
+    MAX_SETTING_NAME_BYTES bytes; 2 to 6 unique values of 1 to MAX_SETTING_VALUE_BYTES bytes; a default among them."""
+    if not isinstance(settings, list):
+        return ['settings must be an array of objects']
+    problems = []
+    if len(settings) > MAX_SETTINGS:
+        problems.append(f'settings holds {len(settings)} settings; at most {MAX_SETTINGS}')
+    ids = set()
+    for number, setting in enumerate(settings, 1):
+        where = f'settings[{number}]'
+        if not isinstance(setting, _Object):
+            problems.append(f'{where} must be an object with id, name, values, and default')
+            continue
+        for key in setting.duplicates:
+            problems.append(f'{where}: duplicate key {key!r}')
+        for key in setting:
+            if key not in SETTING_KEYS:
+                problems.append(f'{where}: unknown key {key!r}; a setting has only {", ".join(SETTING_KEYS)}')
+        for key in ('id', 'name', 'values'):
+            if key not in setting:
+                problems.append(f'{where}: missing key {key!r}')
+        if 'id' in setting:
+            value = setting['id']
+            if not isinstance(value, str) or not SETTING_ID.fullmatch(value):
+                problems.append(f'{where}: id must match {SETTING_ID.pattern}')
+            elif value in ids:
+                problems.append(f'{where}: id {value!r} is used by another setting')
+            else:
+                ids.add(value)
+        if 'name' in setting and (not is_text(setting['name'], MAX_SETTING_NAME_BYTES) or not setting['name']):
+            problems.append(f'{where}: name must be 1 to {MAX_SETTING_NAME_BYTES} bytes of UTF-8 text')
+        values = setting.get('values')
+        if 'values' in setting:
+            if not isinstance(values, list) or not MIN_SETTING_VALUES <= len(values) <= MAX_SETTING_VALUES:
+                problems.append(f'{where}: values must be an array of {MIN_SETTING_VALUES} to {MAX_SETTING_VALUES} '
+                                'strings')
+                values = None
+            elif any(not is_text(value, MAX_SETTING_VALUE_BYTES) or not value for value in values):
+                problems.append(f'{where}: each value must be 1 to {MAX_SETTING_VALUE_BYTES} bytes of UTF-8 text')
+                values = None
+            elif len(set(values)) != len(values):
+                problems.append(f'{where}: values must be unique')
+        if 'default' in setting:
+            value = setting['default']
+            if not isinstance(value, str):
+                problems.append(f'{where}: default must be one of its values')
+            elif values is not None and isinstance(values, list) and value not in values:
+                problems.append(f'{where}: default {value!r} is not one of its values')
+    return problems
 
 
 def load_icon_names(root=ROOT):
@@ -500,6 +579,11 @@ def check_members(members, dir_name, api_range, load_icons):
                                 f'{scaled}x{scaled}, not {ICON_PIXELS}x{ICON_PIXELS}; use a side that scales to '
                                 f'exactly {ICON_PIXELS}, such as {hint}')
         else:
+            if name in PAGE_LIMITS:
+                # The runtime draws title.png and handoff.png centred in their page; a larger one is refused.
+                most = PAGE_LIMITS[name]
+                if size[0] > most[0] or size[1] > most[1]:
+                    problems.append(f'{name}: is {size[0]}x{size[1]}; it may be at most {most[0]}x{most[1]}')
             sizes.append(size)
     problems += check_images(sizes)
     return problems

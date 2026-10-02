@@ -46,16 +46,32 @@ struct DrawnText {
 
 class RecordingTarget final : public freeink::ui::DrawTarget {
  public:
-  explicit RecordingTarget(const GfxRenderer& renderer) : renderer(renderer) { newest() = this; }
+  explicit RecordingTarget(const GfxRenderer& renderer) : renderer(renderer) {
+    live().push_back(this);
+    newest() = this;
+  }
   ~RecordingTarget() override {
-    if (newest() == this) newest() = nullptr;
+    std::vector<RecordingTarget*>& all = live();
+    for (auto it = all.begin(); it != all.end(); ++it) {
+      if (*it != this) continue;
+      all.erase(it);
+      break;
+    }
+    // As on the device, where a screen pushed for a result goes and the screen under it draws again on its own target
+    // (ActivityManager's Pop): the newest one left alive takes its place, or none.
+    if (newest() == this) newest() = all.empty() ? nullptr : all.back();
   }
 
-  // The target of the UiAppHost constructed last, still alive: a screen's host is a private
-  // base, so a test reads what its screen drew through this.
+  // The target of the UiAppHost constructed last, still alive (or, once it is gone, the last constructed of those
+  // left): a screen's host is a private base, so a test reads what its screen drew through this.
   static RecordingTarget*& newest() {
     static RecordingTarget* target = nullptr;
     return target;
+  }
+  // Every target alive, in the order they were constructed.
+  static std::vector<RecordingTarget*>& live() {
+    static std::vector<RecordingTarget*> targets;
+    return targets;
   }
 
   freeink::ui::DeviceContext deviceContext() const {

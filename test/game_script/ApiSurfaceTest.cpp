@@ -423,6 +423,11 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"manifest_name_bytes", GameCore::Manifest::MAX_NAME_BYTES},
       {"manifest_version_bytes", GameCore::Manifest::MAX_VERSION_BYTES},
       {"manifest_icon_bytes", GameCore::Manifest::MAX_ICON_BYTES},
+      {"settings_count", GameCore::Manifest::MAX_SETTINGS},
+      {"setting_values_count", GameCore::ManifestSetting::MAX_VALUES},
+      {"setting_id_bytes", GameCore::ManifestSetting::MAX_ID_BYTES},
+      {"setting_name_bytes", GameCore::ManifestSetting::MAX_NAME_BYTES},
+      {"setting_value_bytes", GameCore::ManifestSetting::MAX_VALUE_BYTES},
       {"state_bytes", GameCore::SNAPSHOT_BYTES},
       {"move_bytes", GameCore::MOVE_BYTES},
       {"reject_reason_bytes", GameCore::REJECT_REASON_BYTES},
@@ -448,6 +453,10 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"member_stem_bytes", GameCore::MEMBER_STEM_BYTES},
       {"image_width_pixels", GameCore::IMAGE_MAX_WIDTH},
       {"image_height_pixels", GameCore::IMAGE_MAX_HEIGHT},
+      {"title_image_width_pixels", GameCore::TITLE_IMAGE_WIDTH},
+      {"title_image_height_pixels", GameCore::TITLE_IMAGE_HEIGHT},
+      {"handoff_image_width_pixels", GameCore::HANDOFF_IMAGE_WIDTH},
+      {"handoff_image_height_pixels", GameCore::HANDOFF_IMAGE_HEIGHT},
       // lib/lua/library.json's defines, as the Lua build (device and host) compiles them.
       {"c_stack_levels_count", LUA_BUILD_LUAI_MAXCCALLS},
       {"pattern_depth_count", LUA_BUILD_MAXCCALLS},
@@ -528,8 +537,9 @@ TEST_F(ApiSurfaceTest, DrawRulesMatchTheBlits) {
 }
 
 // The name entry's pattern is the image loader's rule: every name made of one
-// byte, and of lengths 0, 1, IMAGE_NAME_BYTES, and one past it, and "icon"
-// (icon.bmp is the launcher's), matches the pattern exactly when imageNameOf takes
+// byte, and of lengths 0, 1, IMAGE_NAME_BYTES, and one past it, and the reserved
+// names "icon" (icon.bmp is the launcher's), "title", and "handoff" (the runtime's
+// pages) and names beside them, matches the pattern exactly when imageNameOf takes
 // "<name>.bmp".
 TEST_F(ApiSurfaceTest, ImageNameMatchesTheLoader) {
   std::map<std::string, std::string> patterns;  // what -> pattern
@@ -539,7 +549,7 @@ TEST_F(ApiSurfaceTest, ImageNameMatchesTheLoader) {
   ASSERT_TRUE(patterns.count("image"));
   const std::regex pattern(patterns["image"]);
 
-  std::vector<std::string> names = {"", "icon"};
+  std::vector<std::string> names = {"", "icon", "title", "handoff", "titles", "handoff_2", "a_title", "icon_1"};
   for (int byte = 0; byte <= 0xFF; ++byte) {
     const char c = static_cast<char>(byte);
     for (const size_t length : {size_t{1}, GameCore::IMAGE_NAME_BYTES, GameCore::IMAGE_NAME_BYTES + 1}) {

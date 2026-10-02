@@ -109,6 +109,12 @@ class ActivityManager {
 
   // The manager's side of an activity's exit and destruction, RenderLock held.
   void exitHolding(Activity& activity);
+  // Stands in for the real manager's Pop of a screen pushed with startActivityForResult (ActivityManager::loop, once
+  // the screen has called finish()): `child`, one pushActivity gave (it leaves pushedActivities), exits and is
+  // destroyed with RenderLock held, as exitActivity does; then `parent`'s result handler is taken from it and run with
+  // the child's result and no lock held, as the real loop runs it after unlocking. Counted in neither `asks.popped`
+  // (finish() counted the ask) nor `asks.updates` (the real loop's requestUpdate after a handler is not recorded).
+  void popForResult(Activity& parent, Activity& child);
   template <typename T>
   void destroyHolding(std::unique_ptr<T>& activity) {
     RenderLock lock;

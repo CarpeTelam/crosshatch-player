@@ -255,6 +255,48 @@ snapshot whose status is not over, and deletes `resume.bin` and its tmp instead 
 when it enters Over (a finished round never resumes; a delete the card refuses is retried at most every 5 s in Over and Paused, and at Leave and the forced exit regardless, until it succeeds; the forced exit's SD steps stop starting 1,500 ms after it began). Leave keeps the file. The `ver` a resumed match continues from
 is the file's, so a match that has passed 65,535 snapshots wraps in the file (the spine's `u16`) and only there.
 
+## prefs.bin
+
+`/.games-data/<id>/prefs.bin` holds a game's remembered choices on this device (AD-17, as amended 2026-10-02): the mode
+last started and the value chosen for each setting the manifest declares (AD-15). `src/games/GameSaveStore` is its only
+reader and writer (`loadPrefs`, `savePrefs`), on the loop task only, never in `render()` or `onExit()`; the game's
+title screen reads it when it opens and writes it when its Options screen closes with a change and when New game starts
+a mode other than the one the file holds (a missing file holds none). The match never touches it. It is not a codec
+blob, so it has no blob header.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | magic `CHPF` (`43 48 50 46`) |
+| 4 | 1 | file version, 1 |
+| 5 | 1 | mode: a `GameCore::Manifest::Mode` bit (1 solo, 2 pass, 4 nearby), or 0 for none |
+| 6 | 1 | count: the settings that follow, 0 to 4 |
+| 7 | | per setting: the id's length (1 to 16), the id, the value's length (1 to 16), the value |
+
+The file ends after the last setting, so it is at most 143 bytes (`GameSaveStore::PREFS_MAX_BYTES`). Ids and values are
+the manifest's strings, stored as text so that a manifest that changes is resolved value by value. The mode byte is the
+manifest's mode bit, not `resume.bin`'s mode byte (where 0 is solo), so that 0 can mean none. For a pass match with
+`level` = `Hard` and `sound` = `Off` the file is
+`43 48 50 46 01 02 02 05 6c 65 76 65 6c 04 48 61 72 64 05 73 6f 75 6e 64 03 4f 66 66`.
+
+**Reading** (`loadPrefs`) reads the fields straight into the caller's `GameSaveStore::Prefs`, with no buffer of its
+own, from `prefs.bin`, or from a whole `prefs.bin.tmp` when `prefs.bin` is missing. It answers `None` (no file),
+`Loaded`, `Malformed` (a file over 143 bytes, shorter than its head, with another magic or version, more than four
+settings, an empty or overlong id or value, a length past the end, or bytes after the last setting), or `Unreadable`
+(the file would not open or read). None of them is an error: `Malformed` and `Unreadable` log one `LOG_INF` line, every
+answer but `Loaded` leaves the choices empty, and the file stays until the next write replaces it.
+
+**Resolving** (`GameSaveStore::resolvePrefs`) turns what the file holds into the title screen's current choices, value
+by value: the mode is `Manifest::startMode` (the remembered mode when this host can start it, else `default_mode` when
+it can, else the first it can start in solo, pass, nearby order; a mode byte that is not one bit is never one it can
+start), and each setting the manifest declares takes the value stored under its id when the manifest still lists that
+value, else its default. A stored setting the manifest no longer declares is ignored. Each fallback is logged at
+`LOG_DBG`.
+
+**Writing** (`savePrefs`) is `store.bin`'s: the bytes go to `prefs.bin.tmp`, which is closed, then `prefs.bin` is
+removed and the tmp renamed over it, and a write that finds only the tmp renames it first. A failed write is logged at
+`LOG_ERR` and leaves `prefs.bin` as it was; the title screen keeps the choice until it closes. Removing the game keeps
+the file, as it keeps the rest of `/.games-data/<id>/`.
+
 ## Game package (`.chgame`)
 
 A game ships as one `.chgame` file (AD-15). `scripts/pack_game.py` writes it; `src/games/GamePackageInstaller` is the
@@ -272,7 +314,7 @@ A package is a zip whose members are stored or deflated (no ZIP64) and sit at th
 | `manifest.json` | required; parsed by `GameCore::Manifest::parse`, the one manifest parser |
 | `main.lua` | required |
 | `<name>.lua` | `<name>` is `[a-z0-9_]{1,32}`; loaded by `require("<name>")` |
-| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, any other is a game image |
+| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, `title.png` the title screen's splash, `handoff.png` the hidden hand-off page (the reserved images), any other is a game image |
 
 Anything else makes the package invalid: a folder, a path with `/` or `\`, `..`, an upper-case name, a name over the
 limit, a `.bmp` (images are `.png` only; the installer converts them), and the same name twice.
@@ -287,6 +329,8 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Converted images, all `.bmp` files but `icon.bmp` | `IMAGES_BYTES` | 131,072 B |
 | Converted images | `MAX_IMAGES` | 32 |
 | Side of `icon.bmp` | `ICON_PIXELS` | 64 |
+| Width x height of `title.png` (`GameImages.h`) | `TITLE_IMAGE_WIDTH` x `TITLE_IMAGE_HEIGHT` | 480 x 480 |
+| Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 800 |
 | Width x height of a `.png` | `IMAGE_MAX_WIDTH` x `IMAGE_MAX_HEIGHT` | 2,048 x 3,072 |
 | Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`) | `StreamingJsonParser::MAX_NESTING` | 32 |
 
@@ -312,6 +356,11 @@ scaled to 64 x 64. The converter sizes the result as `int(side * (64.0f / side))
 at 63, not 64, for 280 of the sides 1 to 2,048 (41, 47, 55, 61, 82, 83, 94, 97, ...); the installer refuses a result
 that is not 64 x 64, and `pack_game.py` refuses such a side up front with the sides nearby that work. Every power of two
 from 1 to 2,048 works, so 64, 128, and 256 are always safe. Any other `<name>.png` becomes `<name>.bmp` at its own size.
+`title.png` and `handoff.png`, the reserved pages (AD-15, as amended 2026-10-02), are converted the same way but may be
+at most 480 x 480 and 480 x 800; a larger one makes the package invalid (checked from its header before it is
+converted). Both count toward the images budget, as game images do, but no game draws them: `GameCore::imageNameOf`
+refuses `icon`, `title`, and `handoff`, so `ch.gfx.image` treats them as unknown names, and the game loader skips their
+`.bmp` files without a log line. Only the runtime draws them, on the title screen and the hidden hand-off screen.
 A PNG whose header the converter refuses (not a PNG, interlaced, over 2,048 x 3,072, an impossible colour type or bit
 depth), a converted file `checkImageHeader` does not accept, or images over the budget make the package invalid. The
 converter answers only true or false and ignores failed writes, so its output goes through a wrapper that notes a short

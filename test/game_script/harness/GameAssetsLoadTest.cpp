@@ -136,6 +136,25 @@ TEST_F(GameAssetsLoadTest, AGameWithoutImagesLoadsItsModulesAlone) {
   EXPECT_FALSE(logHas("icon.bmp"));  // the launcher's, skipped without a word
 }
 
+// The runtime's two pages (AD-15, as amended 2026-10-02) are converted beside the game's images but are no images of
+// its own: GameAssets loads neither, says nothing of them, and loads the game's real images beside them.
+TEST_F(GameAssetsLoadTest, TheReservedPagesAreSkippedWithoutAWordAndTheImagesBesideThemLoad) {
+  fakesd::addFile(path("main.lua"), "return 1");
+  fakesd::addFile(path("title.bmp"), image(480, 480));
+  fakesd::addFile(path("handoff.bmp"), image(480, 800));
+  fakesd::addFile(path("TITLE.BMP"), image(8, 8));
+  fakesd::addFile(path("titles.bmp"), image(8, 8));
+  ASSERT_EQ(load(), Result::Ok);
+  ASSERT_EQ(assets.images().count, 1u);
+  EXPECT_STREQ(assets.images().spans[0].name, "titles");
+  EXPECT_EQ(assets.images().find("title", 5), -1);
+  EXPECT_EQ(assets.images().find("handoff", 7), -1);
+  EXPECT_FALSE(logHas("title.bmp"));
+  EXPECT_FALSE(logHas("handoff.bmp"));
+  EXPECT_FALSE(logHas("TITLE.BMP"));
+  EXPECT_FALSE(logHas("is not loaded"));
+}
+
 TEST_F(GameAssetsLoadTest, TheLoadedViewsEmptyWhenTheGameIsReleased) {
   fakesd::addFile(path("main.lua"), "return 1");
   fakesd::addFile(path("dot.bmp"), image(8, 8));

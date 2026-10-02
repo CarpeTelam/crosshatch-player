@@ -7,7 +7,7 @@
 # To pack one more fixture, add its folder name to PACKED_FIXTURES.
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(PACKED_FIXTURES counter timing pack-images)
+set(PACKED_FIXTURES counter timing pack-images pass-art)
 set(PACKED_FIXTURES_DIR ${CMAKE_CURRENT_BINARY_DIR}/packed_fixtures)
 
 set(PACKED_FIXTURE_INPUTS)

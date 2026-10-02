@@ -230,7 +230,7 @@ TEST(GameImagesTest, ABadImageInTheMiddleIsRefusedAlone) {
   EXPECT_EQ(budget.pixelBytes, 4u * (3 + 5));
 }
 
-TEST(GameImagesTest, ImageNamesAreLowercaseStemsOtherThanIcon) {
+TEST(GameImagesTest, ImageNamesAreLowercaseStemsOtherThanTheReservedOnes) {
   char name[IMAGE_NAME_BYTES + 1];
   const auto nameOf = [&](const std::string& file) { return imageNameOf(file.data(), file.size(), name); };
   ASSERT_TRUE(nameOf("badge.bmp"));
@@ -243,8 +243,17 @@ TEST(GameImagesTest, ImageNamesAreLowercaseStemsOtherThanIcon) {
   ASSERT_TRUE(nameOf(std::string(32, 'z') + ".bmp"));
   EXPECT_EQ(std::string(name), std::string(32, 'z'));
 
+  // Names beside the reserved ones are images.
+  ASSERT_TRUE(nameOf("titles.bmp"));
+  ASSERT_TRUE(nameOf("title_2.bmp"));
+  ASSERT_TRUE(nameOf("handoffs.bmp"));
+  ASSERT_TRUE(nameOf("hand_off.bmp"));
+  EXPECT_STREQ(name, "hand_off");
+
   const std::string misses[] = {
-      "icon.bmp",  // the launcher's icon, never an image
+      "icon.bmp",     // the launcher's icon, never an image
+      "title.bmp",    // the title screen's splash, drawn by the runtime alone
+      "handoff.bmp",  // the hidden hand-off page, drawn by the runtime alone
       std::string(33, 'z') + ".bmp",
       "Badge.bmp",
       "badge.BMP",
@@ -267,6 +276,25 @@ TEST(GameImagesTest, ImageNamesAreLowercaseStemsOtherThanIcon) {
   const char unterminated[] = {'d', 'o', 't', '.', 'b', 'm', 'p', 'X'};
   ASSERT_TRUE(imageNameOf(unterminated, 7, name));
   EXPECT_STREQ(name, "dot");
+}
+
+// The reserved images (AD-15, as amended 2026-10-02): icon, title, and handoff, whole names in any letter case, so
+// GameAssets skips their .bmp files without calling them misnamed images.
+TEST(GameImagesTest, ReservedImagesAreIconTitleAndHandoff) {
+  const auto reserved = [](const std::string& stem) { return isReservedImage(stem.data(), stem.size()); };
+  for (const char* stem : {"icon", "title", "handoff", "ICON", "Title", "HandOff"}) EXPECT_TRUE(reserved(stem)) << stem;
+  for (const char* stem : {"", "ico", "icons", "titl", "titles", "hand", "handoff_", "hand_off", "badge", "x"}) {
+    EXPECT_FALSE(reserved(stem)) << stem;
+  }
+  // The length bounds the name: "title" inside a longer buffer is reserved, and a prefix is not.
+  EXPECT_TRUE(isReservedImage("titles", 5));
+  EXPECT_FALSE(isReservedImage("title", 4));
+  EXPECT_FALSE(isReservedImage(nullptr, 0));
+  // The pages' limits are AD-15's.
+  EXPECT_EQ(TITLE_IMAGE_WIDTH, 480u);
+  EXPECT_EQ(TITLE_IMAGE_HEIGHT, 480u);
+  EXPECT_EQ(HANDOFF_IMAGE_WIDTH, 480u);
+  EXPECT_EQ(HANDOFF_IMAGE_HEIGHT, 800u);
 }
 
 TEST(GameImagesTest, LooksLikeImageIsAnyCaseBmp) {

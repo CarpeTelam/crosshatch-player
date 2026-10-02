@@ -72,11 +72,13 @@ class GameVM {
   // size as ch.screen and measures ch.text_width with `replay`'s text metrics (after
   // FrameReplay::loadFonts); `gameId` tags its log lines, `store` (which must outlive
   // the task, see MatchStore) backs ch.store, and the Session plays `roster` (solo, or a
-  // pass match). `handOff` is a hidden pass match's (the class comment). Null (logged) when
+  // pass match). `handOff` is a hidden pass match's (the class comment). `settings` (copied) is
+  // ctx.settings for every setup, Play again's included; none by default. Null (logged) when
   // memory runs out.
   static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                         const char* gameId, GameScript::StoreSlot& store,
-                                        const GameCore::Roster& roster, bool handOff = false);
+                                        const GameCore::Roster& roster, bool handOff = false,
+                                        const GameCore::SettingValues& settings = {});
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -136,8 +138,13 @@ class GameVM {
   // Moves that passed the turn so far: the VM counts one after it has drawn the mover's frame
   // again. Any task.
   uint32_t turnsPassed() const { return turnChanges.load(std::memory_order_acquire); }
-  // The turn seat the last counted move passed to; read after turnsPassed() moved. Any task.
+  // The turn seat the last counted move passed to, or the round's first turn seat once a round has begun (read after
+  // turnsPassed() or turnAnnouncements() moved), from 1. Any task.
   uint8_t passedTo() const { return nextSeat.load(std::memory_order_acquire); }
+  // Rounds that have begun so far, each counted once its first turn seat is in passedTo(): the new match's (after setup
+  // or a restored save) and each Play again's. The match's hand-off screen names that seat ("Player N's turn") and
+  // waits for the count before it shows. Any task.
+  uint32_t turnAnnouncements() const { return roundAnnouncements.load(std::memory_order_acquire); }
   // Hands the front frame, with the largest refresh request of the frames
   // coalesced into it, to `replay` under the frame mutex. False when nothing was
   // drawn: before the first frame, or when replay skipped a frame identical to
@@ -209,7 +216,8 @@ class GameVM {
 
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
-         GameScript::StoreSlot& store, const GameCore::Roster& roster, bool handOff);
+         GameScript::StoreSlot& store, const GameCore::Roster& roster, bool handOff,
+         const GameCore::SettingValues& settings);
   static void taskEntry(void* param);
   void run();
   // ---- a hidden pass match's steps (VM task) ----
@@ -228,6 +236,8 @@ class GameVM {
   // VM task, after `seat`'s frame is published: when it is another seat than the one drawn
   // before, that frame is the first of `seat`'s, so a touch made before it was aimed elsewhere.
   void noteSeatDrawn(uint8_t seat);
+  // VM task, a hidden pass match's round that began (`outcome` Ok): its first turn seat to passedTo(), then counted.
+  void announceTurnSeat(GameScript::Outcome outcome);
   // VM task: whether touch `event` was made before the first frame of the seat drawn now
   // (postInput's shownFrame, below seatFrame), logged; false for a Timer. Zeroes the touch's
   // tag either way, so the game never sees it.
@@ -275,10 +285,11 @@ class GameVM {
   uint8_t drawnSeat = GameCore::NO_SEAT;
   uint32_t seatFrame = 0;
   // Loop task to VM task: showTurnSeat()'s requests. VM task to any: the request served,
-  // the moves that passed the turn, and the seat the last one passed to (stored first).
+  // the moves that passed the turn, the rounds begun, and the seat the last of either named (stored first).
   std::atomic<uint32_t> seatRequests{0};
   std::atomic<uint32_t> seatServed{0};
   std::atomic<uint32_t> turnChanges{0};
+  std::atomic<uint32_t> roundAnnouncements{0};
   std::atomic<uint8_t> nextSeat{0};
   TaskHandle_t task = nullptr;
   std::mutex taskMutex;    // guards taskAlive against the task's exit

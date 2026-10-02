@@ -240,6 +240,15 @@ event timer
 ctx seats integer
 ctx mode string
 ctx api integer
+# settings maps each setting the manifest declares (manifest settings, below) to
+# the value the player chose on the game's Options screen, as a string; every
+# declared setting is present, and a game that declares none gets an empty
+# table. Play again passes the same table as the match's first setup, and a
+# resumed match runs no setup, so its snapshot carries whatever the game derived
+# from them. resume.bin records no settings: a Play again after a resume gets the
+# choices current on the title screen when Continue was tapped, which may differ
+# from those of the saved round.
+ctx settings table
 
 # manifest.json (AD-15). Unknown keys are ignored. A manifest that repeats a known
 # key is invalid: GameCore::Manifest::parse rejects it, and scripts/pack_game.py
@@ -254,6 +263,12 @@ manifest modes array
 manifest hidden boolean?
 manifest icon string?
 manifest icon_weight string?
+manifest default_mode string?
+manifest settings array?
+manifest settings.id string
+manifest settings.name string
+manifest settings.values array
+manifest settings.default string?
 # icon is a library icon name: it matches the pattern below whole ("_" is not
 # accepted) and takes at most manifest_icon_bytes bytes, and a name the library
 # lacks makes the package invalid (the installer and scripts/pack_game.py check
@@ -264,6 +279,20 @@ manifest icon_weight string?
 name manifest_icon [a-z][a-z0-9]*(-[a-z0-9]+)*
 enum icon_weight regular
 enum icon_weight fill
+# default_mode is one of the manifest's modes (an enum mode value): the mode New
+# game starts until the player picks another in Options. Absent, it is solo when
+# modes lists solo, else the first this host can start in solo, pass, nearby
+# order; a value not in modes makes the package invalid, and one this host
+# cannot start falls back the same way. The player's last started mode wins over
+# it once there is one.
+# settings is an array of at most settings_count objects, each with exactly the
+# keys id, name, values, and default (any other key makes the package invalid):
+# id matches the setting_id pattern below and is unique; name is 1 to
+# setting_name_bytes bytes; values holds 2 to setting_values_count unique
+# strings of 1 to setting_value_bytes bytes; default is one of values (absent:
+# the first). A remembered choice the manifest no longer declares falls back to
+# that default.
+name setting_id [a-z][a-z0-9_]{0,15}
 
 # Icons (epic-icon-library), by category; docs/crosshatch/game-icons.md has the list
 # Marks
@@ -334,6 +363,11 @@ limit manifest_id_bytes 32
 limit manifest_name_bytes 64
 limit manifest_version_bytes 32
 limit manifest_icon_bytes 32
+limit settings_count 4
+limit setting_values_count 6
+limit setting_id_bytes 16
+limit setting_name_bytes 24
+limit setting_value_bytes 16
 limit state_bytes 1400
 limit move_bytes 256
 limit reject_reason_bytes 64
@@ -381,11 +415,24 @@ limit member_stem_bytes 32
 # A .png member's largest width and height in pixels (icon.png is scaled to 64 x 64).
 limit image_width_pixels 2048
 limit image_height_pixels 3072
+# Two more reserved images, which only the runtime draws: title.png, the title
+# screen's splash, drawn centred and clipped in a 480 x 480 area under its header
+# (absent or unreadable: the game's icon at 128 px), and handoff.png, the hidden
+# pass hand-off screen's page, drawn centred and clipped on the screen with the
+# runtime's "I'm ready" button over it (absent or unreadable: the game's icon and
+# "Player N's turn"). One larger than its limits below makes the package
+# invalid. Both count toward images_bytes and images_count; icon.png does not.
+limit title_image_width_pixels 480
+limit title_image_height_pixels 480
+limit handoff_image_width_pixels 480
+limit handoff_image_height_pixels 800
 # An image's name, which ch.gfx.image takes, is its file name without ".bmp".
 # Unlike icon names, it takes no "-": a file named otherwise is skipped with a log
 # line, and drawing it stops the game as an unknown image. icon.bmp is the
-# launcher's and never an image, so the pattern leaves out "icon".
-name image (?!icon$)[a-z0-9_]{1,32}
+# launcher's, and title.bmp and handoff.bmp are the runtime's pages: none is ever
+# an image, so the pattern leaves out "icon", "title", and "handoff", and drawing
+# one of them stops the game as an unknown image.
+name image (?!(icon|title|handoff)$)[a-z0-9_]{1,32}
 # Lua's C-level limit (LUAI_MAXCCALLS in lib/lua/library.json): nested C calls
 # (pcall, xpcall, metamethods, string.gsub and table.sort callbacks, require) and
 # the parser's nesting of expressions and blocks (right-associative .. or ^

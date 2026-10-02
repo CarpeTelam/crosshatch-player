@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -130,4 +131,37 @@ TEST_F(PackedImagesTest, ALargeImageAssetIsConvertedToItsOwnSize) {
   EXPECT_EQ(gray.width, 480u);
   EXPECT_EQ(gray.height, 800u);
   EXPECT_FALSE(exists("/.games/timing/gray.png"));
+}
+
+// The fixture with the two reserved pages and the manifest keys of epic-pass-and-play entry 12: the installer converts
+// title.png and handoff.png at their largest sizes (480 x 480, 480 x 800) into the pages the runtime alone draws, and
+// the installed manifest gives the registry default_mode and the count of its settings, and its reader the settings.
+TEST_F(PackedImagesTest, TheReservedPagesAndTheSettingsOfPassArtInstall) {
+  fakesd::addFile("/games/pass-art.chgame", packed("pass-art.chgame"));
+  ASSERT_EQ(GamePackageInstaller::installAll().installed, 1);
+  const std::string dir = "/.games/pass-art/";
+  for (const char* member : {"title.png", "handoff.png"}) EXPECT_FALSE(exists(dir + member)) << member;
+  const GameCore::ImageHeader title = headerOf(dir + "title.bmp");
+  EXPECT_EQ(title.width, GameCore::TITLE_IMAGE_WIDTH);
+  EXPECT_EQ(title.height, GameCore::TITLE_IMAGE_HEIGHT);
+  const GameCore::ImageHeader handoff = headerOf(dir + "handoff.bmp");
+  EXPECT_EQ(handoff.width, GameCore::HANDOFF_IMAGE_WIDTH);
+  EXPECT_EQ(handoff.height, GameCore::HANDOFF_IMAGE_HEIGHT);
+
+  auto reader = std::make_unique<GameCore::ManifestReader>();
+  GameRegistry::Entry entry;
+  ASSERT_TRUE(GameRegistry::readGame("pass-art", *reader, entry));
+  EXPECT_TRUE(entry.manifest.hidden);
+  EXPECT_EQ(entry.manifest.modes, GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS);
+  EXPECT_EQ(entry.manifest.defaultMode, GameCore::Manifest::MODE_PASS);
+  ASSERT_EQ(entry.manifest.settingsCount, 2u);
+  const GameCore::ManifestSettings& settings = reader->settings();
+  ASSERT_EQ(settings.count, 2u);
+  EXPECT_STREQ(settings.settings[0].id, "level");
+  EXPECT_STREQ(settings.settings[0].name, "Level");
+  EXPECT_EQ(settings.settings[0].count, 2u);
+  EXPECT_STREQ(settings.settings[0].values[settings.settings[0].defaultIndex], "Hard");
+  EXPECT_STREQ(settings.settings[1].id, "board");
+  EXPECT_EQ(settings.settings[1].count, 3u);
+  EXPECT_EQ(settings.settings[1].defaultIndex, 0u) << "no default: the first value";
 }

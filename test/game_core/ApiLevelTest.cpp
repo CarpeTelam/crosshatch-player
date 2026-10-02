@@ -93,6 +93,11 @@ TEST(ApiLevelTest, ManifestLimitsMatchTheParser) {
   EXPECT_EQ(limits["manifest_name_bytes"], std::to_string(GameCore::Manifest::MAX_NAME_BYTES));
   EXPECT_EQ(limits["manifest_version_bytes"], std::to_string(GameCore::Manifest::MAX_VERSION_BYTES));
   EXPECT_EQ(limits["manifest_icon_bytes"], std::to_string(GameCore::Manifest::MAX_ICON_BYTES));
+  EXPECT_EQ(limits["settings_count"], std::to_string(GameCore::Manifest::MAX_SETTINGS));
+  EXPECT_EQ(limits["setting_values_count"], std::to_string(GameCore::ManifestSetting::MAX_VALUES));
+  EXPECT_EQ(limits["setting_id_bytes"], std::to_string(GameCore::ManifestSetting::MAX_ID_BYTES));
+  EXPECT_EQ(limits["setting_name_bytes"], std::to_string(GameCore::ManifestSetting::MAX_NAME_BYTES));
+  EXPECT_EQ(limits["setting_value_bytes"], std::to_string(GameCore::ManifestSetting::MAX_VALUE_BYTES));
 }
 
 // The package limits the installer enforces and pack_game.py mirrors (PackageLimits.h, GameImages.h) are the
@@ -110,6 +115,10 @@ TEST(ApiLevelTest, PackageLimitsMatchTheList) {
   EXPECT_EQ(limits["image_height_pixels"], std::to_string(GameCore::IMAGE_MAX_HEIGHT));
   EXPECT_EQ(limits["images_bytes"], std::to_string(GameCore::IMAGES_BYTES));
   EXPECT_EQ(limits["images_count"], std::to_string(GameCore::MAX_IMAGES));
+  EXPECT_EQ(limits["title_image_width_pixels"], std::to_string(GameCore::TITLE_IMAGE_WIDTH));
+  EXPECT_EQ(limits["title_image_height_pixels"], std::to_string(GameCore::TITLE_IMAGE_HEIGHT));
+  EXPECT_EQ(limits["handoff_image_width_pixels"], std::to_string(GameCore::HANDOFF_IMAGE_WIDTH));
+  EXPECT_EQ(limits["handoff_image_height_pixels"], std::to_string(GameCore::HANDOFF_IMAGE_HEIGHT));
 }
 
 // The list's manifest keys are the ones the parser reads (GameCore::MANIFEST_KEYS),
@@ -208,6 +217,41 @@ TEST(ApiLevelTest, ManifestIconMatchesTheParser) {
       shown += (c >= 0x21 && c <= 0x7E) ? std::string(1, static_cast<char>(c)) : std::string(hex);
     }
     exceptions.insert(shown + (listed ? " listed only" : " parsed only"));
+  }
+  EXPECT_EQ(exceptions, std::set<std::string>{});
+}
+
+// The setting_id entry's pattern is Manifest::parse's rule for a setting's id, over the grammar's edge cases and
+// every one-byte change of them: a name the pattern matches parses as an id, and any other is BadSettings.
+TEST(ApiLevelTest, SettingIdMatchesTheParser) {
+  const Surface surface = loadSurface();
+  ASSERT_TRUE(surface.loaded);
+  std::string pattern;
+  for (const Entry& entry : surface.entries()) {
+    if (entry.kind == "name" && entry.name == "setting_id") pattern = entry.body.substr(entry.name.size() + 1);
+  }
+  ASSERT_FALSE(pattern.empty());
+  const std::regex id(pattern);
+  const size_t cap = GameCore::ManifestSetting::MAX_ID_BYTES;
+  std::vector<std::string> names = {"",   "a",   "a_",  "_a",  "a1",    "1a",       "A",
+                                    "aB", "a-b", "a b", "a.b", "level", "ai_level", "\xC3\xA9"};
+  names.push_back(std::string(cap, 'a'));
+  names.push_back(std::string(cap + 1, 'a'));
+  for (int byte = 0x20; byte <= 0x7E; ++byte) {
+    const char c = static_cast<char>(byte);
+    names.push_back(std::string(1, c));
+    names.push_back("a" + std::string(1, c));
+  }
+  std::set<std::string> exceptions;
+  for (const std::string& name : names) {
+    if (name.find('"') != std::string::npos || name.find('\\') != std::string::npos) continue;
+    const std::string json = R"({"id": "g", "name": "G", "version": "", "api": 1, "seats": {"min": 1, "max": 1}, )"
+                             R"("modes": ["solo"], "settings": [{"id": ")" +
+                             name + R"(", "name": "N", "values": ["a", "b"]}]})";
+    GameCore::Manifest parsed;
+    const bool takes = GameCore::Manifest::parse(json, parsed) == GameCore::ManifestError::None;
+    const bool listed = std::regex_match(name, id);
+    if (takes != listed) exceptions.insert(name + (listed ? " listed only" : " parsed only"));
   }
   EXPECT_EQ(exceptions, std::set<std::string>{});
 }

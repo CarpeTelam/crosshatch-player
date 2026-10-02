@@ -17,10 +17,11 @@ struct Report;
 // The Games launcher (Home → Games; spine AD-22): when it opens it installs every /games/*.chgame
 // (GamePackageInstaller), then lists every installed game as one row of icon and name, paged by the
 // list. A row's icon is the package's icon.bmp, else the manifest's library icon in its weight, else
-// `game-controller` (GameRowIcon). A game this host cannot start (Manifest::check) shows its reason
-// under the name and does not open. A file that failed to install is explained once, in a popup.
+// `game-controller` (GameRowIcon). Under the name, the modes this host can start, joined by " · ", in
+// solo, pass, nearby order; a game this host cannot start (Manifest::check) shows its reason there
+// instead and does not open. A file that failed to install is explained once, in a popup.
 // A row of a game the host can start pushes the game's title screen (GameModeActivity), which offers its save
-// (Continue) and its modes, so Back returns to this list as it was. The launcher reads no save: the title screen peeks
+// (Continue) and New game, so Back returns to this list as it was. The launcher reads no save: the title screen peeks
 // it when it opens. A registry load that runs out of memory leaves no rows and says "Not enough memory", not "No games
 // found". A long-press on a row (or a hold of Confirm) asks whether to remove that game; Remove deletes its folder
 // (GamePackageInstaller::remove) and keeps its saved data, and a failure is explained in the note popup. After a
@@ -107,6 +108,8 @@ class GamesLauncherActivity final : public UiListActivity {
   // The library icon of the row being drawn. Written by provideRow, on the render task only; the list
   // reads it before it asks for the next row.
   uint8_t libraryIcon[GameRowIcon::BYTES] = {};
+  // The modes line of the row being drawn (GameModeActivity::writeModesLine), written and read as libraryIcon is.
+  char modesLine[96] = {};
   // The one-time install failure notice: shown over the list until a tap or button dismisses it.
   char note[128] = {};
   // The other failures of an install, each drawn as a line of its own under the note (noteWaiting above noteMore), and

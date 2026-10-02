@@ -13,8 +13,8 @@ inline constexpr int VIEW_PIXELS = 64;
 // A row's icon, square, at the row's left (GameIcons::SMALL_PIXELS).
 inline constexpr int ROW_PIXELS = 32;
 
-// The icon of the view `state` shows; null for a state with no view, and for the Result banner, which has none.
-// HandOff's is the one drawing on the blank hand-off screen (FrameReplay::drawBlank), not a dialog's.
+// The icon of the view `state` shows; null for a state with no view, for the Result banner, which has none, and for
+// the hand-off screen, which shows the game's own icon or page (GamePicture), never a library one.
 constexpr const char* forView(const GameCore::MatchState state) {
   switch (state) {
     case GameCore::MatchState::Paused:
@@ -23,13 +23,12 @@ constexpr const char* forView(const GameCore::MatchState state) {
       return "flag-checkered";
     case GameCore::MatchState::Error:
       return "warning";
-    case GameCore::MatchState::HandOff:
-      return "eye-closed";
     case GameCore::MatchState::Starting:
     case GameCore::MatchState::Playing:
     case GameCore::MatchState::Leaving:
     case GameCore::MatchState::Result:
-      break;  // no view, or (Result) a banner with no icon
+    case GameCore::MatchState::HandOff:
+      break;  // no view, (Result) a banner with no icon, or (HandOff) the game's own art
   }
   return nullptr;
 }
