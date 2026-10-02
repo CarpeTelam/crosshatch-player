@@ -14,7 +14,7 @@ Record the results in entry 11's plan, `story-device-run-and-owner-sign-off-plan
 
 ## Packages
 
-Not committed. From a checkout at `6cf7f65b`, `python3 scripts/pack_device_run.py <out-dir>` writes the ten files below and `HASHES.txt`. It was run on 2026-10-02 at this commit and printed these hashes (rerun for this packet: same). The `Crosshatch game packages` workflow also packs them on a PR labelled `package-games` (artifact `game-packages`, kept 30 days); whether #24 has such a run at `6cf7f65b` is unknown.
+Not committed. `python3 scripts/pack_device_run.py <out-dir>` writes the thirteen files below and `HASHES.txt`. The `Crosshatch game packages` workflow runs it on a pull request labelled `package-games` (artifact `game-packages`, kept 30 days): #24 carries the label, so download the artifact from the latest `Crosshatch game packages` run on the PR's Checks tab. Locally, any checkout with Python 3 works. The hashes below were printed on 2026-10-02 (rerun: same); `slow-restart`, `pass-title` and `pass-store` were first hand-packed and their hashes match the script's.
 
 | File | Game (name on the row) | Hash | Used in |
 | --- | --- | --- | --- |
@@ -26,26 +26,18 @@ Not committed. From a checkout at `6cf7f65b`, `python3 scripts/pack_device_run.p
 | `pass-open.chgame` | `pass-open` (Pass open) | `432492ea015af1e5` | B2 |
 | `pass-hidden.chgame` | `pass-hidden` (Pass hidden) | `5e20548ec727951d` | B3, B6, B7 |
 | `pass-art.chgame` | `pass-art` (Pass art) | `2dd475c09a003d94` | B1, B4, B5, B6 |
+| `slow-restart.chgame` | `slow-restart` (Slow restart) | `db614d9ff9aa1a35` | B8 |
+| `pass-title.chgame` | `pass-title` (Pass title) | `71c89e65c08971f1` | B5 |
+| `pass-store.chgame` | `pass-store` (Pass store) | `5a6bbba63ef264ee` | B7 |
 | `invalid-binary-lua.chgame` | `hardening` | (invalid) | A (R3) |
 | `package_vector.chgame` | `package-vector` (Package Vector) | `0530a15766e91bf1` | A (R1, R4) |
 
-Three more are packed by hand from the same checkout, never committed. Their hashes are from `pack_game.py` on 2026-10-02 at `6cf7f65b` (each packed twice, same hash), from these exact commands. On macOS write `sed -i ''`.
+The script derives the last two new games, so no fixture is added to the tree:
 
-```sh
-mkdir -p extra src
-python3 scripts/pack_game.py test/game_script/fixtures/slow-restart extra              # db614d9ff9aa1a35
-cp -r test/game_script/fixtures/pass-art src/pass-title && rm src/pass-title/handoff.png
-sed -i 's/"id": "pass-art"/"id": "pass-title"/; s/"name": "Pass art"/"name": "Pass title"/' src/pass-title/manifest.json
-python3 scripts/pack_game.py src/pass-title extra                                    # 71c89e65c08971f1
-cp -r test/game_script/fixtures/pass-hidden src/pass-store
-sed -i 's/"id": "pass-hidden"/"id": "pass-store"/; s/"name": "Pass hidden"/"name": "Pass store"/' src/pass-store/manifest.json
-perl -pi -e 's/^  state\.moves = state\.moves \+ 1$/$&\n  ch.store.set({ moves = state.moves })/' src/pass-store/main.lua
-python3 scripts/pack_game.py src/pass-store extra                                    # 5a6bbba63ef264ee
-```
-
-- `slow-restart`: the Play-again gap line (B8).
 - `pass-title`: `pass-art` without `handoff.png`, for the `title.png` fallback (B5).
-- `pass-store`: `pass-hidden` plus one `ch.store.set` per move. No packet fixture in a pass match writes `ch.store`, so without it no store flush can land in a hand-off (B7).
+- `pass-store`: `pass-hidden` plus one `ch.store.set` per move. No other packet fixture in a pass match writes `ch.store`, so without it no store flush can land in a hand-off (B7).
+
+R4's eight "Aa extra" games are still packed by hand, with the loop in epic 4's packet.
 
 After install, `/.games/<id>/.pkg` holds `v1` and the hash on its second line.
 
@@ -256,7 +248,7 @@ The open items in `deferred-work.md` under `## e5-inception`, `## 5.1`–`## 5.1
 
 In entry 11's plan, `story-device-run-and-owner-sign-off-plan.md` in this folder, per entry 11's verify:
 
-- The firmware flashed (the CI artifact, or a local build of `6cf7f65b`) and the package hashes from `HASHES.txt` and the three hand-packed hashes, or the hashes the device's `.pkg` files show.
+- The firmware flashed (the CI artifact, or a local build of `6cf7f65b`) and the package hashes from `HASHES.txt`, or the hashes the device's `.pkg` files show.
 - Each step's result (A R1–R4 and the `.pkg` check, B0–B8, C), pass or fail, with photos for the hand-off screen, the banner, a ghost if any, and B5's three bands.
 - The serial lines for T1–T6, each with its `[millis]` prefix and the computed gap, plus B2.5 and B2.6's counts and the loop bar before the first hand-off.
 - Any reset, watchdog banner, `abandoning it`, or `forced exit past 1500 ms` line.

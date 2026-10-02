@@ -10,6 +10,9 @@ Writes `<out-dir>/` (created if missing):
   pass-open.chgame             the fixture of the same name: noughts and crosses, solo or an open pass match
   pass-hidden.chgame           the fixture of the same name: a hidden pass match's hand-off
   pass-art.chgame              the fixture of the same name: title.png, handoff.png, default_mode, and settings
+  slow-restart.chgame          the fixture of the same name: a Play-again setup that spins for 2 s
+  pass-title.chgame            pass-art without handoff.png, for the title.png fallback (derived, see DERIVED)
+  pass-store.chgame            pass-hidden plus one ch.store.set per move, so a store flush can land in a hand-off
   invalid-binary-lua.chgame    the hardening generator's `binary-lua-stored` case, which the installer must set aside
   package_vector.chgame        the shared hash vector, copied: the file package_vectors.json's `hash_vector.package` names,
                                next to it (test/game_core/package_vector.chgame)
@@ -54,6 +57,16 @@ GAMES = (
     ('pass-open', 'pass-open'),
     ('pass-hidden', 'pass-hidden'),
     ('pass-art', 'pass-art'),
+    ('slow-restart', 'slow-restart'),
+)
+# Games the device run needs that no committed fixture is: (fixture folder copied, its name, new id, new name, files
+# removed, (file, pattern, replacement) edits). Each is copied to scratch, edited, and packed, so no fixture is added to the tree.
+# An edit whose pattern matches nothing is a Failure, since a fixture that moved would otherwise pack unedited.
+DERIVED = (
+    ('pass-art', 'Pass art', 'pass-title', 'Pass title', ('handoff.png',), ()),
+    ('pass-hidden', 'Pass hidden', 'pass-store', 'Pass store', (), (
+        ('main.lua', r'^  state\.moves = state\.moves \+ 1$', '  state.moves = state.moves + 1\n  ch.store.set({ moves = state.moves })'),
+    )),
 )
 INVALID_CASE = 'binary-lua-stored.chgame'
 INVALID_EXPECTED = 'BinaryLua'  # what cases.txt says the installer must do with it
@@ -70,9 +83,9 @@ def run(command, what):
         raise SetupError(f'cannot run {what}: {exc}')
 
 
-def pack_game(root, folder, name, staging):
+def pack_game(root, folder, name, staging, source=None):
     """(package path, hash) of one fixture game, packed by scripts/pack_game.py into its own folder of staging."""
-    source = root / FIXTURES / folder
+    source = source or root / FIXTURES / folder
     if not source.is_dir():
         raise SetupError(f'{source} is not a directory')
     packer = root / PACKER
@@ -93,6 +106,36 @@ def pack_game(root, folder, name, staging):
     if not package.is_file():
         raise Failure(f'{folder}: the packer wrote no {package.name}')
     return package, package_hash
+
+
+def derived_package(root, derived, staging):
+    """(package path, hash) of a DERIVED game: its fixture copied to staging, edited, and packed."""
+    folder, old_name, game_id, game_name, removed, edits = derived
+    origin = root / FIXTURES / folder
+    if not origin.is_dir():
+        raise SetupError(f'{origin} is not a directory')
+    source = staging / 'derived' / game_id
+    try:
+        shutil.copytree(origin, source)
+        manifest = source / 'manifest.json'
+        text = manifest.read_text(encoding='utf-8')
+        for key, old, new in (('id', folder, game_id), ('name', old_name, game_name)):
+            old_line, new_line = f'"{key}": "{old}"', f'"{key}": "{new}"'
+            if text.count(old_line) != 1:
+                raise Failure(f'{game_id}: {folder}/manifest.json has no single {old_line} to change')
+            text = text.replace(old_line, new_line)
+        manifest.write_text(text, encoding='utf-8')
+        for file_name in removed:
+            (source / file_name).unlink()
+        for file_name, pattern, replacement in edits:
+            path = source / file_name
+            text, count = re.subn(pattern, lambda _: replacement, path.read_text(encoding='utf-8'), flags=re.M)
+            if count != 1:
+                raise Failure(f'{game_id}: {folder}/{file_name} no longer has exactly one line matching {pattern}')
+            path.write_text(text, encoding='utf-8')
+    except OSError as exc:
+        raise SetupError(f'cannot derive {game_id} from {folder}: {exc}')
+    return pack_game(root, game_id, game_id, staging, source)
 
 
 def invalid_package(root, staging):
@@ -149,6 +192,9 @@ def pack_device_run(root, out_dir):
         for folder, name in GAMES:
             package, package_hash = pack_game(root, folder, name, staging)
             files.append((f'{name}.chgame', package, package_hash))
+        for derived in DERIVED:
+            package, package_hash = derived_package(root, derived, staging)
+            files.append((f'{derived[2]}.chgame', package, package_hash))
         files.append((INVALID_NAME, invalid_package(root, staging), '(invalid)'))
         package, recorded = vector_package(root)
         files.append((package.name, package, recorded))
