@@ -32,7 +32,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
   - **success:** When the launcher opens, a valid package in `/games/` is listed. An invalid one is renamed `.bad` and its reason is shown once. Reinstalling a game keeps its saved data.
 - **CAP-4**
   - **intent:** A player reaches a paged games launcher from Home, starts a game, continues a saved one, or removes one, with no text entry.
-  - **success:** From Home, a game starts in at most 3 taps: Games, the game, and Continue or New game on its title screen, which starts the game's current mode (the mode last started, or the developer's default; another mode is picked in Options first). "Continue" is offered first when a save exists. The list pages past one screen. (Amended 2026-10-01, owner, epic-pass-and-play entry 3, with spine AD-22.)
+  - **success:** From Home, a game starts in at most 3 taps: Games, the game, and Continue or New game on its title screen, which starts the game's current mode (the mode last started, or the developer's default; another mode is picked in Options first). "Continue" is offered first when a save exists. The list pages past one screen. (Amended 2026-10-02, owner, epic-pass-and-play entry 3, with spine AD-22.)
 - **CAP-5**
   - **intent:** One game script plays solo, pass-and-play, and Play Nearby (one player per device, two devices) with no radio code in the script.
   - **success:** A two-player game finishes a round in both pass-and-play and Play Nearby from the same unmodified package.
