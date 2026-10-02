@@ -3,7 +3,7 @@ title: 'Build the approved title-screen, Options, and hand-off design'
 type: 'feature'
 ticket: '12'
 created: '2026-10-02'
-status: 'built'
+status: done
 followup_baseline: '4ce4959ec952652163964b9b29734d048371b3f1'
 baseline_revision: '0ebe76a4661cfb9ced2bc757f7815d55dbef4140'
 route: 'full'
