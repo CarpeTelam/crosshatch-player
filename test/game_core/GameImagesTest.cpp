@@ -253,7 +253,7 @@ TEST(GameImagesTest, ImageNamesAreLowercaseStemsOtherThanTheReservedOnes) {
   const std::string misses[] = {
       "icon.bmp",     // the launcher's icon, never an image
       "title.bmp",    // the title screen's splash, drawn by the runtime alone
-      "handoff.bmp",  // the hidden hand-off page, drawn by the runtime alone
+      "handoff.bmp",  // the hidden hand-off screen's splash, drawn by the runtime alone
       std::string(33, 'z') + ".bmp",
       "Badge.bmp",
       "badge.BMP",
@@ -290,11 +290,12 @@ TEST(GameImagesTest, ReservedImagesAreIconTitleAndHandoff) {
   EXPECT_TRUE(isReservedImage("titles", 5));
   EXPECT_FALSE(isReservedImage("title", 4));
   EXPECT_FALSE(isReservedImage(nullptr, 0));
-  // The pages' limits are AD-15's.
+  // The pages' limits are AD-15's: both fill the same 480 x 480 band (handoff.png's since the owner's hand-off
+  // redesign, 2026-10-02).
   EXPECT_EQ(TITLE_IMAGE_WIDTH, 480u);
   EXPECT_EQ(TITLE_IMAGE_HEIGHT, 480u);
   EXPECT_EQ(HANDOFF_IMAGE_WIDTH, 480u);
-  EXPECT_EQ(HANDOFF_IMAGE_HEIGHT, 800u);
+  EXPECT_EQ(HANDOFF_IMAGE_HEIGHT, 480u);
 }
 
 TEST(GameImagesTest, LooksLikeImageIsAnyCaseBmp) {

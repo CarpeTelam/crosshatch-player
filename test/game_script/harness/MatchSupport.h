@@ -27,6 +27,7 @@
 #include "MappedInputManager.h"
 #include "RenderLockProbe.h"
 #include "activities/games/GameMatchActivity.h"
+#include "activities/games/GameSplashLayout.h"
 #include "components/UITheme.h"
 #include "components/UiAppHost.h"
 #include "fontIds.h"
@@ -295,6 +296,41 @@ inline void addFonts(GfxRenderer& renderer) {
   renderer.addFont(UI_10_FONT_ID, 20, SMALL_ADVANCE);
   renderer.addFont(UI_12_FONT_ID, 24, MEDIUM_ADVANCE);
   renderer.addFont(NOTOSANS_18_FONT_ID, 30, LARGE_ADVANCE);
+}
+
+// GameSplashLayout::rowRect's rects of the splash menu's rows 0 to count - 1, as a screen built on `renderer` measures
+// them: read through a host of its own, which lays out with the theme the title screen's and the match's hosts use (the
+// double's: resetUi binds none). Its target is gone when this returns, so the screens' own targets are read as before.
+inline std::vector<freeink::ui::Rect> splashMenuRows(const GfxRenderer& renderer, const int count = 2) {
+  struct Probe {
+    const GfxRenderer* renderer = nullptr;
+    int count = 0;
+    std::vector<freeink::ui::Rect> rows;
+    freeink::ui::ListProps scratch;
+  };
+  auto probe = std::make_unique<Probe>();
+  probe->renderer = &renderer;
+  probe->count = count;
+  {
+    auto host = std::make_unique<UiAppHost>(renderer);
+    host->app.setScreen(
+        [](UiAppHost::UiScreen& screen, void* user) {
+          auto* self = static_cast<Probe*>(user);
+          for (int i = 0; i < self->count; ++i)
+            self->rows.push_back(GameSplashLayout::rowRect(screen, *self->renderer, i, self->scratch));
+        },
+        probe.get());
+    host->renderUi();
+  }
+  return probe->rows;
+}
+
+// The middle of the hidden hand-off screen's "I'm ready" button, which fills the splash menu's second row: where the
+// suites tap it (HiddenPassTest pins the button to that row).
+inline freeink::ui::Point readyButtonMiddle(const GfxRenderer& renderer) {
+  const freeink::ui::Rect ready = splashMenuRows(renderer, 2)[1];
+  return freeink::ui::Point{static_cast<int16_t>(ready.x + ready.width / 2),
+                            static_cast<int16_t>(ready.y + ready.height / 2)};
 }
 
 // The state every test starts from: an empty card and log, no PSRAM blocks, the fake clock

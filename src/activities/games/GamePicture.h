@@ -14,16 +14,17 @@ struct Manifest;
 }
 
 // A game's own art outside its canvas (DESIGN.md, Components; AD-15 as amended 2026-10-02): one reserved page (the
-// title screen's title.bmp, the hidden hand-off's handoff.bmp), drawn centred and clipped, and the game's icon at
-// 128 px, drawn when there is no page. The loads read the card, so they run on the loop task (a screen's onEnter),
-// never in render(); the draws only read what the loads left, so they run on the render task.
+// title screen's title.bmp; the hidden hand-off's handoff.bmp, else its title.bmp), drawn centred and clipped in the
+// splash band (GameSplashLayout), and the game's icon at 128 px, drawn when there is no page. The loads read the card,
+// so they run on the loop task (a screen's onEnter), never in render(); the draws only read what the loads left, so
+// they run on the render task.
 //
-// The page is held in PSRAM (title.bmp at most 28,862 B, handoff.bmp at most 48,062 B); a load that finds no file
+// The page is held in PSRAM (title.bmp and handoff.bmp each at most 28,862 B, 480 x 480); a load that finds no file
 // leaves no page and says nothing, and one that cannot use the file (it will not read, its header is not the
-// converter's 1-bit layout, or it is larger than the page allows) logs why and leaves no page, so the screen falls
-// back to its icon. The icon is the launcher row's (GameRowIcon::choose): the package's icon.bmp, read into a 512 B
-// member and drawn with each of its pixels as 2 x 2, else the manifest's library icon in its weight, else
-// game-controller, both drawn by the library at 128 px.
+// converter's 1-bit layout, or it is larger than the page allows) logs why ("...; skipped") and leaves no page, so the
+// screen tries its next page or falls back to its icon. The icon is the launcher row's (GameRowIcon::choose): the
+// package's icon.bmp, read into a 512 B member and drawn with each of its pixels as 2 x 2, else the manifest's library
+// icon in its weight, else game-controller, both drawn by the library at 128 px.
 class GamePicture {
  public:
   // The icon's side when it is drawn, in pixels.

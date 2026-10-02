@@ -545,10 +545,10 @@ class LimitTest(PackerTestCase):
         self.assertEqual(self.project.run(self.project.game({'titles.png': png(481, 801)}))[0], 0)
 
     def test_reserved_pages_count_toward_the_image_budget(self):
-        # 3 x 28,862 + 48,062 = 134,648 bytes: over, where the two game images alone fit.
-        files = {'title.png': png(480, 480), 'handoff.png': png(480, 800), 'a.png': png(480, 480),
-                 'b.png': png(480, 480)}
-        self.assertRefused(self.project.game(files), 'the images convert to 134,648 bytes; at most 131,072')
+        # 5 x 28,862 = 144,310 bytes: over, where the three game images alone fit.
+        files = {'title.png': png(480, 480), 'handoff.png': png(480, 480), 'a.png': png(480, 480),
+                 'b.png': png(480, 480), 'c.png': png(480, 480)}
+        self.assertRefused(self.project.game(files), 'the images convert to 144,310 bytes; at most 131,072')
         del files['title.png'], files['handoff.png']
         self.assertEqual(self.project.run(self.project.game(files))[0], 0)
 

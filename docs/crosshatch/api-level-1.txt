@@ -418,14 +418,15 @@ limit image_height_pixels 3072
 # Two more reserved images, which only the runtime draws: title.png, the title
 # screen's splash, drawn centred and clipped in a 480 x 480 area under its header
 # (absent or unreadable: the game's icon at 128 px), and handoff.png, the hidden
-# pass hand-off screen's page, drawn centred and clipped on the screen with the
-# runtime's "I'm ready" button over it (absent or unreadable: the game's icon and
-# "Player N's turn"). One larger than its limits below makes the package
-# invalid. Both count toward images_bytes and images_count; icon.png does not.
+# pass hand-off screen's splash, drawn centred and clipped in the same 480 x 480
+# area, above the runtime's "Player N's turn" and "I'm ready" button (absent or
+# unreadable: title.png, else the game's icon at 128 px). One larger than its
+# limits below makes the package invalid. Both count toward images_bytes and
+# images_count; icon.png does not.
 limit title_image_width_pixels 480
 limit title_image_height_pixels 480
 limit handoff_image_width_pixels 480
-limit handoff_image_height_pixels 800
+limit handoff_image_height_pixels 480
 # An image's name, which ch.gfx.image takes, is its file name without ".bmp".
 # Unlike icon names, it takes no "-": a file named otherwise is skipped with a log
 # line, and drawing it stops the game as an unknown image. icon.bmp is the

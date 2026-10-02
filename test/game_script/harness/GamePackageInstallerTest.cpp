@@ -416,11 +416,12 @@ TEST_F(InstallerTest, ConvertsAnImageToItsOwnSizeInTheLoadersLayout) {
   }
 }
 
-// The reserved pages (AD-15, as amended 2026-10-02): title.png at most 480 x 480 and handoff.png at most 480 x 800,
-// converted at their own size like any image; one a pixel over either side is BadImage, refused before converting.
+// The reserved pages (AD-15, as amended 2026-10-02; handoff.png's limit by the owner's hand-off redesign): title.png
+// and handoff.png each at most 480 x 480, converted at their own size like any image; one a pixel over either side is
+// BadImage, refused before converting.
 TEST_F(InstallerTest, TheReservedPagesInstallAtTheirLimitsBesideTheImages) {
   drop("g.chgame", gamePackage("g", {{"title.png", bilevelPng(480, 480, true)},
-                                     {"handoff.png", bilevelPng(480, 800, false)},
+                                     {"handoff.png", bilevelPng(480, 480, false)},
                                      {"badge.png", bilevelPng(20, 10, false)}}));
   ASSERT_EQ(install().installed, 1);
   const GameCore::ImageHeader title = headerOf("/.games/g/title.bmp");
@@ -428,9 +429,9 @@ TEST_F(InstallerTest, TheReservedPagesInstallAtTheirLimitsBesideTheImages) {
   EXPECT_EQ(title.height, 480u);
   const GameCore::ImageHeader handoff = headerOf("/.games/g/handoff.bmp");
   EXPECT_EQ(handoff.width, 480u);
-  EXPECT_EQ(handoff.height, 800u);
+  EXPECT_EQ(handoff.height, 480u);
   EXPECT_EQ(fakesd::bytesOf("/.games/g/title.bmp").size(), 28862u);
-  EXPECT_EQ(fakesd::bytesOf("/.games/g/handoff.bmp").size(), 48062u);
+  EXPECT_EQ(fakesd::bytesOf("/.games/g/handoff.bmp").size(), 28862u);
   EXPECT_FALSE(exists("/.games/g/title.png"));
   EXPECT_TRUE(exists("/.games/g/badge.bmp"));
   // Smaller pages are fine too: they are drawn centred.
@@ -443,8 +444,8 @@ TEST_F(InstallerTest, AReservedPageOverItsLimitEndsBad) {
   const std::pair<const char*, std::pair<int, int>> cases[] = {
       {"title.png", {481, 480}},
       {"title.png", {480, 481}},
-      {"handoff.png", {481, 800}},
-      {"handoff.png", {480, 801}},
+      {"handoff.png", {481, 480}},
+      {"handoff.png", {480, 481}},
   };
   for (const auto& c : cases) {
     SetUp();
@@ -458,18 +459,20 @@ TEST_F(InstallerTest, AReservedPageOverItsLimitEndsBad) {
   }
 }
 
-// Both pages count toward the converted-image budget, unlike icon.png: with two 480 x 480 game images (28,862 B
-// each) they come to 3 x 28,862 + 48,062 = 134,648 B, over the 131,072 B, while the same two images alone fit.
+// Both pages count toward the converted-image budget, unlike icon.png: with three 480 x 480 game images (28,862 B
+// each) they come to 5 x 28,862 = 144,310 B, over the 131,072 B, while the same three images alone fit.
 TEST_F(InstallerTest, TheReservedPagesCountTowardTheImagesBudget) {
   const Bytes over = gamePackage("o", {{"title.png", bilevelPng(480, 480, true)},
-                                       {"handoff.png", bilevelPng(480, 800, true)},
+                                       {"handoff.png", bilevelPng(480, 480, true)},
                                        {"a.png", bilevelPng(480, 480, true)},
-                                       {"b.png", bilevelPng(480, 480, true)}});
+                                       {"b.png", bilevelPng(480, 480, true)},
+                                       {"c.png", bilevelPng(480, 480, true)}});
   drop("o.chgame", over);
   expectRejected("o.chgame", over, Error::ImagesTooBig);
   ASSERT_FALSE(HasFatalFailure());
   drop("k.chgame", gamePackage("k", {{"a.png", bilevelPng(480, 480, true)},
                                      {"b.png", bilevelPng(480, 480, true)},
+                                     {"c.png", bilevelPng(480, 480, true)},
                                      {"icon.png", bilevelPng(64, 64, false)}}));
   EXPECT_EQ(install().installed, 1);
 }

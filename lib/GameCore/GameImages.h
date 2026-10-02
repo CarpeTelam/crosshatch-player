@@ -22,12 +22,13 @@ inline constexpr size_t IMAGE_NAME_BYTES = 32;
 
 // The reserved images (AD-15, as amended 2026-10-02), which only the runtime draws and ch.gfx.image
 // never names: icon.bmp (the launcher's), title.bmp (the title screen's splash), and handoff.bmp (the
-// hidden hand-off page). The two pages count toward IMAGES_BYTES and MAX_IMAGES at install; icon.bmp
-// does not. The largest title.png and handoff.png a package may ship, in pixels:
+// hidden hand-off screen's splash, which falls back to title.bmp; amended 2026-10-02, owner, hand-off redesign). The
+// two pages count toward IMAGES_BYTES and MAX_IMAGES at install; icon.bmp does not. The largest title.png and
+// handoff.png a package may ship, in pixels: each fills the same 480 x 480 band.
 inline constexpr uint32_t TITLE_IMAGE_WIDTH = 480;
 inline constexpr uint32_t TITLE_IMAGE_HEIGHT = 480;
 inline constexpr uint32_t HANDOFF_IMAGE_WIDTH = 480;
-inline constexpr uint32_t HANDOFF_IMAGE_HEIGHT = 800;
+inline constexpr uint32_t HANDOFF_IMAGE_HEIGHT = 480;
 
 // True when the `length` bytes at `stem` (an image name without ".bmp", any letter case) name a
 // reserved image: "icon", "title", or "handoff".

@@ -134,7 +134,7 @@ TEST_F(PackedImagesTest, ALargeImageAssetIsConvertedToItsOwnSize) {
 }
 
 // The fixture with the two reserved pages and the manifest keys of epic-pass-and-play entry 12: the installer converts
-// title.png and handoff.png at their largest sizes (480 x 480, 480 x 800) into the pages the runtime alone draws, and
+// title.png and handoff.png at their largest size (480 x 480 each) into the pages the runtime alone draws, and
 // the installed manifest gives the registry default_mode and the count of its settings, and its reader the settings.
 TEST_F(PackedImagesTest, TheReservedPagesAndTheSettingsOfPassArtInstall) {
   fakesd::addFile("/games/pass-art.chgame", packed("pass-art.chgame"));

@@ -96,8 +96,8 @@ TEST(GameViewIconsTest, StatesWithNoViewAndNonMenuEventsHaveNoIcon) {
   EXPECT_EQ(GameViewIcons::forView(MatchState::Playing), nullptr);
   EXPECT_EQ(GameViewIcons::forView(MatchState::Leaving), nullptr);
   EXPECT_EQ(GameViewIcons::forView(MatchState::Result), nullptr) << "the Result banner has no icon";
-  // The hand-off screen shows the game's own icon or handoff.bmp (GamePicture), never a library icon such as the
-  // eye-closed one it showed before entry 12 (DESIGN.md hand-off-screen: "No eye-closed icon").
+  // The hand-off screen shows the game's handoff.bmp, title.bmp, or own icon (GamePicture), never a library icon such
+  // as the eye-closed one it showed before entry 12 (DESIGN.md hand-off-screen: "No eye-closed icon").
   EXPECT_EQ(GameViewIcons::forView(MatchState::HandOff), nullptr) << "the hand-off screen has no library icon";
   int nonMenu = 0;
   for (const MatchEvent event : ALL_EVENTS) {

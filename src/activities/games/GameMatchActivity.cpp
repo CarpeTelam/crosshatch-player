@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <utility>
 
+#include "GameSplashLayout.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
@@ -167,11 +168,13 @@ void GameMatchActivity::onEnter() {
     return;
   }
   // A hidden pass match's hand-off art, read now on the loop task (never in render), once the roster is known: the
-  // game's handoff.bmp in PSRAM (none, or one it cannot use, logged: the icon and the text), and its icon. Neither
-  // read calls the store, so the snapshot stays valid.
+  // band's picture, in order the game's handoff.bmp, else its title.bmp (each in PSRAM; none, or one it cannot use,
+  // logged, goes to the next), else its icon. No read calls the store, so the snapshot stays valid.
   if (lifecycle.hiddenPass()) {
     picture.loadIcon(manifest);
-    picture.loadPage(manifest.id, "handoff", GameCore::HANDOFF_IMAGE_WIDTH, GameCore::HANDOFF_IMAGE_HEIGHT);
+    if (!picture.loadPage(manifest.id, "handoff", GameCore::HANDOFF_IMAGE_WIDTH, GameCore::HANDOFF_IMAGE_HEIGHT)) {
+      picture.loadPage(manifest.id, "title", GameCore::TITLE_IMAGE_WIDTH, GameCore::TITLE_IMAGE_HEIGHT);
+    }
   }
   auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster,
                                 lifecycle.hiddenPass(), settings);
@@ -636,9 +639,11 @@ void GameMatchActivity::loopView() {
 
 void GameMatchActivity::loopHandOff() {
   const MatchState state = lifecycle.state();
+  // This pass's input was sampled just before loop(): its time, taken before the SD steps below, dates a release.
+  const auto now = static_cast<uint32_t>(millis());
   // As in a menu: the VM may still fail, hang, or set ch.store in a call that was running when the screen changed.
   if (!vmHealthy()) return;
-  store.flushIfDue(millis());
+  store.flushIfDue(now);
   flushResume();
   retryResumeDelete(false);
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -656,13 +661,23 @@ void GameMatchActivity::loopHandOff() {
   // A tap on the banner or the "I'm ready" button (the screen's one tap target; a tap elsewhere routes nothing), or
   // Confirm, passes only once render has pushed this state's own screen (passScreenShown), so neither a double tap nor
   // a quick press skips the banner or the hand-off screen before it is on the panel; one before is read and dropped.
+  // And either passes only when it began at or after that push completed (passScreenShownMs): this pass's time less
+  // the tap's touch-only held time (HalGPIO::lastTouchHeldMs, as loopPlaying back-dates a tap) or Confirm's hold
+  // (getHeldTime, a button's on a pass with a button edge). The banner and the button may overlap on the screen, so the
+  // second tap (or press) of a double one, begun while the hand-off screen was being pushed and released after, is
+  // dropped too.
   const auto route = routeTouch(mappedInput);
   const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
-  const bool passed = (route && route.event.action == ACTION_PASS) || confirmed;
-  if (passed && passScreenShown.load(std::memory_order_acquire) == state) {
-    app.clearTapFlash();  // the tap leaves this screen
-    handle(MatchEvent::Tap);
-    return;
+  const bool tapped = route && route.event.action == ACTION_PASS;
+  if ((tapped || confirmed) && passScreenShown.load(std::memory_order_acquire) == state) {
+    // After the acquire above, which orders render's store of the push's time before it.
+    const unsigned long held = tapped ? gpio.lastTouchHeldMs() : mappedInput.getHeldTime();
+    const auto began = static_cast<uint32_t>(now - held);
+    if (static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed)) >= 0) {
+      app.clearTapFlash();  // the tap leaves this screen
+      handle(MatchEvent::Tap);
+      return;
+    }
   }
   if (state != MatchState::Result) return;
   // Result shows the mover's own frame, which a tap queued behind the move may still change.
@@ -813,19 +828,13 @@ void GameMatchActivity::renderHandOff() {
   }
   handOffHeldBack.store(false);
   handOffSeat = vm->passedTo();
-  // No game command: the runtime's own screen on a cleared one, so none of the last seat's frame stays on the panel.
+  // No game command: the runtime's own screen on a cleared one (no header, no status strip), so none of the last seat's
+  // frame stays on the panel.
   replay.drawBlank(renderer);
-  // The game's page, centred and clipped on the screen, or its icon centred in the upper half (the text under it is
-  // buildHandOffView's).
-  const int width = renderer.getScreenWidth();
-  const int height = renderer.getScreenHeight();
-  if (picture.hasPage()) {
-    picture.drawPage(renderer, 0, 0, width, height);
-  } else {
-    picture.drawIcon(renderer, width / 2, height / 4);
-  }
-  // The "I'm ready" button over it. Its routing is published before the push, as Result's is: passScreenShown drops a
-  // tap routed before the push has returned.
+  // The title screen's splash band, drawn as the title screen draws it: the page centred and clipped, else the icon.
+  GameSplashLayout::drawBand(renderer, picture);
+  // "Player N's turn" and the "I'm ready" button under it (buildHandOffView). Its routing is published before the push,
+  // as Result's is: passScreenShown drops a tap routed before the push has returned.
   viewState = MatchState::HandOff;
   renderUi();
   // handle() may have closed routing after this render read its state.
@@ -836,7 +845,11 @@ void GameMatchActivity::renderHandOff() {
   panel = Panel::Blank;
   // The next seat's frame is drawn on a cleared screen in full.
   viewOnScreen = true;
-  // The hand-off screen is on the panel: its button may pass it now (loopHandOff), unless the match has moved on.
+  // The hand-off screen is on the panel: its button may pass it now (loopHandOff), by a touch or press begun from the
+  // push that first showed it (a repaint keeps that time), unless the match has moved on.
+  if (passScreenShown.load() != MatchState::HandOff) {
+    passScreenShownMs.store(static_cast<uint32_t>(millis()), std::memory_order_relaxed);
+  }
   passScreenShown.store(MatchState::HandOff, std::memory_order_release);
 }
 
@@ -869,8 +882,14 @@ void GameMatchActivity::renderView(const MatchState state) {
   renderer.displayBuffer(state == MatchState::Error ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
   // Seat 0's frame under the Over menu is everyone's, so only a view over another seat's frame counts as one.
   panel = canvas && state != MatchState::Over ? Panel::Seat : Panel::Other;
-  // Result's banner is on the panel: a tap may pass it now (loopHandOff), unless the match has moved on meanwhile.
-  if (state == MatchState::Result) passScreenShown.store(MatchState::Result, std::memory_order_release);
+  // Result's banner is on the panel: a tap begun from the push that first showed it (a repaint keeps that time) may
+  // pass it (loopHandOff), unless the match has moved on meanwhile.
+  if (state == MatchState::Result) {
+    if (passScreenShown.load() != MatchState::Result) {
+      passScreenShownMs.store(static_cast<uint32_t>(millis()), std::memory_order_relaxed);
+    }
+    passScreenShown.store(MatchState::Result, std::memory_order_release);
+  }
 }
 
 void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
@@ -996,25 +1015,22 @@ void GameMatchActivity::buildHandOffView(UiScreen& screen, const MatchState stat
     fui::button(screen.frame(), rect, props);
     return;
   }
-  const fui::Rect whole = screen.frame().screen();
-  if (!picture.hasPage() && handOffSeat != 0) {
-    // "Player N's turn" centred under the icon renderHandOff drew in the upper half; a developer's page replaces both,
-    // so it cannot be told the seat. Seat 0 is no player's turn (a round already over when it began announces it): no
-    // line.
+  // Where the title screen has its first two rows (GameSplashLayout::rowRect), whichever picture the band shows.
+  if (handOffSeat != 0) {
+    // "Player N's turn", plain text centred in the first row's place: no action, no frame. Seat 0 is no player's turn
+    // (a round already over when it began announces it): no line.
+    const fui::Rect turnRow = GameSplashLayout::rowRect(screen, renderer, 0, menuProps);
     snprintf(bannerText, sizeof(bannerText), tr(STR_GAMES_PLAYER_TURN), static_cast<unsigned>(handOffSeat));
     fui::TextStyle text = theme.bodyText;
     text.align = fui::TextAlign::Center;
-    const int iconBottom = whole.y + whole.height / 4 + GamePicture::ICON_PIXELS / 2;
-    const fui::Rect line{safe.x, static_cast<int16_t>(iconBottom + theme.spaceLg), safe.width,
-                         static_cast<int16_t>(screen.target().lineHeight(text.font))};
+    const int16_t lineHeight = screen.target().lineHeight(text.font);
+    const fui::Rect line{turnRow.x, static_cast<int16_t>(turnRow.y + (turnRow.height - lineHeight) / 2), turnRow.width,
+                         lineHeight};
     screen.target().text(line, bannerText, text);
   }
-  // "I'm ready", as tall as a dialog's option (dialogProps keeps OptionDialogProps' buttonHeight), centred on the
-  // screen: the banner sits at the bottom, so a double tap on it cannot land here.
+  // "I'm ready" fills the second two-line row's place (the title screen's with a save), framed as the banner is.
   props.label = tr(STR_GAMES_READY);
-  const int16_t height = dialogProps.buttonHeight;
-  const fui::Rect rect{left, static_cast<int16_t>(whole.y + (whole.height - height) / 2), width, height};
-  fui::button(screen.frame(), rect, props);
+  fui::button(screen.frame(), GameSplashLayout::rowRect(screen, renderer, 1, menuProps), props);
 }
 
 bool GameMatchActivity::pauseInGap() const {

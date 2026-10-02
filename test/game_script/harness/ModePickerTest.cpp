@@ -23,6 +23,7 @@
 #include "activities/games/GameModeActivity.h"
 #include "activities/games/GameOptionsActivity.h"
 #include "activities/games/GamePicture.h"
+#include "activities/games/GameSplashLayout.h"
 #include "activities/games/GamesLauncherActivity.h"
 #include "games/GameSaveStore.h"
 #include "util/ButtonNavigator.h"
@@ -976,13 +977,15 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
               (std::vector<std::string>{"Player " + std::to_string(seat) + "'s turn", tr(STR_GAMES_READY)}));
   };
   // The one tap target of the screen on the panel: Result's banner at the bottom, or the hand-off screen's "I'm ready"
-  // in the middle (HiddenPassTest.TheReadyButtonIsMidScreenAndTheBannerAtTheBottom pins both places).
+  // in the splash menu's second row (HiddenPassTest.TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom pins
+  // both places).
   const auto tapBanner = [&] {
     input->tap(240, 740);
     frame();
   };
   const auto tapReady = [&] {
-    input->tap(240, 400);
+    const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
+    input->tap(ready.x, ready.y);
     frame();
   };
   const auto pumpTo = [&](const std::string& part, const size_t times) {
@@ -1354,7 +1357,7 @@ TEST_F(TitleScreenTest, WithNoTitleImageTheBandShowsTheLibraryIconAt128CentredAn
   const auto row = std::find_if(ui().drawn.begin(), ui().drawn.end(),
                                 [](const screen::DrawnText& d) { return d.text == tr(STR_GAMES_NEW_GAME); });
   ASSERT_NE(row, ui().drawn.end()) << ui().joined();
-  EXPECT_GE(row->rect.y, BAND_TOP + GameModeActivity::SPLASH_BAND) << "the rows start under the band";
+  EXPECT_GE(row->rect.y, BAND_TOP + GameSplashLayout::BAND) << "the rows start under the band";
 }
 
 TEST_F(TitleScreenTest, APackageIconIsDrawnAt128WithEachOfItsPixelsTwoByTwo) {
@@ -1398,6 +1401,41 @@ TEST_F(TitleScreenTest, AFullSizeTitleImageFillsTheBandExactly) {
   EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP + 480, 480, 1), 0u) << "and the rows";
 }
 
+// GameSplashLayout::rowRect, which places the hidden hand-off screen's "Player N's turn" and "I'm ready", is where the
+// title screen's list lays out its two-line rows (Continue and New game, over a save): the list's own row fills (each
+// row's background, the selected one's dither) are the helper's rects, row for row, and the rows start right under the
+// band. The hand-off screen's suite (HiddenPassTest) pins its text and button to the same helper.
+TEST_F(TitleScreenTest, TheSplashLayoutsRowRectsAreTheRowsTheTitleScreensListDraws) {
+  installCounter("\"solo\",\"pass\"");
+  save("counter");
+  openTitleFor(SOLO | PASS);
+  ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_CONTINUE))) << ui().joined();
+  ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_OPTIONS))) << ui().joined();
+  const std::vector<freeink::ui::Rect> rows = match::splashMenuRows(*renderer, 2);
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0].y, BAND_TOP + GameSplashLayout::BAND) << "the first row starts right under the band";
+  std::vector<freeink::ui::Rect> drawn;
+  for (const freeink::ui::Rect& fill : ui().fillRects)
+    if (fill.y >= BAND_TOP + GameSplashLayout::BAND) drawn.push_back(fill);
+  ASSERT_GE(drawn.size(), 2u) << "the list drew no rows under the band";
+  for (size_t i = 0; i < 2; ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(drawn[i].x, rows[i].x);
+    EXPECT_EQ(drawn[i].y, rows[i].y);
+    EXPECT_EQ(drawn[i].width, rows[i].width);
+    EXPECT_EQ(drawn[i].height, rows[i].height);
+  }
+  // And the rows' texts sit inside them: Continue's in row 0, New game's in row 1.
+  for (const screen::DrawnText& text : ui().drawn) {
+    if (text.text == tr(STR_GAMES_CONTINUE)) {
+      EXPECT_TRUE(rows[0].contains(text.rect.x, text.rect.y)) << text.text;
+    }
+    if (text.text == tr(STR_GAMES_NEW_GAME)) {
+      EXPECT_TRUE(rows[1].contains(text.rect.x, text.rect.y)) << text.text;
+    }
+  }
+}
+
 // A title.bmp the screen cannot use is the icon, logged: one larger than 480 x 480 (only a hand-copied folder holds
 // one: the installer refuses it), one that will not open, and one that is not the converter's layout.
 TEST_F(TitleScreenTest, ATitleImageItCannotUseFallsBackToTheIconLogged) {
@@ -1407,7 +1445,7 @@ TEST_F(TitleScreenTest, ATitleImageItCannotUseFallsBackToTheIconLogged) {
     EXPECT_GT(blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128), 0u);
     EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128));
     EXPECT_TRUE(logHas("title.bmp"));
-    EXPECT_TRUE(logHas("drawing the icon instead"));
+    EXPECT_TRUE(logHas("; skipped"));
     EXPECT_EQ(fakepsram::liveBlocks, 0u) << "nothing held";
     dropTitle();
     fakelog::clearLines();

@@ -314,7 +314,7 @@ A package is a zip whose members are stored or deflated (no ZIP64) and sit at th
 | `manifest.json` | required; parsed by `GameCore::Manifest::parse`, the one manifest parser |
 | `main.lua` | required |
 | `<name>.lua` | `<name>` is `[a-z0-9_]{1,32}`; loaded by `require("<name>")` |
-| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, `title.png` the title screen's splash, `handoff.png` the hidden hand-off page (the reserved images), any other is a game image |
+| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, `title.png` the title screen's splash, `handoff.png` the hidden hand-off screen's splash (the reserved images), any other is a game image |
 
 Anything else makes the package invalid: a folder, a path with `/` or `\`, `..`, an upper-case name, a name over the
 limit, a `.bmp` (images are `.png` only; the installer converts them), and the same name twice.
@@ -330,7 +330,7 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Converted images | `MAX_IMAGES` | 32 |
 | Side of `icon.bmp` | `ICON_PIXELS` | 64 |
 | Width x height of `title.png` (`GameImages.h`) | `TITLE_IMAGE_WIDTH` x `TITLE_IMAGE_HEIGHT` | 480 x 480 |
-| Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 800 |
+| Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 480 |
 | Width x height of a `.png` | `IMAGE_MAX_WIDTH` x `IMAGE_MAX_HEIGHT` | 2,048 x 3,072 |
 | Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`) | `StreamingJsonParser::MAX_NESTING` | 32 |
 
@@ -356,11 +356,13 @@ scaled to 64 x 64. The converter sizes the result as `int(side * (64.0f / side))
 at 63, not 64, for 280 of the sides 1 to 2,048 (41, 47, 55, 61, 82, 83, 94, 97, ...); the installer refuses a result
 that is not 64 x 64, and `pack_game.py` refuses such a side up front with the sides nearby that work. Every power of two
 from 1 to 2,048 works, so 64, 128, and 256 are always safe. Any other `<name>.png` becomes `<name>.bmp` at its own size.
-`title.png` and `handoff.png`, the reserved pages (AD-15, as amended 2026-10-02), are converted the same way but may be
-at most 480 x 480 and 480 x 800; a larger one makes the package invalid (checked from its header before it is
+`title.png` and `handoff.png`, the reserved pages (AD-15, as amended 2026-10-02; `handoff.png`'s limit by the owner's
+hand-off redesign), are converted the same way but may each be at most 480 x 480, the splash band both are drawn in; a
+larger one makes the package invalid (checked from its header before it is
 converted). Both count toward the images budget, as game images do, but no game draws them: `GameCore::imageNameOf`
 refuses `icon`, `title`, and `handoff`, so `ch.gfx.image` treats them as unknown names, and the game loader skips their
-`.bmp` files without a log line. Only the runtime draws them, on the title screen and the hidden hand-off screen.
+`.bmp` files without a log line. Only the runtime draws them: `title.bmp` on the title screen, and on the hidden
+hand-off screen `handoff.bmp`, else `title.bmp`.
 A PNG whose header the converter refuses (not a PNG, interlaced, over 2,048 x 3,072, an impossible colour type or bit
 depth), a converted file `checkImageHeader` does not accept, or images over the budget make the package invalid. The
 converter answers only true or false and ignores failed writes, so its output goes through a wrapper that notes a short

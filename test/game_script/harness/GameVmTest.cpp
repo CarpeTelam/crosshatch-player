@@ -813,7 +813,7 @@ TEST_F(GameVmTest, ADrawOfAReservedPageIsAnUnknownImage) {
                     page + "', 0, 0, 'black') end\nreturn game\n");
     fakesd::addFile("/.games/" + id + "/badge.bmp", harness::bmpFile(8, 8, [](int, int) { return true; }));
     fakesd::addFile("/.games/" + id + "/title.bmp", harness::bmpFile(480, 480, [](int, int) { return true; }));
-    fakesd::addFile("/.games/" + id + "/handoff.bmp", harness::bmpFile(480, 800, [](int, int) { return true; }));
+    fakesd::addFile("/.games/" + id + "/handoff.bmp", harness::bmpFile(480, 480, [](int, int) { return true; }));
     ASSERT_TRUE(prepare(id));
     ASSERT_TRUE(vm->start());
     ASSERT_TRUE(waitFor([&] { return vm->finished(); }));

@@ -13,6 +13,7 @@
 
 #include "GameMatchActivity.h"
 #include "GameOptionsActivity.h"
+#include "GameSplashLayout.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GameHostCaps.h"
@@ -185,12 +186,6 @@ void GameModeActivity::writeNewGameLine() {
   }
 }
 
-int GameModeActivity::bandTop() const {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  return safe.y + metrics.topPadding + metrics.headerHeight;
-}
-
 void GameModeActivity::drawChrome() {
   UiListActivity::drawChrome();
   // The loop task opens and closes the question while this render runs: its row is read once, here, before the app
@@ -199,37 +194,27 @@ void GameModeActivity::drawChrome() {
   // The confirmation is drawn as it is on a plain list screen, with no band behind it.
   if (renderedConfirmRow >= 0) return;
   // The splash band: title.bmp centred and clipped, else the icon centred.
-  const int top = bandTop();
-  const int width = renderer.getScreenWidth();
-  if (picture.hasPage()) {
-    picture.drawPage(renderer, 0, top, width, SPLASH_BAND);
-  } else {
-    picture.drawIcon(renderer, width / 2, top + SPLASH_BAND / 2);
-  }
+  GameSplashLayout::drawBand(renderer, picture);
 }
 
 void GameModeActivity::buildScreen(UiScreen& screen) {
-  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const int16_t right = static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width));
-  const int16_t bottom = static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height));
+  fui::Insets margin = GameSplashLayout::menuMargin(renderer);
   if (renderedConfirmRow >= 0) {
     // Content: the safe area minus the header band GUI.drawHeader paints, as on a plain list screen.
-    screen.setContentMarginFromScreen(
-        fui::Insets{static_cast<int16_t>(bandTop()), right, bottom, static_cast<int16_t>(safe.x)});
+    margin.top = static_cast<int16_t>(GameSplashLayout::bandTop(renderer));
+    screen.setContentMarginFromScreen(margin);
     screen.spacer(static_cast<int16_t>(UITheme::getInstance().getMetrics().verticalSpacing));
     buildConfirmDialog(screen);  // the list is not built under it, so none of its rows takes a touch
     return;
   }
-  // Content: the safe area under the splash band; the rows follow directly under it.
-  screen.setContentMarginFromScreen(
-      fui::Insets{static_cast<int16_t>(bandTop() + SPLASH_BAND), right, bottom, static_cast<int16_t>(safe.x)});
+  // Content: the safe area under the splash band; the rows follow directly under it (GameSplashLayout::rowRect).
+  screen.setContentMarginFromScreen(margin);
   fui::ListProps props;
   props.items = rowItems;
   props.count = static_cast<uint16_t>(rowCount);
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  props.subtitleText = screen.theme().smallText;
-  props.subtitleText.maxLines = 1;  // a long New game line ends in an ellipsis
+  GameSplashLayout::styleMenu(screen, props);
   syncListViewport(screen, props);
   screen.list(props);
 }

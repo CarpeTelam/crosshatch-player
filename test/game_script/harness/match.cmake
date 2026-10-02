@@ -48,7 +48,7 @@ list(REMOVE_ITEM MATCH_EXCLUDE_GAMES GameVM.cpp GameClock.cpp GameRandom.cpp)
 # GameArena.cpp is built from screen_stubs/GameArenaDouble.cpp: the same, with a reserve a test can shrink.
 list(APPEND MATCH_EXCLUDE_GAMES GameArena.cpp)
 set(MATCH_EXCLUDE_ACTIVITIES ${HARNESS_EXCLUDE_ACTIVITIES})
-list(REMOVE_ITEM MATCH_EXCLUDE_ACTIVITIES GameMatchActivity.cpp)
+list(REMOVE_ITEM MATCH_EXCLUDE_ACTIVITIES GameMatchActivity.cpp GameSplashLayout.cpp)
 # The launcher is built by games_launcher.cmake (entry 8); never here, whatever the shared list says.
 list(APPEND MATCH_EXCLUDE_ACTIVITIES GamesLauncherActivity.cpp)
 harness_game_sources(MATCH_SOURCES

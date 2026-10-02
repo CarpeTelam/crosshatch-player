@@ -1207,10 +1207,15 @@ class PassResumeTest : public ResumeMatchTest {
   }
 
   // pass-hidden: the screen the match asked for is drawn; then a tap on its one target passes the device on: the
-  // hand-off screen's "I'm ready" button (its middle is the screen's), or Result's banner at the bottom
-  // (HiddenPassTest.TheReadyButtonIsMidScreenAndTheBannerAtTheBottom pins both places).
+  // hand-off screen's "I'm ready" button (in the splash menu's second row), or Result's banner at the bottom
+  // (HiddenPassTest.TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom pins both places).
   void tapScreen() {
-    input->tap(240, state() == "Result" ? 740 : 400);
+    if (state() == "Result") {
+      input->tap(240, 740);
+    } else {
+      const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
+      input->tap(ready.x, ready.y);
+    }
     frame();
   }
   const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }

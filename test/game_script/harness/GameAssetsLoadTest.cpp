@@ -141,7 +141,7 @@ TEST_F(GameAssetsLoadTest, AGameWithoutImagesLoadsItsModulesAlone) {
 TEST_F(GameAssetsLoadTest, TheReservedPagesAreSkippedWithoutAWordAndTheImagesBesideThemLoad) {
   fakesd::addFile(path("main.lua"), "return 1");
   fakesd::addFile(path("title.bmp"), image(480, 480));
-  fakesd::addFile(path("handoff.bmp"), image(480, 800));
+  fakesd::addFile(path("handoff.bmp"), image(480, 480));
   fakesd::addFile(path("TITLE.BMP"), image(8, 8));
   fakesd::addFile(path("titles.bmp"), image(8, 8));
   ASSERT_EQ(load(), Result::Ok);

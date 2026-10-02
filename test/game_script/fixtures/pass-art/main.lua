@@ -1,5 +1,5 @@
 -- pass-art fixture: what a developer controls (epic-pass-and-play entry 12): a title.png splash (480 x 480), a
--- handoff.png hand-off page (480 x 800), default_mode "pass", and two settings, Level (Easy, Hard; default Hard) and
+-- handoff.png hand-off splash (480 x 480), default_mode "pass", and two settings, Level (Easy, Hard; default Hard) and
 -- Board (Small, Medium, Large; default the first). A hidden game that also plays solo. setup reads ctx.settings and
 -- keeps the values in state, and every frame prints the mode and both values, so the screen shows which choices the
 -- match was started with: Options changes them for the next New game, Play again keeps them, and Continue resumes

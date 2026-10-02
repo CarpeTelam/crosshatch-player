@@ -57,8 +57,6 @@ class GameModeActivity final : public UiListActivity {
 
   // The rows there can be: Continue, New game, Options.
   static constexpr size_t MAX_ROWS = 3;
-  // The splash band's height under the header (DESIGN.md {spacing.splash-band}): title.png's largest size.
-  static constexpr int SPLASH_BAND = 480;
   // What joins the names in a modes line and the values in New game's line.
   static constexpr const char* JOINER = " \xC2\xB7 ";
   // Room for New game's second line: a mode's name and every setting's value, each after the joiner.
@@ -92,8 +90,6 @@ class GameModeActivity final : public UiListActivity {
   bool handleCustomInput() override;
   void onRowAction(const freeink::ui::ActionEvent& event) override;
 
-  // The top of the splash band on the logical screen: under the header.
-  int bandTop() const;
   // Reads the settings from the installed manifest (the registry's entry keeps only their count); none, logged, when
   // it cannot.
   void loadSettings();

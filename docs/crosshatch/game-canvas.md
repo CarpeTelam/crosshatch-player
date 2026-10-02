@@ -105,17 +105,17 @@ never takes it again (pitfall 12cc816). It notes `millis()` at its very start, a
 
 1. cancel the VM and join it (up to 500 ms);
 2. in a hidden pass match only, the blank (`FrameReplay::drawBlank`: a plain white screen, no icon, no text, never the
-   game's `handoff.bmp`) is drawn and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged ("forced exit:
-   blank screen pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the device sleeps,
-   and the sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over white (AD-12,
-   AD-20, as amended 2026-10-02). The match is Leaving, so render draws nothing, and the render task is not inside
-   `render()` while the lock is held, so the loop task may use `replay` and the framebuffer here. Any state with a VM
-   gets it, the error view of a script error included (only a stuck call frees the VM on the way to Error). With no VM
-   there is no wait, so the blank comes first, before any SD step, and only when the last push left a seat's frame on
-   the panel (`GameMatchActivity::panel`): after a stuck call freed the VM on the way to Error and before the error view
-   was drawn. Once the error view is drawn, or after a Leave (which pushed its own blank over a seat's frame), the exit
-   pushes nothing. Solo and open pass matches push nothing. The half refresh is AD-12's choice, where the hand-off
-   between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
+   game's `handoff.bmp` or `title.bmp`) is drawn and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged
+   ("forced exit: blank screen pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the
+   device sleeps, and the sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over
+   white (AD-12, AD-20, as amended 2026-10-02). The match is Leaving, so render draws nothing, and the render task is
+   not inside `render()` while the lock is held, so the loop task may use `replay` and the framebuffer here. Any state
+   with a VM gets it, the error view of a script error included (only a stuck call frees the VM on the way to Error).
+   With no VM there is no wait, so the blank comes first, before any SD step, and only when the last push left a seat's
+   frame on the panel (`GameMatchActivity::panel`): after a stuck call freed the VM on the way to Error and before the
+   error view was drawn. Once the error view is drawn, or after a Leave (which pushed its own blank over a seat's
+   frame), the exit pushes nothing. Solo and open pass matches push nothing. The half refresh is AD-12's choice, where
+   the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
    (epic-pass-and-play entry 11);
 3. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
    free the memory it lives in;
@@ -165,35 +165,41 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
 | Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the hand-off screen replaces the title screen once the VM has named the round's first turn seat (below). A resumed hidden pass save starts here too: the VM restores the snapshot instead of running `setup`, and the hand-off screen names the saved turn seat. |
-| HandOff | a tap on "I'm ready", or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
+| HandOff | a tap on "I'm ready" begun after the screen was pushed, or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
 | Playing | a move that passes the turn | Result | The VM draws the mover's own frame again and counts the move (`GameVM::turnsPassed`, `passedTo`); the match shows that frame with the banner "Tap to pass to player N" (a fast refresh, no button hints). |
 | Playing | the status the game shipped is over | Over | As in solo: a move that ends the round is RoundOver, never a turn change, and the end-of-round menu sits over seat 0's frame, the one for everyone. |
-| Result | a tap on the banner, or Confirm | HandOff | The hand-off screen, naming the seat the move passed to. |
+| Result | a tap on the banner begun after it was pushed, or Confirm | HandOff | The hand-off screen, naming the seat the move passed to. |
 | Result, HandOff | Back or Home | Paused | The pause menu. From Result it sits over the mover's frame; from HandOff it sits on no frame (a cleared screen), since the device is between players. |
 | Paused | Resume, or Back | Result, HandOff, or Playing | The state the menu was opened from: Result redraws the mover's frame and banner, HandOff the hand-off screen. |
 | Result, HandOff | a ScriptError or a stuck call | Error | As in solo: the loop watches the VM there as in a menu. |
 | Over | Play again | HandOff | The VM begins the new round (`setup`) and draws nothing; the hand-off screen shows once the VM has named the new round's first turn seat (the end-of-round menu stays until then), and its button shows that seat. The Play-again gap's rules hold on top of the seat gate: no frame of the last round is drawn after the hand-off screen. |
 
-**The hand-off screen.** The runtime alone draws it, and no game command: `FrameReplay::drawBlank` clears the screen,
-then the match draws the game's `handoff.bmp` (at most 480 x 800) centred on the screen and clipped to it, or, without
-one, the game's own icon at 128 px (its `icon.bmp`, else the manifest's library icon, else `game-controller`, as on its
-launcher row; `GamePicture`) with its middle at y = 200 and "Player N's turn" centred under it; then the "I'm ready"
-button, framed like a dialog's option, 4/5 of the safe area wide, its middle at y = 400. A developer's page replaces the
-icon and the text, never the button, so it cannot name the next seat; the button is in the same place on both. The match
-reads `handoff.bmp` and the icon in `onEnter` on the loop task, after the save has set the roster, for a hidden pass
-match only (PSRAM, at most 48,062 B); a page that is missing draws the default screen, and one that will not read, is
-not the converter's 1-bit layout, or is larger than 480 x 800 draws it too, logged ("... drawing the icon instead"). N
-is the seat the hand-off passes to (`GameVM::passedTo`): after a move, the seat the move passed to; at a round's start
-(a new match, a resumed save, Play again), the round's first turn seat, which the VM stores and counts once the round
-has begun (`GameVM::turnAnnouncements`). Until the count reaches the one the match awaits (1 for the match's first
-round, Play again's count plus one after it), a render in HandOff pushes nothing, so the screen before stays (the
-title screen at a match's start, the end-of-round menu after Play again, and a pause menu opened during the wait until
-the seat is named) and no tap or Confirm passes it; the loop asks for the render once the count moves. The
-match pushes the screen with a full refresh when it replaces anything else on the panel, so nothing of the last seat's
-frame stays there. A render in HandOff with the hand-off screen already on the panel (after the light panel closes, or
-any repaint) pushes it again with a fast refresh: the match records what its last push left on the panel
-(`GameMatchActivity::panel`: a seat's frame, no seat's (the hand-off screen or the blank), or anything else), under
-`RenderLock`.
+**The hand-off screen.** The runtime alone draws it, and no game command, laid out as the title screen (the owner's
+hand-off redesign, 2026-10-02; `GameSplashLayout`): `FrameReplay::drawBlank` clears the screen, and the match draws no
+header and no status strip; the title screen's 480 x 480 splash band, at the same place under where its header would be,
+shows the game's `handoff.bmp`, else its `title.bmp` (each at most 480 x 480, centred and clipped in the band), else its
+own icon at 128 px centred in the band (its `icon.bmp`, else the manifest's library icon, else `game-controller`, as on
+its launcher row; `GamePicture`), drawn by the same call the title screen draws its splash with; then, where the title
+screen has its first menu row, "Player N's turn" as plain text (no action, no frame), centred in the row, whichever
+picture the band shows; and where it has its second two-line row (as with a save: Continue, then New game), the "I'm
+ready" button filling the row, framed as Result's banner is. `GameSplashLayout::rowRect` measures both rows as
+FreeInkUI's list lays out the title screen's two-line rows, and `ModePickerTest` pins it to the rows the title screen
+draws; without a save the title screen's second row is Options, one line and shorter, which the hand-off screen does not
+copy. The match reads the pages and the icon in `onEnter` on the loop task, after the save has set the roster, for a
+hidden pass match only (`handoff.bmp`, and `title.bmp` only when there is no usable `handoff.bmp`; PSRAM, at most 28,862
+B); a page that is missing is skipped silently, and one that will not read, is not the converter's 1-bit layout, or is
+larger than 480 x 480 is skipped with a log line ("... skipped"). N is the seat the hand-off passes to
+(`GameVM::passedTo`): after a move, the seat the move passed to; at a round's start (a new match, a resumed save, Play
+again), the round's first turn seat, which the VM stores and counts once the round has begun
+(`GameVM::turnAnnouncements`); seat 0 (a round already over when it began) is no player's turn, and the screen draws no
+line for it. Until the count reaches the one the match awaits (1 for the match's first round, Play again's count plus
+one after it), a render in HandOff pushes nothing, so the screen before stays (the title screen at a match's start, the
+end-of-round menu after Play again, and a pause menu opened during the wait until the seat is named) and no tap or
+Confirm passes it; the loop asks for the render once the count moves. The match pushes the screen with a full refresh
+when it replaces anything else on the panel, so nothing of the last seat's frame stays there. A render in HandOff with
+the hand-off screen already on the panel (after the light panel closes, or any repaint) pushes it again with a fast
+refresh: the match records what its last push left on the panel (`GameMatchActivity::panel`: a seat's frame, no seat's
+(the hand-off screen or the blank), or anything else), under `RenderLock`.
 
 A forced exit (sleep, any Replace) pushes the blank, plain white, with a half refresh, from any state with a VM, and
 with no VM while a seat's frame is on the panel: see The forced exit, step 2. So does a Leave from a seat's frame: see
@@ -201,11 +207,17 @@ Leaving.
 
 **Taps.** Result's banner and the hand-off screen's "I'm ready" button are each their screen's one tap target (an
 `fui::button` with `ACTION_PASS`, routed by `routeTouch`): a tap on it, or Confirm, passes the device on, and a tap
-anywhere else does nothing. The banner is a framed panel at the bottom of the screen and the button sits in the middle,
-so a double tap on the banner cannot land on the button. Either passes only once render has pushed that state's own
-screen (`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): the button's routing is
-published before the push, as the banner's is, and a tap or a Confirm press made before the banner or the hand-off
-screen is on the panel, or while it is being pushed, is read and dropped, so a double tap cannot skip either.
+anywhere else (the band, the turn line) does nothing. The banner is a framed panel at the bottom of the screen and the
+button fills the title screen's second two-line row, and on the X4 Pro the two overlap (an estimate from the theme's
+measured tokens: the row at y = 648 to 722, the banner at y = 649 to 780; the simulator screenshots measure it), so they
+are kept apart by time, not by position. Either screen passes only once render has pushed that state's own screen
+(`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): the button's routing is published
+before the push, as the banner's is, and a tap or a Confirm press made before the banner or the hand-off screen is on
+the panel, or while it is being pushed, is read and dropped. And a tap or Confirm passes only when it began at or after
+the push that first showed that screen completed (`passScreenShownMs`, stored with `passScreenShown`; a repaint keeps
+it): the loop pass's `millis()`, taken before its SD steps, less the tap's touch-only held time
+(`HalGPIO::lastTouchHeldMs()`, as `loopPlaying` back-dates a tap) or Confirm's hold (`getHeldTime()`). So the second tap
+or press of a double one, begun while the screen was being pushed and released after, is dropped too.
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is
@@ -250,7 +262,10 @@ the next seat's push completed, or when it is a tap sampled before that push com
   a held time; back-dating the latch itself is deferred, deferred-work.md `## e5-xr`);
 - the back-dating anchors to the loop's read, a few milliseconds after the release sample, whose time is not exposed;
 - a finger already down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet
-  freed, so its touch is dropped (fails closed).
+  freed, so its touch is dropped (fails closed);
+- as on the canvas (the first item), on the Result banner and the hand-off screen's button: a touch that lands and
+  lifts while the loop task is blocked in an SD step is first sampled after it, so it reads as a fresh tap and passes
+  the screen.
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
@@ -274,7 +289,7 @@ and holds the room rule; `GameViewIconsTest` checks every name against the libra
 | End-of-round menu | `flag-checkered`; rows `arrows-clockwise`, `sign-out` | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
 | Error view | `warning`; row `sign-out` | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
 | Result banner (hidden pass) | -- | -- | "Tap to pass to player N" in a framed panel at the bottom, over the mover's frame | a tap on the banner | Confirm passes; Back pauses; no hints |
-| Hand-off screen (hidden pass) | the game's own icon, 128 px, in the upper half (no library view icon) | -- | "Player N's turn" under the icon; or the game's `handoff.bmp` in place of both | "I'm ready", in the middle | Confirm passes; Back pauses; no hints |
+| Hand-off screen (hidden pass) | the title screen's splash band: the game's `handoff.bmp`, else its `title.bmp`, else its own icon at 128 px (no library view icon) | -- | "Player N's turn", plain text in the title screen's first menu row | "I'm ready", filling its second two-line row (as with a save) | Confirm passes; Back pauses; no hints |
 
 The pause menu opened in the Play-again gap adds the line "Starting the next round" under its headline, centred like the
 caption and the headline (see Paused -> Playing above).

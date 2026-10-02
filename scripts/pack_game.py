@@ -13,7 +13,7 @@ decode: a PNG is checked through its IHDR and then chunk by chunk (every chunk's
 data that inflates to exactly the bytes its IHDR's size, colour type, and bit depth call for; the pixels are left to the
 installer's converter), `icon.png` must be square and of a side the converter scales to exactly 64
 (`icon_scaled_side`; 41 is scaled to 63 and would install as `.bad`), `title.png` and `handoff.png` fit their pages
-(`PAGE_LIMITS`, 480 x 480 and 480 x 800), the `.lua` members' bytes together stay within
+(`PAGE_LIMITS`, 480 x 480 each), the `.lua` members' bytes together stay within
 `GameCore::LUA_SOURCES_BYTES`, a Lua file is checked only for a leading binary-chunk signature, and a manifest nests no
 deeper than the device's JSON parser reads (`MAX_NESTING`, 32). The `icon` grammar and the
 `icon_weight` values are R9's (the spine's AD-15 amendment) and `Manifest.cpp`'s `validIcon` and `parseIconWeight` apply
@@ -72,7 +72,7 @@ MAX_IMAGE_HEIGHT = 3072
 ICON_PIXELS = 64  # GameCore::ICON_PIXELS: the side the installer scales icon.png to, and requires of the result
 # The reserved pages (GameCore::TITLE_IMAGE_* and HANDOFF_IMAGE_*): the largest title.png and handoff.png, which the
 # runtime alone draws and which count toward the images budget, unlike icon.png.
-PAGE_LIMITS = {'title.png': (480, 480), 'handoff.png': (480, 800)}
+PAGE_LIMITS = {'title.png': (480, 480), 'handoff.png': (480, 480)}
 
 # Manifest::parse's text caps.
 MAX_NAME_BYTES = 64

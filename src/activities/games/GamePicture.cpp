@@ -34,7 +34,7 @@ bool GamePicture::loadPage(const char* gameId, const char* stem, const uint32_t 
   if (!Storage.exists(path)) return false;  // the package ships none: the screen's default, nothing to say
   auto file = Storage.open(path);
   if (!file) {
-    LOG_ERR("GAME", "Cannot open %s; drawing the icon instead", path);
+    LOG_ERR("GAME", "Cannot open %s; skipped", path);
     return false;
   }
   uint8_t header[GameCore::IMAGE_HEADER_BYTES];
@@ -42,7 +42,7 @@ bool GamePicture::loadPage(const char* gameId, const char* stem, const uint32_t 
   const size_t wanted = fileBytes < sizeof(header) ? fileBytes : sizeof(header);
   const int read = file.read(header, sizeof(header));
   if (read < 0 || static_cast<size_t>(read) < wanted) {
-    LOG_ERR("GAME", "Cannot read %s; drawing the icon instead", path);
+    LOG_ERR("GAME", "Cannot read %s; skipped", path);
     return false;
   }
   // The file is the whole budget: only its layout and its size are in question.
@@ -50,21 +50,21 @@ bool GamePicture::loadPage(const char* gameId, const char* stem, const uint32_t 
   const GameCore::ImageCheck check =
       GameCore::checkImageHeader(header, static_cast<size_t>(read), fileBytes, fileBytes, size);
   if (check != GameCore::ImageCheck::Ok) {
-    LOG_ERR("GAME", "%s is not a usable page: %s; drawing the icon instead", path, GameCore::imageCheckName(check));
+    LOG_ERR("GAME", "%s is not a usable page: %s; skipped", path, GameCore::imageCheckName(check));
     return false;
   }
   if (size.width > maxWidth || size.height > maxHeight) {
-    LOG_ERR("GAME", "%s is %ux%u, over %ux%u; drawing the icon instead", path, static_cast<unsigned>(size.width),
+    LOG_ERR("GAME", "%s is %ux%u, over %ux%u; skipped", path, static_cast<unsigned>(size.width),
             static_cast<unsigned>(size.height), static_cast<unsigned>(maxWidth), static_cast<unsigned>(maxHeight));
     return false;
   }
   HalMemory::PsramBuffer pixels = HalMemory::allocatePsram(size.pixelBytes());
   if (!pixels) {
-    LOG_ERR("GAME", "OOM: %u B for %s; drawing the icon instead", static_cast<unsigned>(size.pixelBytes()), path);
+    LOG_ERR("GAME", "OOM: %u B for %s; skipped", static_cast<unsigned>(size.pixelBytes()), path);
     return false;
   }
   if (file.read(pixels.get(), size.pixelBytes()) != static_cast<int>(size.pixelBytes())) {
-    LOG_ERR("GAME", "Cannot read the rows of %s; drawing the icon instead", path);
+    LOG_ERR("GAME", "Cannot read the rows of %s; skipped", path);
     return false;
   }
   page = std::move(pixels);
