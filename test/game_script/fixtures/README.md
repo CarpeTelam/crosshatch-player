@@ -173,7 +173,7 @@ step that names a tap names the button press too.
 8. Open `pass-hidden`, New game: the hand-off screen with no picture of the game's own: the `game-controller` icon at
    128 px centred in the band, "Player 1's turn" under it in the first row's place, and "I'm ready" in the second's;
    after seat 1's move and the banner, "Player 2's turn". Sleep on that screen: plain white first, as in step 6. A
-   copy of `pass-art` without `handoff.png`, packed by hand like `slow-restart` (never committed), shows `title.png` in
+   copy of `pass-art` without `handoff.png`, `pass-title.chgame` from `pack_device_run.py` (derived, never committed), shows `title.png` in
    the band instead.
 9. In `slow-restart`, play to the end of the round, choose Play again, then Back at once: the pause menu says
    "Starting the next round", centred under "Paused".
