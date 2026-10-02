@@ -1222,10 +1222,12 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
-// A game whose first mode cannot start (pass with no seat count this host fits) continues with the next one that can,
-// in solo, pass, nearby order: nearby, which plays solo until epic-play-nearby. Only a game with no such mode starts
-// nothing.
-TEST_F(TitleScreenTest, AContinueWhoseFirstModeCannotStartTakesTheNextModeThatCan) {
+// On a host with no pass seat count for the game (one seat), the title screen drops pass beside another mode
+// (onEnter), so a pass-and-nearby game is left with nearby alone: no Options row, and Continue passes nearby's roster
+// (solo until epic-play-nearby). It does not reach startResume's skip of a mode rosterFor refuses, since onEnter leaves
+// pass only when it is the game's only mode, where Continue starts nothing
+// (AContinueThatCannotFitAPassMatchStartsNothing).
+TEST_F(TitleScreenTest, APassThisHostCannotSeatIsDroppedBesideNearbyAndContinuePassesNearbysRoster) {
   hostcaps::script().maxSeats = 1;
   addCountingGame("counter", "Counter", "\"pass\"");
   save("counter", SAVED_PASS, 2);
@@ -1762,6 +1764,32 @@ TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadContinueStartsNothing) {
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 
+// Settings that could not be read when the screen opened stay unread until the screen opens again, even once the card
+// fault has passed: New game starts nothing, logged, and the mode Options chose meanwhile is not written
+// (rememberChoices skips while the settings are unread). A read again at the tap costs +80 B of flash the share does
+// not have (deferred-work.md ## 5.12, with G7).
+TEST_F(TitleScreenTest, SettingsThatCouldNotBeReadAtOpenAreNotReadAgainWhenAMatchStarts) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS, SETTINGS_GAME);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = SOLO;
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  const Bytes before = fakesd::bytesOf(prefsPath("counter"));
+  openLauncher();
+  tapRow("Counter");
+  fakesd::sim().failOpen.insert("/.games/counter/manifest.json");  // the title screen's read fails
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  ASSERT_TRUE(logHas("Cannot read the settings of counter; it does not start"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));  // solo -> pass
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  fakesd::sim().failOpen.clear();  // the fault has passed
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(fakelog::countLines("Cannot read the settings of counter"), 1u) << "read again at the tap";
+  EXPECT_TRUE(logHas("Cannot start counter: its settings were not read"));
+  EXPECT_EQ(fakesd::bytesOf(prefsPath("counter")), before);
+}
+
 // A prefs.bin that would not read (a card fault) may be a good one: New game does not replace it with defaults, but
 // an Options change, which the player made, does.
 TEST_F(TitleScreenTest, AnUnreadablePrefsBinIsNotReplacedByNewGame) {
@@ -1820,13 +1848,48 @@ TEST_F(TitleScreenTest, AnUnreadablePrefsBinThatReadsAgainKeepsItsValuesForWhatO
   tapRow("Board");                 // Small -> Large
   tapRow("Board");                 // Large -> Small: back, as the screen opened it
   fakesd::sim().failOpen.clear();  // the fault has passed
-  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  // The merge rewrites the choices the render task reads: onOptionsClosed holds RenderLock around it, through the
+  // write.
+  bool savedUnderLock = false;
+  bool saved = false;
+  fakelog::hook() = [&](const std::string& line) {
+    if (line.find("counter: saved prefs.bin") == std::string::npos) return;
+    saved = true;
+    savedUnderLock = fakelock::held();
+  };
+  closeOptions();
+  fakelog::hook() = nullptr;  // before any ASSERT: the hook refers to this frame's locals
+  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_TRUE(saved) << "no prefs.bin write logged";
+  EXPECT_TRUE(savedUnderLock) << "the merge and write ran outside RenderLock";
   const GameSaveStore::Prefs remembered = prefsOf("counter");
   EXPECT_EQ(remembered.mode, PASS) << "the player's mode";
   ASSERT_EQ(remembered.settings.count, 2u);
   EXPECT_STREQ(remembered.settings.entries[0].value, "Easy") << "the player's level";
   EXPECT_STREQ(remembered.settings.entries[1].value, "Large") << "the setting left as opened keeps the file's";
   EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 Easy \xC2\xB7 Large");
+}
+
+// The mode is merged as the settings are: a prefs.bin holding pass, unreadable when the screen opened (so the screen
+// opened in the game's default, solo) and readable when Options closes after only Level changed, keeps pass.
+TEST_F(TitleScreenTest, AnUnreadablePrefsBinThatReadsAgainKeepsItsModeWhenOptionsLeftItAlone) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS, SETTINGS_GAME);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = PASS;
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  fakesd::sim().failOpen.insert(prefsPath("counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 Hard \xC2\xB7 Small")
+      << "unreadable: the defaults";
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow("Level");                 // Hard -> Easy: the only change
+  fakesd::sim().failOpen.clear();  // the fault has passed
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  const GameSaveStore::Prefs remembered = prefsOf("counter");
+  EXPECT_EQ(remembered.mode, PASS) << "the mode Options left alone took the default the screen opened with";
+  ASSERT_EQ(remembered.settings.count, 2u);
+  EXPECT_STREQ(remembered.settings.entries[0].value, "Easy");
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 Easy \xC2\xB7 Small");
 }
 
 TEST_F(TitleScreenTest, OptionsClosedWithNoChangeWritesNothing) {

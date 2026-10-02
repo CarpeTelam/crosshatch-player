@@ -63,10 +63,12 @@ class MappedInputManager {
   // its touch-down time, whether or not anything reads touch on that pass.
   void update(bool = false) const { sample(); }
   bool wasPressed(const Button button) const {
-    return (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) || pressed.count(button) != 0;
+    return (button == Button::Confirm && (homeAction == HomeButtonAction::Confirm || powerClick)) ||
+           pressed.count(button) != 0;
   }
   bool wasReleased(const Button button) const {
-    return (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) || released.count(button) != 0;
+    return (button == Button::Confirm && (homeAction == HomeButtonAction::Confirm || powerClick)) ||
+           released.count(button) != 0;
   }
   // The home key's action this frame (homeKey()). It stands in for the device's MappedInputManager on a board with a
   // home key: update() runs the key through HomeButtonInput, which reports the configured action for one update (a
@@ -240,6 +242,16 @@ class MappedInputManager {
   }
   // The home key reports `action` this frame, as HomeButtonInput hands it to the device's manager (homeButtonAction).
   void homeKey(const HomeButtonAction action) { homeAction = action; }
+  // The X4 Pro's power click as Confirm, this frame. It stands in for the device with the power button set to Confirm
+  // and the double-click frontlight on (src/main.cpp, setPowerConfirmClickFrame; MappedInputManager.cpp
+  // wasPowerConfirmClick): a click held at most 300 ms becomes Confirm on the first update more than 500 ms after its
+  // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, wasAnyPressed and
+  // wasAnyReleased false, and getHeldTime() answers InputManager's last whole press of any button
+  // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over.
+  void powerConfirmClick(const unsigned long staleHeldMs) {
+    powerClick = true;
+    heldMs = staleHeldMs;
+  }
   // The button is let go: its release edge this frame, and it is no longer held.
   void release(const Button button) {
     released.insert(button);
@@ -328,6 +340,7 @@ class MappedInputManager {
     longPressed.clear();
     heldMs = 0;
     homeAction = HomeButtonAction::Ignore;
+    powerClick = false;
     touch = Touch{};
     swipeDir = SwipeDir::None;
     backGesture = homeGesture = menuGesture = false;
@@ -339,6 +352,7 @@ class MappedInputManager {
   std::set<Button> longPressed;
   unsigned long heldMs = 0;
   HomeButtonAction homeAction = HomeButtonAction::Ignore;
+  bool powerClick = false;  // powerConfirmClick()
   Touch touch;
   // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event. Mutable: the real manager's
   // long-press read suppresses the contact from a const method.

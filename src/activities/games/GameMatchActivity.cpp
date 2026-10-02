@@ -668,17 +668,20 @@ void GameMatchActivity::loopHandOff() {
   // dropped too. On a pass where the home key reports an action, a Confirm (the key's own Confirm action, or a front
   // button's release on the same pass) has no hold to read: getHeldTime answers 0 while a home action is mapped, and
   // the key's press time is not latched on every board (GT911 does not). It fails closed, dated HOME_ACTION_HELD_MS
-  // (the key's longest press that still ends in an action, plus the double-tap wait after its release) before this
-  // pass.
+  // (the key's slowest double tap or tap-then-long-press, plus a late pass) before this pass. So does a Confirm on a
+  // pass with no button edge (the X4 Pro's power click, reported 500 ms after its release, whose getHeldTime is
+  // InputManager's last whole press of any button, long over), dated POWER_CLICK_HELD_MS back. Not covered: such a
+  // Confirm on a pass where another button is released too (getHeldTime dates it), and a pass later than LATE_PASS_MS.
   const auto route = routeTouch(mappedInput);
   const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool tapped = route && route.event.action == ACTION_PASS;
   if ((tapped || confirmed) && passScreenShown.load(std::memory_order_acquire) == state) {
     // After the acquire above, which orders render's store of the push's time before it.
     const bool homeKey = !tapped && mappedInput.homeButtonAction() != HomeButtonAction::Ignore;
-    const unsigned long held = tapped    ? gpio.lastTouchHeldMs()
-                               : homeKey ? HOME_ACTION_HELD_MS
-                                         : mappedInput.getHeldTime();
+    const unsigned long held = tapped                          ? gpio.lastTouchHeldMs()
+                               : homeKey                       ? HOME_ACTION_HELD_MS
+                               : !mappedInput.wasAnyReleased() ? POWER_CLICK_HELD_MS
+                                                               : mappedInput.getHeldTime();
     const auto began = static_cast<uint32_t>(now - held);
     if (static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed)) >= 0) {
       app.clearTapFlash();  // the tap leaves this screen

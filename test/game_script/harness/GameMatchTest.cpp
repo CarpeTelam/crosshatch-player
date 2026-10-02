@@ -2883,11 +2883,12 @@ TEST_F(HiddenPassTest, ATapStraddlingARepaintOfTheBannerPassesIt) {
 }
 
 // A Confirm on a pass where the home key reports an action. The double's homeKey() stands in for the device's
-// MappedInputManager on a board with a home key: HomeButtonInput reports the action on one update, at most
-// GameMatchActivity::HOME_ACTION_HELD_MS after the key's press began (a long press at 700 ms, a tap at its release or
-// the double-tap wait after it); on that update getHeldTime() is 0, and a Confirm action makes wasReleased(Confirm)
-// true. Such a Confirm, the key's own or a front button's released on the same update, passes neither screen until
-// that bound has gone by since the screen's push completed: a key pressed during the push is dropped.
+// MappedInputManager on a board with a home key: HomeButtonInput reports the action on one update, up to 1,750 ms after
+// the key's first contact (its slowest double tap or tap-then-long-press, HomeActionBoundTest below), which
+// GameMatchActivity::HOME_ACTION_HELD_MS covers with slack for a late loop pass; on that update getHeldTime() is 0, and
+// a Confirm action makes wasReleased(Confirm) true. Such a Confirm, the key's own or a front button's released on the
+// same update, passes neither screen until that bound has gone by since the screen's push completed: a key pressed
+// during the push is dropped.
 TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterThePush) {
   constexpr uint32_t BOUND = GameMatchActivity::HOME_ACTION_HELD_MS;
   ASSERT_NO_FATAL_FAILURE(reachResult());
@@ -2917,6 +2918,70 @@ TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterT
   input->homeKey(HomeButtonAction::Confirm);
   frame();
   EXPECT_EQ(state(), "Playing");
+}
+
+// HomeButtonInput (src/util/HomeButtonInput.h, which the device's MappedInputManager runs the home key through) on the
+// key's slowest actions, timed from the constants: a first contact held 1 ms short of the long press (a tap), and a
+// second one at DOUBLE_TAP_MS after its release (still a second contact: the wait ends only past it). That second
+// contact either taps 1 ms short of the long press (the double tap's action at its release) or is held to the long
+// press (InputManager reports `held` HOME_KEY_LONG_PRESS_MS into it: the long press's action then). Either action, here
+// Confirm, comes within HOME_ACTION_HELD_MS less its slack for a late loop pass of the first contact.
+TEST(HomeActionBoundTest, HomeActionHeldMsReachesBackToTheKeysSlowestActionsFirstContact) {
+  constexpr uint32_t LONG = GameMatchActivity::HOME_KEY_LONG_PRESS_MS;
+  constexpr uint32_t WAIT = HomeButtonInput::DOUBLE_TAP_MS;
+  constexpr uint32_t BOUND = GameMatchActivity::HOME_ACTION_HELD_MS - GameMatchActivity::LATE_PASS_MS;
+  for (const bool longPressed : {false, true}) {
+    SCOPED_TRACE(longPressed ? "second contact long-pressed" : "second contact tapped");
+    HomeButtonInput key;
+    const auto at = [&](const uint32_t now, const bool tapped, const bool held, const bool pressed) {
+      return key.update(now, tapped, held, false, pressed, HomeButtonAction::Home, HomeButtonAction::Confirm,
+                        HomeButtonAction::Confirm);
+    };
+    const uint32_t release = LONG - 1;
+    const uint32_t second = release + WAIT;
+    EXPECT_EQ(at(0, false, false, true), HomeButtonAction::Ignore);
+    EXPECT_EQ(at(release, true, false, false), HomeButtonAction::Ignore);
+    EXPECT_EQ(at(second, false, false, true), HomeButtonAction::Ignore) << "the second contact did not count";
+    const uint32_t action = longPressed ? second + LONG : second + LONG - 1;
+    ASSERT_EQ(at(action, !longPressed, longPressed, false), HomeButtonAction::Confirm);
+    EXPECT_LE(action, BOUND) << "the Confirm would read as begun after its first contact";
+  }
+}
+
+// A Confirm on a pass with no button edge: the double's powerConfirmClick() stands in for the X4 Pro's power click as
+// Confirm (src/main.cpp, setPowerConfirmClickFrame), reported more than X4PRO_POWER_DOUBLE_CLICK_MS after a click held
+// at most X4PRO_POWER_CLICK_MAX_HOLD_MS, on an update whose getHeldTime() is InputManager's last whole press (any
+// button's), long over. It passes neither screen until POWER_CLICK_HELD_MS has gone by since the push completed.
+TEST_F(HiddenPassTest, AConfirmWithNoButtonEdgePassesOnlyItsBoundAfterThePush) {
+  constexpr uint32_t BOUND = GameMatchActivity::POWER_CLICK_HELD_MS;
+  ASSERT_NO_FATAL_FAILURE(reachResult());
+  fakertos::advance(BOUND - 1);  // the click began during the banner's push
+  input->powerConfirmClick(100);
+  frame();
+  EXPECT_EQ(state(), "Result") << "a power-click Confirm within its bound of the push passed the banner";
+  fakertos::advance(1);
+  input->powerConfirmClick(100);
+  frame();
+  ASSERT_EQ(state(), "HandOff") << "a power-click Confirm at its bound after the banner's push";
+  ASSERT_TRUE(renderHandOff());
+  fakertos::advance(BOUND - 1);
+  input->powerConfirmClick(100);
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a power-click Confirm within its bound of the push passed the hand-off screen";
+  fakertos::advance(1);
+  input->powerConfirmClick(100);
+  frame();
+  EXPECT_EQ(state(), "Playing");
+}
+
+// A front Confirm, whose pass has the button edge, keeps its own hold's dating: pressed and released right after the
+// banner's push, well within POWER_CLICK_HELD_MS, it passes.
+TEST_F(HiddenPassTest, AFrontConfirmWithAButtonEdgeIsNotDatedAsAPowerClick) {
+  ASSERT_NO_FATAL_FAILURE(reachResult());
+  fakertos::advance(10);
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(state(), "HandOff") << "a front Confirm with a button edge was dated as a power click";
 }
 
 // millis() is 32 bits on the device and wraps after about 49.7 days: loopHandOff compares the tap's start with the

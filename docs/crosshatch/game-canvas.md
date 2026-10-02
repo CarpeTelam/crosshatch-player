@@ -221,11 +221,20 @@ it): the loop pass's `millis()`, taken before its SD steps, less the tap's touch
 or press of a double one, begun while the screen was being pushed and released after, is dropped too. On a board with
 a home key, a Confirm on a pass where the key reports an action (its own Confirm action, or a front button's Confirm
 released on the same pass as any other action) has no hold to read: `getHeldTime()` answers 0 while a home action is
-mapped, and the key's press time is not latched on every board (GT911 does not). The action comes at most
-`GameMatchActivity::HOME_ACTION_HELD_MS` after the press began: a long press reports at 700 ms
-(`InputManager::HOME_KEY_LONG_PRESS_MS`), a shorter press ends in a tap, and a tap's action waits up to
-`HomeButtonInput::DOUBLE_TAP_MS` after its release for a second tap. So such a Confirm fails closed: it passes only when
-that bound or more has gone by since the push completed, and one sooner is read and dropped (press again).
+mapped, and the key's press time is not latched on every board (GT911 does not). The action comes up to 1,750 ms after
+the key's first contact: a long press reports at 700 ms (`InputManager::HOME_KEY_LONG_PRESS_MS`) and a shorter press
+ends in a tap, a tap's action waits up to `HomeButtonInput::DOUBLE_TAP_MS` (350 ms) after its release for a second
+tap, and a second contact then reports its double tap at its release or its long press 700 ms into it.
+`GameMatchActivity::HOME_ACTION_HELD_MS` is that plus `LATE_PASS_MS` (250 ms) for a loop pass that reads the action
+late (2,000 ms; a pass stalled longer is not covered). So such a Confirm fails closed: it passes only when that bound or
+more has gone by since the push completed, and one sooner is read and dropped (press again). The same holds for a
+Confirm on a pass with no button edge: the X4 Pro's power click, with the power button set to Confirm and its
+double-click frontlight on, becomes Confirm on the first pass more than 500 ms after the release of a click held at most
+300 ms (`src/main.cpp`), when `getHeldTime()` is InputManager's last whole press of any button, long over. It is dated
+back `GameMatchActivity::POWER_CLICK_HELD_MS` (the two, plus `LATE_PASS_MS`: 1,050 ms). A power click held longer
+becomes Confirm on its release's pass, which has the button edge, and its own hold dates it. Two cases are not covered:
+a power-click Confirm on a pass where another button is released too has a button edge, so `getHeldTime()` (that last
+press) dates it; and a loop pass that reads either action more than `LATE_PASS_MS` late (deferred-work.md `## 5.12`).
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is

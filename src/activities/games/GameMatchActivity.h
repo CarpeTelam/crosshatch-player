@@ -44,8 +44,8 @@
 // pass" banner (Result), whose tap goes to the hand-off screen. Each is passed by its button or Confirm only, never a
 // tap elsewhere, and only by a tap or press that began after that screen's push completed (a Confirm on a pass where
 // the home key reports an action, whose press time is not known on every board, only HOME_ACTION_HELD_MS or more after
-// it). A forced exit (sleep, any
-// Replace) pushes a plain white blank (FrameReplay::drawBlank), after the VM's stop and before the SD steps, and so
+// it, and one with no button edge, the X4 Pro's power click, only POWER_CLICK_HELD_MS or more). A forced exit (sleep,
+// any Replace) pushes a plain white blank (FrameReplay::drawBlank), after the VM's stop and before the SD steps, and so
 // does a Leave whose panel holds a seat's frame, before it goes to Games; a forced exit after the VM is gone (a Leave
 // whose Games screen ran out of memory, a stuck VM stopped on the way to Error) pushes it while a seat's frame is still
 // on the panel. So no seat's frame stays on the panel. The hand-off screen is pushed with a full refresh when it
@@ -80,10 +80,28 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // freeink-sdk's InputManager::HOME_KEY_LONG_PRESS_MS, private there (so copied): a home-key press held this long
   // reports its long-press action then, and a shorter one ends in a tap.
   static constexpr uint32_t HOME_KEY_LONG_PRESS_MS = 700;
-  // How long before the pass that reads it a home-key action's press may have begun: the longest press (a long press,
-  // or a tap just short of one) plus HomeButtonInput's wait for a second tap after a tap's release. loopHandOff dates a
-  // Confirm on such a pass this far back.
-  static constexpr uint32_t HOME_ACTION_HELD_MS = HomeButtonInput::DOUBLE_TAP_MS + HOME_KEY_LONG_PRESS_MS;
+  // Slack in the two bounds below for a loop pass that reads an action later than the update that made it; a pass
+  // stalled longer than this is not covered.
+  static constexpr uint32_t LATE_PASS_MS = 250;
+  // How long before the pass that reads it a home-key action's first contact may have begun: up to 1,750 ms (a tap
+  // just short of a long press, HomeButtonInput's wait for a second tap after its release, then a second contact just
+  // short of a long press, whose double tap reports at its release and whose long press 700 ms into it), plus
+  // LATE_PASS_MS. loopHandOff dates a Confirm on such a pass this far back.
+  static constexpr uint32_t HOME_ACTION_HELD_MS =
+      HOME_KEY_LONG_PRESS_MS + HomeButtonInput::DOUBLE_TAP_MS + HOME_KEY_LONG_PRESS_MS + LATE_PASS_MS;
+  // src/main.cpp's two constants of these names, in its anonymous namespace (so copied): with the power button set to
+  // Confirm and the X4 Pro's double-click frontlight on, a click held at most X4PRO_POWER_CLICK_MAX_HOLD_MS becomes
+  // Confirm on the first update more than X4PRO_POWER_DOUBLE_CLICK_MS after its release, an update with no button edge
+  // (setPowerConfirmClickFrame). A longer click becomes Confirm on its release's update, which has the edge, so its
+  // own hold dates it.
+  static constexpr uint32_t X4PRO_POWER_DOUBLE_CLICK_MS = 500;
+  static constexpr uint32_t X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
+  // How long before the pass that reads it a Confirm with no button edge (that power click) may have begun.
+  // loopHandOff dates such a Confirm this far back. Not covered: a pass stalled longer than LATE_PASS_MS, and a power
+  // click whose Confirm comes on a pass where another button is released too (it has an edge, so getHeldTime(),
+  // InputManager's last whole press of any button, dates it).
+  static constexpr uint32_t POWER_CLICK_HELD_MS =
+      X4PRO_POWER_CLICK_MAX_HOLD_MS + X4PRO_POWER_DOUBLE_CLICK_MS + LATE_PASS_MS;
 
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
@@ -308,8 +326,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // a tap or Confirm press begun at or after it (the pass's time less the touch-only held time, as loopPlaying
   // back-dates a tap, or Confirm's hold), so the second tap of a double tap on the banner, which may land where the
   // hand-off's button is, never passes the hand-off screen too, even when it began while the screen was being pushed.
-  // A Confirm on a pass where the home key reports an action has no hold to read: it passes only HOME_ACTION_HELD_MS
-  // or more after it (fails closed).
+  // A Confirm on a pass where the home key reports an action, or with no button edge (the X4 Pro's power click), has
+  // no hold to read: it passes only HOME_ACTION_HELD_MS, or POWER_CLICK_HELD_MS, or more after it (fails closed).
   std::atomic<uint32_t> passScreenShownMs{0};
   // Loop task: GameVM::turnsPassed() when the match last entered Result.
   uint32_t turnsSeen = 0;
