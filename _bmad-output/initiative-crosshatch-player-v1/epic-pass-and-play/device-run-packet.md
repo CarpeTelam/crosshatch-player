@@ -128,16 +128,15 @@ The hand-off screen's band falls back `handoff.png`, then `title.png`, then the 
 2. `title.png`: Pass title (page 2), New game. The band shows `title.png`'s two rings and cross. Serial: `Page /.games/pass-title/title.bmp: 480x480`.
 3. Icon: Pass hidden (B3 step 1). The `game-controller` icon.
 
-### B6. Double input on the banner and the hand-off screen
+### B6. Plain taps on the banner and the hand-off screen
 
-The banner and "I'm ready" overlap on screen, so a press counts only if it began after the screen's push completed (owner Decision 2026-10-02). Use Pass art or Pass hidden. Pass is a fresh press about a second after the screen is up.
+Ticket 13 removed the time guard that this step first checked (owner Decision 2026-10-03, epic Notes line 138, superseding the 2026-10-02 Decision, the home-key 2,000 ms and power-click 1,051 ms dating, and review row N1): the banner, "I'm ready" and Confirm are plain tap targets that act on release, even mid-refresh. The old steps 1 to 4 (a fast double tap never presses "I'm ready", a held Confirm does not pass, the home-key and power-click dating) described that guard and are replaced by the checks below. Use Pass art or Pass hidden.
 
-> Superseded 2026-10-03 (ticket 13): the time guard is gone. "I'm ready", the banner and Confirm take one tap each, even during a refresh, and the first move registers during its refresh; steps 1 to 4 below describe the removed guard and are not run (B3 is re-run instead).
-
-1. **Fast double tap:** tap the banner twice quickly, several times, and once with the second finger held on the banner until the hand-off screen is up. The second tap never presses "I'm ready". A fresh tap does.
-2. **Confirm held:** press Confirm on the banner, then hold Confirm again from before the hand-off screen is up until after. It does not pass. A fresh Confirm does.
-3. **Home key (the X4 Pro has one):** Settings, Controls, Home Button Gestures, Double Tap "Confirm". With the banner up for 2 s or more, double-tap the home key: the hand-off screen comes. Once it is being drawn, double-tap again at once: it stays. One double tap more than about 2 s after the screen is up passes it (the removed guard's 2,000 ms). Afterwards, set Double Tap back.
-4. **Power button:** Settings, Controls, Short Power Button Click "Confirm", with Double-Click Power for Light on. Click power on the banner (Confirm comes about half a second after the click). Click again while the hand-off screen is being drawn: it stays. A single click a second or more after the screen is up passes. A click begun within about 0.55 s of the screen being up is dropped by design (the removed guard's 1,051 ms). Afterwards, set Short Power Button Click back to what it was (the firmware default is "Ignore").
+1. **One tap passes:** on the banner, tap once, including during the Result screen's refresh: the hand-off screen comes after that one tap. On the hand-off screen tap "I'm ready" once, also during its refresh: the seat's frame comes. A tap made after "I'm ready" but before the next seat's frame is published is dropped by the owner's Decision of 2026-10-03 (serial: `dropped a touch before the frame was on the panel`); count those, they are not a failure.
+2. **Confirm:** one press and release of Confirm passes the banner, then the hand-off screen, with no wait.
+3. **Home key (the X4 Pro has one):** Settings, Controls, Home Button Gestures, Double Tap "Confirm". A double tap on the home key passes the banner, and again passes the hand-off screen, with no time bound. Afterwards, set Double Tap back.
+4. **Power button:** Settings, Controls, Short Power Button Click "Confirm", with Double-Click Power for Light on. A click passes the banner or the hand-off screen about half a second later. Afterwards, set Short Power Button Click back to what it was (the firmware default is "Ignore").
+5. **Accepted overlap:** a stray second tap on the banner's spot can pass the hand-off, and a stray second tap on "I'm ready" can become a move. Record it if it happens; it is the owner's accepted behaviour, not a failure.
 
 ### B7. Sleep in a hidden match: the blank, the timings, Continue
 
@@ -170,7 +169,7 @@ The launcher lists only games whose `.pkg` reads. So the `.pkg` must fail betwee
 | T2 | Time `peek` adds when the title screen opens (R14) | `Entering activity: GameMode` | `Title screen of <id>: save <none/valid/unreadable/unstartable>` | Record, with and without a save. |
 | T3 | Half refresh inside the forced exit (R14, P4) | `VM stopped; arena peak N bytes, stack high-water N bytes free, least at a hook N bytes` | `<id>: forced exit: blank screen pushed (half refresh)` | Record. `lib/hal/HalDisplay.h` says 1,720 ms (source unstated). |
 | T4 | The forced exit's window (4.13) | `Exiting activity: GameMatch` (then `<id>: <State> -> Leaving on ForcedExit`) | the last of `saved resume.bin`, `saved ch.store`, or a `forced exit past 1500 ms; skipped the resume write` / `the resume.bin delete` / `the ch.store flush` line | Any `skipped` line goes to the owner (B7 step 6). |
-| T5 | Loop stalls in Result and the hand-off (P19, P20, N1) | `New max loop duration: N ms (activity: N ms)` | n/a | One over 250 ms (the removed guard's 250 ms slack) during Result or the hand-off reopens N1. The line prints only for a new maximum since boot (over 50 ms). If the bar noted before the first hand-off is already over 250 ms, the stalls below it are unmeasured. |
+| T5 | Loop stalls in Result and the hand-off (P19, P20, N1) | `New max loop duration: N ms (activity: N ms)` | n/a | Record only, with no pass or fail threshold: the guard whose 250 ms slack T5 once compared stalls with is gone (ticket 13, epic Notes line 138), and N1 no longer exists. The line prints only for a new maximum since boot (over 50 ms). Stalls below the bar noted before the first hand-off are unmeasured. |
 | T6 | A `ch.store` write | the line before it | `pass-store: saved ch.store (N bytes)` | Record. Upper bound, as T1. |
 
 ## Owner answers: the `Assumption for entry 11:` lines

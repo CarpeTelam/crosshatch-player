@@ -558,8 +558,12 @@ Error judge(const MemberGuard& guard, const Member& member, const bool streamed,
     return Error::BadManifest;
   }
   const GameCore::CheckResult verdict = job.manifest.check(gameHostCaps());
-  if (verdict.status == GameCore::CheckStatus::Invalid) {
-    LOG_ERR("GAME", "manifest.json: %s", GameCore::describe(verdict.reason));
+  // check() lets a game already installed keep its solo mode when it claims pass or nearby with one seat; a new
+  // package is rejected, as scripts/pack_game.py rejects it (e5-r7).
+  const bool invalid = verdict.status == GameCore::CheckStatus::Invalid;
+  if (invalid || job.manifest.claimsUnseatedMode()) {
+    LOG_ERR("GAME", "manifest.json: %s",
+            GameCore::describe(invalid ? verdict.reason : GameCore::CheckReason::NearbyNeedsTwoSeats));
     return Error::BadManifest;
   }
   // Manifest::parse checks the icon's grammar; only this side of the GameCore boundary can see the library.

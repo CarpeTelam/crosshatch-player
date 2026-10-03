@@ -28,6 +28,8 @@ Outcome SoloRounds::beginAgain() {
 Outcome SoloRounds::play(const GameCore::GameEvent& event, const uint8_t seat) {
   // A timer the game re-armed or cancelled after this event fired is not due.
   if (!timer.accepts(event)) return Outcome::Ok;
+  // A timer that fell due after the round is over: seat 0 is a frame, never an input seat.
+  if (lateTimer(event, seat)) return Outcome::Ok;
   const Outcome outcome = session->handle(event, seat);
   if (outcome != Outcome::Ok) return outcome;
   return session->applyPending();
@@ -66,6 +68,8 @@ Outcome SoloRounds::step(const GameCore::GameEvent& event) {
   // No seat this device plays has the turn: nothing reads the event.
   const uint8_t seat = shownSeat();
   if (seat == GameCore::NO_SEAT) return Outcome::Ok;
+  // Dropped with no draw, as a stale one (GameVM logs it).
+  if (lateTimer(event, seat)) return Outcome::Ok;
   const Outcome outcome = play(event, seat);
   if (outcome != Outcome::Ok) return outcome;
   return drawShown();

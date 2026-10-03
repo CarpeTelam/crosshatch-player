@@ -170,10 +170,10 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
 | Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the hand-off screen replaces the title screen once the VM has named the round's first turn seat (below). A resumed hidden pass save starts here too: the VM restores the snapshot instead of running `setup`, and the hand-off screen names the saved turn seat. |
-| HandOff | a tap on "I'm ready" begun after the screen was pushed, or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
+| HandOff | a tap on "I'm ready", or Confirm (plain targets: one tap passes, even while the screen is being pushed; see Taps) | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
 | Playing | a move that passes the turn | Result | The VM draws the mover's own frame again and counts the move (`GameVM::turnsPassed`, `passedTo`); the match shows that frame with the banner "Tap to pass to player N" (a fast refresh, no button hints). |
 | Playing | the status the game shipped is over | Over | As in solo: a move that ends the round is RoundOver, never a turn change, and the end-of-round menu sits over seat 0's frame, the one for everyone. |
-| Result | a tap on the banner begun after it was pushed, or Confirm | HandOff | The hand-off screen, naming the seat the move passed to. |
+| Result | a tap on the banner, or Confirm (as above) | HandOff | The hand-off screen, naming the seat the move passed to. |
 | Result, HandOff | Back or Home | Paused | The pause menu. From Result it sits over the mover's frame; from HandOff it sits on no frame (a cleared screen), since the device is between players. |
 | Paused | Resume, or Back | Result, HandOff, or Playing | The state the menu was opened from: Result redraws the mover's frame and banner, HandOff the hand-off screen. |
 | Result, HandOff | a ScriptError or a stuck call | Error | As in solo: the loop watches the VM there as in a menu. |
@@ -252,9 +252,10 @@ frame of each seat it draws, and drops a touch made before the first frame of th
 numbers so that a wrapped count still orders them: one made under seat 1's frame and still queued when seat 1's move
 passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
 reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
-frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
-seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
-posting one less instead, which can only drop (a real frame number reaches it only after 2^32 publishes). The tag is the
+frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), but one that falls due
+after the round is over is dropped, never delivered to seat 0 (e5-r6). A touch posted with `GameVM::UNTAGGED` (a direct
+caller) is never dropped; the loop never posts that value, posting one less instead, which can only drop (a real frame
+number reaches it only after 2^32 publishes). The tag is the
 frame on the panel at the first Playing pass that sees the finger down (`GameMatchActivity::touchDownFrame`, from
 `isScreenTouchHeld`, true from the contact's first sample), freed on the first Playing pass with no finger down (the
 lift, a long press that suppressed the rest of the contact, or a contact that ended where the loop did not read it, such
@@ -279,6 +280,10 @@ the next seat's push completed, or when it is a tap sampled before that push com
 - the back-dating anchors to the loop's read, a few milliseconds after the release sample, whose time is not exposed;
 - a finger already down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet
   freed, so its touch is dropped (fails closed);
+- a tap after "I'm ready" but before the VM publishes the next seat's frame (`GameMatchActivity`'s `awaitingRound` is
+  still true) is dropped, with the log line "dropped a touch before the frame was on the panel": the first-move-accepted
+  rule above covers only the window after the VM publishes the frame. The owner decided on 2026-10-03 to keep dropping
+  it; that log line records how often it happens on a device (the same line also covers any other touch made while the frame is not yet on the panel and the first-move rule does not apply);
 - as on the canvas (the first item), on the Result banner and the hand-off screen's button: a touch that lands and
   lifts while the loop task is blocked in an SD step is first sampled after it, so it reads as a fresh tap and passes
   the screen.

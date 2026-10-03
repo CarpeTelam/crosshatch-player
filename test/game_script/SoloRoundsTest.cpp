@@ -212,6 +212,33 @@ TEST_F(SoloRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
   EXPECT_EQ(rounds.roundsEnded(), 1u);
 }
 
+// Only a pass round's seat 0 drops a late timer (e5-r6): a solo round that is over still shows its one local seat, so a
+// timer still armed when `over` comes reaches that seat's input, as before.
+TEST_F(SoloRoundsTest, ASoloTimerDueAfterOverStillReachesTheLocalSeat) {
+  useSource("main", R"(
+return {
+  setup = function() ch.timer.after(5000) return { taps = 0 } end,
+  status = function(s) if s.taps >= 1 then return { over = true, winners = { 1 } } end return { turn = 1 } end,
+  apply = function(s) s.taps = s.taps + 1 return s end,
+  draw = function() ch.gfx.clear('white') end,
+  input = function(s, seat, ui, ev)
+    if ev.kind == 'tap' then return {} end
+    if ev.kind == 'timer' then ch.log('timer for seat ' .. seat) end
+    return nil
+  end }
+)");
+  SessionGame game(*this);
+  InputQueue queue;
+  SoloRounds rounds(game.game.timer(), queue);
+  ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(rounds.step(tapAt(300)), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_TRUE(tick(rounds, game.game, 5000));
+  size_t seen = 0;
+  for (const std::string& line : log.lines) seen += line.find("timer for seat 1") != std::string::npos;
+  EXPECT_EQ(seen, 1u);
+}
+
 // The solo fixture, the closing device run's game (Done-when 1), played to game over
 // with every input kind, then again after Play again, then reopened.
 TEST_F(SoloRoundsTest, TheSoloFixturePlaysToGameOverAndKeepsItsStore) {
@@ -389,6 +416,30 @@ TEST_F(PassRoundsTest, ATimerReachesTheTurnSeatAndAStaleOneIsDroppedWithNoDraw) 
   EXPECT_EQ(logged("timer for seat 1"), 0u);
   EXPECT_TRUE(hasText(frontCommands(), "Nudges 1, overs 0")) << frontText();
   EXPECT_TRUE(hasText(frontCommands(), "Player 2 (O) to move")) << frontText();
+}
+
+// A timer that falls due after a pass round is over names seat 0, the frame for everyone, which is never an input seat:
+// step and play drop it with no draw, so a game's input() never sees "timer for seat 0" (e5-r6, retrospective F9).
+// pass-open's tap for seat 0 re-arms its timer, which is how a timer comes due after the round.
+TEST_F(PassRoundsTest, ATimerDueAfterThePassRoundEndsIsDroppedNotDeliveredToSeatZero) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  for (const int cell : {1, 2, 4, 3, 7}) ASSERT_EQ(game.step(cellTap(cell)), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_EQ(game.step(cellTap(5)), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(logged("tap for seat 0"), 1u);
+  const uint32_t frame = frames.frameGen();
+  ASSERT_TRUE(tick(game.rounds, game.game, 10000));
+  EXPECT_EQ(logged("timer for seat"), 0u) << "seat 0 is a frame, never an input seat";
+  EXPECT_EQ(frames.frameGen(), frame) << "a dropped timer draws nothing";
+  // play drops it as well, for a caller that already named the seat.
+  ASSERT_EQ(game.step(cellTap(5)), Outcome::Ok) << game.errorMessage();
+  clock.advance(10000);
+  InputEvent due;
+  ASSERT_TRUE(game.game.timer().takeDueEvent(clock.nowMs(), due));
+  ASSERT_EQ(game.rounds.play(due, 0), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("timer for seat"), 0u);
 }
 
 // Once a pass round is over the composition shows seat 0, so a later tap reaches seat 0's input, and its move is

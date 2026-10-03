@@ -186,6 +186,10 @@ TEST_F(InstallerTest, AManifestThatBreaksItsOwnRulesEndsBad) {
       {"an id with capitals", manifestJson("Game")},
       {"no modes", manifestJson("g", "G", 1, R"({"min": 1, "max": 1})", "[]")},
       {"api zero", manifestJson("g", "G", 0)},
+      // Manifest::check lets an installed game with solo keep working; a new package is still rejected (e5-r7).
+      {"pass with one seat and no solo", manifestJson("g", "G", 1, R"({"min": 1, "max": 1})", R"(["pass"])")},
+      {"solo and nearby with one seat", manifestJson("g", "G", 1, R"({"min": 1, "max": 1})", R"(["solo","nearby"])")},
+      {"solo and pass with one seat", manifestJson("g", "G", 1, R"({"min": 1, "max": 1})", R"(["solo","pass"])")},
   };
   for (const Case& c : cases) {
     SetUp();

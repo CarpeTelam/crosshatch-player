@@ -498,6 +498,19 @@ TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
   EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past pass: the host cannot start nearby";
 }
 
+// e5-r7: a game installed before the pass seat rule that lists solo and pass with one seat still opens, in solo, with
+// no Options row (pass is not offered); the load logs why.
+TEST_F(TitleScreenTest, ASoloAndPassGameWithOneSeatOpensItsTitleScreenInSolo) {
+  installCounter("\"solo\",\"pass\"", 1);
+  openLauncher();
+  EXPECT_TRUE(logHas("counter: pass and nearby need seats.max 2 or more; its other modes still work"));
+  EXPECT_FALSE(logHas("Invalid counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME)};
+  EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
+}
+
 TEST_F(TitleScreenTest, ASoloAndPassGameIsSoloWithNoOptionsWhileTheHostHasNoPass) {
   hostcaps::script().pass = false;  // a host without pass: Manifest::check leaves solo
   installCounter("\"solo\",\"pass\"");
@@ -507,8 +520,8 @@ TEST_F(TitleScreenTest, ASoloAndPassGameIsSoloWithNoOptionsWhileTheHostHasNoPass
   EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
 }
 
-// A pass-only game with one seat is an invalid manifest (pass needs seats.max 2): its row says why, and a tap opens
-// nothing and repaints the list.
+// A pass-only game with one seat has no mode left (pass needs seats.max 2) and is invalid: its row says why, and a tap
+// opens nothing and repaints the list.
 TEST_F(TitleScreenTest, APassOnlyGameWithOneSeatOpensNothingFromTheLauncher) {
   installCounter("\"pass\"", 1);
   openLauncher();

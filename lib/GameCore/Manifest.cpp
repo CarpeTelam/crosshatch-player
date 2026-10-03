@@ -277,8 +277,10 @@ CheckResult verdict(const CheckStatus status, const CheckReason reason) { return
 CheckResult Manifest::check(const HostCaps& host) const {
   if (!fieldsValid(*this)) return verdict(CheckStatus::Invalid, CheckReason::BadFields);
   if (hasMode(MODE_SOLO) && seatsMin != 1) return verdict(CheckStatus::Invalid, CheckReason::SoloNeedsOneSeat);
-  if ((modes & (MODE_PASS | MODE_NEARBY)) != 0 && seatsMax < 2)
-    return verdict(CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+  // Epic pass-and-play R10 made this Invalid; a game installed before it that listed pass with one seat was inert
+  // then, so with a solo mode it keeps running (e5-r7): the claim is dropped below and reported in the reason.
+  const bool unseated = claimsUnseatedMode();
+  if (unseated && !hasMode(MODE_SOLO)) return verdict(CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
 
   if (api < host.minApi) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooOld);
   if (api > host.api) return verdict(CheckStatus::Unavailable, CheckReason::ApiTooNew);
@@ -287,10 +289,12 @@ CheckResult Manifest::check(const HostCaps& host) const {
   // Solo starts whenever the rules above hold; pass needs the host's pass capability (its seats
   // are passSeats' to fit when the match starts), and nearby needs the radio and a second seat.
   uint8_t startable = modes & MODE_SOLO;
-  if (hasMode(MODE_PASS) && host.pass) startable |= MODE_PASS;
-  if (hasMode(MODE_NEARBY) && host.nearby && host.maxSeats >= 2) startable |= MODE_NEARBY;
+  if (!unseated) {
+    if (hasMode(MODE_PASS) && host.pass) startable |= MODE_PASS;
+    if (hasMode(MODE_NEARBY) && host.nearby && host.maxSeats >= 2) startable |= MODE_NEARBY;
+  }
   if (startable == 0) return verdict(CheckStatus::Unavailable, CheckReason::NoHostMode);
-  return CheckResult{CheckStatus::Ok, CheckReason::None, startable};
+  return CheckResult{CheckStatus::Ok, unseated ? CheckReason::NearbyNeedsTwoSeats : CheckReason::None, startable};
 }
 
 uint8_t Manifest::startMode(const uint8_t remembered, const uint8_t hostModes) const {

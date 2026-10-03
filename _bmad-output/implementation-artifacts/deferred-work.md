@@ -889,3 +889,35 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r5-forced-exit-cheap-fixes.md`
   summary: Residual: a fast (partial) refresh of the Over menu, or of a pause menu opened from the hand-off, over a panel that held a seat's frame could leave a faint ghost of it, and the forced exit no longer blanks there; `## 5.6` itself stays open for the reordering choice.
   evidence: `renderView` pushes Paused and Over with `FAST_REFRESH` (only Error is full); the owner's decision of 2026-10-03 named HandOff, Paused-from-HandOff and Over as states where nothing private shows. Unobserved: a device run of a sleep from Over after a seat's move (AD-12's ghost check, epic entry 11 did not cover it).
+## e5-r2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: A tap after "I'm ready" but before the VM publishes the next seat's frame (`awaitingRound` still true) is dropped; the owner decided on 2026-10-03 to keep dropping it (retrospective F5). Also, the owner's note and the retrospective name a log line `dropped a tap or Confirm ...`, which `GameMatchActivity.cpp` no longer has after ticket 13: the line that records this drop is `dropped a touch before the frame was on the panel`.
+  evidence: `GameMatchActivity::loopPlaying` (`aimed && awaitingDisplay && !firstFrameTouch`); `docs/crosshatch/game-canvas.md` "What remains". Trigger: a device log showing that line often after "I'm ready", then reconsider accepting the touch once the VM has the seat's frame.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: Resolves the `CopiedConstantsTest` entry above (review pass 1, finding 15): the suite now pins the screen input double's two constants to the device sources, so it stays.
+  evidence: `test/game_script/harness/CopiedConstantsTest.cpp` (`TheDoublesTouchDownDelayIsTheDevicesSelectDelay`, `TheDoublesLongPressIsTheDevicesTouchLongPress`).
+
+## e5-r4
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r4-share-replacefile.md`
+  summary: Only `saveResume` uses `replaceFile`'s `removedOld` out-parameter (for its replacement counter); `saveStore` and `savePrefs` ignore it. Left as is by this refactor (no behaviour change); fold it into a richer result only if a second caller needs it.
+  evidence: `src/games/GameSaveStore.cpp` (`replaceFile`, `saveResume`, `saveStore`, `savePrefs`). Trigger: a second caller that needs `removedOld`.
+
+## e5-r6
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: A solo or nearby round that is over still shows its one local seat, so a timer due after the round reaches that seat's `input()` (only a pass round's seat 0 is dropped); the owner's F9 decision named seat 0 only. A game that cannot take a timer after `over` must cancel it in its own `over` handler, as `pass-open` does.
+  evidence: `GameCore::seatShown` (one local seat: `firstLocalSeat()` in every state but HandOff); `GameScript::SoloRounds::lateTimer` tests seat 0 only. Trigger: an owner decision that a timer after `over` is never delivered in any mode.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: `SoloRounds::lateTimer` infers "the round is over" from seat 0, so a roster with no local seat (`Roster::firstLocalSeat()` returns 0) would drop every timer and mislog it as late; unreachable today, since no such roster plays a round.
+  evidence: `GameCore::seatShown` (`firstLocalSeat()` for a roster with at most one local seat), `lib/GameScript/SoloRounds.h`. Trigger: the first roster with no local seat (epic-play-nearby). Fix: test `status.over` explicitly in `lateTimer`'s callers.
+
+## e5-r7
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: A degraded game (solo plus pass or nearby with `seats.max` 1) is Ok with no row note, so the launcher shows it like any game and the user is never told pass is not offered; only the registry load logs it. A row note would need a new string and a launcher change.
+  evidence: `GameRegistry::load` (the one LOG_INF), `GamesLauncherActivity::loadGames` (logs only non-Ok). Trigger: an owner request for a visible note, or a report from a user with such a package.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: `Manifest::check`'s Ok result can now carry a reason other than None (the dropped claim); a later caller that treats `reason != None` as a failure would misread it.
+  evidence: `lib/GameCore/Manifest.h` (`CheckResult`), `Manifest::check`. Trigger: a new caller of `check` that reads `reason` without `status`.

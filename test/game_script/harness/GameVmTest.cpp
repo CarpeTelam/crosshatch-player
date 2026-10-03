@@ -578,10 +578,10 @@ TEST_F(GameVmTest, HiddenPassATapQueuedBehindTheWinningMoveNeverReachesSeatZero)
   EXPECT_FALSE(vm->failed());
 }
 
-// A timer queued behind the move that ends the round is no touch, so the tag drops nothing (R11): it reaches seat 0's
-// input (R7: after the round, input gets seat 0), the VM does not fail, and the round is over (cross-story fix review
-// F7; the plan's Design Notes record the departure for touches). pass-open cancels its timer on `over`, which would
-// make the queued event stale, so this game keeps it armed.
+// A timer queued behind the move that ends the round is no touch, so the tag drops nothing, but it is dropped all the
+// same (e5-r6, retrospective F9; until then it reached seat 0's input, R7): seat 0 is a frame, never an input seat, so
+// the game's input() never sees a timer with seat 0, the VM does not fail, and the round is over. pass-open cancels its
+// timer on `over`, which would make the queued event stale, so this game keeps it armed.
 const char* const TIMER_AFTER_OVER_GAME = R"(
 local game = {}
 function game.setup(ctx) ch.timer.after(1000) return { moves = 0 } end
@@ -606,7 +606,7 @@ function game.draw(s, seat, ui) ch.gfx.clear("white") end
 return game
 )";
 
-TEST_F(GameVmTest, OpenPassATimerQueuedBehindTheWinningMoveReachesSeatZero) {
+TEST_F(GameVmTest, OpenPassATimerQueuedBehindTheWinningMoveIsDroppedNotDeliveredToSeatZero) {
   installGame("timer-over", TIMER_AFTER_OVER_GAME);
   ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::pass(2), false));
   ASSERT_TRUE(startAndWaitFirstFrame());
@@ -618,11 +618,38 @@ TEST_F(GameVmTest, OpenPassATimerQueuedBehindTheWinningMoveReachesSeatZero) {
   fakertos::advance(1000);
   vm->pollTimer();  // due: queued behind the winning move
   fakertos::release();
-  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat"); }));
-  EXPECT_EQ(fakelog::countLines("timer for seat 0"), 1u);
-  EXPECT_EQ(fakelog::countLines("timer for seat"), 1u);
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u) << "seat 0 is a frame, never an input seat";
   EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
   EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  EXPECT_EQ(vm->roundsEnded(), 1u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// The hidden hand-off VM drops it the same way: a timer due after the winning move reaches no input.
+TEST_F(GameVmTest, HiddenPassATimerQueuedBehindTheWinningMoveIsDroppedNotDeliveredToSeatZero) {
+  installGame("timer-over", TIMER_AFTER_OVER_GAME);
+  ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::pass(2), true));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  const uint32_t first = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == first; }));
+  fakertos::arm(fakertos::At::Log, 1);
+  vm->postInput(tapAt(100, 200), vm->frameGen());
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::advance(1000);
+  vm->pollTimer();
+  fakertos::release();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u);
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  // The drop is stepHandOff's Playing/over branch: after the round's end reached both seats, and with no next seat
+  // asked for (a held timer is dropped only by showSeatNow, which no showTurnSeat here has triggered).
+  EXPECT_LT(lineOf("over for seat 2"), lineOf("Dropped a timer due after the round was over"));
+  EXPECT_EQ(vm->seatShownRequest(), first) << "no further seat was requested, so no held timer was replayed";
   EXPECT_EQ(vm->roundsEnded(), 1u);
   EXPECT_FALSE(vm->failed());
 }

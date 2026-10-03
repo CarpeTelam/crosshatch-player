@@ -210,6 +210,11 @@ void GameVM::run() {
     } else {
       // A touch made under another seat's frame is dropped before the game sees it (postInput); a timer goes on.
       if (madeUnderAnotherSeat(event)) continue;
+      // A timer due after the round is over (seat 0) is dropped by step with no draw; a stale one silently.
+      if (GameScript::SoloRounds::lateTimer(event, rounds.shownSeat()) && game.timer().accepts(event)) {
+        LOG_DBG("GAME", "Dropped a timer due after the round was over");
+        continue;
+      }
       outcome = rounds.step(event);
       // The seat step drew, when it drew (a stale timer draws nothing and leaves the seat as it was).
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
@@ -306,6 +311,11 @@ GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
   const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
   // Fails closed, as seatShown does: no seat this device plays, so no input is read.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
+  // A timer due after the round is over (seat 0, never an input seat) is dropped, never delivered.
+  if (GameScript::SoloRounds::lateTimer(event, seat)) {
+    LOG_DBG("GAME", "Dropped a timer due after the round was over");
+    return GameScript::Outcome::Ok;
+  }
   // A touch made under another seat's frame never reaches this one: seat 0's after the move that ended the round, or
   // the next seat's (postInput). The mover's own late tap in Result was made under the mover's frame and goes on.
   if (madeUnderAnotherSeat(event)) return GameScript::Outcome::Ok;

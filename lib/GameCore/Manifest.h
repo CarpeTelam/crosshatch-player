@@ -41,7 +41,7 @@ enum class CheckReason : uint8_t {
   None,
   BadFields,            // Invalid: a field breaks a parse rule (not from a successful parse)
   SoloNeedsOneSeat,     // Invalid: solo with seats.min other than 1
-  NearbyNeedsTwoSeats,  // Invalid: pass or nearby with seats.max below 2
+  NearbyNeedsTwoSeats,  // Invalid: pass or nearby with seats.max below 2 and no solo; with solo, Ok minus those modes
   ApiTooOld,            // Unavailable: api below the host's minApi
   ApiTooNew,            // Unavailable: api above the host's api
   TooManySeats,         // Unavailable: seats.min above the host's maxSeats
@@ -54,6 +54,7 @@ struct CheckResult {
   CheckStatus status = CheckStatus::Invalid;
   CheckReason reason = CheckReason::BadFields;
   uint8_t modes = 0;  // Manifest::Mode bits this host can start; 0 unless Ok
+  // (Ok with a reason other than None means a claim was dropped, NearbyNeedsTwoSeats; the caller logs it.)
 
   bool ok() const { return status == CheckStatus::Ok; }
 };
@@ -145,8 +146,15 @@ struct Manifest {
   // at any depth, are ignored. On failure `out` is unspecified.
   static ManifestError parse(std::string_view json, Manifest& out);
 
-  // Whether this host can start the game, reading only the manifest and `host`.
+  // Whether this host can start the game, reading only the manifest and `host`. A game that declares pass or nearby
+  // with seats.max below 2 keeps its solo mode: those modes are left out of `modes` and the result is Ok with reason
+  // NearbyNeedsTwoSeats (a package installed before the rule worked in solo and still does). With no solo it is
+  // Invalid.
   CheckResult check(const HostCaps& host) const;
+
+  // True when the manifest declares pass or nearby with seats.max below 2, the claim check() drops. Installs and
+  // packing reject it; check() tolerates it for games already installed.
+  bool claimsUnseatedMode() const { return (modes & (MODE_PASS | MODE_NEARBY)) != 0 && seatsMax < 2; }
 };
 
 // Streaming form of Manifest::parse for callers that read the file in chunks:

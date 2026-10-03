@@ -92,8 +92,8 @@ add_executable(GameMatchHarnessTest
 target_compile_definitions(GameMatchHarnessTest PRIVATE
   # The fixture games (tracer, timer, counter, bad-image) the tests play.
   MATCH_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures"
-  # Read at run time by CopiedConstantsTest: the sources of the constants GameMatchActivity.h copies.
+  # Read at run time by CopiedConstantsTest: the device sources of the two constants the screen input double copies.
   INPUT_MANAGER_HEADER_PATH="${REPO_ROOT}/freeink-sdk/libs/hardware/InputManager/include/InputManager.h"
-  MAIN_CPP_PATH="${REPO_ROOT}/src/main.cpp")
+  MAPPED_INPUT_MANAGER_CPP_PATH="${REPO_ROOT}/src/MappedInputManager.cpp")
 target_link_libraries(GameMatchHarnessTest PRIVATE game_match_src GTest::gtest_main)
 gtest_discover_tests(GameMatchHarnessTest)
