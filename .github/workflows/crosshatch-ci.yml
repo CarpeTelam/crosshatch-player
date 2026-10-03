@@ -116,7 +116,7 @@ jobs:
 
       # Same key as ci.yml's x4pro build, so both workflows share one package cache.
       - name: Cache PlatformIO packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.platformio
           key: pio-v3-${{ runner.os }}-x4pro-${{ hashFiles('platformio.ini') }}
@@ -181,7 +181,7 @@ jobs:
 
       # Same key as ci.yml's x4pro build and the flash budget job, so all three share one package cache.
       - name: Cache PlatformIO packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.platformio
           key: pio-v3-${{ runner.os }}-x4pro-${{ hashFiles('platformio.ini') }}
@@ -230,7 +230,7 @@ jobs:
 
       # Its own key: the x4pro key's cache must hold the espressif32 packages, which this job never installs.
       - name: Cache PlatformIO packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.platformio
           key: pio-v3-${{ runner.os }}-simulator-${{ hashFiles('platformio.ini', '.claude/skills/run-crosshatch-player/simulator.ini') }}
