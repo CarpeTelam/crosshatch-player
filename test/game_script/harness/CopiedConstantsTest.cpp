@@ -9,10 +9,12 @@
 
 #include "activities/games/GameMatchActivity.h"
 
-// GameMatchActivity copies no constant from another source any more (the hand-off's time guard, which did, is gone:
-// the banner, "I'm ready" and Confirm are plain tap targets, 2026-10-03). The suite keeps its reader of constexpr
-// definitions in the sources and the check that the two sources it knew are still found, for the next copy that needs
-// a drift guard (deferred-work.md ## 5.12).
+// The screen input double (screen_stubs/MappedInputManager.h) copies two device constants: the 90 ms a touch must be
+// held before wasScreenTouchDown reports it (src/MappedInputManager.cpp, file-local TOUCH_DOWN_SELECT_DELAY_MS) and the
+// 500 ms a contact must be held for a long press (freeink-sdk's InputManager.h, private TOUCH_LONG_PRESS_MS). These
+// tests read each device source as text and fail when either value, or its definition, moves away from the double's,
+// so a retune of the device cannot leave the host tests passing against the old number (epic-install-and-launcher
+// retro AI-4, R13). The reader of constexpr definitions is below.
 
 namespace {
 
@@ -70,12 +72,28 @@ long long constexprValue(const std::string& text, const std::string& name) {
 std::string explain(const std::string& name, const char* path) {
   return name + " in " + path + " (the source's value: " + std::to_string(NOT_FOUND) +
          " = no plain `constexpr ... = <digits>;` definition found, " + std::to_string(DEFINED_TWICE) +
-         " = defined more than once); GameMatchActivity.h's copy must follow the source";
+         " = defined more than once); the double's copy in screen_stubs/MappedInputManager.h must follow the source";
 }
 
 TEST(CopiedConstantsTest, TheSourcesAreRead) {
   EXPECT_FALSE(readFile(INPUT_MANAGER_HEADER_PATH).empty()) << "cannot read " << INPUT_MANAGER_HEADER_PATH;
-  EXPECT_FALSE(readFile(MAIN_CPP_PATH).empty()) << "cannot read " << MAIN_CPP_PATH;
+  EXPECT_FALSE(readFile(MAPPED_INPUT_MANAGER_CPP_PATH).empty()) << "cannot read " << MAPPED_INPUT_MANAGER_CPP_PATH;
+}
+
+// The double's touch-down delay is the device's: wasScreenTouchDown reports a still finger only once it has been down
+// this long (MappedInputManager.cpp, where the constant sits in an anonymous namespace).
+TEST(CopiedConstantsTest, TheDoublesTouchDownDelayIsTheDevicesSelectDelay) {
+  EXPECT_EQ(constexprValue(readCode(MAPPED_INPUT_MANAGER_CPP_PATH), "TOUCH_DOWN_SELECT_DELAY_MS"),
+            static_cast<long long>(MappedInputManager::TOUCH_DOWN_SELECT_DELAY_MS))
+      << explain("TOUCH_DOWN_SELECT_DELAY_MS", MAPPED_INPUT_MANAGER_CPP_PATH);
+}
+
+// The double's long press is the device's: InputManager reports a stationary contact as a long press once it has been
+// held this long (a private constant of InputManager.h).
+TEST(CopiedConstantsTest, TheDoublesLongPressIsTheDevicesTouchLongPress) {
+  EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_LONG_PRESS_MS"),
+            static_cast<long long>(MappedInputManager::TOUCH_LONG_PRESS_MS))
+      << explain("TOUCH_LONG_PRESS_MS", INPUT_MANAGER_HEADER_PATH);
 }
 
 // The reader itself: it finds the one definition, and refuses none or two.

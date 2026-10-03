@@ -31,7 +31,7 @@ cannot be.
 | # | Upstream file | Change | Guarded |
 | --- | --- | --- | --- |
 | 1 | `platformio.ini` | `FREEINK_CAP_GAMES=1` in the six x4pro/sticky envs; `--suppress=*:*/lib/lua/*` in the shared `check_flags` | env-scoped + one shared line |
-| 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys appended | append-only |
+| 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys added, changed, or removed (the prefix only; no key outside it changes) | prefix-scoped |
 | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
 | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |
 | 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping (the `GamesLauncher`, `GameMode`, and `GameMatch` activity names select Home's Games row), `goToGames()` opens `GamesLauncherActivity`; its include | yes |

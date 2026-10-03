@@ -863,3 +863,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-plain-tap-targets-for-the-hand-off-plan.md`
   summary: `CopiedConstantsTest` keeps its constexpr reader and `TheSourcesAreRead` although no constant is copied any more.
   evidence: Review pass 1, finding 15 (low). The plan keeps the suite for the next copied constant; delete it, with its CMake registration, if none arrives.
+
+## e5-r2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: A tap after "I'm ready" but before the VM publishes the next seat's frame (`awaitingRound` still true) is dropped; the owner decided on 2026-10-03 to keep dropping it (retrospective F5). Also, the owner's note and the retrospective name a log line `dropped a tap or Confirm ...`, which `GameMatchActivity.cpp` no longer has after ticket 13: the line that records this drop is `dropped a touch before the frame was on the panel`.
+  evidence: `GameMatchActivity::loopPlaying` (`aimed && awaitingDisplay && !firstFrameTouch`); `docs/crosshatch/game-canvas.md` "What remains". Trigger: a device log showing that line often after "I'm ready", then reconsider accepting the touch once the VM has the seat's frame.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: Resolves the `CopiedConstantsTest` entry above (review pass 1, finding 15): the suite now pins the screen input double's two constants to the device sources, so it stays.
+  evidence: `test/game_script/harness/CopiedConstantsTest.cpp` (`TheDoublesTouchDownDelayIsTheDevicesSelectDelay`, `TheDoublesLongPressIsTheDevicesTouchLongPress`).
