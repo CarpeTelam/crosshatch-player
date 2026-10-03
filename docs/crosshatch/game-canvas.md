@@ -248,8 +248,9 @@ frame of each seat it draws, and drops a touch made before the first frame of th
 numbers so that a wrapped count still orders them: one made under seat 1's frame and still queued when seat 1's move
 passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
 reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
-frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
-seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
+frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), but one that falls due
+after the round is over is dropped, never delivered to seat 0 (e5-r6). A touch posted with `GameVM::UNTAGGED` (a
+direct caller) is never dropped; the loop never posts that value,
 posting one less instead, which can only drop (a real frame number reaches it only after 2^32 publishes). The tag is the
 frame on the panel at the first Playing pass that sees the finger down (`GameMatchActivity::touchDownFrame`, from
 `isScreenTouchHeld`, true from the contact's first sample), freed on the first Playing pass with no finger down (the

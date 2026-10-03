@@ -878,3 +878,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r4-share-replacefile.md`
   summary: Only `saveResume` uses `replaceFile`'s `removedOld` out-parameter (for its replacement counter); `saveStore` and `savePrefs` ignore it. Left as is by this refactor (no behaviour change); fold it into a richer result only if a second caller needs it.
   evidence: `src/games/GameSaveStore.cpp` (`replaceFile`, `saveResume`, `saveStore`, `savePrefs`). Trigger: a second caller that needs `removedOld`.
+
+## e5-r6
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: A solo or nearby round that is over still shows its one local seat, so a timer due after the round reaches that seat's `input()` (only a pass round's seat 0 is dropped); the owner's F9 decision named seat 0 only. A game that cannot take a timer after `over` must cancel it in its own `over` handler, as `pass-open` does.
+  evidence: `GameCore::seatShown` (one local seat: `firstLocalSeat()` in every state but HandOff); `GameScript::SoloRounds::lateTimer` tests seat 0 only. Trigger: an owner decision that a timer after `over` is never delivered in any mode.
