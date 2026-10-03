@@ -104,6 +104,10 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   | 8 | `src/components/CoverGridHomeUi.h` | tab array size | yes |
   | 9 | `src/components/CoverGridHomeUi.cpp` | Games tab in the cover-grid tab bar, drawn from a `GameIcons` bitmap (**amended 2026-09-28 (owner, epic-install-and-launcher inception):** a tab, not a tile; epic-icon-library retrospective S4) | yes |
   | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison, and into `games/ForkReleaseProbe.h` after a failed fetch (AD-25) | yes |
+  | 11 | `src/activities/boot_sleep/BootActivity.cpp` | **amended 2026-10-03 (owner, brand swap):** the boot logo and title become the Crosshatch mark and `STR_GAMES_PRODUCT_NAME` in games builds | yes |
+  | 12 | `src/activities/boot_sleep/SleepActivity.cpp` | **amended 2026-10-03 (owner, brand swap):** the same swap in `renderDefaultSleepScreen` | yes |
+
+  **Brand swap (2026-10-03, owner):** rows 11 and 12 brand the boot and default sleep screens as Crosshatch in the games envs only (`FREEINK_CAP_GAMES`); the other envs keep the CrossPoint screens. The 120 px mark is the new `src/images/CrosshatchMark120.h`, so neither row includes game code and the layer table is unchanged; the title is the new `STR_GAMES_PRODUCT_NAME` key, inside row 2's prefix. The default game icon (the same mark at 64 and 128 px, `src/games/GameMarkBitmaps.h`) replaces the `game-controller` fallback in `GameRowIcon::choose`; it is a built-in bitmap, not an icon-library name (AD-24 stays Phosphor-only). `scripts/gen_crosshatch_mark.py` makes all three bitmaps from the UX spine's geometry and fails when a ring would fuse into the grid.
 
   The vendored engine is kept out of the whole-tree format check by a new `lib/lua/.clang-format` with `DisableFormat: true`, not by editing `bin/clang-format-fix`.
 

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <new>
@@ -13,6 +14,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "GameMarkBitmaps.h"
 #include "GamePaths.h"
 #include "GameRegistry.h"
 #include "GameRowIcon.h"
@@ -47,6 +49,11 @@ namespace {
 struct NameOf : Activity {
   static const std::string& of(const Activity& activity) { return activity.*(&NameOf::name); }
 };
+
+// The Crosshatch mark's 64 px rows, from the generated header directly (no GameRowIcon).
+std::vector<uint8_t> markRows() {
+  return std::vector<uint8_t>(std::begin(GameMark::ROW_64), std::end(GameMark::ROW_64));
+}
 
 // A library icon's rows decoded without GameRowIcon or GameIconBlit: the packed bitmap's PackBits, from the top.
 std::vector<uint8_t> libraryRows(const char* name, const bool fill) {
@@ -692,9 +699,9 @@ TEST_F(ListTest, APreviousKeyHeldFromTheFirstGameWrapsToTheLastGame) {
   EXPECT_EQ(openedTitle(), "Game 02") << "Confirm opened nothing: the selection was on a blank row";
 }
 
-// ---- the row icon (R7, AD-24): icon.bmp, else the manifest icon in its weight, else game-controller ----
+// ---- the row icon (R7, AD-24): icon.bmp, else the manifest icon in its weight, else the Crosshatch mark ----
 
-TEST_F(ListTest, ARowsIconComesFromIconBmpElseTheManifestIconElseGameController) {
+TEST_F(ListTest, ARowsIconComesFromIconBmpElseTheManifestIconElseTheCrosshatchMark) {
   addIconGame("a-both", "A Both", "dice-six", "fill");  // icon.bmp wins over the manifest's icon
   addIconFile("a-both", iconBmp(1));
   addIconGame("b-fill", "B Fill", "dice-six", "fill");
@@ -707,8 +714,8 @@ TEST_F(ListTest, ARowsIconComesFromIconBmpElseTheManifestIconElseGameController)
   EXPECT_TRUE(logHas("Icon for b-fill: library dice-six fill"));
   EXPECT_TRUE(logHas("Icon for c-regular: library dice-six regular"));
   EXPECT_TRUE(logHas("Icon for d-default: library dice-six regular"));
-  EXPECT_TRUE(logHas("Icon for e-none: fallback game-controller"));
-  EXPECT_TRUE(logHas("Icon for f-unknown: fallback game-controller"));
+  EXPECT_TRUE(logHas("Icon for e-none: fallback crosshatch mark"));
+  EXPECT_TRUE(logHas("Icon for f-unknown: fallback crosshatch mark"));
   // Every row drawn has its icon, whichever the source.
   const std::vector<std::string> names{"A Both", "B Fill", "C Regular", "D Default", "E None", "F Unknown"};
   EXPECT_EQ(ui().bitmaps, static_cast<int>(rows(names).size()));
@@ -726,7 +733,7 @@ TEST_F(ListTest, AnIconBmpThatIsNotUsableFallsBackToTheNextSource) {
   open();
   EXPECT_TRUE(logHas("Icon for g-truncated: library boat regular"));
   EXPECT_TRUE(logHas("Icon for h-small: library boat fill"));
-  EXPECT_TRUE(logHas("Icon for i-small-none: fallback game-controller"));
+  EXPECT_TRUE(logHas("Icon for i-small-none: fallback crosshatch mark"));
   EXPECT_TRUE(logHas("/.games/g-truncated/icon.bmp is not a usable icon"));
   EXPECT_TRUE(logHas("/.games/h-small/icon.bmp is 32x32"));
 }
@@ -757,8 +764,9 @@ TEST_F(ListTest, EachRowDrawsItsOwnBitsAs64x64Mask1) {
   EXPECT_EQ(drawn[2].data, libraryRows("dice-six", true));
   EXPECT_EQ(drawn[3].data, libraryRows("dice-six", false));
   EXPECT_NE(drawn[2].data, drawn[3].data);
-  EXPECT_EQ(drawn[4].data, libraryRows("game-controller", false));
-  EXPECT_EQ(drawn[5].data, libraryRows("game-controller", false));
+  EXPECT_EQ(drawn[4].data, markRows());
+  EXPECT_EQ(drawn[5].data, markRows());
+  EXPECT_NE(drawn[4].data, libraryRows("game-controller", false)) << "the controller is no longer the default";
 }
 
 // The two allocations loadIcons makes: when either fails the rows are still listed, each with its library icon.
@@ -791,7 +799,7 @@ TEST_F(ListTest, WhenTheSlotArrayCannotBeAllocatedTheRowsUseLibraryIcons) {
   EXPECT_EQ(rows(names), names);
   ASSERT_EQ(ui().bitmapsDrawn.size(), 2u);
   EXPECT_EQ(ui().bitmapsDrawn[0].data, libraryRows("dice-six", false));
-  EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("game-controller", false));
+  EXPECT_EQ(ui().bitmapsDrawn[1].data, markRows());
 }
 
 // ActivityManager::goHome selects Home's Games row by this name (ledger row 5): the screen is named by the constant.

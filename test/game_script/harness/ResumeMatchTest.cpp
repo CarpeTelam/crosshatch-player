@@ -1353,7 +1353,7 @@ TEST_F(PassResumeTest, AHiddenPassSaveResumesOnTheBlankAndItsTapShowsTheSavedTur
   ASSERT_GT(renderer->shown.size(), handOffPush);
   const match::Held handOff = match::heldAt(*renderer, renderer->shown[handOffPush].callsBefore);
   EXPECT_TRUE(handOff.cleared);
-  match::expectSameFills(handOff.drawn, match::iconFills(GameRowIcon::FALLBACK_NAME));
+  match::expectSameFills(handOff.drawn, match::markFills());
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1")) << "the saved snapshot, not setup's";
   for (const GfxRenderer::Shown& push : renderer->shown) EXPECT_FALSE(holds(push, "apple"));

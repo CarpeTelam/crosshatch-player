@@ -921,3 +921,10 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
   summary: `Manifest::check`'s Ok result can now carry a reason other than None (the dropped claim); a later caller that treats `reason != None` as a failure would misread it.
   evidence: `lib/GameCore/Manifest.h` (`CheckResult`), `Manifest::check`. Trigger: a new caller of `check` that reads `reason` without `status`.
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
+  summary: Add an automated check that the boot and default sleep screens draw the Crosshatch mark and "Crosshatch" in games builds (and Logo120 elsewhere).
+  evidence: Review found no host test can reach BootActivity or SleepActivity::renderDefaultSleepScreen; reversing the `#if` or dropping one hunk would pass every test. Cheapest routes: a simulator screenshot comparison step, or a host test with a recording GfxRenderer as GameMatchTest uses.
+- source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
+  summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
+  evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
