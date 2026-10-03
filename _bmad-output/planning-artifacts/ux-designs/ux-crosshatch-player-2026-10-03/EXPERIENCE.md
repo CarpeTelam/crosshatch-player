@@ -42,10 +42,11 @@ Where the mark appears and which variant each place uses.
 | Title screen splash | a launcher row | `{components.game-icon-default-128}`, at `{spacing.icon-hero}`, for a game with no `title.png` and no icon of its own | the same fallback, drawn large |
 | Hand-off screen band | the hidden pass match | `{components.game-icon-default-128}`, when the game has no `handoff.png`, no `title.png` and no icon of its own | the same fallback |
 | Website header | the website | `{components.lockup-formal}` | not applicable |
-| Short-name placements | not decided | `{components.lockup-short}` | not applicable |
-| Repo and release avatar | not decided | not decided | not applicable |
+| Short-name placements: website footer, small headers, link previews, release notes | the website, repo and release pages | `{components.lockup-short}`, where "Player" is redundant or space is tight | not applicable |
+| Square and portrait placements: social preview cards, poster and splash images, a narrow mobile header | the website and shared images | `{components.lockup-stacked}`, where a horizontal lockup does not fit | not applicable |
+| Repo and release avatar | the repo and release pages | `{components.brand-mark}` alone (symbol only) | not applicable |
 
-[NOTE FOR UX: the memlog does not say which places use the short lockup, where the stacked lockup (`{components.lockup-stacked}`) is used now that the device screens use the stock layout, or whether the mark is the repo and release avatar. Surfaces other than those in the table are out of scope.]
+Surfaces other than those in the table are out of scope for this run. The device sleep and boot screens keep the stock layout and use no lockup.
 
 The default icon is a built-in bitmap shared by the launcher row, the title screen and the hand-off fallback. A game that supplies its own icon (`icon.bmp` or a library `icon`) is unaffected on every surface. Games cannot select the default icon, because it is not an icon-library name.
 
@@ -65,7 +66,7 @@ Microcopy. Brand voice lives in `DESIGN.md` Brand & Style. This run writes no ne
 | Sleep screen small line | "SLEEPING" | `STR_SLEEPING` (unchanged) |
 | Boot screen small line | "BOOTING" | `STR_BOOTING` (unchanged) |
 | Website header lockup | "Crosshatch Player" | none (website) |
-| Short-name lockup | "Crosshatch" | none (website, images) |
+| Short-name lockup | "Crosshatch" | none (website footer, small headers, link previews, release notes) |
 
 The formal name is "Crosshatch Player", capitalised; the short name is "Crosshatch". The device screens use the short name only, never "Crosshatch Player". The small line stays in capitals as it is today.
 
@@ -83,8 +84,9 @@ Behavioural. Visual specs live in `DESIGN.md` Components.
 |---|---|---|
 | Brand mark (`{components.brand-mark}`) | Everywhere below | Decorative. Not a tap target on any surface. The device draws it from a pre-baked 1-bit bitmap (no scaling at run time); the website draws the SVG. |
 | Lockup, formal (`{components.lockup-formal}`) | Website header | Names the product in full. |
-| Lockup, short (`{components.lockup-short}`) | Where the short name is used | Names the product briefly. Not used on the device screens (those draw the title as text). |
-| Lockup, stacked (`{components.lockup-stacked}`) | Image lockups | Not used on the device sleep and boot screens. [NOTE FOR UX: place of use undecided.] |
+| Lockup, short (`{components.lockup-short}`) | Website footer, small headers, link previews, release notes | Names the product briefly where "Player" is redundant or space is tight. The website header keeps the formal lockup. Not used on the device screens (those draw the title as text). |
+| Lockup, stacked (`{components.lockup-stacked}`) | Social preview cards, poster and splash images, a narrow mobile header | Used where a horizontal lockup does not fit (square and portrait spots). Not used on the device sleep and boot screens, which keep the stock layout. |
+| Every lockup | Wherever a lockup is placed | Clear space one cell of the mark around it (`{spacing.lockup-clear-space}`); gap between mark and text half a cell (`{spacing.lockup-mark-text-gap}`). |
 | Sleep and boot screen (`{components.sleep-boot-screen}`) | Boot, default sleep screen | Draws once and stays; no input. Boot also draws the version line at the bottom, unchanged. The sleep screen is inverted (white on black) except when the sleep-screen setting is LIGHT. |
 | Default game icon, 64 px (`{components.game-icon-default-64}`) | Launcher row | Shown only for a game with no `icon.bmp` and no usable manifest `icon`. The row's own behaviour (tap, long-press, selection) is the games spine's and is unchanged. |
 | Default game icon, 128 px (`{components.game-icon-default-128}`) | Title screen band, hand-off band | Shown only where the games spine's fallback chain reaches the game's icon and the game has none. A tap on the band does nothing, as for any splash. |
@@ -97,7 +99,7 @@ Behavioural. Visual specs live in `DESIGN.md` Components.
 | Game supplies no icon | Launcher row | The default mark at 64 px. |
 | Game supplies no icon and no `title.png` | Title screen | The default mark at 128 px in the band. |
 | Game supplies no icon, `title.png` or `handoff.png` | Hand-off screen | The default mark at 128 px in the band. |
-| Manifest `icon` names something the library lacks | Launcher row | The default mark (the fallback is the last step in the chain). [ASSUMPTION: the replacement covers this case, as the fallback it replaces did.] |
+| Manifest `icon` names something the library lacks | Launcher row | The default mark (the fallback is the last step in the chain; confirmed). |
 | Default sleep-screen mode | Sleep | The mark and "Crosshatch", SLEEPING under it. |
 | Custom, cover or blank sleep mode | Sleep | No mark; the user's choice is shown. Where a custom or cover mode has no image to show it falls back to the default screen, so the mark appears. |
 | LIGHT sleep-screen setting | Sleep | Not inverted: ink on paper. |
@@ -129,13 +131,13 @@ Behavioural. Visual contrast lives in `DESIGN.md` Colors.
 | Website, light | Mark and lockups in colour on `{colors.surface-light}`; grid and wordmark black. |
 | Website, dark | The same on `{colors.surface-dark}`; grid and wordmark white. |
 
-The website's layout (header size, breakpoints) is not specified here. [NOTE FOR UX: website layout and the lockup's size in the header are undecided.]
+Website layout (header size, breakpoints, footer) is deliberately out of scope here and left to a future website story; this spine fixes only the mark, lockups, colours, fonts, and light and dark.
 
 ## Key Flows
 
-Both flows are [ASSUMPTION]: the facilitator drafted them for the owner to correct. The protagonists and settings are invented for illustration.
+The owner accepted both flows as drafted. The protagonists and settings are illustrative.
 
-### Flow 1: Tom installs a game with no icon [ASSUMPTION] (Tom, 11, at the kitchen table after school)
+### Flow 1: Tom installs a game with no icon (Tom, 11, at the kitchen table after school)
 
 Tom's uncle sent him a small paper-and-pencil game as a package. Its developer did not include an icon.
 
@@ -146,9 +148,9 @@ Tom's uncle sent him a small paper-and-pencil game as a package. Its developer d
 5. **Climax:** he sees the same small board of crosses and rings in the row and big on the title screen, so the game does not look broken or half-installed; it looks like a Crosshatch game.
 6. He taps New game and plays.
 
-Failure: the game's manifest names an icon the library lacks. The row shows the Crosshatch mark in its place (the same fallback); the game still opens. [ASSUMPTION]
+Failure: the game's manifest names an icon the library lacks. The row shows the Crosshatch mark in its place (the same fallback); the game still opens.
 
-### Flow 2: Maya puts the device to sleep [ASSUMPTION] (Maya, 34, in bed, finishing a chapter before turning the light off)
+### Flow 2: Maya puts the device to sleep (Maya, 34, in bed, finishing a chapter before turning the light off)
 
 Maya has left the sleep-screen setting on its default.
 
@@ -158,7 +160,7 @@ Maya has left the sleep-screen setting on its default.
 4. She puts the device on the nightstand.
 5. **Climax:** the last thing on the screen is a small game of tic-tac-toe in progress and the name Crosshatch. The panel holds the image with no power, so it is what she sees when she picks the device up in the morning.
 
-Failure: Maya's setting is a custom image, and the image file is missing. The default screen is shown instead, with the mark and name. [ASSUMPTION: relies on the firmware's existing fallback to the default screen.]
+Failure: Maya's setting is a custom image, and the image file is missing. The default screen is shown instead, with the mark and name (the firmware's existing fallback to the default screen).
 
 ## Implementation notes for builders
 
@@ -170,18 +172,10 @@ Repo facts found while distilling; not design decisions.
 - `Logo120` is a pre-baked 120 x 120 1-bit bitmap (`static const uint8_t Logo120[]`). The A2 mark needs a new 120 x 120 bitmap; the sleep screen inverts the whole frame unless the setting is LIGHT, so the bitmap's polarity must match what `Logo120` does today.
 - `SleepActivity.cpp` also falls back to `renderDefaultSleepScreen` in its custom, cover and no-cover paths (lines 612, 791, 801).
 - The launcher row icon is chosen by `GameRowIcon::choose` (`src/games/GameRowIcon.h`): the package's `icon.bmp`; else the manifest `icon` in its `icon_weight`, when the library has the name; else `game-controller` regular. The mark replaces the last step. The same fallback feeds the title screen's 128 px band and the hand-off band per the games spine.
-- The game icon library is Phosphor-only (`docs/crosshatch/game-icons.md`): names are Phosphor's own, in two weights, 1-bit at 32 px and 64 px, and `large` (128 px) draws the 64 px bitmap doubled. The library's names are API surface, so the mark is a separate built-in bitmap, not a new name. The cover-grid Home's Games tab also uses `game-controller` (`GameIcons::GAME_CONTROLLER_32`); the memlog does not change that tab.
+- The game icon library is Phosphor-only (`docs/crosshatch/game-icons.md`): names are Phosphor's own, in two weights, 1-bit at 32 px and 64 px, and `large` (128 px) draws the 64 px bitmap doubled. The library's names are API surface, so the mark is a separate built-in bitmap, not a new name. The 128 px default is a native 128 px drawing, so it is its own bitmap, not the library's doubled 64 px one. The cover-grid Home's Games tab also uses `game-controller` (`GameIcons::GAME_CONTROLLER_32`); the memlog does not change that tab.
+- Other uses of the CrossPoint name are out of scope for this run and logged as a follow-up. Facts: the device web file manager `src/network/html/FilesPage.html` shows "CrossPoint Reader" in its title and header and "CrossPoint E-Reader • Open Source" in its footer; it is an upstream file not listed in `docs/crosshatch/upstream-touches.md`. The Calibre instruction string `STR_CALIBRE_INSTRUCTION_1` ("1) Install CrossPoint Reader plugin") names a third-party plugin.
 - Noto Sans Bold UI sizes shipped in the firmware are 12, 14, 16 and 18 pt; a larger wordmark on device would be a pre-rendered bitmap.
 
 ## Open Questions
 
-- [NOTE FOR UX] Which placements use the short lockup (`{components.lockup-short}`) is undecided.
-- [NOTE FOR UX] Where the stacked lockup (`{components.lockup-stacked}`) is used is undecided now that the device screens use the stock layout.
-- [NOTE FOR UX] Whether the mark is the repo and release avatar is undecided (the memlog does not say).
-- [NOTE FOR UX] Spacing between mark and text, and clear space, for each lockup are undecided.
-- [NOTE FOR UX] Whether the 128 px default icon is a native drawing or the 64 px bitmap doubled is undecided.
-- [NOTE FOR UX] Website layout and the header lockup's size are undecided.
-- [NOTE FOR UX] Other uses of the CrossPoint name or logo beyond boot and sleep (the memlog says "e.g. power-off screen") are not enumerated; the code shows only those two activities.
-- [ASSUMPTION] Flow 1 (Tom installs a game with no icon), including its failure path.
-- [ASSUMPTION] Flow 2 (Maya puts the device to sleep), including its failure path.
-- [ASSUMPTION] The default mark also replaces `game-controller` when a manifest names an icon the library lacks.
+None.

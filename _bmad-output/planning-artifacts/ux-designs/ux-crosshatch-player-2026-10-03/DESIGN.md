@@ -54,6 +54,9 @@ spacing:
   mark-o-radius: 22px
   mark-x-half-diagonal: 18px
   stacked-second-line-scale: 60%
+  mark-cell: 33.33% of the mark's width
+  lockup-clear-space: 33.33% of the mark's width
+  lockup-mark-text-gap: 16.67% of the mark's width
   icon-row: 64px
   icon-hero: 128px
   icon-device: 120px
@@ -91,7 +94,7 @@ components:
     artwork: '{components.brand-mark}, 1-bit, {colors.ink}'
   game-icon-default-128:
     size: '{spacing.icon-hero}'
-    artwork: '{components.brand-mark}, 1-bit, {colors.ink}'
+    artwork: '{components.brand-mark}, native 128 px 1-bit drawing, {colors.ink}'
 ---
 
 # crosshatch brand mark: Design Spine
@@ -153,10 +156,13 @@ Do not use: the pastel set (pink and sky, peach and mint, pink and lavender), th
 | Lockup | Arrangement | Where |
 |---|---|---|
 | Formal | horizontal: mark, then "Crosshatch Player" | website header (the formal name) |
-| Short | horizontal: mark, then "Crosshatch" | places that use the short name |
-| Stacked | three lines: mark, "Crosshatch", "Player" (about 60% size) | image lockups [NOTE FOR UX: its place of use is undecided; the device sleep and boot screens use the stock layout below, not this lockup] |
+| Short | horizontal: mark, then "Crosshatch" | narrow or repeat spots where "Player" is redundant or space is tight: website footer, small headers, link previews, release notes |
+| Stacked | three lines: mark, "Crosshatch", "Player" (about 60% size) | square and portrait spots where a horizontal lockup does not fit: social preview cards, poster and splash images, a narrow mobile header |
+| Mark alone | the symbol only | repo and release avatar |
 
-Gaps between mark and text, and clear space around a lockup, are not decided. [NOTE FOR UX: spacing and clear space, per lockup.]
+The device sleep and boot screens use the stock layout below, not a lockup.
+
+**Lockup spacing**, derived from the mark's grid, applies to every lockup: clear space around the lockup is one cell of the mark, one third of its width (`{spacing.lockup-clear-space}`, `{spacing.mark-cell}`); the gap between mark and text is half a cell (`{spacing.lockup-mark-text-gap}`). In the stacked lockup the gap is the same between the mark and "Crosshatch".
 
 **The device sleep and boot screens keep the stock CrossPoint layout.** Only the icon (the new A2 bitmap) and the title text ("Crosshatch") change. Numbers, as the firmware draws them (`renderDefaultSleepScreen`, `BootActivity`):
 
@@ -177,7 +183,7 @@ Larger icons (160, 200, 240 px) and a Noto Sans Bold 18 pt title were rendered a
 - **Lockups** (`{components.lockup-formal}`, `{components.lockup-short}`, `{components.lockup-stacked}`): the mark plus Noto Sans Bold text, as in Layout & Spacing. Text colour follows `{colors.wordmark-on-light}` / `{colors.wordmark-on-dark}`.
 - **Sleep and boot screen** (`{components.sleep-boot-screen}`): the stock layout with the A2 120 px bitmap and the title "Crosshatch". [Mock](mockups/sleep-screen.html) (the mock shows candidate sizes; the 120 px stock layout is the decision).
 - **Default game icon, 64 px** (`{components.game-icon-default-64}`): the mark as a 64 x 64 1-bit icon, ink, in the launcher row where a game has no icon of its own. Readable at 32 px as well (the O's hole is about 1 to 2 px there), but 64 is the row size.
-- **Default game icon, 128 px** (`{components.game-icon-default-128}`): the mark at 128 px in the title screen's splash band and the hand-off screen's band, where a game has no `title.png` / `handoff.png` and no icon of its own. [NOTE FOR UX: whether this is a native 128 px drawing or the 64 px bitmap doubled, as the Phosphor library's `large` size does.]
+- **Default game icon, 128 px** (`{components.game-icon-default-128}`): a native 128 px drawing of the same geometry (not the 64 px bitmap doubled, as the Phosphor library's `large` size is), in the title screen's splash band and the hand-off screen's band, where a game has no `title.png` / `handoff.png` and no icon of its own.
 
 The default icon is a built-in bitmap. It is not an icon-library name, and games cannot select it.
 
