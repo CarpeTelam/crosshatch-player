@@ -14,7 +14,7 @@ The owner ran the packet (`device-run-packet.md` in this folder) on an X4 Pro, o
 
 - **Firmware:** a CI build of PR #24 at or after `64842706` (the commit that added the `pushed in` and `dropped` log lines, which both logs contain). The exact commit and run were not recorded. Its firmware sources equal the packet's `6cf7f65b` plus those log lines.
 - **Packages:** the `game-packages` artifact of the label-gated `Crosshatch game packages` workflow, which packs `slow-restart`, `pass-title` and `pass-store` as well since `2dadb2fd`. The device listed 11 games. The hashes were not compared on the device (not recorded).
-- **Serial log:** two pastes, Part A (to 538 s after boot) and Part B (to the deep sleep that ended it). The terminal was connected after the installs, so the install notes of R2 and R3 are not in either.
+- **Serial log:** three pastes: Part A (to 538 s after boot), Part B's first part (to the deep sleep that ended it), and Part B's rest, from a fresh boot (`pass-store`, `pass-title`, `slow-restart`). The terminal was connected after the installs, so the install notes of R2 and R3 are not in either.
 
 ## Results
 
@@ -23,7 +23,7 @@ The owner ran the packet (`device-run-packet.md` in this folder) on an X4 Pro, o
 | A, R1 "Slow C calls forever" | pass, now calibrated | `loop: a call ran over 3000 ms; stopping the VM`, `VM cancelled`, `VM stopped` 5 ms later, then the error view; no `abandoning it` |
 | A, R1 "Stuck in one C call" | abandoned as expected, leak differs | `VM did not stop within 500 ms of cancel; abandoning it` 506 ms after the 3,000 ms line; `leaked 1240 bytes`, where the packet and entry 14 say 1,032 |
 | A, R2, R3, R4 and the rest | owner's word: nothing has changed | R2 and R3 are not in the log; R4 was not staged (the eight extra games are hand-packed and not in the artifact) |
-| B0–B8 | owner's word: working as expected | The log shows `pass-open`, `pass-hidden` and `pass-art` matches, and the title screens of `pass-store` and `loop`; no match of `pass-title`, `pass-store` or `slow-restart` (B5.2, B7.5, B7.6, B8.1 have no log evidence) |
+| B0–B8 | owner's word: working as expected; logs back most steps | The logs show matches of `pass-open`, `pass-hidden`, `pass-art`, `pass-store`, `pass-title` and `slow-restart`. B5.2: `pass-title` read `title.bmp` for the hand-off band (480x480). B1.4: Options cycled and wrote `prefs.bin` (30 bytes). B8.1: `slow-restart` Play again to round start took 2,911 ms and 2,919 ms with no error view, so its `setup` stayed under the 3 s watchdog (the call's own time is not logged). B7.5: `ch.store` was saved after `Playing -> Result` and before the Result screen finished its push (at 198409, push done 198432), so a store write did land in the window. **Not in any log: B7.6**, a sleep with a dirty store (the `pass-store` matches ended by Leave) |
 | C, the unreadable `.pkg` | not staged (owner, 2026-10-03) | The host test `ResumeMatchTest.AContinueWhosePkgWillNotReadStopsInTheErrorViewAndKeepsTheSave` covers it |
 
 ## Timings
@@ -34,20 +34,20 @@ The owner ran the packet (`device-run-packet.md` in this folder) on an X4 Pro, o
 | T2 | `peek` added when the title screen opens | 7–9 ms, with a save or none |
 | T3 | Half refresh inside the forced exit (`VM stopped` to `blank screen pushed`) | 1,654 ms (`lib/hal/HalDisplay.h` says 1,720 ms) |
 | T4 | The forced exit's window | `onExit()` started at 1086823 and the blank finished at 1088479: 1,656 ms, past `FORCED_EXIT_DEADLINE_MS` (1,500 ms). No `skipped` line, because no SD step was pending (`pass-hidden` writes no `ch.store`, and its resume was saved) |
-| T5 | Loop stalls in Result and the hand-off | not measurable: the loop bar was already 1,034 ms from the launcher before Part B (Part A log, line 570). The one new maximum in Part B, 1,884 ms, came on leaving a match, not in Result or the hand-off |
-| T6 | A `ch.store` write | not measured (no `pass-store` match in the log) |
+| T5 | Loop stalls in Result and the hand-off | measurable for one match: after the wake the bar read 228 ms (third log, 190385), and `pass-store`'s first match (193371 to 206930), with its store writes in the window, logged no new maximum, so no pass there ran over 228 ms (`LATE_PASS_MS` is 250 ms). The next line, 1,884 ms at 207156, is the Leave's blank push before the launcher, not Result or the hand-off, and it hides later stalls. Earlier matches ran with the bar already at 1,034 ms (Part A log, line 570) |
+| T6 | A `ch.store` write | `Playing -> Result` or the move to `saved ch.store`: 42–96 ms on three writes, 561 ms and 394 ms on two that fell between a resume save and the Result push (upper bounds, as the packet says) |
 
 Push times, from the new log lines: the hand-off screen 1,678 ms (`pass-hidden`) and 1,720–1,722 ms (`pass-art`, with its band image), both full refreshes; the first frame after "I'm ready" and after a launch 1,661–1,664 ms (full); the Result banner, later frames and the Paused screen 671–688 ms (fast); the Error screen 1,655–1,658 ms (full).
 
 ## Findings
 
-1. **Taps are dropped during a full refresh (owner report, 2026-10-03).** "I'm ready" and the first move after it need several taps. Part B's log has 20 hand-off screens, and shows 34 touches dropped on the move screen before its frame was on the panel, 23 taps on the hand-off screen before it was on the panel, 7 that began before its push finished, 5 on the Result banner, and 4 made under another seat's frame (the last is the existing guard working). One hand-off dropped 7 taps in 1.5 s. Every drop lies inside a push, 1.66–1.72 s long. The match drops a tap until `displayBuffer` returns. The guard that stops the second tap of a double tap from passing the hand-off must stay, since a looser one would show seat 2's secret to seat 1. Options: a fast refresh for the first frame after the hand-off (about 675 ms instead of 1,663 ms, at the risk of a ghost of the hand-off band; B3's ghost check raised none); keep the hand-off screen's full refresh, which clears seat 1's secret.
+1. **Taps are dropped during a full refresh (owner report, 2026-10-03).** "I'm ready" and the first move after it need several taps. The two Part B logs have 28 hand-off screens, and show 50 touches dropped on the move screen before its frame was on the panel, 34 taps on the hand-off screen before it was on the panel, 7 that began before its push finished, 7 on the Result banner, and 11 made under another seat's frame (the last is the existing guard working). One hand-off dropped 7 taps in 1.5 s. Every drop lies inside a push, 1.66–1.72 s long. The match drops a tap until `displayBuffer` returns. The guard that stops the second tap of a double tap from passing the hand-off must stay, since a looser one would show seat 2's secret to seat 1. Options: a fast refresh for the first frame after the hand-off (about 675 ms instead of 1,663 ms, at the risk of a ghost of the hand-off band; B3's ghost check raised none); keep the hand-off screen's full refresh, which clears seat 1's secret.
 2. **The blank's half refresh outlasts the forced exit's window (P4, P10; deferral 5.6).** T3 and T4 above. A pending `ch.store` flush or resume write after the blank would be skipped. The log has no such case, so this is unconfirmed; B7.6 (`pass-store`, two moves under 5 s apart, then sleep at once) would show `skipped the ch.store flush`. If it does, the owner decides between accepting the skip, `displayBufferAsync`, and widening the window.
 3. **The abandoned VM leaks 1,240 bytes, not 1,032.** The abandon itself works. Cause not investigated.
 
 ## Open
 
-- B7.6 run, or the owner's decision to accept the P4 risk without it.
+- B7.6 run (`pass-store`, two moves under 5 s apart, then sleep at once), or the owner's decision to accept the P4 risk without it.
 - The owner's decision on Finding 1.
 - The owner's answers to P1–P20, the Decision-121 line, and each deferral row (the packet's two tables).
 - The firmware commit and artifact run actually flashed, if the owner wants them recorded.
