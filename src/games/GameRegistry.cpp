@@ -116,6 +116,9 @@ bool GameRegistry::load(Listing& out) {
     Entry& game = entries[count];
     if (!readGame(dirName, *reader, game)) continue;
     game.check = game.manifest.check(host);
+    if (game.check.ok() && game.check.reason != GameCore::CheckReason::None) {
+      LOG_INF("GAME", "%s: %s; its other modes still work", game.manifest.id, GameCore::describe(game.check.reason));
+    }
     ++count;
   }
   std::sort(entries.get(), entries.get() + count, nameLess);

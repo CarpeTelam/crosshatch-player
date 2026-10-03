@@ -887,3 +887,12 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
   summary: `SoloRounds::lateTimer` infers "the round is over" from seat 0, so a roster with no local seat (`Roster::firstLocalSeat()` returns 0) would drop every timer and mislog it as late; unreachable today, since no such roster plays a round.
   evidence: `GameCore::seatShown` (`firstLocalSeat()` for a roster with at most one local seat), `lib/GameScript/SoloRounds.h`. Trigger: the first roster with no local seat (epic-play-nearby). Fix: test `status.over` explicitly in `lateTimer`'s callers.
+
+## e5-r7
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: A degraded game (solo plus pass or nearby with `seats.max` 1) is Ok with no row note, so the launcher shows it like any game and the user is never told pass is not offered; only the registry load logs it. A row note would need a new string and a launcher change.
+  evidence: `GameRegistry::load` (the one LOG_INF), `GamesLauncherActivity::loadGames` (logs only non-Ok). Trigger: an owner request for a visible note, or a report from a user with such a package.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: `Manifest::check`'s Ok result can now carry a reason other than None (the dropped claim); a later caller that treats `reason != None` as a failure would misread it.
+  evidence: `lib/GameCore/Manifest.h` (`CheckResult`), `Manifest::check`. Trigger: a new caller of `check` that reads `reason` without `status`.

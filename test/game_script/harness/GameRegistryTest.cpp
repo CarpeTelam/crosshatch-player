@@ -113,6 +113,28 @@ TEST_F(RegistryTest, AnUnavailableGameIsListedWithItsVerdict) {
   EXPECT_EQ(listing.entries[0].check.reason, GameCore::CheckReason::ApiTooNew);
 }
 
+// e5-r7: a game installed before the pass seat rule that lists pass with one seat keeps its solo mode; the load says
+// why pass is not offered.
+TEST_F(RegistryTest, AGameThatListsPassWithOneSeatIsListedAndStartsSolo) {
+  fakesd::addFile("/.games/old/manifest.json",
+                  manifestJson("old", "Old", 1, R"({"min": 1, "max": 1})", R"(["solo","pass"])"));
+  fakesd::addFile("/.games/old/.pkg", PKG);
+  const GameRegistry::Listing listing = list();
+  ASSERT_EQ(listing.count, 1u);
+  EXPECT_TRUE(listing.entries[0].check.ok());
+  EXPECT_EQ(listing.entries[0].check.modes, GameCore::Manifest::MODE_SOLO);
+  EXPECT_TRUE(fakelog::any("old: pass and nearby need seats.max 2 or more; its other modes still work"));
+}
+
+TEST_F(RegistryTest, AGameThatListsOnlyPassWithOneSeatIsListedAsInvalid) {
+  fakesd::addFile("/.games/old/manifest.json", manifestJson("old", "Old", 1, R"({"min": 1, "max": 1})", R"(["pass"])"));
+  fakesd::addFile("/.games/old/.pkg", PKG);
+  const GameRegistry::Listing listing = list();
+  ASSERT_EQ(listing.count, 1u);
+  EXPECT_EQ(listing.entries[0].check.status, GameCore::CheckStatus::Invalid);
+  EXPECT_EQ(listing.entries[0].check.reason, GameCore::CheckReason::NearbyNeedsTwoSeats);
+}
+
 TEST_F(RegistryTest, ListsAtMostMaxGames) {
   for (size_t i = 0; i < GameRegistry::MAX_GAMES + 3; ++i) {
     char id[16];
