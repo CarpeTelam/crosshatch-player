@@ -25,10 +25,16 @@ This spine records where the Crosshatch mark and name appear and what they repla
 
 ## Foundation
 
-- **Form factors:** the Xteink X4 Pro (`x4pro`) and the Seeed reTerminal Sticky (`sticky`), both 800 x 480 panels, 1-bit. The sleep and boot canvas is portrait, 480 x 800. The future website is the third surface, in a light and a dark theme, and is the only full-colour one.
+- **Form factors:** the Xteink X4 Pro (`x4pro`) and the Seeed reTerminal Sticky (`sticky`), both 480 x 800 portrait, 1-bit, as in the games spine. The sleep and boot layout is relative to the screen (`DESIGN.md` Layout & Spacing). The future website is the third surface, in a light and a dark theme, and is the only full-colour one.
 - **UI system:** the games area's spines (`ux-crosshatch-player-2026-10-01`, FreeInkUI) remain the UI system for the games area: launcher, title screen, hand-off screen. This run adds the brand mark to them and changes none of their behaviour.
 - **Visual reference:** `DESIGN.md`. The mark is `{components.brand-mark}`; the device is 1-bit (`{colors.ink}` on `{colors.paper}`), the website uses `{colors.mark-x}` and `{colors.mark-o}`.
 - **Stakes:** consumer. The mark is identity, not an interaction; nothing here is a tap target.
+
+## Inspiration & Anti-patterns
+
+- **Matched, Phosphor:** the mark is drawn with Phosphor's regular-weight construction (256 grid, stroke 16, round caps and joins) so it sits beside the firmware's icon set; long-term it should match that set.
+- **Not required, CrossPoint's logo:** Crosshatch is a fork, but the mark stands on its own and need not look like CrossPoint's.
+- **Rejected:** chalk texture and the pastel set; a hatching motif; a won-game variant; a hand-drawn pen-and-paper mark; a serif wordmark.
 
 ## Information Architecture
 
@@ -44,17 +50,17 @@ Where the mark appears and which variant each place uses.
 | Website header | the website | `{components.lockup-formal}` | not applicable |
 | Short-name placements: website footer, small headers, link previews, release notes | the website, repo and release pages | `{components.lockup-short}`, where "Player" is redundant or space is tight | not applicable |
 | Square and portrait placements: social preview cards, poster and splash images, a narrow mobile header | the website and shared images | `{components.lockup-stacked}`, where a horizontal lockup does not fit | not applicable |
-| Repo and release avatar | the repo and release pages | `{components.brand-mark}` alone (symbol only) | not applicable |
+| Repo and release avatar | the repo and release pages | `{components.brand-mark}` alone (symbol only), a square asset with one cell of padding around the mark (the clear-space rule), so a circular crop does not clip the corner O rings | not applicable |
 
 Surfaces other than those in the table are out of scope for this run. The device sleep and boot screens keep the stock layout and use no lockup.
 
 The default icon is a built-in bitmap shared by the launcher row, the title screen and the hand-off fallback. A game that supplies its own icon (`icon.bmp` or a library `icon`) is unaffected on every surface. Games cannot select the default icon, because it is not an icon-library name.
 
-The sleep screen shows the mark only in the default sleep-screen mode (and where a custom or cover mode falls back to it). A user's custom or cover sleep image is untouched.
+The sleep screen shows the mark only through the default screen: the DARK and LIGHT modes, and the fallback of other modes (State Patterns). A user's custom or cover sleep image is untouched.
 
 → Import: [photo of the current CrossPoint sleep screen on device](imports/crosspoint-sleep-screen-photo.jpg) (the layout this run keeps: logo centred, name under it, SLEEPING under that, inverted).
 
-→ Composition reference: [sleep screen](mockups/sleep-screen.html) (the device layout), [mark variants](mockups/mark-variants.html) (the mark at 128, 64 and 32 px, 1-bit and colour), [wordmark variants](mockups/wordmark-variants.html) (the lockups), [colour variants](mockups/colour-variants.html) (the measured palette). Spine wins on conflict.
+→ Composition reference: [sleep screen](mockups/sleep-screen.html) (the device layout; the mock still shows the superseded Noto Sans Bold 18 pt title, a small line at title top + 51, and icons at 120, 160, 200 and 240 px; the decision is the stock layout: Ubuntu 10 bold title, small line at h/2 + 95, 120 px icon), [mark variants](mockups/mark-variants.html) (the mark at 128, 64 and 32 px, 1-bit and colour), [wordmark variants](mockups/wordmark-variants.html) (the lockups), [colour variants](mockups/colour-variants.html) (the measured palette). Spine wins on conflict.
 
 ## Voice and Tone
 
@@ -86,8 +92,9 @@ Behavioural. Visual specs live in `DESIGN.md` Components.
 | Lockup, formal (`{components.lockup-formal}`) | Website header | Names the product in full. |
 | Lockup, short (`{components.lockup-short}`) | Website footer, small headers, link previews, release notes | Names the product briefly where "Player" is redundant or space is tight. The website header keeps the formal lockup. Not used on the device screens (those draw the title as text). |
 | Lockup, stacked (`{components.lockup-stacked}`) | Social preview cards, poster and splash images, a narrow mobile header | Used where a horizontal lockup does not fit (square and portrait spots). Not used on the device sleep and boot screens, which keep the stock layout. |
-| Every lockup | Wherever a lockup is placed | Clear space one cell of the mark around it (`{spacing.lockup-clear-space}`); gap between mark and text half a cell (`{spacing.lockup-mark-text-gap}`). |
-| Sleep and boot screen (`{components.sleep-boot-screen}`) | Boot, default sleep screen | Draws once and stays; no input. Boot also draws the version line at the bottom, unchanged. The sleep screen is inverted (white on black) except when the sleep-screen setting is LIGHT. |
+| Every lockup | Wherever a lockup is placed | Clear space one cell of the mark around it (`{spacing.lockup-clear-space}`); gap between mark and text half a cell (`{spacing.lockup-mark-text-gap}`); minimum mark size `{spacing.lockup-mark-min}`. Proportions and alignment: `DESIGN.md` Layout & Spacing (horizontal text at `{spacing.lockup-text-scale-horizontal}` and vertically centred on the mark; stacked text at `{spacing.lockup-text-scale-stacked}`, centred, "Player" at `{spacing.stacked-second-line-scale}`). |
+| Repo and release avatar | Repo and release pages | The mark alone on a square asset, one cell of padding around it. |
+| Sleep and boot screen (`{components.sleep-boot-screen}`) | Boot, default sleep screen | Draws once and stays; no input. Boot also draws the version line at the bottom, unchanged. The sleep screen is inverted (white on black) except when the sleep-screen setting is LIGHT; the boot screen is never inverted. |
 | Default game icon, 64 px (`{components.game-icon-default-64}`) | Launcher row | Shown only for a game with no `icon.bmp` and no usable manifest `icon`. The row's own behaviour (tap, long-press, selection) is the games spine's and is unchanged. |
 | Default game icon, 128 px (`{components.game-icon-default-128}`) | Title screen band, hand-off band | Shown only where the games spine's fallback chain reaches the game's icon and the game has none. A tap on the band does nothing, as for any splash. |
 
@@ -100,10 +107,17 @@ Behavioural. Visual specs live in `DESIGN.md` Components.
 | Game supplies no icon and no `title.png` | Title screen | The default mark at 128 px in the band. |
 | Game supplies no icon, `title.png` or `handoff.png` | Hand-off screen | The default mark at 128 px in the band. |
 | Manifest `icon` names something the library lacks | Launcher row | The default mark (the fallback is the last step in the chain; confirmed). |
-| Default sleep-screen mode | Sleep | The mark and "Crosshatch", SLEEPING under it. |
-| Custom, cover or blank sleep mode | Sleep | No mark; the user's choice is shown. Where a custom or cover mode has no image to show it falls back to the default screen, so the mark appears. |
-| LIGHT sleep-screen setting | Sleep | Not inverted: ink on paper. |
-| Boot | Boot | The mark, "Crosshatch", BOOTING and the version line. |
+| Sleep, DARK (the default) | Sleep | Mark. `renderDefaultSleepScreen`: the mark and "Crosshatch", SLEEPING under it, inverted (white on black). |
+| Sleep, LIGHT | Sleep | Mark. The same default screen, not inverted: ink on paper. |
+| Sleep, CUSTOM | Sleep | No mark while `renderCustomSleepScreen` finds an image (`/sleep.bmp`, else a random file from the sleep folders). With no usable image it falls back to the default screen: mark. |
+| Sleep, COVER | Sleep | No mark while `renderCoverSleepScreen` has the open book's cover. With no open book or no cover it falls back to the default screen: mark. |
+| Sleep, COVER_CUSTOM | Sleep | From the reader it draws the cover as COVER does; otherwise it draws the custom image as CUSTOM does. Whichever has nothing to show falls back, through the custom path, to the default screen: mark. |
+| Sleep, BLANK | Sleep | No mark: `renderBlankSleepScreen` draws blank. |
+| Sleep, QUICK_RESUME (also after a timeout, when the quick-resume-after-timeout setting is on) | Sleep | No mark: `renderLastScreenSleepScreen` keeps the last frame and never draws the default screen. |
+| Sleep, TRANSPARENT_CUSTOM | Sleep | No mark while `renderTransparentCustomSleepScreen` finds a valid overlay on the retained frame. With none it logs an error and falls back to the default screen: mark. |
+| Boot | Boot | The mark, "Crosshatch", BOOTING and the version line, not inverted: ink on paper (`BootActivity` never calls `invertScreen`). |
+
+The default screen's inversion depends on the setting at the time, so a fallback from any mode other than LIGHT is inverted.
 
 ## Interaction Primitives
 
@@ -115,9 +129,9 @@ None. The mark and the name are not interactive on any surface in this spine.
 
 Behavioural. Visual contrast lives in `DESIGN.md` Colors.
 
-- **X and O are told apart without colour.** On the device and in any greyscale or colour-blind view, a cross and a ring differ by shape and by stroke weight; the mark never relies on red against blue. The colour-blind simulations on the colour page were approximate: under deuteranopia and protanopia the red X goes olive in every red set tried. The shape rule is the guard, not the colours.
-- **Non-text graphics are at least 3:1** against the surface they sit on: X 4.38:1 on white and 4.28:1 on `{colors.surface-dark}`; O 3.99:1 on white and 4.70:1 on `{colors.surface-dark}` (`DESIGN.md` Colors). Slate is not used because C2 falls to 3.09:1 and 3.39:1 there.
-- **1-bit legibility, from the 1-bit rasters:** the mark is readable at 32 px (the O's hole is about 1 to 2 px, tight). 64 px (the launcher row) was checked and not flagged. 120 px (the sleep screen) was checked in the sleep mocks, clear in both polarities. "Player" at 14 px in Noto Sans Bold holds in 1-bit; a serif did not.
+- **X and O are told apart without colour.** On the device and in any greyscale or colour-blind view, a cross and a ring differ by shape alone (both are drawn at stroke 16); the mark never relies on red against blue. The colour-blind simulations on the colour page were approximate: under deuteranopia and protanopia the red X goes olive in every red set tried. The shape rule is the guard, not the colours.
+- **Non-text graphics are at least 3:1** against the surface they sit on (X and O on `{colors.surface-light}` and `{colors.surface-dark}`: the measured table in `DESIGN.md` Colors, all above 3:1). Slate is not used because C2 falls to 3.09:1 and 3.39:1 there.
+- **1-bit legibility, from the 1-bit rasters:** the mark is readable at 32 px (the O's inner diameter is 28 of 256 units, 3.5 px at 32 px before rasterising; the 1-bit raster showed it tight). 64 px (the launcher row) was checked and not flagged. 120 px (the sleep screen) was checked in the sleep mocks, clear in both polarities.
 - **The name is text on the device.** "Crosshatch" is drawn as text by the firmware, so it follows the firmware's existing font handling; it is not baked into an image.
 - **No flow depends on seeing the mark.** A game's row has its name; a title screen has its header. The mark is identity, never the only cue.
 
@@ -125,7 +139,7 @@ Behavioural. Visual contrast lives in `DESIGN.md` Colors.
 
 | Surface | Size and layout |
 |---|---|
-| x4pro and sticky, 480 x 800 portrait sleep and boot | 120 px mark centred, title at screen height / 2 + 70, small line at screen height / 2 + 95 (`DESIGN.md` Layout & Spacing); the same on both devices. |
+| x4pro and sticky, sleep and boot (480 x 800 portrait) | The stock layout in `DESIGN.md` Layout & Spacing (`{components.sleep-boot-screen}`); the same on both devices. |
 | x4pro and sticky, launcher row | 64 px icon (`{spacing.icon-row}`). |
 | x4pro and sticky, title and hand-off band | 128 px icon (`{spacing.icon-hero}`) centred in the 480 x 480 band. |
 | Website, light | Mark and lockups in colour on `{colors.surface-light}`; grid and wordmark black. |
@@ -166,14 +180,15 @@ Failure: Maya's setting is a custom image, and the image file is missing. The de
 
 Repo facts found while distilling; not design decisions.
 
-- `src/activities/boot_sleep/SleepActivity.cpp` (`renderDefaultSleepScreen`, lines 619 to 632) and `src/activities/boot_sleep/BootActivity.cpp` (lines 13 to 19) draw `Logo120` at `((width - 120) / 2, (height - 120) / 2)`, the title `tr(STR_CROSSPOINT)` in `UI_10_FONT_ID` bold at `height / 2 + 70`, and `tr(STR_SLEEPING)` or `tr(STR_BOOTING)` in `SMALL_FONT_ID` at `height / 2 + 95`.
+- `src/activities/boot_sleep/SleepActivity.cpp` (`renderDefaultSleepScreen`) and `src/activities/boot_sleep/BootActivity.cpp` (`onEnter`) draw `Logo120` at `((width - 120) / 2, (height - 120) / 2)`, the title `tr(STR_CROSSPOINT)` in `UI_10_FONT_ID` bold at `height / 2 + 70`, and `tr(STR_SLEEPING)` or `tr(STR_BOOTING)` in `SMALL_FONT_ID` at `height / 2 + 95`.
 - `SleepActivity.cpp`, `BootActivity.cpp` and `src/images/Logo120.h` are upstream files not listed in `docs/crosshatch/upstream-touches.md`. The `Upstream touch ledger` job will fail a change to them until the ledger has entries (or the change sits behind a guard).
 - `STR_CROSSPOINT` is defined in `lib/I18n/translations/english.yaml`. The ledger lists that file only for `STR_GAMES_*` keys (prefix-scoped), so a change to `STR_CROSSPOINT` is outside the existing entry. `STR_CROSSPOINT` and `Logo120` are used only by these two activities.
 - `Logo120` is a pre-baked 120 x 120 1-bit bitmap (`static const uint8_t Logo120[]`). The A2 mark needs a new 120 x 120 bitmap; the sleep screen inverts the whole frame unless the setting is LIGHT, so the bitmap's polarity must match what `Logo120` does today.
-- `SleepActivity.cpp` also falls back to `renderDefaultSleepScreen` in its custom, cover and no-cover paths (lines 612, 791, 801).
+- `SleepActivity.cpp` also falls back to `renderDefaultSleepScreen` in its custom path (`renderCustomSleepScreen`), cover path (`renderCoverSleepScreen`) and transparent path (`renderTransparentCustomSleepScreen`) when they have nothing to show. `renderDefaultSleepScreen` calls `invertScreen` unless the setting is LIGHT; `BootActivity::onEnter` never does.
 - The launcher row icon is chosen by `GameRowIcon::choose` (`src/games/GameRowIcon.h`): the package's `icon.bmp`; else the manifest `icon` in its `icon_weight`, when the library has the name; else `game-controller` regular. The mark replaces the last step. The same fallback feeds the title screen's 128 px band and the hand-off band per the games spine.
 - The game icon library is Phosphor-only (`docs/crosshatch/game-icons.md`): names are Phosphor's own, in two weights, 1-bit at 32 px and 64 px, and `large` (128 px) draws the 64 px bitmap doubled. The library's names are API surface, so the mark is a separate built-in bitmap, not a new name. The 128 px default is a native 128 px drawing, so it is its own bitmap, not the library's doubled 64 px one. The cover-grid Home's Games tab also uses `game-controller` (`GameIcons::GAME_CONTROLLER_32`); the memlog does not change that tab.
 - Other uses of the CrossPoint name are out of scope for this run and logged as a follow-up. Facts: the device web file manager `src/network/html/FilesPage.html` shows "CrossPoint Reader" in its title and header and "CrossPoint E-Reader • Open Source" in its footer; it is an upstream file not listed in `docs/crosshatch/upstream-touches.md`. The Calibre instruction string `STR_CALIBRE_INSTRUCTION_1` ("1) Install CrossPoint Reader plugin") names a third-party plugin.
+- Bitmap derivation, a builder acceptance check and not a design decision: in the A2 geometry the ring's outer edge is at 78 and the neighbouring grid stroke's edge at 80, 2 units apart. That is about 0.94 px at 120 px, 0.5 px at 64 px and 1 px at 128 px, so a plain threshold can fuse the O into the grid. The 120 px and 64 px bitmaps must be pixel-checked against this (hand-corrected pixels are allowed); the 128 px icon is a native drawing.
 - Noto Sans Bold UI sizes shipped in the firmware are 12, 14, 16 and 18 pt; a larger wordmark on device would be a pre-rendered bitmap.
 
 ## Open Questions

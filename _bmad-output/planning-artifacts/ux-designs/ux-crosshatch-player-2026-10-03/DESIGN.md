@@ -28,15 +28,16 @@ typography:
   wordmark:
     fontFamily: Noto Sans
     fontWeight: '700'
-    note: 'Noto Sans Bold, the wordmark face only (website and image lockups). Capitalised: "Crosshatch Player", "Crosshatch". Size is set per lockup, not tokenised (see Typography).'
+    note: 'Noto Sans Bold, the wordmark face only (website and image lockups). Capitalised: "Crosshatch Player", "Crosshatch". Size is relative to the mark height: {spacing.lockup-text-scale-horizontal} in horizontal lockups, {spacing.lockup-text-scale-stacked} in the stacked lockup.'
   wordmark-second-line:
     fontFamily: Noto Sans
     fontWeight: '700'
-    note: '"Player" on the stacked lockup, about 60% of the "Crosshatch" size'
+    note: '"Player" on the stacked lockup, 60% of the stacked "Crosshatch" text size ({spacing.stacked-second-line-scale})'
   device-title:
     fontFamily: Ubuntu
     fontWeight: '700'
-    note: 'UI_10_FONT_ID bold, the firmware UI font (advanceY 24); the device sleep and boot screen title'
+    lineHeight: 24px
+    note: 'UI_10_FONT_ID bold, the firmware UI font; the device sleep and boot screen title. lineHeight is the font''s advanceY (24 px); no font size in px is recorded, and the font slot is the contract.'
   device-small:
     fontFamily: Noto Sans
     fontWeight: '400'
@@ -53,10 +54,13 @@ spacing:
   mark-centre-far: 208px
   mark-o-radius: 22px
   mark-x-half-diagonal: 18px
-  stacked-second-line-scale: 60%
+  stacked-second-line-scale: 60% of the stacked lockup's "Crosshatch" text size
   mark-cell: 33.33% of the mark's width
   lockup-clear-space: 33.33% of the mark's width
   lockup-mark-text-gap: 16.67% of the mark's width
+  lockup-text-scale-horizontal: 66.67% of the mark's height
+  lockup-text-scale-stacked: 33.33% of the mark's height
+  lockup-mark-min: 32px
   icon-row: 64px
   icon-hero: 128px
   icon-device: 120px
@@ -71,7 +75,7 @@ components:
     grid: '{colors.grid-on-light} on {colors.surface-light}; {colors.grid-on-dark} on {colors.surface-dark}'
     x: '{colors.mark-x}'
     o: '{colors.mark-o}'
-    device: '1-bit: {colors.ink} on {colors.paper}, inverted on the default sleep screen'
+    device: '1-bit: {colors.ink} on {colors.paper}; the default sleep screen inverts it, the boot screen does not'
   lockup-formal:
     layout: 'horizontal: {components.brand-mark} then "Crosshatch Player"'
     text: '{typography.wordmark}'
@@ -107,7 +111,7 @@ Crosshatch is named for tic-tac-toe, and its mark is a tic-tac-toe game in progr
 
 The drawing is Phosphor-matched, because the firmware's icon library is Phosphor and the mark should sit beside it: Phosphor's regular-weight construction (256 grid, 16 stroke, round caps and joins), not a hand-drawn wobble. The grid is plain tic-tac-toe only, with no hatching-technique motif. Crosshatch is a fork of CrossPoint but the mark stands on its own; it does not have to look like CrossPoint's.
 
-The device is 1-bit. The mark must therefore read in black and white first; the red and blue exist for the website and only add to a drawing that already works.
+The device is 1-bit. X and O must be told apart by shape alone: both are drawn at the same stroke (16), so only a cross against a ring separates them. The mark must therefore read in black and white first; the red and blue exist for the website and only add to a drawing that already works.
 
 ## Colors
 
@@ -119,21 +123,21 @@ The website palette is final: **C2, solid and flat.**
 - **Wordmark text**: black on white, white on `#121212`.
 - **Ink / paper (`#000000` / `#FFFFFF`)**: the device. No colour reaches the panel.
 
-Measured contrast of each mark against the surface (WCAG, from the 2026-10-03 colour page):
+Measured contrast of each mark against the surface (WCAG, from the [colour variants](mockups/colour-variants.html) page):
 
 | Graphic | on white | on `#121212` |
 |---|---:|---:|
 | X `#C9524D` | 4.38:1 | 4.28:1 |
 | O `#5A7FC4` | 3.99:1 | 4.70:1 |
 
-All four are above the 3:1 non-text floor. Relative luminance is X 0.190 and O 0.213, so X against O is 1.10:1: near-equal. That is a known weak point, not a defect to hide. It is mitigated two ways: the colours are desaturated from the drafted `#E5322D` / `#2B6CFF` (which were equiluminant at 1.03:1 and at risk of chromostereopsis, the red-blue vibration), and the grid always sits between any X and any O, so the two colours never touch. A lightness split between them was tried (C1, C3) and not chosen. Grid-on-surface and wordmark-on-surface contrast are black on white and white on `#121212`; the memlog records no measured figure for them.
+All four are above the 3:1 non-text floor. Relative luminance is X 0.190 and O 0.213, so X against O is 1.10:1: near-equal. That is a known weak point, not a defect to hide. It is mitigated two ways: the colours are desaturated from the drafted `#E5322D` / `#2B6CFF` (which were equiluminant at 1.03:1 and at risk of chromostereopsis, the red-blue vibration), and the grid always sits between any X and any O, so the two colours never touch. A lightness split between them was tried (C1, C3) and not chosen. Grid and wordmark against their surface: black on white 21.00:1, white on `#121212` 18.73:1.
 
 Do not use: the pastel set (pink and sky, peach and mint, pink and lavender), the chalk-white grid, a chalk texture, or the drafted `#E5322D` / `#2B6CFF`.
 
 ## Typography
 
-- **Wordmark:** Noto Sans Bold, capitalised: "Crosshatch Player" (formal) and "Crosshatch" (short). Noto Sans Bold is shipped in the firmware (`lib/EpdFont/builtinFonts/source/NotoSans/NotoSans-Bold.ttf`). A serif was drawn and dropped: its hairlines thin out at 22 to 24 px in 1-bit.
-- **Stacked lockup:** "Player" sits on its own line under "Crosshatch" at about 60% of its size (`{typography.wordmark-second-line}`). At that size 14 px 1-bit "Player" holds in Noto Sans Bold.
+- **Wordmark:** (see [wordmark variants](mockups/wordmark-variants.html)) Noto Sans Bold, capitalised: "Crosshatch Player" (formal) and "Crosshatch" (short). Noto Sans Bold is shipped in the firmware (`lib/EpdFont/builtinFonts/source/NotoSans/NotoSans-Bold.ttf`). A serif was drawn and dropped: its hairlines thin out at 22 to 24 px in 1-bit.
+- **Stacked lockup:** "Player" sits on its own line under "Crosshatch" at 60% of its size (`{typography.wordmark-second-line}`). In the wordmark mock's small 1-bit preview (64 px mark, 24 px "Crosshatch", so 14 px "Player"), "Player" holds in Noto Sans Bold; the full-size stacked lockup (120 px mark, 40 px "Crosshatch") sets it at 24 px.
 - **Scope of the wordmark face:** Noto Sans Bold is the wordmark face only (website, image lockups). It is not a system default and is not imposed on games; games use the system fonts, and a user who wants Noto Sans changes the font at system level.
 - **Device title:** "Crosshatch" on the sleep and boot screens is set in the firmware UI font, Ubuntu 10 bold (`{typography.device-title}`), as CrossPoint's title is today. It is not the Noto Sans Bold wordmark. The small line under it is `{typography.device-small}`.
 - **Size limit on device:** the largest shipped Noto Sans Bold UI size is 18 pt. A larger wordmark on the device would be a pre-rendered bitmap, not text.
@@ -157,32 +161,42 @@ Do not use: the pastel set (pink and sky, peach and mint, pink and lavender), th
 |---|---|---|
 | Formal | horizontal: mark, then "Crosshatch Player" | website header (the formal name) |
 | Short | horizontal: mark, then "Crosshatch" | narrow or repeat spots where "Player" is redundant or space is tight: website footer, small headers, link previews, release notes |
-| Stacked | three lines: mark, "Crosshatch", "Player" (about 60% size) | square and portrait spots where a horizontal lockup does not fit: social preview cards, poster and splash images, a narrow mobile header |
-| Mark alone | the symbol only | repo and release avatar |
+| Stacked | three lines: mark, "Crosshatch", "Player" (60% of the "Crosshatch" size) | square and portrait spots where a horizontal lockup does not fit: social preview cards, poster and splash images, a narrow mobile header |
+| Mark alone | the symbol only, on a square asset with one cell of padding (`{spacing.lockup-clear-space}`) around the mark | repo and release avatar |
 
 The device sleep and boot screens use the stock layout below, not a lockup.
 
-**Lockup spacing**, derived from the mark's grid, applies to every lockup: clear space around the lockup is one cell of the mark, one third of its width (`{spacing.lockup-clear-space}`, `{spacing.mark-cell}`); the gap between mark and text is half a cell (`{spacing.lockup-mark-text-gap}`). In the stacked lockup the gap is the same between the mark and "Crosshatch".
+**Lockup spacing**, derived from the mark's grid, applies to every lockup: clear space around the lockup is one cell of the mark, one third of its width (`{spacing.lockup-clear-space}`, `{spacing.mark-cell}`); the gap between mark and text is half a cell (`{spacing.lockup-mark-text-gap}`). In the stacked lockup the same half-cell gap sits between the mark and "Crosshatch" (owner-confirmed). The avatar's padding is the same clear-space rule, so a circular crop does not clip the corner O rings, which reach 143 units from the mark's centre against a half-width of 128.
 
-**The device sleep and boot screens keep the stock CrossPoint layout.** Only the icon (the new A2 bitmap) and the title text ("Crosshatch") change. Numbers, as the firmware draws them (`renderDefaultSleepScreen`, `BootActivity`):
+**Lockup proportions** (owner-decided, as rendered in the wordmark mock):
+
+| Lockup | Text size | Alignment |
+|---|---|---|
+| Formal and short (horizontal) | 2/3 of the mark height (`{spacing.lockup-text-scale-horizontal}`): 32 px text beside a 48 px mark | vertically centred on the mark |
+| Stacked | 1/3 of the mark height (`{spacing.lockup-text-scale-stacked}`): 40 px text under a 120 px mark; "Player" at 60% of that (`{spacing.stacked-second-line-scale}`) | centred |
+
+The minimum mark size is 32 px (`{spacing.lockup-mark-min}`), the smallest size checked in 1-bit. The gap between "Crosshatch" and "Player" in the stacked lockup is not specified; the wordmark mock is the only source.
+
+**The device sleep and boot screens keep the stock CrossPoint layout** (the [photo of the current screen](imports/crosspoint-sleep-screen-photo.jpg) shows it). Only the icon (the new A2 bitmap) and the title text ("Crosshatch") change. Numbers, as the firmware draws them (`renderDefaultSleepScreen`, `BootActivity`):
 
 | Element | Value |
 |---|---|
 | Icon | `{spacing.icon-device}` x `{spacing.icon-device}` (120 x 120), 1-bit, centred horizontally and vertically on the screen |
 | Title | "Crosshatch", UI_10 bold, centred, top at screen height / 2 + `{spacing.device-title-offset}` (70), which is 10 px under the icon |
 | Small line | SLEEPING or BOOTING, SMALL font, centred, at screen height / 2 + `{spacing.device-small-offset}` (95), which is 25 px under the title's top |
-| Canvas | 480 x 800 portrait (the panel is 800 x 480; the sleep screen is portrait) |
-| Polarity | inverted (white on black) except when the sleep-screen setting is LIGHT |
+| Canvas | 480 x 800 portrait. The layout is relative to the screen (the code centres on `getScreenWidth()` and `getScreenHeight()`), so only the offsets above are fixed. |
+| Polarity, sleep | inverted (white on black) except when the sleep-screen setting is LIGHT |
+| Polarity, boot | not inverted: `BootActivity` never calls `invertScreen`, so the bitmap draws as designed, ink on paper |
 | Boot only | the version string, centred at screen height - 30, unchanged |
 
 Larger icons (160, 200, 240 px) and a Noto Sans Bold 18 pt title were rendered and are superseded: the stock layout is kept.
 
 ## Components
 
-- **Brand mark** (`{components.brand-mark}`): the A2 board above. On the website it uses the colour tokens; on the device it is 1-bit ink on paper, X and O told apart by shape and weight alone (a cross against a ring). Never recoloured, never given a fill, never hatched.
+- **Brand mark** (`{components.brand-mark}`): the A2 board above. On the website it uses the colour tokens; on the device it is 1-bit ink on paper, X and O told apart by shape alone (a cross against a ring, same stroke). Never recoloured, never given a fill, never hatched.
 - **Lockups** (`{components.lockup-formal}`, `{components.lockup-short}`, `{components.lockup-stacked}`): the mark plus Noto Sans Bold text, as in Layout & Spacing. Text colour follows `{colors.wordmark-on-light}` / `{colors.wordmark-on-dark}`.
-- **Sleep and boot screen** (`{components.sleep-boot-screen}`): the stock layout with the A2 120 px bitmap and the title "Crosshatch". [Mock](mockups/sleep-screen.html) (the mock shows candidate sizes; the 120 px stock layout is the decision).
-- **Default game icon, 64 px** (`{components.game-icon-default-64}`): the mark as a 64 x 64 1-bit icon, ink, in the launcher row where a game has no icon of its own. Readable at 32 px as well (the O's hole is about 1 to 2 px there), but 64 is the row size.
+- **Sleep and boot screen** (`{components.sleep-boot-screen}`): the stock layout with the A2 120 px bitmap and the title "Crosshatch". [Mock](mockups/sleep-screen.html): the mock still shows the superseded Noto Sans Bold 18 pt title, a small line at title top + 51, and icons at 120, 160, 200 and 240 px. The decision is the stock layout: Ubuntu 10 bold title, small line at h/2 + 95, 120 px icon.
+- **Default game icon, 64 px** (`{components.game-icon-default-64}`): the mark as a 64 x 64 1-bit icon, ink, in the launcher row where a game has no icon of its own. Readable at 32 px as well (the O's inner diameter is 28 of 256 units, 3.5 px at 32 px before rasterising; the 1-bit raster showed it tight), but 64 is the row size.
 - **Default game icon, 128 px** (`{components.game-icon-default-128}`): a native 128 px drawing of the same geometry (not the 64 px bitmap doubled, as the Phosphor library's `large` size is), in the title screen's splash band and the hand-off screen's band, where a game has no `title.png` / `handoff.png` and no icon of its own.
 
 The default icon is a built-in bitmap. It is not an icon-library name, and games cannot select it.
@@ -191,7 +205,7 @@ The default icon is a built-in bitmap. It is not an icon-library name, and games
 
 | Do | Don't |
 |---|---|
-| Tell X from O by shape and weight alone (cross against ring); colour is extra | Rely on red against blue to separate X from O |
+| Tell X from O by shape alone (cross against ring, same stroke); colour is extra | Rely on red against blue to separate X from O |
 | Keep the grid between every X and O | Let an X and an O touch, or add a fill between them |
 | Black grid on white, white grid on `#121212` | Use slate `#243038` (C2 reaches only 3.09:1 and 3.39:1 there) |
 | X `#C9524D`, O `#5A7FC4`, flat | Chalk texture, the pastel set, or the drafted `#E5322D` / `#2B6CFF` |
