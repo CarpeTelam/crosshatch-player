@@ -153,17 +153,14 @@ step that names a tap names the button press too.
    one had no save, and its one-line Options row is shorter). A tap on the band or on "Player 1's turn" does nothing. The button (or Confirm) shows
    seat 1's frame with a full refresh: "Mode: pass", "Level: Easy", "Board: Large".
 5. Tap the frame: seat 1's frame stays, with "Tap to pass to player 2" in a framed banner at the bottom. A tap above
-   the banner does nothing; a tap on it shows the hand-off screen again ("Player 2's turn"). Tap the banner twice
-   quickly, several times, and once with the second finger held on the banner until the hand-off screen is up: the
-   second tap never presses "I'm ready", although the banner and the button overlap on the screen (a tap passes only
-   when its finger came down after the screen was drawn); a fresh tap on "I'm ready" then passes. With the buttons:
-   press Confirm on the banner, then hold Confirm again from before the hand-off screen is up until after: it does not
-   pass; a fresh Confirm does. With the power button set to Confirm (Settings, Controls) and its double-click
-   frontlight on, as shipped: click power on the banner (Confirm comes half a second after the click), then click it
-   once more while the hand-off screen is being drawn: it stays; a single click about a second or more after it is up
-   passes it. A click begun within about 0.55 s of the screen being up is dropped by design (fails closed: its Confirm
-   comes half a second after the click, and passes only `POWER_CLICK_HELD_MS`, 1,051 ms, after the screen was drawn);
-   click again. Afterwards set the power button back from Confirm.
+   the banner does nothing; one tap on it shows the hand-off screen again ("Player 2's turn"), even if it is made while
+   the frame is still refreshing. One tap on "I'm ready" passes it as well, during the hand-off screen's refresh too, and
+   the first move tapped on seat 2's frame while it is still refreshing registers. The banner and the button overlap on
+   the screen by design (the owner accepts that a stray second tap on the banner's spot passes the hand-off). With the
+   buttons: Confirm on the banner and again on the hand-off screen pass each at once. With the power button set to
+   Confirm (Settings, Controls) and its double-click frontlight on, as shipped: click power on the banner (Confirm comes
+   half a second after the click), then once more on the hand-off screen: each passes. Afterwards set the power button
+   back from Confirm.
 6. Press "I'm ready": seat 2's frame. On it, put the device to sleep, once with each Sleep Screen mode (Settings, Display, Sleep Screen:
    Dark, Light, Custom, Cover, Cover + Custom, None, Quick Resume, Transparent): the screen first goes plain white (no
    icon, no text, not the page), then shows that sleep screen; the transparent and Quick Resume modes draw over white,

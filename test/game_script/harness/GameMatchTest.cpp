@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -1753,6 +1754,31 @@ class HiddenPassTest : public MatchTest {
     render();
   }
 
+  // pass-hidden with seat 1's move made and Result asked for, but not yet drawn.
+  void reachResultUndrawn() {
+    enterHidden();
+    expectHandOff(1);
+    showSeat(1);
+    tapCanvas(100, 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  }
+
+  // `confirm` scripts a Confirm release on a pass; made inside Result's push and then the hand-off screen's, each
+  // passes at once.
+  void expectConfirmPassesDuringPushes(const std::function<void()>& confirm) {
+    ASSERT_NO_FATAL_FAILURE(reachResultUndrawn());
+    renderer->onDisplay = [&] {
+      confirm();
+      frame();
+    };
+    render();
+    ASSERT_EQ(state(), "HandOff") << "a Confirm while the banner was being pushed did not pass it";
+    ASSERT_TRUE(renderHandOff());
+    renderer->onDisplay = nullptr;
+    EXPECT_EQ(state(), "Playing") << "a Confirm while the hand-off screen was being pushed did not pass it";
+  }
+
   // HIDDEN_STORE_GAME in Result after seat 1's two moves, both stored, and the store not yet flushed.
   void reachResultWithADirtyStore() {
     installGame("hidden-store", HIDDEN_STORE_GAME);
@@ -2031,29 +2057,6 @@ TEST_F(HiddenPassTest, TheRoundEndsInOverForEveryoneAndPlayAgainStartsOnTheBlank
   EXPECT_EQ(fakelog::countLines("Round started"), 2u);
 }
 
-// The hand-off screen passes only once it is pushed: a tap on its button's place or Confirm before it, or one made
-// while displayBuffer is still running (its button's routing is published before the push), is dropped, so neither
-// can skip it.
-TEST_F(HiddenPassTest, ATapBeforeTheBlankIsOnThePanelIsDropped) {
-  enterHidden();
-  tapToPass();
-  input->click(Button::Confirm);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a tap before the hand-off screen was drawn passed it";
-  bool ran = false;
-  renderer->onDisplay = [&] {
-    ran = true;
-    tapToPass();
-  };
-  ASSERT_TRUE(renderHandOff());
-  renderer->onDisplay = nullptr;
-  ASSERT_TRUE(ran);
-  EXPECT_EQ(state(), "HandOff") << "a tap while the blank was being pushed passed it";
-  input->click(Button::Confirm);  // once it is up, Confirm passes it as a tap does
-  frame();
-  EXPECT_EQ(state(), "Playing");
-}
-
 TEST_F(HiddenPassTest, PauseFromResultOrTheBlankReturnsThereAndTheBlanksPauseMenuSitsOnNoFrame) {
   enterHidden();
   expectHandOff();
@@ -2253,32 +2256,6 @@ TEST_F(HiddenPassTest, ATimerDueOnTheBlankReachesTheNextSeatAfterItsFirstFrame) 
   };
   EXPECT_LT(at("draw for seat 2"), at("timer for seat 2"));
   EXPECT_FALSE(logHas("timer for seat 1")) << "the timer reached the seat that had passed the device on";
-}
-
-// Result's tap passes only once its banner is on the panel: a tap before its render, or one made while its
-// displayBuffer is still running, is dropped, so a double tap on the move cannot skip the banner.
-TEST_F(HiddenPassTest, ATapBeforeResultsBannerIsOnThePanelIsDropped) {
-  enterHidden();
-  expectHandOff();
-  showSeat(1);
-  tapCanvas(100, 300);
-  frame();
-  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
-  tapToPass();
-  EXPECT_EQ(state(), "Result") << "a tap before the banner was drawn passed it";
-  bool ran = false;
-  renderer->onDisplay = [&] {
-    ran = true;
-    tapToPass();
-    input->click(Button::Confirm);
-    frame();
-  };
-  render();
-  renderer->onDisplay = nullptr;
-  ASSERT_TRUE(ran);
-  EXPECT_EQ(state(), "Result") << "a tap while the banner was being pushed passed it";
-  tapToPass();
-  EXPECT_EQ(state(), "HandOff");
 }
 
 // The loop watches the VM in Result as in a menu: a call stuck there ends in the error view.
@@ -2791,335 +2768,155 @@ TEST_F(HiddenPassTest, ATapOffTheButtonOrOffTheBannerPassesNothing) {
   expectHandOff(2);
 }
 
-// ---- a double tap from the banner (Follow-up 1): the banner and the "I'm ready" row may overlap on the panel ----
+// ---- plain tap targets (Owner Decision 2026-10-03): the hand-off's button, Result's banner and Confirm act on
+// release, even while their screen is being pushed, and the first move after "I'm ready" is taken during its frame's
+// push ----
 //
 // The input double stands in for the device's touch path: input->tap() is a contact whose release update reports its
 // tap with a touch-only held time of 0 (its finger came down now), and holdTouch()/liftTouch() a finger the loop's
 // update() first samples, then lifts, reporting the held time since that first sample (HalGPIO::lastTouchHeldMs, set
 // on the release update as the device's InputManager sets it). The fake clock moves only when a test moves it, and the
-// renderer double's push costs no time, so a test places a push's completion by advancing the clock around it. Confirm
-// is the double's hold(Confirm, ms) then release: getHeldTime() answers that hold on the release's pass, as the
-// device's MappedInputManager answers a button's hold on a pass with a button edge; click() holds it 0 ms.
+// renderer double's push costs no time. Confirm is the double's hold(Confirm, ms) then release; click() holds it 0 ms.
 
-// A double tap on the banner whose second tap lands inside both the banner and the "I'm ready" row (their overlap,
-// measured from the two rects drawn): the first passes Result; the second, before the hand-off screen is pushed and
-// while it is, passes nothing; a tap there once the screen is up presses "I'm ready".
-TEST_F(HiddenPassTest, ADoubleTapInsideTheBannerAndTheReadyRowPassesOnlyTheBanner) {
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  ui().forget();
-  render();  // Result again: its one stroke is the banner's frame
-  ASSERT_EQ(ui().strokeRects.size(), 1u);
-  const freeink::ui::Rect banner = ui().strokeRects[0].rect;
-  const freeink::ui::Rect ready = match::splashMenuRows(*renderer, 2)[1];
-  const int left = std::max(banner.x, ready.x);
-  const int top = std::max(banner.y, ready.y);
-  const int right = std::min(banner.right(), ready.right());
-  const int bottom = std::min(banner.bottom(), ready.bottom());
-  ASSERT_LT(left, right) << "the banner and the ready row do not overlap";
-  ASSERT_LT(top, bottom) << "the banner and the ready row do not overlap";
-  const int x = (left + right) / 2;
-  const int y = (top + bottom) / 2;
-  const auto tapBoth = [&] {
-    input->tap(x, y);
-    frame();
-  };
-  tapBoth();  // the first tap, on the banner
-  ASSERT_EQ(state(), "HandOff");
-  tapBoth();  // the second, before the hand-off screen is pushed
-  EXPECT_EQ(state(), "HandOff");
-  renderer->onDisplay = [&] { tapBoth(); };  // and while it is
-  ASSERT_TRUE(renderHandOff());
-  renderer->onDisplay = nullptr;
-  EXPECT_EQ(state(), "HandOff") << "the double tap on the banner also pressed I'm ready";
-  fakertos::advance(10);
-  tapBoth();  // a fresh tap on the button
-  EXPECT_EQ(state(), "Playing");
-}
-
-// A Confirm press held through the hand-off screen's push (begun before it completed, released after) passes nothing,
-// as a held finger does; a fresh press passes it.
-TEST_F(HiddenPassTest, AConfirmHeldThroughTheHandOffPushIsDroppedAndAFreshOnePasses) {
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  input->click(Button::Confirm);
-  frame();
-  ASSERT_EQ(state(), "HandOff");
-  fakertos::advance(30);
-  ASSERT_TRUE(renderHandOff());  // the push completes 70 ms before the release below, 30 ms after the press began
-  fakertos::advance(70);
-  input->hold(Button::Confirm, 100);
-  input->release(Button::Confirm);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a Confirm begun before the push passed the screen";
-  fakertos::advance(10);
-  input->click(Button::Confirm);
-  frame();
-  EXPECT_EQ(state(), "Playing");
-}
-
-// A repaint of the hand-off screen already on the panel keeps the time of the push that first showed it: a finger
-// that came down on "I'm ready" after that push and lifted after a repaint (the light panel closed, say) presses it.
-TEST_F(HiddenPassTest, ATapStraddlingARepaintOfTheHandOffScreenPassesIt) {
-  enterHidden();
-  expectHandOff(1);
-  fakertos::advance(10);
-  const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
-  input->holdTouch(ready.x, ready.y);
-  frame();  // the touch begins after the first push
-  fakertos::advance(30);
-  render();  // a repaint
-  EXPECT_EQ(lastPush().mode, HalDisplay::FAST_REFRESH) << "not a repaint";
-  fakertos::advance(70);
-  frame();
-  input->liftTouch();
-  frame();
-  EXPECT_EQ(state(), "Playing") << "a repaint made a tap begun on the screen's first push look early";
-}
-
-// The same for Result: a repaint of the banner already on the panel (here an unchanged frame drawn again) keeps the
-// time of the push that first showed it, so a finger that came down on the banner after that push and lifted after the
-// repaint passes it.
-TEST_F(HiddenPassTest, ATapStraddlingARepaintOfTheBannerPassesIt) {
-  ASSERT_NO_FATAL_FAILURE(reachResult());  // the push that first shows the banner
-  fakertos::advance(10);
-  input->holdTouch(BANNER_X, BANNER_Y);
-  frame();  // the touch begins after the first push
-  fakertos::advance(30);
-  const size_t pushes = renderer->shown.size();
-  render();  // a repaint
-  ASSERT_EQ(renderer->shown.size(), pushes + 1) << "no repaint";
-  EXPECT_TRUE(holds(lastPush(), "Tap to pass to player 2")) << "not the banner";
-  fakertos::advance(70);
-  frame();
-  input->liftTouch();
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a repaint made a tap begun on the banner's first push look early";
-}
-
-// A Confirm on a pass where the home key reports an action. The double's homeKey() stands in for the device's
-// MappedInputManager on a board with a home key: HomeButtonInput reports the action on one update, up to 1,750 ms after
-// the key's first contact (its slowest double tap or tap-then-long-press, HomeActionBoundTest below), which
-// GameMatchActivity::HOME_ACTION_HELD_MS covers with slack for a late loop pass; on that update getHeldTime() is 0, and
-// a Confirm action makes wasReleased(Confirm) true. Such a Confirm, the key's own or a front button's released on the
-// same update, passes neither screen until that bound has gone by since the screen's push completed: a key pressed
-// during the push is dropped.
-TEST_F(HiddenPassTest, AConfirmOnAPassWithAHomeKeyActionPassesOnlyItsBoundAfterThePush) {
-  constexpr uint32_t BOUND = GameMatchActivity::HOME_ACTION_HELD_MS;
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  input->homeKey(HomeButtonAction::Confirm);
-  frame();
-  EXPECT_EQ(state(), "Result") << "a home-key Confirm right after the banner's push passed it";
-  idle(BOUND);
-  input->homeKey(HomeButtonAction::Confirm);
-  frame();
-  ASSERT_EQ(state(), "HandOff") << "a home-key Confirm the bound after the banner's push";
-  renderer->onDisplay = [&] {
-    input->homeKey(HomeButtonAction::Confirm);  // the key's action while the hand-off screen is being pushed
-    frame();
-  };
-  ASSERT_TRUE(renderHandOff());
-  renderer->onDisplay = nullptr;
-  EXPECT_EQ(state(), "HandOff");
-  idle(BOUND - 1);  // the key pressed during the push: its action comes after it, within the bound
-  input->homeKey(HomeButtonAction::Confirm);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a home-key Confirm within its bound of the push passed the hand-off screen";
-  input->homeKey(HomeButtonAction::NextPage);  // another home action, on the pass a front button's Confirm releases
-  input->click(Button::Confirm);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a front Confirm with no hold to read passed the hand-off screen";
-  fakertos::advance(1);
-  input->homeKey(HomeButtonAction::Confirm);
-  frame();
-  EXPECT_EQ(state(), "Playing");
-}
-
-// HomeButtonInput (src/util/HomeButtonInput.h, which the device's MappedInputManager runs the home key through) on the
-// key's slowest actions, timed from the constants: a first contact held 1 ms short of the long press (a tap), and a
-// second one at DOUBLE_TAP_MS after its release (still a second contact: the wait ends only past it). That second
-// contact either taps 1 ms short of the long press (the double tap's action at its release) or is held to the long
-// press (InputManager reports `held` HOME_KEY_LONG_PRESS_MS into it: the long press's action then). Either action, here
-// Confirm, comes within HOME_ACTION_HELD_MS less its slack for a late loop pass of the first contact.
-TEST(HomeActionBoundTest, HomeActionHeldMsReachesBackToTheKeysSlowestActionsFirstContact) {
-  constexpr uint32_t LONG = GameMatchActivity::HOME_KEY_LONG_PRESS_MS;
-  constexpr uint32_t WAIT = HomeButtonInput::DOUBLE_TAP_MS;
-  constexpr uint32_t BOUND = GameMatchActivity::HOME_ACTION_HELD_MS - GameMatchActivity::LATE_PASS_MS;
-  for (const bool longPressed : {false, true}) {
-    SCOPED_TRACE(longPressed ? "second contact long-pressed" : "second contact tapped");
-    HomeButtonInput key;
-    const auto at = [&](const uint32_t now, const bool tapped, const bool held, const bool pressed) {
-      return key.update(now, tapped, held, false, pressed, HomeButtonAction::Home, HomeButtonAction::Confirm,
-                        HomeButtonAction::Confirm);
-    };
-    const uint32_t release = LONG - 1;
-    const uint32_t second = release + WAIT;
-    EXPECT_EQ(at(0, false, false, true), HomeButtonAction::Ignore);
-    EXPECT_EQ(at(release, true, false, false), HomeButtonAction::Ignore);
-    EXPECT_EQ(at(second, false, false, true), HomeButtonAction::Ignore) << "the second contact did not count";
-    const uint32_t action = longPressed ? second + LONG : second + LONG - 1;
-    ASSERT_EQ(at(action, !longPressed, longPressed, false), HomeButtonAction::Confirm);
-    EXPECT_LE(action, BOUND) << "the Confirm would read as begun after its first contact";
-  }
-}
-
-// The X4 Pro's power click as Confirm (src/main.cpp, with the power button set to Confirm and the double-click
-// frontlight on), timed from the copied constants on a loop that updates every millisecond (millis()' resolution): a
-// click is a press held at most X4PRO_POWER_CLICK_MAX_HOLD_MS (handleX4ProFrontlightDoubleClick drops one held longer
-// from the click tracking), its release's update stamps lastX4ProPowerClickAt, and its Confirm frame comes on the
-// first update more than X4PRO_POWER_DOUBLE_CLICK_MS after that stamp (a strict '>'). The slowest click's Confirm
-// comes MAX_HOLD + DOUBLE_CLICK + 1 ms after its press, which POWER_CLICK_HELD_MS less its slack for a late loop pass
-// covers. The lambda models main.cpp's rule, which it cannot call (an anonymous namespace there);
-// CopiedConstantsTest.MainCppStampsTheClickOnItsReleaseAndWaitsStrictlyLongerThanTheWindow checks main.cpp still
-// stamps the click on its release and compares with that strict '>'.
-TEST(PowerClickBoundTest, PowerClickHeldMsReachesBackToTheSlowestClicksPress) {
-  constexpr uint32_t MAX_HOLD = GameMatchActivity::X4PRO_POWER_CLICK_MAX_HOLD_MS;
-  constexpr uint32_t DOUBLE_CLICK = GameMatchActivity::X4PRO_POWER_DOUBLE_CLICK_MS;
-  constexpr uint32_t BOUND = GameMatchActivity::POWER_CLICK_HELD_MS - GameMatchActivity::LATE_PASS_MS;
-  // The press at 0, held `held` ms: the update its Confirm frame is set on (main.cpp's rule), or 0 for none.
-  const auto confirmAt = [&](const uint32_t held) -> uint32_t {
-    if (held > MAX_HOLD) return 0;  // no click: a longer press is Confirm on its own release, with the edge
-    const uint32_t lastClickAt = held;
-    for (uint32_t now = held + 1; now <= held + 2 * DOUBLE_CLICK; ++now) {
-      if (now - lastClickAt > DOUBLE_CLICK) return now;
-    }
-    return 0;
-  };
-  EXPECT_EQ(confirmAt(MAX_HOLD + 1), 0u) << "a press held past the click's limit is no delayed click";
-  uint32_t slowest = 0;
-  for (uint32_t held = 0; held <= MAX_HOLD; ++held) slowest = std::max(slowest, confirmAt(held));
-  EXPECT_EQ(slowest, MAX_HOLD + DOUBLE_CLICK + 1);
-  EXPECT_LE(slowest, BOUND) << "the power-click Confirm would read as begun after its press";
-}
-
-// A Confirm on a pass with no button edge: the double's powerConfirmClick() stands in for the X4 Pro's power click as
-// Confirm (src/main.cpp, setPowerConfirmClickFrame), reported more than X4PRO_POWER_DOUBLE_CLICK_MS after a click held
-// at most X4PRO_POWER_CLICK_MAX_HOLD_MS, on an update whose getHeldTime() is InputManager's span of the last press of
-// the buttons, long over. It passes neither screen until POWER_CLICK_HELD_MS has gone by since the push completed.
-TEST_F(HiddenPassTest, AConfirmWithNoButtonEdgePassesOnlyItsBoundAfterThePush) {
-  constexpr uint32_t BOUND = GameMatchActivity::POWER_CLICK_HELD_MS;
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  idle(BOUND - 1);  // the click began during the banner's push
-  input->powerConfirmClick(100);
-  frame();
-  EXPECT_EQ(state(), "Result") << "a power-click Confirm within its bound of the push passed the banner";
-  fakertos::advance(1);
-  input->powerConfirmClick(100);
-  frame();
-  ASSERT_EQ(state(), "HandOff") << "a power-click Confirm at its bound after the banner's push";
-  ASSERT_TRUE(renderHandOff());
-  idle(BOUND - 1);
-  input->powerConfirmClick(100);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a power-click Confirm within its bound of the push passed the hand-off screen";
-  fakertos::advance(1);
-  input->powerConfirmClick(100);
-  frame();
-  EXPECT_EQ(state(), "Playing");
-}
-
-// A front Confirm, whose pass has the button edge, keeps its own hold's dating: pressed and released right after the
-// banner's push, well within POWER_CLICK_HELD_MS, it passes.
-TEST_F(HiddenPassTest, AFrontConfirmWithAButtonEdgeIsNotDatedAsAPowerClick) {
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  fakertos::advance(10);
-  input->click(Button::Confirm);
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a front Confirm with a button edge was dated as a power click";
-}
-
-// millis() is 32 bits on the device and wraps after about 49.7 days: loopHandOff compares the tap's start with the
-// push's completion as a signed difference. Here the hand-off screen's push completes 70 ms before the wrap: a finger
-// held through it and lifted after the wrap is dropped, and a fresh tap after the wrap passes (an unsigned compare
-// would read it as before the push).
-TEST_F(HiddenPassTest, ThePushTimeComparesAcrossTheClocksWrap) {
-  constexpr uint64_t WRAP = uint64_t{1} << 32;
-  // The match runs from 2 s before the wrap, so the jump to 100 ms before it below is short of the 3 s watchdog.
-  fakertos::S().nowMs = WRAP - 2000;
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  tapBanner();
-  ASSERT_EQ(state(), "HandOff");
-  ASSERT_LT(fakertos::S().nowMs.load(), WRAP - 100);
-  fakertos::S().nowMs = WRAP - 100;
-  const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
-  input->holdTouch(ready.x, ready.y);
-  frame();  // the touch begins 100 ms before the wrap
-  fakertos::advance(30);
-  ASSERT_TRUE(renderHandOff());  // the push completes 70 ms before the wrap
-  fakertos::advance(100);        // 30 ms after it
-  frame();
-  input->liftTouch();
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a touch begun before the push passed the screen across the wrap";
-  fakertos::advance(10);
-  tapReady();  // a fresh tap, 40 ms after the wrap
-  ASSERT_EQ(state(), "Playing") << "a tap after the wrap read as before the push";
-  showFrame();
-  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
-  // The host's millis() is 64 bits, so the stop's waits (GameVM's join and abandon, 32-bit starts) would not wrap as
-  // the device's do: the clock goes back under the wrap before the screen goes.
-  fakertos::S().nowMs = WRAP - 1000;
-}
-
-// The second tap of a double tap on the banner lands where the hand-off screen's button is (inside the second menu
-// row) before that screen is on the panel, and again while it is being pushed: both are read and dropped, and the
-// hand-off screen stays until a tap made once it is up.
-TEST_F(HiddenPassTest, ADoubleTapsSecondTapInTheReadyRowBeforeOrDuringTheHandOffPushIsDropped) {
-  ASSERT_NO_FATAL_FAILURE(reachResult());
-  tapBanner();  // the double tap's first tap passes Result
-  ASSERT_EQ(state(), "HandOff");
-  tapReady();  // its second, in the ready row, before the hand-off screen is pushed
-  EXPECT_EQ(state(), "HandOff") << "the double tap's second tap passed a hand-off screen not yet pushed";
+// A tap on the banner made while Result's displayBuffer is running passes it, and one on "I'm ready" made while the
+// hand-off screen is being pushed passes that: both screens publish their routing before the push.
+TEST_F(HiddenPassTest, ATapDuringTheBannersOrTheHandOffsPushPassesAtOnce) {
+  ASSERT_NO_FATAL_FAILURE(reachResultUndrawn());
   bool ran = false;
   renderer->onDisplay = [&] {
     ran = true;
-    tapReady();  // while the hand-off screen is being pushed
+    tapBanner();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_EQ(state(), "HandOff") << "a tap while the banner was being pushed did not pass it";
+  ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapReady();
   };
   ASSERT_TRUE(renderHandOff());
   renderer->onDisplay = nullptr;
   ASSERT_TRUE(ran);
-  EXPECT_EQ(state(), "HandOff") << "a tap while the hand-off screen was being pushed passed it";
-  tapReady();  // a fresh tap once it is up
-  EXPECT_EQ(state(), "Playing");
-  showFrame();
-  EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
+  EXPECT_EQ(state(), "Playing") << "a tap while the hand-off screen was being pushed did not pass it";
 }
 
-// A finger that came down in the ready row before the hand-off screen's push completed and lifted after it (the
-// double tap's second finger, held through the push) is no tap on that screen: its touch began before the screen was
-// on the panel. The same holds for the banner. A fresh tap after passes each.
-TEST_F(HiddenPassTest, ATapWhoseTouchBeganBeforeThePushCompletedIsDroppedAndAFreshOnePasses) {
+// Confirm released during either push passes the screen too: the front button, the home key's action, and the X4 Pro's
+// power click (no button edge, a stale press time), none of which any longer waits for its screen's push.
+TEST_F(HiddenPassTest, AFrontConfirmDuringTheBannersOrTheHandOffsPushPassesAtOnce) {
+  expectConfirmPassesDuringPushes([&] { input->click(Button::Confirm); });
+}
+TEST_F(HiddenPassTest, AHomeKeyConfirmDuringTheBannersOrTheHandOffsPushPassesAtOnce) {
+  expectConfirmPassesDuringPushes([&] { input->homeKey(HomeButtonAction::Confirm); });
+}
+TEST_F(HiddenPassTest, APowerClickConfirmDuringTheBannersOrTheHandOffsPushPassesAtOnce) {
+  expectConfirmPassesDuringPushes([&] { input->powerConfirmClick(100); });
+}
+
+// The first move after "I'm ready", tapped while that seat's frame is being pushed, reaches the game as that seat's
+// move; the same tap on a later frame's push is posted as before (the frame it was made under).
+TEST_F(HiddenPassTest, TheFirstMoveTapDuringTheFirstFramesPushReachesTheGame) {
+  enterHidden();
+  expectHandOff(1);
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpToRender());
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    tapCanvas(100, 300);
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  ASSERT_TRUE(pump([&] { return state() == "Result"; })) << "the move made during the push never reached the game";
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("apply seat 1"), 1u);
+}
+
+// A tap the loop never saw down (no latch) is dated by its touch-only held time: released during the first frame's
+// push with a held time that reaches back before the hand-off passed, it is no move.
+TEST_F(HiddenPassTest, ATapNeverSeenDownWhoseHeldTimeReachesBeforeTheHandOffIsDropped) {
+  enterHidden();
+  expectHandOff(1);
+  fakertos::advance(100);
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpToRender());
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    input->quickTap(CANVAS_X + 100, CANVAS_Y + 300, 500);  // began 500 ms ago: before the transition
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_TRUE(logHas("dropped a touch that began")) << "the held time did not date the tap";
+  EXPECT_FALSE(logHas("tap for seat 1"));
+}
+
+// handle() closes the old screen's routing: a tap made after the banner passed and before the hand-off screen is
+// drawn routes nothing.
+TEST_F(HiddenPassTest, ATapBetweenTheBannerPassingAndTheHandOffsRenderRoutesNothing) {
   ASSERT_NO_FATAL_FAILURE(reachResult());
   tapBanner();
   ASSERT_EQ(state(), "HandOff");
-  const freeink::ui::Point ready = match::readyButtonMiddle(*renderer);
-  input->holdTouch(ready.x, ready.y);
-  frame();  // the loop's update samples the finger: its touch began now
-  fakertos::advance(30);
-  ASSERT_TRUE(renderHandOff());  // the push completes 30 ms after the touch began
-  fakertos::advance(70);
-  frame();  // held 100 ms: the touch-down, routed to the button
-  input->liftTouch();
-  frame();
-  EXPECT_EQ(state(), "HandOff") << "a touch begun before the push passed the screen";
-  fakertos::advance(10);
   tapReady();
+  EXPECT_EQ(state(), "HandOff");
+}
+
+// The owner accepts that the banner's and the button's places overlap: once the hand-off screen has published its
+// routing, a tap on the ready row's spot passes it, even before its push returns.
+TEST_F(HiddenPassTest, ATapOnTheReadyRowDuringTheHandOffsPushPassesItWhereTheBannerWas) {
+  ASSERT_NO_FATAL_FAILURE(reachResult());
+  tapBanner();
+  ASSERT_EQ(state(), "HandOff");
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    ran = true;
+    tapReady();
+  };
+  ASSERT_TRUE(renderHandOff());
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_EQ(state(), "Playing");
+}
+
+// The contact that began before "I'm ready" passed (a finger down on the screen, the hand-off passed by Confirm) and
+// lifts during the first frame's push is not that seat's move; a fresh tap after it is.
+TEST_F(HiddenPassTest, AContactBegunBeforeTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsDropped) {
+  enterHidden();
+  expectHandOff(1);
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();  // sampled on the hand-off screen: the touch begins now
+  fakertos::advance(50);
+  input->click(Button::Confirm);
+  frame();
   ASSERT_EQ(state(), "Playing");
-  showFrame();
-  // Seat 2's move passes the turn: Result again, and a finger held on the banner through its push is dropped too.
-  tapCanvas(100, 300);
+  ASSERT_TRUE(pumpToRender());
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    input->liftTouch();
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_TRUE(logHas("dropped a touch that began")) << "the late-lifted contact was not dropped";
+  fakertos::advance(10);
+  tapCanvas(100, 300);  // a fresh tap, once the frame is on the panel
   frame();
   ASSERT_TRUE(pump([&] { return state() == "Result"; }));
-  input->holdTouch(BANNER_X, BANNER_Y);
-  frame();
-  fakertos::advance(30);
-  render();  // the banner's push completes 30 ms after the touch began
-  fakertos::advance(70);
-  frame();
-  input->liftTouch();
-  frame();
-  EXPECT_EQ(state(), "Result") << "a touch begun before the banner's push passed it";
-  fakertos::advance(10);
-  tapBanner();
-  EXPECT_EQ(state(), "HandOff");
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u) << "the late-lifted contact also became a move";
 }
 
 // A hidden game that logs its setup, so a test can hold the VM there (fakertos::arm(At::Log)) before it has begun the

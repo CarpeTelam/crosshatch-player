@@ -132,10 +132,12 @@ The hand-off screen's band falls back `handoff.png`, then `title.png`, then the 
 
 The banner and "I'm ready" overlap on screen, so a press counts only if it began after the screen's push completed (owner Decision 2026-10-02). Use Pass art or Pass hidden. Pass is a fresh press about a second after the screen is up.
 
+> Superseded 2026-10-03 (ticket 13): the time guard is gone. "I'm ready", the banner and Confirm take one tap each, even during a refresh, and the first move registers during its refresh; steps 1 to 4 below describe the removed guard and are not run (B3 is re-run instead).
+
 1. **Fast double tap:** tap the banner twice quickly, several times, and once with the second finger held on the banner until the hand-off screen is up. The second tap never presses "I'm ready". A fresh tap does.
 2. **Confirm held:** press Confirm on the banner, then hold Confirm again from before the hand-off screen is up until after. It does not pass. A fresh Confirm does.
-3. **Home key (the X4 Pro has one):** Settings, Controls, Home Button Gestures, Double Tap "Confirm". With the banner up for 2 s or more, double-tap the home key: the hand-off screen comes. Once it is being drawn, double-tap again at once: it stays. One double tap more than about 2 s after the screen is up passes it (`HOME_ACTION_HELD_MS`, 2,000 ms, fails closed). Afterwards, set Double Tap back.
-4. **Power button:** Settings, Controls, Short Power Button Click "Confirm", with Double-Click Power for Light on. Click power on the banner (Confirm comes about half a second after the click). Click again while the hand-off screen is being drawn: it stays. A single click a second or more after the screen is up passes. A click begun within about 0.55 s of the screen being up is dropped by design (`POWER_CLICK_HELD_MS`, 1,051 ms). Afterwards, set Short Power Button Click back to what it was (the firmware default is "Ignore").
+3. **Home key (the X4 Pro has one):** Settings, Controls, Home Button Gestures, Double Tap "Confirm". With the banner up for 2 s or more, double-tap the home key: the hand-off screen comes. Once it is being drawn, double-tap again at once: it stays. One double tap more than about 2 s after the screen is up passes it (the removed guard's 2,000 ms). Afterwards, set Double Tap back.
+4. **Power button:** Settings, Controls, Short Power Button Click "Confirm", with Double-Click Power for Light on. Click power on the banner (Confirm comes about half a second after the click). Click again while the hand-off screen is being drawn: it stays. A single click a second or more after the screen is up passes. A click begun within about 0.55 s of the screen being up is dropped by design (the removed guard's 1,051 ms). Afterwards, set Short Power Button Click back to what it was (the firmware default is "Ignore").
 
 ### B7. Sleep in a hidden match: the blank, the timings, Continue
 
@@ -168,7 +170,7 @@ The launcher lists only games whose `.pkg` reads. So the `.pkg` must fail betwee
 | T2 | Time `peek` adds when the title screen opens (R14) | `Entering activity: GameMode` | `Title screen of <id>: save <none/valid/unreadable/unstartable>` | Record, with and without a save. |
 | T3 | Half refresh inside the forced exit (R14, P4) | `VM stopped; arena peak N bytes, stack high-water N bytes free, least at a hook N bytes` | `<id>: forced exit: blank screen pushed (half refresh)` | Record. `lib/hal/HalDisplay.h` says 1,720 ms (source unstated). |
 | T4 | The forced exit's window (4.13) | `Exiting activity: GameMatch` (then `<id>: <State> -> Leaving on ForcedExit`) | the last of `saved resume.bin`, `saved ch.store`, or a `forced exit past 1500 ms; skipped the resume write` / `the resume.bin delete` / `the ch.store flush` line | Any `skipped` line goes to the owner (B7 step 6). |
-| T5 | Loop stalls in Result and the hand-off (P19, P20, N1) | `New max loop duration: N ms (activity: N ms)` | n/a | One over 250 ms (`LATE_PASS_MS`) during Result or the hand-off reopens N1. The line prints only for a new maximum since boot (over 50 ms). If the bar noted before the first hand-off is already over 250 ms, the stalls below it are unmeasured. |
+| T5 | Loop stalls in Result and the hand-off (P19, P20, N1) | `New max loop duration: N ms (activity: N ms)` | n/a | One over 250 ms (the removed guard's 250 ms slack) during Result or the hand-off reopens N1. The line prints only for a new maximum since boot (over 50 ms). If the bar noted before the first hand-off is already over 250 ms, the stalls below it are unmeasured. |
 | T6 | A `ch.store` write | the line before it | `pass-store: saved ch.store (N bytes)` | Record. Upper bound, as T1. |
 
 ## Owner answers: the `Assumption for entry 11:` lines
@@ -177,28 +179,28 @@ Every such line in `epic-pass-and-play.md`, Notes. "Line" is its line number the
 
 | ID | Line | Date, source | Summary | Checked by | Owner's answer |
 | --- | --- | --- | --- | --- | --- |
-| P1 | 97 | 10-01, orchestrator | Entry 2 rewrote `PickerTest.APassOnlyGameWithOneSeatStartsNothingFromTheLauncher` (outside its touches) for R10's rule | none (host) | |
-| P2 | 98 | 10-01, orchestrator | Entry 2 corrected the `NearbyNeedsTwoSeats` (`Manifest.h`) and `pass` (`HostCaps.h`) comments, outside its touches | none | |
-| P3 | 99 | 10-01, orchestrator | Entry 4 changed `ManifestTest.EveryFixtureManifestIsListed` for `pass-hidden` | none (host) | |
-| P4 | 101 | 10-01, entry 6's plan | The half refresh returns in time for the SD steps to start within 1,500 ms; no `skipped the ch.store flush` | B7.1, B7.6, T3, T4 | |
-| P5 | 102 | 10-01, entry 6's plan | The half-refresh blank leaves no readable ghost of the seat's frame | B7.1 | |
-| P6 | 103 | 10-01, orchestrator | Entry 7 updated the launcher suites (29 cases) outside its touches | none (host) | |
-| P7 | 105 | 10-01, entry 7's plan | New over a save asks a second time, Cancel focused (now with the mode's name, entry 12) | B8.2 | |
-| P8 | 106 | 10-01, entry 7's plan | Until entry 9, Continue on a pass save started a new pass match. Superseded: entry 9 resumes the save's roster | B2.8, B7.2 | |
-| P9 | 109 | 10-01, orchestrator | Entry 9 changed five `ModePickerTest` cases that entry 7 marked "until entry 9" | none (host) | |
-| P10 | 113 | 10-01, cross-story row 15 | A hidden match's forced exit pushes the blank in every state (Over, HandOff, Error too); if that skips an SD step, the owner may limit it to Playing/Result/Paused | B7.4, T4 | |
-| P11 | 115 | 10-01, e5-xr's plan | Open pass: a touch made during an SD write after a move can count as the next player's move. Closing it needs touch read off the loop task (upstream input code) | B2.5, T1 | |
-| P12 | 116 | 10-01, e5-xr's plan | Open pass: a swipe or long press landing just before the next screen can count as the next player's | none: no packet fixture logs a swipe or long press; unmeasured | |
-| P13 | 117 | 10-01, e5-xr's plan | A touch after the panel shows the next screen but before its push returns is dropped without feedback | B2.6 (the gap itself: unmeasured) | |
-| P14 | 118 | 10-01, e5-xr's plan | A finger already resting when a new turn begins is ignored for that contact | B3.5 | |
-| P15 | 119 | 10-01, e5-xr's plan | The input double copies the 90 ms touch-down and 500 ms long press | B2.7 (500 ms roughly; 90 ms unmeasured) | |
-| P16 | 122 | 10-02, orchestrator | AI-12 (installer split) stays deferred although entry 12 changed `GamePackageInstaller.cpp` | none | |
-| P17 | 123 | 10-02, orchestrator | Entry 12 changed `GameImages.{h,cpp}` and `GameAssets.cpp` (outside touches) to reserve `title` and `handoff` | none | |
-| P18 | 129 | 10-02, entry 12's plan | Banner and "I'm ready" overlap; time, not position, guards a double tap. Answered by the owner's Decision of 10-02 (line 130): keep both, keep the time guard | B6.1 | |
-| P19 | 132 | 10-02, entry 12's fix round | Home-key Confirm dated back 2,000 ms and power click 1,051 ms; a loop stall over 250 ms is not covered | B6.3, B6.4, T5 | |
-| P20 | 135 | 10-02, orchestrator | N1 open: a press read late after a stall over 250 ms can pass the hand-off; one over 250 ms reopens N1 | B7.5, T5 | |
+| P1 | 97 | 10-01, orchestrator | Entry 2 rewrote `PickerTest.APassOnlyGameWithOneSeatStartsNothingFromTheLauncher` (outside its touches) for R10's rule | none (host) | Accept (owner, 2026-10-03) |
+| P2 | 98 | 10-01, orchestrator | Entry 2 corrected the `NearbyNeedsTwoSeats` (`Manifest.h`) and `pass` (`HostCaps.h`) comments, outside its touches | none | Accept (owner, 2026-10-03) |
+| P3 | 99 | 10-01, orchestrator | Entry 4 changed `ManifestTest.EveryFixtureManifestIsListed` for `pass-hidden` | none (host) | Accept (owner, 2026-10-03) |
+| P4 | 101 | 10-01, entry 6's plan | The half refresh returns in time for the SD steps to start within 1,500 ms; no `skipped the ch.store flush` | B7.1, B7.6, T3, T4 | Accept the skip, fix deferred under 5.6: the blank takes 1,654 ms against the 1,500 ms window, so a pending store flush or resume write after it is skipped; B7.6 was not run (owner, 2026-10-03) |
+| P5 | 102 | 10-01, entry 6's plan | The half-refresh blank leaves no readable ghost of the seat's frame | B7.1 | Accept: no ghost reported in Part B (owner, 2026-10-03) |
+| P6 | 103 | 10-01, orchestrator | Entry 7 updated the launcher suites (29 cases) outside its touches | none (host) | Accept (owner, 2026-10-03) |
+| P7 | 105 | 10-01, entry 7's plan | New over a save asks a second time, Cancel focused (now with the mode's name, entry 12) | B8.2 | Accept (owner, 2026-10-03) |
+| P8 | 106 | 10-01, entry 7's plan | Until entry 9, Continue on a pass save started a new pass match. Superseded: entry 9 resumes the save's roster | B2.8, B7.2 | Accept: superseded by entry 9 (owner, 2026-10-03) |
+| P9 | 109 | 10-01, orchestrator | Entry 9 changed five `ModePickerTest` cases that entry 7 marked "until entry 9" | none (host) | Accept (owner, 2026-10-03) |
+| P10 | 113 | 10-01, cross-story row 15 | A hidden match's forced exit pushes the blank in every state (Over, HandOff, Error too); if that skips an SD step, the owner may limit it to Playing/Result/Paused | B7.4, T4 | Accept, with P4: the same skip, the same deferral (owner, 2026-10-03) |
+| P11 | 115 | 10-01, e5-xr's plan | Open pass: a touch made during an SD write after a move can count as the next player's move. Closing it needs touch read off the loop task (upstream input code) | B2.5, T1 | Accept as a known limit: the SD write after a move takes about 91 ms (T1) (owner, 2026-10-03) |
+| P12 | 116 | 10-01, e5-xr's plan | Open pass: a swipe or long press landing just before the next screen can count as the next player's | none: no packet fixture logs a swipe or long press; unmeasured | Accept: unmeasured (owner, 2026-10-03) |
+| P13 | 117 | 10-01, e5-xr's plan | A touch after the panel shows the next screen but before its push returns is dropped without feedback | B2.6 (the gap itself: unmeasured) | Accept as a known limit (owner, 2026-10-03) |
+| P14 | 118 | 10-01, e5-xr's plan | A finger already resting when a new turn begins is ignored for that contact | B3.5 | Accept (owner, 2026-10-03) |
+| P15 | 119 | 10-01, e5-xr's plan | The input double copies the 90 ms touch-down and 500 ms long press | B2.7 (500 ms roughly; 90 ms unmeasured) | Accept: the 90 ms threshold stays unmeasured (owner, 2026-10-03) |
+| P16 | 122 | 10-02, orchestrator | AI-12 (installer split) stays deferred although entry 12 changed `GamePackageInstaller.cpp` | none | Accept (owner, 2026-10-03) |
+| P17 | 123 | 10-02, orchestrator | Entry 12 changed `GameImages.{h,cpp}` and `GameAssets.cpp` (outside touches) to reserve `title` and `handoff` | none | Accept (owner, 2026-10-03) |
+| P18 | 129 | 10-02, entry 12's plan | Banner and "I'm ready" overlap; time, not position, guards a double tap. Answered by the owner's Decision of 10-02 (line 130): keep both, keep the time guard. Superseded by the owner's Decision of 10-03 (ticket 13): the guard is removed, the layout stays, a stray second tap on the banner's spot can pass the hand-off | B6.1 | Answered 10-03 |
+| P19 | 132 | 10-02, entry 12's fix round | Home-key Confirm dated back 2,000 ms and power click 1,051 ms; a loop stall over 250 ms is not covered | B6.3, B6.4, T5 | Answered 10-03: the dating is removed with the guard (ticket 13); a home-key or power-click Confirm passes at once |
+| P20 | 135 | 10-02, orchestrator | N1 open: a press read late after a stall over 250 ms can pass the hand-off; one over 250 ms reopens N1 | B7.5, T5 | Answered 10-03: N1 no longer exists, the guard it covered is removed (ticket 13) |
 
-Also for the owner at entry 11 (Decision of 10-02, line 121): the approved design's departures from R4, R5, R6/R14, R9 and R10 (buttons or Confirm only, the hand-off screen's picture, the plain white sleep push, New game plus Options, the level-1 preview keys). Answer: ______
+Also for the owner at entry 11 (Decision of 10-02, line 121): the approved design's departures from R4, R5, R6/R14, R9 and R10 (buttons or Confirm only, the hand-off screen's picture, the plain white sleep push, New game plus Options, the level-1 preview keys). Answer: accept (owner, 2026-10-03).
 
 ## Owner answers: this epic's deferrals
 
@@ -206,43 +208,43 @@ The open items in `deferred-work.md` under `## e5-inception`, `## 5.1`–`## 5.1
 
 | Section, item | Summary | Status, trigger | Upstream | Owner's answer |
 | --- | --- | --- | --- | --- |
-| e5-inception #1 | Title-screen seat-choice rows | Deferred; a host with `seats_max` above 2 | no | |
-| 5.8 #5 | A registry load out of memory shows "Not enough memory" and is not retried in that visit | Documented; a device report | no | |
-| 5.8 #6 | `ContinueLauncherTest`'s cases moved to `OneRowPerGameTest` | Documented | no | |
-| 5.10 #7 | The launcher-entry `peek` timing (`## 4.13`, `## owner-e4-homes`) is replaced by R14's title-screen `peek` | Documented; this run (T2) | no | |
-| 5.10 #8 (from 5.1 #4, 5.2 #5) | `SoloRounds` rename and the AD-21 note | Deferred; the next spine edit | no | |
-| 5.10 #9 (from 5.4 #4) | Solo/open pass pause menu in the Play-again gap drawn over the last round's frame | Deferred; the owner's decision | no | |
-| 5.10 #10 (from 5.6 #1) | The forced exit's half refresh may use up the SD steps' window | Deferred; this run (T3, T4) | no | |
-| 5.10 #11 | Drift guards for the doubles, `roundsStartedAwaited`/`shown` interleaving, unreachable `notLoaded`, host task vs core | Deferred; the next feature in those files, this run | no | |
-| 5.10 #12 | `## e4-y`'s two items (the `counter/main.lua` comment, the vector hash check) | Deferred; unchanged (`## e4-y`) | no | |
-| 5.10 #13 | The older `GameSaveStore` forms `peek(id, pkgHash)` and `loadResume(ver, unreadable)` have no firmware caller | Deferred; the next `GameSaveStore` API change | no | |
-| 5.10 #14 | Retro R10 (pauses under the light panel) and AI-12 (installer split) | Deferred; next ledger change (R10), an installer epic (AI-12) | R10: ledger row (`FrontlightPanelActivity.cpp`) | |
-| 5.10 #15 | Move `GameConfirmDialog` to its own file | Deferred; next story adding a file there | no | |
-| 5.10 #16 (a) | `## 4.1`'s per-pixel tests of circle, outline, line, text | Unchanged | no | |
-| 5.10 #16 (b) | `## 4.13`: `resume.bin` write cost, forced-exit total, the panel refresh behind `displayBuffer` | This run (T1, T3, T4) | no | |
-| 5.10 #16 (c) | `GameHash`'s mbedTLS branch | This run (Part A, `.pkg` check) | no | |
-| 5.10 #16 (d) | Unbounded fills | The `timing` fixture's device run (not in this packet) | no | |
-| 5.10 #16 (e) | `## 4.11`'s rejected resume kept (`LUA_ERRMEM`) | Unchanged | no | |
-| 5.10 #16 (f) | The `goHome` mapping test | The next row-5 touch | ledger row 5 | |
-| 5.10 #16 (g) | Launcher fixed row height; a second tap on Remove | A taller-row theme, or a device report | no | |
-| 5.10 #16 (h) | Installer extracted-sum bound; `ZipFile` and `PngToBmpConverter` reason codes | Extracted sum: epic-first-party-games' "before the freeze" Notes (`## owner-e4-homes` A19); reason codes: the next ledger change (A21) | reason codes: ledger row (upstream files) | |
-| e5-xr #5 | `renderCanvas` stores `renderedFrame` from the read before `drawFront` | Deferred; next `renderCanvas` change or overlay pixels seen | no | |
-| e5-xr #6 | A partly-local roster stalls on four paths; blocks epic-play-nearby | Deferred; epic-play-nearby's first story | no | |
-| e5-xr #7, #8 (same item, recorded twice) | The input double's 90 ms and 500 ms thresholds are copies of private upstream constants | Deferred; an upstream change to them; B2.7 meanwhile | a check would read upstream files | |
-| e5-xr #9 | Back-date the touch latch itself (long-press half of the same-pass race) | Deferred; epic-play-nearby's input work, or a device report | possibly (a `MappedInputManager` accessor is one route) | |
-| e5-xr #10 | Three gaps in the screen input double | Deferred; next change to the double | no | |
-| 5.12 #1 | Home gesture from Options lands on Home's default row | Deferred; next row-5 touch (B1.6 shows it) | ledger row 5 | |
-| 5.12 #2 | game-api-seed §3 still calls the hand-off "the blank screen" | Deferred; next edit of the companion | no | |
-| 5.12 #3 | Hidden-pass test names still say "the blank" | Documented; next rewrite of those suites | no | |
-| 5.12 #4 | An Options change left by a Replace (Home, sleep) is not remembered; options: allow the `onExit()` write (spine change) or write on each cycle | Owner decides at entry 11 (B1.6) | no | |
-| 5.12 #6 (1) | N2: a power-click Confirm on a pass with another button's release is dated by `getHeldTime()` | Deferred (+80 B, minimal +32 B); when the share has room | no | |
-| 5.12 #6 (2) | N1: a pass more than 250 ms late is not covered | Deferred (+80 B); this run (T5) | no | |
-| 5.12 #8 | After a failed settings read, New game and Continue do nothing until reopened; no retry (M3, +80 B), no on-screen reason | Deferred; 80 B of room | no | |
-| 5.12 #9 | M4: a remembered pass overwritten by an Options change on a host without pass seats; a garbage mode byte never rewritten | Deferred; such a host, or a prefs.bin format change | no | |
-| 5.12 #10 | M5: after Unreadable-then-readable, a choice cycled back takes the file's value | Deferred; a report | no | |
-| 5.12 #11 | N6: `exists` answering false reads as None, so an Options change overwrites good prefs | Deferred; a report | no | |
-| 5.12 #12 | N7: 2^31–2^32 ms after the push every tap is dropped (Back, Resume clears it) | Deferred; a report | no | |
-| 5.12 #13 | N8: on the Sticky the SDK overwrites the confirm/power key's press start | Deferred; file the proposal against freeink-sdk `InputManager.cpp` (`applyStateChange`) | **upstream proposal (SDK)** | |
+| e5-inception #1 | Title-screen seat-choice rows | Deferred; a host with `seats_max` above 2 | no | Accept as listed (owner, 2026-10-03) |
+| 5.8 #5 | A registry load out of memory shows "Not enough memory" and is not retried in that visit | Documented; a device report | no | Accept as listed (owner, 2026-10-03) |
+| 5.8 #6 | `ContinueLauncherTest`'s cases moved to `OneRowPerGameTest` | Documented | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #7 | The launcher-entry `peek` timing (`## 4.13`, `## owner-e4-homes`) is replaced by R14's title-screen `peek` | Documented; this run (T2) | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #8 (from 5.1 #4, 5.2 #5) | `SoloRounds` rename and the AD-21 note | Deferred; the next spine edit | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #9 (from 5.4 #4) | Solo/open pass pause menu in the Play-again gap drawn over the last round's frame | Deferred; the owner's decision | no | Leave deferred (owner, 2026-10-03) |
+| 5.10 #10 (from 5.6 #1) | The forced exit's half refresh may use up the SD steps' window | Deferred; this run (T3, T4) | no | Accept the skip, fix deferred under 5.6 (see P4) (owner, 2026-10-03) |
+| 5.10 #11 | Drift guards for the doubles, `roundsStartedAwaited`/`shown` interleaving, unreachable `notLoaded`, host task vs core | Deferred; the next feature in those files, this run | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #12 | `## e4-y`'s two items (the `counter/main.lua` comment, the vector hash check) | Deferred; unchanged (`## e4-y`) | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #13 | The older `GameSaveStore` forms `peek(id, pkgHash)` and `loadResume(ver, unreadable)` have no firmware caller | Deferred; the next `GameSaveStore` API change | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #14 | Retro R10 (pauses under the light panel) and AI-12 (installer split) | Deferred; next ledger change (R10), an installer epic (AI-12) | R10: ledger row (`FrontlightPanelActivity.cpp`) | Accept as listed (owner, 2026-10-03) |
+| 5.10 #15 | Move `GameConfirmDialog` to its own file | Deferred; next story adding a file there | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (a) | `## 4.1`'s per-pixel tests of circle, outline, line, text | Unchanged | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (b) | `## 4.13`: `resume.bin` write cost, forced-exit total, the panel refresh behind `displayBuffer` | This run (T1, T3, T4) | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (c) | `GameHash`'s mbedTLS branch | This run (Part A, `.pkg` check) | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (d) | Unbounded fills | The `timing` fixture's device run (not in this packet) | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (e) | `## 4.11`'s rejected resume kept (`LUA_ERRMEM`) | Unchanged | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (f) | The `goHome` mapping test | The next row-5 touch | ledger row 5 | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (g) | Launcher fixed row height; a second tap on Remove | A taller-row theme, or a device report | no | Accept as listed (owner, 2026-10-03) |
+| 5.10 #16 (h) | Installer extracted-sum bound; `ZipFile` and `PngToBmpConverter` reason codes | Extracted sum: epic-first-party-games' "before the freeze" Notes (`## owner-e4-homes` A19); reason codes: the next ledger change (A21) | reason codes: ledger row (upstream files) | Accept as listed (owner, 2026-10-03) |
+| e5-xr #5 | `renderCanvas` stores `renderedFrame` from the read before `drawFront` | Deferred; next `renderCanvas` change or overlay pixels seen | no | Accept as listed (owner, 2026-10-03) |
+| e5-xr #6 | A partly-local roster stalls on four paths; blocks epic-play-nearby | Deferred; epic-play-nearby's first story | no | Accept as listed (owner, 2026-10-03) |
+| e5-xr #7, #8 (same item, recorded twice) | The input double's 90 ms and 500 ms thresholds are copies of private upstream constants | Deferred; an upstream change to them; B2.7 meanwhile | a check would read upstream files | Accept as listed (owner, 2026-10-03) |
+| e5-xr #9 | Back-date the touch latch itself (long-press half of the same-pass race) | Deferred; epic-play-nearby's input work, or a device report | possibly (a `MappedInputManager` accessor is one route) | Accept as listed (owner, 2026-10-03) |
+| e5-xr #10 | Three gaps in the screen input double | Deferred; next change to the double | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #1 | Home gesture from Options lands on Home's default row | Deferred; next row-5 touch (B1.6 shows it) | ledger row 5 | Accept as listed (owner, 2026-10-03) |
+| 5.12 #2 | game-api-seed §3 still calls the hand-off "the blank screen" | Deferred; next edit of the companion | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #3 | Hidden-pass test names still say "the blank" | Documented; next rewrite of those suites | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #4 | An Options change left by a Replace (Home, sleep) is not remembered; options: allow the `onExit()` write (spine change) or write on each cycle | Owner decides at entry 11 (B1.6) | no | Accept as built: remembered on Back only (owner, 2026-10-03) |
+| 5.12 #6 (1) | N2: a power-click Confirm on a pass with another button's release is dated by `getHeldTime()` | Deferred (+80 B, minimal +32 B); when the share has room | no | Superseded by entry 13 (owner Decision, 2026-10-03): N2 went with the time guard (owner, 2026-10-03) |
+| 5.12 #6 (2) | N1: a pass more than 250 ms late is not covered | Deferred (+80 B); this run (T5) | no | Superseded by entry 13 (owner Decision, 2026-10-03): N1 went with the time guard (owner, 2026-10-03) |
+| 5.12 #8 | After a failed settings read, New game and Continue do nothing until reopened; no retry (M3, +80 B), no on-screen reason | Deferred; 80 B of room | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #9 | M4: a remembered pass overwritten by an Options change on a host without pass seats; a garbage mode byte never rewritten | Deferred; such a host, or a prefs.bin format change | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #10 | M5: after Unreadable-then-readable, a choice cycled back takes the file's value | Deferred; a report | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #11 | N6: `exists` answering false reads as None, so an Options change overwrites good prefs | Deferred; a report | no | Accept as listed (owner, 2026-10-03) |
+| 5.12 #12 | N7: 2^31–2^32 ms after the push every tap is dropped (Back, Resume clears it) | Deferred; a report | no | Superseded by entry 13 (owner Decision, 2026-10-03): N7 went with the time guard (owner, 2026-10-03) |
+| 5.12 #13 | N8: on the Sticky the SDK overwrites the confirm/power key's press start | Deferred; file the proposal against freeink-sdk `InputManager.cpp` (`applyStateChange`) | **upstream proposal (SDK)** | Superseded by entry 13 (owner Decision, 2026-10-03): N8 existed only because loopHandOff dated Confirm; no SDK proposal to file (owner, 2026-10-03) |
 
 ## What to record
 

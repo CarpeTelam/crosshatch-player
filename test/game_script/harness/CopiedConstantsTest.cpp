@@ -9,12 +9,10 @@
 
 #include "activities/games/GameMatchActivity.h"
 
-// GameMatchActivity copies three constants it cannot include: freeink-sdk's InputManager::HOME_KEY_LONG_PRESS_MS
-// (private there) and src/main.cpp's X4PRO_POWER_DOUBLE_CLICK_MS and X4PRO_POWER_CLICK_MAX_HOLD_MS (in its anonymous
-// namespace). The bounds loopHandOff dates a home-key or power-click Confirm with are built from the copies, so a
-// change at the source that the copy does not follow would date those Confirms wrongly. This suite reads both source
-// files at run time, as ForkReleaseTest reads its vector file, and compares each value with the copy the match builds
-// with (deferred-work.md ## 5.12, the drift guard).
+// GameMatchActivity copies no constant from another source any more (the hand-off's time guard, which did, is gone:
+// the banner, "I'm ready" and Confirm are plain tap targets, 2026-10-03). The suite keeps its reader of constexpr
+// definitions in the sources and the check that the two sources it knew are still found, for the next copy that needs
+// a drift guard (deferred-work.md ## 5.12).
 
 namespace {
 
@@ -78,37 +76,6 @@ std::string explain(const std::string& name, const char* path) {
 TEST(CopiedConstantsTest, TheSourcesAreRead) {
   EXPECT_FALSE(readFile(INPUT_MANAGER_HEADER_PATH).empty()) << "cannot read " << INPUT_MANAGER_HEADER_PATH;
   EXPECT_FALSE(readFile(MAIN_CPP_PATH).empty()) << "cannot read " << MAIN_CPP_PATH;
-}
-
-TEST(CopiedConstantsTest, HomeKeyLongPressMsIsTheSdksInputManagers) {
-  const std::string header = readCode(INPUT_MANAGER_HEADER_PATH);
-  EXPECT_EQ(constexprValue(header, "HOME_KEY_LONG_PRESS_MS"),
-            static_cast<long long>(GameMatchActivity::HOME_KEY_LONG_PRESS_MS))
-      << explain("HOME_KEY_LONG_PRESS_MS", INPUT_MANAGER_HEADER_PATH);
-}
-
-TEST(CopiedConstantsTest, ThePowerClickConstantsAreMainCpps) {
-  const std::string main = readCode(MAIN_CPP_PATH);
-  EXPECT_EQ(constexprValue(main, "X4PRO_POWER_DOUBLE_CLICK_MS"),
-            static_cast<long long>(GameMatchActivity::X4PRO_POWER_DOUBLE_CLICK_MS))
-      << explain("X4PRO_POWER_DOUBLE_CLICK_MS", MAIN_CPP_PATH);
-  EXPECT_EQ(constexprValue(main, "X4PRO_POWER_CLICK_MAX_HOLD_MS"),
-            static_cast<long long>(GameMatchActivity::X4PRO_POWER_CLICK_MAX_HOLD_MS))
-      << explain("X4PRO_POWER_CLICK_MAX_HOLD_MS", MAIN_CPP_PATH);
-}
-
-// POWER_CLICK_HELD_MS's `+ 1` (PowerClickBoundTest) rests on two things main.cpp does: it stamps a click on its
-// release's update (`lastX4ProPowerClickAt = now;`, `now` read on that update), and it sets the Confirm frame only once
-// `millis() - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS`, a strict '>'. A '>=' there would make the bound
-// 1 ms longer than needed (still safe); anything else changes the timeline the bound is built on.
-TEST(CopiedConstantsTest, MainCppStampsTheClickOnItsReleaseAndWaitsStrictlyLongerThanTheWindow) {
-  const std::string main = readCode(MAIN_CPP_PATH);
-  EXPECT_TRUE(std::regex_search(main, std::regex("\\blastX4ProPowerClickAt\\s*=\\s*now\\s*;")))
-      << "main.cpp no longer stamps lastX4ProPowerClickAt with the release update's `now`: recheck POWER_CLICK_HELD_MS";
-  EXPECT_TRUE(std::regex_search(
-      main, std::regex("millis\\(\\)\\s*-\\s*lastX4ProPowerClickAt\\s*>\\s*X4PRO_POWER_DOUBLE_CLICK_MS\\b")))
-      << "main.cpp's Confirm-frame wait is no longer `millis() - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS`: "
-         "recheck POWER_CLICK_HELD_MS and PowerClickBoundTest";
 }
 
 // The reader itself: it finds the one definition, and refuses none or two.

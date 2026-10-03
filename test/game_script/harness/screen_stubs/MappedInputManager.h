@@ -76,7 +76,7 @@ class MappedInputManager {
   // 700 ms into the press); a Confirm action
   // makes wasPressed and wasReleased(Confirm) true on that update (MappedInputManager.cpp, wasPressed and wasReleased),
   // and any action but Ignore makes getHeldTime() 0 (the key's press time is not latched on every board: GT911 does
-  // not).
+  // not). The hand-off screen acts on such a Confirm at once, whatever its press time (2026-10-03: no time guard).
   HomeButtonAction homeButtonAction() const { return homeAction; }
   bool wasLongPressed(const Button button, const unsigned long thresholdMs) const {
     if (longPressed.count(button) != 0) return true;
@@ -247,7 +247,7 @@ class MappedInputManager {
   // wasPowerConfirmClick): a click held at most 300 ms becomes Confirm on the first update more than 500 ms after its
   // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, wasAnyPressed and
   // wasAnyReleased false, and getHeldTime() answers InputManager's span of the last press of the buttons
-  // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over.
+  // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over. The hand-off screen acts on it at once.
   void powerConfirmClick(const unsigned long staleHeldMs) {
     powerClick = true;
     heldMs = staleHeldMs;

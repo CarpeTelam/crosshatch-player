@@ -287,8 +287,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
           MatchLifecycle::name(event));
   // The next view registers its own options; the old table must not route.
   closeRouting();
-  // The next screen's tap passes nothing until render has pushed that screen.
-  passScreenShown.store(MatchState::Starting);
+  // Only the first seat frame after "I'm ready" lets a move through while it is being pushed (loopPlaying).
+  playingSinceMs = static_cast<uint32_t>(millis());
+  firstFramePushing.store(from == MatchState::HandOff && event == MatchEvent::Tap, std::memory_order_release);
   selected.store(0);
   // Before shown: a render already queued must not see Playing with the old count. A hidden pass match's hand-off
   // likewise waits for the new round's first turn seat, read before playAgain() (startNextRound) can begin it.
@@ -565,10 +566,34 @@ void GameMatchActivity::loopPlaying() {
   GameCore::GameEvent event;
   const bool aimed =
       GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event);
-  if (aimed && awaitingDisplay) {
+  // The first seat frame after "I'm ready" accepts a touch made during its push (the owner's decision of 2026-10-03:
+  // the hand-off needs one tap per step): once the VM has published the frame (!awaitingRound), a touch whose
+  // touch-down came at or after the hand-off passed (playingSinceMs) is that seat's move, whatever the push has
+  // reached. It skips touchDownFrame and frameAt and is posted with the frame the VM has now, so
+  // GameVM::madeUnderAnotherSeat still keeps it for that seat. A contact whose touch-down preceded the transition (the
+  // press that passed the hand-off, lifting late) is dropped. Open pass and solo never set the flag.
+  bool firstFrameTouch = false;  // handled here: posted, or dropped and logged
+  if (aimed && !awaitingRound && firstFramePushing.load(std::memory_order_acquire)) {
+    firstFrameTouch = true;
+    const auto nowMs = static_cast<uint32_t>(millis());
+    uint32_t began = touchDownLatched ? touchDownMs : nowMs;
+    if (gesture.kind == GameTouch::Kind::Tap) {
+      const auto backDated = static_cast<uint32_t>(nowMs - gpio.lastTouchHeldMs());
+      if (static_cast<int32_t>(backDated - began) < 0) began = backDated;
+    }
+    if (static_cast<int32_t>(began - playingSinceMs) >= 0) {
+      const uint32_t gen = vm->frameGen();
+      // As the tag below: UNTAGGED is never dropped by the VM, one less can only drop.
+      vm->postInput(event, gen == GameVM::UNTAGGED ? gen - 1 : gen);
+    } else {
+      LOG_INF("GAME", "%s: dropped a touch that began %d ms before the hand-off passed", manifest.id,
+              -static_cast<int>(static_cast<int32_t>(began - playingSinceMs)));
+    }
+  }
+  if (aimed && awaitingDisplay && !firstFrameTouch) {
     LOG_INF("GAME", "%s: dropped a touch before the frame was on the panel", manifest.id);
   }
-  if (!awaitingDisplay && aimed) {
+  if (!awaitingDisplay && aimed && !firstFrameTouch) {
     // With the frame on the panel when the loop first saw the finger down (or now, for a contact it never saw down), so
     // the VM drops it if another seat has been drawn since (a pass match). A tap is also back-dated by its touch-only
     // held time (HalGPIO::lastTouchHeldMs; MappedInputManager::getHeldTime answers a button's hold on a pass with a
@@ -663,44 +688,21 @@ void GameMatchActivity::loopHandOff() {
     requestUpdate();
   }
   // A tap on the banner or the "I'm ready" button (the screen's one tap target; a tap elsewhere routes nothing), or
-  // Confirm, passes only once render has pushed this state's own screen (passScreenShown), so neither a double tap nor
-  // a quick press skips the banner or the hand-off screen before it is on the panel; one before is read and dropped.
-  // And either passes only when it began at or after that push completed (passScreenShownMs): this pass's time less
-  // the tap's touch-only held time (HalGPIO::lastTouchHeldMs, as loopPlaying back-dates a tap) or Confirm's hold
-  // (getHeldTime, a button's on a pass with a button edge). The banner and the button may overlap on the screen, so the
-  // second tap (or press) of a double one, begun while the hand-off screen was being pushed and released after, is
-  // dropped too. On a pass where the home key reports an action, a Confirm (the key's own Confirm action, or a front
-  // button's release on the same pass) has no hold to read: getHeldTime answers 0 while a home action is mapped, and
-  // the key's press time is not latched on every board (GT911 does not). It fails closed, dated HOME_ACTION_HELD_MS
-  // (the key's slowest double tap or tap-then-long-press, plus a late pass) before this pass. So does a Confirm on a
-  // pass with no button edge (the X4 Pro's power click, reported 500 ms after its release, whose getHeldTime is
-  // InputManager's span of the last press of the buttons, long over), dated POWER_CLICK_HELD_MS back. Not covered: such
-  // a Confirm on a pass where another button is released too (getHeldTime dates it), and a pass later than
-  // LATE_PASS_MS.
+  // Confirm, passes the device on at its release, as the title screen's button does, even while the screen is being
+  // pushed (its routing is published before the push). A tap in the instant between handle() and the new screen's
+  // renderUi routes nothing (closeRouting), and one before the hand-off names the turn seat finds no routing yet. The
+  // banner and the button overlap, so a stray second tap on the banner's spot can pass the hand-off too (the owner
+  // accepts that, 2026-10-03).
   const auto route = routeTouch(mappedInput);
-  const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  // Nothing passes a hand-off screen that has not been pushed for want of the turn seat (renderHandOff pushes nothing
+  // until the VM has named it, and the loop asks again), so neither does Confirm.
+  const bool named = state != MatchState::HandOff || vm->turnAnnouncements() >= announcementAwaited.load();
+  const bool confirmed = named && mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool tapped = route && route.event.action == ACTION_PASS;
-  const bool passScreenUp = passScreenShown.load(std::memory_order_acquire) == state;
-  if ((tapped || confirmed) && !passScreenUp) {
-    LOG_INF("GAME", "%s: dropped a %s on %s, which was not on the panel yet", manifest.id, tapped ? "tap" : "Confirm",
-            MatchLifecycle::name(state));
-  }
-  if ((tapped || confirmed) && passScreenUp) {
-    // After the acquire above, which orders render's store of the push's time before it.
-    const bool homeKey = !tapped && mappedInput.homeButtonAction() != HomeButtonAction::Ignore;
-    const unsigned long held = tapped                          ? gpio.lastTouchHeldMs()
-                               : homeKey                       ? HOME_ACTION_HELD_MS
-                               : !mappedInput.wasAnyReleased() ? POWER_CLICK_HELD_MS
-                                                               : mappedInput.getHeldTime();
-    const auto began = static_cast<uint32_t>(now - held);
-    if (static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed)) >= 0) {
-      app.clearTapFlash();  // the tap leaves this screen
-      handle(MatchEvent::Tap);
-      return;
-    }
-    LOG_INF("GAME", "%s: dropped a %s on %s: it began %d ms before the push finished", manifest.id,
-            tapped ? "tap" : "Confirm", MatchLifecycle::name(state),
-            -static_cast<int>(static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed))));
+  if (tapped || confirmed) {
+    app.clearTapFlash();  // the tap leaves this screen
+    handle(MatchEvent::Tap);
+    return;
   }
   if (state != MatchState::Result) return;
   // Result shows the mover's own frame, which a tap queued behind the move may still change.
@@ -734,6 +736,7 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
   // with when it ends.
   if ((snap.touchHeld || snap.touchPressed) && !touchDownLatched) {
     touchDownFrame = frameDisplayed.load(std::memory_order_acquire);
+    touchDownMs = static_cast<uint32_t>(millis());
     touchDownLatched = true;
   }
   // Whether a finger is still down on this pass; the latch is freed on any pass without one (loopPlaying reads this
@@ -833,6 +836,8 @@ void GameMatchActivity::renderCanvas() {
   frameDisplayed.store(taken, std::memory_order_release);
   roundsDisplayed.store(started, std::memory_order_release);
   seatDisplayed.store(served, std::memory_order_release);
+  // The first seat frame after "I'm ready" is on the panel: a touch is tagged by the frame it was made under again.
+  firstFramePushing.store(false, std::memory_order_release);
 }
 
 bool GameMatchActivity::canvasUnderView(const MatchState state) const {
@@ -847,7 +852,7 @@ bool GameMatchActivity::canvasUnderView(const MatchState state) const {
 void GameMatchActivity::renderHandOff() {
   if (!vm) return;
   // The screen names the round's first turn seat, which the VM knows once the round has begun: until then nothing is
-  // pushed, the screen before stays, and passScreenShown stays unset, so nothing passes (the loop asks again).
+  // pushed, the screen before stays, and no routing is published, so nothing passes (the loop asks again).
   if (vm->turnAnnouncements() < announcementAwaited.load()) {
     handOffHeldBack.store(true, std::memory_order_release);
     return;
@@ -861,7 +866,7 @@ void GameMatchActivity::renderHandOff() {
   // The title screen's splash band, drawn as the title screen draws it: the page centred and clipped, else the icon.
   GameSplashLayout::drawBand(renderer, picture);
   // "Player N's turn" and the "I'm ready" button under it (buildHandOffView). Its routing is published before the push,
-  // as Result's is: passScreenShown drops a tap routed before the push has returned.
+  // as Result's is, so a tap made during the push passes the screen.
   viewState = MatchState::HandOff;
   renderUi();
   // handle() may have closed routing after this render read its state.
@@ -873,12 +878,6 @@ void GameMatchActivity::renderHandOff() {
   LOG_INF("GAME", "%s: hand-off screen pushed in %u ms", manifest.id, static_cast<unsigned>(millis()) - pushBegan);
   // The next seat's frame is drawn on a cleared screen in full.
   viewOnScreen = true;
-  // The hand-off screen is on the panel: its button may pass it now (loopHandOff), by a touch or press begun from the
-  // push that first showed it (a repaint keeps that time), unless the match has moved on.
-  if (passScreenShown.load() != MatchState::HandOff) {
-    passScreenShownMs.store(static_cast<uint32_t>(millis()), std::memory_order_relaxed);
-  }
-  passScreenShown.store(MatchState::HandOff, std::memory_order_release);
 }
 
 void GameMatchActivity::renderView(const MatchState state) {
@@ -913,14 +912,6 @@ void GameMatchActivity::renderView(const MatchState state) {
           static_cast<unsigned>(millis()) - pushBegan);
   // Seat 0's frame under the Over menu is everyone's, so only a view over another seat's frame counts as one.
   panel = canvas && state != MatchState::Over ? Panel::Seat : Panel::Other;
-  // Result's banner is on the panel: a tap begun from the push that first showed it (a repaint keeps that time) may
-  // pass it (loopHandOff), unless the match has moved on meanwhile.
-  if (state == MatchState::Result) {
-    if (passScreenShown.load() != MatchState::Result) {
-      passScreenShownMs.store(static_cast<uint32_t>(millis()), std::memory_order_relaxed);
-    }
-    passScreenShown.store(MatchState::Result, std::memory_order_release);
-  }
 }
 
 void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {

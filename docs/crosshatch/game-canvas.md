@@ -207,36 +207,29 @@ with no VM while a seat's frame is on the panel: see The forced exit, step 2. So
 Leaving.
 
 **Taps.** Result's banner and the hand-off screen's "I'm ready" button are each their screen's one tap target (an
-`fui::button` with `ACTION_PASS`, routed by `routeTouch`): a tap on it, or Confirm, passes the device on, and a tap
-anywhere else (the band, the turn line) does nothing. The banner is a framed panel at the bottom of the screen and the
-button fills the title screen's second two-line row, and on the X4 Pro the two overlap (an estimate from the theme's
-measured tokens: the row at y = 648 to 722, the banner at y = 649 to 780; the simulator screenshots measure it), so they
-are kept apart by time, not by position. Either screen passes only once render has pushed that state's own screen
-(`GameMatchActivity::passScreenShown`, which `handle()` resets on every transition): the button's routing is published
-before the push, as the banner's is, and a tap or a Confirm press made before the banner or the hand-off screen is on
-the panel, or while it is being pushed, is read and dropped. And a tap or Confirm passes only when it began at or after
-the push that first showed that screen completed (`passScreenShownMs`, stored with `passScreenShown`; a repaint keeps
-it): the loop pass's `millis()`, taken before its SD steps, less the tap's touch-only held time
-(`HalGPIO::lastTouchHeldMs()`, as `loopPlaying` back-dates a tap) or Confirm's hold (`getHeldTime()`). So the second tap
-or press of a double one, begun while the screen was being pushed and released after, is dropped too. On a board with
-a home key, a Confirm on a pass where the key reports an action (its own Confirm action, or a front button's Confirm
-released on the same pass as any other action) has no hold to read: `getHeldTime()` answers 0 while a home action is
-mapped, and the key's press time is not latched on every board (GT911 does not). The action comes up to 1,750 ms after
-the key's first contact: a long press reports at 700 ms (`InputManager::HOME_KEY_LONG_PRESS_MS`) and a shorter press
-ends in a tap, a tap's action waits up to `HomeButtonInput::DOUBLE_TAP_MS` (350 ms) after its release for a second
-tap, and a second contact then reports its double tap at its release or its long press 700 ms into it.
-`GameMatchActivity::HOME_ACTION_HELD_MS` is that plus `LATE_PASS_MS` (250 ms) for a loop pass that reads the action
-late (2,000 ms; a pass stalled longer is not covered). So such a Confirm fails closed: it passes only when that bound or
-more has gone by since the push completed, and one sooner is read and dropped (press again). The same holds for a
-Confirm on a pass with no button edge: the X4 Pro's power click, with the power button set to Confirm and its
-double-click frontlight on, becomes Confirm on the first pass more than 500 ms after the release of a click held at most
-300 ms (`src/main.cpp`), when `getHeldTime()` is InputManager's span of the last press of the buttons, long over. It is dated
-back `GameMatchActivity::POWER_CLICK_HELD_MS` (the two, 1 ms more since `main.cpp` waits for more than 500 ms, plus
-`LATE_PASS_MS`: 1,051 ms; `PowerClickBoundTest` times it, and `CopiedConstantsTest` checks the copied constants against
-`src/main.cpp` and the SDK's `InputManager.h`). A power click held longer becomes Confirm on its release's pass, which
-has the button edge, and its own hold dates it. Two cases are not covered: a power-click Confirm on a pass where another
-button is released too has a button edge, so `getHeldTime()` (InputManager's span of the last press of the buttons) dates it; and a loop pass that
-reads either action more than `LATE_PASS_MS` late (deferred-work.md `## 5.12`).
+`fui::button` with `ACTION_PASS`, routed by `routeTouch`), plain ones like the title screen's: a tap on it, or Confirm
+(the front button, the home key's action, the X4 Pro's power click), passes the device on on release (a tap) or on Confirm's release, even while
+its screen is being pushed (a full refresh takes 1.7 s on the X4 Pro, and every tap made during one used to be dropped,
+which cost several taps per step). A tap anywhere else (the band, the turn line) does nothing. The routing is published
+before the push, and `handle()` closes it on every transition, so a tap in the instant between `handle()` and the new
+screen's `renderUi` routes nothing. Confirm is not gated by routing: it passes at once on release once the state is
+Result, or HandOff with its turn seat named (`loopHandOff`'s `named`); before the VM has named the seat (no screen is
+pushed until then) neither a tap nor Confirm passes. The banner is a framed panel at the bottom of the screen and the button fills the title
+screen's second two-line row, and on the X4 Pro the two overlap (the row at y = 648 to 722, the banner at y = 649 to 780),
+which the layout keeps: the owner accepts (Decision, 2026-10-03, superseding the 2026-10-02 time guard) that a stray
+second tap on the banner's spot can pass the hand-off, and that a stray second tap on "I'm ready" can become a move.
+
+The first move after "I'm ready" is taken during its frame's push too, after every HandOff to Playing (a hidden pass's
+Play again included; solo and open-pass Play again have no hand-off screen and still drop a touch during the first
+frame's push). `handle()` sets `firstFramePushing` on the
+HandOff to Playing transition, and `renderCanvas` clears it once that frame is on the panel (and any other transition
+clears it). While it is set and the VM has published the frame, `loopPlaying` lets a touch whose touch-down came at or
+after the transition (`playingSinceMs`; a tap's touch-down is `millis()` less `HalGPIO::lastTouchHeldMs()`, a held
+contact's `touchDownMs`, the pass that latched it) through as that seat's move: it skips `touchDownFrame` and `frameAt`
+and is posted with `GameVM::frameGen()`, so `GameVM::madeUnderAnotherSeat` keeps it. A contact that began before the
+transition (the press that passed the hand-off, lifting late) is dropped and logged. Every other touch follows the path
+under Moves below: an open-pass touch begun under one seat's frame and lifted under another's never reaches the second
+seat, and a solo or Play-again touch during a first frame's push is dropped.
 
 **Moves in Result.** A tap the mover made right after its turn-passing move, queued behind it, still reaches the mover's
 own `input` (its `ui` may change, and the match redraws the banner over the new frame), and the move it returns is
