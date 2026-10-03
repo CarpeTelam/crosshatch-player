@@ -258,6 +258,66 @@ TEST_F(MatchTest, TheEndOfARoundOpensTheOverMenuAndWritesTheStoreAtOnce) {
   EXPECT_EQ(state(), "Over");
 }
 
+// A Continue the title screen let through with settings it could not read (e5-r3, F8) plays the saved round, which runs
+// no setup, but its Play again would run one without the ctx.settings the manifest declares: the match ends in its
+// error view instead, the cause logged; with the settings given, the same Play again starts the next round.
+TEST_F(MatchTest, APlayAgainWithTheManifestsSettingsUnreadEndsInTheErrorViewAndWithThemStartsTheRound) {
+  for (const bool read : {false, true}) {
+    SCOPED_TRACE(read ? "settings read" : "settings not read");
+    fakelog::clearLines();
+    installGame("onetap", match::ONE_TAP_GAME);
+    GameCore::Manifest manifest = match::manifestOf("onetap", "One tap");
+    manifest.settingsCount = 1;
+    GameCore::SettingValues settings;
+    if (read) {
+      std::snprintf(settings.entries[0].id, sizeof(settings.entries[0].id), "level");
+      std::snprintf(settings.entries[0].value, sizeof(settings.entries[0].value), "Easy");
+      settings.count = 1;
+    }
+    gameId = "onetap";
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::solo(),
+                                                   GameMatchActivity::Start::New, settings);
+    activity->onEnter();
+    showFrame();
+    tapCanvas(50, 50);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+    renderView();
+    tapOption(tr(STR_GAMES_PLAY_AGAIN));
+    if (read) {
+      EXPECT_EQ(state(), "Playing");
+      EXPECT_FALSE(logHas("no Play again"));
+    } else {
+      EXPECT_EQ(state(), "Error");
+      EXPECT_TRUE(logHas("onetap: no Play again, the settings its manifest declares were not read"));
+      expectErrorView(tr(STR_GAMES_START_FAILED), tr(STR_GAMES_SETTINGS_NOT_READ));
+      EXPECT_FALSE(logHas("Over -> Playing on PlayAgain")) << "no round began";
+    }
+    activityManager.exitHolding(*activity);
+    activityManager.destroyHolding(activity);
+    ASSERT_TRUE(fakertos::waitNoTasks());
+  }
+}
+
+// A Continue whose save is gone when the match loads starts a new round, which runs setup: with the settings unread it
+// stops in the error view instead, and runs none.
+TEST_F(MatchTest, AContinueWithNoSaveAndTheManifestsSettingsUnreadStopsBeforeSetup) {
+  installGame("onetap", match::ONE_TAP_GAME);
+  fakesd::addFile("/.games/onetap/.pkg", "v1\n0530a15766e91bf1\n");  // a package that keeps resume.bin
+  GameCore::Manifest manifest = match::manifestOf("onetap", "One tap");
+  manifest.settingsCount = 1;
+  gameId = "onetap";
+  activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::solo(),
+                                                 GameMatchActivity::Start::Resume);
+  activity->onEnter();
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("no save to resume and the settings its manifest declares were not read"));
+  expectErrorView(tr(STR_GAMES_START_FAILED), tr(STR_GAMES_SETTINGS_NOT_READ));
+  activityManager.exitHolding(*activity);
+  activityManager.destroyHolding(activity);
+  ASSERT_TRUE(fakertos::waitNoTasks());
+}
+
 // ---- leaving, the forced exit, and Home (the solo-lifecycle item; 12cc816) ----
 
 TEST_F(MatchTest, LeavingStopsTheVmAndWritesTheStoreBeforeItGoesToGames) {
@@ -1799,9 +1859,9 @@ class HiddenPassTest : public MatchTest {
   }
 
   // Time passes with the loop running, `ms` in all: it only advances the clock, a pass every 10 ms (or less), as the
-  // device's main loop runs one every few milliseconds while nothing blocks it. A jump of the clock between two passes
-  // would be a stall of the loop task (an SD step), which loopHandOff does not date a press across (left to entry 11;
-  // deferred-work.md ## 5.12, the residuals entry, review row N1).
+  // device's main loop runs one every few milliseconds while nothing blocks it. The 10 ms stepping is no longer needed
+  // for hand-off timing (ticket 5.13 removed the time guard that dated a press across passes, so one jump of the clock
+  // passes a screen the same); it is kept so each wait still gives the loop its passes (timers, store flushes).
   void idle(const uint32_t ms) {
     for (uint32_t left = ms; left > 0;) {
       const uint32_t step = std::min<uint32_t>(left, 10);
@@ -2330,17 +2390,82 @@ TEST_F(HiddenPassTest, TheForcedExitInResultPushesTheBlank) {
   EXPECT_FALSE(record.pushes[0].abandonLogged);
 }
 
-// Sleep on the hand-off screen (HandOff): the plain white blank is pushed over it.
-TEST_F(HiddenPassTest, TheForcedExitOnTheBlankPushesTheBlankAgain) {
-  enterHidden();
-  expectHandOff();
-  showSeat(1);
-  moveAndPass(1, 2);
+// Sleep on the hand-off screen (HandOff): nothing private is on the panel, so the exit pushes nothing (e5-r5; R6
+// blanks the panel when a seat's frame could be on it). The store flush a dirty store waits for runs in the window the
+// blank no longer spends, even when a push would have taken all of it.
+TEST_F(HiddenPassTest, TheForcedExitOnTheBlankPushesNothingAndLeavesTheWindowToTheSdSteps) {
+  reachResultWithADirtyStore();
+  ASSERT_FALSE(HasFatalFailure());
   tapToPass();
   ASSERT_EQ(state(), "HandOff");
   expectHandOff();
+  ASSERT_FALSE(fakesd::has(storePath("hidden-store")));
+  const ExitRecord record = sleepRecordingPushes([] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); });
+  EXPECT_TRUE(record.pushes.empty()) << "the forced exit pushed over the hand-off screen";
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush did not run";
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_EQ(state(), "Leaving");
+}
+
+// Sleep with the pause menu opened from the hand-off: the menu sits on no frame (canvasUnderView), so nothing private
+// is on the panel and nothing is pushed.
+TEST_F(HiddenPassTest, TheForcedExitFromThePauseMenuOpenedOnTheBlankPushesNothing) {
+  enterHidden();
+  expectHandOff();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  ASSERT_FALSE(holds(lastPush(), "apple"));
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty());
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// Over asked for but not drawn yet: the last mover's frame is still on the panel (`panel` is written by a push only),
+// so the blank is pushed; the rule keeps the blank wherever a seat's frame could still be there.
+TEST_F(HiddenPassTest, TheForcedExitBeforeOverIsDrawnPushesTheBlank) {
+  enterHidden();
+  expectHandOff();
+  for (int turn = 0; turn < 3; ++turn) {
+    const int mover = turn % 2 + 1;
+    showSeat(mover);
+    moveAndPass(mover, 3 - mover);
+    tapToPass();
+    expectHandOff();
+  }
+  showSeat(2);
+  tapCanvas(100, 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
   const ExitRecord record = sleepRecordingPushes();
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+}
+
+// Sleep in Over: the menu sits over seat 0's frame, which is everyone's, so nothing private is on the panel.
+TEST_F(HiddenPassTest, TheForcedExitInOverPushesNothing) {
+  enterHidden();
+  expectHandOff();
+  for (int turn = 0; turn < 3; ++turn) {
+    const int mover = turn % 2 + 1;
+    showSeat(mover);
+    moveAndPass(mover, 3 - mover);
+    tapToPass();
+    expectHandOff();
+  }
+  showSeat(2);
+  tapCanvas(100, 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  renderView();
+  ASSERT_TRUE(holds(lastPush(), "Everyone: the secrets were apple and river"));
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty());
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
 }
 
 // A VM held inside ch.log (a locked binding) neither joins nor can be deleted: the blank goes up once the stop's wait
@@ -2428,20 +2553,38 @@ TEST_F(HiddenPassTest, TheForcedExitFromThePauseMenuOverASeatsFramePushesTheBlan
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
 }
 
-// A script error keeps the VM (only a stuck call frees it on the way to Error), so a forced exit from that error view
-// still pushes the blank: the rule is any forced exit of a hidden pass match with a VM, whatever the panel shows.
-TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmStillPushesTheBlank) {
-  installGame("hidden-error", HIDDEN_ERROR_GAME);
-  enterHidden("hidden-error");
-  expectHandOff();
-  tapToPass();
-  showFrame();
-  tapCanvas(100, 300);
-  frame();
-  ASSERT_TRUE(pump([&] { return state() == "Error"; }));
-  expectErrorView(tr(STR_GAMES_ERROR), "hidden boom");
-  const ExitRecord record = sleepRecordingPushes();
-  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+// A script error keeps the VM (only a stuck call frees it on the way to Error). Once the error view is on the panel
+// nothing private is, so a forced exit from it pushes nothing; before the view is drawn the seat's frame is still on
+// the panel, and the exit pushes the blank.
+TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmPushesTheBlankOnlyWhileTheSeatsFrameIsOnThePanel) {
+  for (const bool viewDrawn : {false, true}) {
+    SCOPED_TRACE(viewDrawn ? "error view drawn" : "error view asked for, not drawn");
+    if (activity) {
+      if (!exited) activityManager.exitHolding(*activity);
+      activityManager.destroyHolding(activity);
+      ASSERT_TRUE(fakertos::waitNoTasks());
+    }
+    exited = false;
+    fakelog::clearLines();
+    installGame("hidden-error", HIDDEN_ERROR_GAME);
+    enterHidden("hidden-error");
+    expectHandOff();
+    tapToPass();
+    showFrame();
+    tapCanvas(100, 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Error"; }));
+    if (viewDrawn) {
+      expectErrorView(tr(STR_GAMES_ERROR), "hidden boom");
+      const ExitRecord record = sleepRecordingPushes();
+      EXPECT_TRUE(record.pushes.empty()) << "the forced exit pushed over the error view";
+      EXPECT_FALSE(logHas("blank screen pushed"));
+    } else {
+      ASSERT_TRUE(holds(lastPush(), "apple")) << "the seat's frame is on the panel";
+      const ExitRecord record = sleepRecordingPushes();
+      ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+    }
+  }
 }
 
 // A user Leave from a pause menu over a seat's frame (cross-story review row 1) pushes the blank, a half refresh with
@@ -2711,8 +2854,8 @@ TEST_F(HiddenPassTest, TheHandOffScreenIsTheTitleScreensBandWithTheTurnLineAndTh
 
 // Result's banner sits at the bottom of the screen and the hand-off's button in the title screen's second two-line row
 // (DESIGN.md): pins the two places the helpers tap (readyButtonMiddle, BANNER_Y). The two overlap on the X4 Pro (and
-// here; game-canvas.md, Taps), which is why a pass also needs a tap or press begun after the screen's push (the
-// double-tap tests below).
+// here; game-canvas.md, Taps), so a stray second tap on the banner's spot can pass the hand-off too, which the owner
+// accepts (2026-10-03): one tap passes a screen at once, with no time guard (the plain tap tests below).
 TEST_F(HiddenPassTest, TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom) {
   enterHidden();
   expectHandOff(1);
@@ -2919,6 +3062,104 @@ TEST_F(HiddenPassTest, AContactBegunBeforeTheHandOffPassedAndLiftedDuringTheFirs
   EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u) << "the late-lifted contact also became a move";
 }
 
+// A contact the loop saw go down in Playing, whose pass then returned early because the turn passed (TurnChanged, with
+// the finger still down), must not leave its latch for the next contact: the finger lifts on the Result banner, the
+// device passes on, and the first move tapped during the next seat's first frame is accepted. The game's own timer
+// passes the turn, so no contact of the test's is a move.
+const char* const HIDDEN_TIMER_PASS_GAME = R"(
+local game = {}
+function game.setup(ctx)
+  ch.timer.after(1000)
+  return { seats = ctx.seats, moves = 0 }
+end
+function game.status(state)
+  if state.moves >= 4 then return { over = true, winners = {} } end
+  return { turn = state.moves % state.seats + 1 }
+end
+function game.apply(state, seat, move)
+  ch.log("apply seat " .. seat)
+  state.moves = state.moves + 1
+  return state
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.log("tap for seat " .. seat)
+    return { tap = true }
+  elseif ev.kind == "timer" then
+    return { tap = true }
+  end
+end
+function game.draw(state, seat, ui)
+  ch.log("draw for seat " .. seat)
+  ch.gfx.clear("white")
+  ch.gfx.text(40, 120, "Player " .. seat .. "'s secret: x", "medium", "black")
+end
+return game
+)";
+
+TEST_F(HiddenPassTest, AContactLatchedBeforeTheTurnPassedDoesNotDropTheNextSeatsFirstMove) {
+  installGame("hidden-timer-pass", HIDDEN_TIMER_PASS_GAME);
+  enterHidden("hidden-timer-pass");
+  expectHandOff(1);
+  showSeat(1);
+  fakertos::advance(1000);  // the game's timer is due, polled at the end of the next pass
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();  // the loop sees the finger go down (latched, under seat 1's frame), then posts the timer
+  ASSERT_TRUE(pump([&] { return state() == "Result"; })) << "the turn did not pass with the finger down";
+  fakertos::advance(50);
+  input->liftTouch();
+  frame();  // the finger lifts on Result, a pass loopPlaying never sees
+  render();
+  tapBanner();
+  ASSERT_EQ(state(), "HandOff");
+  ASSERT_TRUE(renderHandOff());
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  // No pass between the transition and the fresh tap: the next pass in Playing sees the tap first, where a pass without
+  // a contact would have freed a stale latch. The VM publishes seat 2's frame on its own task.
+  ASSERT_TRUE(waitFor([&] { return logHas("draw for seat 2"); }));
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    tapCanvas(100, 300);
+    frame();
+  };
+  render();  // not pumpToRender: its passes would free the latch
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_FALSE(logHas("dropped a touch that began")) << "the stale latch dated the fresh tap before the hand-off";
+  EXPECT_TRUE(pump([&] { return logHas("tap for seat 2"); })) << "the first move of the next seat never arrived";
+}
+
+// A contact that goes down after "I'm ready", is seen down by the loop (latched), and lifts during the first frame's
+// push is that seat's move.
+TEST_F(HiddenPassTest, AContactBegunAfterTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsAccepted) {
+  enterHidden();
+  expectHandOff(1);
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpToRender());
+  fakertos::advance(10);
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();  // the finger is seen going down, before the first frame is drawn
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    input->liftTouch();
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_FALSE(logHas("dropped a touch that began"));
+  ASSERT_TRUE(pump([&] { return state() == "Result"; })) << "the contact was not that seat's move";
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u);
+}
+
 // A hidden game that logs its setup, so a test can hold the VM there (fakertos::arm(At::Log)) before it has begun the
 // round and named its first turn seat. Seat 1's frame shows "apple"; the second move ends the round.
 const char* const HIDDEN_SLOW_SETUP_GAME = R"(
@@ -3047,7 +3288,7 @@ TEST_F(HiddenPassTest, AHandoffPageFillsTheBandAheadOfTheTitlePageWithTheTurnLin
   expectBandShows(*renderer, white);
   ASSERT_EQ(ui().strokeRects.size(), 1u) << "the button";
   EXPECT_TRUE(logHas("Page /.games/pass-hidden/handoff.bmp: 480x480"));
-  EXPECT_FALSE(logHas("title.bmp")) << "title.bmp was read beside handoff.bmp";
+  EXPECT_FALSE(logHas("Page /.games/pass-hidden/title.bmp")) << "title.bmp was read beside handoff.bmp";
   tapReady();  // the button passes it as on the default screen
   ASSERT_EQ(state(), "Playing");
   showFrame();

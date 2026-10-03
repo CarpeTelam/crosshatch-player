@@ -1752,6 +1752,119 @@ TEST_F(PassResumeTest, AHiddenForcedExitPushesTheBlankBeforeAnyResumeOpAndThenWr
   EXPECT_TRUE(savedPassAt(1)) << "the pending snapshot was written after the blank";
 }
 
+// A move that passes the turn is written on the loop pass that handles TurnChanged (R8, e5-r5), not on the next one: a
+// sleep or Back one pass later finds it on the card.
+TEST_F(PassResumeTest, AMoveThatPassesTheTurnIsWrittenOnThePassThatHandlesIt) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());  // the pass that saw TurnChanged was the last one the loop ran
+  EXPECT_TRUE(savedPassAt(2)) << "the snapshot waited for the next loop pass";
+}
+
+// Sleep one pass after the move, before Result is drawn: the panel still holds seat 1's frame, so the blank is pushed,
+// and the move's snapshot is already on the card when it is (it is not written after the blank, where the window may
+// be spent).
+TEST_F(PassResumeTest, ASleepRightAfterATurnPassingMoveFindsItsSnapshotOnTheCardBeforeTheBlank) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  bool onCardAtPush = false;
+  size_t pushes = 0;
+  renderer->onDisplay = [&] {
+    ++pushes;
+    onCardAtPush = savedPassAt(2);
+  };
+  sleep();
+  renderer->onDisplay = nullptr;
+  ASSERT_EQ(pushes, 1u);
+  EXPECT_TRUE(lastPush().texts.empty()) << "the push was the blank";
+  EXPECT_TRUE(onCardAtPush) << "the move's snapshot was not on the card when the blank was pushed";
+  EXPECT_TRUE(savedPassAt(2));
+}
+
+// A hidden match's forced exit pushes nothing when no seat's frame is on the panel (e5-r5), so the resume write a
+// failed try left pending still runs in the window the blank no longer spends.
+TEST_F(PassResumeTest, AForcedExitOnTheBlankPushesNothingAndStillWritesThePendingSnapshot) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
+  showFrame();
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  showFrame();
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  ASSERT_TRUE(savedPassAt(1));
+  const size_t shown = renderer->shown.size();
+  renderer->onDisplay = [&] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); };
+  sleep();
+  renderer->onDisplay = nullptr;
+  EXPECT_EQ(renderer->shown.size(), shown) << "the forced exit pushed over the hand-off screen";
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(savedPassAt(2)) << "the pending snapshot was not written";
+}
+
+TEST_F(PassResumeTest, AForcedExitFromThePauseMenuOpenedOnTheBlankPushesNothingAndStillWritesThePendingSnapshot) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
+  showFrame();
+  tapScreen();
+  ASSERT_EQ(state(), "HandOff");
+  showFrame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  showFrame();
+  ASSERT_FALSE(holds(lastPush(), "secret")) << "the pause menu sits on no seat's frame";
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  ASSERT_TRUE(savedPassAt(1));
+  const size_t shown = renderer->shown.size();
+  renderer->onDisplay = [&] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); };
+  sleep();
+  renderer->onDisplay = nullptr;
+  EXPECT_EQ(renderer->shown.size(), shown) << "the forced exit pushed over the pause menu";
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(savedPassAt(2)) << "the pending snapshot was not written";
+}
+
+// Over: the delete the card refused is retried in the exit's window, and nothing is pushed over the menu.
+TEST_F(PassResumeTest, AForcedExitInOverPushesNothingAndStillRetriesTheResumeDelete) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  for (int turn = 0; turn < 3; ++turn) {
+    ASSERT_NO_FATAL_FAILURE(moveToResult());
+    showFrame();
+    tapScreen();
+    ASSERT_NO_FATAL_FAILURE(passTheBlank(2 - turn % 2));
+  }
+  ASSERT_TRUE(pumpToPassSave(4)) << "the third move's snapshot";
+  fakesd::sim().failRemove.insert(resumePath("pass-hidden"));
+  input->tap(CANVAS_X + 100, CANVAS_Y + 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  showFrame();
+  ASSERT_TRUE(fakesd::has(resumePath("pass-hidden"))) << "the card refused the delete";
+  fakesd::sim().failRemove.clear();
+  const size_t shown = renderer->shown.size();
+  renderer->onDisplay = [&] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); };
+  sleep();  // no loop pass since the card recovered
+  renderer->onDisplay = nullptr;
+  EXPECT_EQ(renderer->shown.size(), shown) << "the forced exit pushed over the Over menu";
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_FALSE(fakesd::has(resumePath("pass-hidden"))) << "the delete retry did not run";
+}
+
 // ---- the waits (R11): elapsed time, not polls ----
 
 class ResumeVmTest : public match::ScreenTest {

@@ -37,11 +37,12 @@ struct Roster;
 // selected. Options left by a Replace (the Home gesture, sleep) runs no result handler, and its change is not written:
 // prefs.bin is never written from onExit() (AD-17; deferred-work.md ## 5.12). prefs.bin is written too when New game
 // starts a mode other than the one the file holds (a missing file holds none; one that would not read is left alone). A
-// failed write is logged, and the choice lasts until the screen closes. Nothing is written, and no match starts, while
-// the manifest's settings could not be read: a write would wipe their values, and a match would lack the ctx.settings
-// its manifest declares. An Options change after a prefs.bin that would not read reads it again before writing, so the
-// choices the player did not touch keep its values when it reads now. New game does not write over a remembered mode
-// this host does not offer.
+// failed write is logged, and the choice lasts until the screen closes. Nothing is written, and no New match starts
+// (the New game row says why), while the manifest's settings could not be read: a write would wipe their values, and a
+// match would lack the ctx.settings its manifest declares. Continue still starts (a resume runs no setup); its match
+// ends in the error view at a Play again (GameMatchActivity::handle). An Options change after a prefs.bin that would
+// not read reads it again before writing, so the choices the player did not touch keep its values when it reads now.
+// New game does not write over a remembered mode this host does not offer.
 //
 // A tap or Confirm on Continue or New game replaces this screen with the game's match, given the chosen settings
 // (GameCore::SettingValues, ctx.settings). Continue resumes the save (Start::Resume): the match plays the roster the
@@ -104,13 +105,15 @@ class GameModeActivity final : public UiListActivity {
   // nearby solo until epic-play-nearby. False when that mode cannot start: no mode, or pass with no seat count this
   // host fits. Logs nothing: Continue's search tries modes that may not start, so the callers log.
   bool rosterFor(uint8_t modeBit, GameCore::Roster& roster) const;
+  // Says on the New game row that the settings were not read, so nothing started. Takes the render lock.
+  void showSettingsNotice();
   // Starts a New match in the current mode.
   void startNew();
   // Starts the match from the save.
   void startResume();
-  // Replaces this screen with the match; repaints this screen, logged, when the manifest's settings were not read
-  // (loadSettings) or the activity cannot be allocated. A New match in a mode other than the one prefs.bin holds writes
-  // it first.
+  // Replaces this screen with the match; repaints this screen, logged, when the activity cannot be allocated, or, for a
+  // New match only, when the manifest's settings were not read (loadSettings; showSettingsNotice). Continue starts. A
+  // New match in a mode other than the one prefs.bin holds writes it first.
   void startMatch(const GameCore::Roster& roster, bool resume);
   // Writes the current choices as prefs.bin (logged when it cannot, and skipped, logged, when the manifest's settings
   // were not read); `saved` follows a write that succeeds. A prefs.bin that was Unreadable is read again first, and
@@ -141,6 +144,8 @@ class GameModeActivity final : public UiListActivity {
   // at all (those or Unstartable: New game asks before it replaces the file).
   bool canContinue = false;
   bool hasSave = false;
+  // New game was tapped while the settings were unread: its row's line says so (showSettingsNotice).
+  bool settingsNotice = false;
   // The manifest's settings (read in onEnter), what prefs.bin held when the screen opened (or last wrote; empty for no
   // usable file), and the choices New game starts with. Options edits `choices` and sets `optionsChanged`; this screen
   // outlives it.

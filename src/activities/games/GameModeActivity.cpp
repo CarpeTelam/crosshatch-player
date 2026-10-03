@@ -160,6 +160,15 @@ void GameModeActivity::loadSettings() {
   settings = read->reader.settings();
 }
 
+void GameModeActivity::showSettingsNotice() {
+  // The New game row's line says why nothing started, until the screen closes; the render task reads the rows.
+  app.clearTapFlash();  // the row did not leave this screen, as startMatch's callers expect
+  RenderLock lock(*this);
+  settingsNotice = true;
+  buildRows();
+  requestUpdate();
+}
+
 void GameModeActivity::buildRows() {
   // Static text and fixed arrays: built once a visit (and when Options closes) rather than on every buildScreen().
   rowCount = 0;
@@ -175,7 +184,7 @@ void GameModeActivity::buildRows() {
   // An Unreadable save gets its row too: hiding it would offer only New game, over what may be a good save.
   if (canContinue) add(RowKind::Continue, tr(STR_GAMES_CONTINUE), tr(STR_GAMES_CONTINUE_DESC));
   writeNewGameLine();
-  add(RowKind::NewGame, tr(STR_GAMES_NEW_GAME), newGameLine);
+  add(RowKind::NewGame, tr(STR_GAMES_NEW_GAME), settingsNotice ? tr(STR_GAMES_SETTINGS_NOT_READ) : newGameLine);
   // Options only when it has a choice to offer: a second mode this host can start, or a setting.
   const bool severalModes = (modes & (modes - 1)) != 0;
   if (severalModes || settings.count > 0) add(RowKind::Options, tr(STR_GAMES_OPTIONS), nullptr);
@@ -231,7 +240,11 @@ void GameModeActivity::activateIndex(const int index) {
       startResume();
       break;
     case RowKind::NewGame:
-      if (hasSave) {
+      if (settings.count != manifest.settingsCount) {
+        // Before the question about replacing a save: nothing would start (startMatch).
+        LOG_ERR("GAME", "Cannot start %s: its settings were not read", manifest.id);
+        showSettingsNotice();
+      } else if (hasSave) {
         openConfirm(index);  // a New match replaces the save: ask first
       } else {
         startNew();
@@ -321,10 +334,12 @@ void GameModeActivity::startResume() {
 void GameModeActivity::startMatch(const GameCore::Roster& roster, const bool resume) {
   app.clearTapFlash();  // the row leaves this screen
   // Settings that were not read (loadSettings: no memory, a card fault, or a manifest changed since the launcher read
-  // it) would start the game without the ctx.settings its manifest declares: no match starts, and nothing is written.
-  if (settings.count != manifest.settingsCount) {
+  // it) would start a New game without the ctx.settings its manifest declares: it starts nothing, writes nothing, and
+  // says why on the New game row. Continue goes on: a resume runs no setup (AD-8), and the match itself ends in its
+  // error view at a Play again, which would (GameMatchActivity::handle).
+  if (!resume && settings.count != manifest.settingsCount) {
     LOG_ERR("GAME", "Cannot start %s: its settings were not read", manifest.id);
-    requestUpdate();  // the tap flash was cleared; repaint this screen
+    showSettingsNotice();
     return;
   }
   // Continue passes the current settings too: a resume runs no setup (AD-8), so they reach only a Play again after it.
