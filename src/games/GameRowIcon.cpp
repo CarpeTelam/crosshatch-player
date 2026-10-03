@@ -13,6 +13,7 @@
 #include <string>
 
 #include "GameIconBlit.h"
+#include "GameMarkBitmaps.h"
 #include "GamePaths.h"
 
 namespace {
@@ -23,6 +24,7 @@ static_assert(GamePaths::PATH_BYTES >= std::char_traits<char>::length(GamePaths:
               "a path to icon.bmp fits");
 
 static_assert(GameRowIcon::SIDE == GameIcons::MEDIUM_PIXELS, "the library's medium bitmap is the row icon");
+static_assert(sizeof(GameMark::ROW_64) == GameRowIcon::BYTES, "the mark's row icon is a row icon bitmap");
 
 void iconPath(const char* id, char (&path)[GamePaths::PATH_BYTES]) {
   snprintf(path, sizeof(path), "%s/%s/icon.bmp", GamePaths::GAMES_DIR, id);
@@ -37,7 +39,7 @@ Choice choose(const bool packageIconRead, const char* manifestIcon, const bool m
   if (manifestIcon && manifestIcon[0] != '\0' && hasLibraryIcon(manifestIcon)) {
     return Choice{Source::Library, manifestIcon, manifestFill};
   }
-  return Choice{Source::Fallback, FALLBACK_NAME, false};
+  return Choice{Source::Fallback, nullptr, false};
 }
 
 bool hasPackageIcon(const char* id) {
@@ -102,6 +104,8 @@ bool renderLibraryIcon(const char* name, const bool fill, uint8_t* bits) {
   });
   return true;
 }
+
+void renderMark(uint8_t* bits) { std::memcpy(bits, GameMark::ROW_64, BYTES); }
 
 }  // namespace GameRowIcon
 

@@ -72,8 +72,10 @@ class ParseLedgerTest(unittest.TestCase):
 
     def test_committed_ledger(self):
         lists = cut.parse_ledger((HERE.parent / cut.LEDGER_PATH).read_text())
-        self.assertEqual(len(lists['Ledger']), 10)
+        self.assertEqual(len(lists['Ledger']), 12)
         self.assertIn('src/network/OtaUpdater.cpp', lists['Ledger'])
+        self.assertIn('src/activities/boot_sleep/BootActivity.cpp', lists['Ledger'])
+        self.assertIn('src/activities/boot_sleep/SleepActivity.cpp', lists['Ledger'])
         self.assertEqual(
             set(lists['Allowlist']),
             {'AGENTS.md', '.gitattributes', '.gitignore', '.github/PULL_REQUEST_TEMPLATE.md', 'CLAUDE.md'})

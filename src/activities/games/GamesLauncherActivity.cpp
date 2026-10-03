@@ -395,7 +395,7 @@ void GamesLauncherActivity::loadIcons() {
                 choice.fill ? "fill" : "regular");
         break;
       case GameRowIcon::Source::Fallback:
-        LOG_DBG("GAME", "Icon for %s: fallback %s", listing.entries[i].manifest.id, choice.name);
+        LOG_DBG("GAME", "Icon for %s: fallback crosshatch mark", listing.entries[i].manifest.id);
         break;
     }
   }
@@ -434,8 +434,10 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
   const GameRowIcon::Choice choice = self->choiceOf(index);
   if (choice.source == GameRowIcon::Source::PackageBmp) {
     bits = self->packageIcons.get() + static_cast<size_t>(self->packageSlot[index]) * GameRowIcon::BYTES;
+  } else if (choice.source == GameRowIcon::Source::Fallback) {
+    GameRowIcon::renderMark(self->libraryIcon);  // the Crosshatch mark, in the same scratch
   } else {
-    // A name choose() found in the library; the row is blank only if the library itself lost game-controller.
+    // A name choose() found in the library.
     GameRowIcon::renderLibraryIcon(choice.name, choice.fill, self->libraryIcon);
   }
   item.icon.data = bits;

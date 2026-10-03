@@ -1387,12 +1387,22 @@ size_t blackIn(const GfxRenderer& renderer, const int x, const int y, const int 
   return black;
 }
 
-TEST_F(TitleScreenTest, WithNoTitleImageTheBandShowsTheLibraryIconAt128CentredAndTheRowsFollowIt) {
+TEST_F(TitleScreenTest, WithNoTitleImageTheBandShowsTheDefaultIconAt128CentredAndTheRowsFollowIt) {
   installCounter("\"solo\"", 1);
   openTitleFor(SOLO, 1);
   const size_t inBox = blackIn(*renderer, ICON_LEFT, ICON_TOP, 128, 128);
-  EXPECT_GT(inBox, 0u) << "game-controller, the fallback, at 128 px";
+  EXPECT_GT(inBox, 0u) << "the Crosshatch mark, the fallback, at 128 px";
   EXPECT_EQ(blackIn(*renderer, 0, BAND_TOP, 480, 480), inBox) << "nothing else in the band";
+  // Exactly the mark: the fills match::markFills makes at the band's middle, replayed on a blank renderer.
+  GfxRenderer expected(480, 800);
+  expected.clearScreen();
+  for (const GfxRenderer::Call& fill : match::markFills())
+    expected.fillRect(fill.x, fill.y, fill.w, fill.h, fill.black);
+  int different = 0;
+  for (int y = BAND_TOP; y < BAND_TOP + 480; ++y)
+    for (int x = 0; x < 480; ++x)
+      if (renderer->pixel(x, y) != expected.pixel(x, y)) ++different;
+  EXPECT_EQ(different, 0) << "the band is the Crosshatch mark, pixel for pixel";
   ASSERT_FALSE(ui().drawn.empty());
   const auto row = std::find_if(ui().drawn.begin(), ui().drawn.end(),
                                 [](const screen::DrawnText& d) { return d.text == tr(STR_GAMES_NEW_GAME); });

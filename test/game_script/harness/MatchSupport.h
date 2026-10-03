@@ -22,6 +22,7 @@
 
 #include "FakeRtos.h"
 #include "GameIconDraw.h"
+#include "GameMarkBitmaps.h"
 #include "GameVM.h"
 #include "HarnessSupport.h"
 #include "Logging.h"
@@ -349,6 +350,34 @@ inline std::vector<GfxRenderer::Call> iconFills(const char* icon, const bool fil
   GfxRenderer expected(480, 800);
   EXPECT_TRUE(drawGameIcon(expected, icon, 240 - 64, bandMiddleY(expected) - 64, 128, true, fill)) << icon;
   std::vector<GfxRenderer::Call> fills;
+  for (const GfxRenderer::Call& call : expected.calls) {
+    if (call.kind == GfxRenderer::Kind::FillRect) fills.push_back(call);
+  }
+  return fills;
+}
+
+// The fills the Crosshatch mark makes at 128 px with its middle at the band's (240, bandMiddleY): one fill per run of
+// ink in a row of GameMark::HERO_128 (bit 0 = ink, MSB first), top to bottom, as the default icon is drawn.
+inline std::vector<GfxRenderer::Call> markFills() {
+  GfxRenderer expected(480, 800);
+  const int left = 240 - 64;
+  const int top = bandMiddleY(expected) - 64;
+  std::vector<GfxRenderer::Call> fills;
+  for (int y = 0; y < 128; ++y) {
+    int x = 0;
+    while (x < 128) {
+      const auto ink = [y](const int column) {
+        return ((GameMark::HERO_128[y * 16 + column / 8] >> (7 - column % 8)) & 1) == 0;
+      };
+      if (!ink(x)) {
+        ++x;
+        continue;
+      }
+      const int start = x;
+      while (x < 128 && ink(x)) ++x;
+      expected.fillRect(left + start, top + y, x - start, 1, true);
+    }
+  }
   for (const GfxRenderer::Call& call : expected.calls) {
     if (call.kind == GfxRenderer::Kind::FillRect) fills.push_back(call);
   }

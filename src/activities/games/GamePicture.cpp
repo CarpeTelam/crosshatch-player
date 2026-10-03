@@ -13,6 +13,7 @@
 
 #include "games/GameIconDraw.h"
 #include "games/GameImageBlit.h"
+#include "games/GameMarkBitmaps.h"
 #include "games/GamePaths.h"
 
 namespace {
@@ -24,6 +25,27 @@ static_assert(GamePaths::PATH_BYTES >= std::char_traits<char>::length(GamePaths:
 // Each pixel of icon.bmp is drawn as SCALE x SCALE.
 constexpr int SCALE = GamePicture::ICON_PIXELS / GameRowIcon::SIDE;
 static_assert(SCALE * GameRowIcon::SIDE == GamePicture::ICON_PIXELS, "icon.bmp scales to the drawn icon whole");
+
+// A Mask1 bitmap's ink (bit 0, MSB first, rows of side / 8 bytes), each run of a row drawn `scale` pixels high and
+// `scale` times as wide, from (left, top).
+void drawMask1(const GfxRenderer& renderer, const uint8_t* bits, const int side, const int scale, const int left,
+               const int top) {
+  const int rowBytes = side / 8;
+  for (int y = 0; y < side; ++y) {
+    const uint8_t* row = bits + static_cast<size_t>(y) * rowBytes;
+    int x = 0;
+    while (x < side) {
+      const auto ink = [row](const int column) { return ((row[column / 8] >> (7 - column % 8)) & 1) == 0; };
+      if (!ink(x)) {
+        ++x;
+        continue;
+      }
+      const int start = x;
+      while (x < side && ink(x)) ++x;
+      renderer.fillRect(left + start * scale, top + y * scale, (x - start) * scale, scale, true);
+    }
+  }
+}
 
 }  // namespace
 
@@ -97,24 +119,14 @@ void GamePicture::drawPage(const GfxRenderer& renderer, const int left, const in
 void GamePicture::drawIcon(const GfxRenderer& renderer, const int centreX, const int centreY) const {
   const int left = centreX - ICON_PIXELS / 2;
   const int top = centreY - ICON_PIXELS / 2;
-  if (icon.source != GameRowIcon::Source::PackageBmp) {
+  if (icon.source == GameRowIcon::Source::Fallback) {
+    // The Crosshatch mark's native 128 px drawing, not the 64 px bitmap doubled.
+    static_assert(sizeof(GameMark::HERO_128) == ICON_PIXELS / 8 * ICON_PIXELS, "the mark's hero bitmap is ICON_PIXELS");
+    drawMask1(renderer, GameMark::HERO_128, ICON_PIXELS, 1, left, top);
+  } else if (icon.source == GameRowIcon::Source::Library) {
     drawGameIcon(renderer, icon.name, left, top, ICON_PIXELS, true, icon.fill);
-    return;
-  }
-  // icon.bmp's ink (bit 0), each run of a row drawn SCALE pixels high and SCALE times as wide.
-  for (int y = 0; y < GameRowIcon::SIDE; ++y) {
-    const uint8_t* row = iconBits + static_cast<size_t>(y) * GameRowIcon::ROW_BYTES;
-    int x = 0;
-    while (x < GameRowIcon::SIDE) {
-      const auto ink = [row](const int column) { return ((row[column / 8] >> (7 - column % 8)) & 1) == 0; };
-      if (!ink(x)) {
-        ++x;
-        continue;
-      }
-      const int start = x;
-      while (x < GameRowIcon::SIDE && ink(x)) ++x;
-      renderer.fillRect(left + start * SCALE, top + y * SCALE, (x - start) * SCALE, SCALE, true);
-    }
+  } else {
+    drawMask1(renderer, iconBits, GameRowIcon::SIDE, SCALE, left, top);  // icon.bmp, each pixel SCALE x SCALE
   }
 }
 

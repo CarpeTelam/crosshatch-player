@@ -37,6 +37,7 @@ using match::expectSameFills;
 using match::iconFills;
 using match::installFixture;
 using match::installGame;
+using match::markFills;
 using match::waitFor;
 using Button = MappedInputManager::Button;
 
@@ -2816,8 +2817,8 @@ const screen::DrawnText* drawnLine(const screen::RecordingTarget& target, const 
 
 // The hand-off screen mirrors the title screen: on a cleared screen with no header and no status strip, the splash
 // band where the title screen has it, here with the game's own icon (pass-hidden has no handoff.png, no title.png, no
-// icon.png, and names no library icon, so game-controller, as its launcher row shows) at 128 px, black, centred in the
-// band, and nothing else drawn on the renderer (no eye-closed icon, no game command); "Player 1's turn", plain text
+// icon.png, and names no library icon, so the Crosshatch mark, as its launcher row shows) at 128 px, black, centred in
+// the band, and nothing else drawn on the renderer (no eye-closed icon, no game command); "Player 1's turn", plain text
 // centred in the title screen's first menu row; and the framed "I'm ready" button filling its second row
 // (GameSplashLayout::rowRect, which ModePickerTest pins to the rows the title screen's list draws).
 TEST_F(HiddenPassTest, TheHandOffScreenIsTheTitleScreensBandWithTheTurnLineAndTheReadyButtonInItsRows) {
@@ -2828,7 +2829,7 @@ TEST_F(HiddenPassTest, TheHandOffScreenIsTheTitleScreensBandWithTheTurnLineAndTh
   EXPECT_TRUE(UITheme::getInstance().getTheme().calls.empty()) << "a header or hints were drawn";
   const Held held = heldAt(lastPush().callsBefore);
   EXPECT_TRUE(held.cleared);
-  expectSameFills(held.drawn, iconFills(GameRowIcon::FALLBACK_NAME));
+  expectSameFills(held.drawn, markFills());
   const std::vector<freeink::ui::Rect> rows = match::splashMenuRows(*renderer, 2);
   ASSERT_EQ(rows.size(), 2u);
   EXPECT_EQ(rows[0].y, GameSplashLayout::bandTop(*renderer) + GameSplashLayout::BAND) << "the rows follow the band";
@@ -3336,7 +3337,7 @@ TEST_F(HiddenPassTest, AnUnusableHandoffPageAndNoTitlePageFallBackToTheIconLogge
   EXPECT_FALSE(logHas("Page /.games/")) << "a page was loaded";
   renderer->forget();
   expectHandOff(1);
-  expectSameFills(heldAt(lastPush().callsBefore).drawn, iconFills(GameRowIcon::FALLBACK_NAME));
+  expectSameFills(heldAt(lastPush().callsBefore).drawn, markFills());
   showSeat(1);
 }
 

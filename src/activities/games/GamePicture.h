@@ -24,7 +24,8 @@ struct Manifest;
 // converter's 1-bit layout, or it is larger than the page allows) logs why ("...; skipped") and leaves no page, so the
 // screen tries its next page or falls back to its icon. The icon is the launcher row's (GameRowIcon::choose): the
 // package's icon.bmp, read into a 512 B member and drawn with each of its pixels as 2 x 2, else the manifest's library
-// icon in its weight, else game-controller, both drawn by the library at 128 px.
+// icon in its weight, drawn by the library at 128 px, else the Crosshatch mark's native 128 px bitmap
+// (GameMarkBitmaps.h).
 class GamePicture {
  public:
   // The icon's side when it is drawn, in pixels.
