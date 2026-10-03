@@ -99,6 +99,8 @@ bool isHiddenPass(const GameCore::Roster& roster, const GameCore::Manifest& mani
 }  // namespace
 
 static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
+static_assert(GameMatchActivity::FORCED_EXIT_DEADLINE_MS == 1500,
+              "game-canvas.md states the forced exit's 1,500 ms bound; change the doc with this deadline");
 static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
               "resume.bin records the package hash .pkg holds (GameSaveStore builds without GameHash.h)");
 
@@ -504,7 +506,17 @@ bool GameMatchActivity::vmHealthy() {
 }
 
 void GameMatchActivity::loop() {
-  switch (lifecycle.state()) {
+  const MatchState current = lifecycle.state();
+  // A latch set in Playing outlives the pass that left it (a pass returning early, or the match leaving Playing, never
+  // reaches loopPlaying's own release): free it on the first pass elsewhere that sees no finger down, so the next
+  // contact in Playing latches its own. A finger still down across the transition keeps its latch: it began before the
+  // hand-off.
+  if (current != MatchState::Playing && touchDownLatched) {
+    int heldX = 0;
+    int heldY = 0;
+    if (!mappedInput.isScreenTouchHeld(heldX, heldY)) touchDownLatched = false;
+  }
+  switch (current) {
     case MatchState::Playing:
       loopPlaying();
       return;
@@ -668,7 +680,6 @@ void GameMatchActivity::loopView() {
 
 void GameMatchActivity::loopHandOff() {
   const MatchState state = lifecycle.state();
-  // This pass's input was sampled just before loop(): its time, taken before the SD steps below, dates a release.
   const auto now = static_cast<uint32_t>(millis());
   // As in a menu: the VM may still fail, hang, or set ch.store in a call that was running when the screen changed.
   if (!vmHealthy()) return;

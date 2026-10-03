@@ -863,3 +863,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-plain-tap-targets-for-the-hand-off-plan.md`
   summary: `CopiedConstantsTest` keeps its constexpr reader and `TheSourcesAreRead` although no constant is copied any more.
   evidence: Review pass 1, finding 15 (low). The plan keeps the suite for the next copied constant; delete it, with its CMake registration, if none arrives.
+
+## e5-r1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r1-touch-latch-and-window-guards.md`
+  summary: Retrospective V5's other two gaps stay open: a forced exit (sleep) from the hidden-pass Over state, and the Play-again variant of the first-move-during-push rule (`firstFramePushing` is set only for a hand-off passed by Tap, so a move tapped during the first frame after Play again takes the ordinary frame-on-panel path; the owner has not asked for it).
+  evidence: `epic-pass-and-play-retrospective.md` row V5 (the third gap, a latched post-transition contact, is now `AContactBegunAfterTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsAccepted`); `GameMatchActivity::handle` (`firstFramePushing.store(from == MatchState::HandOff && event == MatchEvent::Tap)`).

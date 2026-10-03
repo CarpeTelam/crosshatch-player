@@ -1799,9 +1799,9 @@ class HiddenPassTest : public MatchTest {
   }
 
   // Time passes with the loop running, `ms` in all: it only advances the clock, a pass every 10 ms (or less), as the
-  // device's main loop runs one every few milliseconds while nothing blocks it. A jump of the clock between two passes
-  // would be a stall of the loop task (an SD step), which loopHandOff does not date a press across (left to entry 11;
-  // deferred-work.md ## 5.12, the residuals entry, review row N1).
+  // device's main loop runs one every few milliseconds while nothing blocks it. The 10 ms stepping is no longer needed
+  // for hand-off timing (ticket 5.13 removed the time guard that dated a press across passes, so one jump of the clock
+  // passes a screen the same); it is kept so each wait still gives the loop its passes (timers, store flushes).
   void idle(const uint32_t ms) {
     for (uint32_t left = ms; left > 0;) {
       const uint32_t step = std::min<uint32_t>(left, 10);
@@ -2711,8 +2711,8 @@ TEST_F(HiddenPassTest, TheHandOffScreenIsTheTitleScreensBandWithTheTurnLineAndTh
 
 // Result's banner sits at the bottom of the screen and the hand-off's button in the title screen's second two-line row
 // (DESIGN.md): pins the two places the helpers tap (readyButtonMiddle, BANNER_Y). The two overlap on the X4 Pro (and
-// here; game-canvas.md, Taps), which is why a pass also needs a tap or press begun after the screen's push (the
-// double-tap tests below).
+// here; game-canvas.md, Taps), so a stray second tap on the banner's spot can pass the hand-off too, which the owner
+// accepts (2026-10-03): one tap passes a screen at once, with no time guard (the plain tap tests below).
 TEST_F(HiddenPassTest, TheReadyButtonFillsTheSecondMenuRowAndTheBannerIsAtTheBottom) {
   enterHidden();
   expectHandOff(1);
@@ -2917,6 +2917,104 @@ TEST_F(HiddenPassTest, AContactBegunBeforeTheHandOffPassedAndLiftedDuringTheFirs
   frame();
   ASSERT_TRUE(pump([&] { return state() == "Result"; }));
   EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u) << "the late-lifted contact also became a move";
+}
+
+// A contact the loop saw go down in Playing, whose pass then returned early because the turn passed (TurnChanged, with
+// the finger still down), must not leave its latch for the next contact: the finger lifts on the Result banner, the
+// device passes on, and the first move tapped during the next seat's first frame is accepted. The game's own timer
+// passes the turn, so no contact of the test's is a move.
+const char* const HIDDEN_TIMER_PASS_GAME = R"(
+local game = {}
+function game.setup(ctx)
+  ch.timer.after(1000)
+  return { seats = ctx.seats, moves = 0 }
+end
+function game.status(state)
+  if state.moves >= 4 then return { over = true, winners = {} } end
+  return { turn = state.moves % state.seats + 1 }
+end
+function game.apply(state, seat, move)
+  ch.log("apply seat " .. seat)
+  state.moves = state.moves + 1
+  return state
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.log("tap for seat " .. seat)
+    return { tap = true }
+  elseif ev.kind == "timer" then
+    return { tap = true }
+  end
+end
+function game.draw(state, seat, ui)
+  ch.log("draw for seat " .. seat)
+  ch.gfx.clear("white")
+  ch.gfx.text(40, 120, "Player " .. seat .. "'s secret: x", "medium", "black")
+end
+return game
+)";
+
+TEST_F(HiddenPassTest, AContactLatchedBeforeTheTurnPassedDoesNotDropTheNextSeatsFirstMove) {
+  installGame("hidden-timer-pass", HIDDEN_TIMER_PASS_GAME);
+  enterHidden("hidden-timer-pass");
+  expectHandOff(1);
+  showSeat(1);
+  fakertos::advance(1000);  // the game's timer is due, polled at the end of the next pass
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();  // the loop sees the finger go down (latched, under seat 1's frame), then posts the timer
+  ASSERT_TRUE(pump([&] { return state() == "Result"; })) << "the turn did not pass with the finger down";
+  fakertos::advance(50);
+  input->liftTouch();
+  frame();  // the finger lifts on Result, a pass loopPlaying never sees
+  render();
+  tapBanner();
+  ASSERT_EQ(state(), "HandOff");
+  ASSERT_TRUE(renderHandOff());
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  // No pass between the transition and the fresh tap: the next pass in Playing sees the tap first, where a pass without
+  // a contact would have freed a stale latch. The VM publishes seat 2's frame on its own task.
+  ASSERT_TRUE(waitFor([&] { return logHas("draw for seat 2"); }));
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    tapCanvas(100, 300);
+    frame();
+  };
+  render();  // not pumpToRender: its passes would free the latch
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_FALSE(logHas("dropped a touch that began")) << "the stale latch dated the fresh tap before the hand-off";
+  EXPECT_TRUE(pump([&] { return logHas("tap for seat 2"); })) << "the first move of the next seat never arrived";
+}
+
+// A contact that goes down after "I'm ready", is seen down by the loop (latched), and lifts during the first frame's
+// push is that seat's move.
+TEST_F(HiddenPassTest, AContactBegunAfterTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsAccepted) {
+  enterHidden();
+  expectHandOff(1);
+  tapReady();
+  ASSERT_EQ(state(), "Playing");
+  ASSERT_TRUE(pumpToRender());
+  fakertos::advance(10);
+  input->holdTouch(CANVAS_X + 100, CANVAS_Y + 300);
+  frame();  // the finger is seen going down, before the first frame is drawn
+  bool ran = false;
+  renderer->onDisplay = [&] {
+    if (ran) return;
+    ran = true;
+    fakertos::advance(20);
+    input->liftTouch();
+    frame();
+  };
+  render();
+  renderer->onDisplay = nullptr;
+  ASSERT_TRUE(ran);
+  EXPECT_FALSE(logHas("dropped a touch that began"));
+  ASSERT_TRUE(pump([&] { return state() == "Result"; })) << "the contact was not that seat's move";
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u);
 }
 
 // A hidden game that logs its setup, so a test can hold the VM there (fakertos::arm(At::Log)) before it has begun the
