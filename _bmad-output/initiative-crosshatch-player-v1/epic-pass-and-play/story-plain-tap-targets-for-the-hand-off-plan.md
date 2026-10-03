@@ -3,7 +3,7 @@ title: 'Plain tap targets for the hand-off'
 type: 'feature'
 ticket: '13'
 created: '2026-10-03'
-status: 'in-review'
+status: 'built'
 baseline_revision: '0438a669ddd1342c334aebecf89eb0a4e097a047'
 route: 'full'
 route_source: 'auto'
@@ -66,6 +66,13 @@ context: ['{project-root}/docs/contributing/touch-and-ui.md', '{project-root}/AG
 - No source or doc names `passScreenShownMs`, `HOME_ACTION_HELD_MS`, `POWER_CLICK_HELD_MS` or `LATE_PASS_MS`.
 
 ## Implementation Notes
+
+Built by a context-free subagent from this plan, then patched once after review pass 1 (four patches: the never-sampled late-contact test, the routing and overlap tests, `game-canvas.md`'s Confirm and Play-again wording, a comment and a re-wrap). One deviation from the plan, kept: `loopHandOff` ignores Confirm in HandOff until the turn seat is named (`named`), because the plan's literal `tapped || confirmed` passed a hand-off that was never drawn and broke `TheHandOffScreenWaitsForTheRoundsFirstTurnSeat`. The tests went in after the source, so there was no red run, except the late-contact test, which was proved red by deleting the back-dating lines.
+
+Verification (2026-10-03, after the patches, one run): host suites 1,620 of 1,620; every `scripts/*_test.py`; `check_layers.py`; `check_upstream_touches.py`; `./bin/clang-format-fix` twice, nothing new; `pio run -e x4pro` and `-e default`; `pio check -e x4pro` at all three defect levels, no defects; `check_flash_budget.py`'s four steps: games on 5,933,712 B, off 5,679,824 B, +253,888 B flash and +784 B static RAM, `objects` clean, which is +20,448 B over the epic base, 448 B over the 20,000 B share the owner raised to 21,000 B the same day. Matrix audit: every row has a test that ran.
+
+Simulator smoke tests (`sim.sh`, x4pro; the simulator does not model refresh time, so it checks the flow, not the latency, which the host tests pin by tapping inside a push): `pass-hidden`, one tap on "I'm ready" reached seat 1's frame; one tap on the frame passed the turn to the banner; one tap on the banner reached the hand-off screen; one tap on "I'm ready" reached seat 2's frame; Confirm did the same at each step; a second tap 118 ms after the banner tap passed the hand-off screen too (the accepted overlap); `pass-open`, solo and pass alternated seats one tap per mark. No `dropped` lines in any of it.
+
 
 ## Plan Change Log
 

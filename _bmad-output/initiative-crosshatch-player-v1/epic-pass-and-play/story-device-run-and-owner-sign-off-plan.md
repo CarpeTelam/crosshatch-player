@@ -3,7 +3,7 @@ title: 'Device run and owner sign-off'
 type: 'chore'
 ticket: '11'
 created: '2026-10-03'
-status: in-progress
+status: done
 ---
 
 # Device run and owner sign-off (entry 11)
@@ -49,11 +49,8 @@ Push times, from the new log lines: the hand-off screen 1,678 ms (`pass-hidden`)
 
 ## Open
 
-- B7.6 run (`pass-store`, two moves under 5 s apart, then sleep at once), or the owner's decision to accept the P4 risk without it.
-- The owner's decision on Finding 1.
-- The owner's answers to P1–P20, the Decision-121 line, and each deferral row (the packet's two tables).
-- The firmware commit and artifact run actually flashed, if the owner wants them recorded.
+None. The owner settled the answer tables, B7.6 and the flash share on 2026-10-03 (epic Notes): P4/P10 are accepted with the sleep-window fix deferred under `## 5.6`, since the owner did not run B7.6. Finding 1 is built as entry 13 (`story-plain-tap-targets-for-the-hand-off-plan.md`) and checked in the simulator, not on the device. The owner chose to merge without further hardware tests.
 
 ## Sign-off
 
-Pending.
+Signed off by the owner on 2026-10-03 by instructing the epic PR to merge after entry 13's verification and a green CI, with no hardware recheck of entry 13.
