@@ -563,8 +563,12 @@ void GameMatchActivity::loopPlaying() {
   // GameTouch drops every edge swipe that is left.
   const GameTouch::Gesture gesture = readGesture();
   GameCore::GameEvent event;
-  if (!awaitingDisplay &&
-      GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event)) {
+  const bool aimed =
+      GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event);
+  if (aimed && awaitingDisplay) {
+    LOG_INF("GAME", "%s: dropped a touch before the frame was on the panel", manifest.id);
+  }
+  if (!awaitingDisplay && aimed) {
     // With the frame on the panel when the loop first saw the finger down (or now, for a contact it never saw down), so
     // the VM drops it if another seat has been drawn since (a pass match). A tap is also back-dated by its touch-only
     // held time (HalGPIO::lastTouchHeldMs; MappedInputManager::getHeldTime answers a button's hold on a pass with a
@@ -676,7 +680,12 @@ void GameMatchActivity::loopHandOff() {
   const auto route = routeTouch(mappedInput);
   const bool confirmed = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   const bool tapped = route && route.event.action == ACTION_PASS;
-  if ((tapped || confirmed) && passScreenShown.load(std::memory_order_acquire) == state) {
+  const bool passScreenUp = passScreenShown.load(std::memory_order_acquire) == state;
+  if ((tapped || confirmed) && !passScreenUp) {
+    LOG_INF("GAME", "%s: dropped a %s on %s, which was not on the panel yet", manifest.id, tapped ? "tap" : "Confirm",
+            MatchLifecycle::name(state));
+  }
+  if ((tapped || confirmed) && passScreenUp) {
     // After the acquire above, which orders render's store of the push's time before it.
     const bool homeKey = !tapped && mappedInput.homeButtonAction() != HomeButtonAction::Ignore;
     const unsigned long held = tapped                          ? gpio.lastTouchHeldMs()
@@ -689,6 +698,9 @@ void GameMatchActivity::loopHandOff() {
       handle(MatchEvent::Tap);
       return;
     }
+    LOG_INF("GAME", "%s: dropped a %s on %s: it began %d ms before the push finished", manifest.id,
+            tapped ? "tap" : "Confirm", MatchLifecycle::name(state),
+            -static_cast<int>(static_cast<int32_t>(began - passScreenShownMs.load(std::memory_order_relaxed))));
   }
   if (state != MatchState::Result) return;
   // Result shows the mover's own frame, which a tap queued behind the move may still change.
@@ -804,7 +816,10 @@ void GameMatchActivity::renderCanvas() {
   // refresh runs after the mutex is released so the VM can publish during it.
   uint32_t taken = frame;  // drawFront's number of the frame it took; this one when there is none
   if (vm->drawFront(renderer, viewport, replay, &taken)) {
+    const auto pushBegan = static_cast<uint32_t>(millis());
     renderer.displayBuffer(replay.refreshMode());
+    LOG_INF("GAME", "%s: frame %u pushed in %u ms", manifest.id, static_cast<unsigned>(taken),
+            static_cast<unsigned>(millis()) - pushBegan);
     panel = Panel::Seat;
     // displayBuffer returns once the panel's refresh has completed (the blocking push), so a touch down before now was
     // made under the frame before this one (frameAt).
@@ -839,6 +854,7 @@ void GameMatchActivity::renderHandOff() {
   }
   handOffHeldBack.store(false);
   handOffSeat = vm->passedTo();
+  const auto pushBegan = static_cast<uint32_t>(millis());
   // No game command: the runtime's own screen on a cleared one (no header, no status strip), so none of the last seat's
   // frame stays on the panel.
   replay.drawBlank(renderer);
@@ -854,6 +870,7 @@ void GameMatchActivity::renderHandOff() {
   // light panel closed, or any other render in HandOff) has nothing of a seat's frame left to clear.
   renderer.displayBuffer(panel == Panel::Blank ? HalDisplay::FAST_REFRESH : HalDisplay::FULL_REFRESH);
   panel = Panel::Blank;
+  LOG_INF("GAME", "%s: hand-off screen pushed in %u ms", manifest.id, static_cast<unsigned>(millis()) - pushBegan);
   // The next seat's frame is drawn on a cleared screen in full.
   viewOnScreen = true;
   // The hand-off screen is on the panel: its button may pass it now (loopHandOff), by a touch or press begun from the
@@ -890,7 +907,10 @@ void GameMatchActivity::renderView(const MatchState state) {
                                               menu ? tr(STR_DIR_DOWN) : "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
+  const auto pushBegan = static_cast<uint32_t>(millis());
   renderer.displayBuffer(state == MatchState::Error ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
+  LOG_INF("GAME", "%s: %s screen pushed in %u ms", manifest.id, MatchLifecycle::name(state),
+          static_cast<unsigned>(millis()) - pushBegan);
   // Seat 0's frame under the Over menu is everyone's, so only a view over another seat's frame counts as one.
   panel = canvas && state != MatchState::Over ? Panel::Seat : Panel::Other;
   // Result's banner is on the panel: a tap begun from the push that first showed it (a repaint keeps that time) may
