@@ -105,15 +105,10 @@ inline Bytes makeZip(const std::vector<Member>& members) {
   return zip;
 }
 
-// An 8-bit grayscale PNG (zlib stored blocks), `gray(x, y)` the value of a pixel. `interlace`
-// only sets the header's flag: the converter refuses on it before it reads any pixel.
-inline Bytes makePng(const int width, const int height, const std::function<uint8_t(int, int)>& gray,
-                     const bool interlace = false) {
-  Bytes raw;
-  for (int y = 0; y < height; ++y) {
-    raw.push_back(0);  // filter: none
-    for (int x = 0; x < width; ++x) raw.push_back(gray(x, y));
-  }
+// A grayscale PNG of `depth` bits per pixel (zlib stored blocks) from its raw rows, each a filter byte (0) and the
+// row's packed samples. `interlace` only sets the header's flag: the converter refuses on it before it reads any pixel.
+inline Bytes grayPngOf(const int width, const int height, const uint8_t depth, const Bytes& raw,
+                       const bool interlace = false) {
   Bytes zlib = {0x78, 0x01};
   size_t at = 0;
   bool last = false;
@@ -145,11 +140,35 @@ inline Bytes makePng(const int width, const int height, const std::function<uint
   Bytes ihdr;
   putBE32(ihdr, static_cast<uint32_t>(width));
   putBE32(ihdr, static_cast<uint32_t>(height));
-  ihdr.insert(ihdr.end(), {8, 0, 0, 0, static_cast<uint8_t>(interlace ? 1 : 0)});
+  ihdr.insert(ihdr.end(), {depth, 0, 0, 0, static_cast<uint8_t>(interlace ? 1 : 0)});
   chunk("IHDR", ihdr);
   chunk("IDAT", zlib);
   chunk("IEND", {});
   return png;
+}
+
+// An 8-bit grayscale PNG (zlib stored blocks), `gray(x, y)` the value of a pixel. `interlace`
+// only sets the header's flag: the converter refuses on it before it reads any pixel.
+inline Bytes makePng(const int width, const int height, const std::function<uint8_t(int, int)>& gray,
+                     const bool interlace = false) {
+  Bytes raw;
+  for (int y = 0; y < height; ++y) {
+    raw.push_back(0);  // filter: none
+    for (int x = 0; x < width; ++x) raw.push_back(gray(x, y));
+  }
+  return grayPngOf(width, height, 8, raw, interlace);
+}
+
+// A 1-bit grayscale PNG of one colour, all white or all black: an eighth of an 8-bit one's bytes, so a page-sized
+// image (480 x 800) fits a package member, which stored blocks of 8-bit pixels would not.
+inline Bytes bilevelPng(const int width, const int height, const bool white) {
+  const size_t rowBytes = (static_cast<size_t>(width) + 7) / 8;
+  Bytes raw;
+  for (int y = 0; y < height; ++y) {
+    raw.push_back(0);  // filter: none
+    raw.insert(raw.end(), rowBytes, white ? 0xFF : 0x00);
+  }
+  return grayPngOf(width, height, 1, raw);
 }
 
 inline Bytes solidPng(const int width, const int height, const uint8_t value) {

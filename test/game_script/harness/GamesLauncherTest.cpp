@@ -10,14 +10,17 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "GamePaths.h"
+#include "GameRegistry.h"
 #include "GameRowIcon.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
+#include "LauncherSupport.h"
 #include "MatchSupport.h"
-#include "activities/games/GameMatchActivity.h"
+#include "RemoveScript.h"
 #include "activities/games/GamesLauncherActivity.h"
 #include "util/ButtonNavigator.h"
 
@@ -144,6 +147,7 @@ class ListTest : public match::ScreenTest {
   void SetUp() override {
     ScreenTest::SetUp();
     installerscript::reset();
+    removescript::reset();
     hostcaps::reset();
     GamesLauncherActivity::forgetOpenedGame();  // the launcher remembers the game it opened: each test starts fresh
     ButtonNavigator::setMappedInputManager(*input);
@@ -161,15 +165,13 @@ class ListTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
-  // The match the list opened goes as the manager would let it go.
+  // A match left in the manager's record goes as the manager would let it go. (Since entry 8 no case here starts one:
+  // a row opens the game's title screen, which openedTitle lets go.)
   void dropMatch() {
     for (auto& replacement : activityManager.replacements) {
-      if (!replacement) continue;
-      if (replacement.get() == entered) activityManager.exitHolding(*replacement);
-      activityManager.destroyHolding(replacement);
+      if (replacement) activityManager.destroyHolding(replacement);
     }
     activityManager.replacements.clear();
-    entered = nullptr;
   }
 
   // ---- the card ----
@@ -266,19 +268,11 @@ class ListTest : public match::ScreenTest {
     return found;
   }
 
-  // Runs the match the list replaced itself with, so the game it was given is the one that starts.
-  GameMatchActivity* enterReplacement() {
-    if (activityManager.replacements.empty()) return nullptr;
-    auto* match = dynamic_cast<GameMatchActivity*>(activityManager.replacements.back().get());
-    if (match) {
-      match->onEnter();
-      entered = match;
-    }
-    return match;
-  }
+  // The title screen the last row opened pushed, entered, drawn, and let go (LauncherSupport.h): its header, the game's
+  // name.
+  std::string openedTitle() { return launcher::openedTitle(*list); }
 
   std::unique_ptr<GamesLauncherActivity> list;
-  Activity* entered = nullptr;  // the replacement enterReplacement() started, which needs its onExit
 };
 
 // ---- opening: the inbox first, then the installed games (## 4.4: GamesLauncherActivity's filters) ----
@@ -341,6 +335,71 @@ TEST_F(ListTest, AConfirmOrATapOnAnEmptyListDoesNothing) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+}
+
+// The registry sizes its Entry[] to the folders it found. Entry holds no member with a destructor, so new[] asks for
+// exactly count * sizeof(Entry) (no array cookie), which is the size the two cases below make fail.
+static_assert(std::is_trivially_destructible_v<GameRegistry::Entry>);
+
+// A load that runs out of memory lists nothing, as an empty card does, but says why: "No games found" would tell a
+// person whose games are on the card that they are gone. The registry logs the allocation that failed.
+TEST_F(ListTest, ARegistryLoadThatRunsOutOfMemoryIsReportedNotShownAsNoGames) {
+  addGame("alpha", "Alpha");
+  addGame("bravo", "Bravo");
+  oom::failSize = 2 * sizeof(GameRegistry::Entry);
+  open();
+  EXPECT_TRUE(logHas("OOM: manifest reader"));
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_OUT_OF_MEMORY))) << ui().joined();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_EMPTY)));
+  EXPECT_FALSE(ui().drewLine("Alpha"));
+  input->click(Button::Confirm);
+  frame();
+  input->tap(240, 300);
+  frame();
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+
+  // With the memory back, the next visit lists the games again.
+  oom::failSize = 0;
+  reopen();
+  EXPECT_TRUE(ui().drewLine("Alpha"));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_OUT_OF_MEMORY)));
+}
+
+// The listing is read again after a remove; a reload that runs out of memory is reported the same way.
+TEST_F(ListTest, AReloadAfterARemoveThatRunsOutOfMemoryIsReported) {
+  removescript::script().onRemove = [] {
+    // What the real remove does to the card: the marker, then the folder.
+    for (const char* file : {".pkg", "manifest.json", "main.lua"})
+      fakesd::removeEntry(std::string("/.games/bravo/") + file);
+    fakesd::removeEntry("/.games/bravo");
+  };
+  addGame("alpha", "Alpha");
+  addGame("bravo", "Bravo");
+  addGame("charlie", "Charlie");
+  open();
+  const screen::DrawnText* bravo = nullptr;
+  for (const screen::DrawnText& drawn : ui().drawn)
+    if (drawn.text == "Bravo") bravo = &drawn;
+  ASSERT_NE(bravo, nullptr) << ui().joined();
+  input->longPress(bravo->rect.x + bravo->rect.width / 2, bravo->rect.y + bravo->rect.height / 2);
+  frame();
+  render();
+  oom::failSize = 2 * sizeof(GameRegistry::Entry);  // the two folders left after the remove
+  tapRow(tr(STR_GAMES_REMOVE));
+  EXPECT_EQ(removescript::script().ids, std::vector<std::string>{"bravo"});
+  EXPECT_TRUE(logHas("OOM: manifest reader"));
+  render();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_OUT_OF_MEMORY))) << ui().joined();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_EMPTY)));
+  EXPECT_FALSE(ui().drewLine("Alpha"));
+  input->click(Button::Confirm);
+  frame();
+  input->tap(240, 300);
+  frame();
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
 }
 
 TEST_F(ListTest, GamesAreListedByNameWhateverOrderTheFoldersAreIn) {
@@ -379,9 +438,7 @@ TEST_F(ListTest, OnlyAFolderWithAValidPkgAndAManifestOfItsOwnIdIsListed) {
   EXPECT_TRUE(logHas("Found 1 games"));
   // Opening the only row opens Good, not one of the folders that were skipped.
   tapRow("Good");
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started good"));
+  EXPECT_EQ(openedTitle(), "Good");
 }
 
 // ---- a game this host cannot start (R7): listed, with its reason, and never started ----
@@ -395,6 +452,7 @@ std::string lineAfter(const screen::RecordingTarget& target, const std::string& 
 
 // ## 4.4 (the host-caps item): what Manifest::check says about a game is on its row; it is not left off the list.
 TEST_F(ListTest, AGameThisHostCannotStartIsListedWithItsOwnReasonAndDoesNotStart) {
+  hostcaps::script().pass = false;  // a host without pass, so a pass-only game has no mode here
   addGame("solo-game", "SoloGame");
   addGame("too-new", "TooNew", "\"solo\"", 2);                     // api 2 on an api 1 host
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);           // no pass capability on this host
@@ -404,12 +462,12 @@ TEST_F(ListTest, AGameThisHostCannotStartIsListedWithItsOwnReasonAndDoesNotStart
   const std::vector<std::string> all{"SoloGame", "TooNew", "PassOnly", "TooManySeats", "BadSolo"};
   const std::vector<std::string> byName{"BadSolo", "PassOnly", "SoloGame", "TooManySeats", "TooNew"};
   ASSERT_EQ(rows(all), byName) << "every registry game is a row, in the registry's order";
-  // Each reason is under its own game, and the game that can start has none: the next line is the next name.
+  // Each reason is under its own game, in place of the modes line the game that can start has.
   EXPECT_EQ(lineAfter(ui(), "TooNew"), tr(STR_GAMES_UNAVAILABLE_NEWER));
   EXPECT_EQ(lineAfter(ui(), "TooManySeats"), tr(STR_GAMES_UNAVAILABLE_SEATS));
   EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_UNAVAILABLE_MODE));
   EXPECT_EQ(lineAfter(ui(), "BadSolo"), tr(STR_GAMES_UNAVAILABLE_INVALID));
-  EXPECT_EQ(lineAfter(ui(), "SoloGame"), "TooManySeats");
+  EXPECT_EQ(lineAfter(ui(), "SoloGame"), tr(STR_GAMES_MODE_SOLO));
   // The reason is logged for each one, from the check's own verdict.
   EXPECT_TRUE(logHas("Unavailable too-new: "));
   EXPECT_TRUE(logHas("Unavailable pass-only: "));
@@ -426,6 +484,7 @@ TEST_F(ListTest, AGameWrittenForAnOlderApiThanTheHostKeepsSaysSo) {
   EXPECT_TRUE(logHas("Unavailable old-game: "));
   tapRow("OldGame");
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
@@ -435,6 +494,7 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
   tapRow("TooNew");
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_TRUE(logHas("Not starting too-new: "));
 
   // The tap moved the selection to TooNew; Confirm acts on it.
@@ -442,37 +502,36 @@ TEST_F(ListTest, AnUnavailableRowIsNotStartedByATapOrByConfirm) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_EQ(activityManager.asks.goHome, 0) << "the row's own screen stays up";
 
   // The available row beside it still opens.
   tapRow("Alpha");
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started alpha"));
+  EXPECT_EQ(openedTitle(), "Alpha");
 }
 
 // ## 4.8 (the mode-step item), resolved by entry 9: a game whose check is Ok has a mode to start, so with `pass` on a
-// pass-only game is listed without a reason and opens (straight to the match: one mode), and a game that offers solo
-// and pass opens the mode picker. ModePickerTest.cpp tests the picker itself.
-TEST_F(ListTest, AGameOnlyAnotherModeCanStartOpensItsMatchAndAGameWithTwoModesOpensThePicker) {
+// pass-only game is listed without a reason. Since entry 7 of epic-pass-and-play every row of a game the host can
+// start, one mode or two, opens the game's title screen, which ModePickerTest.cpp tests. Since entry 12 its second line
+// names the modes this host can start.
+TEST_F(ListTest, AGameOnlyAnotherModeCanStartHasNoReasonAndEveryStartableRowOpensItsTitleScreen) {
   hostcaps::script().pass = true;
   addGame("pass-only", "PassOnly", "\"pass\"", 1, 2, 2);
   addGame("solo-and-pass", "SoloAndPass", "\"solo\",\"pass\"", 1, 1, 2);
   open();
   const std::vector<std::string> expected{"PassOnly", "SoloAndPass"};
   EXPECT_EQ(rows({"PassOnly", "SoloAndPass"}), expected);
-  EXPECT_EQ(lineAfter(ui(), "PassOnly"), "SoloAndPass") << "a game the host can start has no reason under it";
-  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"), "");
+  EXPECT_EQ(lineAfter(ui(), "PassOnly"), tr(STR_GAMES_MODE_PASS)) << "its modes line, no reason";
+  EXPECT_EQ(lineAfter(ui(), "SoloAndPass"),
+            std::string(tr(STR_GAMES_MODE_SOLO)) + " \xC2\xB7 " + tr(STR_GAMES_MODE_PASS));
   tapRow("PassOnly");
-  ASSERT_EQ(activityManager.replacements.size(), 1u) << "one mode: the match, without a picker";
-  EXPECT_EQ(activityManager.asks.pushed, 0);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started pass-only"));
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_EQ(openedTitle(), "PassOnly") << "one mode: its title screen";
   reopen();
   tapRow("SoloAndPass");
-  EXPECT_TRUE(activityManager.replacements.empty()) << "two modes: the picker first";
   EXPECT_EQ(activityManager.asks.pushed, 1);
-  EXPECT_FALSE(logHas("Started solo-and-pass"));
+  EXPECT_EQ(openedTitle(), "SoloAndPass") << "two modes: its title screen too";
+  EXPECT_TRUE(activityManager.replacements.empty()) << "no match until a choice on the title screen";
 }
 
 // ---- paging (R7): the list pages past one screen ----
@@ -515,8 +574,7 @@ TEST_F(ListTest, ManyGamesPageAndEveryDrawnRowDrawsOneIcon) {
   EXPECT_TRUE(ui().drewLine("Game 25"));
   // The rows on the last page open the game they name.
   tapRow("Game 25");
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  EXPECT_TRUE(activityManager.replacements.back() != nullptr);
+  EXPECT_EQ(openedTitle(), "Game 25");
 }
 
 TEST_F(ListTest, PageKeysMoveTheSelectionPastTheFirstScreen) {
@@ -537,9 +595,7 @@ TEST_F(ListTest, PageKeysMoveTheSelectionPastTheFirstScreen) {
   EXPECT_FALSE(ui().drewLine("Game 01"));
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-25"));
+  EXPECT_EQ(openedTitle(), "Game 25");
 }
 
 // Retro deferral 4.10: the held-button paths. A button held past ButtonNavigator's start (500 ms) steps by a whole page
@@ -596,9 +652,7 @@ TEST_F(ListTest, ANextKeyHeldPagesTheListAndItsReleaseIsNotOneStepMore) {
   frame();
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01"));
+  EXPECT_EQ(openedTitle(), "Game 01");
 }
 
 // A list of two games: a held key steps through the games alone, wrapping from the last game to the first, and never
@@ -620,9 +674,7 @@ TEST_F(ListTest, AKeyHeldOverAShortListWrapsWithinTheGames) {
   frame();
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01"));
+  EXPECT_EQ(openedTitle(), "Game 01") << "Confirm opened nothing: the selection was on a blank row";
 }
 
 TEST_F(ListTest, APreviousKeyHeldFromTheFirstGameWrapsToTheLastGame) {
@@ -637,9 +689,7 @@ TEST_F(ListTest, APreviousKeyHeldFromTheFirstGameWrapsToTheLastGame) {
   frame();
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u) << "Confirm opened nothing: the selection was on a blank row";
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-02"));
+  EXPECT_EQ(openedTitle(), "Game 02") << "Confirm opened nothing: the selection was on a blank row";
 }
 
 // ---- the row icon (R7, AD-24): icon.bmp, else the manifest icon in its weight, else game-controller ----
@@ -727,7 +777,7 @@ TEST_F(ListTest, WhenTheIconCacheCannotBeAllocatedTheRowsUseLibraryIcons) {
   EXPECT_EQ(ui().bitmapsDrawn[1].data, libraryRows("boat", false));
   EXPECT_TRUE(logHas("Icon for a-first: library dice-six fill"));
   tapRow("B Second");
-  EXPECT_EQ(activityManager.replacements.size(), 1u) << "the row still opens";
+  EXPECT_EQ(openedTitle(), "B Second") << "the row still opens";
 }
 
 TEST_F(ListTest, WhenTheSlotArrayCannotBeAllocatedTheRowsUseLibraryIcons) {
@@ -764,21 +814,22 @@ TEST_F(ListTest, IconBmpIsReadOncePerVisitNotOncePerFrame) {
   EXPECT_EQ(ui().bitmaps, 1);
 }
 
-// ---- opening a game: a tap or Confirm replaces the list with the match (## 4.4: the tracer item) ----
+// ---- opening a game: a tap or Confirm pushes the game's title screen (## 4.4: the tracer item) ----
 
-TEST_F(ListTest, ATapOnARowReplacesTheListWithThatGamesMatch) {
+TEST_F(ListTest, ATapOnARowPushesThatGamesTitleScreen) {
   installFixtureWithPkg("tracer");
   installFixtureWithPkg("timer");
   open();
   ASSERT_TRUE(ui().drewLine("Timer"));
   ASSERT_TRUE(ui().drewLine("Tracer"));
   tapRow("Tracer");
-  EXPECT_EQ(activityManager.asks.replaced, 1);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr) << "what the list opens is a GameMatchActivity";
-  EXPECT_TRUE(logHas("Started tracer"));
-  EXPECT_FALSE(logHas("Started timer"));
+  EXPECT_EQ(activityManager.asks.pushed, 1) << "pushed, so Back returns to the list as it was";
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "no match until a choice on the title screen";
+  EXPECT_EQ(openedTitle(), "Tracer");
   EXPECT_EQ(activityManager.asks.goHome, 0);
+  render();  // Back from the title screen: the list as it was
+  EXPECT_TRUE(ui().drewLine("Timer"));
+  EXPECT_TRUE(ui().drewLine("Tracer"));
 }
 
 TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelection) {
@@ -794,19 +845,14 @@ TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelectio
   frame();
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started timer"));  // 0 -> 1 -> 2 -> 1
+  EXPECT_EQ(openedTitle(), "Timer");  // 0 -> 1 -> 2 -> 1
 
   // Confirm with nothing moved opens the first row (of a launcher that has no game to return to).
-  fakelog::clearLines();
   GamesLauncherActivity::forgetOpenedGame();
   reopen();
   input->click(Button::Confirm);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started counter"));
+  EXPECT_EQ(openedTitle(), "Counter");
 }
 
 // ---- Back goes Home (## 3.6's neighbour: the tab the list is opened from is the row Home reselects) ----
@@ -858,6 +904,7 @@ TEST_F(ListTest, ConfirmAndATapAlsoDismissTheNoteWithoutOpeningARow) {
   frame();
   EXPECT_TRUE(activityManager.replacements.empty())
       << "the Confirm that dismisses the note must not open the game under it";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   render();
   EXPECT_EQ(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
 
@@ -865,6 +912,7 @@ TEST_F(ListTest, ConfirmAndATapAlsoDismissTheNoteWithoutOpeningARow) {
   ASSERT_NE(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
   tapRow("Alpha");  // a tap on the row under the note dismisses the note; it does not open the row
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   render();
   EXPECT_EQ(flat(ui().joined()).find(tr(STR_GAMES_INSTALL_BAD_CRC)), std::string::npos);
 }
@@ -1252,7 +1300,29 @@ TEST_F(ListTest, NoFailureShowsNoNote) {
   installerscript::script().report.installed = 1;
   addGame("alpha", "Alpha");
   open();
-  EXPECT_EQ(ui().drawn.size(), 1u) << ui().joined();  // just the one row
+  const std::vector<std::string> row{"Alpha", tr(STR_GAMES_MODE_SOLO)};
+  std::vector<std::string> drawn;
+  for (const screen::DrawnText& line : ui().drawn) drawn.push_back(line.text);
+  EXPECT_EQ(drawn, row) << "just the one row, its name and modes line";
+}
+
+// Row 9 of entry 3's changes (DESIGN.md, Launcher game row): the second line of a game this host can start names the
+// modes it can start here, in solo, pass, nearby order, joined by " · ", from the manifest's check; a mode the manifest
+// lists that this host cannot start (nearby with no radio, pass with no pass) is not named.
+TEST_F(ListTest, TheModesLineNamesTheModesThisHostCanStartInOrder) {
+  hostcaps::script().pass = true;
+  addGame("all-three", "AllThree", "\"nearby\",\"pass\",\"solo\"", 1, 1, 2);
+  addGame("pass-nearby", "PassNearby", "\"pass\",\"nearby\"", 1, 2, 2);
+  open();
+  const std::string dot = " \xC2\xB7 ";
+  EXPECT_EQ(lineAfter(ui(), "AllThree"), std::string(tr(STR_GAMES_MODE_SOLO)) + dot + tr(STR_GAMES_MODE_PASS))
+      << "no nearby: the host has no radio";
+  EXPECT_EQ(lineAfter(ui(), "PassNearby"), tr(STR_GAMES_MODE_PASS));
+  hostcaps::script().pass = false;
+  reopen();
+  EXPECT_EQ(lineAfter(ui(), "AllThree"), tr(STR_GAMES_MODE_SOLO));
+  EXPECT_EQ(lineAfter(ui(), "PassNearby"), tr(STR_GAMES_UNAVAILABLE_MODE))
+      << "a game with no mode here gives its reason";
 }
 
 // Every Error the installer can report reads as its own words (reasonText): a swapped label would

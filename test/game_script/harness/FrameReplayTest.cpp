@@ -407,6 +407,20 @@ TEST_F(FrameReplayTest, AFrameIdenticalToTheOneOnScreenIsNotDrawnAgain) {
   EXPECT_EQ(replay.refreshMode(), HalDisplay::FAST_REFRESH);
 }
 
+// A hidden pass match's blank (epic-pass-and-play entry 12): a cleared screen and nothing else, no icon, and the next
+// frame drawn in full even when it is the one drawn before it.
+TEST_F(FrameReplayTest, TheBlankIsAPlainWhiteScreenAndForcesTheNextFrameInFull) {
+  ASSERT_TRUE(list.appendRect(1, 1, 4, 4, Color::Black, true));
+  ASSERT_TRUE(draw());
+  renderer.forget();
+  replay.drawBlank(renderer);
+  ASSERT_EQ(renderer.calls.size(), 1u) << "the blank drew more than a cleared screen";
+  EXPECT_EQ(renderer.calls[0].kind, GfxRenderer::Kind::ClearScreen);
+  expectScreen([](int, int) { return Px::PixelWhite; });
+  EXPECT_TRUE(draw()) << "the frame on screen before the blank was skipped as unchanged";
+  EXPECT_EQ(replay.refreshMode(), HalDisplay::FULL_REFRESH);
+}
+
 TEST_F(FrameReplayTest, TheCanvasIsTheScreenLessTheBezelInsets) {
   renderer.setInsets(1, 2, 3, 4);  // top, right, bottom, left
   const GameViewport v = GameViewport::forRenderer(renderer);

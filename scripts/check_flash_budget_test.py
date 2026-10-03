@@ -350,8 +350,8 @@ class CompareTest(unittest.TestCase):
         )
         return proc.returncode, proc.stdout + proc.stderr
 
-    def test_default_limit_is_250_kib_in_bytes(self):
-        self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 256000)
+    def test_default_limit_is_270_kib_in_bytes(self):
+        self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 276480)
 
     def test_workflow_limit_matches_the_script_default(self):
         workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml'
@@ -370,12 +370,12 @@ class CompareTest(unittest.TestCase):
         self.assertIn('Within budget', text)
 
     def test_exact_limit_passes(self):
-        self.put('on', 1_256_000, ON_DEFINES)
+        self.put('on', 1_276_480, ON_DEFINES)
         self.put('off', 1_000_000, OFF_DEFINES)
         self.assertEqual(self.run_compare(), 0)
 
     def test_over_budget_fails(self):
-        self.put('on', 1_256_001, ON_DEFINES)
+        self.put('on', 1_276_481, ON_DEFINES)
         self.put('off', 1_000_000, OFF_DEFINES)
         self.assertEqual(self.run_compare(), 1)
         self.assertIn('Over budget** by 1 B', self.summary.read_text())

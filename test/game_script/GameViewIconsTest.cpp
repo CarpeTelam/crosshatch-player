@@ -15,10 +15,12 @@ using GameCore::MatchState;
 namespace {
 
 constexpr MatchState ALL_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Paused,
-                                     MatchState::Over,     MatchState::Error,   MatchState::Leaving};
-constexpr MatchEvent ALL_EVENTS[] = {MatchEvent::Started,   MatchEvent::Back,        MatchEvent::Home,
-                                     MatchEvent::Resume,    MatchEvent::Leave,       MatchEvent::RoundOver,
-                                     MatchEvent::PlayAgain, MatchEvent::ScriptError, MatchEvent::ForcedExit};
+                                     MatchState::Over,     MatchState::Error,   MatchState::Leaving,
+                                     MatchState::Result,   MatchState::HandOff};
+constexpr MatchEvent ALL_EVENTS[] = {MatchEvent::Started,     MatchEvent::Back,        MatchEvent::Home,
+                                     MatchEvent::Resume,      MatchEvent::Leave,       MatchEvent::RoundOver,
+                                     MatchEvent::PlayAgain,   MatchEvent::ScriptError, MatchEvent::ForcedExit,
+                                     MatchEvent::TurnChanged, MatchEvent::Tap};
 
 bool inLibrary(const char* name) { return name && GameIcons::find(name, std::strlen(name)) >= 0; }
 
@@ -93,13 +95,17 @@ TEST(GameViewIconsTest, StatesWithNoViewAndNonMenuEventsHaveNoIcon) {
   EXPECT_EQ(GameViewIcons::forView(MatchState::Starting), nullptr);
   EXPECT_EQ(GameViewIcons::forView(MatchState::Playing), nullptr);
   EXPECT_EQ(GameViewIcons::forView(MatchState::Leaving), nullptr);
+  EXPECT_EQ(GameViewIcons::forView(MatchState::Result), nullptr) << "the Result banner has no icon";
+  // The hand-off screen shows the game's handoff.bmp, title.bmp, or own icon (GamePicture), never a library icon such
+  // as the eye-closed one it showed before entry 12 (DESIGN.md hand-off-screen: "No eye-closed icon").
+  EXPECT_EQ(GameViewIcons::forView(MatchState::HandOff), nullptr) << "the hand-off screen has no library icon";
   int nonMenu = 0;
   for (const MatchEvent event : ALL_EVENTS) {
     if (isMenuChoice(event)) continue;
     ++nonMenu;
     EXPECT_EQ(GameViewIcons::forOption(event), nullptr) << MatchLifecycle::name(event);
   }
-  EXPECT_EQ(nonMenu, 5);
+  EXPECT_EQ(nonMenu, 7);
 }
 
 TEST(GameViewIconsTest, RowIconInsetIsTheRowsVerticalMargin) {

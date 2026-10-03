@@ -48,7 +48,7 @@ list(REMOVE_ITEM MATCH_EXCLUDE_GAMES GameVM.cpp GameClock.cpp GameRandom.cpp)
 # GameArena.cpp is built from screen_stubs/GameArenaDouble.cpp: the same, with a reserve a test can shrink.
 list(APPEND MATCH_EXCLUDE_GAMES GameArena.cpp)
 set(MATCH_EXCLUDE_ACTIVITIES ${HARNESS_EXCLUDE_ACTIVITIES})
-list(REMOVE_ITEM MATCH_EXCLUDE_ACTIVITIES GameMatchActivity.cpp)
+list(REMOVE_ITEM MATCH_EXCLUDE_ACTIVITIES GameMatchActivity.cpp GameSplashLayout.cpp)
 # The launcher is built by games_launcher.cmake (entry 8); never here, whatever the shared list says.
 list(APPEND MATCH_EXCLUDE_ACTIVITIES GamesLauncherActivity.cpp)
 harness_game_sources(MATCH_SOURCES
@@ -87,9 +87,13 @@ target_link_libraries(game_match_src PUBLIC
 
 add_executable(GameMatchHarnessTest
   GameVmTest.cpp
-  GameMatchTest.cpp)
+  GameMatchTest.cpp
+  CopiedConstantsTest.cpp)
 target_compile_definitions(GameMatchHarnessTest PRIVATE
   # The fixture games (tracer, timer, counter, bad-image) the tests play.
-  MATCH_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures")
+  MATCH_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures"
+  # Read at run time by CopiedConstantsTest: the sources of the constants GameMatchActivity.h copies.
+  INPUT_MANAGER_HEADER_PATH="${REPO_ROOT}/freeink-sdk/libs/hardware/InputManager/include/InputManager.h"
+  MAIN_CPP_PATH="${REPO_ROOT}/src/main.cpp")
 target_link_libraries(GameMatchHarnessTest PRIVATE game_match_src GTest::gtest_main)
 gtest_discover_tests(GameMatchHarnessTest)

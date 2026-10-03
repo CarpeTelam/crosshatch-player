@@ -16,7 +16,7 @@ namespace {
 // Fields in order: api, minApi, maxSeats, nearby, pass.
 constexpr HostCaps HOST{3, 2, 2, false, true};
 constexpr HostCaps NEARBY_HOST{3, 2, 2, true, true};
-// What the firmware reports today: no match can run a pass game.
+// A host without Pass and Play (the firmware turned it on in epic-pass-and-play entry 1).
 constexpr HostCaps NO_PASS_HOST{3, 2, 2, false, false};
 
 Manifest game(const int32_t api, const int32_t seatsMin, const int32_t seatsMax, const uint8_t modes) {
@@ -78,6 +78,30 @@ TEST(ManifestCheckTest, NearbyNeedsSeatsMaxTwo) {
   EXPECT_TRUE(game(2, 1, 2, Manifest::MODE_NEARBY).check(NEARBY_HOST).ok());
   expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_NEARBY).check(NEARBY_HOST), CheckStatus::Invalid,
                 CheckReason::NearbyNeedsTwoSeats);
+}
+
+TEST(ManifestCheckTest, PassNeedsSeatsMaxTwo) {
+  // A pass match has at least two seats, so a manifest offering pass with one is broken.
+  expectVerdict(game(2, 1, 1, Manifest::MODE_PASS).check(HOST), CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST), CheckStatus::Invalid,
+                CheckReason::NearbyNeedsTwoSeats);
+  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY).check(NEARBY_HOST),
+                CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+  const CheckResult passOnly = game(2, 1, 2, Manifest::MODE_PASS).check(HOST);
+  EXPECT_TRUE(passOnly.ok());
+  EXPECT_EQ(passOnly.modes, Manifest::MODE_PASS);
+  const CheckResult soloAndPass = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST);
+  EXPECT_TRUE(soloAndPass.ok());
+  EXPECT_EQ(soloAndPass.modes, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+  // Invalid wins over a host without pass: the package is broken wherever it goes.
+  expectVerdict(game(2, 1, 1, Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Invalid,
+                CheckReason::NearbyNeedsTwoSeats);
+  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Invalid,
+                CheckReason::NearbyNeedsTwoSeats);
+}
+
+TEST(ManifestCheckTest, TheSeatRuleSaysItCoversPassAndNearby) {
+  EXPECT_STREQ(GameCore::describe(CheckReason::NearbyNeedsTwoSeats), "pass and nearby need seats.max 2 or more");
 }
 
 TEST(ManifestCheckTest, NearbyOnlyWithoutTheRadioIsUnavailable) {
@@ -155,6 +179,20 @@ TEST(ManifestCheckTest, BrokenFieldsAreInvalid) {
   Manifest unterminatedIcon = solo();
   std::memset(unterminatedIcon.icon, 'x', sizeof(unterminatedIcon.icon));
   expectVerdict(unterminatedIcon.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  // default_mode is one of the modes, one bit; settingsCount at most MAX_SETTINGS.
+  Manifest otherDefault = solo();
+  otherDefault.defaultMode = Manifest::MODE_PASS;
+  expectVerdict(otherDefault.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest twoDefaults = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+  twoDefaults.defaultMode = Manifest::MODE_SOLO | Manifest::MODE_PASS;
+  expectVerdict(twoDefaults.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest tooManySettings = solo();
+  tooManySettings.settingsCount = Manifest::MAX_SETTINGS + 1;
+  expectVerdict(tooManySettings.check(HOST), CheckStatus::Invalid, CheckReason::BadFields);
+  Manifest fine = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS);
+  fine.defaultMode = Manifest::MODE_PASS;
+  fine.settingsCount = Manifest::MAX_SETTINGS;
+  EXPECT_TRUE(fine.check(HOST).ok());
 }
 
 TEST(ManifestCheckTest, InvalidWinsOverUnavailable) {

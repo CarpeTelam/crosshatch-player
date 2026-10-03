@@ -1,10 +1,10 @@
 #pragma once
 
-// A fake SD card for the src/games harness, grown from save_store_stubs/HalStorage.h:
-// files and folders in creation order (so a folder lists as a FAT one does), the
-// calls the game code makes (open, read, write, rename, remove, removeDir, mkdir,
-// folder listing), and a failure injected per path. It follows SdFat where the game
-// code can tell:
+// The one fake SD card of the src/games host suites, GameSaveStoreTest's included (its
+// own second fake was folded in here, AI-4): files and folders in creation order (so a
+// folder lists as a FAT one does), the calls the game code makes (open, read, write,
+// rename, remove, removeDir, mkdir, folder listing), and a failure injected per path. It
+// follows SdFat where the game code can tell:
 //   - rename refuses an existing target and a target inside the source, and moves a
 //     folder's whole subtree; mkdir fails on a path that exists (O_EXCL);
 //   - a file opens read-only, write-only, or read-write, and a read or write the mode
@@ -12,7 +12,15 @@
 //   - removing while a folder is listed does not skip the entries after it;
 //   - an open file closes when its HalFile is destroyed or assigned over;
 //   - getName returns 0 for a name that does not fit (fakesd::sim().getNameCuts = true
-//     switches to the simulator's, which cuts the name instead).
+//     switches to the simulator's, which cuts the name instead);
+//   - a write that fails (failWriteAt) returns 0 and adds none of its bytes, and the bytes
+//     earlier writes put there stay: FAT32's FatFile::write returns 0 and keeps m_fileSize
+//     from the last whole write (SdFat 2.3.1, FatFile.cpp ~1490-1503), and the close after it
+//     still succeeds, since FatFile::sync does not look at the write error.
+// Where it is more permissive than a card: exFAT's ExFatFile::write raises m_validLength
+// sector by sector, so a failing call can keep the whole sectors it wrote, which the fake
+// does not model; and on the device a small write lands in SdFat's sector cache and may only
+// fail at close(), which failClose stands in for.
 // Paths are exact strings and must be normalised (a leading "/", no trailing "/", no
 // "//"): the fake aborts on one that is not, because SdFat would read it another way.
 // It is case-sensitive, where FAT is not.
@@ -71,6 +79,9 @@ struct Card {
   std::map<std::string, size_t> shortReadAt;
   // A folder's listing ends after `n` entries (0: it lists nothing), as a failing read of it would.
   std::map<std::string, size_t> failListAfter;
+  // A write to the path that would put a byte at offset `n` or later stores nothing and returns 0;
+  // the bytes before it stay (FAT32's FatFile::write, see the header comment).
+  std::map<std::string, size_t> failWriteAt;
 
   // getName: false = SdFat (0 when the name does not fit), true = the simulator's (cut to fit).
   bool getNameCuts = false;
@@ -78,6 +89,12 @@ struct Card {
   // so a test can change the card between a reader's passes.
   std::function<void(const std::string& dir, int rewinds)> onRewind;
   std::map<std::string, int> rewinds;
+  // Called at the start of every open with the path and how many opens it has had (this one included), before the
+  // failures above are read and before the file is looked up: a test can make one open of a file fail (failOpen) or
+  // change the file under it. It stands in for a card fault that comes and goes between two reads of one file (a
+  // transient SD open or read error), and for a file rewritten between them.
+  std::function<void(const std::string& path, int opens)> onOpen;
+  std::map<std::string, int> opens;
 };
 
 inline Card& sim() {
@@ -262,6 +279,9 @@ class HalFile : public Print {
     if (!open || !writable || !entry || entry->isDir) return 0;
     fakesd::sim().ops.push_back("write " + path);
     if (fakesd::sim().failWrite.count(path) != 0) return 0;
+    const auto& tears = fakesd::sim().failWriteAt;
+    const auto tearAt = tears.find(path);
+    if (tearAt != tears.end() && count > 0 && entry->bytes.size() + count > tearAt->second) return 0;
     entry->bytes.insert(entry->bytes.end(), data, data + count);
     return count;
   }
@@ -334,6 +354,8 @@ class HalStorage {
     auto& card = fakesd::sim();
     const bool writing = (oflag & O_ACCMODE) != O_RDONLY;
     card.ops.push_back("open " + p);
+    const int opens = ++card.opens[p];
+    if (card.onOpen) card.onOpen(p, opens);
     if (card.failOpen.count(p) != 0 || (writing && card.failOpenWrite.count(p) != 0)) return HalFile();
     if (p == "/") return writing ? HalFile() : HalFile(p, true, oflag);  // the card's root always exists
     fakesd::Entry* entry = fakesd::find(p);

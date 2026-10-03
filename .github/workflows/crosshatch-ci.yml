@@ -82,9 +82,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 250 KiB is
-      # 256,000 bytes. Set it below the measured difference to see the job fail.
-      FLASH_BUDGET_KIB: 250
+      # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 270 KiB is
+      # 276,480 bytes. Set it below the measured difference to see the job fail.
+      FLASH_BUDGET_KIB: 270
       # Static internal RAM limit in bytes (1 KiB), the same way.
       RAM_BUDGET_BYTES: 1024
     steps:

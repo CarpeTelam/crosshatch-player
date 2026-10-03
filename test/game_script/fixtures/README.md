@@ -17,7 +17,7 @@ cp /tmp/packs/counter.chgame <sd>/games/                                    # fs
 
 `pack_game.py` prints the package hash on its last line and refuses a folder the installer would refuse. A fixture
 packs when it holds only `manifest.json`, `main.lua`, `<name>.lua` files, and `<name>.png` images: `counter/`,
-`gallery/`, `icons/`, `limits/`, `loop/`, `pack-images/`, `slow-restart/`, `timer/`, `timing/`, and `tracer/` do. Three fixtures are **host-only**
+`gallery/`, `icons/`, `limits/`, `loop/`, `pack-images/`, `pass-art/`, `pass-hidden/`, `pass-open/`, `slow-restart/`, `timer/`, `timing/`, and `tracer/` do. Three fixtures are **host-only**
 and cannot be packed as they are: `images/` and `bad-image/` hold `.bmp` files (a package carries `.png`, which the
 installer converts) and `solo/` holds a `screenshots/` folder (a package is flat). The host suites load those from
 here directly.
@@ -41,6 +41,9 @@ in small type), Back must return to Games, and the device must stay responsive.
 | `tracer/` | A move-driven round: the fifth tap below the banner ends it, the end-of-round menu opens, Play again starts a new round. |
 | `slow-restart/` | The tracer's round (three taps) with a slow Play again: every later round's `setup` spins about 2 s on `ch.time.ms()`, so the end-of-round menu stays on screen meanwhile. A tap on the canvas in that gap is dropped: the new round starts at "taps: 0" with no square. Play again, then Back and Resume within the gap: the pause menu stays on screen (inert) until round 2's first frame, never the round-1 board. |
 | `counter/` | `ch.store`: the count survives Leave, reopening, sleep, and a restart. |
+| `pass-open/` | Pass and Play's open match (epic-pass-and-play entry 1): noughts and crosses on a 3 x 3 board, solo or pass. From Games, `pass-open`, Pass: seat 1 (X) sees "Player 1 (X) to move", a tap on a free square places its mark and seat 2's board shows "Player 2 (O) to move"; a tap on a taken square says "That square is taken" to that seat only. A line of three or a full board ends the round: each seat's `input` gets `over` once (logged `over for seat S`; its answer, a move on the centre square, is discarded), and the end-of-round menu sits over the "Everyone: Player N wins" (or "Everyone: a draw") frame, seat 0's. A 10 s `ch.timer` nudges the seat whose turn it is (logged `timer for seat S`); each tap is logged `tap for seat S`, and one after the round's end goes to seat 0. Solo places X and O in turn from seat 1. A pass match writes `resume.bin` as solo does (epic-pass-and-play entry 9), so the title screen offers Continue after Leave. |
+| `pass-hidden/` | Pass and Play's hidden hand-off (epic-pass-and-play entries 4 and 12): a two-seat, pass-only game whose manifest says `hidden`, so no seat sees another's frame. It ships no `icon.png`, `handoff.png`, or `title.png`, so it shows the runtime's defaults. From Games, `pass-hidden`, New game: the hand-off screen (a full refresh), laid out as the title screen with no header: the game's icon (`game-controller`, as on its launcher row) at 128 px centred in the 480 x 480 band, "Player 1's turn" in the first menu row's place, and the "I'm ready" button filling the second's; only that button, or Confirm, shows seat 1's frame ("Player 1", "Player 1's secret: apple", "Moves: 0"), and a tap elsewhere does nothing. A tap on the frame is a move: seat 1's frame stays, with the banner "Tap to pass to player 2" at the bottom; only a tap on the banner, or Confirm, shows the hand-off screen again ("Player 2's turn"), and its button shows seat 2's frame ("Player 2's secret: river"). The round ends after four moves with no winner: the end-of-round menu sits over "Everyone: the secrets were apple and river" (seat 0's frame), and Play again starts on the hand-off screen ("Player 1's turn"). Back or Home in the banner or on the hand-off screen pauses, and Resume returns there; the pause menu from the hand-off screen sits on no frame. A 5 s `ch.timer`, re-armed by each tap, falls due on its own: one that does during a hand-off is held and reaches the next seat after its first frame (logged `timer for seat S`). Each call is logged with its seat (`tap for seat S`, `apply seat S`, `draw for seat S`, `over for seat S`). Only the timer depends on device timing (whether a hand-off takes more than 5 s), so a device run with no `timer for seat` line is no failure; the rest needs no calibration. A pass match writes `resume.bin` as solo does (epic-pass-and-play entry 9), so the title screen offers Continue after Leave, and Continue resumes on the hand-off screen naming the saved turn seat. |
+| `pass-art/` | What a developer controls (epic-pass-and-play entry 12): `title.png` (480 x 480, two rings and a cross in a frame), `handoff.png` (480 x 480 since the owner's hand-off redesign, a ring above a checkerboard in a frame), `default_mode` `pass`, the library icon `spade` (fill), and two settings: Level (`Easy`, `Hard`; default `Hard`) and Board (`Small`, `Medium`, `Large`; no default, so `Small`). A hidden game that also plays solo, seats 1 to 2. `setup` reads `ctx.settings` and every frame prints the mode and both values ("Mode: pass", "Level: Hard", "Board: Small"), so the screen shows what the match was started with. Each seat has a secret only its own frame shows (seat 1 `lantern`, seat 2 `harbour`); a tap is a move, and the round ends after four moves with no winner. The log lines name the seat each call was for (`setup <mode> level <v> board <v>`, `tap for seat S`, `apply seat S`, `draw for seat S`, `over for seat S`). The device run below uses it. |
 | `changed/counter/` | `counter/` at version 1.0.1 with the title "Counter v2": the same id and a different package hash, for installing over `counter` on a device (its save is discarded, its `ch.store` kept). `changed/` only holds such variants, named by the game id they change because the packer needs the folder name to equal the manifest's `id`; pack one with `python3 scripts/pack_game.py test/game_script/fixtures/changed/counter <out>` into an `<out>` other than `counter`'s, or it overwrites `counter.chgame`. `scripts/pack_device_run.py` packs it as `counter-changed.chgame` (see Device-run packages below). |
 | `timer/` | `ch.timer`: three ticks 3 s apart with no input. |
 | `gallery/` | Every drawing command and color; prints the last touch event. |
@@ -119,12 +122,60 @@ While the installer is on the device, also install `test/game_core/package_vecto
 ## Device-run packages
 
 The packages entry 14 puts on a device are never committed. `python3 scripts/pack_device_run.py <dir>` packs them:
-`counter`, `loop`, `timing`, and `pack-images` from here, `changed/counter` as `counter-changed`, the hardening
+`counter`, `loop`, `timing`, and `pack-images` from here, `changed/counter` as `counter-changed`, `pass-open`, `pass-hidden`, `pass-art`, the hardening
 generator's `binary-lua-stored` case as `invalid-binary-lua.chgame` (it must install as `.bad`), and
 `test/game_core/package_vector.chgame`, with a `HASHES.txt` of the hash `pack_game.py` printed for each. On a pull
 request, add the label `package-games`: the `Game packages` job of `.github/workflows/crosshatch-game-packages.yml` runs the
 script and uploads `<dir>` as the artifact `game-packages` (kept 30 days). The job is not a required check and runs
 only with the label; adding another label does nothing there and reruns nothing in `crosshatch-ci.yml`.
+
+## Title screen, Options, and hand-off run
+
+Epic-pass-and-play's device run (entry 11) checks entry 12's screens on an X4 Pro with `pass-art.chgame`,
+`pass-hidden.chgame`, and `counter.chgame` from the packet, and `slow-restart.chgame` (all from `pack_device_run.py`), starting from
+no `/.games-data/pass-art/`. A device that kept an earlier `pass-art` install (its `handoff.png` was 480 x 800, which
+the hand-off screen now skips for `title.bmp`) first removes `pass-art` (a long press on its launcher row) and installs
+the packet's copy. Each step is done once by touch and once with the front buttons alone (Up, Down, Confirm, Back); a
+step that names a tap names the button press too.
+
+1. Games: `pass-art`'s row reads "Solo · Pass and play", `pass-hidden`'s "Pass and play", `counter`'s "Solo".
+2. Open `pass-art`: the header names "Pass art"; the 480 x 480 band under it shows `title.png` (the frame, the two
+   rings, the cross), centred; the rows are New game, "Pass and play · Hard · Small" (selected), and Options. Open
+   `counter`: its icon at 128 px centred in the band, Continue only with a save, New game "Solo", and no Options.
+3. In `pass-art`, Options: Mode "Pass and play", Level "Hard", Board "Small". A tap (or Confirm) on each cycles it:
+   Mode to "Solo" and back, Level to "Easy", Board to "Medium", "Large", and back to "Small". Leave Level "Easy" and
+   Board "Large", then Back: the title screen's Options row is selected and New game reads "Pass and play · Easy ·
+   Large". Back to Games and open `pass-art` again: the same line (the choices are remembered).
+4. New game: the hand-off screen is laid out as the title screen, with no header and no status strip: the band, where
+   the title screen's is, shows `handoff.png` (the frame, the ring above the checkerboard, not `title.png`'s two
+   rings), "Player 1's turn" sits as plain text in the title screen's first two-line row's place, and the "I'm ready"
+   button fills its second two-line row's place (the rows of a title screen with a save, Continue and New game; this
+   one had no save, and its one-line Options row is shorter). A tap on the band or on "Player 1's turn" does nothing. The button (or Confirm) shows
+   seat 1's frame with a full refresh: "Mode: pass", "Level: Easy", "Board: Large".
+5. Tap the frame: seat 1's frame stays, with "Tap to pass to player 2" in a framed banner at the bottom. A tap above
+   the banner does nothing; one tap on it shows the hand-off screen again ("Player 2's turn"), even if it is made while
+   the frame is still refreshing. One tap on "I'm ready" passes it as well, during the hand-off screen's refresh too, and
+   the first move tapped on seat 2's frame while it is still refreshing registers. The banner and the button overlap on
+   the screen by design (the owner accepts that a stray second tap on the banner's spot passes the hand-off). With the
+   buttons: Confirm on the banner and again on the hand-off screen pass each at once. With the power button set to
+   Confirm (Settings, Controls) and its double-click frontlight on, as shipped: click power on the banner (Confirm comes
+   half a second after the click), then once more on the hand-off screen: each passes. Afterwards set the power button
+   back from Confirm.
+6. Press "I'm ready": seat 2's frame. On it, put the device to sleep, once with each Sleep Screen mode (Settings, Display, Sleep Screen:
+   Dark, Light, Custom, Cover, Cover + Custom, None, Quick Resume, Transparent): the screen first goes plain white (no
+   icon, no text, not the page), then shows that sleep screen; the transparent and Quick Resume modes draw over white,
+   never over the seat's frame. Wake: Home. Games, `pass-art`, Continue resumes on the hand-off screen.
+7. Play `pass-art` to the end of the round and choose Play again: the hand-off screen again, and seat 1's new frame
+   still reads "Level: Easy", "Board: Large" (Play again keeps the settings).
+8. Open `pass-hidden`, New game: the hand-off screen with no picture of the game's own: the `game-controller` icon at
+   128 px centred in the band, "Player 1's turn" under it in the first row's place, and "I'm ready" in the second's;
+   after seat 1's move and the banner, "Player 2's turn". Sleep on that screen: plain white first, as in step 6. A
+   copy of `pass-art` without `handoff.png`, `pass-title.chgame` from `pack_device_run.py` (derived, never committed), shows `title.png` in
+   the band instead.
+9. In `slow-restart`, play to the end of the round, choose Play again, then Back at once: the pause menu says
+   "Starting the next round", centred under "Paused".
+10. In `pass-art`, set Options' Mode to "Solo" and Back: New game reads "Solo · Easy · Large"; with the new round's
+    save of step 7 on the card (Leave it from its pause menu), New game asks "Start a new game?", "Solo", "This replaces the saved game.", Cancel focused.
 
 ## Fault bands
 

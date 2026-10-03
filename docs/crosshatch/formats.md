@@ -112,8 +112,11 @@ Every persisted codec blob starts with a 6-byte header (`lib/GameScript/BlobHead
 
 A reader checks, in order, that the header is whole (`truncated`), that the magic is its file's (`bad_magic`), that
 the file version is the one it reads (`unknown_file_version`), and that the codec version is this codec's
-(`unknown_codec_version`). Anything but `ok` is discarded with a log line and never decoded. The file's own fields
-and the codec payload follow at offset 6.
+(`unknown_codec_version`). Anything but `ok` is discarded with a log line and never decoded, with one exception:
+`resume.bin` keeps a save whose file or codec version is newer than this firmware's, as one this host cannot start
+(see [resume.bin](#resumebin)). The file's own fields and the codec payload follow at offset 6. A later layout of
+`resume.bin` keeps this 6-byte header, and a codec-only bump keeps the package hash at its offset, which that rule
+relies on.
 
 ## store.bin
 
@@ -148,50 +151,98 @@ writes it at once, for round end and the match's `onExit()` (AD-17).
 
 ## resume.bin
 
-`/.games-data/<id>/resume.bin` holds the latest snapshot of a solo match, so the match can continue after the device
-sleeps (AD-17). `src/games/GameSaveStore` is its only reader and writer, on the loop task only; the VM task never
-touches Storage (AD-5). It sits beside `store.bin` and is written and read the same way.
+`/.games-data/<id>/resume.bin` holds the latest snapshot of a solo or pass match, so the match can continue after the
+device sleeps (AD-17); a nearby match keeps none. `src/games/GameSaveStore` is its only reader and writer, on the loop
+task only; the VM task never touches Storage (AD-5). It sits beside `store.bin` and is written and read the same way.
 
 | Offset | Size | Field |
 | --- | --- | --- |
 | 0 | 6 | blob header: magic `CHRS` (`43 48 52 53`), file version 1, codec version 1 |
 | 6 | 8 | package hash: the 8 bytes of `.pkg`'s hash (see [`.pkg` and the package hash](#pkg-and-the-package-hash)) |
-| 14 | 1 | mode: 0 (solo) |
-| 15 | 1 | seats saved, n: 1 |
+| 14 | 1 | mode: 0 (solo) or 1 (pass); any other byte is refused as `unknown mode` |
+| 15 | 1 | seats saved, n: 1 for solo; for pass, the match's seat count (2 to 16) |
 | 16 | 2 | ver, unsigned 16-bit, little-endian: the low 16 bits of the Session's ver |
 | 18 | 1 to 1,400 | the snapshot's codec bytes (at most `Codec::SNAPSHOT_LIMIT`) |
 
 The snapshot runs to the end of the file. For the package hash `0530a15766e91bf1`, a save of ver 7 holding
-`{taps = 3}` is `43 48 52 53 01 01 05 30 a1 57 66 e9 1b f1 00 01 07 00 06 00 01 05 04 74 61 70 73 03 06`.
+`{taps = 3}` is `43 48 52 53 01 01 05 30 a1 57 66 e9 1b f1 00 01 07 00 06 00 01 05 04 74 61 70 73 03 06`; the same
+save of a two-seat pass match has `01 02` for its mode and n. The mode bytes are the file's own constants
+(`RESUME_MODE_SOLO`, `RESUME_MODE_PASS`), never `GameCore::Mode`'s values.
 
-**Usable** is what `GameSaveStore::peek(id, pkgHash)` answers `Valid` for, and it is exactly what loading accepts: the
-header checks `ok`, the package hash is the installed package's, the mode is 0 and n is 1, and the snapshot is 1 to
-1,400 bytes that pass `Codec::check` as canonical codec. A file longer than 1,418 bytes is refused before it is read.
-`peek` reads the whole file into a buffer allocated for the call. It answers one of three things:
+The file version stays 1: pass saves added a mode value, not a field, so a solo save from before them is the same bytes
+and still loads. A firmware from before pass saves refuses a pass save as `not a solo save` and keeps the file.
 
-- `Valid`: a Continue row is listed for the game (the launcher calls `peek` once per game when it builds its list);
-- `None`: no file, or one that was read and is not usable (the header status, `other package`, `not a solo save`,
-  `empty snapshot`, `truncated`, `too large`, or the codec's error). One log line names why, at `LOG_ERR`, except a save
-  of another package, which is `LOG_INF` because every launcher build asks again. The file stays, so a save of another
-  package survives until the game's next match replaces it;
+`GameSaveStore::setRoster` tells the store who plays the match, before its first write: a solo roster (the default
+until it is called) writes mode 0 and n 1, a pass roster mode 1 and its seat count, and a nearby roster turns
+`resume.bin` off, so nothing is read, written, or deleted, as without the package hash. A match that resumes a save
+through the new `loadResume` (below) writes the roster it loaded, so a resumed pass match stays a pass save; a
+`setRoster` after that load wins.
+
+Each of `peek` and `loadResume` has two forms. The older ones, `peek(id, pkgHash)` and `loadResume(ver, unreadable)`,
+accept a solo save only; no firmware code calls them (the host suites still do). The newer ones,
+`peek(game, pkgHash, host)` and `loadResume(ver, unreadable, game, host, saved)`, take the game's manifest and the
+host's caps. The game's title screen calls the new `peek` once, when it opens. The match's Continue calls the new
+`loadResume`; when that loads nothing, the match calls `peekResume(game, host)` to learn why (below). `peekResume` is
+the new `peek` for the store's own id and package hash. It reads through the store's buffer, which nothing references
+after a `loadResume` that loaded nothing, so it allocates nothing while the match holds its assets; it never changes the
+store's roster; and it reads nothing without the package hash or with a nearby roster, as `loadResume` does. Both forms
+accept a save that game can start on that host: solo with n 1, or pass with n from max(2, `seats.min`) to the least of
+`seats.max`, the host's `maxSeats`, and 16 (`Roster::MAX_SEATS`), each mode only where `Manifest::check(host)` starts
+it. A pass game with no seat count that fits the host cannot start pass there, so its pass save is `mode not startable`.
+The new `loadResume` gives the saved roster in `saved` (`Roster::solo()` or `Roster::pass(n)`, and `Roster::solo()` when
+it loads nothing).
+
+**Usable** is what `GameSaveStore::peek` answers `Valid` for, and it is exactly what the `loadResume` of the same form
+accepts: the header checks `ok`, the package hash is the installed package's, the mode and n are ones the form accepts
+(above; checked after the package hash, so another package's save is `other package` whatever its mode), and the
+snapshot is 1 to 1,400 bytes that pass `Codec::check` as canonical codec. Of a file longer than 1,418 bytes only the
+fixed part is read. The static `peek` reads the whole file into a buffer allocated for the call. It answers one of four
+things:
+
+- `Valid`: the game's title screen offers its Continue row (the title screen calls `peek` once, when it opens);
+- `Unstartable`: a save of this package that the form, game, or host cannot resume: a well-formed mode or seat count it
+  cannot start (`mode not startable`, `seats not startable`), or a later firmware's save: a mode byte this firmware does
+  not write (`unknown mode`, 2 to 255), a file version above 1 (`newer file version`; its layout is unknown, so its
+  package is not checked: it sits in this game's folder), or, with this package's hash, a codec version above this
+  firmware's (`newer codec version`; another package's save is `other package` whatever its codec version) or a
+  snapshot over 1,400 bytes (`too large`). `newer codec version` and `too large` are checked after the mode and seat
+  count, the codec first: such a save with a `bad seat count` is `None`, one with a mode or seat count this host cannot
+  start is kept under that reason, and one with both a newer codec and an oversized snapshot is `newer codec version`.
+  One `LOG_INF` line says it is kept.
+  The title screen offers no Continue row for it, but it is a save: a New row asks before it replaces it, as over any
+  save;
+- `None`: no file, or one that was read and is not usable for another reason (the header status, an older or garbage
+  version included, `other package`, `bad seat count`, `empty snapshot`, `truncated`, or the codec's error).
+  `bad seat count` is a seat count no save of its mode has (solo n other than 1, pass n below 2 or over 16), a malformed
+  file. One log line names why, at `LOG_ERR`, except a save of another package, which is `LOG_INF` because the title
+  screen asks again each time it opens and the save is not broken. `loadResume` logs these refusals at `LOG_ERR`
+  ("discarded"), and an `Unstartable` save at `LOG_INF`, as kept, as `peek` does. The file stays, so a save of another
+  package, or a malformed one, survives until the game's next match replaces it;
 - `Unreadable`: a file is there and could not be checked, because it would not open (`cannot open`) or read
-  (`cannot read`) or the buffer could not be allocated. A card or heap fault may pass, so it is not `None`: the launcher
-  still lists the Continue row, so that a new match is not the only choice offered over a save that may be good.
+  (`cannot read`) or the buffer could not be allocated, whatever the save's mode. A card or heap fault may pass, so it
+  is not `None`: the title screen still offers the Continue row, so that a new match is not the only choice offered
+  over a save that may be good.
 
-The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`). A save that is
-`None` then starts a new match, since nothing usable is lost. A save it cannot read (`Unreadable`), or that the VM
-refuses although `peek` accepted it, does not: the match shows the error view "The saved match could not be resumed",
-`resume.bin` is untouched, and Back returns to the list, where Continue can be tried again or the game's own row starts a
-new match on purpose. (`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which
-`peek` already excludes, so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a
-valid `.pkg` there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known
-to be this package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view
-rather than play new.
+The match applies the same checks when it starts with `Start::Resume` (`GameSaveStore::loadResume`), and plays the
+roster the save records, whatever roster Continue passed. When `loadResume` loads nothing, the match asks `peekResume`
+why. A `None` save starts a new match, since nothing usable is lost; that match plays the roster Continue passed, the
+title screen's first New row that can start (solo for a game that starts solo). An `Unstartable` save stops the match in
+the error view with its own reason, "This saved game cannot be continued on this device", and `resume.bin` is left as it
+was. So does a save the match cannot read: `Unreadable` from either read, or `Valid` from the second, which means the
+file changed between the two reads. So does a save the VM refuses although `peek` accepted it. Those show the error view
+"The saved match could not be resumed", with `resume.bin` left as it was. Back then goes to Games, where the game's row
+opens its title screen: Continue can be tried again there, and a New row replaces the save on purpose, after asking.
+(`GameVM::setResume` and `Session::restore` refuse only an empty or oversized snapshot, which `peek` already excludes,
+so the VM's refusal cannot happen today; the game's own rules run at its first call, below.) Without a valid `.pkg`
+there is no hash, and a new match neither reads, writes, nor deletes `resume.bin` (a file there is not known to be this
+package's, so entering Over leaves it); a Continue whose `.pkg` will not read stops in the same error view rather than
+play new.
 
 A game that fails on the resumed state (a script error at its first `status` or `draw`) does not delete the save either.
 The failure cannot tell a game that rejects the state, every time, from a transient fault (a callback that runs out of
 heap is a script error too), and deleting on the second would lose a good save. Continue shows the error view again on
-each try until a new match, started from the game's own row, replaces the file with its first snapshot.
+each try until a new match, started from a New row of the game's title screen, replaces the file with its first
+snapshot.
 
 **Writing** is `store.bin`'s: the header and snapshot go to `resume.bin.tmp`, which is closed, then `resume.bin` is
 removed and the tmp renamed over it. A failed write removes the partial tmp and leaves `resume.bin` as it was, a stop
@@ -203,6 +254,57 @@ the failure, Leave and the forced exit included. The match writes only in Playin
 snapshot whose status is not over, and deletes `resume.bin` and its tmp instead when the latest snapshot is over or
 when it enters Over (a finished round never resumes; a delete the card refuses is retried at most every 5 s in Over and Paused, and at Leave and the forced exit regardless, until it succeeds; the forced exit's SD steps stop starting 1,500 ms after it began). Leave keeps the file. The `ver` a resumed match continues from
 is the file's, so a match that has passed 65,535 snapshots wraps in the file (the spine's `u16`) and only there.
+
+## prefs.bin
+
+`/.games-data/<id>/prefs.bin` holds a game's remembered choices on this device (AD-17, as amended 2026-10-02): the mode
+last started and the value chosen for each setting the manifest declares (AD-15). `src/games/GameSaveStore` is its only
+reader and writer (`loadPrefs`, `savePrefs`), on the loop task only, never in `render()` or `onExit()`; the game's
+title screen reads it when it opens and writes it when its Options screen closes with a change and when New game starts
+a mode other than the one the file holds (a missing file holds none), unless the file holds a mode this host does not
+offer: a remembered pass on a host that fits no pass seat count (below) is kept for a host that can, and New game in the
+mode it fell back to writes nothing. The match never touches it. It is not a codec
+blob, so it has no blob header.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | magic `CHPF` (`43 48 50 46`) |
+| 4 | 1 | file version, 1 |
+| 5 | 1 | mode: a `GameCore::Manifest::Mode` bit (1 solo, 2 pass, 4 nearby), or 0 for none |
+| 6 | 1 | count: the settings that follow, 0 to 4 |
+| 7 | | per setting: the id's length (1 to 16), the id, the value's length (1 to 16), the value |
+
+The file ends after the last setting, so it is at most 143 bytes (`GameSaveStore::PREFS_MAX_BYTES`). Ids and values are
+the manifest's strings, stored as text so that a manifest that changes is resolved value by value. The mode byte is the
+manifest's mode bit, not `resume.bin`'s mode byte (where 0 is solo), so that 0 can mean none. For a pass match with
+`level` = `Hard` and `sound` = `Off` the file is
+`43 48 50 46 01 02 02 05 6c 65 76 65 6c 04 48 61 72 64 05 73 6f 75 6e 64 03 4f 66 66`.
+
+**Reading** (`loadPrefs`) reads the fields straight into the caller's `GameSaveStore::Prefs`, with no buffer of its
+own, from `prefs.bin`, or from a whole `prefs.bin.tmp` when `prefs.bin` is missing. It answers `None` (no file),
+`Loaded`, `Malformed` (a file over 143 bytes, shorter than its head, with another magic or version, more than four
+settings, an empty or overlong id or value, a length past the end, or bytes after the last setting), or `Unreadable`
+(the file would not open or read). None of them is an error: `Malformed` and `Unreadable` log one `LOG_INF` line, every
+answer but `Loaded` leaves the choices empty, and the file stays until the next write replaces it.
+
+**Resolving** (`GameSaveStore::resolvePrefs`) turns what the file holds into the title screen's current choices, value
+by value: the mode is `Manifest::startMode` (the remembered mode when this host can start it, else `default_mode` when
+it can, else the first it can start in solo, pass, nearby order; a mode byte that is not one bit is never one it can
+start). The title screen counts pass as one it can start only when this host fits a pass seat count for the game
+(`GameCore::passSeats`), unless pass is the game's only mode, and its Options screen offers the same modes. Each
+setting the manifest declares takes the value stored under its id when the manifest still lists that value, else its
+default. A stored setting the manifest no longer declares is ignored. Each fallback is logged at `LOG_DBG`.
+
+**Writing** (`savePrefs`) is `store.bin`'s: the bytes go to `prefs.bin.tmp`, which is closed, then `prefs.bin` is
+removed and the tmp renamed over it, and a write that finds only the tmp renames it first. A failed write is logged at
+`LOG_ERR` and leaves `prefs.bin` as it was; the title screen keeps the choice until it closes. Removing the game keeps
+the file, as it keeps the rest of `/.games-data/<id>/`.
+
+**After `Unreadable`.** A file that would not read when the title screen opened may be a good one (a card fault that
+has passed): New game does not write over it, and an Options change reads it again before writing. When it now reads,
+each choice the player left as the screen opened it (the mode, and each setting, at the defaults the screen fell back
+to) takes the file's resolved value, the player's changes are kept, and that merge is written (and shown on New
+game's line). When it still will not read, or is now missing or `Malformed`, the choices are written as they are.
 
 ## Game package (`.chgame`)
 
@@ -221,7 +323,7 @@ A package is a zip whose members are stored or deflated (no ZIP64) and sit at th
 | `manifest.json` | required; parsed by `GameCore::Manifest::parse`, the one manifest parser |
 | `main.lua` | required |
 | `<name>.lua` | `<name>` is `[a-z0-9_]{1,32}`; loaded by `require("<name>")` |
-| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, any other is a game image |
+| `<name>.png` | `<name>` is `[a-z0-9_]{1,32}`; a non-interlaced PNG; `icon.png` is the launcher icon, `title.png` the title screen's splash, `handoff.png` the hidden hand-off screen's splash (the reserved images), any other is a game image |
 
 Anything else makes the package invalid: a folder, a path with `/` or `\`, `..`, an upper-case name, a name over the
 limit, a `.bmp` (images are `.png` only; the installer converts them), and the same name twice.
@@ -236,6 +338,10 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Converted images, all `.bmp` files but `icon.bmp` | `IMAGES_BYTES` | 131,072 B |
 | Converted images | `MAX_IMAGES` | 32 |
 | Side of `icon.bmp` | `ICON_PIXELS` | 64 |
+| Width x height of `title.png` (`GameImages.h`) | `TITLE_IMAGE_WIDTH` x `TITLE_IMAGE_HEIGHT` | 480 x 480 |
+| Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 480 |
+| Width x height of a `.png` | `IMAGE_MAX_WIDTH` x `IMAGE_MAX_HEIGHT` | 2,048 x 3,072 |
+| Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`) | `StreamingJsonParser::MAX_NESTING` | 32 |
 
 The installer counts converted images as the game loader does: each `.bmp` is 62 + ceil(width / 32) * 4 * height
 bytes, header included, and `icon.bmp` is left out.
@@ -248,7 +354,7 @@ directory's; two members that share bytes of the file. The EOCD must be the last
 and `pack_game.py` writes none) and the central directory must end where it begins. Each member then streams
 through `ZipFile` into a guard that never lets more than the declared size reach the card, refuses a `.lua` whose
 first byte is Lua's bytecode signature (ESC, 0x1B), and checks the CRC-32. `pack_game.py` refuses a package over the
-limits it knows (the `.lua` total is added there in a later entry).
+limits it knows, including the `.lua` total.
 
 ### Images
 
@@ -259,6 +365,13 @@ scaled to 64 x 64. The converter sizes the result as `int(side * (64.0f / side))
 at 63, not 64, for 280 of the sides 1 to 2,048 (41, 47, 55, 61, 82, 83, 94, 97, ...); the installer refuses a result
 that is not 64 x 64, and `pack_game.py` refuses such a side up front with the sides nearby that work. Every power of two
 from 1 to 2,048 works, so 64, 128, and 256 are always safe. Any other `<name>.png` becomes `<name>.bmp` at its own size.
+`title.png` and `handoff.png`, the reserved pages (AD-15, as amended 2026-10-02; `handoff.png`'s limit by the owner's
+hand-off redesign), are converted the same way but may each be at most 480 x 480, the splash band both are drawn in; a
+larger one makes the package invalid (checked from its header before it is
+converted). Both count toward the images budget, as game images do, but no game draws them: `GameCore::imageNameOf`
+refuses `icon`, `title`, and `handoff`, so `ch.gfx.image` treats them as unknown names, and the game loader skips their
+`.bmp` files without a log line. Only the runtime draws them: `title.bmp` on the title screen, and on the hidden
+hand-off screen `handoff.bmp`, else `title.bmp`.
 A PNG whose header the converter refuses (not a PNG, interlaced, over 2,048 x 3,072, an impossible colour type or bit
 depth), a converted file `checkImageHeader` does not accept, or images over the budget make the package invalid. The
 converter answers only true or false and ignores failed writes, so its output goes through a wrapper that notes a short

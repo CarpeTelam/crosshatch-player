@@ -601,15 +601,30 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
          width <= GameCore::IMAGE_MAX_WIDTH && height > 0 && height <= GameCore::IMAGE_MAX_HEIGHT;
 }
 
+// The largest size a reserved page may have (AD-15, as amended 2026-10-02): title.png's and handoff.png's
+// limits, or 0 x 0 for any other member (no limit beyond the converter's).
+struct PageBounds {
+  uint32_t width;
+  uint32_t height;
+};
+
+PageBounds pageBoundsOf(const char* member) {
+  if (std::strcmp(member, "title.png") == 0) return {GameCore::TITLE_IMAGE_WIDTH, GameCore::TITLE_IMAGE_HEIGHT};
+  if (std::strcmp(member, "handoff.png") == 0) return {GameCore::HANDOFF_IMAGE_WIDTH, GameCore::HANDOFF_IMAGE_HEIGHT};
+  return {0, 0};
+}
+
 // Converts the extracted job.pathA (<name>.png) to job.pathB (<name>.bmp) in the converter's
 // 1-bit layout, deletes the PNG, and checks the result the way the game loader will: the
 // layout checkImageHeader accepts and, for images, the budget; for the icon, 64x64.
-// icon.png is scaled to 64x64 (so it must be square); any other image keeps its own size.
+// icon.png is scaled to 64x64 (so it must be square); any other image keeps its own size, and
+// title.png and handoff.png must fit their pages (`page`), checked before converting.
 // The converter answers only true or false and ignores failed writes, so the output goes through
 // a FileSink: a short write, or an output shorter than its own header says, is the card's fault
 // (SdCard, the package stays); any other failure is the image's (BadImage), which includes the
 // converter running out of memory, a case it cannot tell apart.
-[[gnu::noinline]] Error convertImage(Job& job, const bool isIcon, GameCore::ImageBudget& budget) {
+[[gnu::noinline]] Error convertImage(Job& job, const bool isIcon, const PageBounds page,
+                                     GameCore::ImageBudget& budget) {
   {
     HalFile png;
     if (!Storage.openFileForRead("GAME", job.pathA, png)) return Error::SdCard;
@@ -622,6 +637,11 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
     if (isIcon && width != height) {
       LOG_ERR("GAME", "icon.png is %ux%u: the icon must be square", static_cast<unsigned>(width),
               static_cast<unsigned>(height));
+      return Error::BadImage;
+    }
+    if (page.width != 0 && (width > page.width || height > page.height)) {
+      LOG_ERR("GAME", "%s is %ux%u: it may be at most %ux%u", job.pathA, static_cast<unsigned>(width),
+              static_cast<unsigned>(height), static_cast<unsigned>(page.width), static_cast<unsigned>(page.height));
       return Error::BadImage;
     }
     if (!png.seek(0)) return Error::SdCard;
@@ -694,7 +714,7 @@ bool readPngSize(HalFile& png, uint32_t& width, uint32_t& height) {
       const size_t stem = std::strlen(job.pathA) - std::strlen(".png");
       std::memcpy(job.pathB, job.pathA, stem);
       std::memcpy(job.pathB + stem, ".bmp", sizeof(".bmp"));
-      const Error converted = convertImage(job, std::strcmp(name, "icon.png") == 0, budget);
+      const Error converted = convertImage(job, std::strcmp(name, "icon.png") == 0, pageBoundsOf(name), budget);
       if (converted != Error::None) return converted;
     }
   }

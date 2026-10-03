@@ -181,7 +181,7 @@ TEST_F(HostBindingsTest, AnEventFiredBeforeACancelIsDropped) {
   ASSERT_TRUE(pollTimer(game.game, queue));  // fired and queued...
   ASSERT_EQ(game.tap(1, 1), Outcome::Ok);    // ...but a tap ahead of it cancels
   EXPECT_FALSE(deliverNext(game, queue));    // so input never sees it
-  ASSERT_EQ(game.session->draw(), Outcome::Ok);
+  ASSERT_EQ(game.session->draw(1), Outcome::Ok);
   EXPECT_EQ(frontText(), "ticks 0");
 }
 

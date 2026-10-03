@@ -1,6 +1,7 @@
 #include "GameImages.h"
 
 #include <cstring>
+#include <initializer_list>
 
 namespace GameCore {
 
@@ -99,11 +100,24 @@ ImageCheck ImageBudget::add(const uint8_t* header, const size_t headerBytes, con
   return ImageCheck::Ok;
 }
 
+bool isReservedImage(const char* stem, const size_t length) {
+  if (!stem) return false;
+  for (const char* reserved : {"icon", "title", "handoff"}) {
+    const size_t reservedLength = std::strlen(reserved);
+    if (length != reservedLength) continue;
+    size_t i = 0;
+    while (i < length && lower(stem[i]) == reserved[i]) ++i;
+    if (i == length) return true;
+  }
+  return false;
+}
+
 bool imageNameOf(const char* fileName, const size_t length, char (&name)[IMAGE_NAME_BYTES + 1]) {
   if (!fileName || length <= BMP_EXT_BYTES || length - BMP_EXT_BYTES > IMAGE_NAME_BYTES) return false;
   const size_t stem = length - BMP_EXT_BYTES;
   if (std::memcmp(fileName + stem, ".bmp", BMP_EXT_BYTES) != 0) return false;
-  if (stem == 4 && std::memcmp(fileName, "icon", 4) == 0) return false;  // the launcher's icon
+  // The launcher's icon and the runtime's two pages are drawn by the runtime alone (AD-15).
+  if (isReservedImage(fileName, stem)) return false;
   for (size_t i = 0; i < stem; ++i) {
     const char c = fileName[i];
     if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;

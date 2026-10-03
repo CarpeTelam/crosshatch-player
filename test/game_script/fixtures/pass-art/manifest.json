@@ -1,0 +1,16 @@
+{
+  "id": "pass-art",
+  "name": "Pass art",
+  "version": "1.0.0",
+  "api": 1,
+  "seats": { "min": 1, "max": 2 },
+  "modes": ["solo", "pass"],
+  "hidden": true,
+  "default_mode": "pass",
+  "icon": "spade",
+  "icon_weight": "fill",
+  "settings": [
+    { "id": "level", "name": "Level", "values": ["Easy", "Hard"], "default": "Hard" },
+    { "id": "board", "name": "Board", "values": ["Small", "Medium", "Large"] }
+  ]
+}

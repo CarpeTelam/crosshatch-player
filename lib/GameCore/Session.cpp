@@ -4,8 +4,7 @@
 
 namespace GameCore {
 
-Session::Session(const Roster& roster, IGameRules& rules)
-    : seats(roster), rules(rules), localSeat(roster.firstLocalSeat()) {}
+Session::Session(const Roster& roster, IGameRules& rules) : seats(roster), rules(rules) {}
 
 bool Session::restore(const std::span<const uint8_t> snapshot, const uint32_t ver) {
   if (snapshot.empty() || snapshot.size() > SNAPSHOT_BYTES) return false;
@@ -32,19 +31,19 @@ Outcome Session::start() {
   return afterSnapshot();
 }
 
-Outcome Session::handle(const GameEvent& event) {
+Outcome Session::handle(const GameEvent& event, const uint8_t seat) {
   std::span<const uint8_t> returned;
-  const Outcome outcome = rules.input(snapshot(), localSeat, event, returned);
+  const Outcome outcome = rules.input(snapshot(), seat, event, returned);
   if (outcome != Outcome::Ok || returned.empty()) return outcome;
-  const bool ownTurn = !current.over && current.turn == localSeat;
+  const bool turnSeat = !current.over && current.turn == seat && seats.isLocal(seat);
   const bool runtimeEvent = event.kind == EventKind::Rejected || event.kind == EventKind::Over;
-  if (pending() || !ownTurn || runtimeEvent || returned.size() > MOVE_BYTES) {
+  if (pending() || !turnSeat || runtimeEvent || returned.size() > MOVE_BYTES) {
     ++discarded;
     return Outcome::Ok;
   }
   std::memcpy(move, returned.data(), returned.size());
   moveLength = returned.size();
-  moveSeat = localSeat;
+  moveSeat = seat;
   return Outcome::Ok;
 }
 
@@ -60,13 +59,13 @@ Outcome Session::applyPending() {
     GameEvent rejected;
     rejected.kind = EventKind::Rejected;
     rejected.reason = reason;
-    return deliver(rejected);
+    return deliver(rejected, moveSeat);
   }
   if (!keepState(next)) return Outcome::ScriptError;
   return afterSnapshot();
 }
 
-Outcome Session::draw() { return rules.draw(snapshot(), localSeat); }
+Outcome Session::draw(const uint8_t seat) { return rules.draw(snapshot(), seat); }
 
 Outcome Session::afterSnapshot() {
   const Outcome outcome = rules.status(snapshot(), seats, current);
@@ -75,7 +74,12 @@ Outcome Session::afterSnapshot() {
   overDelivered = true;
   GameEvent over;
   over.kind = EventKind::Over;
-  return deliver(over);
+  for (uint8_t seat = 1; seat <= seats.seats && seat <= Roster::MAX_SEATS; ++seat) {
+    if (!seats.isLocal(seat)) continue;
+    const Outcome delivered = deliver(over, seat);
+    if (delivered != Outcome::Ok) return delivered;
+  }
+  return Outcome::Ok;
 }
 
 bool Session::keepState(const std::span<const uint8_t> bytes) {
@@ -86,9 +90,9 @@ bool Session::keepState(const std::span<const uint8_t> bytes) {
   return true;
 }
 
-Outcome Session::deliver(const GameEvent& event) {
+Outcome Session::deliver(const GameEvent& event, const uint8_t seat) {
   std::span<const uint8_t> ignored;
-  const Outcome outcome = rules.input(snapshot(), localSeat, event, ignored);
+  const Outcome outcome = rules.input(snapshot(), seat, event, ignored);
   if (outcome == Outcome::Ok && !ignored.empty()) ++discarded;
   return outcome;
 }

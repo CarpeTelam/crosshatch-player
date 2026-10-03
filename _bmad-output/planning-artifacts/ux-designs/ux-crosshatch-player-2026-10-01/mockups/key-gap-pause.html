@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play-again gap pause menu</title>
+<style>
+/* Governed by: DESIGN.md Components: Pause menu, Option / confirm dialog; EXPERIENCE.md Component Patterns: Pause menu; State Patterns: Play-again gap.
+   The spines (DESIGN.md, EXPERIENCE.md) win over this mock on any conflict. */
+
+:root { --ink: #000000; --paper: #FFFFFF; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--paper); color: var(--ink); font-family: Ubuntu, "Ubuntu Sans", system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px; }
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+p.lede { font-size: 14px; max-width: 1100px; margin-bottom: 20px; line-height: 1.4; }
+.cols { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+.col { width: 482px; }
+.col h2 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.cap { font-size: 13px; line-height: 1.4; margin-top: 10px; }
+/* device: X4 Pro 480 x 800 at 1x, 1-bit */
+.dev { position: relative; width: 480px; height: 800px; background: var(--paper); outline: 1px solid var(--ink); outline-offset: 0; overflow: hidden; }
+.abs { position: absolute; }
+/* the selection: dither-25, one ink pixel per 2 x 2 cell */
+.sel { background-color: var(--paper);
+  background-image: linear-gradient(to bottom, transparent 1px, var(--paper) 1px), linear-gradient(to right, var(--ink) 1px, var(--paper) 1px);
+  background-size: 2px 2px; }
+/* status strip and header bar */
+.status { position: absolute; top: 9px; right: 44px; font-size: 17px; }
+.batt { position: absolute; top: 15px; right: 24px; width: 16px; height: 9px; border: 2px solid var(--ink); }
+.batt::after { content: ""; position: absolute; right: -4px; top: 1px; width: 2px; height: 3px; background: var(--ink); }
+.back { position: absolute; left: 16px; top: 54px; width: 24px; height: 20px; }
+.htitle { position: absolute; left: 50px; top: 46px; font-size: 24px; font-weight: 700; line-height: 32px; }
+.rule { position: absolute; left: 0; top: 91px; width: 480px; height: 3px; background: var(--ink); }
+/* list rows */
+.row { position: absolute; left: 24px; width: 432px; border-radius: 6px; padding-left: 7px; }
+.row .l { font-size: 24px; line-height: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { font-size: 20px; line-height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* frames: option dialog, banner, hand-off text box */
+.frame { position: absolute; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); }
+.center { text-align: center; }
+.note { font-style: italic; }
+
+</style>
+</head>
+<body>
+<h1>Play-again gap pause menu</h1>
+<p class="lede">Play again, then Back before the new round's first frame: the pause menu stays over the last round's frame, inert, and says why. X4 Pro, 480 x 800 at 1x, 1-bit: ink #000000 and paper #FFFFFF only; the selection is the 25 % dither. Icons are drawn approximations of the Phosphor library icons named. The spines win over this mock.</p>
+<div class="cols"><div class="col"><h2>Pause menu in the gap</h2><div class="dev" role="img" aria-label="Pause menu in the gap"><div class="abs" style="left:23px;top:29px;width:400px;height:100px;border:1px solid #000;padding:24px 0 0 19px;font-size:40px;line-height:50px">Slow restart</div><div class="abs" style="left:43px;top:162px;font-size:24px;line-height:30px">Round 1, taps: 3 of 3</div><div class="abs" style="left:43px;top:200px;font-size:20px;line-height:24px">Tap below the banner</div><div class="frame" style="left:50px;top:256px;width:378px;height:293px"><div class="abs center" style="left:0;top:12px;width:374px;font-size:20px;line-height:26px">Slow restart</div><div class="abs center" style="left:0;top:44px;width:374px;font-size:24px;line-height:30px;font-weight:700">Paused</div><div class="abs center" style="left:0;top:80px;width:374px;font-size:20px;line-height:26px">Starting the next round</div><svg class="abs" style="left:155px;top:114px" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><rect x="15" y="10" width="12" height="44" rx="2" fill="none" stroke="#000" stroke-width="3"/><rect x="37" y="10" width="12" height="44" rx="2" fill="none" stroke="#000" stroke-width="3"/></svg><div class="abs sel center" style="left:14px;top:184px;width:346px;height:43px;padding-top:7px;font-size:22px;line-height:28px">Resume</div><svg class="abs" style="left:22px;top:189px" width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="M8 5l18 11-18 11z" fill="none" stroke="#000" stroke-width="2" stroke-linejoin="round"/></svg><div class="abs center" style="left:14px;top:236px;width:346px;height:43px;padding-top:7px;font-size:22px;line-height:28px">Leave</div><svg class="abs" style="left:22px;top:241px" width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="M13 5H6v22h7M14 16h13M22 11l5 5-5 5" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div><p class="cap">"Starting the next round" centred under "Paused", as the caption and headline are (built today: left-aligned, story-hand-off-screenshots/6-gap-pause-menu.png). The frame behind is the slow-restart fixture's. Once the round's first frame is published the menu is drawn again without the line.</p></div></div>
+</body>
+</html>

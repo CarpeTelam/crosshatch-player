@@ -18,7 +18,9 @@
 // calls and a test that drives an activity's loop() calls itself). `holdLong` is the older shortcut: a hold that
 // crosses any threshold, with no suppression.
 
+#include <Arduino.h>
 #include <HalGPIO.h>
+#include <util/HomeButtonInput.h>
 
 #include <climits>
 #include <cstdint>
@@ -57,9 +59,25 @@ class MappedInputManager {
 
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(&renderer) {}
 
-  void update(bool = false) const {}
-  bool wasPressed(const Button button) const { return pressed.count(button) != 0; }
-  bool wasReleased(const Button button) const { return released.count(button) != 0; }
+  // The device's per-pass sample (main.cpp calls it before the activity's loop): a held contact's first sample stamps
+  // its touch-down time, whether or not anything reads touch on that pass.
+  void update(bool = false) const { sample(); }
+  bool wasPressed(const Button button) const {
+    return (button == Button::Confirm && (homeAction == HomeButtonAction::Confirm || powerClick)) ||
+           pressed.count(button) != 0;
+  }
+  bool wasReleased(const Button button) const {
+    return (button == Button::Confirm && (homeAction == HomeButtonAction::Confirm || powerClick)) ||
+           released.count(button) != 0;
+  }
+  // The home key's action this frame (homeKey()). It stands in for the device's MappedInputManager on a board with a
+  // home key: update() runs the key through HomeButtonInput, which reports the configured action for one update (a
+  // tap's at its release, or HomeButtonInput::DOUBLE_TAP_MS after it when a double-tap action is set; a long press's
+  // 700 ms into the press); a Confirm action
+  // makes wasPressed and wasReleased(Confirm) true on that update (MappedInputManager.cpp, wasPressed and wasReleased),
+  // and any action but Ignore makes getHeldTime() 0 (the key's press time is not latched on every board: GT911 does
+  // not). The hand-off screen acts on such a Confirm at once, whatever its press time (2026-10-03: no time guard).
+  HomeButtonAction homeButtonAction() const { return homeAction; }
   bool wasLongPressed(const Button button, const unsigned long thresholdMs) const {
     if (longPressed.count(button) != 0) return true;
     if (pressed.count(button) == 0) {
@@ -88,9 +106,57 @@ class MappedInputManager {
   bool hasTouch() const { return true; }
 
   bool wasScreenTapped(int& x, int& y) const { return touch.tapped ? at(x, y) : false; }
-  bool wasScreenTouchDown(int& x, int& y) const { return touch.down ? at(x, y) : false; }
-  bool wasScreenLongPress(int& x, int& y) const { return touch.longPress ? at(x, y) : false; }
-  bool isScreenTouchHeld(int& x, int& y) const { return touch.held ? at(x, y) : false; }
+  // A held contact (holdTouch) is modelled on the device's touch path (src/MappedInputManager.cpp over freeink-sdk's
+  // InputManager.cpp), on the harness clock (millis()). The device samples touch only in update(), on the loop task,
+  // once a pass, so a contact's touch-down time is the first update after it lands: here, update() (the match tests'
+  // frame() calls it) or the first query below, never holdTouch() itself. wasScreenTouchDown is a level, true on every
+  // frame while the still finger has been down TOUCH_DOWN_SELECT_DELAY_MS (90) or more (isTouchTapCandidate);
+  // wasScreenLongPress is true on every read of the frame on which the contact has been down TOUCH_LONG_PRESS_MS (500)
+  // (touchLongPressEvent, one update long), and reading it suppresses the rest of the contact (suppressTouchContact):
+  // no touch-down, no held contact, no release, no tap after it; one not read on that frame is lost (clear() ends the
+  // frame), the contact goes on unsuppressed, and its lift taps. isScreenTouchHeld is true while the finger is down and
+  // not suppressed (isTouchHeldAt); liftTouch() releases it on a frame that reports the release and the tap (unless
+  // suppressed) but no touch-down, since the device clears its press on the release update, and sets the touch-only
+  // held time (HalGPIO::lastTouchHeldMs). getHeldTime() is MappedInputManager's: a button's hold on a frame with a
+  // button pressed or released, else a tap's held time on its frame. A scripted `touch` (tap(), quickTap(),
+  // longPress()) is one frame's events, as the test sets them. Not modelled: tap slop, multi-touch, the held-time
+  // override's 250 ms life, and the home key's timing (InputManager's 700 ms long press, HomeButtonInput's double-tap
+  // wait): homeKey() scripts only the frame its action is reported on (the device-run packet holds them).
+  static constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
+  static constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
+  bool wasScreenTouchDown(int& x, int& y) const {
+    sample();
+    if (contact.held && !contact.suppressed && millis() - contact.sinceMs >= TOUCH_DOWN_SELECT_DELAY_MS) {
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.down ? at(x, y) : false;
+  }
+  bool wasScreenLongPress(int& x, int& y) const {
+    sample();
+    if (contact.held && !contact.longPressFired && !contact.suppressed &&
+        millis() - contact.sinceMs >= TOUCH_LONG_PRESS_MS) {
+      contact.longPressFired = true;
+      contact.longPressThisFrame = true;
+    }
+    if (contact.longPressThisFrame) {
+      contact.suppressed = true;  // the real wasScreenLongPress consumes it: suppressTouchContact()
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.longPress ? at(x, y) : false;
+  }
+  bool isScreenTouchHeld(int& x, int& y) const {
+    sample();
+    if (contact.held && !contact.suppressed) {
+      x = contact.x;
+      y = contact.y;
+      return true;
+    }
+    return touch.held ? at(x, y) : false;
+  }
   bool wasScreenTouchReleased() const { return touch.released; }
   // A tap released inside the rectangle.
   bool wasTapInRect(const int x, const int y, const int width, const int height) const {
@@ -130,7 +196,14 @@ class MappedInputManager {
   bool wasLightPanelGesture() const { return false; }
   bool wasAnyPressed() const { return !pressed.empty(); }
   bool wasAnyReleased() const { return !released.empty(); }
-  unsigned long getHeldTime() const { return heldMs; }
+  // MappedInputManager::getHeldTime's precedence: a button pressed or released this frame answers its hold (the button
+  // hold a test set); else a tap's frame answers its contact's held time (rememberTouchHeldTime); else the button hold.
+  // More permissive than the device: the double's `pressed` is a level too (hold()), where the device's is an edge.
+  unsigned long getHeldTime() const {
+    if (homeAction != HomeButtonAction::Ignore) return 0;  // a mapped action has no contact duration
+    if (!pressed.empty() || !released.empty()) return heldMs;
+    return touch.tapped ? touch.heldMs : heldMs;
+  }
   const GfxRenderer& getRenderer() const { return *renderer; }
   Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const {
     return {back, confirm, previous, next};
@@ -152,6 +225,7 @@ class MappedInputManager {
     bool released = false;   // wasScreenTouchReleased
     int x = 0;
     int y = 0;
+    unsigned long heldMs = 0;  // getHeldTime() on a tap's frame
   };
 
   void press(const Button button) { pressed.insert(button); }
@@ -166,6 +240,18 @@ class MappedInputManager {
     pressed.insert(button);
     heldMs = ms;
   }
+  // The home key reports `action` this frame, as HomeButtonInput hands it to the device's manager (homeButtonAction).
+  void homeKey(const HomeButtonAction action) { homeAction = action; }
+  // The X4 Pro's power click as Confirm, this frame. It stands in for the device with the power button set to Confirm
+  // and the double-click frontlight on (src/main.cpp, setPowerConfirmClickFrame; MappedInputManager.cpp
+  // wasPowerConfirmClick): a click held at most 300 ms becomes Confirm on the first update more than 500 ms after its
+  // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, wasAnyPressed and
+  // wasAnyReleased false, and getHeldTime() answers InputManager's span of the last press of the buttons
+  // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over. The hand-off screen acts on it at once.
+  void powerConfirmClick(const unsigned long staleHeldMs) {
+    powerClick = true;
+    heldMs = staleHeldMs;
+  }
   // The button is let go: its release edge this frame, and it is no longer held.
   void release(const Button button) {
     released.insert(button);
@@ -176,6 +262,52 @@ class MappedInputManager {
     touch.tapped = touch.released = touch.down = true;
     touch.x = x;
     touch.y = y;
+    gpio.touchHeldMs = touch.heldMs;  // the release update sets the last contact's held time (0 here)
+  }
+  // A finger put down still at (x, y) now, held across frames (and clear()) until liftTouch(): see wasScreenTouchDown.
+  void holdTouch(const int x, const int y) {
+    contact = Contact{};
+    contact.held = true;
+    contact.x = x;
+    contact.y = y;
+  }
+  // The held finger lifts: the release this frame, and a tap at its touch-down point with its held time unless the
+  // contact was suppressed; the release update sets the held time either way. A contact no update sampled (it came and
+  // went while the loop task was blocked) is one the device never sees: nothing. Nothing without a held contact.
+  void liftTouch() {
+    if (!contact.held || !contact.sampled) {
+      contact = Contact{};
+      return;
+    }
+    gpio.touchHeldMs = millis() - contact.sinceMs;
+    if (!contact.suppressed) {
+      touch.tapped = touch.released = true;
+      touch.x = contact.x;
+      touch.y = contact.y;
+      touch.heldMs = gpio.touchHeldMs;
+    }
+    contact = Contact{};
+  }
+  // A tap shorter than 90 ms, as the device reports it: the release and the tap on one frame, and never a touch-down
+  // (tap() also scripts the touch-down, as a screen double needs for rowTouch's Down).
+  void quickTap(const int x, const int y, const unsigned long heldMs = 50) {
+    touch.tapped = touch.released = true;
+    touch.x = x;
+    touch.y = y;
+    touch.heldMs = heldMs;
+    gpio.touchHeldMs = heldMs;
+  }
+  // A contact (held, or this frame's) that ends with no gesture: on the device, one whose excursion passed the 59 px
+  // tap-release slop and that made no swipe (it came back, or took longer than a swipe may). A raw release only (none
+  // for a suppressed contact).
+  void liftWithoutTap() {
+    if (contact.held && contact.sampled) gpio.touchHeldMs = millis() - contact.sinceMs;
+    if (!contact.suppressed) {
+      touch.released = true;
+      touch.x = -1;
+      touch.y = -1;
+    }
+    contact = Contact{};
   }
   void longPress(const int x, const int y) {
     touch.longPress = true;
@@ -198,10 +330,17 @@ class MappedInputManager {
   }
   // The frame is over: nothing is pressed or touched any more.
   void clear() {
+    // A long press due this frame and not read is lost, as the device's one-update event is; one reported is over.
+    if (contact.held && contact.sampled && !contact.suppressed && millis() - contact.sinceMs >= TOUCH_LONG_PRESS_MS) {
+      contact.longPressFired = true;
+    }
+    contact.longPressThisFrame = false;
     pressed.clear();
     released.clear();
     longPressed.clear();
     heldMs = 0;
+    homeAction = HomeButtonAction::Ignore;
+    powerClick = false;
     touch = Touch{};
     swipeDir = SwipeDir::None;
     backGesture = homeGesture = menuGesture = false;
@@ -212,13 +351,35 @@ class MappedInputManager {
   std::set<Button> released;
   std::set<Button> longPressed;
   unsigned long heldMs = 0;
+  HomeButtonAction homeAction = HomeButtonAction::Ignore;
+  bool powerClick = false;  // powerConfirmClick()
   Touch touch;
+  // holdTouch()'s contact, which clear() keeps: a held finger is no per-frame event. Mutable: the real manager's
+  // long-press read suppresses the contact from a const method.
+  struct Contact {
+    bool held = false;
+    bool sampled = false;  // a read has stamped sinceMs (the device's first sample of the contact)
+    bool suppressed = false;
+    bool longPressFired = false;
+    bool longPressThisFrame = false;  // the frame on which the long press is reported, on every read
+    int x = 0;
+    int y = 0;
+    unsigned long sinceMs = 0;
+  };
+  mutable Contact contact;
   SwipeDir swipeDir = SwipeDir::None;
   bool backGesture = false;
   bool homeGesture = false;
   bool menuGesture = false;
 
  private:
+  // The device's first sample of a held contact stamps its touch-down time.
+  void sample() const {
+    if (contact.held && !contact.sampled) {
+      contact.sampled = true;
+      contact.sinceMs = millis();
+    }
+  }
   bool at(int& x, int& y) const {
     x = touch.x;
     y = touch.y;

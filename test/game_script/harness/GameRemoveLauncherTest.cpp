@@ -9,10 +9,9 @@
 
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
+#include "LauncherSupport.h"
 #include "MatchSupport.h"
 #include "RemoveScript.h"
-#include "activities/games/GameMatchActivity.h"
-#include "activities/games/GameModeActivity.h"
 #include "activities/games/GamesLauncherActivity.h"
 #include "util/ButtonNavigator.h"
 
@@ -78,14 +77,12 @@ class RemoveListTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
+  // The match ReturnTest's first case starts (never entered) goes as the manager would let it go.
   void dropMatch() {
     for (auto& replacement : activityManager.replacements) {
-      if (!replacement) continue;
-      if (replacement.get() == entered) activityManager.exitHolding(*replacement);
-      activityManager.destroyHolding(replacement);
+      if (replacement) activityManager.destroyHolding(replacement);
     }
     activityManager.replacements.clear();
-    entered = nullptr;
   }
 
   // ---- the card ----
@@ -187,18 +184,11 @@ class RemoveListTest : public match::ScreenTest {
     frame();
   }
 
-  GameMatchActivity* enterReplacement() {
-    if (activityManager.replacements.empty()) return nullptr;
-    auto* match = dynamic_cast<GameMatchActivity*>(activityManager.replacements.back().get());
-    if (match) {
-      match->onEnter();
-      entered = match;
-    }
-    return match;
-  }
+  // The title screen the last row opened pushed, entered, drawn, and let go (LauncherSupport.h): its header, the game's
+  // name.
+  std::string openedTitle() { return launcher::openedTitle(*list); }
 
   std::unique_ptr<GamesLauncherActivity> list;
-  Activity* entered = nullptr;
 };
 
 }  // namespace
@@ -242,9 +232,7 @@ TEST_F(RemoveListTest, RemoveDeletesTheGameKeepsItsDataAndRefreshesTheList) {
 
   // The next game took the removed row's place in the selection: Confirm opens Game 03.
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-03"));
+  EXPECT_EQ(openedTitle(), "Game 03");
 }
 
 TEST_F(RemoveListTest, RemovingTheLastRowSelectsThePreviousGame) {
@@ -253,9 +241,7 @@ TEST_F(RemoveListTest, RemovingTheLastRowSelectsThePreviousGame) {
   longPressText("Game 03");
   tapText(tr(STR_GAMES_REMOVE));
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-02"));
+  EXPECT_EQ(openedTitle(), "Game 02");
 }
 
 TEST_F(RemoveListTest, RemovingTheOnlyGameShowsTheEmptyList) {
@@ -268,6 +254,7 @@ TEST_F(RemoveListTest, RemovingTheOnlyGameShowsTheEmptyList) {
   input->tap(240, 300);
   frame();
   EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 TEST_F(RemoveListTest, CancelBackAndAConfirmOnTheDefaultButtonKeepTheGame) {
@@ -294,9 +281,7 @@ TEST_F(RemoveListTest, CancelBackAndAConfirmOnTheDefaultButtonKeepTheGame) {
   EXPECT_EQ(shown(3).size(), 3u);
   // The launcher is as it was: Confirm opens the game that was long-pressed (a long-press selects its row).
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-02"));
+  EXPECT_EQ(openedTitle(), "Game 02");
 }
 
 TEST_F(RemoveListTest, TheDirectionKeysMoveTheFocusAndConfirmRemovesOnlyFromRemove) {
@@ -353,8 +338,8 @@ TEST_F(RemoveListTest, ATapOnARowBeforeTheConfirmationIsDrawnOpensNothing) {
   input->tap(gammaX, gammaY);
   activity().loop();
   input->clear();
-  EXPECT_EQ(activityManager.asks.replaced, 0) << "the tap opened Gamma under the confirmation";
-  input->tap(betaX, betaY);  // two modes: this would push the picker
+  EXPECT_EQ(activityManager.asks.pushed, 0) << "the tap opened Gamma under the confirmation";
+  input->tap(betaX, betaY);  // two modes: this would push its title screen too
   activity().loop();
   input->clear();
   EXPECT_EQ(activityManager.asks.pushed, 0);
@@ -387,9 +372,7 @@ TEST_F(RemoveListTest, UnderTheNoteAHoldOrALongPressOpensNothingAndMovesNothing)
   key(Button::Confirm);
   EXPECT_FALSE(noteSays(tr(STR_GAMES_INSTALL_NOT_A_PACKAGE)));
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01"));
+  EXPECT_EQ(openedTitle(), "Game 01");
 }
 
 // A finger down on a row arms the app's tap flash; the long-press that follows opens the confirmation, and the
@@ -415,9 +398,7 @@ TEST_F(RemoveListTest, ALongPressThatFollowsATouchDownOpensAndRemovesCleanly) {
   const std::vector<std::string> expected{"Game 01", "Game 03"};
   EXPECT_EQ(shown(3), expected);
   key(Button::Confirm);  // the selection took the next game's place
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-03"));
+  EXPECT_EQ(openedTitle(), "Game 03");
 }
 
 // Retro deferral 4.10: REMOVE_HOLD_MS is what the code asks the manager, so a hold one millisecond short of it opens
@@ -442,6 +423,7 @@ TEST_F(RemoveListTest, ConfirmHeldToRemoveHoldMsAsksOnceAndItsReleaseIsSwallowed
   EXPECT_TRUE(dialogUp());
   EXPECT_TRUE(removescript::script().ids.empty());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   // A later press of Confirm is the dialog's own: its focused option is the safe one, Cancel, so the game stays.
   key(Button::Confirm);
   EXPECT_FALSE(dialogUp());
@@ -458,9 +440,7 @@ TEST_F(RemoveListTest, ConfirmReleasedBeforeTheHoldOpensTheGameAndAsksNothing) {
   input->release(Button::Confirm);
   frame();
   EXPECT_FALSE(dialogUp());
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01"));
+  EXPECT_EQ(openedTitle(), "Game 01");
 }
 
 TEST_F(RemoveListTest, HoldingConfirmAsksAboutTheSelectedGame) {
@@ -472,6 +452,7 @@ TEST_F(RemoveListTest, HoldingConfirmAsksAboutTheSelectedGame) {
   EXPECT_TRUE(dialogUp());
   EXPECT_TRUE(ui().drewLine("Game 02"));
   EXPECT_EQ(activityManager.asks.replaced, 0) << "the hold does not open the game";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
 }
 
 TEST_F(RemoveListTest, TouchOutsideTheButtonsAndTheOtherKeysDoNothingWhileItIsOpen) {
@@ -484,6 +465,7 @@ TEST_F(RemoveListTest, TouchOutsideTheButtonsAndTheOtherKeysDoNothingWhileItIsOp
   frame();
   EXPECT_TRUE(dialogUp());
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   EXPECT_TRUE(removescript::script().ids.empty());
 }
 
@@ -785,14 +767,13 @@ TEST_F(PagingTest, TheBlankRowsThatPadTheLastPageCannotBeTappedLongPressedOrSele
   input->tap(x, y);
   frame();
   EXPECT_EQ(activityManager.asks.replaced, 0) << "a tap on a blank row opens nothing";
+  EXPECT_EQ(activityManager.asks.pushed, 0);
   input->longPress(x, y);
   frame();
   EXPECT_FALSE(dialogUp());
   // The selection never left Game 01 (the swipes scroll the viewport only): Confirm opens it.
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01"));
+  EXPECT_EQ(openedTitle(), "Game 01");
 
   // The control: the same taps one row up land on the last game, so the blank row's spot really was empty.
   reopen();
@@ -801,9 +782,7 @@ TEST_F(PagingTest, TheBlankRowsThatPadTheLastPageCannotBeTappedLongPressedOrSele
   ASSERT_NE(lastGame, nullptr);
   input->tap(lastGame->rect.x + lastGame->rect.width / 2, lastGame->rect.y + lastGame->rect.height / 2);
   frame();
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-09"));
+  EXPECT_EQ(openedTitle(), "Game 09");
 }
 
 TEST_F(PagingTest, AListThatFillsWholePagesHasNoBlankRowAndOneThatFitsOnePageDoesNotScroll) {
@@ -861,9 +840,7 @@ TEST_F(PagingTest, TheKeysNeverLandOnABlankRowAndAStepPastAPageShowsTheWholeNext
   EXPECT_EQ(shown(count).front(), nameOf(1)) << "past the last game the selection wraps to the first";
   key(Button::NavPrevious);
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-09")) << "back from the first is the last game, not a blank row";
+  EXPECT_EQ(openedTitle(), "Game 09") << "back from the first is the last game, not a blank row";
 }
 
 // ---- the launcher comes back on the page of the game last opened ----
@@ -883,6 +860,7 @@ TEST_F(ReturnTest, TheNewLauncherShowsTheWholePageHoldingTheGameThatWasOpenedAnd
   ASSERT_GT(page, 2);
   key(Button::NavNext, 19);  // Game 20
   key(Button::Confirm);
+  launcher::startNewOnTitle(*input);  // a real match, which the reopen below leaves
   ASSERT_EQ(activityManager.replacements.size(), 1u);
 
   reopen();  // Leave, or the match ended: goToGames() builds a fresh launcher
@@ -891,9 +869,7 @@ TEST_F(ReturnTest, TheNewLauncherShowsTheWholePageHoldingTheGameThatWasOpenedAnd
   EXPECT_EQ(shown(25).front(), nameOf(first)) << "the whole page, from its first row";
   EXPECT_TRUE(ui().drewLine("Game 20"));
   key(Button::Confirm);  // the selection is on it
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-20"));
+  EXPECT_EQ(openedTitle(), "Game 20");
 }
 
 TEST_F(ReturnTest, ATapOpensTheGameAndTheReturnAlsoWorksForTheLastPage) {
@@ -901,25 +877,30 @@ TEST_F(ReturnTest, ATapOpensTheGameAndTheReturnAlsoWorksForTheLastPage) {
   open();
   for (int swipes = 0; swipes < 10 && !ui().drewLine("Game 25"); ++swipes) swipeUp();
   tapText("Game 25");
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  EXPECT_EQ(openedTitle(), "Game 25");
   reopen();
   EXPECT_TRUE(ui().drewLine("Game 25"));
   EXPECT_EQ(shown(25).back(), "Game 25");
   EXPECT_FALSE(ui().drewLine("Game 01"));
 }
 
-TEST_F(ReturnTest, AGameOpenedThroughTheModePickerIsRememberedToo) {
+// Opening a game's title screen is opening the game: its row, Back from the title screen, and Games again come back on
+// its page, though no match was started.
+TEST_F(ReturnTest, AGameWhoseTitleScreenWasOpenedIsRememberedWithNoMatch) {
   hostcaps::script().pass = true;
   for (int i = 1; i <= 24; ++i) addGame(idOf(i), nameOf(i));
   addGame("zz-both", "Game 99", "\"solo\",\"pass\"", 1, 1, 2);  // sorts last, on a later page
   open();
   for (int swipes = 0; swipes < 10 && !ui().drewLine("Game 99"); ++swipes) swipeUp();
   tapText("Game 99");
-  EXPECT_EQ(activityManager.asks.pushed, 1) << "two modes: the picker first";
-  EXPECT_TRUE(activityManager.replacements.empty());
-  reopen();  // the picker replaced itself with the match, and the match was left
+  EXPECT_EQ(activityManager.asks.pushed, 1);
+  EXPECT_EQ(openedTitle(), "Game 99");  // and Back from it
+  EXPECT_TRUE(activityManager.replacements.empty()) << "no match";
+  reopen();  // Home, then Games again: goToGames() builds a fresh launcher
   EXPECT_TRUE(ui().drewLine("Game 99"));
   EXPECT_FALSE(ui().drewLine("Game 01"));
+  key(Button::Confirm);  // the selection is on it
+  EXPECT_EQ(openedTitle(), "Game 99");
 }
 
 TEST_F(ReturnTest, AGameThatIsGoneReturnsToTheTopAndSoDoesAFreshBoot) {
@@ -927,19 +908,15 @@ TEST_F(ReturnTest, AGameThatIsGoneReturnsToTheTopAndSoDoesAFreshBoot) {
   open();
   key(Button::NavNext, 19);
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
+  EXPECT_EQ(openedTitle(), "Game 20");
   takeGameOffTheCard("game-20");  // removed elsewhere (a computer), or the listing changed
   reopen();
   EXPECT_EQ(shown(24).front(), "Game 01");
   key(Button::Confirm);
-  ASSERT_EQ(activityManager.replacements.size(), 1u);
-  ASSERT_NE(enterReplacement(), nullptr);
-  EXPECT_TRUE(logHas("Started game-01")) << "the selection is the first row";
+  EXPECT_EQ(openedTitle(), "Game 01") << "the selection is the first row";
 
   // A fresh boot: nothing was opened.
-  dropMatch();
   GamesLauncherActivity::forgetOpenedGame();
-  fakelog::clearLines();
   reopen();
   EXPECT_EQ(shown(24).front(), "Game 01");
 }

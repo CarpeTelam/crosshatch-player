@@ -5,6 +5,7 @@
 #include "GameInput.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
+#include "SeatShown.h"
 #include "SoloRounds.h"
 
 // The solo round loop as the GameVM task runs it (AD-21): the ended-round count
@@ -282,6 +283,237 @@ TEST_F(SoloRoundsTest, TheSoloFixturePlaysToGameOverAndKeepsItsStore) {
   for (const char* line : {"Round 3", "Rounds finished 2", "Best 130"}) {
     EXPECT_TRUE(hasText(frontCommands(), line)) << line << "\n" << frontText();
   }
+}
+
+// ---- the seat-taking steps and the open match (epic-pass-and-play entry 1) ----
+
+// The steps take a seat from the caller and never pick one; the open match's composition (start, restart, step) runs
+// them with the seat GameCore::seatShown names. pass-open is the fixture: noughts and crosses whose log names the seat
+// of each apply, over, and timer.
+class PassRoundsTest : public SoloRoundsTest {
+ protected:
+  // A tap at the middle of pass-open's cell `cell` (1..9, row by row: 140 px squares from (27, 200)).
+  static InputEvent cellTap(const int cell) {
+    return InputEvent{InputKind::Tap, static_cast<int16_t>(27 + (cell - 1) % 3 * 140 + 70),
+                      static_cast<int16_t>(200 + (cell - 1) / 3 * 140 + 70)};
+  }
+  size_t logged(const std::string& part) const {
+    size_t n = 0;
+    for (const std::string& line : log.lines) n += line.find(part) != std::string::npos;
+    return n;
+  }
+  // Where the first log line holding `part` is, or the log's size when none does.
+  size_t lineOf(const std::string& part) const {
+    for (size_t i = 0; i < log.lines.size(); ++i) {
+      if (log.lines[i].find(part) != std::string::npos) return i;
+    }
+    return log.lines.size();
+  }
+};
+
+// Every seat has its turn in order; a round ends after three moves with seat 3 the winner. Each seat's ui counts its
+// over events, and the frame names the seat it was drawn for.
+const char* const THREE_SEATS = R"(
+return {
+  setup = function(ctx) return { seats = ctx.seats, moves = 0 } end,
+  status = function(s)
+    if s.moves >= 3 then return { over = true, winners = { 3 } } end
+    return { turn = s.moves % s.seats + 1 }
+  end,
+  apply = function(s, seat) ch.log('apply ' .. seat) s.moves = s.moves + 1 return s end,
+  draw = function(s, seat, ui) ch.gfx.text(0, 0, 'seat ' .. seat .. ' overs ' .. (ui.overs or 0), 'small', 'black') end,
+  input = function(s, seat, ui, ev)
+    if ev.kind == 'over' then ui.overs = (ui.overs or 0) + 1 ch.log('over ' .. seat) end
+    return {}
+  end }
+)";
+
+TEST_F(PassRoundsTest, AMoveFromASeatOffTurnIsDiscarded) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.session->status().turn, 1);
+  const uint32_t frame = frames.frameGen();
+  ASSERT_EQ(game.rounds.play(cellTap(1), 2), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.session->discardedMoves(), 1u);
+  EXPECT_FALSE(game.session->pending());
+  EXPECT_EQ(game.session->ver(), 1u);
+  EXPECT_EQ(logged("apply seat"), 0u);
+  EXPECT_EQ(frames.frameGen(), frame) << "play draws nothing";
+}
+
+TEST_F(PassRoundsTest, AStepDrawsTheNextTurnSeatAfterAMoveAndItsNextTapIsThatSeats) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(hasText(frontCommands(), "Player 1 (X) to move")) << frontText();
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("apply seat 1 cell 1"), 1u);
+  EXPECT_TRUE(hasText(frontCommands(), "Player 2 (O) to move")) << frontText();
+  ASSERT_EQ(game.step(cellTap(2)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("apply seat 2 cell 2"), 1u);
+  EXPECT_TRUE(hasText(frontCommands(), "Player 1 (X) to move")) << frontText();
+  EXPECT_EQ(game.session->discardedMoves(), 0u);
+}
+
+TEST_F(PassRoundsTest, DrawPublishesTheFrameOfTheSeatItIsGivenWhoeverHasTheTurn) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->status().turn, 2);
+  const uint32_t frame = frames.frameGen();
+  ASSERT_EQ(game.rounds.draw(1), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), frame + 1);
+  EXPECT_TRUE(hasText(frontCommands(), "Player 1 (X): Player 2 to move")) << frontText();
+  ASSERT_EQ(game.rounds.draw(0), Outcome::Ok) << game.errorMessage();
+  EXPECT_TRUE(hasText(frontCommands(), "Everyone: Player 2 to move")) << frontText();
+}
+
+TEST_F(PassRoundsTest, ATimerReachesTheTurnSeatAndAStaleOneIsDroppedWithNoDraw) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  // setup's timer fires, then seat 1's tap re-arms it before the event is stepped: the event is stale.
+  clock.advance(10000);
+  InputEvent fired;
+  ASSERT_TRUE(game.game.timer().takeDueEvent(clock.nowMs(), fired));
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  const uint32_t frame = frames.frameGen();
+  ASSERT_EQ(game.step(fired), Outcome::Ok);
+  EXPECT_EQ(frames.frameGen(), frame) << "a stale timer is dropped with no draw";
+  EXPECT_EQ(logged("timer for seat"), 0u);
+  // The tap's own timer fires on seat 2's turn and reaches seat 2's input and ui.
+  ASSERT_TRUE(tick(game.rounds, game.game, 10000));
+  EXPECT_EQ(logged("timer for seat 2"), 1u);
+  EXPECT_EQ(logged("timer for seat 1"), 0u);
+  EXPECT_TRUE(hasText(frontCommands(), "Nudges 1, overs 0")) << frontText();
+  EXPECT_TRUE(hasText(frontCommands(), "Player 2 (O) to move")) << frontText();
+}
+
+// Once a pass round is over the composition shows seat 0, so a later tap reaches seat 0's input, and its move is
+// discarded: seat 0 is no seat of the roster, and the round is over.
+TEST_F(PassRoundsTest, ATapAfterThePassRoundEndsReachesSeatZeroAndItsMoveIsDiscarded) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  for (const int cell : {1, 2, 4, 3, 7}) ASSERT_EQ(game.step(cellTap(cell)), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(game.session->status().over);
+  EXPECT_TRUE(hasText(frontCommands(), "Everyone: Player 1 wins")) << frontText();
+  const uint32_t discarded = game.session->discardedMoves();
+  const uint32_t ver = game.session->ver();
+  ASSERT_EQ(game.step(cellTap(5)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("tap for seat 0"), 1u);
+  EXPECT_EQ(logged("apply seat 0"), 0u);
+  EXPECT_EQ(logged("cell 5"), 0u);
+  EXPECT_EQ(game.session->discardedMoves(), discarded + 1);
+  EXPECT_EQ(game.session->ver(), ver);
+  EXPECT_TRUE(hasText(frontCommands(), "Everyone: Player 1 wins")) << frontText();
+}
+
+TEST_F(PassRoundsTest, ThreeSeatsTakeTurnsAndEachGetsOverOnceBeforeTheFrameForEveryone) {
+  useSource("main", THREE_SEATS);
+  SessionGame game(*this, GameCore::Roster::pass(3));
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "seat 1 overs 0");
+  ASSERT_EQ(game.rounds.play(tapAt(10), 3), Outcome::Ok);  // seat 3, off turn
+  EXPECT_EQ(logged("apply"), 0u);
+  ASSERT_EQ(game.step(tapAt(10)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "seat 2 overs 0");
+  ASSERT_EQ(game.step(tapAt(10)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "seat 3 overs 0");
+  EXPECT_EQ(game.rounds.roundsEnded(), 0u);
+  ASSERT_EQ(game.step(tapAt(10)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("apply 1"), 1u);
+  EXPECT_EQ(logged("apply 2"), 1u);
+  EXPECT_EQ(logged("apply 3"), 1u);
+  for (const char* over : {"over 1", "over 2", "over 3"}) EXPECT_EQ(logged(over), 1u) << over;
+  EXPECT_LT(lineOf("over 1"), lineOf("over 2"));
+  EXPECT_LT(lineOf("over 2"), lineOf("over 3"));
+  EXPECT_EQ(frontText(), "seat 0 overs 0") << "seat 0's ui is its own; no seat's over reached it";
+  EXPECT_EQ(game.rounds.roundsEnded(), 1u);
+  EXPECT_EQ(game.session->discardedMoves(), 4u);  // seat 3's off-turn move and the three answers to over
+
+  // Play again: seat 1 first, and over comes once more to each seat in the next round.
+  ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "seat 1 overs 1");
+  for (int i = 0; i < 3; ++i) ASSERT_EQ(game.step(tapAt(10)), Outcome::Ok) << game.errorMessage();
+  for (const char* over : {"over 1", "over 2", "over 3"}) EXPECT_EQ(logged(over), 2u) << over;
+  EXPECT_EQ(game.rounds.roundsEnded(), 2u);
+}
+
+TEST_F(PassRoundsTest, ARosterWithOneLocalSeatDrawsThatSeatWhilePlayingAndOnceOver) {
+  useSource(
+      "main",
+      "return { setup = function() return { moves = 0 } end,\n"
+      "  status = function(s) if s.moves >= 1 then return { over = true, winners = { 2 } } end\n"
+      "    return { turn = 2 } end,\n"
+      "  apply = function(s, seat) ch.log('apply ' .. seat) s.moves = s.moves + 1 return s end,\n"
+      "  draw = function(s, seat) ch.gfx.text(0, 0, 'seat ' .. seat .. ' moves ' .. s.moves, 'small', 'black') end,\n"
+      "  input = function(s, seat, ui, ev) if ev.kind == 'over' then ch.log('over ' .. seat) end return {} end }");
+  GameCore::Roster roster;  // nearby's shape: two seats, this device plays seat 2
+  roster.mode = GameCore::Mode::Nearby;
+  roster.seats = 2;
+  roster.localSeats = 0b10;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frontText(), "seat 2 moves 0");
+  ASSERT_EQ(game.step(tapAt(10)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("apply 2"), 1u);
+  EXPECT_TRUE(game.session->status().over);
+  EXPECT_EQ(frontText(), "seat 2 moves 1") << "one local seat: its own frame once over, not seat 0's";
+  EXPECT_EQ(logged("over 2"), 1u);
+  EXPECT_EQ(logged("over 1"), 0u);
+  EXPECT_EQ(game.rounds.roundsEnded(), 1u);
+}
+
+TEST_F(PassRoundsTest, BeginPublishesNoFrameAndARoundStartsAtItsFirstDraw) {
+  useSource("main", readFixture("pass-open/main.lua"));
+  SessionGame game(*this, GameCore::Roster::pass(2));
+  ASSERT_EQ(game.game.load(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.rounds.begin(*game.session), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), 0u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 0u);
+  ASSERT_EQ(game.rounds.draw(1), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), 1u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 1u);
+  ASSERT_EQ(game.rounds.draw(2), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.rounds.roundsStarted(), 1u) << "once a round";
+
+  game.rounds.requestPlayAgain();
+  ASSERT_TRUE(game.rounds.takePlayAgain());
+  ASSERT_EQ(game.rounds.beginAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), 2u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 1u);
+  ASSERT_EQ(game.rounds.draw(1), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(game.rounds.roundsStarted(), 2u);
+}
+
+// A roster with two of three seats local (cross-story fix review F4; epic-play-nearby's shape, which no match has yet):
+// with the turn on the third seat, seatShown names NO_SEAT, and start, restart, and step neither read input nor draw.
+TEST_F(PassRoundsTest, ATurnSeatThisDeviceDoesNotPlayGetsNoInputAndNoDraw) {
+  useSource("main", R"(
+return {
+  setup = function(ctx) return { moves = 2 } end,
+  status = function(s) return { turn = s.moves % 3 + 1 } end,
+  apply = function(s, seat) ch.log('apply ' .. seat) s.moves = s.moves + 1 return s end,
+  draw = function(s, seat, ui) ch.log('draw ' .. seat) ch.gfx.text(0, 0, 'seat ' .. seat, 'small', 'black') end,
+  input = function(s, seat, ui, ev) ch.log('input ' .. seat) return {} end }
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(3);
+  roster.localSeats = 0b011;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->status().turn, 3);
+  EXPECT_EQ(game.rounds.shownSeat(), GameCore::NO_SEAT);
+  EXPECT_EQ(frames.frameGen(), 0u) << "start drew another device's seat";
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(frames.frameGen(), 0u) << "step or restart drew another device's seat";
+  EXPECT_EQ(logged("input "), 0u);
+  EXPECT_EQ(logged("draw "), 0u);
+  EXPECT_EQ(logged("apply "), 0u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 0u) << "no frame, so no round counts as started";
 }
 
 }  // namespace

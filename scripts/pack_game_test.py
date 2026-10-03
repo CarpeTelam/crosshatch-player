@@ -389,6 +389,11 @@ class BadPackageTest(PackerTestCase):
         for label, text in cases.items():
             with self.subTest(label):
                 self.assertRefused(self.project.game(manifest=text), 'manifest.json: ')
+        for modes in (['pass'], ['solo', 'pass']):
+            with self.subTest(modes=modes):
+                text = manifest_text(modes=modes, seats={'min': 1, 'max': 1})
+                self.assertRefused(self.project.game(manifest=text),
+                                   'error: manifest.json: a pass or nearby game needs seats.max of 2 or more')
 
 
 class LimitTest(PackerTestCase):
@@ -524,6 +529,27 @@ class LimitTest(PackerTestCase):
     def test_icon_png_is_not_in_the_image_budget(self):
         files = self.images_files(LIMITS['images_bytes']['at']['images'])
         files['icon.png'] = png(64, 64)
+        self.assertEqual(self.project.run(self.project.game(files))[0], 0)
+
+    def test_reserved_pages_fit_their_limits(self):
+        for name, (width, height) in pg.PAGE_LIMITS.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.project.run(self.project.game({name: png(width, height)}))[0], 0)
+                shutil.rmtree(self.project.out)
+                self.assertEqual(self.project.run(self.project.game({name: png(1, 1)}))[0], 0)
+                shutil.rmtree(self.project.out)
+                for over in ((width + 1, height), (width, height + 1)):
+                    self.assertRefused(self.project.game({name: png(*over)}),
+                                       f'{name}: is {over[0]}x{over[1]}; it may be at most {width}x{height}')
+        # Any other image may be larger.
+        self.assertEqual(self.project.run(self.project.game({'titles.png': png(481, 801)}))[0], 0)
+
+    def test_reserved_pages_count_toward_the_image_budget(self):
+        # 5 x 28,862 = 144,310 bytes: over, where the three game images alone fit.
+        files = {'title.png': png(480, 480), 'handoff.png': png(480, 480), 'a.png': png(480, 480),
+                 'b.png': png(480, 480), 'c.png': png(480, 480)}
+        self.assertRefused(self.project.game(files), 'the images convert to 144,310 bytes; at most 131,072')
+        del files['title.png'], files['handoff.png']
         self.assertEqual(self.project.run(self.project.game(files))[0], 0)
 
     def test_image_dimensions(self):
@@ -665,7 +691,7 @@ class ReadManifestTest(unittest.TestCase):
     def test_valid_manifests(self):
         self.assertEqual(self.read(manifest_text()), [])
         full = manifest_text(hidden=True, icon='game-controller', icon_weight='fill', modes=['solo', 'pass'],
-                             extra={'a': [1, {'b': None}]})
+                             seats={'min': 1, 'max': 2}, extra={'a': [1, {'b': None}]})
         self.assertEqual(self.read(full), [])
         self.assertEqual(self.read(manifest_text(seats={'min': 2, 'max': 4}, modes=['pass', 'nearby'])), [])
         self.assertEqual(self.read(manifest_text(icon_weight='regular')), [])
@@ -692,9 +718,10 @@ class ReadManifestTest(unittest.TestCase):
                 self.refused(json.dumps(manifest), f'missing key {key!r}')
 
     def test_duplicate_known_keys(self):
-        text = manifest_text(hidden=False, icon='x', icon_weight='fill')
+        text = manifest_text(hidden=False, icon='x', icon_weight='fill', default_mode='solo', settings=[])
         repeated = {'id': '"demo"', 'name': '"Demo"', 'version': '"1.0.0"', 'api': '3', 'seats': '{"min": 1, "max": 1}',
-                    'modes': '["solo"]', 'hidden': 'false', 'icon': '"x"', 'icon_weight': '"fill"'}
+                    'modes': '["solo"]', 'hidden': 'false', 'icon': '"x"', 'icon_weight': '"fill"',
+                    'default_mode': '"solo"', 'settings': '[]'}
         self.assertEqual(sorted(repeated), sorted(pg.KNOWN_KEYS))
         for key in pg.KNOWN_KEYS:
             with self.subTest(key=key):
@@ -775,10 +802,14 @@ class ReadManifestTest(unittest.TestCase):
             with self.subTest(modes=modes):
                 self.assertEqual(self.read(manifest_text(modes=modes, seats={'min': 1, 'max': 2})), [])
 
-    def test_solo_and_nearby_seat_rules(self):
+    def test_solo_pass_and_nearby_seat_rules(self):
         self.refused(manifest_text(modes=['solo', 'pass'], seats={'min': 2, 'max': 2}), 'solo game needs seats.min 1')
         self.refused(manifest_text(modes=['nearby'], seats={'min': 1, 'max': 1}), 'nearby game needs seats.max')
         self.refused(manifest_text(modes=['solo', 'nearby'], seats={'min': 1, 'max': 1}), 'nearby game needs seats.max')
+        seat_rule = 'a pass or nearby game needs seats.max of 2 or more'
+        self.refused(manifest_text(modes=['pass'], seats={'min': 1, 'max': 1}), seat_rule)
+        self.refused(manifest_text(modes=['solo', 'pass'], seats={'min': 1, 'max': 1}), seat_rule)
+        self.assertEqual(self.read(manifest_text(modes=['solo', 'pass'], seats={'min': 1, 'max': 2})), [])
         self.assertEqual(self.read(manifest_text(modes=['pass'], seats={'min': 2, 'max': 2})), [])
         self.assertEqual(self.read(manifest_text(modes=['nearby'], seats={'min': 2, 'max': 2})), [])
 
@@ -828,6 +859,20 @@ class ReadManifestTest(unittest.TestCase):
         self.assertEqual(pg.MAX_ICON_BYTES, limits['manifest_icon_bytes'])
         self.assertEqual(weights, set(pg.ICON_WEIGHTS))
         self.assertEqual(manifest_keys, set(pg.KNOWN_KEYS))
+        # The settings rules and the reserved pages' limits are the list's too.
+        self.assertEqual(pg.SETTING_ID.pattern, names['setting_id'])
+        self.assertEqual(pg.MAX_SETTINGS, limits['settings_count'])
+        self.assertEqual(pg.MAX_SETTING_VALUES, limits['setting_values_count'])
+        self.assertEqual(pg.MAX_SETTING_ID_BYTES, limits['setting_id_bytes'])
+        self.assertEqual(pg.MAX_SETTING_NAME_BYTES, limits['setting_name_bytes'])
+        self.assertEqual(pg.MAX_SETTING_VALUE_BYTES, limits['setting_value_bytes'])
+        self.assertEqual(pg.PAGE_LIMITS['title.png'],
+                         (limits['title_image_width_pixels'], limits['title_image_height_pixels']))
+        self.assertEqual(pg.PAGE_LIMITS['handoff.png'],
+                         (limits['handoff_image_width_pixels'], limits['handoff_image_height_pixels']))
+        setting_keys = {body.split(' ', 1)[0].split('.')[1] for kind, body in entries
+                        if kind == 'manifest' and body.startswith('settings.')}
+        self.assertEqual(setting_keys, set(pg.SETTING_KEYS))
         # The listed pattern and cap decide the same names as the packer, over the edge names.
         pattern = re.compile(names['manifest_icon'])
         edge = ['', '-', 'a', 'a-', '-a', 'a--b', 'a-b', 'a_b', '_', '1', '1a', 'a1', 'A', 'aB', 'a b', 'a.b', 'a-1',
@@ -836,6 +881,71 @@ class ReadManifestTest(unittest.TestCase):
             with self.subTest(name=name):
                 listed = len(name) <= limits['manifest_icon_bytes'] and bool(pattern.fullmatch(name))
                 self.assertEqual(listed, self.read(manifest_text(icon=name), icons={name}) == [])
+
+    def test_default_mode(self):
+        both = {'modes': ['solo', 'pass'], 'seats': {'min': 1, 'max': 2}}
+        for mode in ('solo', 'pass'):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.read(manifest_text(default_mode=mode, **both)), [])
+        self.refused(manifest_text(default_mode='pass'), "default_mode 'pass' is not one of the manifest's modes")
+        for bad in ('', 'Solo', 'duo', 1, None, ['solo'], True):
+            with self.subTest(bad=bad):
+                self.refused(manifest_text(default_mode=bad, **both), 'default_mode must be one of')
+        # Key order is free, as on the device.
+        self.assertEqual(self.read('{"default_mode": "pass", "id": "demo", "name": "D", "version": "", "api": 3,'
+                                   ' "seats": {"min": 1, "max": 2}, "modes": ["solo", "pass"]}'), [])
+
+    def setting(self, **changes):
+        base = {'id': 'level', 'name': 'Level', 'values': ['Easy', 'Hard']}
+        base.update(changes)
+        return {key: value for key, value in base.items() if value is not DROP}
+
+    def test_settings_are_read_as_the_device_reads_them(self):
+        full = [self.setting(default='Hard'), self.setting(id='sound_2', name='Sound', values=['On', 'Off']),
+                self.setting(id='a'),
+                self.setting(id='b' * 16, name='n' * 24, values=['1', '2', '3', '4', '5', 'v' * 16])]
+        self.assertEqual(self.read(manifest_text(settings=full)), [])
+        self.assertEqual(self.read(manifest_text(settings=[])), [])
+        self.assertEqual(self.read(manifest_text(settings=[self.setting(name='é' * 12)])), [])  # 24 bytes
+        # The default may come before its values.
+        self.assertEqual(self.read(manifest_text()[:-1] + ', "settings": [{"default": "B", "values": ["A", "B"], '
+                                   '"name": "N", "id": "x"}]}'), [])
+
+    def test_settings_limits_and_rules_refuse_the_package(self):
+        cases = {
+            'at most 4': [self.setting(id=c) for c in 'abcde'],
+            'settings must be an array': {'id': 'a'},
+            'must be an object': ['level'],
+            "unknown key 'note'": [self.setting(note='x')],
+            "missing key 'id'": [self.setting(id=DROP)],
+            "missing key 'name'": [self.setting(name=DROP)],
+            "missing key 'values'": [self.setting(values=DROP)],
+            'is used by another setting': [self.setting(), self.setting()],
+            'values must be unique': [self.setting(values=['a', 'b', 'a'])],
+            "default 'Medium' is not one of its values": [self.setting(default='Medium')],
+        }
+        for fragment, settings in cases.items():
+            with self.subTest(fragment=fragment):
+                self.refused(manifest_text(settings=settings), fragment)
+        for bad_id in ('', '1a', '_a', 'A', 'a-b', 'b' * 17, 1, None):
+            with self.subTest(bad_id=bad_id):
+                self.refused(manifest_text(settings=[self.setting(id=bad_id)]), 'id must match')
+        for bad_name in ('', 'n' * 25, 'é' * 13, 1, None):
+            with self.subTest(bad_name=bad_name):
+                self.refused(manifest_text(settings=[self.setting(name=bad_name)]), 'name must be 1 to 24 bytes')
+        for values in (['one'], [], ['1', '2', '3', '4', '5', '6', '7'], 'Easy', {'a': 'b'}):
+            with self.subTest(values=values):
+                self.refused(manifest_text(settings=[self.setting(values=values)]),
+                             'values must be an array of 2 to 6')
+        for values in (['a', ''], ['a', 'v' * 17], ['a', 2], ['a', ['b']], ['a', None]):
+            with self.subTest(values=values):
+                self.refused(manifest_text(settings=[self.setting(values=values)]),
+                             'each value must be 1 to 16 bytes')
+        for default in (1, None, True, ['Easy']):
+            with self.subTest(default=default):
+                self.refused(manifest_text(settings=[self.setting(default=default)]), 'default must be one of')
+        self.refused(manifest_text()[:-1] +
+                     ', "settings": [{"id": "a", "id": "b", "name": "N", "values": ["1", "2"]}]}', "duplicate key 'id'")
 
     def test_icon_weight(self):
         for bad in ('bold', 'Regular', '', 'thin', 1, None, True, ['fill']):

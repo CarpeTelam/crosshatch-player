@@ -184,6 +184,11 @@ bool FrameReplay::draw(const GfxRenderer& renderer, const GameViewport& viewport
   return true;
 }
 
+void FrameReplay::drawBlank(const GfxRenderer& renderer) {
+  renderer.clearScreen();
+  policy.forceFull();
+}
+
 void FrameReplay::drawText(const GfxRenderer& renderer, const GameViewport& viewport,
                            const GameScript::DrawCommand& text) const {
   const int fontId = TEXT_FONT_IDS[static_cast<size_t>(text.size)];

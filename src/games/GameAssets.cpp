@@ -17,6 +17,7 @@ namespace {
 
 constexpr size_t NAME_BUFFER = 48;   // longer names cannot be modules or images and are skipped
 constexpr size_t LUA_EXT_BYTES = 4;  // ".lua"
+constexpr size_t BMP_EXT_BYTES = 4;  // ".bmp"
 
 // One buffer holds a module name or an image name, whichever the file is.
 static_assert(GameScript::SourceSpan::MAX_NAME_BYTES == GameCore::IMAGE_NAME_BYTES, "one stem buffer for both");
@@ -138,10 +139,11 @@ struct FolderScan {
       // A .lua file no require can name: said, so it never goes missing silently.
       ++scan.misnamed;
       LOG_ERR("GAME", "%s/%s is not loaded: a module name is [a-z0-9_]{1,32}.lua", path, name);
-    } else if (GameCore::looksLikeImage(name, length) && strcasecmp(name, "icon.bmp") != 0) {
+    } else if (GameCore::looksLikeImage(name, length) && !GameCore::isReservedImage(name, length - BMP_EXT_BYTES)) {
       // A .bmp file no ch.gfx.image can name: skipped with a log line on purpose,
       // not a load failure; the game fails later only if it draws that name.
-      // icon.bmp is the launcher's, not a game image.
+      // A reserved image (icon.bmp, the launcher's; title.bmp and handoff.bmp, the
+      // runtime's pages) is no game image, and is skipped without one.
       LOG_ERR("GAME", "%s/%s is not loaded: an image name is [a-z0-9_]{1,32}.bmp", path, name);
     } else if (!fits) {
       // Any other name that filled the buffer: said too, so no file goes missing silently.

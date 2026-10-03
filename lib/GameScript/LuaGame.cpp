@@ -423,13 +423,20 @@ void LuaGame::encodeTop(lua_State* L, const char* function, const char* what, co
 
 void LuaGame::setupEntry(lua_State* L, Call& call) {
   pushGameFunction(L, "setup");
-  lua_createtable(L, 0, 3);
+  lua_createtable(L, 0, 4);
   lua_pushinteger(L, call.ctx->seats);
   lua_setfield(L, -2, "seats");
   lua_pushstring(L, GameCore::modeName(call.ctx->mode));
   lua_setfield(L, -2, "mode");
   lua_pushinteger(L, call.ctx->api);
   lua_setfield(L, -2, "api");
+  // A fresh table each call, so a change the game made to the last one never reaches Play again.
+  lua_createtable(L, 0, settings.count);
+  for (uint8_t i = 0; i < settings.count && i < GameCore::SettingValues::MAX_SETTINGS; ++i) {
+    lua_pushstring(L, settings.entries[i].value);
+    lua_setfield(L, -2, settings.entries[i].id);
+  }
+  lua_setfield(L, -2, "settings");
   lua_call(L, 1, 1);
   if (!lua_istable(L, -1)) luaL_error(L, "setup must return a state table, not a %s", luaL_typename(L, -1));
   encodeTop(L, "setup", "state", Codec::SNAPSHOT_LIMIT, *call.encoded);

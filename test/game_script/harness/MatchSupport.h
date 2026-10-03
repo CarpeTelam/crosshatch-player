@@ -21,12 +21,14 @@
 #include <vector>
 
 #include "FakeRtos.h"
+#include "GameIconDraw.h"
 #include "GameVM.h"
 #include "HarnessSupport.h"
 #include "Logging.h"
 #include "MappedInputManager.h"
 #include "RenderLockProbe.h"
 #include "activities/games/GameMatchActivity.h"
+#include "activities/games/GameSplashLayout.h"
 #include "components/UITheme.h"
 #include "components/UiAppHost.h"
 #include "fontIds.h"
@@ -229,17 +231,17 @@ inline std::set<std::string> resumeFilesOnCard() {
 
 // What becomes of the resume.bin files a match writes on its way out (the forced exit writes the last snapshot).
 enum class Saves : uint8_t {
-  Discard,  // taken off the card: the launcher opened next has no Continue row for them
-  Keep,     // left on the card, as production leaves them: a game that was left mid-round has a Continue row
+  Discard,  // taken off the card: the game's title screen opened next has no Continue row for them
+  Keep,     // left on the card, as production leaves them: a game that was left mid-round offers Continue
 };
 
 // Lets go of the matches a launcher test started (`drop` does it, as the manager would), the same way every run.
 // A match's VM publishes its first snapshot a moment after it logs "Started <id>", and the match writes its last
 // snapshot as resume.bin on the way out, so a test that dropped it at once got a save on some runs and none on others,
-// and the launcher opened next listed a Continue row or not. This waits until every match that started has logged its
+// and the title screen opened next offered Continue or not. This waits until every match that started has logged its
 // first round, then drops. `saves` says what happens to the saves the drop wrote: Discard takes them away (a test that
-// means a save puts it there before, and one that means the state production reaches, a game left mid-round with its
-// Continue row, says Keep). Discard takes away only the files the drop itself created: a save that was on the card
+// means a save puts it there before, and one that means the state production reaches, a game left mid-round that
+// offers Continue, says Keep). Discard takes away only the files the drop itself created: a save that was on the card
 // before it (one the test placed, or one the match's own loop wrote) stays.
 inline void letStartedMatchesGo(const std::function<void()>& drop, const Saves saves) {
   waitFor([] { return fakelog::countLines("GAME: Started ") <= fakelog::countLines("Round started"); }, 3000);
@@ -265,6 +267,25 @@ inline GameCore::Manifest manifestOf(const std::string& id, const std::string& n
   return manifest;
 }
 
+// The texts the renderer recorded since its last forget(), one string a ch.gfx.text: FrameReplay draws one code point
+// a drawText call, so the calls of one text (consecutive, on one line) are joined back.
+inline std::vector<std::string> drawnTexts(const GfxRenderer& renderer) {
+  std::vector<std::string> texts;
+  bool joining = false;
+  int lineY = 0;
+  for (const auto& call : renderer.calls) {
+    if (call.kind != GfxRenderer::Kind::DrawText) {
+      joining = false;
+      continue;
+    }
+    if (!joining || call.y != lineY) texts.emplace_back();
+    texts.back() += call.text;
+    joining = true;
+    lineY = call.y;
+  }
+  return texts;
+}
+
 // The three built-in fonts FrameReplay::loadFonts reads, as the double models them: 9, 11, and 17
 // px a glyph (small, medium, large), on lines 20, 24, and 30 px high. None equals the stand-in
 // advance the replay measures with before loadFonts (8, 10, 14), so a game that measures text
@@ -276,6 +297,126 @@ inline void addFonts(GfxRenderer& renderer) {
   renderer.addFont(UI_10_FONT_ID, 20, SMALL_ADVANCE);
   renderer.addFont(UI_12_FONT_ID, 24, MEDIUM_ADVANCE);
   renderer.addFont(NOTOSANS_18_FONT_ID, 30, LARGE_ADVANCE);
+}
+
+// GameSplashLayout::rowRect's rects of the splash menu's rows 0 to count - 1, as a screen built on `renderer` measures
+// them: read through a host of its own, which lays out with the theme the title screen's and the match's hosts use (the
+// double's: resetUi binds none). Its target is gone when this returns, so the screens' own targets are read as before.
+inline std::vector<freeink::ui::Rect> splashMenuRows(const GfxRenderer& renderer, const int count = 2) {
+  struct Probe {
+    const GfxRenderer* renderer = nullptr;
+    int count = 0;
+    std::vector<freeink::ui::Rect> rows;
+    freeink::ui::ListProps scratch;
+  };
+  auto probe = std::make_unique<Probe>();
+  probe->renderer = &renderer;
+  probe->count = count;
+  {
+    auto host = std::make_unique<UiAppHost>(renderer);
+    host->app.setScreen(
+        [](UiAppHost::UiScreen& screen, void* user) {
+          auto* self = static_cast<Probe*>(user);
+          for (int i = 0; i < self->count; ++i)
+            self->rows.push_back(GameSplashLayout::rowRect(screen, *self->renderer, i, self->scratch));
+        },
+        probe.get());
+    host->renderUi();
+  }
+  return probe->rows;
+}
+
+// The middle of the hidden hand-off screen's "I'm ready" button, which fills the splash menu's second row: where the
+// suites tap it (HiddenPassTest pins the button to that row).
+inline freeink::ui::Point readyButtonMiddle(const GfxRenderer& renderer) {
+  const freeink::ui::Rect ready = splashMenuRows(renderer, 2)[1];
+  return freeink::ui::Point{static_cast<int16_t>(ready.x + ready.width / 2),
+                            static_cast<int16_t>(ready.y + ready.height / 2)};
+}
+
+// ---- the hidden hand-off screen as a push holds it (GameMatchTest's HiddenPassTest, ResumeMatchTest's PassResumeTest)
+// ----
+
+// The middle of the splash band on the logical screen: it starts under the header, where the title screen's does
+// (GameSplashLayout::bandTop), and is 480 px tall.
+inline int bandMiddleY(const GfxRenderer& renderer) {
+  return GameSplashLayout::bandTop(renderer) + GameSplashLayout::BAND / 2;
+}
+
+// The fills `icon` makes at 128 px with its middle at the band's (240, bandMiddleY), in its fill weight when `fill`,
+// drawn as drawGameIcon draws it there.
+inline std::vector<GfxRenderer::Call> iconFills(const char* icon, const bool fill = false) {
+  GfxRenderer expected(480, 800);
+  EXPECT_TRUE(drawGameIcon(expected, icon, 240 - 64, bandMiddleY(expected) - 64, 128, true, fill)) << icon;
+  std::vector<GfxRenderer::Call> fills;
+  for (const GfxRenderer::Call& call : expected.calls) {
+    if (call.kind == GfxRenderer::Kind::FillRect) fills.push_back(call);
+  }
+  return fills;
+}
+
+// Whether `drawn` is exactly the fills `want`, call by call.
+inline void expectSameFills(const std::vector<GfxRenderer::Call>& drawn, const std::vector<GfxRenderer::Call>& want) {
+  ASSERT_FALSE(want.empty());
+  ASSERT_EQ(drawn.size(), want.size()) << "the hand-off screen drew more or less than the game's icon";
+  for (size_t i = 0; i < want.size(); ++i) {
+    EXPECT_EQ(drawn[i].kind, GfxRenderer::Kind::FillRect) << i;
+    EXPECT_EQ(drawn[i].x, want[i].x) << i;
+    EXPECT_EQ(drawn[i].y, want[i].y) << i;
+    EXPECT_EQ(drawn[i].w, want[i].w) << i;
+    EXPECT_EQ(drawn[i].h, want[i].h) << i;
+    EXPECT_EQ(drawn[i].black, want[i].black) << i;
+  }
+}
+
+// Black pixels the renderer holds in (x, y, w, h).
+inline size_t blackIn(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
+  size_t black = 0;
+  for (int py = y; py < y + h; ++py)
+    for (int px = x; px < x + w; ++px)
+      if (renderer.pixel(px, py) == GfxRenderer::PixelBlack) ++black;
+  return black;
+}
+
+// Whether the band shows `white` (a page of the band's full size) pixel for pixel, sampled every 7 px, and nothing
+// black is drawn on the renderer outside the band (the turn line and the button are FreeInkUI's, which the recording
+// target does not paint).
+inline void expectBandShows(const GfxRenderer& renderer, const std::function<bool(int, int)>& white) {
+  const int top = GameSplashLayout::bandTop(renderer);
+  int wrong = 0;
+  for (int y = 0; y < GameSplashLayout::BAND && wrong < 5; y += 7) {
+    for (int x = 0; x < GameSplashLayout::BAND && wrong < 5; x += 7) {
+      const auto want = white(x, y) ? GfxRenderer::PixelWhite : GfxRenderer::PixelBlack;
+      if (renderer.pixel(x, top + y) != want) {
+        ADD_FAILURE() << "band pixel " << x << "," << y;
+        ++wrong;
+      }
+    }
+  }
+  EXPECT_EQ(blackIn(renderer, 0, 0, 480, 800), blackIn(renderer, 0, top, 480, GameSplashLayout::BAND))
+      << "ink outside the band";
+}
+
+// What the framebuffer held at a push: every drawing call since the last clearScreen before it (`callsBefore`,
+// GfxRenderer::Shown::callsBefore), and whether a clearScreen came before them at all.
+struct Held {
+  bool cleared = false;
+  std::vector<GfxRenderer::Call> drawn;
+};
+inline Held heldAt(const GfxRenderer& renderer, const size_t callsBefore) {
+  Held held;
+  for (size_t i = 0; i < callsBefore && i < renderer.calls.size(); ++i) {
+    const GfxRenderer::Call& call = renderer.calls[i];
+    if (call.kind == GfxRenderer::Kind::ClearScreen) {
+      held.cleared = true;
+      held.drawn.clear();
+    }
+    if (call.kind == GfxRenderer::Kind::FillRect || call.kind == GfxRenderer::Kind::DrawText ||
+        call.kind == GfxRenderer::Kind::FillRectDither || call.kind == GfxRenderer::Kind::DrawLine) {
+      held.drawn.push_back(call);
+    }
+  }
+  return held;
 }
 
 // The state every test starts from: an empty card and log, no PSRAM blocks, the fake clock
@@ -292,6 +433,7 @@ class ScreenTest : public harness::HarnessTest {
     UITheme::getInstance().getTheme().reset();
     UITheme::getInstance().coverGridHome = false;
     gpio.swipe = HalGPIO::Swipe{};
+    gpio.touchHeldMs = 0;
     renderer = std::make_unique<GfxRenderer>(480, 800);
     addFonts(*renderer);
     input = std::make_unique<MappedInputManager>(gpio, *renderer);

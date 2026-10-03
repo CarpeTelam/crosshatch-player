@@ -7,6 +7,7 @@ import io
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,12 @@ FILE_ORDER = [
     'timing.chgame',
     'pack-images.chgame',
     'counter-changed.chgame',
+    'pass-open.chgame',
+    'pass-hidden.chgame',
+    'pass-art.chgame',
+    'slow-restart.chgame',
+    'pass-title.chgame',
+    'pass-store.chgame',
     'invalid-binary-lua.chgame',
     'package_vector.chgame',
 ]
@@ -58,6 +65,9 @@ out.mkdir(parents=True, exist_ok=True)
 (out / 'binary-lua-stored.chgame').write_bytes(b'BAD')
 (out / 'cases.txt').write_text('other.chgame Ok\\nbinary-lua-stored.chgame BinaryLua\\n')
 '''
+MOVE_LINE = '  state.moves = state.moves + 1\n'
+STORE_LINE = '  ch.store.set({ moves = state.moves })\n'
+NAMES = {'pass-art': 'Pass art', 'pass-hidden': 'Pass hidden'}
 VECTOR_BYTES = b'vector-package'
 VECTOR_HASH = '0123456789abcdef'
 VECTOR_FILE = 'the_vector.chgame'  # not the committed name: the script must read it from the JSON
@@ -81,7 +91,9 @@ def make_root(base):
     write(root / pdr.PACKER, FAKE_PACKER)
     write(root / pdr.GENERATOR, FAKE_GENERATOR)
     for folder, _ in pdr.GAMES:
-        write(root / pdr.FIXTURES / folder / 'main.lua', f'-- {folder}\n')
+        write(root / pdr.FIXTURES / folder / 'main.lua', f'-- {folder}\n' + (MOVE_LINE if folder == 'pass-hidden' else ''))
+        write(root / pdr.FIXTURES / folder / 'manifest.json', json.dumps({'id': folder, 'name': NAMES.get(folder, folder)}))
+    write(root / pdr.FIXTURES / 'pass-art' / 'handoff.png', b'png')
     write(root / pdr.VECTORS.parent / VECTOR_FILE, VECTOR_BYTES)
     vectors = {'hash_vector': {'package_hash': VECTOR_HASH, 'package_bytes': len(VECTOR_BYTES), 'package': VECTOR_FILE}}
     write(root / pdr.VECTORS, json.dumps(vectors))
@@ -120,6 +132,12 @@ class FakeTreeTest(unittest.TestCase):
             ('timing.chgame', fake_hash('-- timing\n')),
             ('pack-images.chgame', fake_hash('-- pack-images\n')),
             ('counter-changed.chgame', fake_hash('-- changed/counter\n')),
+            ('pass-open.chgame', fake_hash('-- pass-open\n')),
+            ('pass-hidden.chgame', fake_hash('-- pass-hidden\n' + MOVE_LINE)),
+            ('pass-art.chgame', fake_hash('-- pass-art\n')),
+            ('slow-restart.chgame', fake_hash('-- slow-restart\n')),
+            ('pass-title.chgame', fake_hash('-- pass-art\n')),
+            ('pass-store.chgame', fake_hash('-- pass-hidden\n' + MOVE_LINE + STORE_LINE)),
             ('invalid-binary-lua.chgame', '(invalid)'),
             (VECTOR_FILE, VECTOR_HASH),
         ]
@@ -129,6 +147,27 @@ class FakeTreeTest(unittest.TestCase):
         self.assertEqual((self.out / 'invalid-binary-lua.chgame').read_bytes(), b'BAD')
         self.assertEqual((self.out / VECTOR_FILE).read_bytes(), VECTOR_BYTES)
         self.assertIn('counter-changed.chgame ' + fake_hash('-- changed/counter\n'), stdout)
+
+    def test_a_derived_game_is_its_fixture_with_a_new_id_and_name_and_the_fixture_is_untouched(self):
+        code, _, _ = call(self.root, self.out)
+        self.assertEqual(code, fork_common.PASS)
+        source = self.root / pdr.FIXTURES
+        self.assertEqual(json.loads((source / 'pass-art' / 'manifest.json').read_text()), {'id': 'pass-art', 'name': 'Pass art'})
+        self.assertTrue((source / 'pass-art' / 'handoff.png').is_file())
+        self.assertNotIn('store', (source / 'pass-hidden' / 'main.lua').read_text())
+
+    def test_a_derived_game_whose_fixture_lost_the_line_to_edit_is_exit_1_and_writes_nothing(self):
+        write(self.root / pdr.FIXTURES / 'pass-hidden' / 'main.lua', '-- pass-hidden\n')
+        code, _, stderr = call(self.root, self.out)
+        self.assertEqual(code, fork_common.FAIL)
+        self.assertIn('pass-store', stderr)
+        self.assertFalse((self.out / 'HASHES.txt').exists())
+
+    def test_a_derived_game_whose_manifest_lost_its_name_is_exit_1(self):
+        write(self.root / pdr.FIXTURES / 'pass-art' / 'manifest.json', json.dumps({'id': 'pass-art', 'name': 'Renamed'}))
+        code, _, stderr = call(self.root, self.out)
+        self.assertEqual(code, fork_common.FAIL)
+        self.assertIn('pass-title', stderr)
 
     def test_an_existing_out_dir_is_reused_and_the_files_replaced(self):
         write(self.out / 'counter.chgame', b'old')
@@ -180,7 +219,7 @@ class FakeTreeTest(unittest.TestCase):
 
     def test_a_missing_fixture_folder_is_exit_2(self):
         (self.root / pdr.FIXTURES / 'changed' / 'counter' / 'main.lua').unlink()
-        (self.root / pdr.FIXTURES / 'changed' / 'counter').rmdir()
+        shutil.rmtree(self.root / pdr.FIXTURES / 'changed' / 'counter')
         code, _, stderr = call(self.root, self.out)
         self.assertEqual(code, fork_common.COULD_NOT_RUN)
         self.assertIn('is not a directory', stderr)
@@ -267,14 +306,27 @@ class RealTreeTest(unittest.TestCase):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
         self.assertTrue(self.result.stdout.endswith((self.out / 'HASHES.txt').read_text(encoding='utf-8')))
 
-    def test_hashes_lists_the_seven_files_in_order(self):
+    def test_hashes_lists_every_file_in_order(self):
         rows = hashes_of(self.out)
         self.assertEqual([name for name, _ in rows], FILE_ORDER)
         for name, package_hash in rows:
             if name != 'invalid-binary-lua.chgame':
                 self.assertRegex(package_hash, r'[0-9a-f]{16}', name)
         self.assertEqual(dict(rows)['invalid-binary-lua.chgame'], '(invalid)')
-        self.assertEqual(len(set(package_hash for _, package_hash in rows)), 7)
+        self.assertEqual(len(set(package_hash for _, package_hash in rows)), len(FILE_ORDER))
+
+    def test_pass_title_has_no_handoff_and_pass_store_writes_the_store_per_move(self):
+        def members(name):
+            with zipfile.ZipFile(self.out / name) as package:
+                return {member: package.read(member) for member in package.namelist()}
+
+        art, title, hidden, store = (members(n) for n in ('pass-art.chgame', 'pass-title.chgame', 'pass-hidden.chgame', 'pass-store.chgame'))
+        self.assertTrue(any(m.startswith('handoff') for m in art))
+        self.assertFalse(any(m.startswith('handoff') for m in title))
+        self.assertEqual(json.loads(title['manifest.json']), {**json.loads(art['manifest.json']), 'id': 'pass-title', 'name': 'Pass title'})
+        self.assertEqual(json.loads(store['manifest.json']), {**json.loads(hidden['manifest.json']), 'id': 'pass-store', 'name': 'Pass store'})
+        self.assertEqual(store['main.lua'].decode().count('ch.store.set({ moves = state.moves })'), 1)
+        self.assertEqual(store['main.lua'].decode().replace('  ch.store.set({ moves = state.moves })\n', ''), hidden['main.lua'].decode())
 
     def test_the_vector_is_the_committed_file_with_its_recorded_hash(self):
         vectors = json.loads((REPO / pdr.VECTORS).read_text(encoding='utf-8'))['hash_vector']

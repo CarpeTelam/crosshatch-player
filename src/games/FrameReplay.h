@@ -32,6 +32,12 @@ class FrameReplay {
   // shown before: the screen shows something else now. Render task.
   void forceFull() { policy.forceFull(); }
 
+  // A hidden pass match's blank: a plain white screen, with no game command and nothing else, which the forced exit and
+  // a Leave from a seat's frame push as it is and the hand-off screen draws its own page on. Forces the next frame in
+  // full, since the screen no longer shows one. The caller pushes it (displayBuffer) with its own refresh. Render task,
+  // or the loop task while it holds RenderLock.
+  void drawBlank(const GfxRenderer& renderer);
+
   // Draws the frame inside the viewport, clipped to it, unless it is identical to
   // the frame on screen and nothing forces it; `hint` is the largest refresh
   // request of the frames coalesced into it, and `images` the table its image

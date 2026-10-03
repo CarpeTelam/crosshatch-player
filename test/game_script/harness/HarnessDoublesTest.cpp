@@ -63,6 +63,32 @@ TEST_F(HarnessTest, RewindingCallsTheHookWithTheFoldersRewindCount) {
   EXPECT_EQ(seen, (std::vector<std::string>{"/g#1", "/g#2"}));
 }
 
+// The open hook (a transient SD fault, or a file rewritten, between two reads of one file): called with each open's
+// path and count before the failures are read and the file is looked up, so what it does decides that very open.
+TEST_F(HarnessTest, OpeningCallsTheHookWithThePathsOpenCountBeforeTheOpenIsDecided) {
+  fakesd::addFile("/g/a.bin", Bytes{1, 2});
+  std::vector<std::string> seen;
+  fakesd::sim().onOpen = [&](const std::string& path, const int count) {
+    seen.push_back(path + "#" + std::to_string(count));
+    if (count == 2) fakesd::sim().failOpen.insert(path);  // the second open fails
+    if (count == 3) {
+      fakesd::sim().failOpen.clear();
+      fakesd::addFile(path, Bytes{7, 8, 9});  // the third reads a rewritten file
+    }
+  };
+  uint8_t out[4];
+  auto first = Storage.open("/g/a.bin");
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first.read(out, 4), 2);
+  EXPECT_FALSE(Storage.open("/g/a.bin"));
+  auto third = Storage.open("/g/a.bin");
+  ASSERT_TRUE(third);
+  EXPECT_EQ(third.read(out, 4), 3);
+  EXPECT_EQ(out[0], 7);
+  EXPECT_EQ(seen, (std::vector<std::string>{"/g/a.bin#1", "/g/a.bin#2", "/g/a.bin#3"}));
+  EXPECT_EQ(fakesd::sim().opens["/g/a.bin"], 3);
+}
+
 TEST_F(HarnessTest, GetNameFollowsSdFatOrTheSimulator) {
   const std::string longName(60, 'a');
   fakesd::addFile("/g/" + longName, "x");
