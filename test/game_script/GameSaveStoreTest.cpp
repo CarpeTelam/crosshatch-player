@@ -411,6 +411,62 @@ TEST_F(GameSaveStoreTest, AFailedRemoveKeepsThePreviousSave) {
   EXPECT_TRUE(fakelog::any(std::string("cannot replace ") + STORE));
 }
 
+// The replace-by-tmp sequence store.bin shares with resume.bin and prefs.bin: the folder, first write, rename and
+// leftover-tmp paths.
+TEST_F(GameSaveStoreTest, AFolderThatCannotBeCreatedStopsTheWriteBeforeAnyFileIsTouched) {
+  open();
+  ASSERT_TRUE(slot->post(TAPS3));
+  fakesd::sim().failMkdir.insert("/.games-data/counter");
+  fakesd::sim().ops.clear();
+  EXPECT_FALSE(saves->flush(*slot, 2000));
+  EXPECT_TRUE(slot->dirty());
+  EXPECT_TRUE(fakelog::any("ERR GAME: counter: cannot create /.games-data/counter"));
+  EXPECT_EQ(fakesd::countOps("open "), 0u);
+  EXPECT_FALSE(fakesd::has(TMP));
+  EXPECT_FALSE(fakesd::has(STORE));
+}
+
+TEST_F(GameSaveStoreTest, AFirstWriteHasNoRemoveAndRenamesTheTmpIntoPlace) {
+  open();
+  ASSERT_TRUE(slot->post(TAPS3));
+  fakesd::sim().ops.clear();
+  ASSERT_TRUE(saves->flush(*slot, 2000));
+  const std::vector<std::string> ops = cardOps();
+  ASSERT_FALSE(ops.empty());
+  EXPECT_EQ(fakesd::countOps("remove "), 0u);
+  EXPECT_EQ(ops.back(), std::string("rename ") + TMP + " " + STORE);
+  EXPECT_EQ(fakesd::bytesOf(STORE), cat(header(), TAPS3));
+}
+
+TEST_F(GameSaveStoreTest, AFailedRenameAfterTheRemoveIsLoggedAndTheTmpHoldsTheOnlyCopy) {
+  fakesd::addFile(STORE, cat(header(), TAPS3));
+  open();
+  ASSERT_TRUE(slot->post(TAPS4));
+  fakesd::sim().failRename.insert(TMP);
+  fakesd::sim().ops.clear();
+  EXPECT_FALSE(saves->flush(*slot, 2000));
+  const std::vector<std::string> expected = {
+      std::string("open ") + TMP,  std::string("write ") + TMP,    std::string("write ") + TMP,
+      std::string("close ") + TMP, std::string("remove ") + STORE, std::string("rename ") + TMP + " " + STORE,
+  };
+  EXPECT_EQ(cardOps(), expected);
+  EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: cannot rename ") + TMP + " to " + STORE));
+  EXPECT_FALSE(fakesd::has(STORE));
+  EXPECT_EQ(fakesd::bytesOf(TMP), cat(header(), TAPS4));
+}
+
+TEST_F(GameSaveStoreTest, ALeftoverTmpBesideStoreBinIsOverwrittenNotPromoted) {
+  fakesd::addFile(STORE, cat(header(), TAPS3));
+  fakesd::addFile(TMP, Bytes{1, 2, 3});
+  open();
+  ASSERT_TRUE(slot->post(TAPS4));
+  fakesd::sim().ops.clear();
+  ASSERT_TRUE(saves->flush(*slot, 2000));
+  EXPECT_EQ(cardOps().front(), std::string("open ") + TMP) << "no promotion while store.bin exists";
+  EXPECT_EQ(fakesd::bytesOf(STORE), cat(header(), TAPS4));
+  EXPECT_FALSE(fakesd::has(TMP));
+}
+
 TEST_F(GameSaveStoreTest, FlushIfDueWritesADirtyStoreAtMostEveryFiveSeconds) {
   open(1000);
   ASSERT_TRUE(slot->post(TAPS3));

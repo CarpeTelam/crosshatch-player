@@ -872,3 +872,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
   summary: Resolves the `CopiedConstantsTest` entry above (review pass 1, finding 15): the suite now pins the screen input double's two constants to the device sources, so it stays.
   evidence: `test/game_script/harness/CopiedConstantsTest.cpp` (`TheDoublesTouchDownDelayIsTheDevicesSelectDelay`, `TheDoublesLongPressIsTheDevicesTouchLongPress`).
+
+## e5-r4
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r4-share-replacefile.md`
+  summary: Only `saveResume` uses `replaceFile`'s `removedOld` out-parameter (for its replacement counter); `saveStore` and `savePrefs` ignore it. Left as is by this refactor (no behaviour change); fold it into a richer result only if a second caller needs it.
+  evidence: `src/games/GameSaveStore.cpp` (`replaceFile`, `saveResume`, `saveStore`, `savePrefs`). Trigger: a second caller that needs `removedOld`.
