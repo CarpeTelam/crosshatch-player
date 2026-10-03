@@ -643,6 +643,13 @@ TEST_F(GameVmTest, HiddenPassATimerQueuedBehindTheWinningMoveIsDroppedNotDeliver
   fakertos::release();
   ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
   EXPECT_EQ(fakelog::countLines("timer for seat"), 0u);
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
+  // The drop is stepHandOff's Playing/over branch: after the round's end reached both seats, and with no next seat
+  // asked for (a held timer is dropped only by showSeatNow, which no showTurnSeat here has triggered).
+  EXPECT_LT(lineOf("over for seat 2"), lineOf("Dropped a timer due after the round was over"));
+  EXPECT_EQ(vm->seatShownRequest(), first) << "no further seat was requested, so no held timer was replayed";
   EXPECT_EQ(vm->roundsEnded(), 1u);
   EXPECT_FALSE(vm->failed());
 }

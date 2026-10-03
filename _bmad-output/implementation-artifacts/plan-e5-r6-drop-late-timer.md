@@ -8,7 +8,7 @@ route: 'oneshot'
 route_source: 'auto'
 review: 'quick'
 review_source: 'auto'
-lenses_ran: ['quick', 'edge-case-hunter', 'verification-gap']
+lenses_ran: ['quick', 'edge-case-hunter', 'verification-gap', 'blind-hunter', 'intent-alignment']
 review_loop_iteration: 0
 baseline_revision: 'a4142f98a35e57e17d1fcbe24e80b9824dd6247c'
 context: []
@@ -51,6 +51,11 @@ Lenses ran as context-free subagents and all returned: quick, edge-case-hunter, 
 9. Quick/verification: doc line wrapping in game-canvas.md. Verdict low, patched (reflowed).
 10. Quick: Verification lists only the host run. Patched below.
 11. Quick: `plan-e5-xr-cross-story-fixes.md` still says timers reach seat 0. Verdict low: historical plan, not edited (stays_out).
+
+Follow-up (orchestrator's two extra lenses, run as context-free subagents and returned; `blind-hunter` and `intent-alignment` added to `lenses_ran`):
+12. Blind hunter, low: the hidden-pass twin would pass if the drop moved to the held-timer path, and it did not assert the round-end events. Patched: it now asserts `over for seat 1` and `over for seat 2` once each, that the drop line follows `over for seat 2`, and that no further seat was requested (a held timer is dropped only after `showSeatNow`).
+13. Blind hunter, low: the `game-canvas.md` paragraph was left with a short ragged line. Patched: reflowed.
+14. Intent alignment: constraints met; one doc nit (same as 13) fixed. Also recorded in deferred-work: `lateTimer` infers "round over" from seat 0 (no-local-seat roster).
 
 ## Verification
 

@@ -884,3 +884,6 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
   summary: A solo or nearby round that is over still shows its one local seat, so a timer due after the round reaches that seat's `input()` (only a pass round's seat 0 is dropped); the owner's F9 decision named seat 0 only. A game that cannot take a timer after `over` must cancel it in its own `over` handler, as `pass-open` does.
   evidence: `GameCore::seatShown` (one local seat: `firstLocalSeat()` in every state but HandOff); `GameScript::SoloRounds::lateTimer` tests seat 0 only. Trigger: an owner decision that a timer after `over` is never delivered in any mode.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: `SoloRounds::lateTimer` infers "the round is over" from seat 0, so a roster with no local seat (`Roster::firstLocalSeat()` returns 0) would drop every timer and mislog it as late; unreachable today, since no such roster plays a round.
+  evidence: `GameCore::seatShown` (`firstLocalSeat()` for a roster with at most one local seat), `lib/GameScript/SoloRounds.h`. Trigger: the first roster with no local seat (epic-play-nearby). Fix: test `status.over` explicitly in `lateTimer`'s callers.
