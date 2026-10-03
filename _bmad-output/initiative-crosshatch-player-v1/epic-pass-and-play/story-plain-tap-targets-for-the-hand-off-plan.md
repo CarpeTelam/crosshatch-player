@@ -3,7 +3,7 @@ title: 'Plain tap targets for the hand-off'
 type: 'feature'
 ticket: '13'
 created: '2026-10-03'
-status: 'built'
+status: done
 baseline_revision: '0438a669ddd1342c334aebecf89eb0a4e097a047'
 route: 'full'
 route_source: 'auto'

@@ -60,8 +60,16 @@ class SoloRounds {
   // cancelled first, so a timer event already queued is stale. Draws nothing.
   GameCore::Outcome beginAgain();
   // One event to `seat`'s input, then the pending move. A timer event the game
-  // re-armed or cancelled after it fired is dropped first. Draws nothing.
+  // re-armed or cancelled after it fired is dropped first, and so is a late one
+  // (lateTimer). Draws nothing.
   GameCore::Outcome play(const GameCore::GameEvent& event, uint8_t seat);
+  // A Timer event for seat 0, the frame for everyone: the round is over, and seat 0 is
+  // never an input seat, so no step reads the event (play and step drop it; the
+  // caller that logs the drop asks first). Other seats' timers, and every other event
+  // kind, are never late.
+  static bool lateTimer(const GameCore::GameEvent& event, const uint8_t seat) {
+    return event.kind == GameCore::EventKind::Timer && seat == 0;
+  }
   // Draws the snapshot for `seat` (0: the frame for everyone). A round's first
   // frame counts it as started; a frame of a round that is over counts its end, once.
   GameCore::Outcome draw(uint8_t seat);
@@ -74,7 +82,7 @@ class SoloRounds {
   GameCore::Outcome start(GameCore::Session& session);
   // beginAgain, then draw.
   GameCore::Outcome restart();
-  // One event as the game sees it: a stale timer event is dropped with no draw; else
+  // One event as the game sees it: a stale or late timer event is dropped with no draw; else
   // play, then draw (the seat shown after the move).
   GameCore::Outcome step(const GameCore::GameEvent& event);
   // The seat GameCore::seatShown names for the session's status now: after start, restart, or a step that drew, the

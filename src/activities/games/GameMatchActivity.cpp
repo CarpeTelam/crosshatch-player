@@ -99,6 +99,8 @@ bool isHiddenPass(const GameCore::Roster& roster, const GameCore::Manifest& mani
 }  // namespace
 
 static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
+static_assert(GameMatchActivity::FORCED_EXIT_DEADLINE_MS == 1500,
+              "game-canvas.md states the forced exit's 1,500 ms bound; change the doc with this deadline");
 static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
               "resume.bin records the package hash .pkg holds (GameSaveStore builds without GameHash.h)");
 
@@ -165,6 +167,14 @@ void GameMatchActivity::onEnter() {
     // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
     // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
     fail(StrId::STR_GAMES_START_FAILED, I18N.get(refusal));
+    return;
+  }
+  // A Continue whose save is gone by now (seedResume: nothing to lose) starts a new round, which runs setup: with the
+  // settings the title screen could not read, it would run without ctx.settings.
+  if (start == Start::Resume && snapshot.empty() && settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "%s: no save to resume and the settings its manifest declares were not read; not starting",
+            manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_SETTINGS_NOT_READ));
     return;
   }
   // A hidden pass match's hand-off art, read now on the loop task (never in render), once the roster is known: the
@@ -253,8 +263,8 @@ void GameMatchActivity::onExit() {
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
-  // order: cancel and join, a hidden pass match's plain white blank pushed (stopVm,
-  // pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
+  // order: cancel and join, a hidden pass match's plain white blank pushed when a seat's frame may be on the panel
+  // (stopVm, pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
   // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
   // finish, then the store. The SD steps stop starting once the deadline has passed,
   // which counts the blank's push.
@@ -278,6 +288,14 @@ bool GameMatchActivity::handleHomeGesture() {
 
 void GameMatchActivity::handle(const MatchEvent event) {
   const MatchState from = lifecycle.state();
+  // The title screen lets a Continue through with settings it could not read: a resume runs no setup, but a Play again
+  // does, so it ends in the error view rather than start a round with a missing ctx.settings
+  // (GameModeActivity::startMatch).
+  if (event == MatchEvent::PlayAgain && from == MatchState::Over && settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "%s: no Play again, the settings its manifest declares were not read", manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_SETTINGS_NOT_READ));
+    return;
+  }
   if (!lifecycle.apply(event)) {
     LOG_DBG("GAME", "%s ignored in %s", MatchLifecycle::name(event), MatchLifecycle::name(from));
     return;
@@ -397,8 +415,11 @@ void GameMatchActivity::stopVm() {
 
 void GameMatchActivity::pushForcedExitBlank() {
   // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave pushes
-  // its own after the stop (leave).
-  if (!forcedExit || !lifecycle.hiddenPass()) return;
+  // its own after the stop (leave). And only when a seat's frame may be on the panel (panel is Seat: Playing, Result's
+  // mover frame, a menu over a seat's frame, and any new state whose screen is not drawn yet, which leaves the last
+  // frame there): on the hand-off screen, the blank, Over (seat 0's public frame), a drawn error view, or a menu on no
+  // frame nothing private shows, and the push would only spend the SD steps' window.
+  if (!forcedExit || !lifecycle.hiddenPass() || panel != Panel::Seat) return;
   // Not an SD step: the deadline does not gate it, but its time counts against the SD steps that follow.
   pushBlank("forced exit");
 }
@@ -504,7 +525,17 @@ bool GameMatchActivity::vmHealthy() {
 }
 
 void GameMatchActivity::loop() {
-  switch (lifecycle.state()) {
+  const MatchState current = lifecycle.state();
+  // A latch set in Playing outlives the pass that left it (a pass returning early, or the match leaving Playing, never
+  // reaches loopPlaying's own release): free it on the first pass elsewhere that sees no finger down, so the next
+  // contact in Playing latches its own. A finger still down across the transition keeps its latch: it began before the
+  // hand-off.
+  if (current != MatchState::Playing && touchDownLatched) {
+    int heldX = 0;
+    int heldY = 0;
+    if (!mappedInput.isScreenTouchHeld(heldX, heldY)) touchDownLatched = false;
+  }
+  switch (current) {
     case MatchState::Playing:
       loopPlaying();
       return;
@@ -542,6 +573,9 @@ void GameMatchActivity::loopPlaying() {
     turnsSeen = passed;
     passTo.store(vm->passedTo());
     handle(MatchEvent::TurnChanged);
+    // Result writes resume.bin as any state does (R8): not left to the next pass, which a Back, Home, or sleep may
+    // beat.
+    flushResume();
     return;
   }
 
@@ -668,7 +702,6 @@ void GameMatchActivity::loopView() {
 
 void GameMatchActivity::loopHandOff() {
   const MatchState state = lifecycle.state();
-  // This pass's input was sampled just before loop(): its time, taken before the SD steps below, dates a release.
   const auto now = static_cast<uint32_t>(millis());
   // As in a menu: the VM may still fail, hang, or set ch.store in a call that was running when the screen changed.
   if (!vmHealthy()) return;

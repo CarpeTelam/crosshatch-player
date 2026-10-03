@@ -74,30 +74,58 @@ TEST(ManifestCheckTest, SoloNeedsSeatsMinOne) {
                 CheckReason::SoloNeedsOneSeat);
 }
 
+// A degraded verdict: Ok, only `modes` start, and the reason names the dropped claim for the log.
+void expectDegraded(const CheckResult& r, const uint8_t modes) {
+  EXPECT_EQ(r.status, CheckStatus::Ok);
+  EXPECT_EQ(r.reason, CheckReason::NearbyNeedsTwoSeats);
+  EXPECT_EQ(r.modes, modes);
+}
+
 TEST(ManifestCheckTest, NearbyNeedsSeatsMaxTwo) {
   EXPECT_TRUE(game(2, 1, 2, Manifest::MODE_NEARBY).check(NEARBY_HOST).ok());
-  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_NEARBY).check(NEARBY_HOST), CheckStatus::Invalid,
-                CheckReason::NearbyNeedsTwoSeats);
+  // e5-r7: with solo the game keeps working in solo; nearby is dropped.
+  expectDegraded(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_NEARBY).check(NEARBY_HOST), Manifest::MODE_SOLO);
 }
 
 TEST(ManifestCheckTest, PassNeedsSeatsMaxTwo) {
-  // A pass match has at least two seats, so a manifest offering pass with one is broken.
+  // A pass match has at least two seats, so a manifest offering pass with one has no pass or nearby; with no solo
+  // it has no mode at all and is Invalid, with solo it degrades to solo (e5-r7).
   expectVerdict(game(2, 1, 1, Manifest::MODE_PASS).check(HOST), CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
-  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST), CheckStatus::Invalid,
+  expectVerdict(game(2, 1, 1, Manifest::MODE_PASS | Manifest::MODE_NEARBY).check(NEARBY_HOST), CheckStatus::Invalid,
                 CheckReason::NearbyNeedsTwoSeats);
-  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY).check(NEARBY_HOST),
-                CheckStatus::Invalid, CheckReason::NearbyNeedsTwoSeats);
+  expectDegraded(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST), Manifest::MODE_SOLO);
+  expectDegraded(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY).check(NEARBY_HOST),
+                 Manifest::MODE_SOLO);
   const CheckResult passOnly = game(2, 1, 2, Manifest::MODE_PASS).check(HOST);
   EXPECT_TRUE(passOnly.ok());
+  EXPECT_EQ(passOnly.reason, CheckReason::None);
   EXPECT_EQ(passOnly.modes, Manifest::MODE_PASS);
   const CheckResult soloAndPass = game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST);
   EXPECT_TRUE(soloAndPass.ok());
+  EXPECT_EQ(soloAndPass.reason, CheckReason::None);
   EXPECT_EQ(soloAndPass.modes, Manifest::MODE_SOLO | Manifest::MODE_PASS);
-  // Invalid wins over a host without pass: the package is broken wherever it goes.
+  // The seat rule is on the manifest, not the host: a host without pass degrades the same way, and a game with no
+  // solo is Invalid wherever it goes.
   expectVerdict(game(2, 1, 1, Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Invalid,
                 CheckReason::NearbyNeedsTwoSeats);
-  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(NO_PASS_HOST), CheckStatus::Invalid,
-                CheckReason::NearbyNeedsTwoSeats);
+  expectDegraded(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(NO_PASS_HOST), Manifest::MODE_SOLO);
+}
+
+TEST(ManifestCheckTest, ADegradedGameStillFailsOnItsOtherFields) {
+  expectVerdict(game(2, 2, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST), CheckStatus::Invalid,
+                CheckReason::BadFields);
+  expectVerdict(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS | 0x08).check(HOST), CheckStatus::Invalid,
+                CheckReason::BadFields);
+  // The host's limits still come first: an api this host lacks is Unavailable, not degraded.
+  expectVerdict(game(4, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).check(HOST), CheckStatus::Unavailable,
+                CheckReason::ApiTooNew);
+}
+
+TEST(ManifestCheckTest, ClaimsUnseatedModeIsTheClaimCheckDrops) {
+  EXPECT_TRUE(game(2, 1, 1, Manifest::MODE_SOLO | Manifest::MODE_PASS).claimsUnseatedMode());
+  EXPECT_TRUE(game(2, 1, 1, Manifest::MODE_NEARBY).claimsUnseatedMode());
+  EXPECT_FALSE(game(2, 1, 1, Manifest::MODE_SOLO).claimsUnseatedMode());
+  EXPECT_FALSE(game(2, 1, 2, Manifest::MODE_SOLO | Manifest::MODE_PASS).claimsUnseatedMode());
 }
 
 TEST(ManifestCheckTest, TheSeatRuleSaysItCoversPassAndNearby) {

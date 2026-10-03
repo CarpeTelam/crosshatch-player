@@ -114,16 +114,18 @@ bool modeOfByte(const uint8_t byte, GameCore::Mode& mode) {
   }
 }
 
-// Replaces `path` with `head` then `body` by way of `tmp`, as saveStore does for
-// store.bin (see there for why each step is ordered as it is); false when it could not. `removedOld` (when given) is
-// set once the old `path` has been removed, whether or not the rename after it then succeeds: from there the old file
-// is gone and `tmp` holds the new one.
+// Replaces `path` with `head` then `body` by way of `tmp`, the one sequence store.bin, resume.bin and prefs.bin are
+// written by; false when it could not. `removedOld` (when given) is set once the old `path` has been removed, whether
+// or not the rename after it then succeeds: from there the old file is gone and `tmp` holds the new one.
 bool replaceFile(const char* id, const char* dir, const char* path, const char* tmp,
                  const std::span<const uint8_t> head, const std::span<const uint8_t> body, bool* removedOld = nullptr) {
   if (!Storage.ensureDirectoryExists(dir)) {
     LOG_ERR("GAME", "%s: cannot create %s", id, dir);
     return false;
   }
+  // A tmp without `path` is the only copy (an earlier write stopped or failed
+  // before its rename), and opening the tmp for writing would truncate it, so it
+  // becomes `path` first. The loaders read the same bytes either way.
   if (!Storage.exists(path) && Storage.exists(tmp) && !Storage.rename(tmp, path)) {
     LOG_ERR("GAME", "%s: cannot rename %s to %s", id, tmp, path);
     return false;
@@ -139,6 +141,8 @@ bool replaceFile(const char* id, const char* dir, const char* path, const char* 
     Storage.remove(tmp);
     return false;
   }
+  // The tmp is whole from here, and the loaders read it while `path` is missing,
+  // so a failure below loses nothing. SdFat's rename refuses an existing target.
   if (Storage.exists(path)) {
     if (!Storage.remove(path)) {
       LOG_ERR("GAME", "%s: cannot replace %s", id, path);
@@ -328,41 +332,9 @@ bool GameSaveStore::saveStore(const std::span<const uint8_t> encoded) {
     LOG_ERR("GAME", "%s: refused a %u-byte store", id, static_cast<unsigned>(encoded.size()));
     return false;
   }
-  if (!Storage.ensureDirectoryExists(dirPath)) {
-    LOG_ERR("GAME", "%s: cannot create %s", id, dirPath);
-    return false;
-  }
-  // A tmp without store.bin is the only copy (an earlier write stopped or failed
-  // before its rename), and opening the tmp for writing would truncate it, so it
-  // becomes store.bin first. loadStore reads the same bytes either way.
-  if (!Storage.exists(storePath) && Storage.exists(tmpPath) && !Storage.rename(tmpPath, storePath)) {
-    LOG_ERR("GAME", "%s: cannot rename %s to %s", id, tmpPath, storePath);
-    return false;
-  }
   uint8_t header[BLOB_HEADER_BYTES];
   writeBlobHeader(header, STORE_MAGIC, STORE_FILE_VERSION);
-  HalFile file;
-  bool written = Storage.openFileForWrite("GAME", tmpPath, file);
-  if (written) {
-    written = writeExactly(file, header, sizeof(header)) && writeExactly(file, encoded.data(), encoded.size());
-    written = file.close() && written;
-  }
-  if (!written) {
-    LOG_ERR("GAME", "%s: cannot write %s", id, tmpPath);
-    Storage.remove(tmpPath);
-    return false;
-  }
-  // The tmp is whole from here, and loadStore reads it while store.bin is missing,
-  // so a failure below loses nothing. SdFat's rename refuses an existing target.
-  if (Storage.exists(storePath) && !Storage.remove(storePath)) {
-    LOG_ERR("GAME", "%s: cannot replace %s", id, storePath);
-    return false;
-  }
-  if (!Storage.rename(tmpPath, storePath)) {
-    LOG_ERR("GAME", "%s: cannot rename %s to %s", id, tmpPath, storePath);
-    return false;
-  }
-  return true;
+  return replaceFile(id, dirPath, storePath, tmpPath, header, encoded);
 }
 
 void GameSaveStore::restoreInto(GameScript::StoreSlot& slot) {

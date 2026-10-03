@@ -80,7 +80,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
   // `settings` (copied) is the chosen value of each setting the manifest declares, which the VM gives the game as
-  // ctx.settings at every setup (a resumed match runs none until Play again).
+  // ctx.settings at every setup (a resumed match runs none until Play again, which ends in the error view when these
+  // are fewer than the manifest declares).
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
                     const GameCore::Roster& roster, Start start = Start::New,
                     const GameCore::SettingValues& settings = {});
@@ -144,8 +145,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // blank between the wait and that write (pushForcedExitBlank). The caller holds
   // RenderLock, since render reads vm and the frames an abandon frees. Nothing without a VM.
   void stopVm();
-  // A hidden pass match's forced exit only (AD-12, AD-20): pushBlank, so no seat's frame stays on the panel while the
-  // device sleeps. Nothing otherwise; a user Leave pushes its own (leave).
+  // A hidden pass match's forced exit with a seat's frame possibly on the panel (panel is Seat; AD-12, AD-20):
+  // pushBlank, so no seat's frame stays on the panel while the device sleeps. Nothing otherwise; a user Leave pushes
+  // its own (leave).
   void pushForcedExitBlank();
   // Draws the plain white blank (FrameReplay::drawBlank) and pushes it with a half refresh; logged with `when`.
   // The caller holds RenderLock (its own, or ActivityManager's in onExit, never taken again: 12cc816), so the render

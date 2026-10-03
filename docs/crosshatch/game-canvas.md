@@ -105,19 +105,22 @@ saves every set made before the leak.
 never takes it again (pitfall 12cc816). It notes `millis()` at its very start, and the order is:
 
 1. cancel the VM and join it (up to 500 ms);
-2. in a hidden pass match only, the blank (`FrameReplay::drawBlank`: a plain white screen, no icon, no text, never the
-   game's `handoff.bmp` or `title.bmp`) is drawn and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged
-   ("forced exit: blank screen pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the
-   device sleeps, and the sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over
-   white (AD-12, AD-20, as amended 2026-10-02). The match is Leaving, so render draws nothing, and the render task is
-   not inside `render()` while the lock is held, so the loop task may use `replay` and the framebuffer here. Any state
-   with a VM gets it, the error view of a script error included (only a stuck call frees the VM on the way to Error).
-   With no VM there is no wait, so the blank comes first, before any SD step, and only when the last push left a seat's
-   frame on the panel (`GameMatchActivity::panel`): after a stuck call freed the VM on the way to Error and before the
-   error view was drawn. Once the error view is drawn, or after a Leave (which pushed its own blank over a seat's
-   frame), the exit pushes nothing. Solo and open pass matches push nothing. The half refresh is AD-12's choice, where
-   the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
-   (epic-pass-and-play entry 11);
+2. in a hidden pass match only, and only while a seat's frame may be on the panel (`GameMatchActivity::panel` is
+   `Seat`), the blank (`FrameReplay::drawBlank`: a plain white screen, no icon, no text, never the game's `handoff.bmp`
+   or `title.bmp`) is drawn and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged ("forced exit: blank
+   screen pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the device sleeps, and the
+   sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over white (AD-12, AD-20, as
+   amended 2026-10-02). The match is Leaving, so render draws nothing, and the render task is not inside `render()`
+   while the lock is held, so the loop task may use `replay` and the framebuffer here. The panel is `Seat` in Playing,
+   in Result (the mover's frame under the banner), in a menu over a seat's frame, and in any state entered from those
+   whose own screen is not drawn yet (it still holds the frame): a pause menu not yet drawn, or an error view not yet
+   drawn after a script error or a stuck call. It is not `Seat` on the hand-off screen or the blank, in a pause menu
+   opened from the hand-off, in Over (the menu sits over seat 0's frame, which is everyone's), in a drawn error view, or
+   after a Leave (which pushed its own blank over a seat's frame): there the exit pushes nothing and the SD steps keep
+   the whole window. With no VM (a stuck call freed it on the way to Error) there is no wait, so the blank comes first,
+   before any SD step, under the same rule. Solo and open pass matches push nothing. The half refresh is AD-12's choice,
+   where the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4
+   Pro (epic-pass-and-play entry 11);
 3. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
    free the memory it lives in;
 4. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
@@ -144,12 +147,13 @@ poll divides into, so a late poll shows), counts elapsed time under a thread tha
 polls do, and checks the order and the skipped steps.
 
 A hidden pass match's blank (step 2) is pushed after the join's wait and before the abandon's: at once when the VM
-joins, about 500 ms after `onExit()` began when it is stuck. Its half refresh counts against the 1,500 ms window, for
-every forced exit of a hidden pass match, and is unmeasured (entry 11; `lib/hal/HalDisplay.h` names 1,720 ms for a
-half refresh, source unstated). If `displayBuffer` returns only after that long, every SD step after it is skipped,
-even when the VM joined at once. The host double's push costs no clock, so `GameMatchTest` moves the clock by hand
-where it needs the push to take time. Measured on an X4 Pro before the blank existed, so without it: a forced exit
-with a stuck VM held `RenderLock` for 502 ms (epic-install-and-launcher entry 14).
+joins, about 500 ms after `onExit()` began when it is stuck. Its half refresh counts against the 1,500 ms window, in the
+states where it is pushed (a seat's frame is on the panel; step 2). On an X4 Pro it took 1,654 ms (the owner's device
+log, 2026-10-03; `lib/hal/HalDisplay.h` names 1,720 ms for a half refresh), so every SD step after it is skipped, even
+when the VM joined at once; in the other states nothing is pushed and the steps start at once. The host double's push
+costs no clock, so `GameMatchTest` moves the clock by hand where it needs the push to take time. Measured on an X4 Pro
+before the blank existed, so without it: a forced exit with a stuck VM held `RenderLock` for 502 ms
+(epic-install-and-launcher entry 14).
 
 **Resume before store.** The resume write (step 3) comes before the `ch.store` flush (step 6), so a slow exit can skip the
 store flush after the resume write ran: Continue may then resume a board newer than `ch.store` holds. Deferred
@@ -166,10 +170,10 @@ move that passes the turn. Solo and open pass matches run the solo machine above
 | State | Event | Next | What the match does |
 | --- | --- | --- | --- |
 | Starting | the VM started | HandOff | The VM runs `setup` and draws nothing; the hand-off screen replaces the title screen once the VM has named the round's first turn seat (below). A resumed hidden pass save starts here too: the VM restores the snapshot instead of running `setup`, and the hand-off screen names the saved turn seat. |
-| HandOff | a tap on "I'm ready" begun after the screen was pushed, or Confirm | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
+| HandOff | a tap on "I'm ready", or Confirm (plain targets: one tap passes, even while the screen is being pushed; see Taps) | Playing | The match asks the VM for the turn seat (`showTurnSeat`, which the VM serves ahead of any queued event) and keeps the hand-off screen on the panel until that seat's frame is published: the loop asks for no render and drops gestures, and `renderCanvas` draws nothing, until `GameVM::seatShownRequest()` reaches the request (`seatAwaited`), then gestures until render has pushed that frame (`seatDisplayed`). The frame is drawn on a cleared screen with a full refresh. |
 | Playing | a move that passes the turn | Result | The VM draws the mover's own frame again and counts the move (`GameVM::turnsPassed`, `passedTo`); the match shows that frame with the banner "Tap to pass to player N" (a fast refresh, no button hints). |
 | Playing | the status the game shipped is over | Over | As in solo: a move that ends the round is RoundOver, never a turn change, and the end-of-round menu sits over seat 0's frame, the one for everyone. |
-| Result | a tap on the banner begun after it was pushed, or Confirm | HandOff | The hand-off screen, naming the seat the move passed to. |
+| Result | a tap on the banner, or Confirm (as above) | HandOff | The hand-off screen, naming the seat the move passed to. |
 | Result, HandOff | Back or Home | Paused | The pause menu. From Result it sits over the mover's frame; from HandOff it sits on no frame (a cleared screen), since the device is between players. |
 | Paused | Resume, or Back | Result, HandOff, or Playing | The state the menu was opened from: Result redraws the mover's frame and banner, HandOff the hand-off screen. |
 | Result, HandOff | a ScriptError or a stuck call | Error | As in solo: the loop watches the VM there as in a menu. |
@@ -202,9 +206,9 @@ the hand-off screen already on the panel (after the light panel closes, or any r
 refresh: the match records what its last push left on the panel (`GameMatchActivity::panel`: a seat's frame, no seat's
 (the hand-off screen or the blank), or anything else), under `RenderLock`.
 
-A forced exit (sleep, any Replace) pushes the blank, plain white, with a half refresh, from any state with a VM, and
-with no VM while a seat's frame is on the panel: see The forced exit, step 2. So does a Leave from a seat's frame: see
-Leaving.
+A forced exit (sleep, any Replace) pushes the blank, plain white, with a half refresh, only while a seat's frame may be
+on the panel (`panel` is `Seat`), with or without a VM: see The forced exit, step 2; from the hand-off screen, the
+blank, Over, or a drawn error view it pushes nothing. So does a Leave from a seat's frame: see Leaving.
 
 **Taps.** Result's banner and the hand-off screen's "I'm ready" button are each their screen's one tap target (an
 `fui::button` with `ACTION_PASS`, routed by `routeTouch`), plain ones like the title screen's: a tap on it, or Confirm
@@ -248,9 +252,10 @@ frame of each seat it draws, and drops a touch made before the first frame of th
 numbers so that a wrapped count still orders them: one made under seat 1's frame and still queued when seat 1's move
 passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
 reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
-frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), and after the round to
-seat 0 (R7). A touch posted with `GameVM::UNTAGGED` (a direct caller) is never dropped; the loop never posts that value,
-posting one less instead, which can only drop (a real frame number reaches it only after 2^32 publishes). The tag is the
+frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), but one that falls due
+after the round is over is dropped, never delivered to seat 0 (e5-r6). A touch posted with `GameVM::UNTAGGED` (a direct
+caller) is never dropped; the loop never posts that value, posting one less instead, which can only drop (a real frame
+number reaches it only after 2^32 publishes). The tag is the
 frame on the panel at the first Playing pass that sees the finger down (`GameMatchActivity::touchDownFrame`, from
 `isScreenTouchHeld`, true from the contact's first sample), freed on the first Playing pass with no finger down (the
 lift, a long press that suppressed the rest of the contact, or a contact that ended where the loop did not read it, such
@@ -275,17 +280,26 @@ the next seat's push completed, or when it is a tap sampled before that push com
 - the back-dating anchors to the loop's read, a few milliseconds after the release sample, whose time is not exposed;
 - a finger already down when a Playing pass first runs after another state keeps the latch of an earlier contact not yet
   freed, so its touch is dropped (fails closed);
+- a tap after "I'm ready" but before the VM publishes the next seat's frame (`GameMatchActivity`'s `awaitingRound` is
+  still true) is dropped, with the log line "dropped a touch before the frame was on the panel": the first-move-accepted
+  rule above covers only the window after the VM publishes the frame. The owner decided on 2026-10-03 to keep dropping
+  it; that log line records how often it happens on a device (the same line also covers any other touch made while the frame is not yet on the panel and the first-move rule does not apply);
 - as on the canvas (the first item), on the Result banner and the hand-off screen's button: a touch that lands and
   lifts while the loop task is blocked in an SD step is first sampled after it, so it reads as a fresh tap and passes
   the screen.
+- the forced exit's blank takes about 1,654 ms on the X4 Pro against the 1,500 ms window (the owner's device log,
+  2026-10-03) in the one state where it is pushed (a seat's frame may be on the panel: step 2), so a resume write or
+  `ch.store` flush still pending after it may be skipped; B7.6 (a sleep with a dirty store, `pass-store`) has not been
+  run on the device; reordering the exit is the owner's open choice under deferred-work.md `## 5.6` (AD-20).
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
 as anywhere else. Play again drops a held timer with the last round.
 
 **Saves.** A hidden pass match keeps `resume.bin` as a solo match does (Resume, above): each committed snapshot is
-written in Playing, Paused, Result, and HandOff, Over deletes it, and Leave and the forced exit keep it. The forced
-exit's blank is pushed before the resume write (step 2, then step 3).
+written in Playing, Paused, Result, and HandOff, Over deletes it, and Leave and the forced exit keep it. A move that passes the
+turn is written on the loop pass that handles it (not the next one). The forced exit's blank, when it is pushed, comes
+before the resume write (step 2, then step 3).
 
 ## The views
 

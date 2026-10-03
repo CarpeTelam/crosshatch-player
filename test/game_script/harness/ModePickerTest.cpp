@@ -498,6 +498,19 @@ TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
   EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past pass: the host cannot start nearby";
 }
 
+// e5-r7: a game installed before the pass seat rule that lists solo and pass with one seat still opens, in solo, with
+// no Options row (pass is not offered); the load logs why.
+TEST_F(TitleScreenTest, ASoloAndPassGameWithOneSeatOpensItsTitleScreenInSolo) {
+  installCounter("\"solo\",\"pass\"", 1);
+  openLauncher();
+  EXPECT_TRUE(logHas("counter: pass and nearby need seats.max 2 or more; its other modes still work"));
+  EXPECT_FALSE(logHas("Invalid counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME)};
+  EXPECT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
+}
+
 TEST_F(TitleScreenTest, ASoloAndPassGameIsSoloWithNoOptionsWhileTheHostHasNoPass) {
   hostcaps::script().pass = false;  // a host without pass: Manifest::check leaves solo
   installCounter("\"solo\",\"pass\"");
@@ -507,8 +520,8 @@ TEST_F(TitleScreenTest, ASoloAndPassGameIsSoloWithNoOptionsWhileTheHostHasNoPass
   EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_SOLO));
 }
 
-// A pass-only game with one seat is an invalid manifest (pass needs seats.max 2): its row says why, and a tap opens
-// nothing and repaints the list.
+// A pass-only game with one seat has no mode left (pass needs seats.max 2) and is invalid: its row says why, and a tap
+// opens nothing and repaints the list.
 TEST_F(TitleScreenTest, APassOnlyGameWithOneSeatOpensNothingFromTheLauncher) {
   installCounter("\"pass\"", 1);
   openLauncher();
@@ -1714,8 +1727,8 @@ TEST(TitleScreenModes, NextModeStartsAtSoloWhenTheCurrentModeIsNoneOfThem) {
 }
 
 // Settings the title screen could not read would be written as none, wiping every remembered value, and a match would
-// start without the ctx.settings its manifest declares: while they are not read, New game and Continue start nothing
-// (logged, the screen repainted), an Options change is not written, and prefs.bin stays as it was.
+// start without the ctx.settings its manifest declares: while they are not read, New game starts nothing (logged, and
+// its row says why), an Options change is not written, and prefs.bin stays as it was.
 TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadPrefsBinIsLeftAlone) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS);
   GameSaveStore::Prefs prefs;
@@ -1736,6 +1749,8 @@ TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadPrefsBinIsLeftAlone) {
   EXPECT_TRUE(activityManager.replacements.empty());
   EXPECT_TRUE(logHas("Cannot start counter: its settings were not read"));
   EXPECT_TRUE(activityManager.updateRequested());
+  render();
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_SETTINGS_NOT_READ)) << "the notice, not a silent repaint";
   EXPECT_EQ(fakesd::bytesOf(prefsPath("counter")), before);
   // An Options change (Mode: there are two) is not written either.
   ASSERT_NO_FATAL_FAILURE(openOptions());
@@ -1747,8 +1762,10 @@ TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadPrefsBinIsLeftAlone) {
   EXPECT_EQ(activityManager.asks.replaced, 0);
 }
 
-// The same with a save: Continue starts nothing either (a Play again after it would run setup without the settings).
-TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadContinueStartsNothing) {
+// The same with a save: Continue starts the saved match (a resume runs no setup, AD-8), the file untouched; New game
+// says why it starts nothing, before it asks about replacing the save. The match then refuses a Play again
+// (GameMatchTest: APlayAgainWithTheManifestsSettingsUnreadEndsInTheErrorViewAndWithThemStartsTheRound).
+TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadContinueStartsTheSavedMatchAndNewGameSaysWhyItDoesNot) {
   addCountingGame("counter", "Counter", "\"solo\"", 1, 1, TWO_SETTINGS);
   save("counter");
   const Bytes saved = fakesd::bytesOf(resumePath("counter"));
@@ -1757,10 +1774,18 @@ TEST_F(TitleScreenTest, WhileTheSettingsCouldNotBeReadContinueStartsNothing) {
   fakesd::sim().failOpen.insert("/.games/counter/manifest.json");  // the title screen's re-read fails
   ASSERT_NO_FATAL_FAILURE(openPushedTitle());
   activityManager.markRendered();
-  tapRow(tr(STR_GAMES_CONTINUE));
+  tapRow(tr(STR_GAMES_NEW_GAME));
   EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_FALSE(dialogUp()) << "no question about replacing the save: nothing would start";
   EXPECT_TRUE(logHas("Cannot start counter: its settings were not read"));
-  EXPECT_TRUE(activityManager.updateRequested());
+  render();
+  EXPECT_EQ(newGameLine(), tr(STR_GAMES_SETTINGS_NOT_READ));
+  fakesd::sim().failOpen.clear();
+  tapRow(tr(STR_GAMES_CONTINUE));
+  ASSERT_EQ(activityManager.asks.replaced, 1);
+  ASSERT_NE(enterReplacement(), nullptr);
+  ASSERT_TRUE(pumpMatchTo("Resuming at ver 3"));
+  EXPECT_FALSE(logHas("setup ran"));
   EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved);
 }
 

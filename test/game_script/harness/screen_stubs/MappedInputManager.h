@@ -122,6 +122,10 @@ class MappedInputManager {
   // longPress()) is one frame's events, as the test sets them. Not modelled: tap slop, multi-touch, the held-time
   // override's 250 ms life, and the home key's timing (InputManager's 700 ms long press, HomeButtonInput's double-tap
   // wait): homeKey() scripts only the frame its action is reported on (the device-run packet holds them).
+  // Both constants are copies of device values, pinned by CopiedConstantsTest (it reads the device sources): the first
+  // stands in for MappedInputManager.cpp's file-local TOUCH_DOWN_SELECT_DELAY_MS (wasScreenTouchDown's
+  // isTouchTapCandidate delay), the second for freeink-sdk InputManager.h's private TOUCH_LONG_PRESS_MS (its long-press
+  // event).
   static constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
   static constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
   bool wasScreenTouchDown(int& x, int& y) const {

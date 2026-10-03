@@ -863,3 +863,61 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-plain-tap-targets-for-the-hand-off-plan.md`
   summary: `CopiedConstantsTest` keeps its constexpr reader and `TheSourcesAreRead` although no constant is copied any more.
   evidence: Review pass 1, finding 15 (low). The plan keeps the suite for the next copied constant; delete it, with its CMake registration, if none arrives.
+
+## e5-r1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r1-touch-latch-and-window-guards.md`
+  summary: Retrospective V5's other two gaps stay open: a forced exit (sleep) from the hidden-pass Over state, and the Play-again variant of the first-move-during-push rule (`firstFramePushing` is set only for a hand-off passed by Tap, so a move tapped during the first frame after Play again takes the ordinary frame-on-panel path; the owner has not asked for it).
+  evidence: `epic-pass-and-play-retrospective.md` row V5 (the third gap, a latched post-transition contact, is now `AContactBegunAfterTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsAccepted`); `GameMatchActivity::handle` (`firstFramePushing.store(from == MatchState::HandOff && event == MatchEvent::Tap)`).
+
+## e5-r3
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r3-settings-read-and-reserved-image-log.md`
+  summary: F11 is log-only: a package made before `title.bmp` and `handoff.bmp` were reserved still loses that image to the loader, and the installer, the pack step and the api level are unchanged (owner scope).
+  evidence: `GameAssets.cpp` `scanFolder` now logs each reserved image except icon.bmp at info level, once a load; the line also appears for a package's own, valid title.bmp and handoff.bmp, since the loader cannot tell the two apart. Action, if the owner wants more: an install-time warning for a title/handoff PNG that is not meant as a page, or an api-level entry. Trigger: a game author reports the not-found.
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r3-settings-read-and-reserved-image-log.md`
+  summary: The New game row's "settings not read" notice stays until the title screen closes; nothing retries the manifest read, so a card fault that has passed still needs the player to leave and reopen the game.
+  evidence: `GameModeActivity::showSettingsNotice`; `SettingsThatCouldNotBeReadAtOpenAreNotReadAgainWhenAMatchStarts` keeps the no-retry rule (a read at the tap cost +80 B of flash, deferred-work.md ## 5.12).
+
+## e5-r5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r5-forced-exit-cheap-fixes.md`
+  summary: `## 5.6` stays open for the owner's choice, narrowed: the forced exit's blank (1,654 ms on the X4 Pro, owner's log) still runs before the resume write, the delete retry and the store flush in the one state where it is pushed (`panel` is `Seat`), so those steps may still be skipped there; reordering the exit, a `displayBufferAsync` push, or a wider window is a spine decision (AD-20) the owner has not made. The cheap fixes are in: no blank where nothing private shows (HandOff, Paused-from-HandOff, Over, a drawn error view, an already blank panel), and the TurnChanged pass writes the snapshot.
+  evidence: `GameMatchActivity::pushForcedExitBlank` (`panel != Panel::Seat`), `loopPlaying`'s `flushResume()` after `handle(TurnChanged)`; `HiddenPassTest.TheForcedExitOnTheBlankPushesNothingAndLeavesTheWindowToTheSdSteps`, `PassResumeTest.AForcedExitInOverPushesNothingAndStillRetriesTheResumeDelete`, `AMoveThatPassesTheTurnIsWrittenOnThePassThatHandlesIt`; docs/crosshatch/game-canvas.md "What remains" (taps list). B7.6 (a sleep with a dirty store, `pass-store`) has not been run on the device.
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r5-forced-exit-cheap-fixes.md`
+  summary: Residual: a fast (partial) refresh of the Over menu, or of a pause menu opened from the hand-off, over a panel that held a seat's frame could leave a faint ghost of it, and the forced exit no longer blanks there; `## 5.6` itself stays open for the reordering choice.
+  evidence: `renderView` pushes Paused and Over with `FAST_REFRESH` (only Error is full); the owner's decision of 2026-10-03 named HandOff, Paused-from-HandOff and Over as states where nothing private shows. Unobserved: a device run of a sleep from Over after a seat's move (AD-12's ghost check, epic entry 11 did not cover it).
+## e5-r2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: A tap after "I'm ready" but before the VM publishes the next seat's frame (`awaitingRound` still true) is dropped; the owner decided on 2026-10-03 to keep dropping it (retrospective F5). Also, the owner's note and the retrospective name a log line `dropped a tap or Confirm ...`, which `GameMatchActivity.cpp` no longer has after ticket 13: the line that records this drop is `dropped a touch before the frame was on the panel`.
+  evidence: `GameMatchActivity::loopPlaying` (`aimed && awaitingDisplay && !firstFrameTouch`); `docs/crosshatch/game-canvas.md` "What remains". Trigger: a device log showing that line often after "I'm ready", then reconsider accepting the touch once the VM has the seat's frame.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r2-stale-docs-and-drift-guard.md`
+  summary: Resolves the `CopiedConstantsTest` entry above (review pass 1, finding 15): the suite now pins the screen input double's two constants to the device sources, so it stays.
+  evidence: `test/game_script/harness/CopiedConstantsTest.cpp` (`TheDoublesTouchDownDelayIsTheDevicesSelectDelay`, `TheDoublesLongPressIsTheDevicesTouchLongPress`).
+
+## e5-r4
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r4-share-replacefile.md`
+  summary: Only `saveResume` uses `replaceFile`'s `removedOld` out-parameter (for its replacement counter); `saveStore` and `savePrefs` ignore it. Left as is by this refactor (no behaviour change); fold it into a richer result only if a second caller needs it.
+  evidence: `src/games/GameSaveStore.cpp` (`replaceFile`, `saveResume`, `saveStore`, `savePrefs`). Trigger: a second caller that needs `removedOld`.
+
+## e5-r6
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: A solo or nearby round that is over still shows its one local seat, so a timer due after the round reaches that seat's `input()` (only a pass round's seat 0 is dropped); the owner's F9 decision named seat 0 only. A game that cannot take a timer after `over` must cancel it in its own `over` handler, as `pass-open` does.
+  evidence: `GameCore::seatShown` (one local seat: `firstLocalSeat()` in every state but HandOff); `GameScript::SoloRounds::lateTimer` tests seat 0 only. Trigger: an owner decision that a timer after `over` is never delivered in any mode.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r6-drop-late-timer.md`
+  summary: `SoloRounds::lateTimer` infers "the round is over" from seat 0, so a roster with no local seat (`Roster::firstLocalSeat()` returns 0) would drop every timer and mislog it as late; unreachable today, since no such roster plays a round.
+  evidence: `GameCore::seatShown` (`firstLocalSeat()` for a roster with at most one local seat), `lib/GameScript/SoloRounds.h`. Trigger: the first roster with no local seat (epic-play-nearby). Fix: test `status.over` explicitly in `lateTimer`'s callers.
+
+## e5-r7
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: A degraded game (solo plus pass or nearby with `seats.max` 1) is Ok with no row note, so the launcher shows it like any game and the user is never told pass is not offered; only the registry load logs it. A row note would need a new string and a launcher change.
+  evidence: `GameRegistry::load` (the one LOG_INF), `GamesLauncherActivity::loadGames` (logs only non-Ok). Trigger: an owner request for a visible note, or a report from a user with such a package.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r7-degrade-old-pass-manifests.md`
+  summary: `Manifest::check`'s Ok result can now carry a reason other than None (the dropped claim); a later caller that treats `reason != None` as a failure would misread it.
+  evidence: `lib/GameCore/Manifest.h` (`CheckResult`), `Manifest::check`. Trigger: a new caller of `check` that reads `reason` without `status`.
