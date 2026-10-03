@@ -263,8 +263,8 @@ void GameMatchActivity::onExit() {
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
-  // order: cancel and join, a hidden pass match's plain white blank pushed (stopVm,
-  // pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
+  // order: cancel and join, a hidden pass match's plain white blank pushed when a seat's frame may be on the panel
+  // (stopVm, pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
   // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
   // finish, then the store. The SD steps stop starting once the deadline has passed,
   // which counts the blank's push.
@@ -415,8 +415,11 @@ void GameMatchActivity::stopVm() {
 
 void GameMatchActivity::pushForcedExitBlank() {
   // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave pushes
-  // its own after the stop (leave).
-  if (!forcedExit || !lifecycle.hiddenPass()) return;
+  // its own after the stop (leave). And only when a seat's frame may be on the panel (panel is Seat: Playing, Result's
+  // mover frame, a menu over a seat's frame, and any new state whose screen is not drawn yet, which leaves the last
+  // frame there): on the hand-off screen, the blank, Over (seat 0's public frame), a drawn error view, or a menu on no
+  // frame nothing private shows, and the push would only spend the SD steps' window.
+  if (!forcedExit || !lifecycle.hiddenPass() || panel != Panel::Seat) return;
   // Not an SD step: the deadline does not gate it, but its time counts against the SD steps that follow.
   pushBlank("forced exit");
 }
@@ -570,6 +573,9 @@ void GameMatchActivity::loopPlaying() {
     turnsSeen = passed;
     passTo.store(vm->passedTo());
     handle(MatchEvent::TurnChanged);
+    // Result writes resume.bin as any state does (R8): not left to the next pass, which a Back, Home, or sleep may
+    // beat.
+    flushResume();
     return;
   }
 

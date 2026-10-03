@@ -2390,17 +2390,82 @@ TEST_F(HiddenPassTest, TheForcedExitInResultPushesTheBlank) {
   EXPECT_FALSE(record.pushes[0].abandonLogged);
 }
 
-// Sleep on the hand-off screen (HandOff): the plain white blank is pushed over it.
-TEST_F(HiddenPassTest, TheForcedExitOnTheBlankPushesTheBlankAgain) {
-  enterHidden();
-  expectHandOff();
-  showSeat(1);
-  moveAndPass(1, 2);
+// Sleep on the hand-off screen (HandOff): nothing private is on the panel, so the exit pushes nothing (e5-r5; R6
+// blanks the panel when a seat's frame could be on it). The store flush a dirty store waits for runs in the window the
+// blank no longer spends, even when a push would have taken all of it.
+TEST_F(HiddenPassTest, TheForcedExitOnTheBlankPushesNothingAndLeavesTheWindowToTheSdSteps) {
+  reachResultWithADirtyStore();
+  ASSERT_FALSE(HasFatalFailure());
   tapToPass();
   ASSERT_EQ(state(), "HandOff");
   expectHandOff();
+  ASSERT_FALSE(fakesd::has(storePath("hidden-store")));
+  const ExitRecord record = sleepRecordingPushes([] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); });
+  EXPECT_TRUE(record.pushes.empty()) << "the forced exit pushed over the hand-off screen";
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush did not run";
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+  EXPECT_EQ(state(), "Leaving");
+}
+
+// Sleep with the pause menu opened from the hand-off: the menu sits on no frame (canvasUnderView), so nothing private
+// is on the panel and nothing is pushed.
+TEST_F(HiddenPassTest, TheForcedExitFromThePauseMenuOpenedOnTheBlankPushesNothing) {
+  enterHidden();
+  expectHandOff();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  ASSERT_FALSE(holds(lastPush(), "apple"));
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty());
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// Over asked for but not drawn yet: the last mover's frame is still on the panel (`panel` is written by a push only),
+// so the blank is pushed; the rule keeps the blank wherever a seat's frame could still be there.
+TEST_F(HiddenPassTest, TheForcedExitBeforeOverIsDrawnPushesTheBlank) {
+  enterHidden();
+  expectHandOff();
+  for (int turn = 0; turn < 3; ++turn) {
+    const int mover = turn % 2 + 1;
+    showSeat(mover);
+    moveAndPass(mover, 3 - mover);
+    tapToPass();
+    expectHandOff();
+  }
+  showSeat(2);
+  tapCanvas(100, 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
   const ExitRecord record = sleepRecordingPushes();
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+}
+
+// Sleep in Over: the menu sits over seat 0's frame, which is everyone's, so nothing private is on the panel.
+TEST_F(HiddenPassTest, TheForcedExitInOverPushesNothing) {
+  enterHidden();
+  expectHandOff();
+  for (int turn = 0; turn < 3; ++turn) {
+    const int mover = turn % 2 + 1;
+    showSeat(mover);
+    moveAndPass(mover, 3 - mover);
+    tapToPass();
+    expectHandOff();
+  }
+  showSeat(2);
+  tapCanvas(100, 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  renderView();
+  ASSERT_TRUE(holds(lastPush(), "Everyone: the secrets were apple and river"));
+  const ExitRecord record = sleepRecordingPushes();
+  EXPECT_TRUE(record.pushes.empty());
+  EXPECT_FALSE(logHas("blank screen pushed"));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
 }
 
 // A VM held inside ch.log (a locked binding) neither joins nor can be deleted: the blank goes up once the stop's wait
@@ -2488,20 +2553,38 @@ TEST_F(HiddenPassTest, TheForcedExitFromThePauseMenuOverASeatsFramePushesTheBlan
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
 }
 
-// A script error keeps the VM (only a stuck call frees it on the way to Error), so a forced exit from that error view
-// still pushes the blank: the rule is any forced exit of a hidden pass match with a VM, whatever the panel shows.
-TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmStillPushesTheBlank) {
-  installGame("hidden-error", HIDDEN_ERROR_GAME);
-  enterHidden("hidden-error");
-  expectHandOff();
-  tapToPass();
-  showFrame();
-  tapCanvas(100, 300);
-  frame();
-  ASSERT_TRUE(pump([&] { return state() == "Error"; }));
-  expectErrorView(tr(STR_GAMES_ERROR), "hidden boom");
-  const ExitRecord record = sleepRecordingPushes();
-  ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+// A script error keeps the VM (only a stuck call frees it on the way to Error). Once the error view is on the panel
+// nothing private is, so a forced exit from it pushes nothing; before the view is drawn the seat's frame is still on
+// the panel, and the exit pushes the blank.
+TEST_F(HiddenPassTest, TheForcedExitFromAScriptErrorWithItsVmPushesTheBlankOnlyWhileTheSeatsFrameIsOnThePanel) {
+  for (const bool viewDrawn : {false, true}) {
+    SCOPED_TRACE(viewDrawn ? "error view drawn" : "error view asked for, not drawn");
+    if (activity) {
+      if (!exited) activityManager.exitHolding(*activity);
+      activityManager.destroyHolding(activity);
+      ASSERT_TRUE(fakertos::waitNoTasks());
+    }
+    exited = false;
+    fakelog::clearLines();
+    installGame("hidden-error", HIDDEN_ERROR_GAME);
+    enterHidden("hidden-error");
+    expectHandOff();
+    tapToPass();
+    showFrame();
+    tapCanvas(100, 300);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Error"; }));
+    if (viewDrawn) {
+      expectErrorView(tr(STR_GAMES_ERROR), "hidden boom");
+      const ExitRecord record = sleepRecordingPushes();
+      EXPECT_TRUE(record.pushes.empty()) << "the forced exit pushed over the error view";
+      EXPECT_FALSE(logHas("blank screen pushed"));
+    } else {
+      ASSERT_TRUE(holds(lastPush(), "apple")) << "the seat's frame is on the panel";
+      const ExitRecord record = sleepRecordingPushes();
+      ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
+    }
+  }
 }
 
 // A user Leave from a pause menu over a seat's frame (cross-story review row 1) pushes the blank, a half refresh with

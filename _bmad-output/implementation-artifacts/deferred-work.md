@@ -879,3 +879,13 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r3-settings-read-and-reserved-image-log.md`
   summary: The New game row's "settings not read" notice stays until the title screen closes; nothing retries the manifest read, so a card fault that has passed still needs the player to leave and reopen the game.
   evidence: `GameModeActivity::showSettingsNotice`; `SettingsThatCouldNotBeReadAtOpenAreNotReadAgainWhenAMatchStarts` keeps the no-retry rule (a read at the tap cost +80 B of flash, deferred-work.md ## 5.12).
+
+## e5-r5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r5-forced-exit-cheap-fixes.md`
+  summary: `## 5.6` stays open for the owner's choice, narrowed: the forced exit's blank (1,654 ms on the X4 Pro, owner's log) still runs before the resume write, the delete retry and the store flush in the one state where it is pushed (`panel` is `Seat`), so those steps may still be skipped there; reordering the exit, a `displayBufferAsync` push, or a wider window is a spine decision (AD-20) the owner has not made. The cheap fixes are in: no blank where nothing private shows (HandOff, Paused-from-HandOff, Over, a drawn error view, an already blank panel), and the TurnChanged pass writes the snapshot.
+  evidence: `GameMatchActivity::pushForcedExitBlank` (`panel != Panel::Seat`), `loopPlaying`'s `flushResume()` after `handle(TurnChanged)`; `HiddenPassTest.TheForcedExitOnTheBlankPushesNothingAndLeavesTheWindowToTheSdSteps`, `PassResumeTest.AForcedExitInOverPushesNothingAndStillRetriesTheResumeDelete`, `AMoveThatPassesTheTurnIsWrittenOnThePassThatHandlesIt`; docs/crosshatch/game-canvas.md "What remains" (taps list). B7.6 (a sleep with a dirty store, `pass-store`) has not been run on the device.
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r5-forced-exit-cheap-fixes.md`
+  summary: Residual: a fast (partial) refresh of the Over menu, or of a pause menu opened from the hand-off, over a panel that held a seat's frame could leave a faint ghost of it, and the forced exit no longer blanks there; `## 5.6` itself stays open for the reordering choice.
+  evidence: `renderView` pushes Paused and Over with `FAST_REFRESH` (only Error is full); the owner's decision of 2026-10-03 named HandOff, Paused-from-HandOff and Over as states where nothing private shows. Unobserved: a device run of a sleep from Over after a seat's move (AD-12's ghost check, epic entry 11 did not cover it).
