@@ -214,3 +214,9 @@ Open items that qualify the verdict: S2 and S7 (device checks not run), F6 (slee
 - Not checked: stack locals over 256 B (structs not measured); the duplication and divergence greps over test code and docs; `scripts/pack_device_run.py` against `pack_game.py` beyond the function names; the spine's layer-table text against `check_layers.py`; `lib/GameIcons` (no diff lines).
 - Findings marked **unverified** come only from a subagent's report.
 - 5.13's own diff could not be isolated: its baseline commit is absent and its range is a squash that also carries upstream merges.
+
+## Addendum: follow-up fixes applied (2026-10-03)
+
+Ticket 5.13 was marked done on the owner's confirmation (commit `0264a1f4`); its device check (action item AI-6) was not run. Seven follow-up builds then applied the retro's findings, with the owner's answers recorded in the epic Notes: e5-r1 (F4 stale touch latch, V4 window `static_assert`, F2 comments, one V5 gap), e5-r2 (F1, F3, F5 note, A2, V1/V2), e5-r3 (F8, F11), e5-r4 (D1), e5-r5 (F6 cheap fixes, F10), e5-r6 (F9), e5-r7 (F7). Each ran four review lenses as subagents (two for e5-r6 were run by the orchestrator); each plan is `_bmad-output/implementation-artifacts/plan-e5-r*.md`. Merged tree `55a8d9bf`: host suites 1,646/1,646, firmware and `pio check` green, flash +254,480 B (40 B over the epic's 21,000 B share, 22,000 B under the gate).
+
+Resolved: A2, F1, F2, F3, F4, F5 (decided: keep dropping), F7, F8, F9, F10 (the `TurnChanged` flush), F11 (log only), D1, V1, V2, V4, and V5's first gap. The verdict stays accepted-with-open-items. Still open: S2 and S7 (device checks, B7.6), F6's window (reordering, owner choice under `## 5.6`), F12-F14, F3's other packet history, G1 (`GameMatchActivity` split, before epic-play-nearby), D2-D4, V3 and V5's other gaps, AI-7 (Requirement text, including R10's "invalid"), and AI-8 (the previous retro's dropped items).
