@@ -80,7 +80,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
   // `settings` (copied) is the chosen value of each setting the manifest declares, which the VM gives the game as
-  // ctx.settings at every setup (a resumed match runs none until Play again).
+  // ctx.settings at every setup (a resumed match runs none until Play again, which ends in the error view when these
+  // are fewer than the manifest declares).
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
                     const GameCore::Roster& roster, Start start = Start::New,
                     const GameCore::SettingValues& settings = {});

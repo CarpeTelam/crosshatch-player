@@ -869,3 +869,13 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e5-r1-touch-latch-and-window-guards.md`
   summary: Retrospective V5's other two gaps stay open: a forced exit (sleep) from the hidden-pass Over state, and the Play-again variant of the first-move-during-push rule (`firstFramePushing` is set only for a hand-off passed by Tap, so a move tapped during the first frame after Play again takes the ordinary frame-on-panel path; the owner has not asked for it).
   evidence: `epic-pass-and-play-retrospective.md` row V5 (the third gap, a latched post-transition contact, is now `AContactBegunAfterTheHandOffPassedAndLiftedDuringTheFirstFramesPushIsAccepted`); `GameMatchActivity::handle` (`firstFramePushing.store(from == MatchState::HandOff && event == MatchEvent::Tap)`).
+
+## e5-r3
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r3-settings-read-and-reserved-image-log.md`
+  summary: F11 is log-only: a package made before `title.bmp` and `handoff.bmp` were reserved still loses that image to the loader, and the installer, the pack step and the api level are unchanged (owner scope).
+  evidence: `GameAssets.cpp` `scanFolder` now logs each reserved image except icon.bmp at info level, once a load; the line also appears for a package's own, valid title.bmp and handoff.bmp, since the loader cannot tell the two apart. Action, if the owner wants more: an install-time warning for a title/handoff PNG that is not meant as a page, or an api-level entry. Trigger: a game author reports the not-found.
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e5-r3-settings-read-and-reserved-image-log.md`
+  summary: The New game row's "settings not read" notice stays until the title screen closes; nothing retries the manifest read, so a card fault that has passed still needs the player to leave and reopen the game.
+  evidence: `GameModeActivity::showSettingsNotice`; `SettingsThatCouldNotBeReadAtOpenAreNotReadAgainWhenAMatchStarts` keeps the no-retry rule (a read at the tap cost +80 B of flash, deferred-work.md ## 5.12).

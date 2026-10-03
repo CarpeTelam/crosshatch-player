@@ -258,6 +258,66 @@ TEST_F(MatchTest, TheEndOfARoundOpensTheOverMenuAndWritesTheStoreAtOnce) {
   EXPECT_EQ(state(), "Over");
 }
 
+// A Continue the title screen let through with settings it could not read (e5-r3, F8) plays the saved round, which runs
+// no setup, but its Play again would run one without the ctx.settings the manifest declares: the match ends in its
+// error view instead, the cause logged; with the settings given, the same Play again starts the next round.
+TEST_F(MatchTest, APlayAgainWithTheManifestsSettingsUnreadEndsInTheErrorViewAndWithThemStartsTheRound) {
+  for (const bool read : {false, true}) {
+    SCOPED_TRACE(read ? "settings read" : "settings not read");
+    fakelog::clearLines();
+    installGame("onetap", match::ONE_TAP_GAME);
+    GameCore::Manifest manifest = match::manifestOf("onetap", "One tap");
+    manifest.settingsCount = 1;
+    GameCore::SettingValues settings;
+    if (read) {
+      std::snprintf(settings.entries[0].id, sizeof(settings.entries[0].id), "level");
+      std::snprintf(settings.entries[0].value, sizeof(settings.entries[0].value), "Easy");
+      settings.count = 1;
+    }
+    gameId = "onetap";
+    activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::solo(),
+                                                   GameMatchActivity::Start::New, settings);
+    activity->onEnter();
+    showFrame();
+    tapCanvas(50, 50);
+    frame();
+    ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+    renderView();
+    tapOption(tr(STR_GAMES_PLAY_AGAIN));
+    if (read) {
+      EXPECT_EQ(state(), "Playing");
+      EXPECT_FALSE(logHas("no Play again"));
+    } else {
+      EXPECT_EQ(state(), "Error");
+      EXPECT_TRUE(logHas("onetap: no Play again, the settings its manifest declares were not read"));
+      expectErrorView(tr(STR_GAMES_START_FAILED), tr(STR_GAMES_SETTINGS_NOT_READ));
+      EXPECT_FALSE(logHas("Over -> Playing on PlayAgain")) << "no round began";
+    }
+    activityManager.exitHolding(*activity);
+    activityManager.destroyHolding(activity);
+    ASSERT_TRUE(fakertos::waitNoTasks());
+  }
+}
+
+// A Continue whose save is gone when the match loads starts a new round, which runs setup: with the settings unread it
+// stops in the error view instead, and runs none.
+TEST_F(MatchTest, AContinueWithNoSaveAndTheManifestsSettingsUnreadStopsBeforeSetup) {
+  installGame("onetap", match::ONE_TAP_GAME);
+  fakesd::addFile("/.games/onetap/.pkg", "v1\n0530a15766e91bf1\n");  // a package that keeps resume.bin
+  GameCore::Manifest manifest = match::manifestOf("onetap", "One tap");
+  manifest.settingsCount = 1;
+  gameId = "onetap";
+  activity = std::make_unique<GameMatchActivity>(*renderer, *input, manifest, GameCore::Roster::solo(),
+                                                 GameMatchActivity::Start::Resume);
+  activity->onEnter();
+  EXPECT_EQ(state(), "Error");
+  EXPECT_TRUE(logHas("no save to resume and the settings its manifest declares were not read"));
+  expectErrorView(tr(STR_GAMES_START_FAILED), tr(STR_GAMES_SETTINGS_NOT_READ));
+  activityManager.exitHolding(*activity);
+  activityManager.destroyHolding(activity);
+  ASSERT_TRUE(fakertos::waitNoTasks());
+}
+
 // ---- leaving, the forced exit, and Home (the solo-lifecycle item; 12cc816) ----
 
 TEST_F(MatchTest, LeavingStopsTheVmAndWritesTheStoreBeforeItGoesToGames) {
@@ -3145,7 +3205,7 @@ TEST_F(HiddenPassTest, AHandoffPageFillsTheBandAheadOfTheTitlePageWithTheTurnLin
   expectBandShows(*renderer, white);
   ASSERT_EQ(ui().strokeRects.size(), 1u) << "the button";
   EXPECT_TRUE(logHas("Page /.games/pass-hidden/handoff.bmp: 480x480"));
-  EXPECT_FALSE(logHas("title.bmp")) << "title.bmp was read beside handoff.bmp";
+  EXPECT_FALSE(logHas("Page /.games/pass-hidden/title.bmp")) << "title.bmp was read beside handoff.bmp";
   tapReady();  // the button passes it as on the default screen
   ASSERT_EQ(state(), "Playing");
   showFrame();

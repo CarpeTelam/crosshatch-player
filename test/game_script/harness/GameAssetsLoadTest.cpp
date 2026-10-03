@@ -137,9 +137,13 @@ TEST_F(GameAssetsLoadTest, AGameWithoutImagesLoadsItsModulesAlone) {
 }
 
 // The runtime's two pages (AD-15, as amended 2026-10-02) are converted beside the game's images but are no images of
-// its own: GameAssets loads neither, says nothing of them, and loads the game's real images beside them.
-TEST_F(GameAssetsLoadTest, TheReservedPagesAreSkippedWithoutAWordAndTheImagesBesideThemLoad) {
+// its own: GameAssets loads neither and loads the game's real images beside them. It says so, at info level and with
+// the game's folder and the file name, so a package made before the names were reserved, whose ch.gfx.image('title')
+// now fails as not found, has the cause in the log (retro epic-pass-and-play, F11). icon.bmp, the launcher's, gets no
+// line.
+TEST_F(GameAssetsLoadTest, TheReservedPagesAreSkippedWithALineAndTheImagesBesideThemLoad) {
   fakesd::addFile(path("main.lua"), "return 1");
+  fakesd::addFile(path("icon.bmp"), "not an image the game draws");
   fakesd::addFile(path("title.bmp"), image(480, 480));
   fakesd::addFile(path("handoff.bmp"), image(480, 480));
   fakesd::addFile(path("TITLE.BMP"), image(8, 8));
@@ -149,9 +153,16 @@ TEST_F(GameAssetsLoadTest, TheReservedPagesAreSkippedWithoutAWordAndTheImagesBes
   EXPECT_STREQ(assets.images().spans[0].name, "titles");
   EXPECT_EQ(assets.images().find("title", 5), -1);
   EXPECT_EQ(assets.images().find("handoff", 7), -1);
-  EXPECT_FALSE(logHas("title.bmp"));
-  EXPECT_FALSE(logHas("handoff.bmp"));
-  EXPECT_FALSE(logHas("TITLE.BMP"));
+  EXPECT_TRUE(logHas("/.games/demo/title.bmp is reserved for the runtime's pages: ch.gfx.image cannot name it"));
+  EXPECT_TRUE(logHas("/.games/demo/handoff.bmp is reserved for the runtime's pages"));
+  EXPECT_TRUE(logHas("/.games/demo/TITLE.BMP is reserved for the runtime's pages"));
+  size_t reservedLines = 0;
+  for (const std::string& line : fakelog::lines) {
+    if (line.find("is reserved for the runtime's pages") != std::string::npos) ++reservedLines;
+  }
+  EXPECT_EQ(reservedLines, 3u) << "one line a file, none for icon.bmp";
+  EXPECT_FALSE(logHas("icon.bmp"));
+  EXPECT_FALSE(logHas("titles.bmp"));
   EXPECT_FALSE(logHas("is not loaded"));
 }
 

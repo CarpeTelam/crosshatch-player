@@ -169,6 +169,14 @@ void GameMatchActivity::onEnter() {
     fail(StrId::STR_GAMES_START_FAILED, I18N.get(refusal));
     return;
   }
+  // A Continue whose save is gone by now (seedResume: nothing to lose) starts a new round, which runs setup: with the
+  // settings the title screen could not read, it would run without ctx.settings.
+  if (start == Start::Resume && snapshot.empty() && settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "%s: no save to resume and the settings its manifest declares were not read; not starting",
+            manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_SETTINGS_NOT_READ));
+    return;
+  }
   // A hidden pass match's hand-off art, read now on the loop task (never in render), once the roster is known: the
   // band's picture, in order the game's handoff.bmp, else its title.bmp (each in PSRAM; none, or one it cannot use,
   // logged, goes to the next), else its icon. No read calls the store, so the snapshot stays valid.
@@ -280,6 +288,14 @@ bool GameMatchActivity::handleHomeGesture() {
 
 void GameMatchActivity::handle(const MatchEvent event) {
   const MatchState from = lifecycle.state();
+  // The title screen lets a Continue through with settings it could not read: a resume runs no setup, but a Play again
+  // does, so it ends in the error view rather than start a round with a missing ctx.settings
+  // (GameModeActivity::startMatch).
+  if (event == MatchEvent::PlayAgain && from == MatchState::Over && settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "%s: no Play again, the settings its manifest declares were not read", manifest.id);
+    fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_SETTINGS_NOT_READ));
+    return;
+  }
   if (!lifecycle.apply(event)) {
     LOG_DBG("GAME", "%s ignored in %s", MatchLifecycle::name(event), MatchLifecycle::name(from));
     return;
