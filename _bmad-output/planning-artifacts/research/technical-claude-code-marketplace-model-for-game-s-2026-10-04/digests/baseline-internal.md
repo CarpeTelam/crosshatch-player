@@ -24,3 +24,4 @@ Facts:
 - B8 src/games/GameHash.cpp: device SHA-256 via mbedTLS already in firmware (package hash).
 - Not checked: whether the shipped mbedTLS/wolfSSL config exposes ECDSA P-256 or Ed25519 *verify* to application code. A signed-index design needs a spike to confirm (open question).
 - Prior run (internal): competitive-crosssmudge-app-store-vs-crosshatch-game-2026-10-04/research.md recommended a "Get games" catalog that verifies SHA-256 and drops into the /games/ inbox; noted our HttpDownloader's wolfSSL path calls setInsecure() (B6).
+- B9 src/network/HttpDownloader.cpp:12-28,66-136,138-244,253-260: with FREEINK_NET_WOLFSSL defined (platformio.ini [base]), only runGetWolf (setInsecure) is compiled; the esp_http_client path that attaches the CA bundle is compiled out. So on our game boards every HTTPS fetch is unverified today (lead read, 2026-10-04).
