@@ -67,11 +67,11 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
 
 1. **Dispatch the build agent** in its lane's worktree, on Sonnet: pass `model: "sonnet"` to the `Agent` tool. The
    orchestrator runs on the stronger model the owner started it with and keeps planning, owner questions, merges, and
-   the cross-story review there; a build agent's own subagents inherit its model, and
-   `_bmad/custom/bmad-build-auto.toml` pins its implementation subagent to Sonnet as well. The build agent's prompt
-   starts with the slash command `/bmad-build-auto ticket {ref}`: the word `ticket` matters, since the workflow takes
-   a bare ref or title as free text, not as a ticket. Then say that the build runs for an orchestrator, and give the
-   brief below, filled in. The review is already pinned to `thorough` by the same file. Add the sentence
+   the cross-story review there; a build agent's implementation subagent and review lenses inherit its model. The
+   build agent's prompt starts with the slash command `/bmad-build-auto ticket {ref}`: the word `ticket` matters,
+   since the workflow takes a bare ref or title as free text, not as a ticket. Then say that the build runs for an
+   orchestrator, and give the brief below, filled in. The review is already pinned to `thorough` by
+   `_bmad/custom/bmad-build-auto.toml`. Add the sentence
    `Halt after planning.` for a plan checkpoint (step 3a); the run then stops at `ready-for-dev`, and the same dispatch
    later resumes it from the plan. The run's chat output is not its result: read the plan.
 2. **Read the result from the plan.** `uv run _bmad/method/scripts/tickets.py --project-root <worktree> find {ref}`
