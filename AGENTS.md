@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-26 against a376afc; hand-edited 2026-09-28 for the epic-script-runtime retro's AI-12 and 2026-10-04 for the epic-install-and-launcher retro's AI-6. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-26 against a376afc; hand-edited 2026-09-28 for the epic-script-runtime retro's AI-12. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## crosshatch-player
 
@@ -14,7 +14,7 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Push feature branches to `origin` (this fork) and open PRs into its `develop`. Title every PR as a Conventional Commit (`type: subject`, types `feat` `fix` `docs` `style` `refactor` `perf` `test` `build` `ci` `chore` `revert`); the `Title Check` job (`amannn/action-semantic-pull-request`) fails any other title.
 - Ship each epic as one PR: check a ticket's verify locally in its build session, check CI on the epic PR, and never merge an epic PR with a red check.
 - Sync upstream by merging, with `upstream` = `https://github.com/crosspoint-reader/crosspoint-reader.git`: run `git config merge.ours.driver true` once per clone, then merge `upstream/develop` into `develop`. `AGENTS.md` is this fork's own; `.gitattributes` keeps our copy. Without the driver, resolve with `git checkout --ours AGENTS.md`; resolve an upstream `CLAUDE.md` change with `git rm CLAUDE.md`.
-- Never hand-edit generated files: `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` (from `lib/I18n/translations/*.yaml`) and `*.generated.h` (from `src/**/*.html` and `.js`), which every `pio run` regenerates; `lib/GameIcons/GameIcons.generated.h` and `test/game_script/GameIconsRaw.h` are committed, regenerated with `python3 scripts/gen_game_icons.py` (`--raw-out test/game_script/GameIconsRaw.h` for the second), and compared by CI.
+- Never hand-edit generated files: `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` (from `lib/I18n/translations/*.yaml`) and `*.generated.h` (from `src/**/*.html` and `.js`), which every `pio run` regenerates; `lib/GameIcons/GameIcons.generated.h` is committed and regenerated with `python3 scripts/gen_game_icons.py`.
 
 ## Where things are
 
@@ -35,7 +35,6 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Static analysis matching CI: `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` checks `default`, which leaves `FREEINK_CAP_GAMES` off; for games code also run it with `-e x4pro`, as the fork's `x4pro static analysis` job does. The packaged cppcheck needs `libpcre.so.3`, which the setup script installs as root; otherwise extract it into scratch (`apt-get download libpcre3 && dpkg-deb -x libpcre3_*.deb <dir>`) and run `pio check` with `LD_LIBRARY_PATH` at its library directory.
 - Format with `./bin/clang-format-fix` and no arguments as the last step before committing, after every edit, matching CI's whole-tree check; then run it again and confirm `git status` shows nothing new. Keep any formatting-only change it makes to fork files outside your paths, never revert it, and name it (4779ab69, aebea6f4, 6165a741); if it changes an upstream file the ledger does not list, stop and report it. It formats only files git tracks (`git ls-files`), so `git add` a new file before the final run; `-g` also skips staged changes. It needs clang-format 21, which the setup script installs, and exits 1 below it; never run `clang-format` directly, since the wrapper excludes generated and vendored sources.
 - CI runs only on pull requests here (the `ci.yml` push trigger is `master`, which this fork does not use); open a PR to get a CI result.
-- Never add `labeled` or another event type to `crosshatch-ci.yml`; its per-PR `cancel-in-progress` group cancels the running checks and turns the required status red. A label-gated job goes in its own workflow file, as `crosshatch-game-packages.yml` does (9180a698).
 - Add a fork-only CI check as a job in `.github/workflows/crosshatch-ci.yml` and list it in the `Crosshatch Test Status` job's `needs`; never edit upstream's `ci.yml`. Branch protection requires only `Test Status` and `Crosshatch Test Status`.
 - A ticket that adds or changes a CI-only gate or workflow runs it once from a fresh clone, not an incremental tree, before it counts as built, and its plan's Verification says so; the flash budget gate passed incrementally and failed on CI's fresh tree (f3ba9e54). When `git clone` is unavailable, a `git archive <commit>` tree plus every submodule's archive, nested ones included (recipe in `docs/crosshatch/orchestrated-epics.md`), counts, for a gate that reads no git history.
 - Delete a finished worktree or scratch clone once its work is merged: each takes 1.5–1.8 GB, and a full disk half-installs shared `~/.platformio/packages`.
@@ -59,3 +58,10 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Never run two builds at once against one checkout or one `~/.platformio`, and never `sim.sh setup` or a simulator build while a firmware `pio run` is in progress; the changed `platformio.local.ini` changes PlatformIO's project checksum, and it wipes `.pio/build` mid-build. Wrap every `pio run`, `pio check`, `pio project metadata`, and `sim.sh setup`/`build` in `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test CMake configure and build in `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'` (`flock <lock> a && b` locks only `a`); every agent on the machine and the session-start warm builds take these same locks, so your first build waits for a warm one. `pio project metadata` on a fresh tree likewise empties the env's build dir, which failed the flash budget job on PR #9 (f3ba9e54).
 
 <!-- /bmad:context -->
+
+## Fork rules kept outside the managed block
+
+A `bmad-project-context` refresh replaces everything between the markers above; these rules stay.
+
+- Never add `labeled` or another event type to `crosshatch-ci.yml`; its per-PR `cancel-in-progress` group cancels the running checks and turns the required status red. A label-gated job goes in its own workflow file, as `crosshatch-game-packages.yml` does (9180a698).
+- `test/game_script/GameIconsRaw.h` is also generated and committed: `python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h` regenerates it, CI compares it, and it is never hand-edited.
