@@ -201,20 +201,16 @@ void GameMatchActivity::onExit() {
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
-  // order: cancel and join, a hidden pass match's plain white blank pushed when a seat's frame may be on the panel
-  // (stopVm, pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
-  // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
-  // finish, then the store. The SD steps stop starting once the deadline has passed,
-  // which counts the blank's push.
+  // order: cancel and join, the last snapshot written while the VM that holds it still exists (stopVm), abandon if it
+  // did not join, a resume.bin delete Over could not finish, the store, and last a hidden pass match's plain white
+  // blank when a seat's frame may be on the panel (pushForcedExitBlank). The SD steps stop starting once the deadline
+  // has passed; the blank is no SD step, so a skipped or failed step never keeps it from running (its own panel guards
+  // aside).
   handle(MatchEvent::ForcedExit);
-  // With no VM there is no stop to wait for, so a hidden pass match's blank comes first, before the SD steps, when a
-  // seat's frame may still be on the panel: after a stuck VM was stopped on the way to Error before the error view was
-  // drawn (R6). A Leave pushed its own before goToGames() (leave), so one whose Games screen ran out of memory left the
-  // blank, and nothing is pushed again.
-  if (!vm && lifecycle.hiddenPass() && panel == Panel::Seat) pushBlank("forced exit");
   stopVm();
   retryResumeDelete(true);
   flushStore();
+  pushForcedExitBlank();
 }
 
 bool GameMatchActivity::handleHomeGesture() {
@@ -337,8 +333,6 @@ void GameMatchActivity::leave() {
 void GameMatchActivity::stopVm() {
   if (!vm) return;
   const bool joined = vm->stop(STOP_TIMEOUT_MS);
-  // After the wait (joined or not), before the first SD step and any abandon's wait (AD-12).
-  pushForcedExitBlank();
   // After the wait, before the VM is freed or abandoned (the snapshot is in its memory).
   // A task that did not join may still publish one on its way out; abandonVm looks again.
   flushResume();
@@ -350,13 +344,15 @@ void GameMatchActivity::stopVm() {
 }
 
 void GameMatchActivity::pushForcedExitBlank() {
+  // Last in the forced exit, after the SD steps (e6pre-10): the steps start inside the deadline whatever the half
+  // refresh costs, and the blank is not gated by it, so a slow card cannot cost the blank. With or without a VM.
   // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave pushes
   // its own after the stop (leave). And only when a seat's frame may be on the panel (panel is Seat: Playing, Result's
   // mover frame, a menu over a seat's frame, and any new state whose screen is not drawn yet, which leaves the last
   // frame there): on the hand-off screen, the blank, Over (seat 0's public frame), a drawn error view, or a menu on no
   // frame nothing private shows, and the push would only spend the SD steps' window.
   if (!persistence.forcedExit() || !lifecycle.hiddenPass() || panel != Panel::Seat) return;
-  // Not an SD step: the deadline does not gate it, but its time counts against the SD steps that follow.
+  // Not an SD step: the deadline does not gate it, and nothing follows it that it could cost time.
   pushBlank("forced exit");
 }
 

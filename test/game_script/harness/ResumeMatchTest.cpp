@@ -1723,9 +1723,10 @@ TEST_F(PassResumeTest, WithNoUsableSaveContinueStartsANewMatchWithTheCallersRost
   }
 }
 
-// The forced exit of a hidden match in Playing with a snapshot whose write failed: the blank is pushed before any
-// resume.bin op, and the snapshot is written after it (deferred-work ## 5.6).
-TEST_F(PassResumeTest, AHiddenForcedExitPushesTheBlankBeforeAnyResumeOpAndThenWritesThePendingSnapshot) {
+// The forced exit of a hidden match in Playing with a snapshot whose write failed: the pending snapshot is written
+// first and the blank is pushed after it (e6pre-10, deferred-work ## 5.6, option (a)), so the half refresh's time can
+// no longer cost the write.
+TEST_F(PassResumeTest, AHiddenForcedExitWritesThePendingSnapshotAndThenPushesTheBlank) {
   fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
   enterPass("pass-hidden", true, GameMatchActivity::Start::New);
   ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); })) << "setup's snapshot";
@@ -1737,19 +1738,183 @@ TEST_F(PassResumeTest, AHiddenForcedExitPushesTheBlankBeforeAnyResumeOpAndThenWr
 
   const size_t opsBefore = resumeOps();
   size_t opsAtPush = 0;
+  bool onCardAtPush = false;
   size_t pushes = 0;
   renderer->onDisplay = [&] {
     ++pushes;
     opsAtPush = resumeOps();
+    onCardAtPush = savedPassAt(1);
   };
   sleep();
   renderer->onDisplay = nullptr;
   ASSERT_EQ(pushes, 1u);
   EXPECT_TRUE(lastPush().texts.empty()) << "the push was the blank";
   EXPECT_EQ(lastPush().mode, HalDisplay::HALF_REFRESH);
-  EXPECT_EQ(opsAtPush, opsBefore) << "a resume.bin op ran before the blank was pushed";
-  EXPECT_GT(resumeOps(), opsBefore);
-  EXPECT_TRUE(savedPassAt(1)) << "the pending snapshot was written after the blank";
+  EXPECT_GT(opsAtPush, opsBefore) << "the blank was pushed before the resume write";
+  EXPECT_TRUE(onCardAtPush) << "the pending snapshot was not on the card when the blank was pushed";
+  EXPECT_TRUE(savedPassAt(1));
+}
+
+// The deadline bounds the resume write and not the blank: a write that starts past FORCED_EXIT_DEADLINE_MS (the join
+// ran long) is skipped and logged, and the blank is still pushed, at the end.
+TEST_F(PassResumeTest, AResumeWriteSkippedPastTheDeadlineStillGetsTheBlank) {
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); })) << "setup's snapshot";
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);
+  bool slow = false;
+  fakertos::S().onLoopNotify = [&] {
+    if (!slow) fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS + 100);
+    slow = true;
+  };
+  size_t pushes = 0;
+  renderer->onDisplay = [&] { ++pushes; };
+  sleep();
+  renderer->onDisplay = nullptr;
+  fakertos::S().onLoopNotify = nullptr;
+  ASSERT_TRUE(slow) << "the stop did not wake the VM";
+  EXPECT_TRUE(logHas("skipped the resume write"));
+  EXPECT_FALSE(savedPassAt(1)) << "a write started past the deadline";
+  ASSERT_EQ(pushes, 1u) << "the blank is not an SD step: the deadline does not gate it";
+  EXPECT_TRUE(lastPush().texts.empty());
+}
+
+// A resume write the card refuses does not hold the blank back: the exit goes on to push it.
+TEST_F(PassResumeTest, AResumeWriteThatFailsInTheExitStillGetsTheBlank) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  ASSERT_NO_FATAL_FAILURE(moveToResult());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); }));
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the retry in the exit is due; the card still refuses
+  size_t pushes = 0;
+  renderer->onDisplay = [&] { ++pushes; };
+  sleep();
+  renderer->onDisplay = nullptr;
+  EXPECT_FALSE(savedPassAt(2));
+  ASSERT_EQ(pushes, 1u);
+  EXPECT_EQ(lastPush().mode, HalDisplay::HALF_REFRESH);
+  EXPECT_TRUE(lastPush().texts.empty());
+}
+
+// The delete retry also runs before the blank. Over's delete failed and Play again's first snapshot failed too, so the
+// finished round's save is still on the card with its delete pending when the new round's seat frame is on the panel;
+// the forced exit retries the delete (forced: the snapshot's back-off holds the write) and only then pushes the blank.
+TEST_F(PassResumeTest, AHiddenForcedExitRetriesTheResumeDeleteAndThenPushesTheBlank) {
+  enterPass("pass-hidden", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  for (int turn = 0; turn < 3; ++turn) {
+    ASSERT_NO_FATAL_FAILURE(moveToResult());
+    showFrame();
+    tapScreen();
+    ASSERT_NO_FATAL_FAILURE(passTheBlank(2 - turn % 2));
+  }
+  ASSERT_TRUE(pumpToPassSave(4)) << "the third move's snapshot";
+  fakesd::sim().failRemove.insert(resumePath("pass-hidden"));
+  input->tap(CANVAS_X + 100, CANVAS_Y + 300);  // the fourth move ends the round
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Over"; }));
+  showFrame();
+  ASSERT_TRUE(fakesd::has(resumePath("pass-hidden"))) << "the card refused the delete";
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-hidden"));
+  fakelog::clearLines();
+  input->click(Button::Confirm);  // Play again is the first option
+  frame();
+  ASSERT_EQ(state(), "HandOff");
+  ASSERT_NO_FATAL_FAILURE(passTheBlank());              // the round's first snapshot comes with its first turn seat
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the failed delete's back-off holds the first write
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-hidden")); })) << "the new round's save";
+  EXPECT_TRUE(holds(lastPush(), "secret")) << "a seat's frame is on the panel";
+  fakesd::sim().failRemove.clear();  // the card can delete now; the write's back-off has not passed
+  fakesd::sim().failOpenWrite.clear();
+
+  size_t removeAtPush = 0;
+  size_t pushes = 0;
+  renderer->onDisplay = [&] {
+    ++pushes;
+    removeAtPush = fakesd::countOps("remove " + resumePath("pass-hidden"));
+  };
+  const size_t removesBefore = fakesd::countOps("remove " + resumePath("pass-hidden"));
+  sleep();
+  renderer->onDisplay = nullptr;
+  ASSERT_EQ(pushes, 1u);
+  EXPECT_GT(removeAtPush, removesBefore) << "the blank was pushed before the delete retry";
+  EXPECT_FALSE(fakesd::has(resumePath("pass-hidden"))) << "the delete retry did not run";
+  EXPECT_TRUE(lastPush().texts.empty());
+  EXPECT_FALSE(logHas("skipped"));
+}
+
+// The resume write, then the store flush, then the blank, on one forced exit from Result (the mover's frame under the
+// banner): the card refused the move's snapshot until the exit, and the store is dirty. The game writes ch.store on
+// every move; GameMatchTest has no package hash, so it cannot see resume.bin.
+TEST_F(PassResumeTest, AHiddenForcedExitWritesTheResumeThenFlushesTheStoreThenPushesTheBlank) {
+  installGame("hidden-store", R"(
+local game = {}
+function game.setup(ctx) return { seats = ctx.seats, moves = 0, turn = 1 } end
+function game.status(state) return { turn = state.turn } end
+function game.apply(state, seat, move)
+  state.moves = state.moves + 1
+  if state.moves % 2 == 0 then state.turn = state.turn % state.seats + 1 end
+  ch.store.set({ moves = state.moves })
+  ch.log("stored " .. state.moves)
+  return state
+end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then return { tap = true } end
+end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+  ch.gfx.text(40, 120, "Player " .. seat .. "'s secret: apple", "medium", "black")
+end
+return game
+)");
+  installPkg("hidden-store");
+  GameCore::Manifest manifest = match::manifestOf("hidden-store");
+  manifest.seatsMin = 2;
+  manifest.seatsMax = 2;
+  manifest.modes = GameCore::Manifest::MODE_PASS;
+  manifest.hidden = true;
+  const std::string store = "/.games-data/hidden-store/store.bin";
+  const std::string resume = resumePath("hidden-store");
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("hidden-store"));
+  enterWith(manifest, GameCore::Roster::pass(2), GameMatchActivity::Start::New);
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  input->tap(CANVAS_X + 100, CANVAS_Y + 300);  // the first move: the store is dirty, the turn stays
+  frame();
+  ASSERT_TRUE(pump([&] { return logHas("stored 1"); }));
+  input->tap(CANVAS_X + 100, CANVAS_Y + 300);  // the second passes the turn
+  frame();
+  ASSERT_TRUE(pump([&] { return state() == "Result"; }));
+  ASSERT_FALSE(fakesd::has(store));
+  ASSERT_FALSE(fakesd::has(resume));
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the refused write is due again; no loop pass has run
+
+  size_t opsAtPush = 0;
+  size_t pushes = 0;
+  renderer->onDisplay = [&] {
+    ++pushes;
+    opsAtPush = fakesd::sim().ops.size();
+  };
+  sleep();
+  renderer->onDisplay = nullptr;
+  ASSERT_EQ(pushes, 1u);
+  EXPECT_TRUE(lastPush().texts.empty()) << "the push was the blank";
+  EXPECT_FALSE(logHas("skipped"));
+  const auto& ops = fakesd::sim().ops;
+  const auto at = [&](const std::string& op) {
+    return static_cast<size_t>(std::find(ops.begin(), ops.end(), op) - ops.begin());
+  };
+  const size_t resumeRename = at("rename " + resumeTmpPath("hidden-store") + " " + resume);
+  const size_t storeRename = at("rename " + store + ".tmp " + store);
+  ASSERT_LT(resumeRename, ops.size()) << "no resume write";
+  ASSERT_LT(storeRename, ops.size()) << "no store flush";
+  EXPECT_LT(resumeRename, storeRename) << "the store was flushed before the resume write";
+  EXPECT_LT(storeRename, opsAtPush) << "the blank was pushed before the store flush";
 }
 
 // A move that passes the turn is written on the loop pass that handles TurnChanged (R8, e5-r5), not on the next one: a

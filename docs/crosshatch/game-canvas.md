@@ -105,35 +105,42 @@ saves every set made before the leak.
 never takes it again (pitfall 12cc816). It notes `millis()` at its very start, and the order is:
 
 1. cancel the VM and join it (up to 500 ms);
-2. in a hidden pass match only, and only while a seat's frame may be on the panel (`GameMatchActivity::panel` is
+2. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
+   free the memory it lives in;
+3. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
+   snapshot written before it is deleted;
+4. a `resume.bin` delete that Over could not finish is retried;
+5. the `ch.store` flush;
+6. in a hidden pass match only, and only while a seat's frame may be on the panel (`GameMatchActivity::panel` is
    `Seat`), the blank (`FrameReplay::drawBlank`: a plain white screen, no icon, no text, never the game's `handoff.bmp`
    or `title.bmp`) is drawn and pushed with a half refresh (`HalDisplay::HALF_REFRESH`) and logged ("forced exit: blank
    screen pushed"), whether the VM joined or not, so no seat's frame stays on the panel while the device sleeps, and the
-   sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over white (AD-12, AD-20, as
-   amended 2026-10-02). The match is Leaving, so render draws nothing, and the render task is not inside `render()`
-   while the lock is held, so the loop task may use `replay` and the framebuffer here. The panel is `Seat` in Playing,
-   in Result (the mover's frame under the banner), in a menu over a seat's frame, and in any state entered from those
-   whose own screen is not drawn yet (it still holds the frame): a pause menu not yet drawn, or an error view not yet
-   drawn after a script error or a stuck call. It is not `Seat` on the hand-off screen or the blank, in a pause menu
-   opened from the hand-off, in Over (the menu sits over seat 0's frame, which is everyone's), in a drawn error view, or
-   after a Leave (which pushed its own blank over a seat's frame): there the exit pushes nothing and the SD steps keep
-   the whole window. With no VM (a stuck call freed it on the way to Error) there is no wait, so the blank comes first,
-   before any SD step, under the same rule. Solo and open pass matches push nothing. The half refresh is AD-12's choice,
-   where the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4
-   Pro (epic-pass-and-play entry 11);
-3. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
-   free the memory it lives in;
-4. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
-   snapshot written before it is deleted;
-5. a `resume.bin` delete that Over could not finish is retried;
-6. the `ch.store` flush.
+   sleep screen the user chose in CrossPoint's settings, an overlay mode included, draws over white (AD-12, AD-20; the
+   order is e6pre-10's, deferred-work.md `## 5.6` option (a)). The match is Leaving, so render draws nothing, and the
+   render task is not inside `render()` while the lock is held, so the loop task may use `replay` and the framebuffer
+   here. The panel is `Seat` in Playing, in Result (the mover's frame under the banner), in a menu over a seat's frame,
+   and in any state entered from those whose own screen is not drawn yet (it still holds the frame): a pause menu not
+   yet drawn, or an error view not yet drawn after a script error or a stuck call. It is not `Seat` on the hand-off
+   screen or the blank, in a pause menu opened from the hand-off, in Over (the menu sits over seat 0's frame, which is
+   everyone's), in a drawn error view, or after a Leave (which pushed its own blank over a seat's frame): there the exit
+   pushes nothing. With no VM (a stuck call freed it on the way to Error) there is nothing to join and steps 2 and 3
+   are empty, under the same rule. Solo and open pass matches push nothing. The half refresh is AD-12's choice, where
+   the hand-off between seats uses a full one; whether it leaves a ghost of the seat's frame is checked on an X4 Pro
+   (epic-pass-and-play entry 11).
 
-Those are the only SD writes in `onExit()` (AD-17). Each of steps 3, 4's write, 5, and 6 starts only if less than
+The blank is last because it is the one step that costs a fixed 1,654 ms and has no SD work to lose: any SD step still
+pending would otherwise start after it and be skipped. It is the one step that is never skipped: the deadline below
+gates the SD steps (2 to 5) only, and a skipped or failed step does not stop step 6. What each guard protects: the
+panel check keeps the half refresh (and its time) out of every state where nothing private shows; `hiddenPass` keeps it
+out of solo and open pass, which show nothing private; the forced-exit flag keeps a user Leave's own blank (pushed after
+its stop, in `leave()`) from being pushed twice; the steps that come before it keep their own guards (writable state,
+ready store, pending snapshot, dirty slot, back-off, deadline).
+
+Those are the only SD writes in `onExit()` (AD-17). Each of steps 2, 3's write, 4, and 5 starts only if less than
 `FORCED_EXIT_DEADLINE_MS` (1,500 ms) has passed since the start of `onExit()`; a step that would start later is skipped
-and logged with one `LOG_ERR` line naming it. Step 2 is no SD step and the deadline does not gate it, but its time counts
-against the deadline of the steps after it. A resume write that failed less than 5 s (`FLUSH_INTERVAL_MS`) before is not
-retried at the exit either. Leave has no deadline and follows the same order (its delete retry and store flush come after
-it releases `RenderLock`).
+and logged with one `LOG_ERR` line naming it. Step 6 is no SD step and the deadline does not gate it. A resume write
+that failed less than 5 s (`FLUSH_INTERVAL_MS`) before is not retried at the exit either. Leave has no deadline and follows the same order (its delete retry and store
+flush come after it releases `RenderLock`).
 
 **The bound.** The stop's two waits count `millis()`, not polls: the join ends 500 ms (`STOP_TIMEOUT_MS`) after it began
 and the abandon 500 ms (`GameVM::ABANDON_WAIT_MS`) after it began. Each is late by its last iteration: a poll
@@ -146,18 +153,38 @@ only what starts before the deadline: each is one tmp write and rename, the card
 poll divides into, so a late poll shows), counts elapsed time under a thread that advances the clock faster than the
 polls do, and checks the order and the skipped steps.
 
-A hidden pass match's blank (step 2) is pushed after the join's wait and before the abandon's: at once when the VM
-joins, about 500 ms after `onExit()` began when it is stuck. Its half refresh counts against the 1,500 ms window, in the
-states where it is pushed (a seat's frame is on the panel; step 2). On an X4 Pro it took 1,654 ms (the owner's device
-log, 2026-10-03; `lib/hal/HalDisplay.h` names 1,720 ms for a half refresh), so every SD step after it is skipped, even
-when the VM joined at once; in the other states nothing is pushed and the steps start at once. The host double's push
-costs no clock, so `GameMatchTest` moves the clock by hand where it needs the push to take time. Measured on an X4 Pro
-before the blank existed, so without it: a forced exit with a stuck VM held `RenderLock` for 502 ms
-(epic-install-and-launcher entry 14).
+**Worst case, with the blank last.** The timeline of a hidden pass match whose seat's frame is on the panel, in the
+order of the steps (clock from the start of `onExit()`):
 
-**Resume before store.** The resume write (step 3) comes before the `ch.store` flush (step 6), so a slow exit can skip the
-store flush after the resume write ran: Continue may then resume a board newer than `ch.store` holds. Deferred
-(retrospective rev-5); its trigger is a device log line `forced exit past 1500 ms; skipped the ch.store flush`.
+| Moment | Joined at once | VM that never stops |
+| --- | --- | --- |
+| join ends | about 5 ms | about 500 ms |
+| resume write starts (allowed if under 1,500 ms) | about 5 ms | about 500 ms |
+| abandon ends (the resume write is inside this span, before it) | none | about 1,030 ms |
+| delete retry and store flush start (each allowed if under 1,500 ms) | right after the write | right after the abandon |
+| blank starts | when the last SD step that started in time ends | the same |
+| `onExit()` returns | blank start + the half refresh (1,654 ms on an X4 Pro) | the same |
+
+The SD steps are bounded where they start, not where they end: the deadline stops a step from starting at 1,500 ms or
+later, and a step that started at 1,499 ms runs at the card's speed (91 ms for a resume write on the X4 Pro, a
+tmp write and rename). So the blank starts by `1,500 ms + the longest SD step that started in time` at the latest
+(`GameMatchTest`'s `AStoreFlushStartedInsideTheDeadlineMayRunPastItAndTheBlankStillFollows` runs that with a 1,000 ms
+flush) and, with the usual 1,030 ms for a stuck VM and the measured 91 ms resume write, about 100 ms in when the VM
+joins and about 1,150 ms when it is stuck (an estimate from those figures, unmeasured as a whole), against about 5 ms and
+about 500 ms before the reorder. The seat's frame therefore stays readable for the
+SD steps' time longer than before, a few hundred milliseconds at the device's speeds and never more than the deadline
+plus one step; the blank still always runs, and it finishes the way it did, one half refresh after it starts. Before
+the reorder the blank's own 1,654 ms pushed every pending SD step past 1,500 ms and they were skipped, losing the last
+move's `resume.bin` and the `ch.store` flush. In the other states nothing is pushed and the steps start at once. The
+host double's push costs no clock, so `GameMatchTest` moves the clock by hand where it needs a step or the push to take
+time. Measured on an X4 Pro before the blank existed, so without it: a forced exit with a stuck VM held `RenderLock` for
+502 ms (epic-install-and-launcher entry 14). B7.6 (a sleep with a dirty store on the X4 Pro, `pass-store`) has not been
+run on the device: the reorder is verified on the host only.
+
+**Resume before store.** The resume write (step 2) comes before the `ch.store` flush (step 5), so a slow exit can skip
+the store flush after the resume write ran: Continue may then resume a board newer than `ch.store` holds. Deferred
+(retrospective rev-5); its trigger is a device log line `forced exit past 1500 ms; skipped the ch.store flush`. The
+blank no longer counts toward that window.
 
 ## Hidden pass states
 
@@ -207,7 +234,7 @@ refresh: the match records what its last push left on the panel (`GameMatchActiv
 (the hand-off screen or the blank), or anything else), under `RenderLock`.
 
 A forced exit (sleep, any Replace) pushes the blank, plain white, with a half refresh, only while a seat's frame may be
-on the panel (`panel` is `Seat`), with or without a VM: see The forced exit, step 2; from the hand-off screen, the
+on the panel (`panel` is `Seat`), with or without a VM, after the SD steps: see The forced exit, step 6; from the hand-off screen, the
 blank, Over, or a drawn error view it pushes nothing. So does a Leave from a seat's frame: see Leaving.
 
 **Taps.** Result's banner and the hand-off screen's "I'm ready" button are each their screen's one tap target (an
@@ -287,10 +314,11 @@ the next seat's push completed, or when it is a tap sampled before that push com
 - as on the canvas (the first item), on the Result banner and the hand-off screen's button: a touch that lands and
   lifts while the loop task is blocked in an SD step is first sampled after it, so it reads as a fresh tap and passes
   the screen.
-- the forced exit's blank takes about 1,654 ms on the X4 Pro against the 1,500 ms window (the owner's device log,
-  2026-10-03) in the one state where it is pushed (a seat's frame may be on the panel: step 2), so a resume write or
-  `ch.store` flush still pending after it may be skipped; B7.6 (a sleep with a dirty store, `pass-store`) has not been
-  run on the device; reordering the exit is the owner's open choice under deferred-work.md `## 5.6` (AD-20).
+- the forced exit's blank takes about 1,654 ms on the X4 Pro (the owner's device log, 2026-10-03) and now comes after the
+  resume write, the delete retry, and the store flush (e6pre-10, deferred-work.md `## 5.6` option (a)), so it no longer
+  costs them their 1,500 ms window; a seat's frame stays on the panel for those steps' time first (see The forced exit,
+  the worst case). B7.6 (a sleep with a dirty store, `pass-store`) has not been run on the device; the order is verified
+  on the host only.
 
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
@@ -308,7 +336,7 @@ fixtures do); it no longer has to.
 **Saves.** A hidden pass match keeps `resume.bin` as a solo match does (Resume, above): each committed snapshot is
 written in Playing, Paused, Result, and HandOff, Over deletes it, and Leave and the forced exit keep it. A move that passes the
 turn is written on the loop pass that handles it (not the next one). The forced exit's blank, when it is pushed, comes
-before the resume write (step 2, then step 3).
+after the resume write (step 2, then step 6).
 
 ## The views
 

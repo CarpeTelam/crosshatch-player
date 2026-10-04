@@ -46,10 +46,10 @@
 // tap elsewhere, as a plain tap target acts: on release, even while its screen is being pushed (the owner's decision of
 // 2026-10-03), and the first move tap on a seat's frame after "I'm ready" is accepted during that frame's push
 // (firstFramePushing). A forced exit (sleep, any Replace) pushes a plain white blank (FrameReplay::drawBlank), after
-// the VM's stop and before the SD steps, and so does a Leave whose panel holds a seat's frame, before it goes to Games;
-// a forced exit after the VM is gone (a Leave whose Games screen ran out of memory, a stuck VM stopped on the way to
-// Error) pushes it while a seat's frame is still on the panel. So no seat's frame stays on the panel. The hand-off
-// screen is pushed with a full refresh when it replaces anything else, and repainted without one.
+// the VM's stop and the SD steps (e6pre-10), and so does a Leave whose panel holds a seat's frame, before it goes to
+// Games; a forced exit after the VM is gone (a Leave whose Games screen ran out of memory, a stuck VM stopped on the
+// way to Error) pushes it while a seat's frame is still on the panel. So no seat's frame stays on the panel. The
+// hand-off screen is pushed with a full refresh when it replaces anything else, and repainted without one.
 // docs/crosshatch/game-canvas.md has the states.
 //
 // A touch reaches the VM with the frame the panel showed when it was made (GameVM::postInput), so one made under a
@@ -135,13 +135,14 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A user exit (Leave, or Back from the error view), from loop().
   void leave();
   // Cancels the VM, joins it or abandons it (AD-5), and writes its last pending
-  // snapshot before it is freed; in a hidden pass match's forced exit it pushes the
-  // blank between the wait and that write (pushForcedExitBlank). The caller holds
-  // RenderLock, since render reads vm and the frames an abandon frees. Nothing without a VM.
+  // snapshot before it is freed. The blank of a hidden pass match's forced exit comes after the SD steps, not here
+  // (pushForcedExitBlank). The caller holds RenderLock, since render reads vm and the frames an abandon frees. Nothing
+  // without a VM.
   void stopVm();
   // A hidden pass match's forced exit with a seat's frame possibly on the panel (panel is Seat; AD-12, AD-20):
-  // pushBlank, so no seat's frame stays on the panel while the device sleeps. Nothing otherwise; a user Leave pushes
-  // its own (leave).
+  // pushBlank, so no seat's frame stays on the panel while the device sleeps. Called last in onExit, after the resume
+  // write, the delete retry, and the store flush (e6pre-10); never gated by the SD deadline. Nothing otherwise; a user
+  // Leave pushes its own (leave).
   void pushForcedExitBlank();
   // Draws the plain white blank (FrameReplay::drawBlank) and pushes it with a half refresh; logged with `when`.
   // The caller holds RenderLock (its own, or ActivityManager's in onExit, never taken again: 12cc816), so the render
