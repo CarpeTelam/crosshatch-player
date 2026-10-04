@@ -2,7 +2,7 @@
 type: epic
 title: "Two devices play one match over ESP-NOW"
 parent: initiative-crosshatch-player-v1
-covers: [CAP-5, CAP-7]
+covers: [CAP-5, CAP-7, CAP-10]
 after: []
 assignee: ""
 risk: high
@@ -12,20 +12,20 @@ risk: high
 
 ## Description
 
-Adds Play Nearby: the wire protocol and reliable link in `GameCore`, tested over a lossy fake link, the ESP-NOW adapter and link task, the host lobby and guest join, and clean endings when a peer leaves or goes silent. It measures the spec's open radio questions.
+Adds Play Nearby: the wire protocol and reliable link in `GameCore`, tested over a lossy fake link, the ESP-NOW adapter and link task, the host lobby and guest join, and clean endings when a peer leaves or goes silent. It measures the spec's open radio questions. With epic-first-party-games's games in `games/<id>/`, it adds `nearby` to Ultimate tic-tac-toe's and Battleship's manifests and plays their nearby rounds (owner, 2026-10-04).
 
 ## Outcome
 
-Two players each on their own device finish a round of an unmodified game; the nearby part of CAP-5 and the peer-left part of CAP-7 are the signal.
+Two players each on their own device finish a round of an unmodified game; the nearby part of CAP-5, the peer-left part of CAP-7, and CAP-10's nearby rounds are the signal.
 
 ## Requirements
 
-Completed at inception. This epic owns the Play Nearby part of CAP-5 and the peer-left part of CAP-7.
+Completed at inception. This epic owns the Play Nearby part of CAP-5, the peer-left part of CAP-7, and CAP-10's nearby rounds (Ultimate tic-tac-toe and Battleship; epic-first-party-games owns the rest of CAP-10).
 
 ## Done when
 
 1. `Protocol`, `ReliableLink`, and `Session` pass host suites over a `FakeLink` that drops, delays, duplicates, and reorders frames.
-2. Two X4 Pros finish a round of the same unmodified package in Play Nearby: host lobby, guest join, seat assignment, moves, a rejected move, and Play again.
+2. Two X4 Pros finish a round of the same unmodified package in Play Nearby: host lobby, guest join, seat assignment, moves, a rejected move, and Play again. Ultimate tic-tac-toe and Battleship, with `nearby` added to their manifests in `games/<id>/`, each finish a round too, Battleship's boards hidden from the other player's screen.
 3. A peer that leaves or is silent for 10 s brings up "player left" on the other device, and a script error on one device ends the match on both.
 4. The lobby never opens while the web server or other Wi-Fi is up, refuses to open below 100 KB free internal heap, and the radio is off after leaving; the simulator envs build with `EspNowLink` and nearby compiled out.
 5. Reliability, battery cost, and internal heap after teardown are measured, and the 400 ms, 10 s, and 100 KB values are confirmed or changed and recorded in `docs/crosshatch/` and the spine's Deferred rows.
@@ -33,7 +33,7 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
 
 ## Boundaries
 
-`GameCore` Protocol, ReliableLink, and FakeLink; `EspNowLink`, `NearbySession`, and the GameLink task in `src/games`; `GameLobbyActivity`; the Lobby and PeerGone states. Not reconnect, more than two seats, or saving nearby matches (spec Non-goals).
+`GameCore` Protocol, ReliableLink, and FakeLink; `EspNowLink`, `NearbySession`, and the GameLink task in `src/games`; `GameLobbyActivity`; the Lobby and PeerGone states; `nearby` in the first-party two-player manifests and any fix in `games/<id>/` their nearby rounds need. Not reconnect, more than two seats, or saving nearby matches (spec Non-goals).
 
 ## References
 
@@ -52,7 +52,7 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
 - Decision (owner, 2026-10-04, e6pre-3, retro R10 option (b)): the ESP-NOW link pump and the peer-silence ("silent for 10 s") detection run on the `GameLink` task, never in `GameMatchActivity::loop()`, so an overlay such as the light panel cannot pause them (the match's move to `PeerGone` still waits for `loop()`, so for the overlay's duration). Constraint: the `GameLink` task never takes `RenderLock` and never touches activity state; it hands events to the match through the session's queue, whose overflow policy for a long overlay this epic states (a lost-peer event is never dropped). No upstream `ActivityManager` change and no new ledger row. The watchdog, timer poll, and store flush still pause under an overlay in solo and pass matches (`docs/crosshatch/game-canvas.md`, Overlays; `deferred-work.md`, `## e6pre-3`).
 - Decision (owner, 2026-10-04, e6pre-8): the move to `PeerGone` runs on the match's next `loop()`, so it waits while an overlay (the light panel) is open; the owner accepts it. The risk is an overlay held open indefinitely, with the peer already gone. Spine AD-18, AD-20, and AD-21 say so (amended 2026-10-04).
 - Requirement for the first story's design (e6pre-8, from e6pre-3's review): the session queue between the `GameLink` task and the match is depth-bounded, so this epic states its overflow policy before building it. A lost-peer event is never dropped; the rest of the policy is this epic's to state.
-- First story (e6pre-8; `deferred-work.md`, `## e5-xr`, "Blocks epic-play-nearby"): a roster with some seats local and some not stalls on four paths, and this epic fixes and tests them before anything else. (1) A local move that passes the turn to a non-local seat is never drawn (`SoloRounds::step` → `drawShown`, `NO_SEAT`). (2) A hidden hand-off to a non-local turn seat leaves the VM in HandOff with the request unserved (`GameVM::showSeatNow`). (3) A timer due while the turn seat is non-local is dropped (`SoloRounds::step`, `NO_SEAT`). (4) A round whose first turn is non-local publishes no frame, so `roundsStarted` never moves. The first story also decides what a device shows while a remote seat moves.
+- First story (e6pre-8; `deferred-work.md`, `## e5-xr`, "Blocks epic-play-nearby"): a roster with some seats local and some not stalls on four paths, and this epic fixes and tests them before anything else. (1) A local move that passes the turn to a non-local seat is never drawn (`MatchRounds::step`, named `SoloRounds::step` until e6pre-12, → `drawShown`, `NO_SEAT`). (2) A hidden hand-off to a non-local turn seat leaves the VM in HandOff with the request unserved (`GameVM::showSeatNow`). (3) A timer due while the turn seat is non-local is dropped (`MatchRounds::step`, `NO_SEAT`). (4) A round whose first turn is non-local publishes no frame, so `roundsStarted` never moves. The first story also decides what a device shows while a remote seat moves.
 - Measure first (e6pre-8): before the first story, measure the x4pro flash and static-RAM base (`scripts/check_flash_budget.py`, as the Budget lines above say) on the commit this epic starts from; this epic's 9,504 B and 160 B are deltas over that base, and the earlier epics' figures are over different bases (`docs/crosshatch/orchestrated-epics.md`).
 - Spine as built (e6pre-8): `GameScript::MatchRounds` (renamed from `SoloRounds` in e6pre-12) already runs any roster; `MatchLifecycle` has no `Lobby` or `PeerGone` yet, which this epic adds (AD-21).
 - Measurement (2026-10-04, commit `9b0262ad`, an incremental tree; the code matches the pre-epic cleanup's merged tree `448ab64d`, later commits are docs only): `scripts/check_flash_budget.py` x4pro games on 5,935,632 B, off 5,680,016 B, so +255,616 B flash (20,864 B under the 270 KiB gate) and +784 B static RAM (240 B under the 1,024 B gate); 49 game objects, no problems. This epic's deltas subtract these figures, re-measured the same way on the commit it starts from.
@@ -61,4 +61,9 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
   - `GameMatchActivity` is still 873 lines; the touch-tagging state and the round and seat gate counters remain in it (`## e6pre-1`). Decide in planning whether this epic splits them before adding its second local-seat path.
   - Still to build here: pass the picked mode into the match, `NEARBY_BUILT` on (off under `SIMULATOR`), the solo fallbacks at `GameModeActivity.cpp:274` and `:302` removed, retro F12 and F14, and K1's accessor in upstream `MappedInputManager` (a ledger row).
   - `API_SURFACE_CRC` changed (0x9B618471 to 0x0401CF0D) with the new `manifest_nesting_count` limit: both test devices need firmware from the same build.
-  - Open and not blocking: the B7.6 device check of the forced-exit blank (`## e6pre-13`); epic-pass-and-play's 40 B flash overage awaits the owner's confirmation; the real-PR run of the `crosshatch-game-packages.yml` concurrency group (`## e6pre-5`).
+  - Open and not blocking: the B7.6 device check of the forced-exit blank (`## e6pre-13`; epic-first-party-games's hidden pass device run owns it since 2026-10-04); the real-PR run of the `crosshatch-game-packages.yml` concurrency group (`## e6pre-5`; this epic owns it).
+- Gate cleared (2026-10-04): epic-pass-and-play is closed (`status: done`; its 40 B flash overage was covered from the unallocated headroom by the owner, leaving this epic's 9,504 B / 160 B share unchanged), so this epic's `after` on epics 4 and 5 is met. Its Requirements and breakdown wait for inception.
+- Handoff to epic-api-freeze (2026-10-04): it waits on this whole epic; every level-1 change here (and any `API_SURFACE_CRC` change) lands before the freeze, and the `nearby` manifests this epic adds are in `games/<id>/` before its `pack-games` dry run.
+- Decision (owner, 2026-10-04): epic-first-party-games builds first, then this epic, which waits on it (the initiative's `tickets.toml`) and adds `nearby` to Ultimate tic-tac-toe's and Battleship's manifests and plays their rounds (Done when 2). Epic-first-party-games merges first with its PR-time `games/` check over `test/CMakeLists.txt` (ledger row 1), `test/game_script/`, and `crosshatch-ci.yml`'s `needs`; this epic builds on it, and its own CMake and CI changes merge on top. The second device gates only this epic's closure now.
+- Waits on epic-first-party-games because: Ultimate tic-tac-toe and Battleship in `games/<id>/`, which this epic adds `nearby` to and plays.
+- For inception (moved from epic-api-freeze, 2026-10-04): the first-party nearby rounds play only on two X4 Pros running one build (the simulator compiles nearby out, and a level-1 surface CRC mismatch aborts the match, AD-13). Battleship in `nearby` carries both fleets in the shared state and only `draw` hides the other seat's ships, which the spec accepts; its placement through the per-seat `ui` is untested until this epic.

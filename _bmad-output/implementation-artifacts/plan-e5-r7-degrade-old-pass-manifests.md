@@ -3,7 +3,7 @@ title: 'e5-r7: an installed game that lists pass with one seat keeps its solo mo
 type: 'bugfix'
 ticket: ''
 created: '2026-10-03'
-status: 'built'
+status: 'done'
 route: 'full'
 route_source: 'pinned'
 review: 'thorough'

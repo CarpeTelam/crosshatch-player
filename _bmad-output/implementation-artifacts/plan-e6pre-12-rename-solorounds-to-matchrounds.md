@@ -1,3 +1,12 @@
+---
+title: 'e6pre-12 rename SoloRounds to MatchRounds'
+type: 'refactor'
+ticket: ''
+created: '2026-10-04'
+baseline_revision: 'f94ff293'
+status: 'done'
+---
+
 # e6pre-12: rename SoloRounds to MatchRounds
 
 Intent: pure rename of `GameScript::SoloRounds` (files, class, test suite, wiring, docs, comments) to `MatchRounds`; byte-identical logic. Unrelated "solo" concepts (solo mode, solo match, the solo fixture) keep their names.

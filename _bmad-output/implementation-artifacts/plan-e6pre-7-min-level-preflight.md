@@ -3,7 +3,7 @@ title: 'e6pre-7: release preflight refuses an API_MIN_LEVEL raise over a frozen 
 type: 'feature'
 ticket: ''
 created: '2026-10-04'
-status: 'in-review'
+status: 'done'
 route: 'oneshot'
 route_source: 'auto'
 review: 'quick'

@@ -3,7 +3,7 @@ title: 'e5-r5: forced-exit cheap fixes (skip the needless blank, flush on the Tu
 type: 'bugfix'
 ticket: ''
 created: '2026-10-03'
-status: 'built'
+status: 'done'
 route: 'full'
 route_source: 'auto'
 review: 'thorough'

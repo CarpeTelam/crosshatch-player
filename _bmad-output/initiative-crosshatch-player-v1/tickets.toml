@@ -35,11 +35,18 @@ covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7"]
 after = [{ epic = 2, needs = "Session and the match lifecycle" }, { epic = 4, needs = "the mode picker and resume" }]
 
 [[epic]]
+id = 8
+slug = "epic-first-party-games"
+title = "Three first-party games ship with each release"
+covers = ["CAP-10", "CAP-1"]
+after = [{ epic = 3, needs = "the icon set" }, { epic = 4, needs = "packing and install through the inbox" }, { epic = 5, needs = "pass-and-play and the hand-off" }]
+
+[[epic]]
 id = 6
 slug = "epic-play-nearby"
 title = "Two devices play one match over ESP-NOW"
-covers = ["CAP-5", "CAP-7"]
-after = [{ epic = 4, needs = "the mode picker and Manifest checks for the lobby" }, { epic = 5, needs = "the N-seat Session and Roster and the Over / Play again flow" }]
+covers = ["CAP-5", "CAP-7", "CAP-10"]
+after = [{ epic = 4, needs = "the mode picker and Manifest checks for the lobby" }, { epic = 5, needs = "the N-seat Session and Roster and the Over / Play again flow" }, { epic = 8, needs = "Ultimate tic-tac-toe and Battleship in games/<id>/, which this epic adds nearby to and plays" }]
 
 [[epic]]
 id = 7
@@ -49,8 +56,8 @@ covers = ["CAP-9"]
 after = [{ epic = 3, needs = "the icon set to catalog" }, { epic = 4, needs = "install through the inbox for the AI-authoring trial" }, { epic = 6, needs = "the complete pass and nearby behaviour the docs describe (the seed's tic-tac-toe is pass and nearby)" }]
 
 [[epic]]
-id = 8
-slug = "epic-first-party-games"
-title = "Three first-party games ship with each release"
-covers = ["CAP-10", "CAP-1"]
-after = [{ epic = 3, needs = "the icon set" }, { epic = 4, needs = "packing and install through the inbox" }, { epic = 5, needs = "pass-and-play and the hand-off" }]
+id = 9
+slug = "epic-api-freeze"
+title = "API level 1 freezes and game authors get a starter repo"
+covers = ["CAP-1", "CAP-12"]
+after = [{ epic = 6, needs = "its level-1 changes landed, and nearby in the first-party manifests" }, { epic = 7, needs = "R4 and any level-1 entry it adds landed, and the docs the starter repo carries unchanged" }, { epic = 8, needs = "the three games the release attaches and the starter repo uses as examples, and the PR-time games/ check" }]
