@@ -53,4 +53,11 @@ id = 8
 slug = "epic-first-party-games"
 title = "Three first-party games ship with each release"
 covers = ["CAP-10", "CAP-1"]
-after = [{ epic = 3, needs = "the icon set" }, { epic = 4, needs = "packing and install through the inbox" }, { epic = 5, needs = "pass-and-play and the hand-off" }, { epic = 6, needs = "nearby play for the nearby rounds, and level 1 final before the freeze entry" }, { epic = 7, needs = "the docs final against api-level-1.txt and R4 settled before the freeze entry" }]
+after = [{ epic = 3, needs = "the icon set" }, { epic = 4, needs = "packing and install through the inbox" }, { epic = 5, needs = "pass-and-play and the hand-off" }]
+
+[[epic]]
+id = 9
+slug = "epic-api-freeze"
+title = "The first-party games play nearby and API level 1 freezes"
+covers = ["CAP-10", "CAP-1"]
+after = [{ epic = 6, needs = "nearby play for the rounds, and its level-1 changes landed" }, { epic = 7, needs = "R4 and any level-1 entry it adds landed, and the docs final against the list" }, { epic = 8, needs = "the three games in games/<id>/ that the rounds play and the release attaches" }]
