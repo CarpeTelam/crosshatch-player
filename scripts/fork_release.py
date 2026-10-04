@@ -8,8 +8,10 @@ subcommands in order; each one fails the run rather than let a release go out th
 
   preflight       publishing needs a run dispatched from develop on develop's head or an ancestor of it, and a commit
                   that keeps frozen every game API level a -ch.N tag's commit froze: its API_LEVEL is above each such
-                  level (an open preview may be), or equal to the highest with API_LEVEL_FROZEN true (a dry run only
-                  warns about both); fails when another active workflow triggers on `release` or builds a gh_release
+                  level (an open preview may be), or equal to the highest with API_LEVEL_FROZEN true, and its
+                  API_MIN_LEVEL is no higher than the lowest frozen level still running, so no frozen level's games
+                  stop running (a dry run only warns about all of these); fails when another active workflow triggers on
+                  `release` or builds a gh_release
                   env
   prepare         N = 1 + the largest number after "-ch." in any tag; checks the [crosspoint] version line, rewrites
                   it to the tag in this checkout only, and finds the release envs: every <board>-gh_release env that
@@ -326,36 +328,51 @@ def tag_api_level(repo_dir, tag):
 
 
 def freeze_problems(repo_dir):
-    """Refuse a release only when a level an earlier release shipped as frozen is no longer frozen here (AD-19).
+    """Refuse a release that drops or stops running a level an earlier release shipped as frozen (AD-19).
 
-    A level is frozen at a commit when it is below API_LEVEL, or is API_LEVEL with API_LEVEL_FROZEN true. So the
-    release is refused when its API_LEVEL is below a level a -ch.N tag's commit had frozen, or equal to it with
-    API_LEVEL_FROZEN false; an API_LEVEL that is an open preview above every level released as frozen is allowed. That
-    is: fork_common.frozen_top of the commit must be at least that of every -ch.N tag's commit. The tags come from the
-    checkout, which the workflow fetches with full history.
+    A level is frozen at a commit when it is below API_LEVEL, or is API_LEVEL with API_LEVEL_FROZEN true. Two refusals:
+    (1) the release's API_LEVEL is below a level a -ch.N tag's commit had frozen, or equal to it with API_LEVEL_FROZEN
+    false (fork_common.frozen_top of the commit must be at least that of every -ch.N tag's commit); an API_LEVEL that
+    is an open preview above every level released as frozen is allowed. (2) the release's API_MIN_LEVEL is above a
+    level still running that a -ch.N tag's commit had frozen (that tag's API_MIN_LEVEL..frozen_top; the highest such
+    minimum among the tags), because games of that level would stop running; a raise over levels no release
+    shipped frozen is allowed. The tags come from the checkout,
+    which the workflow fetches with full history.
     """
     level = read_api_level(repo_dir)
     top = fork_common.frozen_top(level)
     tags = fork_common.git_text('tag', '--list', cwd=repo_dir).splitlines()
     released_top, released_tag = 0, None
+    dropped = None  # (tag, lowest frozen level it ran) of the release with the highest such minimum
     # In release order, so a refusal names the first release that froze the level.
     releases = sorted((int(BUILD_NUMBER_IN_TAG.search(tag)[1]), tag) for tag in tags if BUILD_NUMBER_IN_TAG.search(tag))
     for _, tag in releases:
-        tag_top = fork_common.frozen_top(tag_api_level(repo_dir, tag))
+        tag_level = tag_api_level(repo_dir, tag)
+        tag_top = fork_common.frozen_top(tag_level)
         if tag_top > released_top:
             released_top, released_tag = tag_top, tag
-    if top >= released_top:
-        return []
-    if level is None:
-        state = 'has no ApiLevel.h'
-    elif level.frozen:
-        state = f'has frozen API level {level.level}'
-    else:
-        state = f'has API level {level.level} as a preview' + (f', frozen only to level {top}' if top else '')
-    return [
-        f'the commit to release {state}, but {released_tag} released frozen API level {released_top}; a release '
-        'keeps frozen every level an earlier release froze, and only a level above them may be a preview'
-    ]
+        # The lowest frozen level still running is the highest minimum among the releases that ran a frozen level,
+        # so a drop an earlier release already made is not refused again.
+        if tag_level is not None and tag_level.min_level <= tag_top and (
+                dropped is None or tag_level.min_level > dropped[1]):
+            dropped = (tag, tag_level.min_level)
+    problems = []
+    if top < released_top:
+        if level is None:
+            state = 'has no ApiLevel.h'
+        elif level.frozen:
+            state = f'has frozen API level {level.level}'
+        else:
+            state = f'has API level {level.level} as a preview' + (f', frozen only to level {top}' if top else '')
+        problems.append(
+            f'the commit to release {state}, but {released_tag} released frozen API level {released_top}; a release '
+            'keeps frozen every level an earlier release froze, and only a level above them may be a preview')
+    if dropped and level is not None and level.min_level > dropped[1]:
+        problems.append(
+            f'the commit to release raises API_MIN_LEVEL to {level.min_level}, but {dropped[0]} released frozen API '
+            f'level {dropped[1]} as runnable; games of that level would stop running, and a release keeps running '
+            'every level an earlier release froze')
+    return problems
 
 
 def preflight(args):

@@ -109,6 +109,8 @@ Game names are derived from the scan's own notion of game code (the objects of `
 
 Release rule, as the orchestrator gave it for AD-19: "A fork release is refused only when a level that an earlier fork release shipped as frozen is no longer frozen here (API_LEVEL below it, or equal to it with API_LEVEL_FROZEN false). A release whose API_LEVEL is an open preview above every level released as frozen is allowed." Implemented equivalently as: with `frozen_top(h)` = `API_LEVEL` when `API_LEVEL_FROZEN` is true, else `API_LEVEL - 1` (0 without `ApiLevel.h`), a publishing preflight passes when `frozen_top(commit) >= max(frozen_top(tag commit))` over every `-ch.N` tag. So after release of frozen level N, a release may carry `API_LEVEL_FROZEN false` only with `API_LEVEL > N`.
 
+Extended by e6pre-7 (owner decision (a), 2026-10-04): the preflight also refuses a commit whose `API_MIN_LEVEL` is above a level a `-ch.N` tag's commit ran and had frozen (`plan-e6pre-7-min-level-preflight.md`). The rule text above is the original and covers `API_LEVEL` and `API_LEVEL_FROZEN` only.
+
 ## Verification
 
 **Commands:**
