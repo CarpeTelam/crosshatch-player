@@ -184,7 +184,7 @@ about 500 ms before the reorder. The seat's frame therefore stays readable for t
 SD steps' time longer than before, a few hundred milliseconds at the device's speeds and never more than the deadline
 plus one step; the blank still always runs, and it finishes the way it did, one half refresh after it starts. Before
 the reorder the blank's own 1,654 ms pushed every pending SD step past 1,500 ms and they were skipped, losing the last
-move's `resume.bin` and the `ch.store` flush. In the other states nothing is pushed and the steps start at once. The
+move's `resume.bin` and the `ch.store` flush. In the other states nothing is pushed and the steps start at once. The owner accepted the longer exposure on 2026-10-04 (option (a)); if B7.6 shows a stall, the alternative is a start-time bound for the blank on its own thread or an async push. The
 host double's push costs no clock, so `GameMatchTest` moves the clock by hand where it needs a step or the push to take
 time. Measured on an X4 Pro before the blank existed, so without it: a forced exit with a stuck VM held `RenderLock` for
 502 ms (epic-install-and-launcher entry 14). B7.6 (a sleep with a dirty store on the X4 Pro, `pass-store`) has not been
