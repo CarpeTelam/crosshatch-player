@@ -15,8 +15,14 @@ persistent_facts = [
   "Verification order (AGENTS.md): implementation runs only the plan's host tests and fast checks (fork script tests, scripts/check_upstream_touches.py, ./bin/clang-format-fix). The firmware checks the plan's Verification lists (pio run, pio check, sim.sh build) run once, under the build lock, after the review and its patches and before Finalize commits. When step 4 re-runs the Verification after patches, that run is the one; do not repeat it. Record their results in the plan, treat a failure like a review finding, and run ./bin/clang-format-fix again after any review patch.",
 ]
 
+# Model split for orchestrated runs: the orchestrator plans and merges on a stronger model and dispatches each build agent
+# on Sonnet (docs/crosshatch/orchestrated-epics.md, Each story, step 1). The implementation subagent below is pinned to
+# Sonnet too, so the split holds even when a build agent was started on another model. The review lenses take no model
+# here: the workflow runs them at the build agent's own model, which the orchestrator's dispatch sets.
 implementation_handoff = """
-Launch a subagent with no prior conversation context, with this prompt:
+Launch a subagent with no prior conversation context, with this prompt. When this build runs for an orchestrator and the
+host's subagent launcher takes a model (Claude Code's `Agent` tool has a `model` argument), launch it with `sonnet`;
+otherwise let it inherit this session's model.
 
 > Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start.
 >

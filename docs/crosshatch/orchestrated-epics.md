@@ -43,9 +43,10 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
 - **Nested subagents are a precondition.** `.claude/settings.json` sets `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to 3,
   Claude Code's default, because cloud sessions start it with 1, which keeps a build agent from starting its own
   subagents (the cause of O1). The auto workflow needs depth 2 (its implementation subagent and its four lenses) and
-  halts `no subagents` without it. Before the first story, start one subagent that reports whether it has the `Agent`
-  tool. If it does not, fix the setting before dispatching anything; if that fails, the epic runs under `bmad-build`
-  as "When a story runs under bmad-build" says, and step 3's fallback review applies to every story.
+  halts `no subagents` without it. Before the first story, start one subagent on Sonnet (`model: "sonnet"`, as the
+  build agents run) that reports whether it has the `Agent` tool. If it does not, fix the setting before dispatching
+  anything; if that fails, the epic runs under `bmad-build` as "When a story runs under bmad-build" says, and step 3's
+  fallback review applies to every story.
 - **The upstream remote.** `scripts/dev_setup.py` (next bullet) adds `upstream`, fetches `develop`, and unshallows the
   clone; worktrees share that git config, so every agent can run `scripts/check_upstream_touches.py`. Confirm its
   `git` step passed; if it failed, its docstring lists the commands to run by hand.
@@ -64,10 +65,13 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
 
 ### Each story
 
-1. **Dispatch the build agent** in its lane's worktree. Its prompt starts with the slash command
-   `/bmad-build-auto ticket {ref}`: the word `ticket` matters, since the workflow takes a bare ref or title as free
-   text, not as a ticket. Then say that the build runs for an orchestrator, and give the brief below, filled in. The
-   review is already pinned to `thorough` by `_bmad/custom/bmad-build-auto.toml`. Add the sentence
+1. **Dispatch the build agent** in its lane's worktree, on Sonnet: pass `model: "sonnet"` to the `Agent` tool. The
+   orchestrator runs on the stronger model the owner started it with and keeps planning, owner questions, merges, and
+   the cross-story review there; a build agent's own subagents inherit its model, and
+   `_bmad/custom/bmad-build-auto.toml` pins its implementation subagent to Sonnet as well. The build agent's prompt
+   starts with the slash command `/bmad-build-auto ticket {ref}`: the word `ticket` matters, since the workflow takes
+   a bare ref or title as free text, not as a ticket. Then say that the build runs for an orchestrator, and give the
+   brief below, filled in. The review is already pinned to `thorough` by the same file. Add the sentence
    `Halt after planning.` for a plan checkpoint (step 3a); the run then stops at `ready-for-dev`, and the same dispatch
    later resumes it from the plan. The run's chat output is not its result: read the plan.
 2. **Read the result from the plan.** `uv run _bmad/method/scripts/tickets.py --project-root <worktree> find {ref}`
