@@ -479,7 +479,7 @@
 ## owner-e4-homes
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-device-run-and-owner-sign-off-plan.md` (the owner's answers to A15–A27, 2026-09-30)
-  summary: Where the entry-14 deferrals that had no trigger now land. A15, the inert pause menu in the Play-again gap, goes to `## owner-e4-title-screen`. A16(b), a per-frame fill budget, and A19, a cap on a package's extracted total, go to epic-first-party-games' "before the freeze" Notes, beside the device's stack figure. A21, the reasons `ZipFile` and `PngToBmpConverter` do not give, has the trigger "the next ledger change". The rest of A26, the device cost of a `resume.bin` write and the launcher's `peek` time at entry, goes to epic-pass-and-play's closing device run.
+  summary: Where the entry-14 deferrals that had no trigger now land. A15, the inert pause menu in the Play-again gap, goes to `## owner-e4-title-screen`. A16(b), a per-frame fill budget, and A19, a cap on a package's extracted total, go to epic-first-party-games' "before the freeze" Notes (epic-api-freeze's since the 2026-10-04 split), beside the device's stack figure. A21, the reasons `ZipFile` and `PngToBmpConverter` do not give, has the trigger "the next ledger change". The rest of A26, the device cost of a `resume.bin` write and the launcher's `peek` time at entry, goes to epic-pass-and-play's closing device run.
   evidence: The owner agreed each home at the entry-14 device run. A18 (the `.removing` marker), A22 ("and N more"), and step 9's finding (the `loop` fixture's Slow C calls band is abandoned, not cancelled, on the device) are fixed before the epic closes, as e4-z1 to e4-z3.
 ## owner-e4-entry14
 

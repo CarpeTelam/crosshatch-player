@@ -33,7 +33,7 @@ The spec is the requirement source: `CAP-1` to `CAP-11`, with its Constraints an
 
 ## Boundaries
 
-Follows the spec's capabilities, cut along the spine's layers: build and merge guardrails, the script runtime, the icon library, install and launcher, pass-and-play, Play Nearby, author docs, and first-party games. Not in scope: everything in the spec's Non-goals and the spine's Deferred table. Tracer path: Home, Games, and a solo Lua game drawn and played on an X4 Pro (baseline, then script runtime), before packages install through the inbox.
+Follows the spec's capabilities, cut along the spine's layers: build and merge guardrails, the script runtime, the icon library, install and launcher, pass-and-play, Play Nearby, author docs, first-party games, and the API level 1 freeze. Not in scope: everything in the spec's Non-goals and the spine's Deferred table. Tracer path: Home, Games, and a solo Lua game drawn and played on an X4 Pro (baseline, then script runtime), before packages install through the inbox.
 
 - Touch point: `platformio.ini`, `test/CMakeLists.txt`, the simulator's `simulator.ini` — build flag, test subdirectories, lint suppress (ledger rows 1 and 3); owner: epic-platform-baseline
 - Touch point: `ActivityManager`, `HomeActivity` — the Games menu item and `goToGames()` (ledger rows 4 to 7); owner: epic-script-runtime

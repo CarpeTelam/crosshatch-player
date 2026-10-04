@@ -60,4 +60,4 @@ id = 9
 slug = "epic-api-freeze"
 title = "The first-party games play nearby and API level 1 freezes"
 covers = ["CAP-10", "CAP-1"]
-after = [{ epic = 6, needs = "nearby play for the rounds, and its level-1 changes landed" }, { epic = 7, needs = "R4 and any level-1 entry it adds landed, and the docs final against the list" }, { epic = 8, needs = "the three games in games/<id>/ that the rounds play and the release attaches" }]
+after = [{ epic = 6, needs = "nearby play for the rounds, and its level-1 changes landed" }, { epic = 7, needs = "R4 and any level-1 entry it adds landed, and the docs final against the list" }, { epic = 8, needs = "the three games in games/<id>/ that the rounds play and the release attaches, and the PR-time games/ check" }]
