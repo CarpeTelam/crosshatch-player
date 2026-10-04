@@ -239,6 +239,31 @@ TEST_F(GamesCheckEngineTest, APackageTheInstallerAcceptsIsListedWithThePackersHa
   expectRed(games_check::checkPackage(roots(), "pass-art"), {"is not the packer's 0123456789abcdef"});
 }
 
+TEST_F(GamesCheckEngineTest, AGameTheHostCannotStartFailsThePackageTest) {
+  // GameRegistry lists a package the host cannot start as unavailable; the check must not read that as a pass.
+  copyGame("pass-open", "too-many-seats");
+  edit("too-many-seats", "manifest.json", "\"seats\": { \"min\": 1, \"max\": 2 }",
+       "\"seats\": { \"min\": 9, \"max\": 9 }");
+  edit("too-many-seats", "manifest.json", "\"modes\": [\"solo\", \"pass\"]", "\"modes\": [\"pass\"]");
+  pack({"too-many-seats"});
+  expectRed(games_check::checkPackage(roots(), "too-many-seats"), {"unavailable on this host"});
+}
+
+TEST_F(GamesCheckEngineTest, APackOverAnOldFailureStartsCleanSoAFixedGameIsGreenAndItsPackErrorIsGone) {
+  copyGame("pass-open", "pass-open");
+  const fs::path main = games() / "pass-open" / "main.lua";
+  const std::string source = games_check::test::readTextFile(main.string());
+  fs::remove(main);
+  pack({"pass-open"});
+  expectRed(games_check::checkPackage(roots(), "pass-open"), {"pack_game.py refused"});
+  ASSERT_TRUE(fs::exists(packed() / "pass-open.packerror"));
+  // The same output folder, packed again after the fix: the old error must not outlive it.
+  write(main, source);
+  pack({"pass-open"});
+  EXPECT_FALSE(fs::exists(packed() / "pass-open.packerror"));
+  expectGreen(games_check::checkPackage(roots(), "pass-open"));
+}
+
 // ---- faults ----
 
 TEST_F(GamesCheckEngineTest, ALuaErrorFailsTheRoundNamingRoundStepAndMessageAndLaterRoundsStillRun) {
@@ -818,6 +843,20 @@ TEST_F(GamesCheckEngineTest, AStepAfterTheRoundIsOverFailsInSoloWhetherItMovesOr
       {"round 'a-moves-after-the-end', step 6: the round is already over (winners {1}); a step cannot follow its end",
        "round 'b-no-move-after-the-end', step 6: the round is already over (winners {1})"});
   EXPECT_EQ(report.failures.size(), 2u) << report.text();
+}
+
+TEST_F(GamesCheckEngineTest, ASoloRoundDrawsOnlyItsOneSeatNeverSeatZeroEvenOnceOver) {
+  // Stands in for the device: solo's seatShown is the one local seat, and the device never asks a game to draw seat 0.
+  copyGame("pass-open", "pass-open");
+  round("pass-open", "x-wins-in-solo", X_WINS_IN_SOLO);
+  pack({"pass-open"});
+  RoundDetails details;
+  expectGreen(games_check::playRounds(roots(), "pass-open", &details));
+  const games_check::RoundReport* played = detail(details, "x-wins-in-solo");
+  ASSERT_NE(played, nullptr);
+  EXPECT_TRUE(played->over);
+  ASSERT_FALSE(played->frames.empty());
+  for (const auto& frame : played->frames) EXPECT_EQ(frame.seat, 1) << "a solo round drew seat " << int(frame.seat);
 }
 
 TEST_F(GamesCheckEngineTest, ATestNameIsValidAndUniqueForAnyFolderName) {

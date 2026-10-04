@@ -52,7 +52,7 @@ A step is `{seat, x, y, wait?, move?, shows?}`, a tap in canvas pixels:
 - `wait` milliseconds pass on the clock (`ch.time.ms`) before the tap. No timer event is ever delivered.
 - `move = false` says the tap changes nothing: `ver` stays and, when `shows` is set, the seat's next frame holds that text. Left
   out, the tap must move: `ver` is exactly one more.
-- `shows` is text that one of the text commands in a frame the check drew for `seat` after the step contains. That includes
+- `shows` is text that one of the text commands in the first frame the check drew for `seat` after the step contains. That includes
   the check's own every-local-seat draws (below), so in a hidden pass round it can be met by a frame of a seat the device would
   not show at that moment; it does not prove which frame the device shows next.
 

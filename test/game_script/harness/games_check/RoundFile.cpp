@@ -323,7 +323,7 @@ bool readRound(lua_State* L, RoundRead& read) {
     } else if (key == "unfinished") {
       ok = lua_type(L, -1) == LUA_TBOOLEAN;
       if (!ok) {
-        read.error = "unfinished must be true, not a " + std::string(typeOf(L, -1));
+        read.error = "unfinished must be true or false, not a " + std::string(typeOf(L, -1));
       } else {
         unfinished = lua_toboolean(L, -1) != 0;
       }
