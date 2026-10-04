@@ -970,3 +970,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-11-title-screen-writes-prefs-on-exit.md`
   summary: Decided (owner, 2026-10-04) and resolves `## 5.12`'s entry "a change made on the Options screen is not remembered when Options is left by a Replace": the title screen's `onExit()` writes `prefs.bin` when an Options change is still unwritten (`optionsChanged`), so the Home gesture and sleep keep it; Back's write is not repeated, nothing changed writes nothing, and a failed write is logged and the exit goes on. AD-17 (amended by e6pre-8 as target, on another branch) is what this build implements.
   evidence: `GameModeActivity::onExit`; `ModePickerTest` (`OptionsChangedThenLeftByAReplacePersistsTheChange`, `ABackThatWroteTheChangeIsNotWrittenAgainWhenTheScreenExits`, `OptionsLeftByAReplaceWithNoChangeWritesNothing`, `AFailedPrefsWriteInOnExitIsLoggedAndTheExitGoesOn`) replace `OptionsLeftByAReplaceWritesNothing`; `docs/crosshatch/formats.md` (prefs.bin). Host only: a Replace over Options on the device is not run.
+
+## e6pre-12
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-12-rename-solorounds-to-matchrounds.md`
+  summary: Landed: `GameScript::SoloRounds` is now `GameScript::MatchRounds` (it runs any roster; the spine, amended by e6pre-8 on another branch, already calls it that). Files `lib/GameScript/MatchRounds.{h,cpp}` and `test/game_script/MatchRoundsTest.cpp` moved with `git mv`; `SoloRoundsTest` is `MatchRoundsTest`; CMake wiring, `GameVM`, test fixtures, and `docs/crosshatch/game-canvas.md` follow. No behaviour change. Older plans, retros, and spine text keep the old name as history.
+  evidence: host `ctest` count unchanged; `grep -rn SoloRounds lib src test docs scripts` is empty.

@@ -29,11 +29,11 @@ class InputQueue;
 // several the turn seat, and seat 0 once the round is over. A turn seat this device
 // does not play gets no input and no draw, so its round counts as started only at a
 // local seat's first frame.
-class SoloRounds {
+class MatchRounds {
  public:
-  SoloRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
-  SoloRounds(const SoloRounds&) = delete;
-  SoloRounds& operator=(const SoloRounds&) = delete;
+  MatchRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
+  MatchRounds(const MatchRounds&) = delete;
+  MatchRounds& operator=(const MatchRounds&) = delete;
 
   // Loop task: Play again. Drops the queued events, which were aimed at the last
   // round, and asks the VM for a new round before its next event.

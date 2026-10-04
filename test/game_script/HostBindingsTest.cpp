@@ -45,7 +45,7 @@ class HostBindingsTest : public GameScriptTestSupport::LuaGameTest {
     return true;
   }
 
-  // GameVM::run's handling of one queued event (SoloRounds::step, which drops a
+  // GameVM::run's handling of one queued event (MatchRounds::step, which drops a
   // stale timer event); false when the queue was empty or the event was stale.
   bool deliverNext(SessionGame& game, InputQueue& queue) {
     InputEvent event;

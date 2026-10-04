@@ -24,8 +24,8 @@
 #include "IGameLog.h"
 #include "IRandom.h"
 #include "LuaGame.h"
+#include "MatchRounds.h"
 #include "Session.h"
-#include "SoloRounds.h"
 #include "StoreSlot.h"
 
 namespace GameScriptTestSupport {
@@ -176,7 +176,7 @@ class LuaGameTest : public ::testing::Test {
 
   // The GameVM task's composition (GameVM::run): a Session of `roster` (solo unless a
   // test gives one) in the arena, taken before the Lua state, over a LuaGame, driven by
-  // the production round loop (GameScript::SoloRounds) over its own input queue, so a
+  // the production round loop (GameScript::MatchRounds) over its own input queue, so a
   // regression in the loop fails these tests too.
   struct SessionGame {
     explicit SessionGame(LuaGameTest& test, const GameCore::Roster& roster = GameCore::Roster::solo())
@@ -187,14 +187,14 @@ class LuaGameTest : public ::testing::Test {
       game.close();
       arena.destroy(session);
     }
-    // load(), then the first round (SoloRounds::start: setup, status, draw).
+    // load(), then the first round (MatchRounds::start: setup, status, draw).
     GameScript::Outcome start() {
       if (!session) return GameScript::Outcome::ScriptError;
       const GameScript::Outcome outcome = game.load();
       if (outcome != GameScript::Outcome::Ok) return outcome;
       return rounds.start(*session);
     }
-    // One event as GameVM handles it (SoloRounds::step): a stale timer event is
+    // One event as GameVM handles it (MatchRounds::step): a stale timer event is
     // dropped, then input, the pending move, and a draw.
     GameScript::Outcome step(const GameScript::InputEvent& event) { return rounds.step(event); }
     // Play again as the match asks for it and GameVM::run answers it: the queue is
@@ -212,7 +212,7 @@ class LuaGameTest : public ::testing::Test {
     GameScript::ArenaAllocator& arena;
     GameScript::LuaGame game;
     GameScript::InputQueue queue;
-    GameScript::SoloRounds rounds{game.timer(), queue};
+    GameScript::MatchRounds rounds{game.timer(), queue};
     GameCore::Session* session = nullptr;
   };
 

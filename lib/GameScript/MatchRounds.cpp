@@ -1,4 +1,4 @@
-#include "SoloRounds.h"
+#include "MatchRounds.h"
 
 #include <SeatShown.h>
 #include <Session.h>
@@ -10,22 +10,22 @@ namespace GameScript {
 
 using GameCore::Outcome;
 
-void SoloRounds::requestPlayAgain() {
+void MatchRounds::requestPlayAgain() {
   queue.clear();
   playAgain.store(true, std::memory_order_release);
 }
 
-Outcome SoloRounds::begin(GameCore::Session& played) {
+Outcome MatchRounds::begin(GameCore::Session& played) {
   session = &played;
   return beginRound();
 }
 
-Outcome SoloRounds::beginAgain() {
+Outcome MatchRounds::beginAgain() {
   timer.cancel();
   return beginRound();
 }
 
-Outcome SoloRounds::play(const GameCore::GameEvent& event, const uint8_t seat) {
+Outcome MatchRounds::play(const GameCore::GameEvent& event, const uint8_t seat) {
   // A timer the game re-armed or cancelled after this event fired is not due.
   if (!timer.accepts(event)) return Outcome::Ok;
   // A timer that fell due after the round is over is never delivered, whichever seat is shown.
@@ -35,7 +35,7 @@ Outcome SoloRounds::play(const GameCore::GameEvent& event, const uint8_t seat) {
   return session->applyPending();
 }
 
-Outcome SoloRounds::draw(const uint8_t seat) {
+Outcome MatchRounds::draw(const uint8_t seat) {
   const Outcome outcome = session->draw(seat);
   if (outcome != Outcome::Ok) return outcome;
   if (firstFramePending) {
@@ -49,19 +49,19 @@ Outcome SoloRounds::draw(const uint8_t seat) {
   return outcome;
 }
 
-Outcome SoloRounds::start(GameCore::Session& played) {
+Outcome MatchRounds::start(GameCore::Session& played) {
   const Outcome outcome = begin(played);
   if (outcome != Outcome::Ok) return outcome;
   return drawShown();
 }
 
-Outcome SoloRounds::restart() {
+Outcome MatchRounds::restart() {
   const Outcome outcome = beginAgain();
   if (outcome != Outcome::Ok) return outcome;
   return drawShown();
 }
 
-Outcome SoloRounds::step(const GameCore::GameEvent& event) {
+Outcome MatchRounds::step(const GameCore::GameEvent& event) {
   // A stale timer is dropped before anything, with no draw (play would drop it too,
   // but the draw after it would publish a frame nothing changed).
   if (!timer.accepts(event)) return Outcome::Ok;
@@ -76,7 +76,7 @@ Outcome SoloRounds::step(const GameCore::GameEvent& event) {
   return drawShown();
 }
 
-Outcome SoloRounds::drawShown() {
+Outcome MatchRounds::drawShown() {
   // A turn seat this device does not play (a roster with some seats local, not all) is never drawn: the frame on
   // screen stays, and no other device's seat is drawn here.
   const uint8_t seat = shownSeat();
@@ -84,19 +84,19 @@ Outcome SoloRounds::drawShown() {
   return draw(seat);
 }
 
-Outcome SoloRounds::beginRound() {
+Outcome MatchRounds::beginRound() {
   roundOver = false;
   firstFramePending = true;
   return session->start();
 }
 
-void SoloRounds::countRoundEnd() {
+void MatchRounds::countRoundEnd() {
   if (roundOver || !session->status().over) return;
   roundOver = true;
   ended.fetch_add(1, std::memory_order_acq_rel);
 }
 
-uint8_t SoloRounds::shownSeat() const {
+uint8_t MatchRounds::shownSeat() const {
   const GameCore::Status& status = session->status();
   const GameCore::MatchState state = status.over ? GameCore::MatchState::Over : GameCore::MatchState::Playing;
   return GameCore::seatShown(state, session->roster(), status);
