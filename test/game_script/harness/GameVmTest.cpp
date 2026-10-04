@@ -620,7 +620,7 @@ TEST_F(GameVmTest, OpenPassATimerQueuedBehindTheWinningMoveIsDroppedNotDelivered
   fakertos::release();
   ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
   EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
-  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u) << "seat 0 is a frame, never an input seat";
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u) << "no timer is delivered after over";
   EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
   EXPECT_EQ(fakelog::countLines("over for seat 2"), 1u);
   EXPECT_EQ(vm->roundsEnded(), 1u);
@@ -651,6 +651,78 @@ TEST_F(GameVmTest, HiddenPassATimerQueuedBehindTheWinningMoveIsDroppedNotDeliver
   EXPECT_LT(lineOf("over for seat 2"), lineOf("Dropped a timer due after the round was over"));
   EXPECT_EQ(vm->seatShownRequest(), first) << "no further seat was requested, so no held timer was replayed";
   EXPECT_EQ(vm->roundsEnded(), 1u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// Solo: the one local seat is still the seat shown once the round is over, and a timer due after the winning move is
+// dropped all the same (e6pre-2: no timer after `over`, in any mode).
+TEST_F(GameVmTest, SoloATimerQueuedBehindTheWinningMoveIsDroppedNotDeliveredToTheLocalSeat) {
+  installGame("timer-over", TIMER_AFTER_OVER_GAME);
+  ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::solo(), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::arm(fakertos::At::Log, 1);
+  vm->postInput(tapAt(100, 200), vm->frameGen());
+  ASSERT_TRUE(fakertos::waitParked());
+  fakertos::advance(1000);
+  vm->pollTimer();
+  fakertos::release();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u);
+  EXPECT_EQ(fakelog::countLines("over for seat 1"), 1u);
+  EXPECT_EQ(vm->roundsEnded(), 1u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// A roster with no local seat is over from its first status, and its timer is dropped and logged as late: the test is
+// status.over, not seat 0 (which seatShown also names for a roster with no local seat while the round is playing).
+TEST_F(GameVmTest, ARosterWithNoLocalSeatDropsAndLogsATimerDueAfterOver) {
+  installGame("timer-nolocal", R"(
+local game = {}
+function game.setup(ctx) ch.timer.after(1000) return {} end
+function game.status(s) return { over = true, winners = {} } end
+function game.apply(s, seat, move) return s end
+function game.input(s, seat, ui, ev) ch.log(ev.kind .. " for seat " .. seat) return nil end
+function game.draw(s, seat, ui) ch.gfx.clear("white") end
+return game
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(2);
+  roster.localSeats = 0;
+  ASSERT_TRUE(prepareFor("timer-nolocal", roster, false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Dropped a timer due after the round was over"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 1u);
+  EXPECT_EQ(fakelog::countLines("timer for seat"), 0u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// A timer that fell due before the round ended is still delivered, solo and open pass alike.
+TEST_F(GameVmTest, SoloATimerDueBeforeTheRoundEndsIsStillDelivered) {
+  installGame("timer-over", TIMER_AFTER_OVER_GAME);
+  ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::solo(), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat 1"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 0u);
+  EXPECT_EQ(vm->roundsEnded(), 0u);
+  EXPECT_FALSE(vm->failed());
+}
+
+TEST_F(GameVmTest, OpenPassATimerDueBeforeTheRoundEndsIsStillDelivered) {
+  installGame("timer-over", TIMER_AFTER_OVER_GAME);
+  ASSERT_TRUE(prepareFor("timer-over", GameCore::Roster::pass(2), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor(match::roundStarted));
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat 1"); }));
+  EXPECT_EQ(fakelog::countLines("Dropped a timer due after the round was over"), 0u);
+  EXPECT_EQ(vm->roundsEnded(), 0u);
   EXPECT_FALSE(vm->failed());
 }
 

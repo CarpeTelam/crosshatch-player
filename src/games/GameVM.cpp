@@ -210,8 +210,8 @@ void GameVM::run() {
     } else {
       // A touch made under another seat's frame is dropped before the game sees it (postInput); a timer goes on.
       if (madeUnderAnotherSeat(event)) continue;
-      // A timer due after the round is over (seat 0) is dropped by step with no draw; a stale one silently.
-      if (GameScript::SoloRounds::lateTimer(event, rounds.shownSeat()) && game.timer().accepts(event)) {
+      // A timer due after the round is over (any mode) is dropped by step with no draw; a stale one silently.
+      if (GameScript::SoloRounds::lateTimer(event, session->status().over) && game.timer().accepts(event)) {
         LOG_DBG("GAME", "Dropped a timer due after the round was over");
         continue;
       }
@@ -309,13 +309,14 @@ GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
   // discards (it is not the turn seat), so a tap queued behind a turn-passing move changes
   // only that seat's own view.
   const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
-  // Fails closed, as seatShown does: no seat this device plays, so no input is read.
-  if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
-  // A timer due after the round is over (seat 0, never an input seat) is dropped, never delivered.
-  if (GameScript::SoloRounds::lateTimer(event, seat)) {
+  // A timer due after the round is over is dropped, never delivered, whichever seat is shown (status.over, not seat 0:
+  // a roster with no local seat shows none and is dropped the same way, and logged).
+  if (GameScript::SoloRounds::lateTimer(event, playing->status().over)) {
     LOG_DBG("GAME", "Dropped a timer due after the round was over");
     return GameScript::Outcome::Ok;
   }
+  // Fails closed, as seatShown does: no seat this device plays, so no input is read.
+  if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
   // A touch made under another seat's frame never reaches this one: seat 0's after the move that ended the round, or
   // the next seat's (postInput). The mover's own late tap in Result was made under the mover's frame and goes on.
   if (madeUnderAnotherSeat(event)) return GameScript::Outcome::Ok;

@@ -63,12 +63,13 @@ class SoloRounds {
   // re-armed or cancelled after it fired is dropped first, and so is a late one
   // (lateTimer). Draws nothing.
   GameCore::Outcome play(const GameCore::GameEvent& event, uint8_t seat);
-  // A Timer event for seat 0, the frame for everyone: the round is over, and seat 0 is
-  // never an input seat, so no step reads the event (play and step drop it; the
-  // caller that logs the drop asks first). Other seats' timers, and every other event
-  // kind, are never late.
-  static bool lateTimer(const GameCore::GameEvent& event, const uint8_t seat) {
-    return event.kind == GameCore::EventKind::Timer && seat == 0;
+  // A Timer event after the round is over: no timer is ever delivered once `over` is true, in any mode (solo, open or
+  // hidden pass, nearby), whichever seat the device shows. Callers pass the Session's status().over explicitly, never
+  // a seat inferred from it (seat 0 is only a pass round's over frame; a roster with no local seat also reports 0).
+  // Neither play nor step reads such an event (the caller that logs the drop asks first). Every other event kind is
+  // never late, and neither is a timer due before the round's end.
+  static bool lateTimer(const GameCore::GameEvent& event, const bool roundOver) {
+    return event.kind == GameCore::EventKind::Timer && roundOver;
   }
   // Draws the snapshot for `seat` (0: the frame for everyone). A round's first
   // frame counts it as started; a frame of a round that is over counts its end, once.

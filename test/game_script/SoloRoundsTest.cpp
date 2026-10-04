@@ -212,10 +212,10 @@ TEST_F(SoloRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
   EXPECT_EQ(rounds.roundsEnded(), 1u);
 }
 
-// Only a pass round's seat 0 drops a late timer (e5-r6): a solo round that is over still shows its one local seat, so a
-// timer still armed when `over` comes reaches that seat's input, as before.
-TEST_F(SoloRoundsTest, ASoloTimerDueAfterOverStillReachesTheLocalSeat) {
-  useSource("main", R"(
+// A timer due after the round is over is never delivered, in any mode (e6pre-2, the owner's option (a) on the e5-r6
+// entries): a solo round that is over still shows its one local seat, and its timer is dropped all the same. The game
+// here never cancels its timer, so only the runtime's drop keeps it out of `input`.
+const char* const SOLO_TIMER_GAME = R"(
 return {
   setup = function() ch.timer.after(5000) return { taps = 0 } end,
   status = function(s) if s.taps >= 1 then return { over = true, winners = { 1 } } end return { turn = 1 } end,
@@ -226,14 +226,37 @@ return {
     if ev.kind == 'timer' then ch.log('timer for seat ' .. seat) end
     return nil
   end }
-)");
+)";
+
+TEST_F(SoloRoundsTest, ASoloTimerDueAfterOverIsDroppedNotDelivered) {
+  useSource("main", SOLO_TIMER_GAME);
   SessionGame game(*this);
   InputQueue queue;
   SoloRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(rounds.step(tapAt(300)), Outcome::Ok) << game.errorMessage();
   ASSERT_TRUE(game.session->status().over);
+  EXPECT_EQ(rounds.shownSeat(), 1) << "over, but the one local seat is still the seat shown";
   ASSERT_TRUE(tick(rounds, game.game, 5000));
+  size_t seen = 0;
+  for (const std::string& line : log.lines) seen += line.find("timer for seat") != std::string::npos;
+  EXPECT_EQ(seen, 0u);
+  // The predicate itself (play and step both ask it; only a timer after over is late).
+  InputEvent late;
+  late.kind = InputKind::Timer;
+  EXPECT_TRUE(SoloRounds::lateTimer(late, true));
+  EXPECT_FALSE(SoloRounds::lateTimer(late, false)) << "a timer before the round's end is never late";
+  EXPECT_FALSE(SoloRounds::lateTimer(tapAt(10), true)) << "only a timer is late";
+}
+
+TEST_F(SoloRoundsTest, ASoloTimerDueBeforeOverStillReachesTheLocalSeat) {
+  useSource("main", SOLO_TIMER_GAME);
+  SessionGame game(*this);
+  InputQueue queue;
+  SoloRounds rounds(game.game.timer(), queue);
+  ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(tick(rounds, game.game, 5000));
+  ASSERT_FALSE(game.session->status().over);
   size_t seen = 0;
   for (const std::string& line : log.lines) seen += line.find("timer for seat 1") != std::string::npos;
   EXPECT_EQ(seen, 1u);
@@ -516,6 +539,30 @@ TEST_F(PassRoundsTest, ARosterWithOneLocalSeatDrawsThatSeatWhilePlayingAndOnceOv
   EXPECT_EQ(logged("over 2"), 1u);
   EXPECT_EQ(logged("over 1"), 0u);
   EXPECT_EQ(game.rounds.roundsEnded(), 1u);
+}
+
+// A roster with no local seat (firstLocalSeat() is 0 by default, so shownSeat() reads 0 whether or not the round is
+// over): a timer due after the round ended is dropped. This passes on the seat-0 test too (a regression guard); the
+// predicate check below pins that seat 0 alone no longer means over.
+TEST_F(PassRoundsTest, ARosterWithNoLocalSeatDropsATimerDueAfterOverAndNotBefore) {
+  useSource("main", R"(
+return {
+  setup = function() ch.timer.after(5000) return {} end,
+  status = function() return { over = true, winners = {} } end,
+  apply = function(s) return s end,
+  draw = function() ch.gfx.clear('white') end,
+  input = function(s, seat, ui, ev) ch.log('input ' .. ev.kind .. ' ' .. seat) return nil end }
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(2);
+  roster.localSeats = 0;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.rounds.shownSeat(), 0) << "no local seat: seat 0, over or not";
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_TRUE(tick(game.rounds, game.game, 5000)) << "the timer was armed and fell due";
+  EXPECT_EQ(logged("input timer"), 0u);
+  EXPECT_FALSE(SoloRounds::lateTimer(InputEvent{InputKind::Timer, 0, 0}, false))
+      << "seat 0 alone is not 'over': a round still playing is asked with status.over";
 }
 
 TEST_F(PassRoundsTest, BeginPublishesNoFrameAndARoundStartsAtItsFirstDraw) {

@@ -940,3 +940,15 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
   summary: `handle()` sets `persistence.setWritable` in each state case; a single state-to-writable mapping would keep the "Over and Error never write" rule in one place.
   evidence: `GameMatchActivity::handle`. Trigger: a new MatchState.
+
+## e6pre-2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Decided (owner, option (a)) and resolves both `## e5-r6` entries: a timer due after the round is over is never delivered to the game in any mode (solo, open and hidden pass, later nearby), and "over" is the explicit `status.over`, not seat 0, so a roster with no local seat is dropped and logged correctly. `lateTimer(event, roundOver)` now takes the flag.
+  evidence: `lib/GameScript/SoloRounds.{h,cpp}` (`lateTimer`, `play`, `step`), `src/games/GameVM.cpp` (`run`, `stepHandOff`); tests `SoloRoundsTest`, `GameVmTest` (solo, open pass, no local seat, and timer-before-over cases).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: The architecture spine still states the old behaviour in places (AD-23's timer bullet says a timer fires "for the local seat, or the current turn seat in `pass`" with no after-over rule; the events bullet, spine line ~180, lists `timer` with no after-over rule) and `game-api-seed.md` section 5's `ch.timer.after` row likewise; a separate pass amends the spine.
+  evidence: `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md` lines 180 and 387; `game-api-seed.md` line 191. Trigger: the spine pass.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Untested: a hidden-pass or nearby (one remote seat) roster for the late-timer drop and for a timer before over; and a no-local-seat roster whose round is still playing now gets a timer delivered as seat 0 (the old seat-0 test dropped it, mislogged). Unreachable until a roster has no local seat.
+  evidence: `GameVM::stepHandOff`, `SoloRounds::step`; `GameVmTest` / `SoloRoundsTest` late-timer tests. Trigger: epic play-nearby's first roster with a remote seat or none local.

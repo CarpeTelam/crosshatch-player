@@ -253,7 +253,7 @@ numbers so that a wrapped count still orders them: one made under seat 1's frame
 passes the turn never becomes seat 2's move (open pass), and one queued behind the move that ends the round never
 reaches seat 0, which is a frame, never an input seat. The mover's own late tap in Result was made under the mover's
 frame and goes on, as above. A timer is never dropped for this: it goes to the turn seat (R11), but one that falls due
-after the round is over is dropped, never delivered to seat 0 (e5-r6). A touch posted with `GameVM::UNTAGGED` (a direct
+after the round is over is dropped, never delivered, in any mode (e6pre-2, below). A touch posted with `GameVM::UNTAGGED` (a direct
 caller) is never dropped; the loop never posts that value, posting one less instead, which can only drop (a real frame
 number reaches it only after 2^32 publishes). The tag is the
 frame on the panel at the first Playing pass that sees the finger down (`GameMatchActivity::touchDownFrame`, from
@@ -295,6 +295,15 @@ the next seat's push completed, or when it is a tap sampled before that push com
 **Timers.** A timer that falls due in Result or HandOff (polled by the loop there, or already queued) is held by the VM and
 delivered to the next seat right after its first frame; one the game re-armed or cancelled meanwhile is dropped as stale,
 as anywhere else. Play again drops a held timer with the last round.
+
+**No timer after the round is over.** A timer that falls due once the round is over (`status.over`) is never delivered to
+`input`, in any mode: solo, open or hidden pass, and later nearby. It does not matter which seat the device shows (solo
+and nearby show their one local seat, pass shows seat 0) or whether the roster has a local seat at all (once over); the test is
+`status.over`, not a seat number (`GameScript::SoloRounds::lateTimer`, called by `GameVM::run` and `GameVM::stepHandOff`,
+and by `SoloRounds::step` and `play`). The VM logs `Dropped a timer due after the round was over` at debug level, once,
+and draws nothing (a timer held in Result or HandOff is dropped, and logged, when it would have been delivered to the next seat, or silently when Play again clears it); a stale timer (re-armed or cancelled by the game) is dropped before that, silently. A timer that fell
+due before the round ended is delivered as always. A game may still cancel its timer in its `over` handler (the
+fixtures do); it no longer has to.
 
 **Saves.** A hidden pass match keeps `resume.bin` as a solo match does (Resume, above): each committed snapshot is
 written in Playing, Paused, Result, and HandOff, Over deletes it, and Leave and the forced exit keep it. A move that passes the
