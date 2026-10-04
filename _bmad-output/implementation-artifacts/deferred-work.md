@@ -1027,3 +1027,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-7-min-level-preflight.md`
   summary: Decided (a) by the owner (2026-10-04): the e2r-ai-9 owner question for AD-19 is closed; `freeze_problems` in `scripts/fork_release.py` now also refuses a commit whose `API_MIN_LEVEL` is above a level an earlier `-ch.N` release ran and shipped frozen.
   evidence: `FreezeTest` in `scripts/fork_release_test.py` pins the refusal, the accepted raise over an unfrozen level, and an unchanged or lowered minimum. The spine's AD-19 Freeze bullet still needs the sentence; a later pass edits it (see the plan).
+
+## e6pre-13
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-10-forced-exit-writes-before-the-blank.md`
+  summary: Device check still owed for e6pre-10's forced-exit order (the owner accepted the order, 2026-10-04): run B7.6 (a sleep with a dirty store, `pass-store`) on an X4 Pro and record when the blank actually starts and whether the resume write and `ch.store` flush land. The decision is closed; this check is not.
+  evidence: The blank now follows the SD steps. Its start time is an estimate from logged figures, about 100 ms in with a joined VM and about 1,150 ms with a stuck one, and a card that stalls inside a step already started delays it with no cap (`docs/crosshatch/game-canvas.md`, "Worst case, with the blank last"). The host tests pin the order, not the timing. If B7.6 shows a stall, the alternative is a start-time bound for the blank on its own thread or an async push.
