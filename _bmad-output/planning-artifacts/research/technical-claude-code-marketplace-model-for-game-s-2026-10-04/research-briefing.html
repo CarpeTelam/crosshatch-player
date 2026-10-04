@@ -1,0 +1,471 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Marketplace model for the game store</title><style>:root{
+  --paper:#F3F4F1; --panel:#FAFBF8; --ink:#1C211E; --ink-2:#4B554F; --rule:#D3D8D2;
+  --grey-1:#E4E7E2; --accent:#1F5B66; --accent-ink:#FFFFFF;
+  --ok:#2E6B45; --ok-bg:#E3EFE6; --warn:#8A5A00; --warn-bg:#FBEFD2; --bad:#9C2B23; --bad-bg:#F8E1DE;
+  --inf:#4E4A7A; --inf-bg:#E9E7F5;
+  --serif:"Iowan Old Style","Charter","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#141816; --panel:#1B201D; --ink:#E3E7E3; --ink-2:#A6B0AA; --rule:#2F3632;
+    --grey-1:#252B28; --accent:#7FB8C2; --accent-ink:#0F1412;
+    --ok:#8FCB9F; --ok-bg:#1D2E23; --warn:#F0C46A; --warn-bg:#352A12; --bad:#F29A90; --bad-bg:#3A1E1B;
+    --inf:#BEB8EE; --inf-bg:#27253A;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#141816; --panel:#1B201D; --ink:#E3E7E3; --ink-2:#A6B0AA; --rule:#2F3632;
+  --grey-1:#252B28; --accent:#7FB8C2; --accent-ink:#0F1412;
+  --ok:#8FCB9F; --ok-bg:#1D2E23; --warn:#F0C46A; --warn-bg:#352A12; --bad:#F29A90; --bad-bg:#3A1E1B;
+  --inf:#BEB8EE; --inf-bg:#27253A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--sans)}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:28px 64px}
+.masthead{display:grid;gap:14px;padding-block:8px 24px;border-bottom:1px solid var(--rule)}
+.eyebrow{margin:0;font:600 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{margin:0;font:600 clamp(26px,4vw,38px)/1.15 var(--serif);text-wrap:balance;max-width:24ch}
+.decision{margin:0;font-size:18px;max-width:62ch;color:var(--ink)}
+.decision .k,.meta dt{font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-right:8px}
+.meta{display:flex;flex-wrap:wrap;gap:10px 28px;margin:0}
+.meta div{display:flex;flex-direction:column;gap:4px}
+.meta dd{margin:0;font:14px/1.3 var(--mono);font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;margin-top:28px}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:14px}
+.toc summary{font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);cursor:pointer;padding-block:6px}
+.toc ol{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:2px;border-left:2px solid var(--rule)}
+.toc a{display:block;padding:4px 10px;color:var(--ink-2);text-decoration:none;line-height:1.35}
+.toc a:hover,.toc a:focus-visible{color:var(--accent)}
+main{min-width:0;max-width:760px}
+main h2{font:600 26px/1.25 var(--serif);text-wrap:balance;margin:56px 0 12px;padding-top:14px;border-top:1px solid var(--rule);scroll-margin-top:16px}
+main h3{font:600 17px/1.35 var(--sans);margin:30px 0 8px}
+main p,main li{max-width:68ch}
+main ul,main ol{padding-left:22px}
+main li{margin:4px 0}
+main li>ul,main li>ol{margin-top:4px}
+strong{font-weight:650}
+code{font:0.88em var(--mono);background:var(--grey-1);padding:1px 5px;border-radius:3px}
+a{color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.lead-card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:4px 24px 20px}
+.lead-card h2{border-top:0;margin-top:14px}
+.tw{overflow-x:auto;margin:14px 0;border:1px solid var(--rule);border-radius:4px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.45}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule)}
+th{font:600 11px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);background:var(--grey-1)}
+tr:last-child td{border-bottom:0}
+td{font-variant-numeric:tabular-nums}
+.sources td:first-child{font-family:var(--mono);white-space:nowrap}
+.sources tr:target{background:var(--warn-bg)}
+.appendix summary{cursor:pointer;font-weight:600;color:var(--accent);padding-block:6px}
+.cite{display:inline-block;font:600 11px/1.5 var(--mono);text-decoration:none;padding:0 5px;margin:0 1px;border-radius:3px;vertical-align:1px;border:1px solid transparent;font-variant-numeric:tabular-nums;white-space:nowrap}
+.c-high,.c-verified{color:var(--ok);background:var(--ok-bg)}
+.c-medium{color:var(--ink-2);background:var(--grey-1)}
+.c-low{color:var(--warn);background:var(--warn-bg)}
+.c-unverified{color:var(--warn);background:var(--warn-bg);border-color:var(--warn)}
+.c-disputed,.c-overturned{color:var(--bad);background:var(--bad-bg);border-color:var(--bad)}
+.badge{display:inline-block;font:600 11px/1.5 var(--mono);letter-spacing:.02em;padding:0 6px;border-radius:3px;white-space:normal}
+.b-high{color:var(--ok);background:var(--ok-bg)}
+.b-medium{color:var(--ink-2);background:var(--grey-1)}
+.b-low,.b-unverified{color:var(--warn);background:var(--warn-bg);border:1px solid var(--warn)}
+.b-inf{color:var(--inf);background:var(--inf-bg);text-transform:uppercase;letter-spacing:.06em}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-2)}
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr;gap:8px}
+  .toc{position:static;background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:6px 12px}
+  .wrap{padding-inline:16px}
+  .lead-card{padding:2px 16px 16px}
+}
+
+.lv{font-weight:500}
+</style></head><body><div class="wrap">
+<header class="masthead"><p class="eyebrow">Technical research · crosshatch-player</p><h1>Claude Code marketplace model for the crosshatch game store</h1>
+<p class="decision"><span class="k">Decision</span>Whether to model the post-v1 crosshatch game store on the Claude Code plugin-marketplace pattern, and what to adapt for an ESP32 device</p>
+<dl class="meta"><div><dt>Date</dt><dd>2026-10-04</dd></div><div><dt>Preset</dt><dd>standard</dd></div><div><dt>Validation</dt><dd>normal</dd></div><div><dt>Claims</dt><dd>8 verified · 5 unverified · 0 overturned</dd></div><div><dt>Sources</dt><dd>30 + 7 internal</dd></div><div><dt>Subject</dt><dd>Claude Code v2.1.289</dd></div></dl>
+<div class="legend"><span><a class="cite c-verified">n</a> source re-read by the lead</span><span><a class="cite c-high">n</a> high</span><span><a class="cite c-medium">n<span class="lv"> · medium</span></a> medium</span><span><span class="badge b-unverified">unverified</span> single source, no second check</span><span><code>(B1)</code> internal project document (B or P), not evidence</span></div>
+</header>
+<div class="layout"><nav class="toc" aria-label="Contents"><details open><summary>Contents</summary><ol><li><a href="#executive-summary">Executive summary</a></li><li><a href="#1-how-the-claude-code-marketplace-works">1. How the Claude Code marketplace works</a></li><li><a href="#2-how-it-holds-up-in-practice">2. How it holds up in practice</a></li><li><a href="#3-prior-art-from-other-package-catalogs">3. Prior art from other package catalogs</a></li><li><a href="#4-our-baseline-internal-not-research-evidence">4. Our baseline (internal, not research evidence)</a></li><li><a href="#5-mapping-claude-code-concept-to-crosshatch">5. Mapping: Claude Code concept to crosshatch</a></li><li><a href="#6-sketch-catalog-and-device-flow">6. Sketch: catalog and device flow</a></li><li><a href="#7-cross-dimension-insights">7. Cross-dimension insights</a></li><li><a href="#8-recommendations">8. Recommendations</a></li><li><a href="#9-open-questions">9. Open questions</a></li><li><a href="#sources">Source appendix</a></li><li><a href="#staleness-map">Staleness map</a></li></ol></details></nav>
+<main><div class="lead-card"><section id="executive-summary"><h2>Executive summary</h2><p><strong>Recommendation.</strong> Yes, model the store on the Claude Code marketplace, but only on its git-free subset, and add three things it lacks.</p>
+<p><strong>What to copy.</strong> Claude Code can already run a marketplace with no git client:</p>
+<ul>
+<li>The catalog is a single <code>marketplace.json</code> fetched from an HTTPS URL <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>Each entry is an <code>archive</code> source: a zip URL plus a <code>sha256</code> pin, and the client refuses a download that does not match <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>The installed version is the explicit <code>version</code> if one is set, otherwise a prefix of that <code>sha256</code>. An update happens only when the computed version changes <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>.</li>
+</ul>
+<p>That maps almost one to one onto a <code>.chgame</code> catalog whose entries carry a URL, a size, and a SHA-256, with update detection by package hash. Anyone can host a catalog, users add catalogs by URL, and each catalog has a unique name. Those parts carry over too.</p>
+<p><strong>What to add.</strong></p>
+<ol>
+<li><strong>A signed catalog.</strong> Claude Code does not sign catalogs or packages; it relies on HTTPS plus hash pins <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a>. That is not enough for us. On our game boards the wolfSSL transport replaces the certificate-checking path entirely, so every HTTPS fetch is unverified (B9). Anyone on the network could swap the catalog, and with it the hashes. F-Droid's design fixes this: a small signed root pins the hash and size of everything else, and a timestamp and an expiry date prevent rollback and stale copies <a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-verified" href="#src-20" title="Source 20: verified">20</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a>. A third-party catalog is added by URL plus key fingerprint <a class="cite c-medium" href="#src-22" title="Source 22: medium">22<span class="lv"> · medium</span></a>.</li>
+<li><strong>API-level gating in each entry.</strong> Claude Code catalogs say nothing about which client version an entry needs. Flipper Zero, the closest device analogue, requires each app's major API version to match the firmware's, and its catalog keeps one build per app version and API version <a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-verified" href="#src-25" title="Source 25: verified">25</a>. F-Droid gates on integer <code>minSdkVersion</code> <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>. Our integer <code>api</code> level slots straight in (B2 AD-19).</li>
+<li><strong>No automatic install.</strong> Claude Code leaves auto-update off for every marketplace except Anthropic's official ones and those added from claude.ai, and a catalog cannot turn it on <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a>. Its zero-click exploit came through background auto-update <a class="cite c-high" href="#src-14" title="Source 14: high">14</a>. On a battery-powered device, show "Update available" and install only when the player asks.</li>
+</ol>
+<p><strong>What to drop:</strong> the items in "Do not adopt" in section 8. They are git, npm, and command sources; plugin dependencies; merging manifests with catalog entries; a version cache; background auto-update; and enterprise allowlists.</p>
+<p><strong>Biggest caveat.</strong> Whether the shipped mbedTLS or wolfSSL build exposes Ed25519 or ECDSA P-256 signature verification to application code was not checked. A short spike must confirm it before we commit to signing.</p></section></div><section id="1-how-the-claude-code-marketplace-works"><h2>1. How the Claude Code marketplace works</h2><p><strong>Takeaway.</strong> A marketplace is one JSON file that lists plugins and where to fetch each one. The client works out a version for each plugin, caches by that version, and updates when the version changes. Hash pins are the only integrity mechanism.</p>
+<p><strong>The catalog.</strong></p>
+<ul>
+<li>The file is <code>.claude-plugin/marketplace.json</code>. It requires <code>name</code>, <code>owner.name</code>, and <code>plugins[]</code>. Each entry requires <code>name</code> and <code>source</code>; <code>description</code>, <code>version</code>, <code>category</code>, <code>tags</code>, <code>displayName</code>, and a free-form <code>metadata</code> are optional <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>Each entry is validated on its own, and unknown keys are ignored at load time <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>Lifecycle fields:<ul>
+<li><code>renames</code>, an append-only map from old names to new, where <code>null</code> means removed <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</li>
+<li><code>forceRemoveDeletedPlugins</code>, which uninstalls delisted plugins and shows them under "Flagged" <a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</li>
+</ul>
+</li>
+<li>A user can register only one marketplace per name. Many official-looking names are reserved and accepted only from <code>github.com/anthropics/</code> sources <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a>.</li>
+<li>A plugin is installed as <code>plugin@marketplace</code> <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>.</li>
+</ul>
+<p><strong>Where plugins come from.</strong></p>
+<ul>
+<li>A plugin's source can be a relative path, <code>github</code>, a git <code>url</code>, <code>git-subdir</code>, <code>npm</code>, <code>archive</code>, or <code>command</code> <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>Git sources can pin a full 40-character <code>sha</code>; when both a <code>sha</code> and a <code>ref</code> are set, the <code>sha</code> wins <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>The <code>archive</code> source arrived in v2.1.224 on 2026-08-07 <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-high" href="#src-10" title="Source 10: high">10</a>. It takes an HTTPS zip and an optional <code>sha256</code>, and refuses a download that does not match <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</li>
+<li>Archive downloads and extraction have fixed caps on size, time, redirects, entry count, and compression ratio <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a>. Our own package limits are far smaller (B1).</li>
+</ul>
+<p><strong>Where the catalog comes from.</strong></p>
+<ul>
+<li>A marketplace can itself be a plain HTTPS URL to a <code>marketplace.json</code> <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</li>
+<li>When the marketplace is a URL, the client fetches only the JSON (up to 5 MiB), so every entry needs a source it can fetch on its own <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</li>
+<li>Users add one with <code>/plugin marketplace add &lt;owner/repo | git URL | path | https URL&gt;</code> <a class="cite c-high" href="#src-7" title="Source 7: high">7</a>.</li>
+</ul>
+<p><strong>Versions, cache, and updates.</strong></p>
+<ul>
+<li>The version is resolved in order: the plugin manifest's <code>version</code>, then the catalog entry's <code>version</code>, then a value derived from the source. For an archive that is the first 12 characters of the SHA-256 <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>.</li>
+<li>Each version is cached in <code>cache/&lt;marketplace&gt;/&lt;plugin&gt;/&lt;version&gt;/</code>. Per-plugin data in <code>data/</code> survives updates, and old versions are swept after 14 days <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>.</li>
+<li>Auto-update defaults are set per marketplace <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>:<ul>
+<li>on for Anthropic's official marketplaces, except <code>knowledge-work-plugins</code> and <code>first-party-plugins</code></li>
+<li>on for marketplaces added from claude.ai</li>
+<li>off for every other marketplace</li>
+</ul>
+</li>
+</ul>
+<p>A catalog cannot turn auto-update on itself <a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</p>
+<ul>
+<li>Claude Code has no release channels. The documented workaround is two catalogs pointing at different refs <a class="cite c-high" href="#src-3" title="Source 3: high">3</a>.</li>
+</ul>
+<p><strong>Trust.</strong></p>
+<ul>
+<li>Installing shows the same warning for every source: Anthropic "cannot verify that they will work as intended or that they won't change" <a class="cite c-high" href="#src-5" title="Source 5: high">5</a>.</li>
+<li>Admins get allowlists and blocklists of marketplaces (<code>strictKnownMarketplaces</code>, <code>blockedMarketplaces</code>) and can force plugins on or off <a class="cite c-high" href="#src-6" title="Source 6: high">6</a>.</li>
+<li>Anthropic does not review third-party marketplaces <a class="cite c-medium" href="#src-8" title="Source 8: medium">8<span class="lv"> · medium</span></a>.</li>
+<li>No signing of catalogs or packages is described anywhere in the docs <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a> <span class="badge b-medium">confidence: medium, an absence finding</span>.</li>
+</ul>
+<p><strong>Validation.</strong> <code>claude plugin validate [--strict] [--json]</code> checks a plugin or marketplace on disk <a class="cite c-high" href="#src-4" title="Source 4: high">4</a>. Errors fetching a source appear only after install, not in validation <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>.</p>
+<p><strong>The official catalog in practice.</strong> It lists 315 plugins. All 262 entries with an external source pin a 40-character <code>sha</code>, and 97 of them also set a <code>ref</code> <a class="cite c-medium" href="#src-11" title="Source 11: medium">11<span class="lv"> · medium</span></a> <span class="badge b-unverified">confidence: medium, unverified</span>.</p></section><section id="2-how-it-holds-up-in-practice"><h2>2. How it holds up in practice</h2><p><strong>Takeaway.</strong> The format is sound, but the client has needed constant repair for a year. Much of the trouble is in caching, updates, and the state files. That is exactly where a device store would also be fragile.</p>
+<p><strong>Rapid change.</strong></p>
+<ul>
+<li>Marketplaces shipped in v2.0.12 on 2025-10-09 <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-high" href="#src-10" title="Source 10: high">10</a>.</li>
+<li>The CHANGELOG has more than 200 marketplace and plugin-update entries since then. Cache and update fixes are still landing in the latest releases, up to v2.1.289 on 2026-10-03 <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-high" href="#src-10" title="Source 10: high">10</a>.</li>
+</ul>
+<p><strong>Stale caches and missed updates</strong> are the largest cluster of problems.</p>
+<ul>
+<li>Issues #14061 ("/plugin update does not invalidate plugin cache") and #17361 are still open, despite partial fixes up to 2.1.289 <a class="cite c-medium" href="#src-12" title="Source 12: medium">12<span class="lv"> · medium</span></a><a class="cite c-high" href="#src-9" title="Source 9: high">9</a> <span class="badge b-unverified">confidence: medium, unverified</span>.</li>
+<li>A plugin that sets an explicit <code>version</code> ships no update to users until the author bumps it, because the cache is keyed by version <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a>.</li>
+</ul>
+<p><strong>Schema drift.</strong> Older clients failed to load the entire official catalog because one entry used a source type they did not know (#33172). Since 2.1.120 the client shows that entry and asks the user to update instead <a class="cite c-high" href="#src-13" title="Source 13: high">13</a><a class="cite c-high" href="#src-9" title="Source 9: high">9</a>.</p>
+<p><strong>State corruption.</strong> These were all fixed between April and September 2026 <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>:</p>
+<ul>
+<li>concurrent writes at startup silently unregistered a marketplace</li>
+<li>a failed fetch deleted the local copy of a GitHub marketplace named after its repo</li>
+<li>an auto-update left the official catalog broken while files were held open</li>
+</ul>
+<p><strong>Name collisions.</strong></p>
+<ul>
+<li><code>marketplace add</code> silently replaced a marketplace with the same name. Since 2.1.284 it says so and how to undo it, but it still replaces <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>.</li>
+<li>IDs differing only in punctuation or case collided until 2.1.285 <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>.</li>
+</ul>
+<p><strong>Security.</strong></p>
+<ul>
+<li>Plugin4Shell, disclosed 2026-09-17, defeated commit pinning: an attacker made a branch named after the pinned SHA. Background auto-update made the attack zero-click for every marketplace with auto-update on. Claude Code patched it in 2.1.179 <a class="cite c-high" href="#src-14" title="Source 14: high">14</a><a class="cite c-high" href="#src-15" title="Source 15: high">15</a><a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>.</li>
+<li>Prompt Security published a proof of concept in which a marketplace skill hijacked dependency installs <a class="cite c-high" href="#src-16" title="Source 16: high">16</a>.</li>
+<li>No confirmed malicious plugin was found in the wild <span class="badge b-medium">confidence: medium, an absence finding</span>.</li>
+</ul>
+<p><strong>Ecosystem and practice.</strong></p>
+<ul>
+<li>An aggregator claims more than 2,700 marketplaces <a class="cite c-medium" href="#src-17" title="Source 17: medium">17<span class="lv"> · medium</span></a> <span class="badge b-medium">confidence: medium, self-reported</span>.</li>
+<li>A practitioner advises pinning commit SHAs rather than tags, keeping the catalog repo separate from plugin source repos, and running stable and canary as distinct pinned SHAs <a class="cite c-medium" href="#src-18" title="Source 18: medium">18<span class="lv"> · medium</span></a> <span class="badge b-medium">confidence: medium, prescriptive rather than retrospective</span>.</li>
+<li>Publishing guides recommend having CI regenerate the catalog from each package's manifest, so the two never drift <a class="cite c-low" href="#src-30" title="Source 30: low">30<span class="lv"> · low</span></a> <span class="badge b-low">confidence: low, read through a search summary</span>.</li>
+</ul></section><section id="3-prior-art-from-other-package-catalogs"><h2>3. Prior art from other package catalogs</h2><p><strong>Takeaway.</strong> Catalogs built for clients without git share three habits. They sign a small root that pins the hashes of everything else, gate packages on an integer compatibility level, and keep the top-level index small.</p>
+<p><strong>F-Droid.</strong></p>
+<ul>
+<li>Its live <code>entry.json</code> is signed with both a JAR signature and a GPG signature <a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-verified" href="#src-20" title="Source 20: verified">20</a>. It holds a <code>timestamp</code>, <code>maxAge: 14</code>, the <code>sha256</code> and <code>size</code> of the full index, and a list of diffs.</li>
+<li>The full index is 62.6 MB for 4,525 packages, far too large for a microcontroller to hold. The small signed entry point is the part a device could use <a class="cite c-verified" href="#src-20" title="Source 20: verified">20</a>.</li>
+<li>Each package version in the index carries <code>file{name, sha256, size}</code> and <code>usesSdk{minSdkVersion, targetSdkVersion}</code> <a class="cite c-high" href="#src-21" title="Source 21: high">21</a>.</li>
+<li>A third-party repo is added by URL plus key fingerprint, as one string: <code>https://host/repo?fingerprint=&lt;sha256&gt;</code> <a class="cite c-medium" href="#src-22" title="Source 22: medium">22<span class="lv"> · medium</span></a>.</li>
+<li>A documented failure: a fingerprint left in the stored repo URL was not caught when the repo was added, and verification failed only later, at install <a class="cite c-medium" href="#src-22" title="Source 22: medium">22<span class="lv"> · medium</span></a>. The lesson is to verify the key when a source is added.</li>
+</ul>
+<p><strong>Flipper Zero.</strong> The closest device analogue.</p>
+<ul>
+<li>Authors submit by pull request. The manifest pins a source <code>commit_sha</code>, and each <code>id</code> must be globally unique <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a>. Versions must strictly increase <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a> <span class="badge b-unverified">confidence: medium, unverified</span>.</li>
+<li>The catalog builds every package itself <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a>.</li>
+<li>The device's App Loader requires the app's major API version to equal the firmware's <a class="cite c-verified" href="#src-25" title="Source 25: verified">25</a>. The catalog keeps one build per app version, API version, and target <a class="cite c-high" href="#src-24" title="Source 24: high">24</a>.</li>
+</ul>
+<p><strong>Homebrew taps.</strong> The git analogue of a Claude Code marketplace.</p>
+<ul>
+<li><code>brew tap user/repo</code> clones a git repo. A formula's short name resolves to Homebrew core, and <code>user/repo/formula</code> selects a tap's copy <a class="cite c-medium" href="#src-26" title="Source 26: medium">26<span class="lv"> · medium</span></a>.</li>
+<li>Since Homebrew 6.0.0, a non-official tap needs explicit <code>brew trust</code> before it loads <a class="cite c-medium" href="#src-26" title="Source 26: medium">26<span class="lv"> · medium</span></a> <span class="badge b-unverified">confidence: medium, the version date is unverified</span>. That is the git-world version of adding a catalog by fingerprint.</li>
+<li>Prebuilt binaries pin one <code>sha256</code> per platform. On a mismatch, Homebrew falls back to building from source <a class="cite c-high" href="#src-27" title="Source 27: high">27</a>.</li>
+</ul>
+<p><strong>MicroPython mip.</strong> An installer that runs on a microcontroller.</p>
+<ul>
+<li>The ABI version is part of the index path, <code>package/{mpy_version}/{name}/{version}.json</code>, and files are content-addressed <a class="cite c-medium" href="#src-28" title="Source 28: medium">28<span class="lv"> · medium</span></a>.</li>
+<li>It appears to use the hash only to skip files it already has, not to verify a fresh download <a class="cite c-medium" href="#src-28" title="Source 28: medium">28<span class="lv"> · medium</span></a> <span class="badge b-medium">confidence: medium</span>. That is the counterexample: verify each file after downloading it.</li>
+</ul>
+<p><strong>TUF.</strong> The Update Framework is the formal model. Its spec, v1.0.36 (2026-08-05), chains timestamp → snapshot → targets metadata <a class="cite c-high" href="#src-29" title="Source 29: high">29</a>:</p>
+<ul>
+<li>expiry stops a stale ("freeze") attack</li>
+<li>versions that only increase stop rollback</li>
+<li>length limits stop endless downloads</li>
+<li>hash matches stop substituted files</li>
+</ul>
+<p>F-Droid's signed <code>entry.json</code> is a lightweight form of the same idea.</p></section><section id="4-our-baseline-internal-not-research-evidence"><h2>4. Our baseline (internal, not research evidence)</h2><p>From the project documents labeled B and P in the source appendix. These are design facts, not research claims.</p>
+<ul>
+<li><strong>Packages.</strong> A <code>.chgame</code> is one zip of at most 256 KB, with a whitelist of members. The installer reads only the SD inbox <code>/games/</code> and stages each install. It writes a <code>.pkg</code> file as its commit marker; the file holds the first 8 bytes of a SHA-256 hash of the members (B1, B2 AD-15, AD-16).</li>
+<li><strong>API level.</strong> Each game declares an integer <code>api</code> level. <code>Manifest::check</code> decides whether this firmware can start it (B2 AD-19).</li>
+<li><strong>Parsing.</strong> The device has a streaming JSON parser with a 512-byte token buffer, so it can parse a catalog streamed from the SD card without holding it in RAM (B7).</li>
+<li><strong>Hashing.</strong> The device computes SHA-256 with mbedTLS already (B8).</li>
+<li><strong>TLS.</strong> With <code>FREEINK_NET_WOLFSSL</code> on, which <code>[base]</code> sets, only the wolfSSL transport is compiled, and it calls <code>setInsecure()</code>. The certificate-verifying <code>esp_http_client</code> path is compiled out, so no HTTPS fetch on our game boards verifies the server today (B9, B6).</li>
+<li><strong>Earlier recommendation.</strong> P1 proposed a "Get games" browser: download a <code>.chgame</code> from a catalog, verify its SHA-256, and put it in the inbox.</li>
+</ul></section><section id="5-mapping-claude-code-concept-to-crosshatch"><h2>5. Mapping: Claude Code concept to crosshatch</h2><p><strong>Takeaway.</strong> Of 17 Claude Code concepts, 7 carry over as they are, 6 need adapting, 3 are dropped, and 1 is added. Signing is the one change our hardware forces (B9).</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Claude Code</th>
+<th>Crosshatch store</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>marketplace.json</code> with <code>name</code>, <code>owner</code>, entry list <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a></td>
+<td><code>catalog.json</code> with <code>name</code>, <code>owner</code>, <code>games[]</code></td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td><code>url</code> marketplace source: one JSON over HTTPS <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a></td>
+<td>The device fetches the catalog by URL, streams it to SD, and parses it from there (B7)</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td><code>archive</code> entry: <code>url</code> plus <code>sha256</code> <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a></td>
+<td>Each build carries <code>url</code>, <code>size</code>, <code>sha256</code>, and the 8-byte package hash</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td>Relative, git, <code>git-subdir</code>, <code>npm</code>, and <code>command</code> sources <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a></td>
+<td>None; the device has no git client and runs nothing outside the sandbox</td>
+<td>Drop</td>
+</tr>
+<tr>
+<td>Computed version: explicit <code>version</code>, else hash prefix <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a></td>
+<td>"Update available" when the catalog's package hash differs from the installed <code>.pkg</code> (B1)</td>
+<td>Adapt</td>
+</tr>
+<tr>
+<td><code>plugin@marketplace</code> IDs; one marketplace per name <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a></td>
+<td>A game's <code>id</code> stays global on the device (<code>/.games/&lt;id&gt;/</code>). The device records which catalog installed a game, and installing the same ID from a different catalog asks first</td>
+<td>Adapt</td>
+</tr>
+<tr>
+<td>Reserved official names, accepted only from Anthropic's sources <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a></td>
+<td>The official catalog name is accepted only with the built-in key</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td>HTTPS plus hash pins, no signing <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-5" title="Source 5: high">5</a></td>
+<td>Detached signature over <code>catalog.json</code>, plus a monotonic <code>version</code> and an <code>expires</code> time <a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-verified" href="#src-20" title="Source 20: verified">20</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a></td>
+<td>Adapt, required by B9</td>
+</tr>
+<tr>
+<td>Add a marketplace by source with a generic trust warning <a class="cite c-high" href="#src-5" title="Source 5: high">5</a><a class="cite c-high" href="#src-7" title="Source 7: high">7</a></td>
+<td>Add a catalog by URL plus key fingerprint, and check the key when the catalog is added <a class="cite c-medium" href="#src-22" title="Source 22: medium">22<span class="lv"> · medium</span></a><a class="cite c-medium" href="#src-26" title="Source 26: medium">26<span class="lv"> · medium</span></a></td>
+<td>Adapt</td>
+</tr>
+<tr>
+<td>Auto-update defaults per marketplace <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a></td>
+<td>No automatic install; show "Update available" and install on request</td>
+<td>Adapt</td>
+</tr>
+<tr>
+<td>Two catalogs for stable and canary <a class="cite c-high" href="#src-3" title="Source 3: high">3</a></td>
+<td>A "preview" catalog for games on a preview API level beside the stable one (B2 AD-19)</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td>No client-compatibility field</td>
+<td>Each build carries <code>api</code>; the device hides any build <code>Manifest::check</code> would refuse <a class="cite c-high" href="#src-21" title="Source 21: high">21</a><a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-verified" href="#src-25" title="Source 25: verified">25</a></td>
+<td>Add</td>
+</tr>
+<tr>
+<td>Per-entry validation; an unknown source shows a prompt instead of failing the catalog <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-13" title="Source 13: high">13</a></td>
+<td>Validate each entry on its own; skip an unknown field or source and list the entry as "needs newer firmware"</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td><code>renames</code>, <code>forceRemoveDeletedPlugins</code>, "Flagged" <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a></td>
+<td>A game in the <code>delisted</code> list shows "no longer listed" but is never removed, because saves live under its ID (B1). No renames: the ID keys the saves</td>
+<td>Adapt</td>
+</tr>
+<tr>
+<td>Version cache with a 14-day sweep <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a></td>
+<td>None; the installer keeps one copy and saves live elsewhere (B1)</td>
+<td>Drop</td>
+</tr>
+<tr>
+<td><code>claude plugin validate</code> <a class="cite c-high" href="#src-4" title="Source 4: high">4</a>; CI regenerates the catalog <a class="cite c-low" href="#src-30" title="Source 30: low">30<span class="lv"> · low</span></a>; a catalog that builds its own packages <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a></td>
+<td><code>pack_game.py</code> plus a catalog build-and-sign step in CI, which generates <code>catalog.json</code> from the packed <code>.chgame</code> files</td>
+<td>Adopt</td>
+</tr>
+<tr>
+<td>Allowlists and blocklists for admins <a class="cite c-high" href="#src-6" title="Source 6: high">6</a></td>
+<td>Not needed on a personal device</td>
+<td>Drop</td>
+</tr>
+</tbody>
+</table></div></section><section id="6-sketch-catalog-and-device-flow"><h2>6. Sketch: catalog and device flow</h2><p>This sketch is the proposal the research points to. It is not a decided design.</p>
+<p><strong>Catalog</strong> (<code>catalog.json</code>, with a detached <code>catalog.json.sig</code> over its exact bytes):</p>
+<pre><code class="language-json">{
+  &quot;format&quot;: 1,
+  &quot;name&quot;: &quot;crosshatch-official&quot;,
+  &quot;owner&quot;: {&quot;name&quot;: &quot;CarpeTelam&quot;},
+  &quot;version&quot;: 42,
+  &quot;generated&quot;: &quot;2026-11-01T00:00:00Z&quot;,
+  &quot;expires&quot;: &quot;2026-11-29T00:00:00Z&quot;,
+  &quot;games&quot;: [
+    {
+      &quot;id&quot;: &quot;dots-and-boxes&quot;,
+      &quot;name&quot;: &quot;Dots and Boxes&quot;,
+      &quot;author&quot;: &quot;CarpeTelam&quot;,
+      &quot;description&quot;: &quot;Claim the most boxes.&quot;,
+      &quot;version&quot;: &quot;1.2&quot;,
+      &quot;icon&quot;: &quot;grid-four&quot;,
+      &quot;modes&quot;: [&quot;solo&quot;, &quot;pass&quot;, &quot;nearby&quot;],
+      &quot;seats&quot;: {&quot;min&quot;: 2, &quot;max&quot;: 2},
+      &quot;builds&quot;: [
+        {&quot;api&quot;: 1, &quot;url&quot;: &quot;https://github.com/CarpeTelam/crosshatch-games/releases/download/dots-and-boxes-1.2/dots-and-boxes-api1.chgame&quot;,
+         &quot;size&quot;: 48213, &quot;sha256&quot;: &quot;&lt;64 hex&gt;&quot;, &quot;pkg&quot;: &quot;&lt;16 hex&gt;&quot;}
+      ]
+    }
+  ],
+  &quot;delisted&quot;: []
+}
+</code></pre>
+<p><code>id</code>, <code>name</code>, <code>version</code>, <code>icon</code>, <code>modes</code>, and <code>seats</code> mirror existing manifest keys (B2 AD-15). <code>author</code> and <code>description</code> are new (recommendation 5a). <code>pkg</code> is the 8-byte package hash from section 4.</p>
+<p><strong>Device flow:</strong></p>
+<ol>
+<li>Download <code>catalog.json</code> and <code>catalog.json.sig</code> to a temp folder on SD.</li>
+<li>Hash the file as it is read back from SD, then verify the signature with the catalog's key: built in for the official catalog, or stored when a third-party catalog was added.</li>
+<li>Refuse the catalog if its <code>version</code> is lower than the last one accepted, or if <code>expires</code> has passed (see open question 3). Keep the previous copy when a fetch or check fails <a class="cite c-high" href="#src-9" title="Source 9: high">9</a>.</li>
+<li>Parse it from SD with the streaming parser. For each game, pick the newest build that <code>Manifest::check</code> accepts on this host, and list the game.</li>
+<li>To install: download the <code>.chgame</code> to a temp file and check <code>size</code> and <code>sha256</code> before using it <a class="cite c-medium" href="#src-28" title="Source 28: medium">28<span class="lv"> · medium</span></a>. Rename it into <code>/games/</code> and run the existing installer, then confirm that the <code>.pkg</code> it writes matches the build's <code>pkg</code>.</li>
+</ol>
+<p><strong>Publishing flow:</strong></p>
+<ol>
+<li>An author opens a pull request to a catalog repo that adds either a package or a source pinned to a commit.</li>
+<li>CI runs <code>pack_game.py</code>, attaches the <code>.chgame</code> to a release, regenerates <code>catalog.json</code>, and signs it with a key held in repository secrets.</li>
+</ol>
+<p>This mirrors Flipper's catalog, which builds packages from pinned sources <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a>.</p></section><section id="7-cross-dimension-insights"><h2>7. Cross-dimension insights</h2><ul>
+<li><strong>Copy the part of Claude Code that does not need git.</strong> Much of its trouble is in git transport, credentials, and cache refresh <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-medium" href="#src-12" title="Source 12: medium">12<span class="lv"> · medium</span></a>. The path a device can use, a URL catalog with <code>archive</code> entries, is one of its newest parts <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-high" href="#src-9" title="Source 9: high">9</a>. The design most worth copying is also among the least proven, so we should borrow from the older device designs in section 3 as well.</li>
+<li><strong>A pin is only as trustworthy as the file that carries it.</strong> With no verified TLS (B9), the catalog's signature is what makes every hash in it mean anything <a class="cite c-high" href="#src-14" title="Source 14: high">14</a><a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a>.</li>
+<li><strong>Background updates carry the sharpest risk.</strong> The zero-click exploit and an auto-update that broke the official catalog both came through background updates <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-high" href="#src-14" title="Source 14: high">14</a>.</li>
+<li><strong>Our API level is the compatibility field Claude Code lacks.</strong> F-Droid and Flipper both list builds per SDK or API level, so a client can choose one <a class="cite c-high" href="#src-21" title="Source 21: high">21</a><a class="cite c-high" href="#src-24" title="Source 24: high">24</a>. A <code>builds[]</code> list keyed by <code>api</code> lets a game keep serving older firmware after a new level ships.</li>
+</ul></section><section id="8-recommendations"><h2>8. Recommendations</h2><p>Ranked by value. Item 1 has to land before the "Get games" browser ships.</p>
+<ol>
+<li><strong>Spike signature verification on the device.</strong><ul>
+<li><strong>What:</strong> check that the shipped mbedTLS or wolfSSL exposes Ed25519 or ECDSA P-256 verification to application code, and measure its time and RAM on x4pro.</li>
+<li><strong>Feeds:</strong> the catalog-trust decision.</li>
+<li><strong>Basis:</strong> B9, <a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a>.</li>
+<li><strong>Effort:</strong> small.</li>
+</ul>
+</li>
+<li><strong>Write a spine decision for the store: the catalog format and trust.</strong><ul>
+<li><strong>What:</strong><ul>
+<li>first re-read <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a> and <a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a>, because their claims go stale after 2026-11-04</li>
+<li>the format in section 6</li>
+<li>a signed catalog with a monotonic <code>version</code> and an <code>expires</code> time</li>
+<li>third-party catalogs added by URL plus fingerprint</li>
+<li>per-entry validation, with unknown entries tolerated</li>
+<li><code>builds[]</code> keyed by <code>api</code></li>
+<li>no automatic install</li>
+</ul>
+</li>
+<li><strong>Feeds:</strong> a new architecture decision beside AD-16 and AD-19, plus the "Get games" epic (B2).</li>
+<li><strong>Basis:</strong> <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a><a class="cite c-verified" href="#src-2" title="Source 2: verified">2</a><a class="cite c-high" href="#src-3" title="Source 3: high">3</a><a class="cite c-high" href="#src-19" title="Source 19: high">19</a><a class="cite c-high" href="#src-21" title="Source 21: high">21</a><a class="cite c-medium" href="#src-22" title="Source 22: medium">22<span class="lv"> · medium</span></a><a class="cite c-high" href="#src-24" title="Source 24: high">24</a><a class="cite c-verified" href="#src-25" title="Source 25: verified">25</a><a class="cite c-high" href="#src-29" title="Source 29: high">29</a>, B9.</li>
+<li><strong>Effort:</strong> small to write; the epic is medium.</li>
+</ul>
+</li>
+<li><strong>Build the catalog in CI from packed games, and sign it there.</strong><ul>
+<li><strong>What:</strong> a catalog repo; <code>pack_game.py</code> builds each package; CI writes and signs <code>catalog.json</code> and publishes the packages as release assets, not raw branch files.</li>
+<li><strong>Feeds:</strong> the release workflow (B2 AD-25) and the starter repo.</li>
+<li><strong>Basis:</strong> <a class="cite c-medium" href="#src-23" title="Source 23: medium">23<span class="lv"> · medium</span></a><a class="cite c-low" href="#src-30" title="Source 30: low">30<span class="lv"> · low</span></a>, P1.</li>
+<li><strong>Effort:</strong> medium.</li>
+</ul>
+</li>
+<li><strong>Keep a known-good catalog.</strong><ul>
+<li><strong>What:</strong> never replace the cached catalog with one that fails to download, verify, or parse. Write catalog state with the same tmp-then-rename pattern as our saves (B1).</li>
+<li><strong>Feeds:</strong> the "Get games" epic.</li>
+<li><strong>Basis:</strong> <a class="cite c-high" href="#src-9" title="Source 9: high">9</a><a class="cite c-medium" href="#src-12" title="Source 12: medium">12<span class="lv"> · medium</span></a>.</li>
+<li><strong>Effort:</strong> small, inside the epic.</li>
+</ul>
+</li>
+<li><strong>Add catalog fields and a preview catalog.</strong><ul>
+<li><strong>5a. <code>author</code> and <code>description</code> manifest keys,</strong> for the catalog detail view. Feeds the next API level (B2 AD-19). Basis: <a class="cite c-verified" href="#src-1" title="Source 1: verified">1</a>. Effort: small.</li>
+<li><strong>5b. A <code>preview</code> catalog</strong> for games on a preview API level, beside the stable one. Feeds the "Get games" epic. Basis: <a class="cite c-high" href="#src-3" title="Source 3: high">3</a>. Effort: small.</li>
+</ul>
+</li>
+</ol>
+<p><strong>Do not adopt:</strong> git, npm, or command sources; plugin dependencies; merging manifests with catalog entries; a version cache; background auto-update; enterprise allowlists.</p></section><section id="9-open-questions"><h2>9. Open questions</h2><p><strong>These block the design:</strong></p>
+<ul>
+<li><strong>Can the device verify signatures, and at what cost?</strong> See recommendation 1.</li>
+<li><strong>Could the catalog fetch use verified TLS instead?</strong> Re-enabling the <code>esp_http_client</code> path for one fetch would touch upstream networking code and the upstream-touch ledger (B9). Even then, a signature keeps protecting the catalog if a mirror or a GitHub account is compromised. We did not evaluate this option.</li>
+<li><strong>How should the device know the time for <code>expires</code>?</strong> A device without a synced clock cannot check expiry. We did not research whether to use NTP, the HTTP <code>Date</code> header, or a fallback to the version check alone.</li>
+</ul>
+<p><strong>Background:</strong></p>
+<ul>
+<li><strong>How does Flipper's client pick a build, and what happens when no build matches?</strong> The catalog's API query parameters were not read.</li>
+<li><strong>Are stale-cache reports still open on Claude Code 2.1.28x?</strong> The latest comments on #14061 and #17361 were not read; the GitHub API was blocked in this session.</li>
+<li><strong>How do update-time hook attacks work?</strong> The PromptArmor and arXiv write-ups on hooks changed by an update were found but not read.</li>
+</ul></section><section id="sources"><h2>Source appendix</h2><p>Claude Code doc pages are live documents without a last-updated date; the current release when read was v2.1.289 (2026-10-03).</p><details class="appendix" open><summary>Show all 30 sources</summary><div class="tw"><table class="sources"><thead><tr><th>#</th><th>Supports</th><th>Publisher</th><th>Pub date</th><th>Accessed</th><th>Confidence</th></tr></thead><tbody><tr id="src-1"><td>[1]</td><td>Catalog schema, name rules, reserved names, plugin source types, <code>archive</code> with <code>sha256</code>, URL marketplace fetching only the JSON, extraction caps, source errors appearing only at install</td><td><a href="https://code.claude.com/docs/en/plugins/marketplace-reference" target="_blank" rel="noopener">Anthropic: Marketplace reference</a></td><td>live doc</td><td>2026-10-04</td><td>high (lead re-read)</td></tr><tr id="src-2"><td>[2]</td><td>Version resolution order, cache layout, auto-update defaults, update only on version change</td><td><a href="https://code.claude.com/docs/en/plugins/loading" target="_blank" rel="noopener">Anthropic: How plugins load</a></td><td>live doc</td><td>2026-10-04</td><td>high (lead re-read)</td></tr><tr id="src-3"><td>[3]</td><td>Hosting a URL marketplace, <code>renames</code>, <code>forceRemoveDeletedPlugins</code>, no catalog field for auto-update, two catalogs as channels</td><td><a href="https://code.claude.com/docs/en/plugins/host-marketplace" target="_blank" rel="noopener">Anthropic: Host a marketplace</a></td><td>live doc</td><td>2026-10-04</td><td>high</td></tr><tr id="src-4"><td>[4]</td><td><code>plugin.json</code> fields, <code>claude plugin validate</code></td><td><a href="https://code.claude.com/docs/en/plugins/manifest-reference" target="_blank" rel="noopener">Anthropic: Manifest reference</a></td><td>live doc</td><td>2026-10-04</td><td>high</td></tr><tr id="src-5"><td>[5]</td><td>Trust warning, name-tier enforcement, no signing described, threat surface</td><td><a href="https://code.claude.com/docs/en/plugins/security" target="_blank" rel="noopener">Anthropic: Plugin security</a></td><td>live doc</td><td>2026-10-04</td><td>high</td></tr><tr id="src-6"><td>[6]</td><td>Managed allowlists and blocklists, <code>enabledPlugins</code></td><td><a href="https://code.claude.com/docs/en/plugins/org" target="_blank" rel="noopener">Anthropic: Plugins for organizations</a></td><td>live doc</td><td>2026-10-04</td><td>high</td></tr><tr id="src-7"><td>[7]</td><td><code>/plugin marketplace add</code> forms</td><td><a href="https://code.claude.com/docs/en/plugins/install" target="_blank" rel="noopener">Anthropic: Install plugins</a></td><td>live doc</td><td>2026-10-04</td><td>high</td></tr><tr id="src-8"><td>[8]</td><td>Anthropic does not review third-party marketplaces</td><td><a href="https://code.claude.com/docs/en/plugins/anthropic-marketplaces" target="_blank" rel="noopener">Anthropic: Anthropic marketplaces</a></td><td>live doc</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-9"><td>[9]</td><td>Feature timeline, 200+ marketplace entries, cache, state, and name-collision changes</td><td><a href="https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md" target="_blank" rel="noopener">Anthropic: claude-code CHANGELOG</a></td><td>2025-10 to 2026-10</td><td>2026-10-04</td><td>high</td></tr><tr id="src-10"><td>[10]</td><td>Release dates for CHANGELOG versions</td><td><a href="https://registry.npmjs.org/@anthropic-ai/claude-code" target="_blank" rel="noopener">npm: @anthropic-ai/claude-code</a></td><td>2025-10 to 2026-10</td><td>2026-10-04</td><td>high</td></tr><tr id="src-11"><td>[11]</td><td>Official catalog: 315 plugins; 262 external entries pin a <code>sha</code>, 97 also a <code>ref</code></td><td><a href="https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json" target="_blank" rel="noopener">Anthropic: claude-plugins-official marketplace.json</a></td><td>live file</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-12"><td>[12]</td><td>Open stale-cache and missed-update issues</td><td><a href="https://github.com/anthropics/claude-code/issues/14061" target="_blank" rel="noopener">GitHub: anthropics/claude-code #14061</a>, #17361, #45810</td><td>2025-12 to 2026-10</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-13"><td>[13]</td><td>One unknown source type broke the whole catalog on older clients</td><td><a href="https://github.com/anthropics/claude-code/issues/33172" target="_blank" rel="noopener">GitHub: anthropics/claude-code #33172</a></td><td>2026-04</td><td>2026-10-04</td><td>high</td></tr><tr id="src-14"><td>[14]</td><td>Plugin4Shell: SHA-named branch bypassed pinning, zero-click via auto-update, patched 2.1.179</td><td><a href="https://www.air.security/blog-posts/plugin4shell" target="_blank" rel="noopener">Air Security: Plugin4Shell</a></td><td>2026-09-17</td><td>2026-10-04</td><td>high</td></tr><tr id="src-15"><td>[15]</td><td>Independent coverage of Plugin4Shell</td><td><a href="https://www.theregister.com/security/2026/09/17/ai-coding-agents-0-click-rce-flaw-could-hand-attackers-keys-to-the-kingdom/5297335" target="_blank" rel="noopener">The Register</a></td><td>2026-09-17</td><td>2026-10-04</td><td>high</td></tr><tr id="src-16"><td>[16]</td><td>Proof of concept: marketplace skill hijacking dependency installs</td><td><a href="https://prompt.security/blog/when-your-plugin-starts-picking-your-dependencies-marketplace-skills-and-dependency-hijack-in-claude-code" target="_blank" rel="noopener">Prompt Security</a></td><td>2026-01-05</td><td>2026-10-04</td><td>high</td></tr><tr id="src-17"><td>[17]</td><td>Aggregator&#x27;s claim of 2,700+ marketplaces</td><td><a href="https://claudemarketplaces.com/" target="_blank" rel="noopener">claudemarketplaces.com</a></td><td>2026-10-04</td><td>2026-10-04</td><td>medium (self-reported)</td></tr><tr id="src-18"><td>[18]</td><td>Practitioner advice: pin SHAs, separate catalog repo, stable and canary as distinct pinned SHAs</td><td><a href="https://www.mpt.solutions/your-claude-plugin-marketplace-needs-more-than-a-git-repo/" target="_blank" rel="noopener">The Cloud Codex: Your Claude plugin marketplace needs more than a git repo</a></td><td>2026-04-20</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-19"><td>[19]</td><td>Signed JAR and GPG index, signed <code>entry</code> point</td><td><a href="https://f-droid.org/docs/All_our_APIs/" target="_blank" rel="noopener">F-Droid: All our APIs</a></td><td>undated</td><td>2026-10-04</td><td>high</td></tr><tr id="src-20"><td>[20]</td><td>Live signed entry: <code>timestamp</code>, <code>maxAge</code>, index <code>sha256</code> and <code>size</code>, 62.6 MB for 4,525 packages</td><td><a href="https://f-droid.org/repo/entry.json" target="_blank" rel="noopener">F-Droid: entry.json</a></td><td>live file</td><td>2026-10-04</td><td>high (lead fetched)</td></tr><tr id="src-21"><td>[21]</td><td>Per-version <code>file{sha256, size}</code> and <code>usesSdk</code> integer gating</td><td><a href="https://gitlab.com/fdroid/fdroidserver/-/raw/master/tests/repo/index-v2.json" target="_blank" rel="noopener">fdroidserver: index-v2 test fixture</a></td><td>2023-02 fixture</td><td>2026-10-04</td><td>high</td></tr><tr id="src-22"><td>[22]</td><td>Repos added by URL plus <code>?fingerprint=</code>; the fingerprint failure surfacing at install</td><td><a href="https://gitlab.com/fdroid/fdroidclient/-/issues/2078" target="_blank" rel="noopener">F-Droid client issue #2078</a></td><td>undated</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-23"><td>[23]</td><td>Submission by pull request, <code>commit_sha</code> pin, unique IDs, increasing versions, catalog builds packages</td><td><a href="https://github.com/flipperdevices/flipper-application-catalog/blob/main/documentation/Manifest.md" target="_blank" rel="noopener">Flipper: catalog Manifest.md</a> and [Contributing.md](https://github.com/flipperdevices/flipper-application-catalog/blob/main/documentation/Contributing.md)</td><td>live doc</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-24"><td>[24]</td><td>One build per app version, API version, and target</td><td><a href="https://catalog.flipperzero.one/application/67f379d625a4a6f1fb4a57f7/page" target="_blank" rel="noopener">Flipper catalog: application page</a></td><td>live page</td><td>2026-10-04</td><td>high</td></tr><tr id="src-25"><td>[25]</td><td>App Loader requires major API version to match the firmware</td><td><a href="https://raw.githubusercontent.com/flipperdevices/flipperzero-firmware/dev/documentation/AppsOnSDCard.md" target="_blank" rel="noopener">Flipper: AppsOnSDCard.md</a></td><td>dev branch</td><td>2026-10-04</td><td>high (lead re-read)</td></tr><tr id="src-26"><td>[26]</td><td>Taps as git repos, fully qualified names, tap trust since 6.0.0</td><td><a href="https://docs.brew.sh/Taps" target="_blank" rel="noopener">Homebrew: Taps</a> and [Tap-Trust](https://docs.brew.sh/Tap-Trust)</td><td>current docs</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-27"><td>[27]</td><td>Per-platform <code>sha256</code> for bottles, fallback on mismatch</td><td><a href="https://docs.brew.sh/Bottles" target="_blank" rel="noopener">Homebrew: Bottles</a></td><td>current docs</td><td>2026-10-04</td><td>high</td></tr><tr id="src-28"><td>[28]</td><td>ABI version in the index path, content-addressed files, hash used only to skip existing files</td><td><a href="https://raw.githubusercontent.com/micropython/micropython-lib/master/micropython/mip/mip/__init__.py" target="_blank" rel="noopener">MicroPython: mip source</a></td><td>master</td><td>2026-10-04</td><td>medium</td></tr><tr id="src-29"><td>[29]</td><td>Timestamp, snapshot, and targets roles; expiry; monotonic versions; length limits</td><td><a href="https://theupdateframework.github.io/specification/latest/" target="_blank" rel="noopener">TUF specification v1.0.36</a></td><td>2026-08-05</td><td>2026-10-04</td><td>high</td></tr><tr id="src-30"><td>[30]</td><td>Guides recommending CI regenerate the catalog from package manifests</td><td><a href="https://systemprompt.io/guides/publish-plugin-claude-marketplace" target="_blank" rel="noopener">systemprompt.io: Publish a plugin to a Claude marketplace</a></td><td>2026</td><td>2026-10-04</td><td>low (search summary)</td></tr></tbody></table></div></div></details><p><strong>Internal documents (crosshatch-player at <code>f1413185</code>; the cited lines are unchanged at later commits; not evidence):</strong></p>
+<ul>
+<li>B1 <code>docs/crosshatch/formats.md</code></li>
+<li>B2 <code>_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md</code> (AD-15, AD-16, AD-19, AD-25)</li>
+<li>B6 <code>src/network/HttpDownloader.cpp</code> <code>runGetWolf</code> calls <code>setInsecure()</code>; <code>platformio.ini</code> <code>[base]</code> sets <code>-DFREEINK_NET_WOLFSSL=1</code></li>
+<li>B7 <code>lib/JsonParser/StreamingJsonParser.h</code></li>
+<li>B8 <code>src/games/GameHash.cpp</code></li>
+<li>B9 <code>src/network/HttpDownloader.cpp</code> lines 12–28, 66–136, 138–244, 253–260: with wolfSSL on, the CA-bundle path is compiled out</li>
+<li>P1 <code>_bmad-output/planning-artifacts/research/competitive-crosssmudge-app-store-vs-crosshatch-game-2026-10-04/research.md</code></li>
+</ul></section><section id="staleness-map"><h2>Staleness map</h2><p>Computed with <code>recon_kit.py staleness</code> from the claims ledger, using the technical research pack's windows: versions and features 1 month, failures and ecosystem 6 months, patterns 2 years. Nothing is stale today.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Claims</th>
+<th>Class</th>
+<th>Re-check by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>archive</code> source and <code>sha256</code>, URL catalogs, version resolution, auto-update defaults, no signing</td>
+<td>version, feature</td>
+<td>2026-11-04</td>
+</tr>
+<tr>
+<td>Plugin4Shell, open stale-cache issues, size of the official catalog</td>
+<td>failure, ecosystem</td>
+<td>2027-03-01 to 2027-04-04</td>
+</tr>
+<tr>
+<td>F-Droid signed entry, Flipper API gating and catalog, TUF roles, the unknown-entry lesson</td>
+<td>pattern</td>
+<td>2028-04-01 to 2028-10-04</td>
+</tr>
+</tbody>
+</table></div>
+<p>The earliest re-check is <strong>2026-11-04</strong>. Claude Code changes its marketplace rules almost weekly, so re-read the marketplace reference and loading pages before the store decision is written into the spine.</p></section></main></div>
+<footer>Generated from research.md in this folder; research.md is the source of truth. Deep Recon run, 2026-10-04.</footer></div></body></html>
