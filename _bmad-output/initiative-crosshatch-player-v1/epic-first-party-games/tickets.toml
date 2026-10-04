@@ -1,0 +1,94 @@
+# tickets.toml — epic-first-party-games's agreed stories in build order. tickets.py reads it.
+# `touches` and `stays_out` are this epic's own keys: the files an entry may change, and those it must not; a builder that needs a file outside `touches` stops and reports.
+# Every entry may also write its plan and its `story-<name>-screenshots/`, append under `## <ref>` in `deferred-work.md`, and keep formatting-only changes from `./bin/clang-format-fix`; none of these counts as a file outside `touches`.
+# Verify order (AGENTS.md): host tests and fast checks, then the review. "Host suites" means AGENTS.md's host-test command under `/tmp/crosshatch-hosttest.lock`. The games change no firmware (R2), so entries 1 to 3 run no firmware build; `sim.sh` runs under `/tmp/crosshatch-build.lock`, and CI builds all five envs on the epic PR.
+# "The games check" is entry 1's host target and `games-check` job (R10); "rounds" are the scripted rounds it plays, under `test/game_script/fixtures/rounds/<id>/`, never in `games/`.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: the games check and Ultimate tic-tac-toe"
+description = "Adds `games/ultimate-tic-tac-toe/` (R1, R6, R8) with the shared 9×9 board module (R3), which entry 3 copies unchanged, and the games check (R10): a harness target that finds every `games/<id>/` at configure time, packs each with the real `pack_game.py` at build time, installs it with the real installer, and plays every round under `test/game_script/fixtures/rounds/<id>/` in each mode the manifest declares, drawing every local seat after each step and failing on a pack or load failure, any fault (the 2 M-instruction budget and the frame limits included), a snapshot over 700 B (R9), a round that ends with other winners than its file says, a game with no rounds, or rounds with no game; it documents the rounds format in `fixtures/README.md`, exposes the packed `games/` folder to other harness targets (entry 2's resume tests use it), and adds the `games-check` job to `crosshatch-ci.yml`, listed in `Crosshatch Test Status`'s `needs`."
+verify = "Host suites pass, including the games check over `ultimate-tic-tac-toe` with a round won by each seat, a drawn round, a forced-board round, and a rejected move; scratch copies (not committed) of the game that fail to pack, raise a Lua error, grow a snapshot past 700 B, and lose their rounds folder each turn the target red; the `games-check` job's commands pass once from a fresh clone (or AGENTS.md's `git archive` tree with every submodule); every `scripts/*_test.py`, `python3 scripts/check_upstream_touches.py`, and `./bin/clang-format-fix` twice pass; simulator screenshots (`sim.sh build x4pro`) show the package installed from `fs_/games/`, a pass round with the playable small boards highlighted, a won small board, and the Over menu."
+covers = ["R1", "R2", "R3", "R6", "R8", "R9", "R10"]
+after = ["3.9", "4.2", "4.3", "4.7", "5.12", "5.13"]
+hitl = false
+risk = "high"
+unknown = "Whether rounds play best as taps through `input` on the harness's 480 × 800 canvas or as moves through the session with a tap check per game, and whether `SessionGame` or the match harness carries a round; the builder picks the one that exercises `draw` and `input` for every seat. If the check and the game outgrow one session, the orchestrator splits the check off as its own entry first, with a minimal round over `fixtures/pass-open/` copied into a scratch `games/` folder for its test."
+references = ["_bmad-output/specs/spec-crosshatch-player/first-party-games.md", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, sections 1 to 4 and 7", "docs/crosshatch/api-level-1.txt, the limits and icons", "test/game_script/LuaGameFixture.h, SessionGame", "test/game_script/harness/packed_fixtures.cmake and pack_fixtures.py", "test/game_script/harness/PackedFixturesTest.cpp", "test/game_script/fixtures/pass-open/main.lua", "test/game_script/fixtures/README.md", ".github/workflows/crosshatch-ci.yml, crosshatch-test-status", "docs/crosshatch/orchestrated-epics.md, the fresh-clone recipe", ".claude/skills/run-crosshatch-player/SKILL.md"]
+touches = ["games/ultimate-tic-tac-toe/", "test/game_script/harness (a new games-check target: its .cmake, test source, and any helper beside pack_fixtures.py)", "test/game_script/harness/CMakeLists.txt (the include line)", "test/game_script/fixtures/rounds/ultimate-tic-tac-toe/", "test/game_script/fixtures/README.md (the rounds format)", ".github/workflows/crosshatch-ci.yml (the games-check job and its line in crosshatch-test-status's needs)"]
+stays_out = ["src/**", "lib/**", "docs/crosshatch/api-level-1.txt", "test/CMakeLists.txt (ledger row 3; the target lives under test/game_script, which is fork-only)", ".github/workflows/ci.yml and every other upstream file", ".github/workflows/crosshatch-release.yml and crosshatch-game-packages.yml", "scripts/pack_game.py and fork_release.py"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Battleship"
+description = "Adds `games/battleship/` (R1, R7, R8, R9): a hidden pass game whose placement runs one seat at a time, each ship a move that keeps the turn (rotate in the seat's `ui`, Random places the remaining ships, Ready passes the turn), then one shot per turn with hit, miss, or sunk shown to the mover before the runtime's hand-off; the firing view draws the target board large with library icons and the seat's own fleet small with `ch.gfx` shapes, each `draw` showing only its seat's fleet and shots, and seat 0 at Over both fleets; its rounds cover a win for each seat, Random placement, and rejected moves; it adds `PassResumeTest` cases over the packed game from entry 1 for a hidden match saved in Paused and a snapshot written mid-turn in Playing, both during placement (R11, `deferred-work.md` `## e5-close` V3, marked resolved)."
+verify = "Host suites pass, including the games check over `battleship` (every snapshot within 700 B) and the two new `PassResumeTest` cases, each resuming into the hand-off with the placed ships kept; every `scripts/*_test.py`, `python3 scripts/check_upstream_touches.py`, and `./bin/clang-format-fix` twice pass; simulator screenshots show placement with the rotate, Random, and Ready controls, the hand-off between placements, the firing view with both boards, Result with its banner after a hit, and seat 0 under the Over menu with both fleets."
+covers = ["R1", "R2", "R7", "R8", "R9", "R11"]
+after = [1, "5.9"]
+hitl = false
+risk = "high"
+unknown = "Where the five placement controls and the two boards fit on 480 × 800 with tap targets a child can hit (about 44 px target cells, about 28 px fleet cells); the builder settles the layout from simulator screenshots, and a layout that cannot fit both boards goes back to the owner before a toggle is built."
+references = ["_bmad-output/specs/spec-crosshatch-player/first-party-games.md, Battleship", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, section 3 (hidden games)", "docs/crosshatch/game-canvas.md, the pass states", "docs/crosshatch/game-icons.md", "test/game_script/fixtures/pass-hidden/main.lua", "test/game_script/harness/ResumeMatchTest.cpp, PassResumeTest", "_bmad-output/implementation-artifacts/deferred-work.md, `## e5-close` (V3)", "_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/epic-play-nearby.md, Notes, the For-inception line on Battleship in nearby"]
+touches = ["games/battleship/", "test/game_script/fixtures/rounds/battleship/", "test/game_script/harness/ResumeMatchTest.cpp", "test/game_script/harness/match.cmake (only to reach entry 1's packed games)"]
+stays_out = ["src/**", "lib/**", "docs/crosshatch/api-level-1.txt", "games/ultimate-tic-tac-toe/ and games/sudoku/", "entry 1's games-check target and fixtures/README.md (called, not changed)", ".github/workflows/**", "every upstream file"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Sudoku"
+description = "Adds `games/sudoku/` (R1, R4, R5, R8, R9) with entry 1's 9×9 board module copied byte for byte (R3) and a test in the games check that fails when the two copies differ: Sudoku+'s interaction (a cell, then a digit on a 3 × 3 pad; NOTES as dots in the digit's pad position, grey rings with the focused digit's marks and copies black; ERASE; UNDO from a bounded ring in `state`; clash marks; a solved grid ends the round with seat 1 the winner); difficulty as a manifest setting; a bank of puzzles in `puzzles.lua` made and graded offline with crossplay's `SudokuCore`, its source commit and seeds recorded in the file, picked at random in `setup` and varied by a random symmetry; a host test checks that every bank puzzle is a valid grid with exactly one solution; its rounds solve a puzzle at each difficulty and cover notes, ERASE, UNDO, and a rejected move on a clue."
+verify = "Host suites pass, including the games check over `sudoku` (every snapshot within 700 B, no fault in `setup`'s pick and symmetry), the board-module identity test, and the bank test; every `scripts/*_test.py`, `python3 scripts/check_upstream_touches.py`, and `./bin/clang-format-fix` twice pass; simulator screenshots show the Options difficulty row, a grid with clues, the player's digits, dot notes with a focused digit, a clash mark, and the solved Over screen."
+covers = ["R1", "R2", "R3", "R4", "R5", "R8", "R9"]
+after = [1, "5.12"]
+hitl = false
+risk = "medium"
+unknown = "How many puzzles per difficulty the bank carries within the 128 KB member and 256 KB Lua-source limits (about 82 B a puzzle) and what crossplay's grades map to Easy, Medium, and Hard; the builder records both in the plan."
+references = ["https://github.com/thisishuey/crossplay, docs/apps/sudokuplus.md (Playing it, Drawing) and docs/apps/sudoku.md (grading)", "https://github.com/thisishuey/crossplay, src/apps_local/sudoku/SudokuCore.h and tools_local/sudoku/", "_bmad-output/specs/spec-crosshatch-player/first-party-games.md, Sudoku and Shared board", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md, sections 1 (settings) and 2 (ctx.settings)", "test/game_script/fixtures/pass-art/manifest.json (settings)"]
+touches = ["games/sudoku/", "test/game_script/fixtures/rounds/sudoku/", "entry 1's games-check test source (the identity test and the bank test only)"]
+stays_out = ["src/**", "lib/**", "docs/crosshatch/api-level-1.txt", "games/ultimate-tic-tac-toe/ (its board module is the copy's source, not changed) and games/battleship/", "test/game_script/harness/ResumeMatchTest.cpp and match.cmake", ".github/workflows/**", "every upstream file"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only, its scope set when it starts from the three build records and the review findings deferred during the epic (R14): the three games' Lua (shared idioms stay copied, since `require` loads only from a package's own root), the rounds data, and the games check's code; the `deferred-work.md` items the epic met are fixed, documented, or deferred, each deferral with a reason the owner confirms at entry 5."
+verify = "Host suites pass; every `scripts/*_test.py` and `python3 scripts/check_upstream_touches.py` pass; `./bin/clang-format-fix` twice leaves nothing new; the epic PR's CI is green on all five env builds, both test-status jobs, `pio check`, and the size and ledger jobs."
+covers = ["R14"]
+after = [2, 3]
+hitl = false
+risk = "low"
+unknown = "None beyond what the build records hold."
+touches = ["games/**", "test/game_script/fixtures/rounds/**", "the games-check target's files from entry 1", "test/game_script/harness/ResumeMatchTest.cpp (entry 2's cases only)"]
+stays_out = ["src/**", "lib/**", "docs/crosshatch/api-level-1.txt", "every upstream file"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "Device run and owner sign-off"
+description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the packet's `pass-store` fixture; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
+verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome."
+covers = ["R11", "R12", "R13", "R14"]
+after = [4]
+hitl = true
+risk = "medium"
+unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
+references = ["_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/device-run-packet.md", "_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/story-device-run-and-owner-sign-off-plan.md", "_bmad-output/implementation-artifacts/deferred-work.md, `## e5-close`, `## e6pre-13`, `## e5-r5`, `## e5-r2`, `## owner-e4-games-cap`", "_bmad-output/initiative-crosshatch-player-v1/epic-api-freeze/epic-api-freeze.md, Notes, the Lua C-stack headroom item", "src/games/GameVM.cpp, the \"VM stopped\" line", ".github/workflows/crosshatch-release.yml, dry_run"]
+touches = ["the plan and its packet files beside it", "a new story entry in this tickets.toml for a device failure"]
+stays_out = ["games/** (a fix is a new story)", "src/**", "lib/**", "test/**"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Fork release with the three games"
+description = "After the epic PR merges, the owner dispatches the release workflow from `develop` without `dry_run` (AD-25), and the release it publishes attaches `sudoku.chgame`, `ultimate-tic-tac-toe.chgame`, and `battleship.chgame` with notes listing their hashes, each equal to what `pack_game.py` prints for `games/<id>/` at the released commit (R13)."
+verify = "The release page lists the three `.chgame` assets and their hashes; `pack_game.py` over each `games/<id>/` at the released tag prints the same hashes, recorded in the plan with the release link."
+covers = ["R13"]
+after = [5]
+hitl = true
+risk = "low"
+unknown = "None: the workflow already packs every `games/<id>/` (epic-platform-baseline entry 7)."
+references = [".github/workflows/crosshatch-release.yml", "scripts/fork_release.py, pack_games", "_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md, AD-25"]
+touches = ["the plan"]
+stays_out = ["every repository file"]
