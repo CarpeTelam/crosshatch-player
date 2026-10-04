@@ -1054,3 +1054,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play-retrospective.md`
   summary: Retrospective D4 and AI-10 (test data): the same 8-byte package hash is hard-coded in `ModePickerTest.cpp`, `ResumeMatchTest.cpp`, and `GameSaveStoreTest.cpp`, and builders such as `resumeBytes`, `resumeFile`, `snapshotOf`, `manifestJson`, `addGame`, `dropMatch`, `tapCell`, and `holds` recur across suites; `LauncherSupport.h` serves two suites but not these. AI-10 deferred one test-support header to the next sweep.
   evidence: Retrospective D4 (the hash lines verified, the rest not) and AI-10. Trigger: epic-play-nearby's refactor sweep.
+
+## 8.8
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-the-games-check-plan.md`
+  summary: The games check and `ctest -L games-check` are documented only in `test/game_script/first_party/README.md` and a CI comment, not in AGENTS.md or `docs/contributing/`.
+  evidence: A contributor adding a game under `games/` reads AGENTS.md first and finds no mention of the check, its label, or the rule that a game leaving the repository takes its companion folder with it. The fix edits AGENTS.md (an agent-context file, the owner's), so it is deferred, not patched. Location: AGENTS.md, docs/contributing/. Severity: low.

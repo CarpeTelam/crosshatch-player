@@ -3,7 +3,7 @@ title: 'The games check'
 type: 'feature'
 ticket: '8'
 created: '2026-10-04'
-status: 'built'
+status: done
 baseline_revision: 'd6aa0d3cf3e16a0315529baaba3ffe4b9d438aec'
 route: 'full'
 route_source: 'auto'
