@@ -928,3 +928,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-5-ai6-concurrency-group-and-agents-lines.md`
+  summary: Run the new `crosshatch-game-packages.yml` concurrency group on a real PR: label it `package-games`, then add an unrelated label while the pack runs, and confirm the pack is not cancelled; also confirm a later push still cancels it.
+  evidence: `.github/workflows/crosshatch-game-packages.yml` concurrency.group; Actions cannot run locally, so only the YAML parse and a reading of the expression were checked. Trigger: the epic PR.
