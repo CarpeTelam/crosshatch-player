@@ -928,3 +928,14 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-3
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: R10 is decided for the nearby part (owner, 2026-10-04, option (b)): the ESP-NOW link pump and peer-silence detection run on the `GameLink` task, so an overlay cannot pause them (the match's move to `PeerGone` still waits for `loop()`); the link task never takes `RenderLock` or touches activity state. This covers the R10 entries above (the `## 3.7` entry, the epic-icon-library R10 entry, and the epic-pass-and-play deferral).
+  evidence: `docs/crosshatch/game-canvas.md` Overlays; `epic-play-nearby.md` Notes.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: Still open for solo and pass matches: while an overlay is open the match loop's 3 s watchdog, `vm->pollTimer()`, and `store.flushIfDue` pause; a call running in the VM runs on unwatched and a timer fires when the overlay closes.
+  evidence: `GameMatchActivity::loopPlaying`; `FrontlightPanelActivity`. Trigger: the next ledger change that touches `FrontlightPanelActivity` or `ActivityManager` beyond rows 4 and 5.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: The architecture spine does not yet carry the R10 decision: AD-18's `GameLink` bullet (line 309), AD-20's Prevents and Rule (328-329), and AD-11's 10 s peer-silence rule (338) need to say detection runs on the `GameLink` task, the task never takes `RenderLock` or touches activity state, and the move to `PeerGone` waits for `loop()`. The link is not built (epic-play-nearby).
+  evidence: `ARCHITECTURE-SPINE.md` lines 236, 305, 309, 328, 338. Trigger: the next architecture pass, or epic-play-nearby's first story.
