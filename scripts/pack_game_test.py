@@ -857,6 +857,7 @@ class ReadManifestTest(unittest.TestCase):
         manifest_keys = {body.split(' ', 1)[0].split('.')[0] for kind, body in entries if kind == 'manifest'}
         self.assertEqual(pg.ICON_NAME.pattern, names['manifest_icon'])
         self.assertEqual(pg.MAX_ICON_BYTES, limits['manifest_icon_bytes'])
+        self.assertEqual(pg.MAX_NESTING, limits['manifest_nesting_count'])
         self.assertEqual(weights, set(pg.ICON_WEIGHTS))
         self.assertEqual(manifest_keys, set(pg.KNOWN_KEYS))
         # The settings rules and the reserved pages' limits are the list's too.

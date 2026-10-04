@@ -29,7 +29,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
   - **success:** A Lua error, an infinite loop, heap exhaustion, and an oversized state or move each end the session in the error view with Back, both in host tests and on a device, and the device stays responsive.
 - **CAP-3**
   - **intent:** A player or author installs a game by putting one `.chgame` file on the SD card with the existing web file manager or USB, without a reboot or a firmware build.
-  - **success:** When the launcher opens, a valid package in `/games/` is listed. An invalid one is renamed `.bad` and its reason is shown once. Reinstalling a game keeps its saved data.
+  - **success:** When the launcher opens, a valid package in `/games/` is listed. An invalid one is renamed `.bad` and its reason is shown once; a valid one that would exceed 64 games waits in `/games/` with its reason. Reinstalling a game keeps its saved data.
 - **CAP-4**
   - **intent:** A player reaches a paged games launcher from Home, starts a game, continues a saved one, or removes one, with no text entry.
   - **success:** From Home, a game starts in at most 3 taps: Games, the game, and Continue or New game on its title screen, which starts the game's current mode (the mode last started, or the developer's default; another mode is picked in Options first). "Continue" is offered first when a save exists. The list pages past one screen. (Amended 2026-10-02, owner, epic-pass-and-play entry 3, with spine AD-22.)

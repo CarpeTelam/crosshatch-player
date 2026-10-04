@@ -344,7 +344,7 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Width x height of `title.png` (`GameImages.h`) | `TITLE_IMAGE_WIDTH` x `TITLE_IMAGE_HEIGHT` | 480 x 480 |
 | Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 480 |
 | Width x height of a `.png` | `IMAGE_MAX_WIDTH` x `IMAGE_MAX_HEIGHT` | 2,048 x 3,072 |
-| Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`) | `StreamingJsonParser::MAX_NESTING` | 32 |
+| Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`; `limit manifest_nesting_count` in `api-level-1.txt`) | `StreamingJsonParser::MAX_NESTING` | 32 |
 
 The installer counts converted images as the game loader does: each `.bmp` is 62 + ceil(width / 32) * 4 * height
 bytes, header included, and `icon.bmp` is left out.

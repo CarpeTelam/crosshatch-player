@@ -19,6 +19,7 @@
 #include "Manifest.h"
 #include "PackageLimits.h"
 #include "Session.h"
+#include "StreamingJsonParser.h"
 
 // Checks docs/crosshatch/api-level-<n>.txt against its own grammar and against
 // ApiLevel.h: the list is what API_SURFACE_CRC names, so the two change together.
@@ -111,6 +112,7 @@ TEST(ApiLevelTest, PackageLimitsMatchTheList) {
   EXPECT_EQ(limits["member_bytes"], std::to_string(GameCore::MEMBER_BYTES));
   EXPECT_EQ(limits["lua_sources_bytes"], std::to_string(GameCore::LUA_SOURCES_BYTES));
   EXPECT_EQ(limits["member_stem_bytes"], std::to_string(GameCore::MEMBER_STEM_BYTES));
+  EXPECT_EQ(limits["manifest_nesting_count"], std::to_string(StreamingJsonParser::MAX_NESTING));
   EXPECT_EQ(limits["image_width_pixels"], std::to_string(GameCore::IMAGE_MAX_WIDTH));
   EXPECT_EQ(limits["image_height_pixels"], std::to_string(GameCore::IMAGE_MAX_HEIGHT));
   EXPECT_EQ(limits["images_bytes"], std::to_string(GameCore::IMAGES_BYTES));

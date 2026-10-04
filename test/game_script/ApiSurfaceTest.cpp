@@ -29,6 +29,7 @@
 #include "PackageLimits.h"
 #include "Sandbox.h"
 #include "Session.h"
+#include "StreamingJsonParser.h"
 
 static_assert(sizeof(lua_Integer) == 8, "games rely on 64-bit Lua integers");
 
@@ -451,6 +452,7 @@ TEST_F(ApiSurfaceTest, LimitsMatchTheCode) {
       {"member_bytes", GameCore::MEMBER_BYTES},
       {"lua_sources_bytes", GameCore::LUA_SOURCES_BYTES},
       {"member_stem_bytes", GameCore::MEMBER_STEM_BYTES},
+      {"manifest_nesting_count", StreamingJsonParser::MAX_NESTING},
       {"image_width_pixels", GameCore::IMAGE_MAX_WIDTH},
       {"image_height_pixels", GameCore::IMAGE_MAX_HEIGHT},
       {"title_image_width_pixels", GameCore::TITLE_IMAGE_WIDTH},

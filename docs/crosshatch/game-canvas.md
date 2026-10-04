@@ -85,6 +85,15 @@ overlay closes, and a store set meanwhile is written then (or by the forced exit
 Fixing it needs files outside the ledger (`FrontlightPanelActivity`, or `ActivityManager` beyond rows 4 and 5), so it
 is deferred (`deferred-work.md`, 3.7).
 
+Owner decision (R10, e6pre-3, 2026-10-04), option (b): the supervision above stays paused under an overlay in solo and
+pass matches, and the nearby link does not depend on it for pumping or detection (the match's reaction to a lost peer still waits for `loop()`, below). What pauses under an overlay: the watchdog, the timer poll, and the
+store flush. What must not pause: the ESP-NOW link pump (draining the receive ring, `ReliableLink` resends and acks) and
+the peer-silence detection (a peer silent for 10 s). Both run on the `GameLink` task (spine AD-18; detection on that task is new to the spine), not in
+`GameMatchActivity::loop()`, so an open overlay cannot stall them; no `ActivityManager` change and no ledger row. The
+constraint on that task: it never takes `RenderLock` and never touches activity state (no `ActivityManager` call, no
+view or match-state write); it reports a lost peer to the match through the session's queue, and the match acts on it
+in its next `loop()`, that is when the overlay closes, so the move to `PeerGone` waits for the overlay while the link and the detection do not. The queue is depth-bounded, so epic-play-nearby states its overflow policy for a long overlay (a lost-peer event is never dropped). The link is not built yet (epic-play-nearby).
+
 ### Leaving
 
 A user exit runs from `loop()`. It takes `RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it,
