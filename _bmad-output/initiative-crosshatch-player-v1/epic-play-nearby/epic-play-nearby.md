@@ -2,7 +2,7 @@
 type: epic
 title: "Two devices play one match over ESP-NOW"
 parent: initiative-crosshatch-player-v1
-covers: [CAP-5, CAP-7]
+covers: [CAP-5, CAP-7, CAP-10]
 after: []
 assignee: ""
 risk: high
@@ -12,20 +12,20 @@ risk: high
 
 ## Description
 
-Adds Play Nearby: the wire protocol and reliable link in `GameCore`, tested over a lossy fake link, the ESP-NOW adapter and link task, the host lobby and guest join, and clean endings when a peer leaves or goes silent. It measures the spec's open radio questions.
+Adds Play Nearby: the wire protocol and reliable link in `GameCore`, tested over a lossy fake link, the ESP-NOW adapter and link task, the host lobby and guest join, and clean endings when a peer leaves or goes silent. It measures the spec's open radio questions. With epic-first-party-games's games in `games/<id>/`, it adds `nearby` to Ultimate tic-tac-toe's and Battleship's manifests and plays their nearby rounds (owner, 2026-10-04).
 
 ## Outcome
 
-Two players each on their own device finish a round of an unmodified game; the nearby part of CAP-5 and the peer-left part of CAP-7 are the signal.
+Two players each on their own device finish a round of an unmodified game; the nearby part of CAP-5, the peer-left part of CAP-7, and CAP-10's nearby rounds are the signal.
 
 ## Requirements
 
-Completed at inception. This epic owns the Play Nearby part of CAP-5 and the peer-left part of CAP-7.
+Completed at inception. This epic owns the Play Nearby part of CAP-5, the peer-left part of CAP-7, and CAP-10's nearby rounds (Ultimate tic-tac-toe and Battleship; epic-first-party-games owns the rest of CAP-10).
 
 ## Done when
 
 1. `Protocol`, `ReliableLink`, and `Session` pass host suites over a `FakeLink` that drops, delays, duplicates, and reorders frames.
-2. Two X4 Pros finish a round of the same unmodified package in Play Nearby: host lobby, guest join, seat assignment, moves, a rejected move, and Play again.
+2. Two X4 Pros finish a round of the same unmodified package in Play Nearby: host lobby, guest join, seat assignment, moves, a rejected move, and Play again. Ultimate tic-tac-toe and Battleship, with `nearby` added to their manifests in `games/<id>/`, each finish a round too, Battleship's boards hidden from the other player's screen.
 3. A peer that leaves or is silent for 10 s brings up "player left" on the other device, and a script error on one device ends the match on both.
 4. The lobby never opens while the web server or other Wi-Fi is up, refuses to open below 100 KB free internal heap, and the radio is off after leaving; the simulator envs build with `EspNowLink` and nearby compiled out.
 5. Reliability, battery cost, and internal heap after teardown are measured, and the 400 ms, 10 s, and 100 KB values are confirmed or changed and recorded in `docs/crosshatch/` and the spine's Deferred rows.
@@ -33,7 +33,7 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
 
 ## Boundaries
 
-`GameCore` Protocol, ReliableLink, and FakeLink; `EspNowLink`, `NearbySession`, and the GameLink task in `src/games`; `GameLobbyActivity`; the Lobby and PeerGone states. Not reconnect, more than two seats, or saving nearby matches (spec Non-goals).
+`GameCore` Protocol, ReliableLink, and FakeLink; `EspNowLink`, `NearbySession`, and the GameLink task in `src/games`; `GameLobbyActivity`; the Lobby and PeerGone states; `nearby` in the first-party two-player manifests and any fix in `games/<id>/` their nearby rounds need. Not reconnect, more than two seats, or saving nearby matches (spec Non-goals).
 
 ## References
 
@@ -63,4 +63,7 @@ Completed at inception. This epic owns the Play Nearby part of CAP-5 and the pee
   - `API_SURFACE_CRC` changed (0x9B618471 to 0x0401CF0D) with the new `manifest_nesting_count` limit: both test devices need firmware from the same build.
   - Open and not blocking: the B7.6 device check of the forced-exit blank (`## e6pre-13`; epic-first-party-games's hidden pass device run owns it since 2026-10-04); the real-PR run of the `crosshatch-game-packages.yml` concurrency group (`## e6pre-5`; this epic owns it).
 - Gate cleared (2026-10-04): epic-pass-and-play is closed (`status: done`; its 40 B flash overage was covered from the unallocated headroom by the owner, leaving this epic's 9,504 B / 160 B share unchanged), so this epic's `after` on epics 4 and 5 is met. Its Requirements and breakdown wait for inception.
-- Handoff to epic-api-freeze (2026-10-04): it waits on this whole epic; every level-1 change here (and any `API_SURFACE_CRC` change) lands before the freeze, and this epic's two-device setup is the one its nearby rounds use. Epic-first-party-games runs alongside this epic and may touch `test/CMakeLists.txt` (ledger row 1), `test/game_script/`, and `crosshatch-ci.yml`'s `needs` for its `games/` check; whichever merges second merges the other in.
+- Handoff to epic-api-freeze (2026-10-04): it waits on this whole epic; every level-1 change here (and any `API_SURFACE_CRC` change) lands before the freeze, and the `nearby` manifests this epic adds are in `games/<id>/` before its `pack-games` dry run.
+- Decision (owner, 2026-10-04): epic-first-party-games builds first, then this epic, which waits on it (the initiative's `tickets.toml`) and adds `nearby` to Ultimate tic-tac-toe's and Battleship's manifests and plays their rounds (Done when 2). Epic-first-party-games merges first with its PR-time `games/` check over `test/CMakeLists.txt` (ledger row 1), `test/game_script/`, and `crosshatch-ci.yml`'s `needs`; this epic builds on it, and its own CMake and CI changes merge on top. The second device gates only this epic's closure now.
+- Waits on epic-first-party-games because: Ultimate tic-tac-toe and Battleship in `games/<id>/`, which this epic adds `nearby` to and plays.
+- For inception (moved from epic-api-freeze, 2026-10-04): the first-party nearby rounds play only on two X4 Pros running one build (the simulator compiles nearby out, and a level-1 surface CRC mismatch aborts the match, AD-13). Battleship in `nearby` carries both fleets in the shared state and only `draw` hides the other seat's ships, which the spec accepts; its placement through the per-seat `ui` is untested until this epic.

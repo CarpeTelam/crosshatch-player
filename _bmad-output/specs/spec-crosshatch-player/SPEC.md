@@ -46,7 +46,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
   - **intent:** Games and runtime screens share a curated icon library as a common design language, and a game can also ship its own images.
   - **success:** The launcher, the runtime views, the Home Games tile, and the first-party games draw from the library. A package image is shown at its native size in 1-bit.
 - **CAP-9**
-  - **intent:** An AI assistant can write a working game from the API docs alone, and the docs can move to a future starter repo unchanged.
+  - **intent:** An AI assistant can write a working game from the API docs alone, and the docs can move to the starter repo (CAP-12) unchanged.
   - **success:** Given only `docs/crosshatch/game-api.md`, its LuaLS stub, and the icon catalog, an AI writes a game that installs and plays a round on a device.
 - **CAP-10**
   - **intent:** At least three first-party games ship with each fork release, covering a solo puzzle, an open-information two-player game, and a hidden-information two-player game. Together they exercise every mode.
@@ -54,6 +54,9 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - **CAP-11**
   - **intent:** Upstream `develop` merges stay clean. Game code sits outside upstream files, and changes to upstream files are capped by a ledger and enforced in CI.
   - **success:** A fork-only CI job fails any PR that changes an upstream path missing from the ledger or the baseline allowlist, and merging upstream `develop` touches no game code.
+- **CAP-12** (added 2026-10-04, owner; was a Non-goal)
+  - **intent:** A developer with an AI assistant starts from a public game starter repo that carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and example games, and has their own game on their device the same day.
+  - **success:** Pointed only at the starter repo, an AI assistant writes a game that packs with the repo's packer, installs through the inbox, and plays a round on an X4 Pro running a fork release with API level 1 frozen.
 
 ## Constraints
 
@@ -77,7 +80,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - A computer opponent provided by the runtime. A script may implement its own inside `apply`.
 - Real-time, action, physics, or drag-heavy games.
 - Playing against CrossPlay devices, and porting CrossPlay's C++ games.
-- A game starter repo, a gallery, sharing between players, a browser playground, and a simulated radio link for Play Nearby.
+- A gallery, sharing between players, a browser playground, and a simulated radio link for Play Nearby. (Amended 2026-10-04, owner: the game starter repo moved into v1 as CAP-12.)
 - Migrating saves across package versions; a changed package hash discards the save.
 - Aligning with upstream "web plugins" before upstream has code for them.
 - Encryption, anti-cheat, and telemetry.

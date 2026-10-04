@@ -2,7 +2,7 @@
 type: initiative
 title: "Games as content: the crosshatch-player v1 game platform"
 parent: none
-covers: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11]
+covers: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12]
 after: []
 assignee: ""
 risk: high
@@ -21,19 +21,20 @@ The author writes a new game with an AI in an evening and a child plays it on a 
 
 ## Requirements
 
-The spec is the requirement source: `CAP-1` to `CAP-11`, with its Constraints and Non-goals. Epics cite those ids in `covers`.
+The spec is the requirement source: `CAP-1` to `CAP-12`, with its Constraints and Non-goals. Epics cite those ids in `covers`.
 
 ## Done when
 
 1. The spec's success signal is observed on a real X4 Pro: an AI-written game, dropped on the SD card as one `.chgame`, is launched by a child and a round is finished alone, passing the device, and against a second device, without adult help.
-2. Every CAP-1 to CAP-11 success check passes on a fork release build.
+2. Every CAP-1 to CAP-12 success check passes on a fork release build.
 3. The next merge of upstream `develop` touches no game code, and the upstream-touch ledger job passes on it.
 4. `default`, `x4c`, and `papermono` build with the game libraries compiled and unreferenced, and the x4pro image grows by at most 250 KB.
 5. Sudoku, Ultimate tic-tac-toe, and Battleship are attached to a fork release as `.chgame` assets.
+6. A public game starter repo carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and an example game, and targets the freezing release (CAP-12).
 
 ## Boundaries
 
-Follows the spec's capabilities, cut along the spine's layers: build and merge guardrails, the script runtime, the icon library, install and launcher, pass-and-play, Play Nearby, author docs, first-party games, and the API level 1 freeze. Not in scope: everything in the spec's Non-goals and the spine's Deferred table. Tracer path: Home, Games, and a solo Lua game drawn and played on an X4 Pro (baseline, then script runtime), before packages install through the inbox.
+Follows the spec's capabilities, cut along the spine's layers: build and merge guardrails, the script runtime, the icon library, install and launcher, pass-and-play, Play Nearby, author docs, first-party games, the API level 1 freeze, and a game starter repo. Not in scope: everything in the spec's Non-goals and the spine's Deferred table. Tracer path: Home, Games, and a solo Lua game drawn and played on an X4 Pro (baseline, then script runtime), before packages install through the inbox.
 
 - Touch point: `platformio.ini`, `test/CMakeLists.txt`, the simulator's `simulator.ini` — build flag, test subdirectories, lint suppress (ledger rows 1 and 3); owner: epic-platform-baseline
 - Touch point: `ActivityManager`, `HomeActivity` — the Games menu item and `goToGames()` (ledger rows 4 to 7); owner: epic-script-runtime
@@ -44,6 +45,7 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Touch point: the existing web file manager and USB — consumed unchanged to put files in `/games/`; owner: epic-install-and-launcher
 - Touch point: `src/network/OtaUpdater.cpp` — guarded calls to the fork update source (ledger row 10, AD-25); owner: epic-platform-baseline
 - Touch point: the fork release — the release workflow numbers and publishes firmware and packs every `games/<id>/` (AD-25); owner: epic-platform-baseline; epic-first-party-games adds only game sources
+- Touch point: the game starter repo, a separate public GitHub repository that carries `docs/crosshatch/`'s author docs unchanged, a packer, and example games (CAP-12); owner: epic-api-freeze
 
 ## References
 
@@ -66,3 +68,4 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Source conflict: spine Operational envelope, Firmware delivery — "users update through the existing OTA, SD, or web flasher paths" vs `src/network/OtaUpdater.cpp`, which checks only `crosspoint-reader/crosspoint-reader` releases/latest and compares X.Y.Z alone; a fork device would be offered upstream firmware without games and never a fork release. The fork versioning and update-source scheme is unsettled and waits on an architecture decision; epic-first-party-games (release assets) and any fork firmware release wait on it.
 - Decision: the OTA source conflict is settled by AD-25: builds with `FREEINK_CAP_GAMES` update from the fork's own releases, versioned `X.Y.Z-ch.N` by one fork release workflow, through the ledger's row 10 (`OtaUpdater.cpp`); epic-platform-baseline owns it (user's decision, 2026-09-26).
 - Decision (owner, 2026-10-04): nine epics. epic-first-party-games is split: it keeps the three games in solo and pass, a PR-time `games/` check, and the release assets, and runs alongside epic-play-nearby; epic-api-freeze (epic 9) plays the games' nearby rounds, settles the pre-freeze checklist, and sets `API_LEVEL_FROZEN` last, after epic-play-nearby, epic-game-api-docs, and epic-first-party-games. This amends the 2026-09-26 Decisions on eight epics and on the second device, which now gates the closure of epic-play-nearby and epic-api-freeze.
+- Decision (owner, 2026-10-04): the build order is epic-first-party-games, epic-play-nearby, epic-game-api-docs, epic-api-freeze. Epic-play-nearby adds `nearby` to the first-party two-player games and plays their rounds, so the second device gates only its closure. A game starter repo moves into v1 as CAP-12 (spec Non-goal and spine Deferred row amended), built by epic-api-freeze after the freeze. This supersedes the earlier 2026-10-04 Decision where they differ.
