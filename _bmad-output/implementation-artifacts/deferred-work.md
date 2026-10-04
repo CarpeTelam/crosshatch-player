@@ -1006,3 +1006,8 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
   summary: F (landed): `epic-play-nearby.md` Notes gain (a) PeerGone waits for an open overlay (accepted; the risk is an overlay held open indefinitely), (b) the session queue's overflow policy is the epic's to state and a lost-peer event is never dropped, (c) the four partly-remote roster paths are the first story, (d) measure the x4pro flash and RAM base before the first story. Open: the overflow policy itself and the four paths' design are epic 6 planning's.
   evidence: `epic-play-nearby.md` Notes; `deferred-work.md` `## e5-xr`.
+## e6pre-5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-5-ai6-concurrency-group-and-agents-lines.md`
+  summary: Run the new `crosshatch-game-packages.yml` concurrency group on a real PR: label it `package-games`, then add an unrelated label while the pack runs, and confirm the pack is not cancelled; also confirm a later push still cancels it.
+  evidence: `.github/workflows/crosshatch-game-packages.yml` concurrency.group; Actions cannot run locally, so only the YAML parse and a reading of the expression were checked. Trigger: the epic PR.

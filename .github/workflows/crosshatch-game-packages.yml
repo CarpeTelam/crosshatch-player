@@ -16,8 +16,11 @@ on:
 permissions:
   contents: read
 
+# One group per PR, so a newer commit or the package-games label replaces a running pack. The group applies even when
+# the job's `if` skips it, so a `labeled` event for any other label gets a group of its own (the run id) and cancels
+# nothing.
 concurrency:
-  group: crosshatch-game-packages-${{ github.event.pull_request.number }}
+  group: crosshatch-game-packages-${{ github.event.pull_request.number }}${{ github.event.action == 'labeled' && github.event.label.name != 'package-games' && format('-other-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
