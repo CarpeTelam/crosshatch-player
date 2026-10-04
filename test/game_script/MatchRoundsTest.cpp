@@ -5,10 +5,10 @@
 #include "GameInput.h"
 #include "GameTimer.h"
 #include "LuaGameFixture.h"
+#include "MatchRounds.h"
 #include "SeatShown.h"
-#include "SoloRounds.h"
 
-// The solo round loop as the GameVM task runs it (AD-21): the ended-round count
+// The round loop as the GameVM task runs it (AD-21): the ended-round count
 // the match watches, and Play again on the same Session.
 
 using namespace GameScript;
@@ -17,10 +17,10 @@ using GameScriptTestSupport::readFixture;
 
 namespace {
 
-class SoloRoundsTest : public LuaGameTest {
+class MatchRoundsTest : public LuaGameTest {
  protected:
   // Loads the game and starts its first round through `rounds`, as GameVM::run does.
-  static Outcome begin(SessionGame& game, SoloRounds& rounds) {
+  static Outcome begin(SessionGame& game, MatchRounds& rounds) {
     const Outcome loaded = game.game.load();
     if (loaded != Outcome::Ok) return loaded;
     return rounds.start(*game.session);
@@ -35,7 +35,7 @@ class SoloRoundsTest : public LuaGameTest {
 
   // Moves the clock to the pending timer and steps its event, as GameVM::pollTimer
   // and run do; false when no timer was due.
-  bool tick(SoloRounds& rounds, LuaGame& game, uint64_t ms) {
+  bool tick(MatchRounds& rounds, LuaGame& game, uint64_t ms) {
     clock.advance(ms);
     InputEvent event;
     if (!game.timer().takeDueEvent(clock.nowMs(), event)) return false;
@@ -50,7 +50,7 @@ class SoloRoundsTest : public LuaGameTest {
   }
 };
 
-TEST_F(SoloRoundsTest, InputQueueClearDropsEveryEvent) {
+TEST_F(MatchRoundsTest, InputQueueClearDropsEveryEvent) {
   InputQueue queue;
   for (int i = 0; i < 3; ++i) queue.push(tapAt(static_cast<int16_t>(i)));
   queue.clear();
@@ -61,11 +61,11 @@ TEST_F(SoloRoundsTest, InputQueueClearDropsEveryEvent) {
   EXPECT_EQ(event.y, 7);
 }
 
-TEST_F(SoloRoundsTest, EachRoundEndIsCountedOnce) {
+TEST_F(MatchRoundsTest, EachRoundEndIsCountedOnce) {
   useSource("main", readFixture("tracer/main.lua"));
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(rounds.roundsEnded(), 0u);
   for (int i = 1; i <= 4; ++i) ASSERT_EQ(rounds.step(tapAt(200)), Outcome::Ok) << game.errorMessage();
@@ -79,11 +79,11 @@ TEST_F(SoloRoundsTest, EachRoundEndIsCountedOnce) {
   EXPECT_EQ(game.session->ver(), 6u);
 }
 
-TEST_F(SoloRoundsTest, PlayAgainDropsQueuedTapsCancelsTheTimerAndKeepsCountingVer) {
+TEST_F(MatchRoundsTest, PlayAgainDropsQueuedTapsCancelsTheTimerAndKeepsCountingVer) {
   useSource("main", readFixture("tracer/main.lua"));
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   for (int i = 1; i <= 5; ++i) ASSERT_EQ(rounds.step(tapAt(200)), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(rounds.roundsEnded(), 1u);
@@ -122,11 +122,11 @@ TEST_F(SoloRoundsTest, PlayAgainDropsQueuedTapsCancelsTheTimerAndKeepsCountingVe
 
 // The match asks for no render after Play again until this count moves (the
 // retro's R3), so it must move only once the new round's first frame is out.
-TEST_F(SoloRoundsTest, ARoundCountsAsStartedOnceItsFirstFrameIsPublished) {
+TEST_F(MatchRoundsTest, ARoundCountsAsStartedOnceItsFirstFrameIsPublished) {
   useSource("main", readFixture("tracer/main.lua"));
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   EXPECT_EQ(rounds.roundsStarted(), 0u);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(rounds.roundsStarted(), 1u);
@@ -147,20 +147,20 @@ TEST_F(SoloRoundsTest, ARoundCountsAsStartedOnceItsFirstFrameIsPublished) {
   EXPECT_TRUE(contains(frontText().c_str(), "Taps: 0 of 5")) << frontText();
 }
 
-TEST_F(SoloRoundsTest, ARoundWhoseFirstDrawFailsNeverCountsAsStarted) {
+TEST_F(MatchRoundsTest, ARoundWhoseFirstDrawFailsNeverCountsAsStarted) {
   useSource("main",
             "return { setup = function() return {} end, status = function() return { turn = 1 } end,\n"
             "  apply = function(s) return s end, input = function() return nil end,\n"
             "  draw = function() error('no frame', 0) end }");
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   EXPECT_EQ(begin(game, rounds), Outcome::ScriptError);
   EXPECT_EQ(rounds.roundsStarted(), 0u);
   EXPECT_EQ(frames.frameGen(), 0u);
 }
 
-TEST_F(SoloRoundsTest, PlayAgainRunsSetupAgain) {
+TEST_F(MatchRoundsTest, PlayAgainRunsSetupAgain) {
   useSource("main",
             "local setups = 0\n"
             "return { setup = function() setups = setups + 1 return { n = setups } end,\n"
@@ -169,7 +169,7 @@ TEST_F(SoloRoundsTest, PlayAgainRunsSetupAgain) {
             "  input = function() return nil end }");
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(frontText(), "setup 1");
   rounds.requestPlayAgain();
@@ -179,14 +179,14 @@ TEST_F(SoloRoundsTest, PlayAgainRunsSetupAgain) {
   EXPECT_EQ(game.session->ver(), 2u);
 }
 
-TEST_F(SoloRoundsTest, ARoundOverAtSetupIsCountedEachTime) {
+TEST_F(MatchRoundsTest, ARoundOverAtSetupIsCountedEachTime) {
   useSource("main",
             "return { setup = function() return {} end,\n"
             "  status = function() return { over = true, winners = {} } end, apply = function(s) return s end,\n"
             "  draw = function() end, input = function() return nil end }");
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   EXPECT_EQ(rounds.roundsEnded(), 1u);
   rounds.requestPlayAgain();
@@ -195,7 +195,7 @@ TEST_F(SoloRoundsTest, ARoundOverAtSetupIsCountedEachTime) {
   EXPECT_EQ(rounds.roundsEnded(), 2u);
 }
 
-TEST_F(SoloRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
+TEST_F(MatchRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
   useSource("main",
             "local n = 0\n"
             "return { setup = function() n = n + 1 if n > 1 then error('second setup') end return {} end,\n"
@@ -203,7 +203,7 @@ TEST_F(SoloRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
             "  draw = function() end, input = function() return nil end }");
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   rounds.requestPlayAgain();
   ASSERT_TRUE(rounds.takePlayAgain());
@@ -212,10 +212,10 @@ TEST_F(SoloRoundsTest, ASetupErrorOnPlayAgainEndsTheSession) {
   EXPECT_EQ(rounds.roundsEnded(), 1u);
 }
 
-// Only a pass round's seat 0 drops a late timer (e5-r6): a solo round that is over still shows its one local seat, so a
-// timer still armed when `over` comes reaches that seat's input, as before.
-TEST_F(SoloRoundsTest, ASoloTimerDueAfterOverStillReachesTheLocalSeat) {
-  useSource("main", R"(
+// A timer due after the round is over is never delivered, in any mode (e6pre-2, the owner's option (a) on the e5-r6
+// entries): a solo round that is over still shows its one local seat, and its timer is dropped all the same. The game
+// here never cancels its timer, so only the runtime's drop keeps it out of `input`.
+const char* const SOLO_TIMER_GAME = R"(
 return {
   setup = function() ch.timer.after(5000) return { taps = 0 } end,
   status = function(s) if s.taps >= 1 then return { over = true, winners = { 1 } } end return { turn = 1 } end,
@@ -226,14 +226,37 @@ return {
     if ev.kind == 'timer' then ch.log('timer for seat ' .. seat) end
     return nil
   end }
-)");
+)";
+
+TEST_F(MatchRoundsTest, ASoloTimerDueAfterOverIsDroppedNotDelivered) {
+  useSource("main", SOLO_TIMER_GAME);
   SessionGame game(*this);
   InputQueue queue;
-  SoloRounds rounds(game.game.timer(), queue);
+  MatchRounds rounds(game.game.timer(), queue);
   ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(rounds.step(tapAt(300)), Outcome::Ok) << game.errorMessage();
   ASSERT_TRUE(game.session->status().over);
+  EXPECT_EQ(rounds.shownSeat(), 1) << "over, but the one local seat is still the seat shown";
   ASSERT_TRUE(tick(rounds, game.game, 5000));
+  size_t seen = 0;
+  for (const std::string& line : log.lines) seen += line.find("timer for seat") != std::string::npos;
+  EXPECT_EQ(seen, 0u);
+  // The predicate itself (play and step both ask it; only a timer after over is late).
+  InputEvent late;
+  late.kind = InputKind::Timer;
+  EXPECT_TRUE(MatchRounds::lateTimer(late, true));
+  EXPECT_FALSE(MatchRounds::lateTimer(late, false)) << "a timer before the round's end is never late";
+  EXPECT_FALSE(MatchRounds::lateTimer(tapAt(10), true)) << "only a timer is late";
+}
+
+TEST_F(MatchRoundsTest, ASoloTimerDueBeforeOverStillReachesTheLocalSeat) {
+  useSource("main", SOLO_TIMER_GAME);
+  SessionGame game(*this);
+  InputQueue queue;
+  MatchRounds rounds(game.game.timer(), queue);
+  ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(tick(rounds, game.game, 5000));
+  ASSERT_FALSE(game.session->status().over);
   size_t seen = 0;
   for (const std::string& line : log.lines) seen += line.find("timer for seat 1") != std::string::npos;
   EXPECT_EQ(seen, 1u);
@@ -241,13 +264,13 @@ return {
 
 // The solo fixture, the closing device run's game (Done-when 1), played to game over
 // with every input kind, then again after Play again, then reopened.
-TEST_F(SoloRoundsTest, TheSoloFixturePlaysToGameOverAndKeepsItsStore) {
+TEST_F(MatchRoundsTest, TheSoloFixturePlaysToGameOverAndKeepsItsStore) {
   using GameCore::SwipeDir;
   useSource("main", readFixture("solo/main.lua"));
   {
     SessionGame game(*this);
     InputQueue queue;
-    SoloRounds rounds(game.game.timer(), queue);
+    MatchRounds rounds(game.game.timer(), queue);
     ASSERT_EQ(begin(game, rounds), Outcome::Ok) << game.errorMessage();
     EXPECT_TRUE(hasText(frontCommands(), "1 of 8: Tap the circle")) << frontText();
     EXPECT_TRUE(hasText(frontCommands(), "Rounds finished 0")) << frontText();
@@ -317,7 +340,7 @@ TEST_F(SoloRoundsTest, TheSoloFixturePlaysToGameOverAndKeepsItsStore) {
 // The steps take a seat from the caller and never pick one; the open match's composition (start, restart, step) runs
 // them with the seat GameCore::seatShown names. pass-open is the fixture: noughts and crosses whose log names the seat
 // of each apply, over, and timer.
-class PassRoundsTest : public SoloRoundsTest {
+class PassRoundsTest : public MatchRoundsTest {
  protected:
   // A tap at the middle of pass-open's cell `cell` (1..9, row by row: 140 px squares from (27, 200)).
   static InputEvent cellTap(const int cell) {
@@ -516,6 +539,30 @@ TEST_F(PassRoundsTest, ARosterWithOneLocalSeatDrawsThatSeatWhilePlayingAndOnceOv
   EXPECT_EQ(logged("over 2"), 1u);
   EXPECT_EQ(logged("over 1"), 0u);
   EXPECT_EQ(game.rounds.roundsEnded(), 1u);
+}
+
+// A roster with no local seat (firstLocalSeat() is 0 by default, so shownSeat() reads 0 whether or not the round is
+// over): a timer due after the round ended is dropped. This passes on the seat-0 test too (a regression guard); the
+// predicate check below pins that seat 0 alone no longer means over.
+TEST_F(PassRoundsTest, ARosterWithNoLocalSeatDropsATimerDueAfterOverAndNotBefore) {
+  useSource("main", R"(
+return {
+  setup = function() ch.timer.after(5000) return {} end,
+  status = function() return { over = true, winners = {} } end,
+  apply = function(s) return s end,
+  draw = function() ch.gfx.clear('white') end,
+  input = function(s, seat, ui, ev) ch.log('input ' .. ev.kind .. ' ' .. seat) return nil end }
+)");
+  GameCore::Roster roster = GameCore::Roster::pass(2);
+  roster.localSeats = 0;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.rounds.shownSeat(), 0) << "no local seat: seat 0, over or not";
+  ASSERT_TRUE(game.session->status().over);
+  ASSERT_TRUE(tick(game.rounds, game.game, 5000)) << "the timer was armed and fell due";
+  EXPECT_EQ(logged("input timer"), 0u);
+  EXPECT_FALSE(MatchRounds::lateTimer(InputEvent{InputKind::Timer, 0, 0}, false))
+      << "seat 0 alone is not 'over': a round still playing is asked with status.over";
 }
 
 TEST_F(PassRoundsTest, BeginPublishesNoFrameAndARoundStartsAtItsFirstDraw) {

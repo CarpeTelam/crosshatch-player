@@ -665,16 +665,18 @@ class PlayAgainGapTest : public MatchTest {
   void SetUp() override {
     MatchTest::SetUp();
     installGame("gated", match::gatedGame(1));
-    enter("gated");
+    enter("gated", "", roster());
     showFrame();
     fakertos::arm();
     tapCanvas(100, 200);  // A: ends the round, held at its clock read
     frame();
     ASSERT_TRUE(fakertos::waitParked());
-    tapCanvas(300, 400);  // B: queued behind A
-    frame();
+    if (lateStep()) {
+      tapCanvas(300, 400);  // B: queued behind A
+      frame();
+    }
     fakertos::pass();  // A finishes and the round ends; B is held at its own clock read
-    ASSERT_TRUE(fakertos::waitParked());
+    if (lateStep()) ASSERT_TRUE(fakertos::waitParked());
     ASSERT_TRUE(pump([&] { return state() == "Over"; }));
   }
 
@@ -682,6 +684,12 @@ class PlayAgainGapTest : public MatchTest {
     fakertos::release();
     MatchTest::TearDown();
   }
+
+  // The match's roster: solo here, an open pass match in PlayAgainGapPassTest (the gap is the same in both).
+  virtual GameCore::Roster roster() const { return GameCore::Roster::solo(); }
+  // Whether a second tap B is queued behind A, so a late frame of the last round is published in the gap. An open pass
+  // match drops it once the round is over (every seat answers `over` and nothing else), so its gap is the setup's hold.
+  virtual bool lateStep() const { return true; }
 
   // Play again from the menu on screen (or the focused option, when it was never drawn).
   void playAgainByTouch() {
@@ -691,10 +699,71 @@ class PlayAgainGapTest : public MatchTest {
 
   // B's step finishes and publishes its (late) frame; the VM restarts and is held at round 2's setup.
   void enterTheGap() {
-    fakertos::pass();
+    if (lateStep()) fakertos::pass();
     ASSERT_TRUE(fakertos::waitParked());
     activityManager.markRendered();
   }
+
+  // e6pre-9: a pause menu opened in the gap, then resumed there, sits on a cleared screen. Round 1's newest frame (a
+  // square at the last tap, (300, 400) after the late step B or A's (100, 200) without it, and the text "Round 1, ...")
+  // is never drawn under it, nor by the render after Resume.
+  void pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas() {
+    playAgainByTouch();
+    enterTheGap();
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+    renderer->forget();
+    renderView();
+    ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+    EXPECT_TRUE(match::drawnTexts(*renderer).empty()) << "the last round's frame was drawn under the pause menu";
+    const int squareX = lateStep() ? 300 : 100;
+    const int squareY = lateStep() ? 400 : 200;
+    EXPECT_EQ(renderer->pixel(CANVAS_X + squareX, CANVAS_Y + squareY), GfxRenderer::PixelWhite);
+    tapOption(tr(STR_GAMES_RESUME));
+    ASSERT_EQ(state(), "Playing");
+    renderer->forget();
+    const size_t shown = renderer->shown.size();
+    render();
+    EXPECT_EQ(renderer->shown.size(), shown) << "Resume in the gap pushed a frame";
+    EXPECT_TRUE(match::drawnTexts(*renderer).empty());
+    // The new round's first frame is still drawn on a cleared screen, in full.
+    const size_t clears = renderer->count(GfxRenderer::Kind::ClearScreen);
+    fakertos::release();
+    ASSERT_TRUE(pumpToRender());
+    render();
+    ASSERT_EQ(renderer->shown.size(), shown + 1);
+    EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_GT(renderer->count(GfxRenderer::Kind::ClearScreen), clears);
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    EXPECT_NE(std::find(texts.begin(), texts.end(), "Round 2, taps: 0"), texts.end());
+  }
+
+  // e6pre-9: a pause menu left open across the round's first frame is drawn again over the new round's frame.
+  void theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame() {
+    playAgainByTouch();
+    enterTheGap();
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+    renderView();
+    fakertos::release();
+    ASSERT_TRUE(pump([&] { return activityManager.updateRequested(); })) << "the round started and the menu stayed";
+    ASSERT_EQ(state(), "Paused");
+    renderer->forget();
+    renderView();
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    EXPECT_NE(std::find(texts.begin(), texts.end(), "Round 2, taps: 0"), texts.end()) << "no canvas under the menu";
+    EXPECT_EQ(std::find(texts.begin(), texts.end(), "Round 1, taps: 1"), texts.end());
+    EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+  }
+};
+
+// The same gap in an open pass match (no hand-off screen): the late step and the Play-again flow are the solo ones.
+class PlayAgainGapPassTest : public PlayAgainGapTest {
+ protected:
+  GameCore::Roster roster() const override { return GameCore::Roster::pass(2); }
+  bool lateStep() const override { return false; }
 };
 
 TEST_F(PlayAgainGapTest, TheLoopAsksForNoRenderWhileTheLastRoundsLateFrameIsTheNewest) {
@@ -778,6 +847,24 @@ TEST_F(PlayAgainGapTest, PauseThenResumeInTheGapKeepsThePauseMenuUntilTheNewRoun
   render();
   ASSERT_EQ(renderer->shown.size(), shown + 1);
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+}
+
+// Owner decision of 2026-10-04 (deferred-work `## 5.4`, e6pre-9): the pause menu opened in the gap is not drawn over
+// the last round's frame, in any mode; the canvas is back once the new round has published its first frame.
+TEST_F(PlayAgainGapTest, ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull) {
+  pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas();
+}
+
+TEST_F(PlayAgainGapTest, TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished) {
+  theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame();
+}
+
+TEST_F(PlayAgainGapPassTest, ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull) {
+  pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas();
+}
+
+TEST_F(PlayAgainGapPassTest, TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished) {
+  theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame();
 }
 
 TEST_F(PlayAgainGapTest, AGapRenderMarksTheScreenAsNotHoldingTheCanvasEvenWhenNoMenuWasDrawn) {
@@ -2350,10 +2437,10 @@ TEST_F(HiddenPassTest, ACallStuckInResultIsStoppedIntoTheErrorView) {
 
 // ---- the forced exit's blank hand-off (epic-pass-and-play entry 6; AD-12, AD-20) ----
 
-// Sleep on a seat's frame: the exit pushes the blank once, a half refresh with no text, after the VM's stop and
-// before any SD op, so the store flush comes after it. The double's push moves no clock; the device's half refresh
-// is measured by entry 11.
-TEST_F(HiddenPassTest, TheForcedExitOnASeatsFramePushesTheBlankAfterTheJoinAndBeforeTheStore) {
+// Sleep on a seat's frame: the exit pushes the blank once, a half refresh with no text, after the VM's stop and the
+// SD steps (e6pre-10, deferred-work ## 5.6 option (a)), so the store flush comes before it. The double's push moves no
+// clock; the device's half refresh took 1,654 ms (entry 11).
+TEST_F(HiddenPassTest, TheForcedExitOnASeatsFrameFlushesTheStoreAndThenPushesTheBlank) {
   installGame("hidden-store", HIDDEN_STORE_GAME);
   enterHidden("hidden-store");
   expectHandOff();
@@ -2371,9 +2458,9 @@ TEST_F(HiddenPassTest, TheForcedExitOnASeatsFramePushesTheBlankAfterTheJoinAndBe
 
   const ExitRecord record = sleepRecordingPushes();
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
-  EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD op ran before the blank was pushed";
-  EXPECT_FALSE(record.pushes[0].storeOnCard) << "the store was flushed before the blank was pushed";
-  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush after the push";
+  EXPECT_GT(record.pushes[0].sdOps, record.sdOpsBefore) << "no SD op ran before the blank was pushed";
+  EXPECT_TRUE(record.pushes[0].storeOnCard) << "the store was not flushed before the blank was pushed";
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store")));
   EXPECT_FALSE(logHas("skipped"));
   EXPECT_EQ(state(), "Leaving");
   EXPECT_EQ(activityManager.asks.goToGames, 0);  // a forced exit does not navigate
@@ -2469,9 +2556,9 @@ TEST_F(HiddenPassTest, TheForcedExitInOverPushesNothing) {
   EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
 }
 
-// A VM held inside ch.log (a locked binding) neither joins nor can be deleted: the blank goes up once the stop's wait
-// has run out, before the abandon begins its own wait, and the whole exit stays within the bound.
-TEST_F(HiddenPassTest, TheForcedExitWithAStuckVmPushesTheBlankBetweenTheJoinAndTheAbandon) {
+// A VM held inside ch.log (a locked binding) neither joins nor can be deleted: the blank goes up last, after the
+// join's wait and the abandon's, and the whole exit (the blank's push costs the double no time) stays within the bound.
+TEST_F(HiddenPassTest, TheForcedExitWithAStuckVmPushesTheBlankAfterTheAbandon) {
   enterHidden();
   expectHandOff();
   showSeat(1);
@@ -2484,9 +2571,8 @@ TEST_F(HiddenPassTest, TheForcedExitWithAStuckVmPushesTheBlankBetweenTheJoinAndT
 
   const ExitRecord record = sleepRecordingPushes();
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
-  EXPECT_GE(record.pushes[0].sinceExitMs, 500u) << "the blank was pushed before the stop's wait ran out";
-  EXPECT_LT(record.pushes[0].sinceExitMs, 1000u);
-  EXPECT_FALSE(record.pushes[0].abandonLogged) << "the abandon began before the blank was pushed";
+  EXPECT_GE(record.pushes[0].sinceExitMs, 1000u) << "the blank was pushed before the abandon's wait ran out";
+  EXPECT_TRUE(record.pushes[0].abandonLogged) << "the blank was pushed before the abandon began";
   EXPECT_TRUE(logHas("did not stop within"));
   // docs/crosshatch/game-canvas.md, The forced exit's bound: two waits of 500 ms, each late by at most an iteration.
   EXPECT_LE(record.tookMs, 1030u);
@@ -2494,35 +2580,47 @@ TEST_F(HiddenPassTest, TheForcedExitWithAStuckVmPushesTheBlankBetweenTheJoinAndT
   EXPECT_TRUE(fakertos::waitNoTasks());
 }
 
-// The push is not an SD step, but its time counts against the SD steps' deadline. The double's push moves no clock, so
-// these tests move it by hand inside the push: one that ends 1 ms short of FORCED_EXIT_DEADLINE_MS after onExit()
-// began leaves the store flush in time, and one that ends on it skips the flush, as any step that would start late.
-TEST_F(HiddenPassTest, TheBlanksRefreshCountsAgainstTheSdStepsDeadline) {
+// The push is not an SD step and now comes after them (e6pre-10): its time counts against nothing. A push that takes
+// the clock to FORCED_EXIT_DEADLINE_MS leaves the store flushed before it, with no step skipped.
+TEST_F(HiddenPassTest, TheBlanksRefreshNoLongerCostsTheSdSteps) {
   reachResultWithADirtyStore();
   ASSERT_FALSE(HasFatalFailure());
   const uint64_t began = fakertos::S().nowMs.load();
   const ExitRecord record = sleepRecordingPushes([] { fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS); });
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
   EXPECT_GE(fakertos::S().nowMs.load() - began, uint64_t{GameMatchActivity::FORCED_EXIT_DEADLINE_MS});
-  EXPECT_TRUE(logHas("skipped the ch.store flush"));
-  EXPECT_FALSE(fakesd::has(storePath("hidden-store")));
+  EXPECT_FALSE(logHas("skipped"));
+  EXPECT_TRUE(record.pushes[0].storeOnCard) << "the store was flushed after the blank";
+  EXPECT_TRUE(fakesd::has(storePath("hidden-store")));
 }
 
-TEST_F(HiddenPassTest, ABlankPushThatEndsInsideTheDeadlineLeavesTheStoreFlushInTime) {
+// The worst case the deadline allows: the stop returns about 20 ms inside the deadline, so the store flush starts in
+// time, and then takes as long as a slow card likes (1,000 ms, moved by hand inside the flush's open). The step started
+// in time, so it finishes; the blank comes after it, about 2,480 ms in, and is pushed. Nothing is skipped, and the
+// blank is not.
+TEST_F(HiddenPassTest, AStoreFlushStartedInsideTheDeadlineMayRunPastItAndTheBlankStillFollows) {
   reachResultWithADirtyStore();
   ASSERT_FALSE(HasFatalFailure());
-  const uint64_t began = fakertos::S().nowMs.load();
-  const ExitRecord record = sleepRecordingPushes([began] {
-    const uint64_t spent = fakertos::S().nowMs.load() - began;
-    fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS - 1 - spent);
-  });
+  bool slow = false;
+  fakertos::S().onLoopNotify = [&] {
+    if (!slow) fakertos::advance(GameMatchActivity::FORCED_EXIT_DEADLINE_MS - 20);
+    slow = true;
+  };
+  fakesd::sim().onOpen = [](const std::string& path, int) {
+    if (path.find("store.bin") != std::string::npos) fakertos::advance(1000);
+  };
+  const ExitRecord record = sleepRecordingPushes();
+  fakesd::sim().onOpen = nullptr;
+  fakertos::S().onLoopNotify = nullptr;
+  ASSERT_TRUE(slow) << "the stop did not wake the VM";
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
   EXPECT_FALSE(logHas("skipped"));
-  EXPECT_TRUE(fakesd::has(storePath("hidden-store"))) << "the store flush started 1 ms before the deadline";
+  EXPECT_TRUE(record.pushes[0].storeOnCard);
+  EXPECT_GE(record.pushes[0].sinceExitMs, uint64_t{GameMatchActivity::FORCED_EXIT_DEADLINE_MS - 20 + 1000});
 }
 
 // The deadline gates the SD steps only: a stop that has already run past it (a slow card from the stop's wake on) still
-// pushes the blank, and only the store flush after it is skipped.
+// pushes the blank (now after the steps, e6pre-10), and the store flush before it is skipped.
 TEST_F(HiddenPassTest, TheBlankIsPushedEvenPastTheDeadline) {
   reachResultWithADirtyStore();
   ASSERT_FALSE(HasFatalFailure());
@@ -2729,8 +2827,10 @@ TEST_F(HiddenPassTest, ARepaintOfTheBlankIsAFastRefreshAndEnteringItIsFull) {
 }
 
 // A call stuck on a seat's frame frees the VM on the way to Error; a forced exit before the error view is drawn finds
-// no VM but a seat's frame on the panel, and pushes the blank before any SD step (cross-story review row 1). Nothing is
-// pushed after it.
+// no VM but a seat's frame on the panel, and pushes the blank, last like any forced exit's (cross-story review row 1;
+// e6pre-10 folded the no-VM push into the one at the end). No SD step is pending here (clean store, no snapshot), so
+// the order against the steps is pinned by the VM tests; this one pins that the blank is still pushed, once, with no
+// VM. Nothing is pushed after it.
 TEST_F(HiddenPassTest, AForcedExitWithNoVmOverASeatsFramePushesTheBlankAndNothingAfter) {
   enterHidden();
   expectHandOff();
@@ -2752,7 +2852,7 @@ TEST_F(HiddenPassTest, AForcedExitWithNoVmOverASeatsFramePushesTheBlankAndNothin
   const ExitRecord record = sleepRecordingPushes();
   EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit's no-VM push took the RenderLock the manager holds (12cc816)";
   ASSERT_NO_FATAL_FAILURE(expectOneBlankPush(record));
-  EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD step ran before the blank";
+  EXPECT_EQ(record.pushes[0].sdOps, record.sdOpsBefore) << "an SD step ran with nothing pending";
   const size_t pushes = renderer->shown.size();
   render();
   EXPECT_EQ(renderer->shown.size(), pushes) << "a push after the forced exit";

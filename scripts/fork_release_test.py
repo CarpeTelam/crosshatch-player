@@ -34,8 +34,8 @@ def app_image(*strings, magic=0xE9, desc=fr.APP_DESC_MAGIC):
     return header + b''.join(b'\x00' + s + b'\x00' for s in strings)
 
 
-def api_header(level=1, frozen=False):
-    return (f'#pragma once\n#define API_LEVEL {level}\n#define API_MIN_LEVEL 1\n'
+def api_header(level=1, frozen=False, min_level=1):
+    return (f'#pragma once\n#define API_LEVEL {level}\n#define API_MIN_LEVEL {min_level}\n'
             f'#define API_LEVEL_FROZEN {"true" if frozen else "false"}\n#define API_SURFACE_CRC 0x1A78D21F\n')
 
 
@@ -702,6 +702,51 @@ class FreezeTest(unittest.TestCase):
                       fr.freeze_problems(self.project.dir)[0])
         self.release(api_header(1, frozen=False))  # lowered and a preview
         self.assertEqual(self.preflight('false'), 1)
+
+    def test_min_level_raised_over_a_released_frozen_level_fails(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.2')  # levels 1 and 2 ran, both frozen
+        self.release(api_header(3, frozen=False, min_level=2))  # level 1 games would stop running
+        self.assertEqual(self.preflight('false'), 1)
+        self.assertEqual(self.preflight('true'), 0)  # a dry run only warns
+        self.assertEqual(fr.freeze_problems(self.project.dir), [
+            'the commit to release raises API_MIN_LEVEL to 2, but 1.6.5-ch.2 released frozen API level 1 as runnable; '
+            'games of that level would stop running, and a release keeps running every level an earlier release '
+            'froze'])
+
+    def test_min_level_raise_is_refused_alongside_a_reopened_level(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.2')
+        self.release(api_header(2, frozen=False, min_level=2))
+        self.assertEqual(len(fr.freeze_problems(self.project.dir)), 2)
+
+    def test_min_level_raise_passes_when_no_release_shipped_that_level_frozen(self):
+        self.release(api_header(1, frozen=False), tag='1.6.5-ch.2')  # level 1 only a preview
+        self.release(api_header(2, frozen=False, min_level=2))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_min_level_raise_passes_over_a_level_an_earlier_release_already_dropped(self):
+        self.release(api_header(3, frozen=True, min_level=2), tag='1.6.5-ch.2')  # level 1 never ran frozen here
+        self.release(api_header(3, frozen=True, min_level=2))
+        self.assertEqual(self.preflight('false'), 0)
+        self.release(api_header(4, frozen=False, min_level=3))  # level 2 ran frozen at ch.2
+        self.assertEqual(self.preflight('false'), 1)
+
+    def test_min_level_already_raised_by_an_earlier_release_is_not_refused_again(self):
+        self.release(api_header(2, frozen=True), tag='1.6.5-ch.2')
+        self.release(api_header(2, frozen=True, min_level=2), tag='1.6.5-ch.3')  # an earlier drop of level 1
+        self.release(api_header(2, frozen=True, min_level=2))
+        self.assertEqual(self.preflight('false'), 0)
+
+    def test_tag_without_a_frozen_run_level_or_header_does_not_count(self):
+        self.release(api_header(3, frozen=False, min_level=3), tag='1.6.5-ch.2')  # frozen_top 2 below its minimum
+        self.release(api_header(4, frozen=False, min_level=4))
+        self.assertEqual(self.preflight('false'), 0)  # 1.6.5-ch.1 has no header either
+
+    def test_unchanged_or_lowered_min_level_passes(self):
+        self.release(api_header(2, frozen=True, min_level=2), tag='1.6.5-ch.2')
+        self.release(api_header(2, frozen=True, min_level=2))
+        self.assertEqual(self.preflight('false'), 0)
+        self.release(api_header(2, frozen=True, min_level=1))
+        self.assertEqual(self.preflight('false'), 0)
 
     def test_commit_without_the_header_counts_as_a_preview(self):
         self.release(api_header(1, frozen=True), tag='1.6.5-ch.2')

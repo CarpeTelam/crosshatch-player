@@ -88,7 +88,7 @@ TEST_F(SessionGameTest, TheSlowRestartReachesItsFirstFrame) {
   EXPECT_TRUE(contains(frontText().c_str(), "Round 1, taps: 0 of 3")) << frontText();
 }
 
-// Play again (AD-21) as GameVM runs it, through SoloRounds: Session::start() and
+// Play again (AD-21) as GameVM runs it, through MatchRounds: Session::start() and
 // draw() on the same Session; ver keeps counting and the new round delivers `over`
 // once more.
 TEST_F(SessionGameTest, TheTracerPlaysAgainAfterGameOver) {
@@ -258,8 +258,8 @@ TEST_F(SessionGameTest, EveryFaultScriptEndsWithTheReadmesText) {
     SessionGame game(*this);
     modelTaskStack(game.game);
     // Each step on the Session directly, so a failure is attributed to the README's
-    // step (the round loop, SoloRounds, has its own tests). The input step is one tap
-    // as SoloRounds::step runs it: input, the pending move, then a draw.
+    // step (the round loop, MatchRounds, has its own tests). The input step is one tap
+    // as MatchRounds::step runs it: input, the pending move, then a draw.
     Step failed = Step::None;
     const InputEvent tap{InputKind::Tap, 100, 100};
     if (game.game.load() != Outcome::Ok) {

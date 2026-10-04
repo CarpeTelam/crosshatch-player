@@ -257,13 +257,16 @@ is the file's, so a match that has passed 65,535 snapshots wraps in the file (th
 
 ## prefs.bin
 
-`/.games-data/<id>/prefs.bin` holds a game's remembered choices on this device (AD-17, as amended 2026-10-02): the mode
+`/.games-data/<id>/prefs.bin` holds a game's remembered choices on this device (AD-17, as amended 2026-10-02 and 2026-10-04): the mode
 last started and the value chosen for each setting the manifest declares (AD-15). `src/games/GameSaveStore` is its only
-reader and writer (`loadPrefs`, `savePrefs`), on the loop task only, never in `render()` or `onExit()`; the game's
-title screen reads it when it opens and writes it when its Options screen closes with a change and when New game starts
-a mode other than the one the file holds (a missing file holds none), unless the file holds a mode this host does not
+reader and writer (`loadPrefs`, `savePrefs`), on the loop task and, for the title screen only, in its `onExit()`
+(never in `render()`); the game's title screen reads it when it opens and writes it when its Options screen closes with
+a change, from its own `onExit()` when Options is left by a Replace (the Home gesture, sleep), which runs no result
+handler (one write: Back's clears the pending change, so `onExit()` writes only a change nothing has written), and when
+New game starts a mode other than the one the file holds (a missing file holds none), unless the file holds a mode this host does not
 offer: a remembered pass on a host that fits no pass seat count (below) is kept for a host that can, and New game in the
-mode it fell back to writes nothing. The match never touches it. It is not a codec
+mode it fell back to writes nothing. The match never touches it, `onExit()` included. The title screen's `onExit()` runs under the render mutex
+`ActivityManager` holds, and a failed write there is logged and the exit goes on. It is not a codec
 blob, so it has no blob header.
 
 | Offset | Size | Field |
@@ -341,7 +344,7 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Width x height of `title.png` (`GameImages.h`) | `TITLE_IMAGE_WIDTH` x `TITLE_IMAGE_HEIGHT` | 480 x 480 |
 | Width x height of `handoff.png` (`GameImages.h`) | `HANDOFF_IMAGE_WIDTH` x `HANDOFF_IMAGE_HEIGHT` | 480 x 480 |
 | Width x height of a `.png` | `IMAGE_MAX_WIDTH` x `IMAGE_MAX_HEIGHT` | 2,048 x 3,072 |
-| Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`) | `StreamingJsonParser::MAX_NESTING` | 32 |
+| Nesting of `manifest.json`, the root object included (`lib/JsonParser/StreamingJsonParser.h`; `limit manifest_nesting_count` in `api-level-1.txt`) | `StreamingJsonParser::MAX_NESTING` | 32 |
 
 The installer counts converted images as the game loader does: each `.bmp` is 62 + ceil(width / 32) * 4 * height
 bytes, header included, and `icon.bmp` is left out.

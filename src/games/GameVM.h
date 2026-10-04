@@ -4,9 +4,9 @@
 #include <GameInput.h>
 #include <HalMemory.h>
 #include <LuaGame.h>
+#include <MatchRounds.h>
 #include <Roster.h>
 #include <SeatShown.h>
-#include <SoloRounds.h>
 #include <VmFailure.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -47,7 +47,7 @@ class GfxRenderer;
 // a round begins (the match shows the blank hand-off screen), the turn seat once the match asks
 // with showTurnSeat(), and, after a move that passes the turn, the mover again, which it counts
 // (turnsPassed) so the match enters Result. Meanwhile it holds a timer that falls due until the
-// next seat is shown. Solo and open pass VMs run SoloRounds' start, restart, and step as before.
+// next seat is shown. Solo and open pass VMs run MatchRounds' start, restart, and step as before.
 class GameVM {
  public:
   static constexpr uint32_t TASK_STACK_BYTES = GameScript::VM_STACK_BYTES;
@@ -116,11 +116,11 @@ class GameVM {
   uint32_t roundsEnded() const { return rounds.roundsEnded(); }
   // Rounds that have started so far: the VM counts one once the round's first
   // frame is published. After playAgain(), every frame published before this
-  // count moves is the last round's (SoloRounds::roundsStarted). Any task.
+  // count moves is the last round's (MatchRounds::roundsStarted). Any task.
   uint32_t roundsStarted() const { return rounds.roundsStarted(); }
   // Asks the VM for a new round (Play again): drops the queued events, and before
   // its next event the VM cancels the pending timer and runs Session::start() and
-  // draw(), so ver keeps counting (GameScript::SoloRounds).
+  // draw(), so ver keeps counting (GameScript::MatchRounds).
   void playAgain();
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
@@ -266,7 +266,7 @@ class GameVM {
   GameLog log;
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
-  GameScript::SoloRounds rounds{game.timer(), queue};
+  GameScript::MatchRounds rounds{game.timer(), queue};
   // A hidden pass match's VM (create's `handOff`); fixed for its life.
   const bool handOff;
   // VM task, a hidden pass match only: the Session run() plays; the state whose seat the VM

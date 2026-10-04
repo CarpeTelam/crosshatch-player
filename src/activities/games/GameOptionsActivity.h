@@ -16,7 +16,8 @@
 //
 // It edits the title screen's choices through the reference it is given, which outlives it (the title screen is under
 // it on the stack), and sets `changed` on every edit; the title screen's result handler writes prefs.bin and redraws
-// once this screen is gone. This screen reads and writes no card.
+// once this screen is gone (a Replace runs no handler: the title screen's onExit() writes it then). This screen reads
+// and writes no card.
 class GameOptionsActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "GameOptions";

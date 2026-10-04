@@ -402,9 +402,21 @@ void GameModeActivity::openOptions() {
     requestUpdate();
     return;
   }
-  // The handler runs on the loop task once Options pops (Back). A Replace (the Home gesture, sleep) runs no handler,
-  // and the change is not written: prefs.bin is never written from onExit() (AD-17).
+  // The handler runs on the loop task once Options pops (Back). A Replace (the Home gesture, sleep) runs no handler;
+  // this screen's onExit() writes the change then (AD-17 as amended 2026-10-04).
   startActivityForResult(std::move(options), [this](const ActivityResult&) { onOptionsClosed(); });
+}
+
+void GameModeActivity::onExit() {
+  // ActivityManager holds the render mutex here (a Replace exits Options, then each stacked screen): take no
+  // RenderLock. `optionsChanged` is still set only when no handler ran, so Back's write is never doubled and an
+  // untouched screen writes nothing. It is cleared first, so a failed write (logged by rememberChoices; the choices
+  // are lost with the screen) is tried once and never blocks the exit.
+  if (optionsChanged) {
+    optionsChanged = false;
+    rememberChoices();
+  }
+  UiListActivity::onExit();
 }
 
 void GameModeActivity::onOptionsClosed() {

@@ -406,12 +406,15 @@ limit images_count 32
 # A .chgame package (docs/crosshatch/formats.md): the file's bytes, its members (a folder is
 # not allowed), one member's bytes uncompressed, the .lua members' bytes together, and the stem
 # of a .lua or .png member's name ([a-z0-9_]{1,32}). The installer rejects a package over any
-# of them; scripts/pack_game.py refuses to make one over any of them.
+# of them; scripts/pack_game.py refuses to make one over any of them. Also the deepest nesting of
+# manifest.json's own objects and arrays (the device's JSON parser, StreamingJsonParser::MAX_NESTING,
+# refuses a 33rd open bracket; the packer refuses the same manifest).
 limit package_bytes 262144
 limit package_members_count 32
 limit member_bytes 131072
 limit lua_sources_bytes 262144
 limit member_stem_bytes 32
+limit manifest_nesting_count 32
 # A .png member's largest width and height in pixels (icon.png is scaled to 64 x 64).
 limit image_width_pixels 2048
 limit image_height_pixels 3072

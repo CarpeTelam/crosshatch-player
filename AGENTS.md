@@ -58,3 +58,10 @@ Fork of CrossPoint Reader (`crosspoint-reader/crosspoint-reader`): e-reader firm
 - Never run two builds at once against one checkout or one `~/.platformio`, and never `sim.sh setup` or a simulator build while a firmware `pio run` is in progress; the changed `platformio.local.ini` changes PlatformIO's project checksum, and it wipes `.pio/build` mid-build. Wrap every `pio run`, `pio check`, `pio project metadata`, and `sim.sh setup`/`build` in `flock /tmp/crosshatch-build.lock sh -c '<commands>'`, and every host-test CMake configure and build in `flock /tmp/crosshatch-hosttest.lock sh -c '<commands>'` (`flock <lock> a && b` locks only `a`); every agent on the machine and the session-start warm builds take these same locks, so your first build waits for a warm one. `pio project metadata` on a fresh tree likewise empties the env's build dir, which failed the flash budget job on PR #9 (f3ba9e54).
 
 <!-- /bmad:context -->
+
+## Fork rules kept outside the managed block
+
+A `bmad-project-context` refresh replaces everything between the markers above; these rules stay.
+
+- Never add `labeled` or another event type to `crosshatch-ci.yml`; its per-PR `cancel-in-progress` group cancels the running checks and turns the required status red. A label-gated job goes in its own workflow file, as `crosshatch-game-packages.yml` does (9180a698).
+- `test/game_script/GameIconsRaw.h` is also generated and committed: `python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h` regenerates it, CI compares it, and it is never hand-edited.

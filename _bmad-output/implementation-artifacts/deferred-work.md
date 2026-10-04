@@ -928,3 +928,108 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `MatchPersistence` has unit tests only for the deadline, wrap, and unbound paths; the back-off, `onOver` failure, replacement-clears-pending, successful write, and writable=false guards are covered only through `ResumeMatchTest`, and `seedResume` and `GameMatchView` have no direct tests.
+  evidence: `test/game_script/harness/MatchPersistenceTest.cpp`; a direct test needs a ready `MatchStore`/`GameSaveStore` over the Storage double (as `ResumeMatchTest` builds one). Trigger: any of the forced-exit-order or play-again-gap builds changing these units.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: Not extracted, left for a later split: the touch-tagging state (`readGesture`, `frameAt`, `lastPush`, `touchDown*`), the round/seat gate counters, and `loopPlaying`'s first-frame touch logic stay in `GameMatchActivity`.
+  evidence: `GameMatchActivity.cpp` is 873 lines after this split; those members interlock with render-task atomics, so a clean seam needs its own design. Trigger: epic play-nearby's second local-seat path.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `handle()` sets `persistence.setWritable` in each state case; a single state-to-writable mapping would keep the "Over and Error never write" rule in one place.
+  evidence: `GameMatchActivity::handle`. Trigger: a new MatchState.
+
+## e6pre-2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Decided (owner, option (a)) and resolves both `## e5-r6` entries: a timer due after the round is over is never delivered to the game in any mode (solo, open and hidden pass, later nearby), and "over" is the explicit `status.over`, not seat 0, so a roster with no local seat is dropped and logged correctly. `lateTimer(event, roundOver)` now takes the flag.
+  evidence: `lib/GameScript/SoloRounds.{h,cpp}` (`lateTimer`, `play`, `step`), `src/games/GameVM.cpp` (`run`, `stepHandOff`); tests `SoloRoundsTest`, `GameVmTest` (solo, open pass, no local seat, and timer-before-over cases).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: The architecture spine still states the old behaviour in places (AD-23's timer bullet says a timer fires "for the local seat, or the current turn seat in `pass`" with no after-over rule; the events bullet, spine line ~180, lists `timer` with no after-over rule) and `game-api-seed.md` section 5's `ch.timer.after` row likewise; a separate pass amends the spine.
+  evidence: `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md` lines 180 and 387; `game-api-seed.md` line 191. Trigger: the spine pass.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Untested: a hidden-pass or nearby (one remote seat) roster for the late-timer drop and for a timer before over; and a no-local-seat roster whose round is still playing now gets a timer delivered as seat 0 (the old seat-0 test dropped it, mislogged). Unreachable until a roster has no local seat.
+  evidence: `GameVM::stepHandOff`, `SoloRounds::step`; `GameVmTest` / `SoloRoundsTest` late-timer tests. Trigger: epic play-nearby's first roster with a remote seat or none local.
+
+## e6pre-9
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-9-pause-menu-in-the-play-again-gap.md`
+  summary: Decided (owner, 2026-10-04) and resolves `## 5.4`'s last item and `## 5.6`'s repeat of it: a pause menu opened in the Play-again gap is not drawn over the last round's frame, in every mode (solo, open pass, later nearby); `GameMatchActivity::canvasUnderView` is also false while `vm->roundsStarted() < roundsStartedAwaited`. Solo's pause menu in the gap changes visibly: it now sits on a cleared screen. The new round's first frame still draws on a cleared screen in full, and Resume in the gap keeps the menu.
+  evidence: `PlayAgainGapTest` / `PlayAgainGapPassTest` (`ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull`, `TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished`); `docs/crosshatch/game-canvas.md` (Paused -> Playing row, The views).
+
+## e6pre-10
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-10-forced-exit-writes-before-the-blank.md`
+  summary: Decided (owner, option (a)) and resolves `## 5.6`'s first entry (and its second, whose order test entry 9 added): the forced exit runs the resume write, the `resume.bin` delete retry, and the `ch.store` flush before a hidden pass match's privacy blank, each still gated by `FORCED_EXIT_DEADLINE_MS`; the blank is last and never gated, so a 1,654 ms push no longer causes those steps to be skipped. Spine AD-20 (amended by e6pre-8 as target, on another branch) is what this build implements.
+  evidence: `GameMatchActivity::onExit` / `stopVm` / `pushForcedExitBlank`; `HiddenPassTest` (`TheForcedExitOnASeatsFrameFlushesTheStoreAndThenPushesTheBlank`, `TheBlanksRefreshNoLongerCostsTheSdSteps`, `AStoreFlushStartedInsideTheDeadlineMayRunPastItAndTheBlankStillFollows`, `TheForcedExitWithAStuckVmPushesTheBlankAfterTheAbandon`, `TheBlankIsPushedEvenPastTheDeadline`) and `PassResumeTest` (the resume, store, and delete-retry order tests); `docs/crosshatch/game-canvas.md` (The forced exit). Host only: B7.6 (a sleep with a dirty store on the X4 Pro) is still UNRUN, so the order and the 1,654 ms figure are not re-measured on the device.
+
+## e6pre-11
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-11-title-screen-writes-prefs-on-exit.md`
+  summary: Decided (owner, 2026-10-04) and resolves `## 5.12`'s entry "a change made on the Options screen is not remembered when Options is left by a Replace": the title screen's `onExit()` writes `prefs.bin` when an Options change is still unwritten (`optionsChanged`), so the Home gesture and sleep keep it; Back's write is not repeated, nothing changed writes nothing, and a failed write is logged and the exit goes on. AD-17 (amended by e6pre-8 as target, on another branch) is what this build implements.
+  evidence: `GameModeActivity::onExit`; `ModePickerTest` (`OptionsChangedThenLeftByAReplacePersistsTheChange`, `ABackThatWroteTheChangeIsNotWrittenAgainWhenTheScreenExits`, `OptionsLeftByAReplaceWithNoChangeWritesNothing`, `AFailedPrefsWriteInOnExitIsLoggedAndTheExitGoesOn`) replace `OptionsLeftByAReplaceWritesNothing`; `docs/crosshatch/formats.md` (prefs.bin). Host only: a Replace over Options on the device is not run.
+
+## e6pre-12
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-12-rename-solorounds-to-matchrounds.md`
+  summary: Landed: `GameScript::SoloRounds` is now `GameScript::MatchRounds` (it runs any roster; the spine, amended by e6pre-8 on another branch, already calls it that). Files `lib/GameScript/MatchRounds.{h,cpp}` and `test/game_script/MatchRoundsTest.cpp` moved with `git mv`; `SoloRoundsTest` is `MatchRoundsTest`; CMake wiring, `GameVM`, test fixtures, and `docs/crosshatch/game-canvas.md` follow. No behaviour change. Older plans, retros, and spine text keep the old name as history.
+  evidence: host `ctest` count unchanged; `grep -rn SoloRounds lib src test docs scripts` is empty.
+## e6pre-3
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: R10 is decided for the nearby part (owner, 2026-10-04, option (b)): the ESP-NOW link pump and peer-silence detection run on the `GameLink` task, so an overlay cannot pause them (the match's move to `PeerGone` still waits for `loop()`); the link task never takes `RenderLock` or touches activity state. This covers the R10 entries above (the `## 3.7` entry, the epic-icon-library R10 entry, and the epic-pass-and-play deferral).
+  evidence: `docs/crosshatch/game-canvas.md` Overlays; `epic-play-nearby.md` Notes.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: Still open for solo and pass matches: while an overlay is open the match loop's 3 s watchdog, `vm->pollTimer()`, and `store.flushIfDue` pause; a call running in the VM runs on unwatched and a timer fires when the overlay closes.
+  evidence: `GameMatchActivity::loopPlaying`; `FrontlightPanelActivity`. Trigger: the next ledger change that touches `FrontlightPanelActivity` or `ActivityManager` beyond rows 4 and 5.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-3-link-on-its-own-task-decision.md`
+  summary: The architecture spine does not yet carry the R10 decision: AD-18's `GameLink` bullet (line 309), AD-20's Prevents and Rule (328-329), and AD-11's 10 s peer-silence rule (338) need to say detection runs on the `GameLink` task, the task never takes `RenderLock` or touches activity state, and the move to `PeerGone` waits for `loop()`. The link is not built (epic-play-nearby).
+  evidence: `ARCHITECTURE-SPINE.md` lines 236, 305, 309, 328, 338. Trigger: the next architecture pass, or epic-play-nearby's first story.
+
+## e6pre-8
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: A (decided, landed in the spine): the five owner decisions of 2026-10-04 are in `ARCHITECTURE-SPINE.md`. (1) AD-23: a timer due after the round is over is never delivered in any mode, tested on `status.over`. (2) AD-21: a pause menu opened in the Play-again gap draws no stale canvas. (3) AD-13, AD-18, AD-20, AD-21: the link pump and peer-silence detection run on the `GameLink` task and never pause under an overlay; the `PeerGone` transition runs on the match's next `loop()` and so waits for an open overlay (owner accepted). (4) AD-12 and AD-20: the forced exit's SD steps run before the blank. (5) AD-17: the title screen's `onExit()` may write `prefs.bin`; the title-screen plan's Always line carries a dated amendment. Still open: the code for (1), (2), (4), (5) is e6pre-2, e6pre-9, e6pre-10, e6pre-11; the spine states the target, not the build. `formats.md`'s prefs.bin section ("written ... never from the match or onExit()") is not yet reworded and belongs to e6pre-11.
+  evidence: `ARCHITECTURE-SPINE.md` AD-12, AD-13, AD-17, AD-18, AD-20, AD-21, AD-23; the title-screen plan's Always line. Trigger: e6pre-2, e6pre-9, e6pre-10, e6pre-11 land.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: B (landed): AD-19's Freeze bullet states the `API_MIN_LEVEL` refusal and drops "Pending the matching `fork_release.py` preflight change". It is built in e6pre-7 on `claude/pre-e6-lane-c` (commit 27d2e635); this branch carries the spine text only, so the sentence is true once lane-c merges. Open: none.
+  evidence: `ARCHITECTURE-SPINE.md` AD-19; `scripts/fork_release.py` `freeze_problems` on `claude/pre-e6-lane-c`. Trigger: merge order of the two lanes.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: C (landed): AD-21 now says `MatchLifecycle` is the machine for solo, open pass, and hidden pass (no `Lobby` or `PeerGone` yet), and that `GameScript::SoloRounds` runs any roster and will be renamed `MatchRounds` (e6pre-12); the two other spine mentions of `SoloRounds` say the same. The epic-play-nearby epic file names no other spine change; AD-11, AD-13, AD-18, and the Deferred rows were read against the as-built code and need none beyond A. Open: Section 5.1 "Pass the picked mode" stays epic 6's; the spine names `SoloRounds` until e6pre-12 renames it.
+  evidence: `ARCHITECTURE-SPINE.md` AD-21, the layer diagram, the Structural Seed; `lib/GameScript/SoloRounds.h` (its header comment). Trigger: e6pre-12 lands (rename the spine's three mentions then).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: D (landed, with item 8 built): epic-install-and-launcher retrospective AI-10 items 1, 2, 4, 5, 6, 9, 10 are applied (AD-16 `.removing` and 64 games, `.chgame.installed`, AD-15 and `game-api-seed.md` section 1 limits, the SD-card seed, the CI row's `Game packages` workflow, SPEC CAP-3, `upstream-touches.md` row 5), each against the code (`GameRegistry::MAX_GAMES`, `GamePaths::REMOVING_NAME`, `INSTALLED_SUFFIX`, `PackageLimits.h`, `StreamingJsonParser::MAX_NESTING`, `crosshatch-game-packages.yml`). Items 3, 7, and 11 had landed (AD-17, `formats.md`, `game-canvas.md`'s 502 ms) and were verified, not repeated. Item 8: `limit manifest_nesting_count 32` is in `api-level-1.txt` (owner approved 2026-10-04; level 1 is a preview, so the freeze job passes), tied to `StreamingJsonParser::MAX_NESTING` in `ApiSurfaceTest` and `ApiLevelTest` and to `pack_game.MAX_NESTING` in `pack_game_test.py`; `API_SURFACE_CRC` is now 0x0401CF0D, so a preview device built before this commit no longer matches one built after it in Play Nearby (AD-13). Open: none.
+  evidence: `docs/crosshatch/api-level-1.txt`, `lib/GameCore/ApiLevel.h`, `test/game_script/ApiSurfaceTest.cpp`, `test/game_core/ApiLevelTest.cpp`, `scripts/pack_game_test.py`.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: E (landed): epic-pass-and-play's Requirement text (R1, R4, R5, R6, R9, R10, R12, R14, Done when 2) is reconciled with its owner Decisions (retrospective AI-7, S4's eight places, R10's "invalid"), and AD-12's "cannot land on the other" sentence carries the 2026-10-03 reconciliation; the Decision records are untouched, and Done when 5's CI status (S1) is not edited. Open: S1 (CI on the final head), and R6's order text still describes the blank before the SD steps, with a pointer to the 2026-10-04 amendment, until e6pre-10 builds it.
+  evidence: `epic-pass-and-play.md`; `ARCHITECTURE-SPINE.md` AD-12. Trigger: e6pre-10 lands.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-8-spine-and-docs-pass.md`
+  summary: F (landed): `epic-play-nearby.md` Notes gain (a) PeerGone waits for an open overlay (accepted; the risk is an overlay held open indefinitely), (b) the session queue's overflow policy is the epic's to state and a lost-peer event is never dropped, (c) the four partly-remote roster paths are the first story, (d) measure the x4pro flash and RAM base before the first story. Open: the overflow policy itself and the four paths' design are epic 6 planning's.
+  evidence: `epic-play-nearby.md` Notes; `deferred-work.md` `## e5-xr`.
+## e6pre-5
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-5-ai6-concurrency-group-and-agents-lines.md`
+  summary: Run the new `crosshatch-game-packages.yml` concurrency group on a real PR: label it `package-games`, then add an unrelated label while the pack runs, and confirm the pack is not cancelled; also confirm a later push still cancels it.
+  evidence: `.github/workflows/crosshatch-game-packages.yml` concurrency.group; Actions cannot run locally, so only the YAML parse and a reading of the expression were checked. Trigger: the epic PR.
+## e6pre-6
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-6-ai13-deferred-entries.md`
+  summary: A3, with a trigger that can fire (supersedes the A3 sentence in the `## 3.7` entry that begins "Outcomes of the other open findings this sweep did not fix", whose trigger "`pack_game.py` first importing the codec" never fires): split the Lua-literal vector notation (`_Parser`, `parse_value`, `parse_hex`, about 260 lines) out of `scripts/game_codec.py` into its own module, leaving encode, decode, the blob header, the vector runner, and the CLI. Do it when the first script or test other than `game_codec.py` and `game_codec_test.py` needs the notation (for example a pack-time check that parses a vector string).
+  evidence: At HEAD `scripts/pack_game.py:41-55` imports only the standard library and `fork_common`, and the packer's plan forbade the codec import (`_bmad-output/initiative-crosshatch-player-v1/epic-install-and-launcher/story-pack-game-py-and-the-package-vectors-plan.md:31`), so the old trigger cannot fire (epic-install-and-launcher retro spec-5). Today only `game_codec_test.py`, `CodecTest.cpp` and its `CMakeLists.txt` (through `codec_vectors.json`, which reads the JSON and does not use the notation parser), `formats.md`, and the ledger name the codec. The notation sits in `game_codec.py:341-600` of 775 lines (`_Parser` `:401`, `parse_value` `:541`, `parse_hex` `:546`). Without a second consumer the split buys nothing, so none is scheduled.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-6-ai13-deferred-entries.md`
+  summary: rev-7: an inbox file whose name is 63 bytes or more (the 62-byte limit is `INBOX_NAME_BYTES` 64 minus the terminator and a guard byte) is skipped with only a log line, and the person is told nothing: it is not listed, not installed, and not reported as failed.
+  evidence: `src/games/GamePackageInstaller.cpp:176-182` in `forEachInboxFile`: `fits = length > 0 && length < sizeof(name) - 1`, then `LOG_INF("GAME", "Skipping an inbox file with a name over %u bytes", ...)` (`:181-182`); `hasInbox` (`:926-932`) and `installAll` (`:959`) both go through it, so a lone long-named package does not even make the installer run. `GamePaths.h:26` sets the 64. Trigger: a device report of a package that never installs and shows no error (the first thing to ask for is its file name length).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-6-ai13-deferred-entries.md`
+  summary: rev-9, worse than the `## e4-x` item "An installed inbox file that would not delete is renamed `<name>.chgame.installed` and nothing cleans these up" records (this entry widens it, and does not replace it): when the five aside names (`ASIDE_NAMES`) are all taken by files that will not delete, the installed inbox file stays in the inbox and installs again on every visit, which undoes a Remove. It is a data-integrity bug: the person's removal of a game does not hold.
+  evidence: `src/games/GamePackageInstaller.cpp:58` (`ASIDE_NAMES = 5`); `moveAside` (`:763-780`) skips a name that exists and will not delete (`:770-773`) and returns false after the fifth (`:779`); `install` reaches it only after `Storage.remove(job.inboxPath)` failed (`:861-866`) and returns `Error::SdCard`, leaving the file in the inbox; `commit` (`:733-754`) replaces `/.games/<id>` with no comparison against the installed `.pkg` hash, and a removed game's folder is gone, so the next visit installs it afresh. Each visit also reports a failure, but the game is back. The setup needs a card that refuses deletes five times over, as the `## e4-x` item says. Trigger: a card that refuses deletes repeatedly (a report of a removed game coming back, or an install failure on the same file every visit). A host test can pin it with the fake card (`GamePackageInstallerTest.cpp:978-994` already sets up the stuck names): after that install, remove the game's folder, call `install()` again, and expect the game not to come back (today `/.games/g/.pkg` exists again); the fix is open (skip a file whose package hash matches the installed `.pkg`, or mark it bad when no aside name is free).
+## e6pre-7
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-7-min-level-preflight.md`
+  summary: Decided (a) by the owner (2026-10-04): the e2r-ai-9 owner question for AD-19 is closed; `freeze_problems` in `scripts/fork_release.py` now also refuses a commit whose `API_MIN_LEVEL` is above a level an earlier `-ch.N` release ran and shipped frozen.
+  evidence: `FreezeTest` in `scripts/fork_release_test.py` pins the refusal, the accepted raise over an unfrozen level, and an unchanged or lowered minimum. The spine's AD-19 Freeze bullet still needs the sentence; a later pass edits it (see the plan).
+
+## e6pre-13
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-10-forced-exit-writes-before-the-blank.md`
+  summary: Device check still owed for e6pre-10's forced-exit order (the owner accepted the order, 2026-10-04): run B7.6 (a sleep with a dirty store, `pass-store`) on an X4 Pro and record when the blank actually starts and whether the resume write and `ch.store` flush land. The decision is closed; this check is not.
+  evidence: The blank now follows the SD steps. Its start time is an estimate from logged figures, about 100 ms in with a joined VM and about 1,150 ms with a stuck one, and a card that stalls inside a step already started delays it with no cap (`docs/crosshatch/game-canvas.md`, "Worst case, with the blank last"). The host tests pin the order, not the timing. If B7.6 shows a stall, the alternative is a start-time bound for the blank on its own thread or an async push.
