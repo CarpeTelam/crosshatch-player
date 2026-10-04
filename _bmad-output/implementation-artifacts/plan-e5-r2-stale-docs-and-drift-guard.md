@@ -3,7 +3,7 @@ title: 'e5-r2: stale docs and the input double drift guard (epic-pass-and-play r
 type: 'chore'
 ticket: ''
 created: '2026-10-03'
-status: 'built'
+status: 'done'
 baseline_revision: '0264a1f4'
 route: 'full'
 review: 'thorough'

@@ -3,7 +3,7 @@ title: 'e5-r1: free the touch latch on leaving Playing, pin the forced-exit dead
 type: 'bugfix'
 ticket: ''
 created: '2026-10-03'
-status: 'in-review'
+status: 'done'
 route: 'full'
 route_source: 'auto'
 review: 'thorough'

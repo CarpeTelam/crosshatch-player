@@ -3,7 +3,7 @@ title: 'e6pre-6-ai13-deferred-entries: the three deferred-work entries epic 4 re
 type: 'chore'
 ticket: ''
 created: '2026-10-04'
-status: 'built'
+status: 'done'
 route: 'oneshot'
 route_source: 'pinned'
 review: 'quick'
