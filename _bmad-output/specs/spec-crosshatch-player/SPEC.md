@@ -55,7 +55,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
   - **intent:** Upstream `develop` merges stay clean. Game code sits outside upstream files, and changes to upstream files are capped by a ledger and enforced in CI.
   - **success:** A fork-only CI job fails any PR that changes an upstream path missing from the ledger or the baseline allowlist, and merging upstream `develop` touches no game code.
 - **CAP-12** (added 2026-10-04, owner; was a Non-goal)
-  - **intent:** A developer with an AI assistant starts from a public game starter repo that carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and example games, and has their own game on their device the same day.
+  - **intent:** A developer with an AI assistant starts from a public game starter repo that carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and at least one example game, and has their own game on their device the same day.
   - **success:** Pointed only at the starter repo, an AI assistant writes a game that packs with the repo's packer, installs through the inbox, and plays a round on an X4 Pro running a fork release with API level 1 frozen.
 
 ## Constraints
@@ -66,7 +66,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - Scripts reach the host only through `ch.*`: no file, radio, or framebuffer access, and text chunks only. Each callback has a budget of 2 M instructions, which answers a move in about 1 s, and each VM has a 256 KB PSRAM heap.
 - Every mode enforces the same codec limits: a snapshot of at most 1,400 B (one ESP-NOW v2 payload), a move of at most 256 B, and a `ch.store` of at most 4 KB.
 - Only simple turn-structured games are in scope, and every API addition must serve one. The API has no frame loop, drag input, sprites, sound, or timers under 1 s.
-- The API is versioned by an integer level. Levels are cumulative and only add; a released level is frozen, and level 1 is a preview until v1 closes (spine AD-19). Icon names are part of the level.
+- The API is versioned by an integer level. Levels are cumulative and only add; a released level is frozen, and level 1 is a preview until the freezing release (spine AD-19). Icon names are part of the level.
 - Play Nearby never runs while the web server or any other Wi-Fi activity is up. The radio is unencrypted, so the design assumes everyone in the room cooperates.
 - The runtime adds at most 270 KB of flash to the x4pro image (amended 2026-10-02, owner, from 250 KB: epic-pass-and-play's approved title-screen, Options, and hand-off design). Its internal-RAM costs are the 16 KB VM stack, the 4 KB link stack, and the Wi-Fi driver; everything else lives in PSRAM. The Nearby lobby refuses to open below 100 KB of free internal heap.
 - A child can finish every v1 flow unaided: no text entry, large touch targets, and short `tr(STR_GAMES_*)` text.

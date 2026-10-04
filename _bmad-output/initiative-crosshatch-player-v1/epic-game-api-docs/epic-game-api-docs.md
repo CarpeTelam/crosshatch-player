@@ -45,7 +45,7 @@ Author docs in `docs/crosshatch/` only. Not the byte-formats doc (epic-script-ru
 - Waits on epic-icon-library because: the icon set to catalog.
 - Waits on epic-install-and-launcher because: install through the inbox for the AI-authoring trial.
 - Waits on epic-play-nearby because: the complete pass and nearby behaviour the docs describe (the seed's tic-tac-toe is `pass` and `nearby`).
-- Decision: the API level 1 freeze moved from epic-game-api-docs to the end of this initiative, in epic-first-party-games's last ticket (owner, spine AD-19 update, 2026-09-27). **Amended 2026-10-04 (owner):** the freeze is epic-api-freeze's last entry.
+- Decision: the API level 1 freeze moved from epic-game-api-docs to the end of this initiative, in epic-first-party-games's last ticket (owner, spine AD-19 update, 2026-09-27). **Amended 2026-10-04 (owner):** the freeze is epic-api-freeze's freeze entry, which only its starter repo follows.
 - Handoffs from epic-icon-library (owner's entry-8 review, 2026-09-28):
   - The icon catalog lists every library icon by its exact Phosphor 2.1.1 name, in both weights, with `ch.gfx.icon`'s sixth argument `weight` (`"regular"` default, `"fill"`), and links each name to the Phosphor site; the chess pieces are not in the library, so a chess game ships its own images (`ch.gfx.image`).
   - Retro R8: a game cannot force a refresh of an unchanged frame (`ch.gfx.refresh("full")` on an identical frame is skipped); one line in the API docs.

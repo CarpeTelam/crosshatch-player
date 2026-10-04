@@ -30,7 +30,7 @@ The spec is the requirement source: `CAP-1` to `CAP-12`, with its Constraints an
 3. The next merge of upstream `develop` touches no game code, and the upstream-touch ledger job passes on it.
 4. `default`, `x4c`, and `papermono` build with the game libraries compiled and unreferenced, and the x4pro image grows by at most 250 KB.
 5. Sudoku, Ultimate tic-tac-toe, and Battleship are attached to a fork release as `.chgame` assets.
-6. A public game starter repo carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and an example game, and targets the freezing release (CAP-12).
+6. A public game starter repo carries the API docs, LuaLS stub, and icon catalog unchanged, a packer, and at least one first-party game as an example, and targets the freezing release (CAP-12).
 
 ## Boundaries
 
@@ -45,7 +45,7 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Touch point: the existing web file manager and USB — consumed unchanged to put files in `/games/`; owner: epic-install-and-launcher
 - Touch point: `src/network/OtaUpdater.cpp` — guarded calls to the fork update source (ledger row 10, AD-25); owner: epic-platform-baseline
 - Touch point: the fork release — the release workflow numbers and publishes firmware and packs every `games/<id>/` (AD-25); owner: epic-platform-baseline; epic-first-party-games adds only game sources
-- Touch point: the game starter repo, a separate public GitHub repository that carries `docs/crosshatch/`'s author docs unchanged, a packer, and example games (CAP-12); owner: epic-api-freeze
+- Touch point: the game starter repo, a separate public GitHub repository that carries `docs/crosshatch/`'s author docs unchanged, a packer, and at least one example game (CAP-12); owner: epic-api-freeze
 
 ## References
 
@@ -67,5 +67,5 @@ Follows the spec's capabilities, cut along the spine's layers: build and merge g
 - Decision: first-party release assets are attached by the fork release workflow of AD-25, owned by epic-platform-baseline, not by editing upstream `release.yml` (user's decision, 2026-09-26).
 - Source conflict: spine Operational envelope, Firmware delivery — "users update through the existing OTA, SD, or web flasher paths" vs `src/network/OtaUpdater.cpp`, which checks only `crosspoint-reader/crosspoint-reader` releases/latest and compares X.Y.Z alone; a fork device would be offered upstream firmware without games and never a fork release. The fork versioning and update-source scheme is unsettled and waits on an architecture decision; epic-first-party-games (release assets) and any fork firmware release wait on it.
 - Decision: the OTA source conflict is settled by AD-25: builds with `FREEINK_CAP_GAMES` update from the fork's own releases, versioned `X.Y.Z-ch.N` by one fork release workflow, through the ledger's row 10 (`OtaUpdater.cpp`); epic-platform-baseline owns it (user's decision, 2026-09-26).
-- Decision (owner, 2026-10-04): nine epics. epic-first-party-games is split: it keeps the three games in solo and pass, a PR-time `games/` check, and the release assets, and runs alongside epic-play-nearby; epic-api-freeze (epic 9) plays the games' nearby rounds, settles the pre-freeze checklist, and sets `API_LEVEL_FROZEN` last, after epic-play-nearby, epic-game-api-docs, and epic-first-party-games. This amends the 2026-09-26 Decisions on eight epics and on the second device, which now gates the closure of epic-play-nearby and epic-api-freeze.
+- Decision (owner, 2026-10-04): nine epics. epic-first-party-games is split: it keeps the three games in solo and pass, a PR-time `games/` check, and the release assets, and runs alongside epic-play-nearby; epic-api-freeze (epic 9) plays the games' nearby rounds, settles the pre-freeze checklist, and sets `API_LEVEL_FROZEN` last, after epic-play-nearby, epic-game-api-docs, and epic-first-party-games. This amends the 2026-09-26 Decisions on eight epics and on the second device, which now gates the closure of epic-play-nearby and epic-api-freeze. **Superseded in part 2026-10-04 by the build-order Decision below:** epic-first-party-games builds before epic-play-nearby, which takes the nearby rounds and the second-device gate.
 - Decision (owner, 2026-10-04): the build order is epic-first-party-games, epic-play-nearby, epic-game-api-docs, epic-api-freeze. Epic-play-nearby adds `nearby` to the first-party two-player games and plays their rounds, so the second device gates only its closure. A game starter repo moves into v1 as CAP-12 (spec Non-goal and spine Deferred row amended), built by epic-api-freeze after the freeze. This supersedes the earlier 2026-10-04 Decision where they differ.
