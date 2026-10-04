@@ -487,8 +487,8 @@ TEST(ManifestTest, StartModeFallsBackRememberedThenDefaultThenTheFirstStartable)
 
 // Every fixture game's manifest.json passes what GameRegistry requires to list a game,
 // and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
-// name, it passes Manifest::check against this host, and it offers solo (pass-hidden, the hidden hand-off, which
-// has no solo form, offers pass instead, and says hidden). Exactly the folders that
+// name, it passes Manifest::check against this host, and it offers solo (pass-hidden, the hidden hand-off, and
+// pass-keep, its kept-turn twin, have no solo form, offer pass instead, and say hidden). Exactly the folders that
 // are not games of their own (changed, which holds only game folders one level down, and faults, modules, surface) have
 // none, so a game fixture that loses its manifest fails here.
 TEST(ManifestTest, EveryFixtureManifestIsListed) {
@@ -515,7 +515,7 @@ TEST(ManifestTest, EveryFixtureManifestIsListed) {
     EXPECT_EQ(std::string(m.id), folder);
     const GameCore::CheckResult check = m.check(gameHostCaps());
     EXPECT_TRUE(check.ok()) << folder << ": " << GameCore::describe(check.reason);
-    if (folder == "pass-hidden") {
+    if (folder == "pass-hidden" || folder == "pass-keep") {
       EXPECT_EQ(check.modes, Manifest::MODE_PASS) << folder << " offers more than pass, or not pass, on this host";
       EXPECT_TRUE(m.hidden) << folder << " does not say hidden";
     } else {
