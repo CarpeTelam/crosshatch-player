@@ -928,3 +928,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-7
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-7-min-level-preflight.md`
+  summary: Decided (a) by the owner (2026-10-04): the e2r-ai-9 owner question for AD-19 is closed; `freeze_problems` in `scripts/fork_release.py` now also refuses a commit whose `API_MIN_LEVEL` is above a level an earlier `-ch.N` release ran and shipped frozen.
+  evidence: `FreezeTest` in `scripts/fork_release_test.py` pins the refusal, the accepted raise over an unfrozen level, and an unchanged or lowered minimum. The spine's AD-19 Freeze bullet still needs the sentence; a later pass edits it (see the plan).
