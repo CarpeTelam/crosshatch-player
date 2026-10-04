@@ -952,3 +952,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
   summary: Untested: a hidden-pass or nearby (one remote seat) roster for the late-timer drop and for a timer before over; and a no-local-seat roster whose round is still playing now gets a timer delivered as seat 0 (the old seat-0 test dropped it, mislogged). Unreachable until a roster has no local seat.
   evidence: `GameVM::stepHandOff`, `SoloRounds::step`; `GameVmTest` / `SoloRoundsTest` late-timer tests. Trigger: epic play-nearby's first roster with a remote seat or none local.
+
+## e6pre-9
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-9-pause-menu-in-the-play-again-gap.md`
+  summary: Decided (owner, 2026-10-04) and resolves `## 5.4`'s last item and `## 5.6`'s repeat of it: a pause menu opened in the Play-again gap is not drawn over the last round's frame, in every mode (solo, open pass, later nearby); `GameMatchActivity::canvasUnderView` is also false while `vm->roundsStarted() < roundsStartedAwaited`. Solo's pause menu in the gap changes visibly: it now sits on a cleared screen. The new round's first frame still draws on a cleared screen in full, and Resume in the gap keeps the menu.
+  evidence: `PlayAgainGapTest` / `PlayAgainGapPassTest` (`ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull`, `TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished`); `docs/crosshatch/game-canvas.md` (Paused -> Playing row, The views).

@@ -780,6 +780,13 @@ bool GameMatchActivity::canvasUnderView(const MatchState state) const {
   if (state == MatchState::Error || !vm) return false;
   // Paused from the hand-off: the device is between players, and no seat's frame may show.
   if (state == MatchState::Paused && resumesTo.load() == MatchState::HandOff) return false;
+  // In the Play-again gap (every mode) every frame is the last round's: a pause menu opened there sits on a cleared
+  // screen, as renderCanvas leaves the screen in the gap. Once the round's first frame is published, the loop redraws
+  // the menu (gapWhenPaused) with the canvas back under it.
+  // Only after a Play again (awaited passes 1, as in pauseInGap): a menu over the match's first round is redrawn by no
+  // one.
+  const uint32_t awaited = roundsStartedAwaited.load();
+  if (awaited > 1 && vm->roundsStarted() < awaited) return false;
   // Before the next seat's frame is published the front frame may be the last seat's.
   return vm->seatShownRequest() >= seatAwaited.load();
 }

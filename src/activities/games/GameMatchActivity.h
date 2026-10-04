@@ -174,7 +174,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // (announcementAwaited).
   void renderHandOff();
   // Render task: whether a view in `state` sits over the canvas. Not the error view, nor a pause menu entered from
-  // HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match).
+  // HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match), nor anything
+  // in the Play-again gap (the round the match awaits has not published its first frame), in every mode.
   bool canvasUnderView(MatchState state) const;
   static void viewScreen(UiScreen& screen, void* user);
   // Render task: a pause menu that returns to play while the new round has not published its first frame (the

@@ -665,16 +665,18 @@ class PlayAgainGapTest : public MatchTest {
   void SetUp() override {
     MatchTest::SetUp();
     installGame("gated", match::gatedGame(1));
-    enter("gated");
+    enter("gated", "", roster());
     showFrame();
     fakertos::arm();
     tapCanvas(100, 200);  // A: ends the round, held at its clock read
     frame();
     ASSERT_TRUE(fakertos::waitParked());
-    tapCanvas(300, 400);  // B: queued behind A
-    frame();
+    if (lateStep()) {
+      tapCanvas(300, 400);  // B: queued behind A
+      frame();
+    }
     fakertos::pass();  // A finishes and the round ends; B is held at its own clock read
-    ASSERT_TRUE(fakertos::waitParked());
+    if (lateStep()) ASSERT_TRUE(fakertos::waitParked());
     ASSERT_TRUE(pump([&] { return state() == "Over"; }));
   }
 
@@ -682,6 +684,12 @@ class PlayAgainGapTest : public MatchTest {
     fakertos::release();
     MatchTest::TearDown();
   }
+
+  // The match's roster: solo here, an open pass match in PlayAgainGapPassTest (the gap is the same in both).
+  virtual GameCore::Roster roster() const { return GameCore::Roster::solo(); }
+  // Whether a second tap B is queued behind A, so a late frame of the last round is published in the gap. An open pass
+  // match drops it once the round is over (every seat answers `over` and nothing else), so its gap is the setup's hold.
+  virtual bool lateStep() const { return true; }
 
   // Play again from the menu on screen (or the focused option, when it was never drawn).
   void playAgainByTouch() {
@@ -691,10 +699,71 @@ class PlayAgainGapTest : public MatchTest {
 
   // B's step finishes and publishes its (late) frame; the VM restarts and is held at round 2's setup.
   void enterTheGap() {
-    fakertos::pass();
+    if (lateStep()) fakertos::pass();
     ASSERT_TRUE(fakertos::waitParked());
     activityManager.markRendered();
   }
+
+  // e6pre-9: a pause menu opened in the gap, then resumed there, sits on a cleared screen. Round 1's newest frame (a
+  // square at the last tap, (300, 400) after the late step B or A's (100, 200) without it, and the text "Round 1, ...")
+  // is never drawn under it, nor by the render after Resume.
+  void pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas() {
+    playAgainByTouch();
+    enterTheGap();
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+    renderer->forget();
+    renderView();
+    ASSERT_TRUE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+    EXPECT_TRUE(match::drawnTexts(*renderer).empty()) << "the last round's frame was drawn under the pause menu";
+    const int squareX = lateStep() ? 300 : 100;
+    const int squareY = lateStep() ? 400 : 200;
+    EXPECT_EQ(renderer->pixel(CANVAS_X + squareX, CANVAS_Y + squareY), GfxRenderer::PixelWhite);
+    tapOption(tr(STR_GAMES_RESUME));
+    ASSERT_EQ(state(), "Playing");
+    renderer->forget();
+    const size_t shown = renderer->shown.size();
+    render();
+    EXPECT_EQ(renderer->shown.size(), shown) << "Resume in the gap pushed a frame";
+    EXPECT_TRUE(match::drawnTexts(*renderer).empty());
+    // The new round's first frame is still drawn on a cleared screen, in full.
+    const size_t clears = renderer->count(GfxRenderer::Kind::ClearScreen);
+    fakertos::release();
+    ASSERT_TRUE(pumpToRender());
+    render();
+    ASSERT_EQ(renderer->shown.size(), shown + 1);
+    EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+    EXPECT_GT(renderer->count(GfxRenderer::Kind::ClearScreen), clears);
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    EXPECT_NE(std::find(texts.begin(), texts.end(), "Round 2, taps: 0"), texts.end());
+  }
+
+  // e6pre-9: a pause menu left open across the round's first frame is drawn again over the new round's frame.
+  void theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame() {
+    playAgainByTouch();
+    enterTheGap();
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+    renderView();
+    fakertos::release();
+    ASSERT_TRUE(pump([&] { return activityManager.updateRequested(); })) << "the round started and the menu stayed";
+    ASSERT_EQ(state(), "Paused");
+    renderer->forget();
+    renderView();
+    const std::vector<std::string> texts = match::drawnTexts(*renderer);
+    EXPECT_NE(std::find(texts.begin(), texts.end(), "Round 2, taps: 0"), texts.end()) << "no canvas under the menu";
+    EXPECT_EQ(std::find(texts.begin(), texts.end(), "Round 1, taps: 1"), texts.end());
+    EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_NEXT_ROUND_STARTING))) << ui().joined();
+  }
+};
+
+// The same gap in an open pass match (no hand-off screen): the late step and the Play-again flow are the solo ones.
+class PlayAgainGapPassTest : public PlayAgainGapTest {
+ protected:
+  GameCore::Roster roster() const override { return GameCore::Roster::pass(2); }
+  bool lateStep() const override { return false; }
 };
 
 TEST_F(PlayAgainGapTest, TheLoopAsksForNoRenderWhileTheLastRoundsLateFrameIsTheNewest) {
@@ -778,6 +847,24 @@ TEST_F(PlayAgainGapTest, PauseThenResumeInTheGapKeepsThePauseMenuUntilTheNewRoun
   render();
   ASSERT_EQ(renderer->shown.size(), shown + 1);
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+}
+
+// Owner decision of 2026-10-04 (deferred-work `## 5.4`, e6pre-9): the pause menu opened in the gap is not drawn over
+// the last round's frame, in any mode; the canvas is back once the new round has published its first frame.
+TEST_F(PlayAgainGapTest, ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull) {
+  pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas();
+}
+
+TEST_F(PlayAgainGapTest, TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished) {
+  theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame();
+}
+
+TEST_F(PlayAgainGapPassTest, ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull) {
+  pauseAndResumeInTheGapDrawsNoPreviousRoundCanvas();
+}
+
+TEST_F(PlayAgainGapPassTest, TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished) {
+  theCanvasIsBackUnderThePauseMenuOnceTheRoundHasItsFirstFrame();
 }
 
 TEST_F(PlayAgainGapTest, AGapRenderMarksTheScreenAsNotHoldingTheCanvasEvenWhenNoMenuWasDrawn) {
