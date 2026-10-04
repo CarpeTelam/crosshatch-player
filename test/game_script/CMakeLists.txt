@@ -91,7 +91,7 @@ add_executable(GameScriptTest
   RefreshPolicyTest.cpp
   SandboxTest.cpp
   SessionGameTest.cpp
-  SoloRoundsTest.cpp
+  MatchRoundsTest.cpp
   StoreSlotTest.cpp
   TextMetricsTest.cpp
   VmFailureTest.cpp

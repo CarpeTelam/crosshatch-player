@@ -11,18 +11,16 @@
 #include <cstdio>
 #include <utility>
 
+#include "GameMatchView.h"
 #include "GameSplashLayout.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
 #include "games/GameHostCaps.h"
-#include "games/GameIconDraw.h"
 #include "games/GameRegistry.h"
 #include "games/GameVM.h"
-#include "games/GameViewIcons.h"
-
-namespace fui = freeink::ui;
+#include "games/MatchResume.h"
 
 namespace {
 
@@ -53,12 +51,6 @@ StrId loadFailureReason(const GameAssets::LoadResult result) {
   return StrId::STR_GAMES_START_FAILED;
 }
 
-// Whether an icon beside a label drawn over `paint` in `text` is black (GameViewIcons::labelIsBlack has the rule).
-bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
-  return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
-                                     GameViewIcons::textInkIsWhite(text.color == fui::Color::White, text.inverted));
-}
-
 // The error view's detail for a failed VM: tr() text for the host's own failures,
 // Lua's message for the script's (AD-14).
 const char* vmFailureText(const GameVM& vm) {
@@ -66,29 +58,6 @@ const char* vmFailureText(const GameVM& vm) {
   texts.outOfMemory = tr(STR_GAMES_OUT_OF_MEMORY);
   texts.notLoaded = tr(STR_GAMES_NOT_LOADED);
   return vm.failureDetail(texts);
-}
-
-// A menu choice's label.
-StrId optionLabel(const MatchEvent event) {
-  switch (event) {
-    case MatchEvent::Resume:
-      return StrId::STR_GAMES_RESUME;
-    case MatchEvent::Leave:
-      return StrId::STR_GAMES_LEAVE;
-    case MatchEvent::PlayAgain:
-      return StrId::STR_GAMES_PLAY_AGAIN;
-    case MatchEvent::Back:
-      return StrId::STR_BACK;
-    case MatchEvent::Started:
-    case MatchEvent::Home:
-    case MatchEvent::RoundOver:
-    case MatchEvent::ScriptError:
-    case MatchEvent::ForcedExit:
-    case MatchEvent::TurnChanged:
-    case MatchEvent::Tap:
-      break;  // never a menu choice (MatchLifecycle::menuFor)
-  }
-  return StrId::STR_BACK;
 }
 
 // A hidden pass match: a pass roster of a game whose manifest says hidden (MatchLifecycle's hiddenPass).
@@ -113,7 +82,9 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
       roster(roster),
       settings(settings),
       start(start),
-      lifecycle(isHiddenPass(roster, manifest)) {}
+      lifecycle(isHiddenPass(roster, manifest)) {
+  persistence.bind(store, this->manifest.id, [] { return static_cast<uint32_t>(millis()); });
+}
 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
@@ -162,15 +133,28 @@ void GameMatchActivity::onEnter() {
   // here and setResume calls the store, so the snapshot stays valid.
   std::span<const uint8_t> snapshot;
   uint16_t ver = 0;
-  StrId refusal = StrId::STR_GAMES_RESUME_FAILED;
-  if (start == Start::Resume && !seedResume(snapshot, ver, refusal)) {
-    // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
-    // match stops here instead, with resumeWritable still false (Error never writes resume.bin).
-    fail(StrId::STR_GAMES_START_FAILED, I18N.get(refusal));
-    return;
+  if (start == Start::Resume) {
+    const ResumeSeed seed = seedResume(store.saves(), manifest, gameHostCaps());
+    if (seed.outcome == ResumeSeed::Outcome::Refused) {
+      // The save is on the card and unchanged. Starting a new match would replace it with its first snapshot, so the
+      // match stops here instead, with the persistence still not writable (Error never writes resume.bin).
+      fail(StrId::STR_GAMES_START_FAILED,
+           I18N.get(seed.refusal == ResumeSeed::Refusal::NotHere ? StrId::STR_GAMES_RESUME_NOT_HERE
+                                                                 : StrId::STR_GAMES_RESUME_FAILED));
+      return;
+    }
+    snapshot = seed.snapshot;
+    ver = seed.version;
+    if (seed.outcome == ResumeSeed::Outcome::Resume) {
+      // The save's roster is the match's, whatever the caller passed: the VM's Session, the lifecycle, and the store's
+      // writes (loadResume adopted it) all follow it.
+      roster = seed.roster;
+      // Still Starting and before the VM exists: no event has been applied, so the flag is fixed from here on.
+      lifecycle = MatchLifecycle(isHiddenPass(seed.roster, manifest));
+    }
   }
-  // A Continue whose save is gone by now (seedResume: nothing to lose) starts a new round, which runs setup: with the
-  // settings the title screen could not read, it would run without ctx.settings.
+  // A Continue whose save is gone by now (seedResume's New: nothing to lose) starts a new round, which runs setup: with
+  // the settings the title screen could not read, it would run without ctx.settings.
   if (start == Start::Resume && snapshot.empty() && settings.count != manifest.settingsCount) {
     LOG_ERR("GAME", "%s: no save to resume and the settings its manifest declares were not read; not starting",
             manifest.id);
@@ -210,73 +194,23 @@ void GameMatchActivity::onEnter() {
   handle(MatchEvent::Started);
 }
 
-bool GameMatchActivity::seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver, StrId& refusal) {
-  bool unreadable = false;
-  GameCore::Roster saved;
-  snapshot = store.saves().loadResume(ver, unreadable, manifest, gameHostCaps(), saved);
-  if (snapshot.empty()) {
-    refusal = StrId::STR_GAMES_RESUME_FAILED;
-    if (unreadable) {
-      // A save is there and would not read, a fault that may pass (the title screen offered Continue for it).
-      LOG_ERR("GAME", "%s: resume.bin could not be read; not starting a new match over it", manifest.id);
-      return false;
-    }
-    // Why there is none, asked of the card again through the store's buffer (nothing references it after an empty
-    // load) and never its roster, so the error view writes nothing and a new match writes its own roster.
-    switch (store.saves().peekResume(manifest, gameHostCaps())) {
-      case GameSaveStore::SaveState::Unstartable:
-        // A save of this package whose mode or seats this host cannot start, or a later firmware's (an unknown mode
-        // byte, a newer file or codec version, or an oversized snapshot): a new match here would replace it with its
-        // first snapshot.
-        LOG_ERR("GAME", "%s: resume.bin is a save this host cannot start; not starting a new match over it",
-                manifest.id);
-        refusal = StrId::STR_GAMES_RESUME_NOT_HERE;
-        return false;
-      case GameSaveStore::SaveState::Unreadable:
-      case GameSaveStore::SaveState::Valid:
-        // A read that faults now (the first did not) cannot rule out a save, and a save that reads now changed since
-        // the load refused it: either way the file is kept.
-        LOG_ERR("GAME", "%s: resume.bin could not be checked again; not starting a new match over it", manifest.id);
-        return false;
-      case GameSaveStore::SaveState::None:
-        break;
-    }
-    // No file, or one that was read and is no save (logged with its reason): nothing to lose.
-    LOG_INF("GAME", "%s: no usable resume.bin; starting a new match", manifest.id);
-    return true;
-  }
-  // The save's roster is the match's, whatever the caller passed: the VM's Session, the lifecycle, and the store's
-  // writes (loadResume adopted it) all follow it.
-  roster = saved;
-  // Still Starting and before the VM exists: no event has been applied, so the flag is fixed from here on.
-  lifecycle = MatchLifecycle(isHiddenPass(saved, manifest));
-  LOG_INF("GAME", "%s: resuming the save's roster: %s, %u seat(s)", manifest.id, GameCore::modeName(saved.mode),
-          static_cast<unsigned>(saved.seats));
-  return true;
-}
-
 void GameMatchActivity::onExit() {
-  forcedExitBeganMs = millis();
-  forcedExit = true;
+  persistence.beginForcedExit();
   Activity::onExit();
   // ActivityManager holds RenderLock here: never take it again (12cc816). The VM
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
   // the frames an abandon frees. After a user exit the match is Leaving already
   // and the VM is gone; the store is flushed again only if a set landed since. The
-  // order: cancel and join, a hidden pass match's plain white blank pushed when a seat's frame may be on the panel
-  // (stopVm, pushForcedExitBlank; with no VM, first, below), the last snapshot written while the VM that holds it still
-  // exists (stopVm), abandon if it did not join, a resume.bin delete Over could not
-  // finish, then the store. The SD steps stop starting once the deadline has passed,
-  // which counts the blank's push.
+  // order: cancel and join, the last snapshot written while the VM that holds it still exists (stopVm), abandon if it
+  // did not join, a resume.bin delete Over could not finish, the store, and last a hidden pass match's plain white
+  // blank when a seat's frame may be on the panel (pushForcedExitBlank). The SD steps stop starting once the deadline
+  // has passed; the blank is no SD step, so a skipped or failed step never keeps it from running (its own panel guards
+  // aside).
   handle(MatchEvent::ForcedExit);
-  // With no VM there is no stop to wait for, so a hidden pass match's blank comes first, before the SD steps, when a
-  // seat's frame may still be on the panel: after a stuck VM was stopped on the way to Error before the error view was
-  // drawn (R6). A Leave pushed its own before goToGames() (leave), so one whose Games screen ran out of memory left the
-  // blank, and nothing is pushed again.
-  if (!vm && lifecycle.hiddenPass() && panel == Panel::Seat) pushBlank("forced exit");
   stopVm();
   retryResumeDelete(true);
   flushStore();
+  pushForcedExitBlank();
 }
 
 bool GameMatchActivity::handleHomeGesture() {
@@ -322,7 +256,7 @@ void GameMatchActivity::handle(const MatchEvent event) {
   shown.store(to);
   switch (to) {
     case MatchState::Playing:
-      resumeWritable = true;
+      persistence.setWritable(true);
       if (event == MatchEvent::PlayAgain) startNextRound();
       // A new round's first frame asks for its own render, as does the next seat's after the hand-off; a resumed one
       // is redrawn, unless it resumes into the Play-again gap, where renderCanvas keeps the view on screen until the
@@ -330,32 +264,30 @@ void GameMatchActivity::handle(const MatchEvent event) {
       if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
       break;
     case MatchState::Result:
-      resumeWritable = true;
+      persistence.setWritable(true);
       break;
     case MatchState::HandOff:
-      resumeWritable = true;
+      persistence.setWritable(true);
       if (event == MatchEvent::PlayAgain) startNextRound();
       break;
     case MatchState::Over:
-      resumeWritable = false;
+      persistence.setWritable(false);
       flushStore();
-      // A finished round never resumes. A snapshot with `over` set is never written, and
-      // one still pending is dropped by the next flushResume.
-      resumeDeletePending = !store.saves().deleteResume();
-      resumeDeleteTriedMs = millis();
+      // A finished round never resumes (MatchPersistence::onOver).
+      persistence.onOver();
       break;
     case MatchState::Leaving:
       // onExit() stops and flushes itself after a forced exit.
       if (event != MatchEvent::ForcedExit) leave();
       return;
     case MatchState::Paused:
-      resumeWritable = true;
+      persistence.setWritable(true);
       // A pause menu opened in the Play-again gap says so (pauseInGap; resumesTo was stored above). loopView redraws
       // it once the round starts.
       gapWhenPaused = pauseInGap();
       break;
     case MatchState::Error:
-      resumeWritable = false;
+      persistence.setWritable(false);
       break;
     case MatchState::Starting:
       break;
@@ -401,8 +333,6 @@ void GameMatchActivity::leave() {
 void GameMatchActivity::stopVm() {
   if (!vm) return;
   const bool joined = vm->stop(STOP_TIMEOUT_MS);
-  // After the wait (joined or not), before the first SD step and any abandon's wait (AD-12).
-  pushForcedExitBlank();
   // After the wait, before the VM is freed or abandoned (the snapshot is in its memory).
   // A task that did not join may still publish one on its way out; abandonVm looks again.
   flushResume();
@@ -414,13 +344,15 @@ void GameMatchActivity::stopVm() {
 }
 
 void GameMatchActivity::pushForcedExitBlank() {
+  // Last in the forced exit, after the SD steps (e6pre-10): the steps start inside the deadline whatever the half
+  // refresh costs, and the blank is not gated by it, so a slow card cannot cost the blank. With or without a VM.
   // Only a hidden pass match's forced exit: a solo or open pass match shows nothing private, and a user Leave pushes
   // its own after the stop (leave). And only when a seat's frame may be on the panel (panel is Seat: Playing, Result's
   // mover frame, a menu over a seat's frame, and any new state whose screen is not drawn yet, which leaves the last
   // frame there): on the hand-off screen, the blank, Over (seat 0's public frame), a drawn error view, or a menu on no
   // frame nothing private shows, and the push would only spend the SD steps' window.
-  if (!forcedExit || !lifecycle.hiddenPass() || panel != Panel::Seat) return;
-  // Not an SD step: the deadline does not gate it, but its time counts against the SD steps that follow.
+  if (!persistence.forcedExit() || !lifecycle.hiddenPass() || panel != Panel::Seat) return;
+  // Not an SD step: the deadline does not gate it, and nothing follows it that it could cost time.
   pushBlank("forced exit");
 }
 
@@ -434,49 +366,15 @@ void GameMatchActivity::pushBlank(const char* when) {
   LOG_INF("GAME", "%s: %s: blank screen pushed (half refresh)", manifest.id, when);
 }
 
-bool GameMatchActivity::sdStepAllowed(const char* what) {
-  if (!forcedExit || millis() - forcedExitBeganMs < FORCED_EXIT_DEADLINE_MS) return true;
-  LOG_ERR("GAME", "%s: forced exit past %u ms; skipped %s", manifest.id, static_cast<unsigned>(FORCED_EXIT_DEADLINE_MS),
-          what);
-  return false;
-}
-
-void GameMatchActivity::retryResumeDelete(const bool forced) {
-  if (!resumeDeletePending || !store.ready()) return;
-  const uint32_t now = millis();
-  if (!forced && now - resumeDeleteTriedMs < GameSaveStore::FLUSH_INTERVAL_MS) return;
-  if (!sdStepAllowed("the resume.bin delete")) return;
-  if (store.saves().deleteResume()) {
-    resumeDeletePending = false;
-  } else {
-    resumeDeleteTriedMs = now;
-  }
-}
+void GameMatchActivity::retryResumeDelete(const bool forced) { persistence.retryResumeDelete(forced); }
 
 void GameMatchActivity::flushResume() {
   if (vm) flushResumeOf(*vm);
 }
 
-void GameMatchActivity::flushResumeOf(GameVM& from) {
-  if (!resumeWritable || !store.ready() || !from.committed().pending()) return;
-  if (!sdStepAllowed("the resume write")) return;
-  const uint32_t replacedBefore = store.saves().resumeReplacements();
-  store.saves().flushResume(from.committed(), millis());
-  // The finished round's resume.bin is gone once a snapshot has replaced it, or once a write that then failed to
-  // rename has removed it (the new snapshot waits in resume.bin.tmp). Either way an Over delete that failed has
-  // nothing left to remove, and a retry from here on would delete this round's save. Until then the delete keeps
-  // retrying (loopPlaying, loopView, Leave, the forced exit).
-  if (store.saves().resumeReplacements() != replacedBefore) resumeDeletePending = false;
-}
+void GameMatchActivity::flushResumeOf(GameVM& from) { persistence.flushResumeOf(from.committed()); }
 
-void GameMatchActivity::flushStore() {
-  if (!store.ready()) return;  // the match never got that far
-  if (!store.slot().dirty() || !sdStepAllowed("the ch.store flush")) return;
-  // Safe with a leaked task too: the slot's mutex is held only for a copy inside
-  // a locked binding, which an abandon never deletes nor leaves suspended, so the
-  // flush waits at most one copy, and it saves every set until the leak.
-  store.flush(millis());
-}
+void GameMatchActivity::flushStore() { persistence.flushStore(); }
 
 void GameMatchActivity::abandonVm() {
   LOG_ERR("GAME", "VM did not stop within %u ms of cancel; abandoning it", static_cast<unsigned>(STOP_TIMEOUT_MS));
@@ -492,7 +390,7 @@ void GameMatchActivity::stopStuckVm() {
   LOG_ERR("GAME", "%s: a call ran over %u ms; stopping the VM", manifest.id, static_cast<unsigned>(WATCHDOG_MS));
   char detail[GameVM::ERROR_CAPACITY];
   snprintf(detail, sizeof(detail), "%s", tr(STR_GAMES_NOT_RESPONDING));
-  resumeWritable = false;  // the match is going to Error, which never writes resume.bin
+  persistence.setWritable(false);  // the match is going to Error, which never writes resume.bin
   {
     // render() reads vm and the frames abandon may free.
     RenderLock lock(*this);
@@ -681,7 +579,7 @@ void GameMatchActivity::loopView() {
   }
   const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
   const auto route = routeTouch(mappedInput);
-  if (route && route.event.action == ACTION_OPTION) {
+  if (route && route.event.action == GameMatchView::ACTION_OPTION) {
     choose(menu, route.event.value);
     return;
   }
@@ -731,7 +629,7 @@ void GameMatchActivity::loopHandOff() {
   // until the VM has named it, and the loop asks again), so neither does Confirm.
   const bool named = state != MatchState::HandOff || vm->turnAnnouncements() >= announcementAwaited.load();
   const bool confirmed = named && mappedInput.wasReleased(MappedInputManager::Button::Confirm);
-  const bool tapped = route && route.event.action == ACTION_PASS;
+  const bool tapped = route && route.event.action == GameMatchView::ACTION_PASS;
   if (tapped || confirmed) {
     app.clearTapFlash();  // the tap leaves this screen
     handle(MatchEvent::Tap);
@@ -878,6 +776,13 @@ bool GameMatchActivity::canvasUnderView(const MatchState state) const {
   if (state == MatchState::Error || !vm) return false;
   // Paused from the hand-off: the device is between players, and no seat's frame may show.
   if (state == MatchState::Paused && resumesTo.load() == MatchState::HandOff) return false;
+  // In the Play-again gap (every mode) every frame is the last round's: a pause menu opened there sits on a cleared
+  // screen, as renderCanvas leaves the screen in the gap. Once the round's first frame is published, the loop redraws
+  // the menu (gapWhenPaused) with the canvas back under it.
+  // Only after a Play again (awaited passes 1, as in pauseInGap): a menu over the match's first round is redrawn by no
+  // one.
+  const uint32_t awaited = roundsStartedAwaited.load();
+  if (awaited > 1 && vm->roundsStarted() < awaited) return false;
   // Before the next seat's frame is published the front frame may be the last seat's.
   return vm->seatShownRequest() >= seatAwaited.load();
 }
@@ -948,178 +853,24 @@ void GameMatchActivity::renderView(const MatchState state) {
 }
 
 void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
-  static_cast<GameMatchActivity*>(user)->buildView(screen);
-}
-
-const char* GameMatchActivity::viewHeadline(const MatchState state) const {
-  switch (state) {
-    case MatchState::Paused:
-      return tr(STR_GAMES_PAUSED);
-    case MatchState::Over:
-      return tr(STR_GAMES_OVER);
-    case MatchState::Error:
-      return I18N.get(errorHeadline);
-    case MatchState::Starting:
-    case MatchState::Playing:
-    case MatchState::Leaving:
-    case MatchState::Result:   // the banner, which has no headline
-    case MatchState::HandOff:  // the hand-off screen, which has no dialog
-      break;                   // no view
-  }
-  return nullptr;
-}
-
-void GameMatchActivity::buildView(UiScreen& screen) {
-  const MatchState state = viewState;
-  if (state == MatchState::Result || state == MatchState::HandOff) {
-    buildHandOffView(screen, state);
-    return;
-  }
-  const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
-  const char* headline = viewHeadline(state);
-  if (menu.count == 0 || !headline) return;
-  const uint8_t count = menu.count < MAX_OPTIONS ? menu.count : MAX_OPTIONS;
-  const uint8_t focused = selected.load();
-  fui::DialogOption options[MAX_OPTIONS];
-  for (uint8_t i = 0; i < count; ++i) {
-    options[i].label = I18N.get(optionLabel(menu.events[i]));
-    options[i].action = ACTION_OPTION;
-    options[i].value = static_cast<int16_t>(i);
-    options[i].state = i == focused ? fui::StateFocused : fui::StateNormal;
-  }
-
-  const auto& theme = screen.theme();
-  fui::OptionDialogProps& props = dialogProps;
-  props.title = manifest.name;
-  props.titleText = theme.smallText;
-  props.titleText.align = fui::TextAlign::Center;
-  props.headline = headline;
-  props.headlineText = theme.titleText;
-  props.headlineText.align = fui::TextAlign::Center;
-  props.headlineText.maxLines = 2;
-  // The error view adds Lua's message in small type, wrapped (AD-14); its
-  // ERROR_CAPACITY bytes fit in 8 lines. A pause menu in the Play-again gap says
-  // the round is starting, since Resume shows nothing new until it has.
-  props.message = state == MatchState::Error ? errorDetail : nullptr;
-  props.messageText = theme.smallText;
-  props.messageText.maxLines = 8;
-  if (state == MatchState::Paused && pauseInGap()) {
-    // Centred under the headline, like the caption and the headline above it.
-    props.message = tr(STR_GAMES_NEXT_ROUND_STARTING);
-    props.messageText.align = fui::TextAlign::Center;
-  }
-  props.buttonText = theme.bodyText;
-  props.buttonStyles = theme.button;
-  props.options = options;
-  props.optionCount = count;
-  props.verticalOptions = true;
-  // The view's library icon sits in the content band, between the text and the rows.
-  props.contentHeight = GameViewIcons::forView(state) ? static_cast<int16_t>(GameViewIcons::VIEW_PIXELS) : 0;
-  // Touch only: the buttons are read in loopView().
-  props.inputMask = fui::InputTouch;
-  // A framed panel, as OptionPopup draws it, so it stands out over the game.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
-
-  const fui::Rect safe = screen.frame().safeRect();
-  const auto width = static_cast<int16_t>(safe.width * 4 / 5);
-  const int16_t height = fui::optionDialogHeight(screen.target(), props, width);
-  const fui::Rect band = fui::optionDialog(screen.frame(), fui::centeredRect(safe, fui::Size{width, height}), props);
-  drawViewIcons(screen, band, state, menu, count);
-}
-
-void GameMatchActivity::buildHandOffView(UiScreen& screen, const MatchState state) {
-  const fui::Rect safe = screen.frame().safeRect();
-  const auto& theme = screen.theme();
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // The banner and the button are each the screen's one tap target, routed like any FreeInkUI control: a tap on it
-  // passes the device on (loopHandOff), a tap elsewhere routes nothing. Touch only: Confirm is read in loopHandOff.
-  fui::ButtonProps& props = bannerProps;
-  props.action = ACTION_PASS;
-  props.inputMask = fui::InputTouch;
-  props.text = theme.bodyText;
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
-  const auto width = static_cast<int16_t>(safe.width * 4 / 5);
-  const auto left = static_cast<int16_t>(safe.x + (safe.width - width) / 2);
-  if (state == MatchState::Result) {
-    // A framed panel at the bottom, over the mover's frame, naming who takes the device next.
-    snprintf(bannerText, sizeof(bannerText), tr(STR_GAMES_PASS_TO_PLAYER), static_cast<unsigned>(passTo.load()));
-    props.label = bannerText;
-    const auto height = static_cast<int16_t>(2 * theme.rowHeight);
-    const fui::Rect rect{left, static_cast<int16_t>(safe.bottom() - height - theme.spaceLg), width, height};
-    fui::button(screen.frame(), rect, props);
-    return;
-  }
-  // Where the title screen has its first two rows (GameSplashLayout::rowRect), whichever picture the band shows.
-  if (handOffSeat != 0) {
-    // "Player N's turn", plain text centred in the first row's place: no action, no frame. Seat 0 is no player's turn
-    // (a round already over when it began announces it): no line.
-    const fui::Rect turnRow = GameSplashLayout::rowRect(screen, renderer, 0, menuProps);
-    snprintf(bannerText, sizeof(bannerText), tr(STR_GAMES_PLAYER_TURN), static_cast<unsigned>(handOffSeat));
-    fui::TextStyle text = theme.bodyText;
-    text.align = fui::TextAlign::Center;
-    const int16_t lineHeight = screen.target().lineHeight(text.font);
-    const fui::Rect line{turnRow.x, static_cast<int16_t>(turnRow.y + (turnRow.height - lineHeight) / 2), turnRow.width,
-                         lineHeight};
-    screen.target().text(line, bannerText, text);
-  }
-  // "I'm ready" fills the second two-line row's place (the title screen's with a save), framed as the banner is.
-  props.label = tr(STR_GAMES_READY);
-  fui::button(screen.frame(), GameSplashLayout::rowRect(screen, renderer, 1, menuProps), props);
+  auto* self = static_cast<GameMatchActivity*>(user);
+  // Read here, at the callback, as the build used to: viewState, selected, passTo, handOffSeat, and the gap.
+  GameMatchView::Input input;
+  input.state = self->viewState;
+  input.title = self->manifest.name;
+  input.focused = self->selected.load();
+  input.errorHeadline = self->errorHeadline;
+  input.errorDetail = self->errorDetail;
+  input.pauseInGap = input.state == MatchState::Paused && self->pauseInGap();
+  input.passTo = self->passTo.load();
+  input.handOffSeat = self->handOffSeat;
+  self->views.build(screen, self->renderer, input);
 }
 
 bool GameMatchActivity::pauseInGap() const {
   // roundsStartedAwaited passes 1 only with a Play again: before a match's first frame no round is "next".
   const uint32_t awaited = roundsStartedAwaited.load();
   return vm && awaited > 1 && resumesTo.load() == MatchState::Playing && vm->roundsStarted() < awaited;
-}
-
-void GameMatchActivity::drawViewIcons(UiScreen& screen, const fui::Rect band, const MatchState state,
-                                      const GameCore::MatchMenu& menu, const uint8_t count) const {
-  // The dialog has no icon field, so the icons are drawn over the finished dialog.
-  if (band.empty()) return;
-  const fui::OptionDialogProps& props = dialogProps;
-  const char* viewIcon = GameViewIcons::forView(state);
-  if (viewIcon) {
-    // The icon sits on the panel's own background, not on a button. buildView sets that panel white with a solid black
-    // foreground, so this reads black; it is the panel's foreground that decides, as a row's button style decides its
-    // icon, and the headline's text style stands in only for a foreground that is not solid (none is today).
-    drawGameIcon(renderer, viewIcon, band.x + (band.width - GameViewIcons::VIEW_PIXELS) / 2, band.y,
-                 GameViewIcons::VIEW_PIXELS, labelIsBlack(props.styles.normal.foreground, props.headlineText));
-  }
-  // optionDialog stacks the rows directly below the band (verticalOptions).
-  const int inset = GameViewIcons::rowIconInset(props.buttonHeight);
-  for (uint8_t i = 0; i < count; ++i) {
-    const char* rowIcon = GameViewIcons::forOption(menu.events[i]);
-    const char* label = props.options[i].label;
-    if (!rowIcon || !label) continue;
-    const int labelWidth = screen.target().measureText(props.buttonText.font, label, props.buttonText).width;
-    if (!GameViewIcons::rowIconFits(band.width, props.buttonHeight, labelWidth, props.gap)) continue;
-    const int rowY = GameViewIcons::rowTop(band.bottom(), i, props.buttonHeight, props.gap);
-    const fui::State rowState = screen.frame().stateFor(ACTION_OPTION, static_cast<int16_t>(i), props.options[i].state);
-    const bool black = labelIsBlack(props.buttonStyles.resolve(rowState).foreground, props.buttonText);
-    drawGameIcon(renderer, rowIcon, band.x + inset, rowY + inset, GameViewIcons::ROW_PIXELS, black);
-  }
 }
 
 #endif  // FREEINK_CAP_GAMES

@@ -32,7 +32,8 @@ class StoreSlot;
 // calls only the newer forms; the older ones stay for the host suites, so a new caller takes the newer.
 //
 // And of prefs.bin beside them: the game's remembered mode and settings (loadPrefs, savePrefs), which the title screen
-// reads when it opens and writes on the loop task, never the match or onExit().
+// reads when it opens and writes on the loop task or in its own onExit() (AD-17 as amended 2026-10-04), never the
+// match.
 class GameSaveStore final : public GameCore::ISnapshotStore {
  public:
   static constexpr char STORE_MAGIC[] = "CHST";
@@ -159,12 +160,14 @@ class GameSaveStore final : public GameCore::ISnapshotStore {
   // LOG_INF). Every answer but Loaded leaves `out` empty, and none is an error: the title screen falls back to the
   // manifest's defaults (resolvePrefs), and the file stays until the next savePrefs replaces it.
   enum class PrefsState : uint8_t { None, Loaded, Malformed, Unreadable };
-  // Loop task, never in render() or onExit(): reads /.games-data/<gameId>/prefs.bin (or a whole prefs.bin.tmp, when it
-  // is missing) straight into `out`, with no buffer of its own.
+  // Loop task, or the title screen's onExit() (rememberChoices' re-read); never in render(): reads
+  // /.games-data/<gameId>/prefs.bin (or a whole prefs.bin.tmp, when it is missing) straight into `out`, with no buffer
+  // of its own.
   static PrefsState loadPrefs(const char* gameId, Prefs& out);
-  // Loop task, never in render() or onExit(): writes `prefs` as prefs.bin by way of prefs.bin.tmp and a rename, as
-  // saveResume writes resume.bin. False (logged) when it could not, or when `prefs` holds an entry no file can (an id
-  // or value empty or over its field, or more than MAX_SETTINGS); prefs.bin is then as it was.
+  // Loop task, or the title screen's onExit() (AD-17 as amended 2026-10-04); never in render(): writes `prefs` as
+  // prefs.bin by way of prefs.bin.tmp and a rename, as saveResume writes resume.bin. False (logged) when it could not,
+  // or when `prefs` holds an entry no file can (an id or value empty or over its field, or more than MAX_SETTINGS);
+  // prefs.bin is then as it was.
   static bool savePrefs(const char* gameId, const Prefs& prefs);
 
   // The title screen's choices: the current mode (a Manifest::Mode bit; 0 when `hostModes` is empty) and, for each

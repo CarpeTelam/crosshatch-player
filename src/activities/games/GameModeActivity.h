@@ -34,8 +34,9 @@ struct Roster;
 // host fits, onEnter), and each setting's value the remembered one when the manifest still declares it, else its
 // default (GameSaveStore::resolvePrefs). Options (GameOptionsActivity, pushed for its result) cycles them in place;
 // when it closes with a change, prefs.bin is written, and the New game line shows the new choice with the Options row
-// selected. Options left by a Replace (the Home gesture, sleep) runs no result handler, and its change is not written:
-// prefs.bin is never written from onExit() (AD-17; deferred-work.md ## 5.12). prefs.bin is written too when New game
+// selected. Options left by a Replace (the Home gesture, sleep) runs no result handler, so onExit() writes the change
+// still unwritten (optionsChanged; AD-17 as amended 2026-10-04, e6pre-11), once, and nothing when Back already wrote it
+// or nothing changed. prefs.bin is written too when New game
 // starts a mode other than the one the file holds (a missing file holds none; one that would not read is left alone). A
 // failed write is logged, and the choice lasts until the screen closes. Nothing is written, and no New match starts
 // (the New game row says why), while the manifest's settings could not be read: a write would wipe their values, and a
@@ -88,6 +89,8 @@ class GameModeActivity final : public UiListActivity {
   int listCount() const override { return static_cast<int>(rowCount); }
   const char* headerTitle() const override { return manifest.name; }
   void onEnter() override;
+  // Writes an Options change no result handler saw (a Replace); RenderLock is already held by the caller.
+  void onExit() override;
   void drawChrome() override;
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
@@ -148,7 +151,7 @@ class GameModeActivity final : public UiListActivity {
   bool settingsNotice = false;
   // The manifest's settings (read in onEnter), what prefs.bin held when the screen opened (or last wrote; empty for no
   // usable file), and the choices New game starts with. Options edits `choices` and sets `optionsChanged`; this screen
-  // outlives it.
+  // outlives it. `optionsChanged` stays set until a write is tried (onOptionsClosed, else onExit()).
   GameCore::ManifestSettings settings;
   GameSaveStore::Prefs saved;
   GameSaveStore::PrefsState prefsState = GameSaveStore::PrefsState::None;  // loadPrefs' answer, Loaded after a write

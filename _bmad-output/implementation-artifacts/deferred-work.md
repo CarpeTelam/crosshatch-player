@@ -928,3 +928,51 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `MatchPersistence` has unit tests only for the deadline, wrap, and unbound paths; the back-off, `onOver` failure, replacement-clears-pending, successful write, and writable=false guards are covered only through `ResumeMatchTest`, and `seedResume` and `GameMatchView` have no direct tests.
+  evidence: `test/game_script/harness/MatchPersistenceTest.cpp`; a direct test needs a ready `MatchStore`/`GameSaveStore` over the Storage double (as `ResumeMatchTest` builds one). Trigger: any of the forced-exit-order or play-again-gap builds changing these units.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: Not extracted, left for a later split: the touch-tagging state (`readGesture`, `frameAt`, `lastPush`, `touchDown*`), the round/seat gate counters, and `loopPlaying`'s first-frame touch logic stay in `GameMatchActivity`.
+  evidence: `GameMatchActivity.cpp` is 873 lines after this split; those members interlock with render-task atomics, so a clean seam needs its own design. Trigger: epic play-nearby's second local-seat path.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `handle()` sets `persistence.setWritable` in each state case; a single state-to-writable mapping would keep the "Over and Error never write" rule in one place.
+  evidence: `GameMatchActivity::handle`. Trigger: a new MatchState.
+
+## e6pre-2
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Decided (owner, option (a)) and resolves both `## e5-r6` entries: a timer due after the round is over is never delivered to the game in any mode (solo, open and hidden pass, later nearby), and "over" is the explicit `status.over`, not seat 0, so a roster with no local seat is dropped and logged correctly. `lateTimer(event, roundOver)` now takes the flag.
+  evidence: `lib/GameScript/SoloRounds.{h,cpp}` (`lateTimer`, `play`, `step`), `src/games/GameVM.cpp` (`run`, `stepHandOff`); tests `SoloRoundsTest`, `GameVmTest` (solo, open pass, no local seat, and timer-before-over cases).
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: The architecture spine still states the old behaviour in places (AD-23's timer bullet says a timer fires "for the local seat, or the current turn seat in `pass`" with no after-over rule; the events bullet, spine line ~180, lists `timer` with no after-over rule) and `game-api-seed.md` section 5's `ch.timer.after` row likewise; a separate pass amends the spine.
+  evidence: `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/ARCHITECTURE-SPINE.md` lines 180 and 387; `game-api-seed.md` line 191. Trigger: the spine pass.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-2-no-timer-after-over.md`
+  summary: Untested: a hidden-pass or nearby (one remote seat) roster for the late-timer drop and for a timer before over; and a no-local-seat roster whose round is still playing now gets a timer delivered as seat 0 (the old seat-0 test dropped it, mislogged). Unreachable until a roster has no local seat.
+  evidence: `GameVM::stepHandOff`, `SoloRounds::step`; `GameVmTest` / `SoloRoundsTest` late-timer tests. Trigger: epic play-nearby's first roster with a remote seat or none local.
+
+## e6pre-9
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-9-pause-menu-in-the-play-again-gap.md`
+  summary: Decided (owner, 2026-10-04) and resolves `## 5.4`'s last item and `## 5.6`'s repeat of it: a pause menu opened in the Play-again gap is not drawn over the last round's frame, in every mode (solo, open pass, later nearby); `GameMatchActivity::canvasUnderView` is also false while `vm->roundsStarted() < roundsStartedAwaited`. Solo's pause menu in the gap changes visibly: it now sits on a cleared screen. The new round's first frame still draws on a cleared screen in full, and Resume in the gap keeps the menu.
+  evidence: `PlayAgainGapTest` / `PlayAgainGapPassTest` (`ThePauseMenuInTheGapSitsOnNoPreviousRoundCanvasAndTheFirstFrameIsStillDrawnInFull`, `TheCanvasIsBackUnderThePauseMenuOnceTheNewRoundsFirstFrameIsPublished`); `docs/crosshatch/game-canvas.md` (Paused -> Playing row, The views).
+
+## e6pre-10
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-10-forced-exit-writes-before-the-blank.md`
+  summary: Decided (owner, option (a)) and resolves `## 5.6`'s first entry (and its second, whose order test entry 9 added): the forced exit runs the resume write, the `resume.bin` delete retry, and the `ch.store` flush before a hidden pass match's privacy blank, each still gated by `FORCED_EXIT_DEADLINE_MS`; the blank is last and never gated, so a 1,654 ms push no longer causes those steps to be skipped. Spine AD-20 (amended by e6pre-8 as target, on another branch) is what this build implements.
+  evidence: `GameMatchActivity::onExit` / `stopVm` / `pushForcedExitBlank`; `HiddenPassTest` (`TheForcedExitOnASeatsFrameFlushesTheStoreAndThenPushesTheBlank`, `TheBlanksRefreshNoLongerCostsTheSdSteps`, `AStoreFlushStartedInsideTheDeadlineMayRunPastItAndTheBlankStillFollows`, `TheForcedExitWithAStuckVmPushesTheBlankAfterTheAbandon`, `TheBlankIsPushedEvenPastTheDeadline`) and `PassResumeTest` (the resume, store, and delete-retry order tests); `docs/crosshatch/game-canvas.md` (The forced exit). Host only: B7.6 (a sleep with a dirty store on the X4 Pro) is still UNRUN, so the order and the 1,654 ms figure are not re-measured on the device.
+
+## e6pre-11
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-11-title-screen-writes-prefs-on-exit.md`
+  summary: Decided (owner, 2026-10-04) and resolves `## 5.12`'s entry "a change made on the Options screen is not remembered when Options is left by a Replace": the title screen's `onExit()` writes `prefs.bin` when an Options change is still unwritten (`optionsChanged`), so the Home gesture and sleep keep it; Back's write is not repeated, nothing changed writes nothing, and a failed write is logged and the exit goes on. AD-17 (amended by e6pre-8 as target, on another branch) is what this build implements.
+  evidence: `GameModeActivity::onExit`; `ModePickerTest` (`OptionsChangedThenLeftByAReplacePersistsTheChange`, `ABackThatWroteTheChangeIsNotWrittenAgainWhenTheScreenExits`, `OptionsLeftByAReplaceWithNoChangeWritesNothing`, `AFailedPrefsWriteInOnExitIsLoggedAndTheExitGoesOn`) replace `OptionsLeftByAReplaceWritesNothing`; `docs/crosshatch/formats.md` (prefs.bin). Host only: a Replace over Options on the device is not run.
+
+## e6pre-12
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-12-rename-solorounds-to-matchrounds.md`
+  summary: Landed: `GameScript::SoloRounds` is now `GameScript::MatchRounds` (it runs any roster; the spine, amended by e6pre-8 on another branch, already calls it that). Files `lib/GameScript/MatchRounds.{h,cpp}` and `test/game_script/MatchRoundsTest.cpp` moved with `git mv`; `SoloRoundsTest` is `MatchRoundsTest`; CMake wiring, `GameVM`, test fixtures, and `docs/crosshatch/game-canvas.md` follow. No behaviour change. Older plans, retros, and spine text keep the old name as history.
+  evidence: host `ctest` count unchanged; `grep -rn SoloRounds lib src test docs scripts` is empty.

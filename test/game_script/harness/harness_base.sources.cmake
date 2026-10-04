@@ -16,4 +16,6 @@ list(APPEND HARNESS_EXCLUDE_ACTIVITIES
      # The activity framework, UITheme, and the SDK's UI: the match and list screens on
      # the host are the next harness entries.
      GameMatchActivity.cpp
+     # The match's views: FreeInkUI screens, UITheme, and the screen GfxRenderer (match.cmake builds it).
+     GameMatchView.cpp
      GamesLauncherActivity.cpp)

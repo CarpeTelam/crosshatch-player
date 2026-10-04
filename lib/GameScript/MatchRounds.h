@@ -29,11 +29,11 @@ class InputQueue;
 // several the turn seat, and seat 0 once the round is over. A turn seat this device
 // does not play gets no input and no draw, so its round counts as started only at a
 // local seat's first frame.
-class SoloRounds {
+class MatchRounds {
  public:
-  SoloRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
-  SoloRounds(const SoloRounds&) = delete;
-  SoloRounds& operator=(const SoloRounds&) = delete;
+  MatchRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
+  MatchRounds(const MatchRounds&) = delete;
+  MatchRounds& operator=(const MatchRounds&) = delete;
 
   // Loop task: Play again. Drops the queued events, which were aimed at the last
   // round, and asks the VM for a new round before its next event.
@@ -63,12 +63,13 @@ class SoloRounds {
   // re-armed or cancelled after it fired is dropped first, and so is a late one
   // (lateTimer). Draws nothing.
   GameCore::Outcome play(const GameCore::GameEvent& event, uint8_t seat);
-  // A Timer event for seat 0, the frame for everyone: the round is over, and seat 0 is
-  // never an input seat, so no step reads the event (play and step drop it; the
-  // caller that logs the drop asks first). Other seats' timers, and every other event
-  // kind, are never late.
-  static bool lateTimer(const GameCore::GameEvent& event, const uint8_t seat) {
-    return event.kind == GameCore::EventKind::Timer && seat == 0;
+  // A Timer event after the round is over: no timer is ever delivered once `over` is true, in any mode (solo, open or
+  // hidden pass, nearby), whichever seat the device shows. Callers pass the Session's status().over explicitly, never
+  // a seat inferred from it (seat 0 is only a pass round's over frame; a roster with no local seat also reports 0).
+  // Neither play nor step reads such an event (the caller that logs the drop asks first). Every other event kind is
+  // never late, and neither is a timer due before the round's end.
+  static bool lateTimer(const GameCore::GameEvent& event, const bool roundOver) {
+    return event.kind == GameCore::EventKind::Timer && roundOver;
   }
   // Draws the snapshot for `seat` (0: the frame for everyone). A round's first
   // frame counts it as started; a frame of a round that is over counts its end, once.
