@@ -11,6 +11,7 @@
 #include <mutex>
 #include <span>
 
+#include "GameMatchView.h"
 #include "GamePicture.h"
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
@@ -18,6 +19,7 @@
 #include "games/GameTouch.h"
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
+#include "games/MatchPersistence.h"
 #include "games/MatchStore.h"
 
 // One match, solo or pass, open or hidden (AD-20): owns the GameVM task and, through it, the game's assets,
@@ -71,11 +73,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // (GameSaveStore's Unstartable: its own reason), or that the VM refuses.
   enum class Start : uint8_t { New, Resume };
 
-  // The forced exit's SD steps (the resume write, the resume.bin delete retry, the
-  // ch.store flush) start only within this long of the start of onExit(); a step that
-  // would start later is skipped and logged. A step that starts in time is one tmp write
-  // and rename, whose time is the card's. Leave has no deadline.
-  static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = 1500;
+  // The forced exit's SD steps start only within this long of the start of onExit() (MatchPersistence).
+  static constexpr uint32_t FORCED_EXIT_DEADLINE_MS = MatchPersistence::FORCED_EXIT_DEADLINE_MS;
 
   // `roster` is who plays a New match: GameCore::Roster::solo(), or Roster::pass(n) for a pass match. A Resume that
   // loads a save plays the save's roster instead (and a new match with this one when there is no usable save).
@@ -114,11 +113,6 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
   // A call into Lua still running after this long is a stuck script (AD-5).
   static constexpr uint32_t WATCHDOG_MS = 3000;
-  static constexpr freeink::ui::ActionId ACTION_OPTION = 1;
-  // A tap on the Result banner or on the hand-off screen's "I'm ready" button.
-  static constexpr freeink::ui::ActionId ACTION_PASS = 2;
-  // The most options a view offers (the pause and end-of-round menus).
-  static constexpr uint8_t MAX_OPTIONS = 2;
 
   // Takes the transition `event` names and does what entering the new state
   // requires: Over flushes ch.store, a user's Leaving stops the VM, flushes, and
@@ -153,7 +147,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // The caller holds RenderLock (its own, or ActivityManager's in onExit, never taken again: 12cc816), so the render
   // task is idle and replay, the framebuffer, and `panel` are this task's for now.
   void pushBlank(const char* when);
-  // Writes a dirty ch.store now (round end, Leave, onExit; AD-17).
+  // Writes a dirty ch.store now (round end, Leave, onExit; AD-17): MatchPersistence::flushStore.
   void flushStore();
   // Playing, Paused, Result, and HandOff: writes the VM's latest committed snapshot as resume.bin (not
   // again until FLUSH_INTERVAL_MS after a failed write, Leave and the forced exit
@@ -161,20 +155,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void flushResume();
   // The same for `from`, which may be a VM that is no longer vm (abandonVm's hook).
   void flushResumeOf(GameVM& from);
-  // Removes resume.bin again after Over's delete failed (resumeDeletePending), at most
+  // Removes resume.bin again after Over's delete failed (MatchPersistence::deletePending), at most
   // every FLUSH_INTERVAL_MS from the last failed try unless `forced` (Leave, the forced exit).
   void retryResumeDelete(bool forced);
-  // False, with one log line naming `what`, for an SD step of the forced exit that would
-  // start past FORCED_EXIT_DEADLINE_MS; true for every step outside a forced exit.
-  bool sdStepAllowed(const char* what);
-  // Start::Resume, after the assets load and before the VM is created: reads the save into `snapshot` and `ver` (in the
-  // store's buffer; valid until the store's next call), and makes its roster the match's (roster, lifecycle; logged).
-  // True with `snapshot` empty when there is no usable save (logged: the match starts new with the caller's roster,
-  // since nothing is lost). False, with the error view's reason in `refusal`, when a save is there and cannot be used
-  // now, because it would not read or this host cannot start it (GameSaveStore::peekResume, which reads through the
-  // store's buffer and leaves its roster): the caller shows the error view and leaves the file, which a new match
-  // would replace.
-  bool seedResume(std::span<const uint8_t>& snapshot, uint16_t& ver, StrId& refusal);
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
   // For a VM that did not join: abandons it (GameVM::abandon), writing its last snapshot
@@ -194,22 +177,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match).
   bool canvasUnderView(MatchState state) const;
   static void viewScreen(UiScreen& screen, void* user);
-  void buildView(UiScreen& screen);
-  // Result's framed "Tap to pass" banner at the bottom, or HandOff's "Player N's turn" (plain text in the title
-  // screen's first row's place) and its "I'm ready" button (filling the second row's): each the screen's one tap target
-  // (ACTION_PASS).
-  void buildHandOffView(UiScreen& screen, MatchState state);
   // Render task: a pause menu that returns to play while the new round has not published its first frame (the
   // Play-again gap: after a Play again, never before a match's first frame), which loopView redraws (gapWhenPaused)
   // once it has.
   bool pauseInGap() const;
-  // Draws the view's library icon centred in the dialog's content band `band`, and
-  // each of the `count` rows' icons at the row's left when its label leaves room
-  // (GameViewIcons), in the ink of the row's label. Nothing for an empty band.
-  void drawViewIcons(UiScreen& screen, freeink::ui::Rect band, MatchState state, const GameCore::MatchMenu& menu,
-                     uint8_t count) const;
-  // The view's translated headline; null for a state with no view.
-  const char* viewHeadline(MatchState state) const;
   // This loop pass's touch gesture on the logical screen, if any; latches frameDisplayed at the first pass that sees a
   // finger down, and notes whether a finger is still down.
   GameTouch::Gesture readGesture();
@@ -236,18 +207,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   bool slotLeaked = false;
 
   Start start;
-  // The state allows resume.bin to be written: Playing, Paused, Result, or HandOff, not yet Over or Error
-  // (loop task; handle() keeps it).
-  bool resumeWritable = false;
-  // Entering Over could not delete resume.bin (the card refused): the loop retries until it
-  // can, so a finished round's save does not survive one failed remove. Play again keeps it pending until the new
-  // round's first snapshot is written over the file (flushResumeOf), so a Leave before that still removes the finished
-  // round's save. Loop task.
-  bool resumeDeletePending = false;
-  uint32_t resumeDeleteTriedMs = 0;  // millis() of the last failed delete
-  // onExit() is running (a forced exit), from millis() forcedExitBeganMs.
-  bool forcedExit = false;
-  uint32_t forcedExitBeganMs = 0;
+  // resume.bin and ch.store's writes, the Over delete's retry, and the forced exit's deadline over them.
+  MatchPersistence persistence;
 
   GameCore::MatchLifecycle lifecycle;  // loop task
   // lifecycle's state for render, stored by handle() after each transition.
@@ -343,17 +304,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   };
   mutable std::mutex pushMutex;
   LastPush lastPush;
-  // Render task only: the view's dialog, a member since it is over 1 KB.
-  freeink::ui::OptionDialogProps dialogProps;
-  // Render task only: Result's banner or the hand-off's "I'm ready" button, and the banner's or the hand-off's line
-  // ("Player N's turn"), members since the props are over 256 bytes.
-  freeink::ui::ButtonProps bannerProps;
-  char bannerText[96] = {};
   // Render task only: the seat the hand-off screen names (GameVM::passedTo when renderHandOff drew it).
   uint8_t handOffSeat = 0;
-  // Render task only: GameSplashLayout::rowRect's scratch, the resolved props it measures the hand-off screen's rows
-  // with (rowRect still builds a by-value ListProps temporary, as syncListViewport does).
-  freeink::ui::ListProps menuProps;
+  // Render task only: builds the runtime's own views (the dialog's props are members of it).
+  GameMatchView views;
   // The error view's text, written once before the match enters Error.
   StrId errorHeadline = StrId::STR_GAMES_ERROR;
   char errorDetail[GameVM::ERROR_CAPACITY] = {};

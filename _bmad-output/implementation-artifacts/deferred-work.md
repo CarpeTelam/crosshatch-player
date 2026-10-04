@@ -928,3 +928,15 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-crosshatch-brand-swap.md`
   summary: Decide and rebrand the remaining visible CrossPoint surfaces: the Wi-Fi hotspot name and DHCP hostname, the device web pages (Files, Settings, Home, Fonts), and the USB product and manufacturer strings.
   evidence: The brand swap covers only the boot and default sleep screens and the default game icon. These strings still say CrossPoint; the HTTP User-Agent, the KOReader device name and the Calibre plugin name identify the software to outside services and probably stay.
+
+## e6pre-1
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `MatchPersistence` has unit tests only for the deadline, wrap, and unbound paths; the back-off, `onOver` failure, replacement-clears-pending, successful write, and writable=false guards are covered only through `ResumeMatchTest`, and `seedResume` and `GameMatchView` have no direct tests.
+  evidence: `test/game_script/harness/MatchPersistenceTest.cpp`; a direct test needs a ready `MatchStore`/`GameSaveStore` over the Storage double (as `ResumeMatchTest` builds one). Trigger: any of the forced-exit-order or play-again-gap builds changing these units.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: Not extracted, left for a later split: the touch-tagging state (`readGesture`, `frameAt`, `lastPush`, `touchDown*`), the round/seat gate counters, and `loopPlaying`'s first-frame touch logic stay in `GameMatchActivity`.
+  evidence: `GameMatchActivity.cpp` is 873 lines after this split; those members interlock with render-task atomics, so a clean seam needs its own design. Trigger: epic play-nearby's second local-seat path.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
+  summary: `handle()` sets `persistence.setWritable` in each state case; a single state-to-writable mapping would keep the "Over and Error never write" rule in one place.
+  evidence: `GameMatchActivity::handle`. Trigger: a new MatchState.
