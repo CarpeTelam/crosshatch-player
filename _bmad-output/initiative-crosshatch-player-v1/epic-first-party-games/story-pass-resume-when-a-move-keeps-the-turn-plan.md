@@ -3,7 +3,7 @@ title: 'Pass resume when a move keeps the turn'
 type: 'chore'
 ticket: '7'
 created: '2026-10-04'
-status: 'built'
+status: done
 review: 'thorough'
 review_source: 'pinned'
 baseline_revision: 'eca7e6c7147dc664a8189d097b134831cd573a21'
