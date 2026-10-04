@@ -377,6 +377,17 @@ class TitleScreenTest : public match::ScreenTest {
     current = title;
     render();
   }
+  // ActivityManager's Replace (the Home gesture, sleep) over Options: the current screen exits and goes, then the
+  // stacked title screen exits, RenderLock held, with no result handler.
+  void replaceFromOptions() {
+    auto& pushed = activityManager.pushedActivities;
+    ASSERT_EQ(pushed.back().get(), options);
+    activityManager.exitHolding(*options);
+    activityManager.destroyHolding(pushed.back());
+    pushed.pop_back();
+    options = nullptr;
+    activityManager.exitHolding(*title);
+  }
 
   // Runs the match a screen replaced itself with, so the game it was given is the one that starts.
   GameMatchActivity* enterReplacement() {
@@ -1707,23 +1718,123 @@ TEST_F(TitleScreenTest, OptionsCyclesInPlaceAndBackRemembersTheChoiceAndSelectsO
 }
 
 // Options left by a Replace (the Home gesture, sleep) runs no result handler: the real manager exits Options, then
-// calls onExit() of each screen stacked under it, RenderLock held. prefs.bin is never written from onExit() (AD-17), so
-// the change is not remembered (deferred-work.md ## 5.12) and nothing touches the card.
-TEST_F(TitleScreenTest, OptionsLeftByAReplaceWritesNothing) {
+// calls onExit() of each screen stacked under it, RenderLock held. The title screen's onExit() writes the pending
+// change (AD-17 as amended 2026-10-04, e6pre-11) and takes no RenderLock.
+TEST_F(TitleScreenTest, OptionsChangedThenLeftByAReplacePersistsTheChange) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS, SETTINGS_GAME);
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  tapRow("Level");
+  render();
+  const std::string level = lineUnder("Level");
+  EXPECT_FALSE(fakesd::has(prefsPath("counter"))) << "nothing is written while Options is open";
+  replaceFromOptions();
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit takes no RenderLock";
+  const GameSaveStore::Prefs remembered = prefsOf("counter");
+  EXPECT_EQ(remembered.mode, PASS);
+  ASSERT_EQ(remembered.settings.count, 2u);
+  EXPECT_STREQ(remembered.settings.entries[0].id, "level");
+  EXPECT_STREQ(remembered.settings.entries[0].value, level.c_str());
+  // The next title screen opens on it.
+  dropTitle();
+  activityManager.exitHolding(*list);
+  activityManager.destroyHolding(list);
+  activityManager.reset();
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  EXPECT_EQ(newGameLine(), std::string(tr(STR_GAMES_MODE_PASS)) + " \xC2\xB7 " + level + " \xC2\xB7 Small");
+}
+
+// Back already wrote the change; the exit that follows (a Replace later) writes nothing more.
+TEST_F(TitleScreenTest, ABackThatWroteTheChangeIsNotWrittenAgainWhenTheScreenExits) {
   installCounter("\"solo\",\"pass\"");
   openTitleFor(SOLO | PASS);
   ASSERT_NO_FATAL_FAILURE(openOptions());
   tapRow(tr(STR_GAMES_MODE));
-  // ActivityManager's Replace (goHome): the current screen exits and goes, then the stacked one exits.
-  auto& pushed = activityManager.pushedActivities;
-  ASSERT_EQ(pushed.back().get(), options);
-  activityManager.exitHolding(*options);
-  activityManager.destroyHolding(pushed.back());
-  pushed.pop_back();
-  options = nullptr;
+  ASSERT_NO_FATAL_FAILURE(closeOptions());
+  const auto prefsWrites = [] { return fakesd::countOps("rename " + prefsPath("counter") + ".tmp"); };
+  const size_t writes = prefsWrites();
+  EXPECT_EQ(prefsOf("counter").mode, PASS);
+  activityManager.exitHolding(*title);
+  EXPECT_EQ(prefsWrites(), writes) << "onExit finds nothing pending";
+  EXPECT_EQ(prefsOf("counter").mode, PASS);
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// Options opened and left with no edit, then a Replace: nothing is written.
+TEST_F(TitleScreenTest, OptionsLeftByAReplaceWithNoChangeWritesNothing) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  replaceFromOptions();
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// A title screen that never opened Options exits writing nothing.
+TEST_F(TitleScreenTest, ATitleScreenLeftByAReplaceWithNoOptionsOpenedWritesNothing) {
+  installCounter("\"solo\",\"pass\"");
+  openTitleFor(SOLO | PASS);
   activityManager.exitHolding(*title);
   EXPECT_FALSE(fakesd::has(prefsPath("counter")));
-  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0) << "onExit takes no RenderLock";
+}
+
+// A write that fails in onExit() is logged and the exit goes on: the file is as it was, and the change is lost with the
+// screen, as for a failed write on Back.
+TEST_F(TitleScreenTest, AFailedPrefsWriteInOnExitIsLoggedAndTheExitGoesOn) {
+  installCounter("\"solo\",\"pass\"");
+  fakesd::sim().failOpenWrite.insert(prefsPath("counter") + ".tmp");
+  openTitleFor(SOLO | PASS);
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));
+  replaceFromOptions();
+  EXPECT_TRUE(logHas("The choices for counter are not remembered"));
+  EXPECT_FALSE(fakesd::has(prefsPath("counter")));
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), 0);
+}
+
+// The guards of rememberChoices apply on the onExit path: settings that could not be read write nothing.
+TEST_F(TitleScreenTest, AnOptionsChangeLeftByAReplaceWhileTheSettingsCouldNotBeReadWritesNothing) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = NEARBY;
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  const Bytes before = fakesd::bytesOf(prefsPath("counter"));
+  openLauncher();
+  tapRow("Counter");
+  fakesd::sim().failOpen.insert("/.games/counter/manifest.json");
+  ASSERT_NO_FATAL_FAILURE(openPushedTitle());
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));
+  replaceFromOptions();
+  EXPECT_TRUE(logHas("The choices for counter are not remembered: its settings were not read"));
+  EXPECT_EQ(fakesd::bytesOf(prefsPath("counter")), before);
+}
+
+// An unreadable prefs.bin that reads again at the exit keeps its values for what Options left alone, as on Back.
+TEST_F(TitleScreenTest, AnUnreadablePrefsBinThatReadsAgainIsMergedWhenOptionsIsLeftByAReplace) {
+  addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, TWO_SETTINGS, SETTINGS_GAME);
+  GameSaveStore::Prefs prefs;
+  prefs.mode = SOLO;
+  const std::pair<const char*, const char*> entries[] = {{"level", "Hard"}, {"board", "Large"}};
+  for (const auto& [id, value] : entries) {
+    GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];
+    std::snprintf(entry.id, sizeof(entry.id), "%s", id);
+    std::snprintf(entry.value, sizeof(entry.value), "%s", value);
+  }
+  ASSERT_TRUE(GameSaveStore::savePrefs("counter", prefs));
+  fakesd::sim().failOpen.insert(prefsPath("counter"));
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  tapRow(tr(STR_GAMES_MODE));  // solo -> pass: the player's change
+  fakesd::sim().failOpen.clear();
+  replaceFromOptions();
+  const GameSaveStore::Prefs remembered = prefsOf("counter");
+  EXPECT_EQ(remembered.mode, PASS) << "the player's mode";
+  ASSERT_EQ(remembered.settings.count, 2u);
+  EXPECT_STREQ(remembered.settings.entries[0].value, "Hard") << "left alone: the file's";
+  EXPECT_STREQ(remembered.settings.entries[1].value, "Large") << "left alone: the file's";
 }
 
 // The Mode row cycles from solo when the current mode is none of the host's, as nextMode documents.
