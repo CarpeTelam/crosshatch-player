@@ -1,12 +1,13 @@
 # Team overrides for bmad-build (merged over .claude/skills/bmad-build/customize.toml; lists append).
-# The orchestrated-build rules live in docs/crosshatch/orchestrated-epics.md, and interactive builds keep every human
-# gate. The verification order below is AGENTS.md's: firmware builds come after the review, so a review fix costs one
-# round of them, not two.
+# Orchestrated stories run under bmad-build-auto (_bmad/custom/bmad-build-auto.toml); this workflow builds one for an
+# orchestrator only in the cases docs/crosshatch/orchestrated-epics.md names (a `hitl` ticket, or no nested subagents),
+# and interactive builds keep every human gate. The verification order below is AGENTS.md's: firmware builds come after
+# the review, so a review fix costs one round of them, not two.
 
 [workflow]
 
 persistent_facts = [
-  "When the prompt says this build runs for an orchestrator, follow docs/crosshatch/orchestrated-epics.md § Build-agent brief; its answers replace this workflow's human gates. Otherwise ignore that file and keep every gate.",
+  "When the prompt says this build runs for an orchestrator, follow docs/crosshatch/orchestrated-epics.md § Build-agent brief, including its section 'When a story runs under bmad-build'; those answers replace this workflow's human gates. Otherwise ignore that file and keep every gate.",
   "Verification order (AGENTS.md): implementation runs only the plan's host tests and fast checks (fork script tests, scripts/check_upstream_touches.py, ./bin/clang-format-fix). The firmware checks the plan's Verification lists (pio run, pio check, sim.sh build) run once, after the review and its patches, under the build lock, before the commit. When step 4 re-runs the Verification after patches, that run is the one; do not repeat it. Record their results in the plan, treat a failure like a review finding, and run ./bin/clang-format-fix again after any review patch.",
 ]
 

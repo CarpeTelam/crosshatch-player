@@ -1,0 +1,28 @@
+# Team overrides for bmad-build-auto (merged over .claude/skills/bmad-build-auto/customize.toml; lists append).
+# The orchestrator in docs/crosshatch/orchestrated-epics.md dispatches this workflow, one run per ticket; its Build-agent
+# brief adds this fork's rules and names where a ticket's settled decisions live. It never replaces a workflow step, and
+# a HALT stays a HALT. The verification order below is AGENTS.md's: firmware builds come after the review, so a review
+# fix costs one round of them, not two.
+
+[workflow]
+
+# Every unattended story gets the four thorough lenses, whatever route the plan takes (epic-script-runtime retro AI-1:
+# review every story independently, not only the risky ones). The orchestrator's dispatch needs no review argument.
+review = "thorough"
+
+persistent_facts = [
+  "When the prompt says this build runs for an orchestrator, follow docs/crosshatch/orchestrated-epics.md § Build-agent brief as workflow input: it adds this fork's rules and names the sources that settle a ticket's intent. It never replaces a workflow step, never answers a question the intent leaves open, and never turns a HALT into a guess. Otherwise ignore that file.",
+  "Verification order (AGENTS.md): implementation runs only the plan's host tests and fast checks (fork script tests, scripts/check_upstream_touches.py, ./bin/clang-format-fix). The firmware checks the plan's Verification lists (pio run, pio check, sim.sh build) run once, under the build lock, after the review and its patches and before Finalize commits. When step 4 re-runs the Verification after patches, that run is the one; do not repeat it. Record their results in the plan, treat a failure like a review finding, and run ./bin/clang-format-fix again after any review patch.",
+]
+
+# No model is named here: the implementation subagent and the review lenses inherit the build agent's model, which the
+# orchestrator's dispatch sets (docs/crosshatch/orchestrated-epics.md, Each story, step 1).
+implementation_handoff = """
+Launch a subagent with no prior conversation context, with this prompt:
+
+> Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start.
+>
+> From the plan's Verification, run only host tests and fast checks (fork script tests, `scripts/check_upstream_touches.py`, `./bin/clang-format-fix`). Do not run firmware builds (`pio run`), `pio check`, or `sim.sh build`: they run after the review.
+>
+> When done, report what you changed, how you verified it, which firmware checks are still to run, and anything left incomplete or risky.
+"""
