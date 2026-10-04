@@ -1027,9 +1027,3 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-7-min-level-preflight.md`
   summary: Decided (a) by the owner (2026-10-04): the e2r-ai-9 owner question for AD-19 is closed; `freeze_problems` in `scripts/fork_release.py` now also refuses a commit whose `API_MIN_LEVEL` is above a level an earlier `-ch.N` release ran and shipped frozen.
   evidence: `FreezeTest` in `scripts/fork_release_test.py` pins the refusal, the accepted raise over an unfrozen level, and an unchanged or lowered minimum. The spine's AD-19 Freeze bullet still needs the sentence; a later pass edits it (see the plan).
-
-## e6pre-13
-
-- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-10-forced-exit-writes-before-the-blank.md`
-  summary: Owner accepted 2026-10-04 the privacy cost of e6pre-10's order: on a forced exit with a seat's private frame showing, the blank now starts after the SD steps, about 100 ms in with a joined VM and about 1,150 ms with a stuck one (estimates, not measured), and without a cap when the card stalls inside a step already started.
-  evidence: The owner's answer to the plan's worst-case timeline. Open only as a device check: B7.6 (sleep with a dirty store on the X4 Pro) measures the real blank start. If it shows a stall, the alternative is a start-time bound for the blank on its own thread or an async push.
