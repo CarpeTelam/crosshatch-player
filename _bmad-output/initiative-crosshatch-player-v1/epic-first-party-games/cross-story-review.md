@@ -69,3 +69,41 @@ The orchestrator ran this review on 2026-10-05, after entry 11 merged. The revie
   - The fix commit gets the same three context-free lenses before the push, recorded below.
   - Firmware is unchanged unless row 1's game edit counts: a game file is packaged, not linked, so it needs no new flash measurement.
   - If the fix changes `games/sudoku`, the device-run packet's `sudoku.chgame` and its hash are rebuilt from the new head, and the owner gets the new file.
+
+## Review of the fix commit
+
+**What was reviewed:**
+- The fix commit `4fdc3176` (plan `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`), merged as `14428a56`.
+- Diff `ddd88cb7..4fdc3176`, without planning documents.
+- Lenses: the build's four context-free lenses (blind hunter, edge-case hunter, verification gap, intent alignment), 2026-10-05, over the staged diff (259,635 B).
+- Raw reports are in the orchestrator's scratchpad (`e8-xr/lenses/`). The plan's Review Triage Log carries every verdict.
+
+**Overall result:**
+- Rows 1–19 are closed, each pinned by a check that was red alone against a scratch mutant (24 mutants, listed in the plan).
+- The new end-frame bound failed six Sudoku solve rounds before the fix, which confirms row 1.
+- The review found 31 findings: high 0, medium 5, low 26.
+- **Patched:**
+  - The one medium root cause, which three lenses found: a memory error inside a check VM could be swallowed by the check's own `pcall`. Any arena refusal in a check VM is now a fault, with a test.
+  - The low wording, labelling and `static_assert` fixes.
+  - Moving the test-pointing comments out of `games/**`. The only shipped-game change is now `games/sudoku/view.lua`, and Battleship's package is byte-identical to the epic head.
+- **Deferred** (carried to `deferred-work.md`, `## e8-xr`): the host dialog and banner bounds tied to the host's layout (medium), the restore probe for solo and open-pass rosters, open-pass `shows` sweep frames, the shared text-box heights, and a per-band costliest-puzzle heap round.
+- **Rejected, with reasons in the plan:** the rest.
+- `followup_review_recommended` is false: one medium was patched and nothing high.
+
+**Verification on the merged tree (`14428a56`):**
+- Host suites: 1,802 of 1,802.
+- `games-check`: 124 tests.
+- Fork script tests pass.
+- Firmware: nothing under `src/`, `lib/` or `freeink-sdk` changed since `daedbeab`, so the firmware and its flash measurement stand.
+
+**Packages:**
+- `sudoku` `e35f23efd835450d` (was `3c657cfcb2e461dc`).
+- `ultimate-tic-tac-toe` `a7e63b542144938b`, unchanged.
+- `battleship` `10a07de10cb14489`, unchanged.
+- The device-run packet's copies of `sudoku.chgame` and `sudoku-costly.chgame` are repacked from the merge.
+
+**Screenshots** (`story-xr-screenshots/`, X4 Pro):
+- `sudoku-solved-level-above-dialog.png` shows Solved, the level, Time and Best, all above the Game over dialog.
+- `sudoku-solved-no-best-after-hint.png` shows the widest end line, also above it.
+
+**Owner rows:** rows 20 (Sudoku's pause-menu time) and 21 (33–64-member packages on older firmware) wait on the owner's answers.

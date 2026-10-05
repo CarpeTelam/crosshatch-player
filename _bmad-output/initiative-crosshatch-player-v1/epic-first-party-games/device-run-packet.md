@@ -15,15 +15,15 @@ Files beside this one are in `device-run-packet/`: the five packages, `HASHES.tx
 
 ## Packages
 
-All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed on 2026-10-05 for the tree at `daedbeab` (a second packing gave the same bytes). The three games are the three that the release workflow packs; `pass-store` and `sudoku-costly` exist only for this run.
+All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed on 2026-10-05 for the tree at `daedbeab` (a second packing gave the same bytes). `sudoku.chgame` and `sudoku-costly.chgame` were packed again from `14428a56`, the merge of the cross-story fixes (`e8-xr`), whose only change to a shipped game is the Sudoku end screen in `games/sudoku/view.lua` (the level name moved above the host's end-of-round dialog). They replace the copies sent first (`3c657cfcb2e461dc` and `d964af5a1278ea7f`); the other three files are unchanged, and nothing under `src/`, `lib/` or `freeink-sdk` changed, so the firmware is still the one above. The three games are the three that the release workflow packs; `pass-store` and `sudoku-costly` exist only for this run.
 
 | File | Packed from | Package hash | Bytes | SHA-256 of the file |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `games/sudoku` (36 members) | `3c657cfcb2e461dc` | 40,638 | `959f3673c8d66d732ce2fd831d312543f2be4c286c9bec4811f877f608bb8dbc` |
+| `sudoku.chgame` | `games/sudoku` (36 members) | `e35f23efd835450d` | 40,638 | `3e72bd57f74772d472220b7a5e32d404129be593fee515ffcdd6deed62ed435d` |
 | `ultimate-tic-tac-toe.chgame` | `games/ultimate-tic-tac-toe` | `a7e63b542144938b` | 4,824 | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` |
 | `battleship.chgame` | `games/battleship` | `10a07de10cb14489` | 9,494 | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` |
 | `pass-store.chgame` | `python3 scripts/pack_device_run.py <dir>` (B7.6) | `5a6bbba63ef264ee` | 1,218 | `ec4e1c656ca8bc62d5d9b3b631e51cfb72cfbcd55df388f44d026963192684e4` |
-| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `d964af5a1278ea7f` | 40,642 | `319c146813b0f1603dfd485fe11f4615cea5bb98644772cb48a3e78e9ba5d312` |
+| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `340f6c3dbb0c277b` | 40,642 | `4c0999bbfb897c4890d47ae3f785ed053c298471fd965f5274c800fc58065d34` |
 
 - `pass-store` is the script's derived game: `pass-hidden` plus one `ch.store.set` per move, so a store flush can land in a sleep (its hash equals the one the epic-pass-and-play packet printed). The script's other twelve files are not needed here.
 - `sudoku-costly` is Sudoku with one change, so HINT and CHECK can be timed on the costliest Expert grid: its `setup` returns a fixed Expert grid instead of a random deal, and its id, name and Difficulty default (`Expert`) differ so it cannot be mistaken for the shipped game. The grid is bank puzzle `0034ee8363e5` (Expert, index 59, the costliest Expert call the bank tool recorded) under the one symmetry out of 3,000 random ones that cost most (below). `make_sudoku_costly.py` documents the edits; it is a packet file, not a repository script, and nothing under `games/` changes.

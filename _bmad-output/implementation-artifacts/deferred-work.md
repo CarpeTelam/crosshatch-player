@@ -1168,3 +1168,28 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
   summary: The 302,052-instruction figure is the worst found (3,000 symmetries of one puzzle, 40 of each other Expert puzzle, none of Easy, Medium or Hard), not the worst possible.
   evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: games/sudoku/puzzles.lua (the bank's cost cap), test/game_script/first_party/sudoku/tools/make_bank.py. Severity: low.
+
+## e8-xr
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`
+  summary: The host end-of-round dialog and Result banner bounds (HostBounds.h: 259, 528, 640) are one hand measurement of three screenshots and no test ties them to the host's layout.
+  evidence: Recorded by the review of the cross-story fix commit (the plan's Review Triage Log). Location: test/game_script/harness/games_check/HostBounds.h. Severity: medium.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`
+  summary: The restore probe is pinned to GameVM's Continue only for a hidden pass roster.
+  evidence: Recorded by the review of the cross-story fix commit (the plan's Review Triage Log). Location: test/game_script/harness/games_check/GamesCheckFlowTest.cpp. Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`
+  summary: In an open pass round, `shows` can still be met by the check's every-seat sweep frame instead of the frame the device shows next.
+  evidence: Recorded by the review of the cross-story fix commit (the plan's Review Triage Log). Location: test/game_script/harness/games_check/RoundPlayer.cpp (shows). Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`
+  summary: Text-box heights are re-derived by hand in three companion folders (layout.DY, UTTT TEXT_BOX, Battleship) and the harness end-frame pin tests only a text's top y.
+  evidence: Recorded by the review of the cross-story fix commit (the plan's Review Triage Log). Location: test/game_script/first_party/*/checks.lua, test/game_script/harness/games_check/RoundPlayer.cpp. Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-xr-cross-story-fixes.md`
+  summary: No check bounds the heap of the HINT, CHECK, FILL NOTES and symmetry calls on each band's costliest puzzle in the played game.
+  evidence: Recorded by the review of the cross-story fix commit (the plan's Review Triage Log). Location: test/game_script/first_party/sudoku/checks.lua. Severity: low (unverified).
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/cross-story-review.md`
+  summary: No job runs the simulator's X4 Pro shim, so a no-op shim builds green and the 466 screenshots would silently show 474 (cross-story row 22).
+  evidence: Verification-gap VG-6 of the cross-story review; a headless smoke that greps `[SIM] X4 Pro bezel insets` in the Simulator build job is a CI-gate change with its own fresh-clone rule. Location: .claude/skills/run-crosshatch-player/shim/BoardConfig.h, .github/workflows/crosshatch-ci.yml (simulator-build). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/cross-story-review.md`
+  summary: The four draw recorders in the companion folders are near-copies (UTTT and Battleship trace.lua are byte-identical) and will drift (cross-story row 24).
+  evidence: Adversarial L4 of the cross-story review; merging them is a refactor across the companion folders, beyond a fix story; e8-xr fixed the false counting claim. Location: test/game_script/first_party/*/trace.lua, sudoku/drawn.lua, sudoku/canvases.lua. Severity: low.
