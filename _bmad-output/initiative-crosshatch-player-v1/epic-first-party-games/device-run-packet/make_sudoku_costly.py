@@ -20,6 +20,10 @@ cost most: 302,052 host instructions (the solver's one-time table building, 11,0
 game's own solver and a separate backtracking search agree on; the script itself re-checks, with a backtracking
 search, that GRID has exactly one solution and that it is SOLUTION.
 
+The replacement `setup` writes the game's state shape (`l`, `v`, `n`, `u`, `t`, from the header of `games/sudoku/main.lua`) by
+hand; if that shape changes, this script and `count_sudoku_costly.lua` must change with it, and only a device (or the
+simulator) would show the mismatch.
+
 Prints the package hash as `scripts/pack_game.py` does. Exit codes: 0 packed. 1 the package is invalid or an edit
 matched nothing (the game moved since this was written). 2 the script could not run. Standard library only.
 """
@@ -91,9 +95,10 @@ def main():
             manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
             manifest['id'], manifest['name'] = ID, 'Sudoku costly'
             levels = [s for s in manifest.get('settings', []) if s.get('id') == 'level']
+            has_expert = len(levels) == 1 and 'Expert' in levels[0].get('values', [])
         except (ValueError, AttributeError, TypeError) as exc:
             fail(f'manifest.json is not the shape this script edits ({exc}): the game moved', 1)
-        if len(levels) != 1 or 'Expert' not in levels[0]['values']:
+        if not has_expert:
             fail('manifest.json has no level setting with Expert: the game moved', 1)
         levels[0]['default'] = 'Expert'
         (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')

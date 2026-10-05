@@ -1,16 +1,16 @@
 # Device-run packet: epic-first-party-games entry 5
 
-This packet is everything the owner needs for entry 5, "Device run and owner sign-off", on an X4 Pro. It names the firmware and the packages, gives the steps in run order (install and heap first, then one part per game, then the Sudoku timing, then B7.6), the serial lines that carry each figure, which fixtures are calibrated, the owner's design judgements, and the answer tables: the three `Assumption for entry 5:` lines and this epic's deferrals. Built on 2026-10-05 from the epic head `daedbeabf8a9cf7da90ed976401a0fbb73498c8d` (`daedbeab`, branch `epic-first-party-games-lane-a`).
+This packet is everything the owner needs for entry 5, "Device run and owner sign-off", on an X4 Pro. It names the firmware and the packages, gives the steps in run order (install and heap first, then one part per game, then the Sudoku timing, then B7.6), the serial lines that carry each figure, which fixtures are calibrated, the owner's design judgements, and the answer tables: the three `Assumption for entry 5:` lines and this epic's deferrals. Built on 2026-10-05 from `daedbeabf8a9cf7da90ed976401a0fbb73498c8d` (`daedbeab`), the epic head when the firmware and packages were built (branch `epic-first-party-games-lane-a`).
 
-Record the results in entry 5's plan, `story-device-run-and-owner-sign-off-plan.md` in this folder, under its "Owner's results" heading, as "What to record" at the end says. A device failure becomes a new story in this epic's PR, which merges only after this entry and a green CI.
+**This packet is the single home of the results:** the owner's answers go in its tables (J1 to J6, A1 to A3, the deferral rows) and the step results, figures and log excerpts go in the "Step results" table under "What to record" at the end. Entry 5's plan, `story-device-run-and-owner-sign-off-plan.md`, only points here and records the sign-off. A device failure becomes a new story in this epic's PR, which merges only after this entry and a green CI.
 
 Files beside this one are in `device-run-packet/`: the five packages, `HASHES.txt`, `make_sudoku_costly.py` (packs `sudoku-costly`) and `count_sudoku_costly.lua` (the host counts behind Part T's figures).
 
 ## Firmware
 
 - **Commit:** `daedbeab` (full hash above), the epic head. This packet's own commit adds files under `_bmad-output/` only, so the firmware sources are those of `daedbeab`.
-- **File:** `firmware-x4pro-daedbeab.bin`, 5,935,632 B, SHA-256 `823141498d4f0493b3c104288639dfcd340bc8364332a54e04eec38062971c9e`. Built on 2026-10-05 with `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache flock /tmp/crosshatch-build.lock sh -c 'pio run -e x4pro'`: SUCCESS in 206.7 s, PlatformIO's summary RAM 101,832 B of 327,680 and flash 5,930,622 B of 6,553,600. At 5.9 MB it is not committed. The orchestrator hands it to the owner as a file in the session (SendUserFile); check its SHA-256 and size after the download, and flash only a file that matches. (Built at `/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/8.5/packet/firmware-x4pro-daedbeab.bin`, a session path.) Its size equals the x4pro "games on" `firmware.bin` the epic Notes record at the base `eca7e6c7` (5,935,632 B); that is one `pio run`, not a new `check_flash_budget.py` Measurement, so it says nothing about the delta.
-- **Flash it** as the previous packet says: CrossPoint Reader Flash Tools with the `.bin`, or from a checkout at `daedbeab` run `git submodule update --init --recursive`, then `pio run -e x4pro -t upload`. It must be this firmware, not an older one: entry 10 raised the installer's package cap to 64 members, and Sudoku has 36, so a firmware from before it refuses Sudoku's package. The firmware prints no commit at boot, so the check that the device runs this build is that Sudoku installs (Part I step 2): the firmware's size equals the base Measurement's, as the epic's entry-10 Measurement at its own commit also found.
+- **File:** `firmware-x4pro-daedbeab.bin`, 5,935,632 B, SHA-256 `823141498d4f0493b3c104288639dfcd340bc8364332a54e04eec38062971c9e`. Built on 2026-10-05 with the shared PlatformIO build cache under `flock /tmp/crosshatch-build.lock sh -c 'pio run -e x4pro'`: SUCCESS in 206.7 s, PlatformIO's summary RAM 101,832 B of 327,680 and flash 5,930,622 B of 6,553,600. At 5.9 MB it is not committed: the orchestrator has sent it to the owner as a session file, with `sudoku.chgame`, `ultimate-tic-tac-toe.chgame` and `battleship.chgame`. **Check the received file's SHA-256 against the one above before flashing, and flash only a file that matches.** The branch has moved since (docs, and entry 8.12, which per the orchestrator changes only `scripts/fork_release.py` and its test), so no firmware source differs from `daedbeab`'s.
+- **Flash it** with CrossPoint Reader Flash Tools and the `.bin`. A rebuild from a checkout (`git submodule update --init --recursive`, then `pio run -e x4pro -t upload` at `daedbeab` or a later head with the same firmware sources) is not promised to be byte-identical to this file, so it is a different build to the one whose hash is above, not an equal fallback: use it only if the received file is lost, and write down that you did. Why it must be a build from entry 10 on: entry 10 raised the installer's package cap to 64 members, Sudoku has 36, and a firmware from before it refuses Sudoku's package. The firmware prints no commit at boot, so the checks are the file's hash before flashing and that Sudoku installs (Part I step 2), which shows the cap is at least 36 and not that the build is `daedbeab`'s. Its size equals the x4pro "games on" `firmware.bin` the epic Notes record at the base `eca7e6c7` (5,935,632 B); that is one `pio run`, not a new `check_flash_budget.py` Measurement, and it identifies nothing.
 - **Serial log (needed for every figure):** `pio device monitor -e x4pro` (115200 baud) with `--filter log2file` or piped through `tee entry5.log`. Start it before the first step; each line starts `[<millis>] [<level>] [<origin>] `, so a gap between two lines is a time in ms. **The port goes away at every sleep** (deep sleep resets the chip, as the epic-install-and-launcher and epic-pass-and-play runs found: their logs are separate pastes), and `pio device monitor` exits when it does. Run it in a loop that appends to one file, `while true; do pio device monitor -e x4pro | tee -a entry5.log; sleep 1; done`, and note each sleep's time so a line lost to the power-down is known to be lost: the lines the forced exit logs just before the port closes (`VM stopped`, `saved ch.store`, `blank screen pushed`) may not arrive, and a sleep whose lines matter (Part P) is repeated until they do. The x4pro build logs at `LOG_LEVEL=2`. While the serial port is open the firmware prints a `[MEM] Free: N bytes, Total: N bytes, Min Free: N bytes, MaxAlloc: N bytes` line (and a PSRAM line) every 10 s (`src/main.cpp`).
 
 ## Packages
@@ -37,8 +37,8 @@ All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.
 | Item | Status | Why |
 | --- | --- | --- |
 | `sudoku-costly`, HINT and CHECK against the 3 s watchdog (Part T) | uncalibrated: expected outcome estimated from the host ratio | Host instruction counts, measured on 2026-10-05 with a host Lua 5.5.1 built from `lib/lua/src` and a count hook of 1 over the game's own `input` (`device-run-packet/count_sudoku_costly.lua` reproduces them): the first HINT 302,708, the first CHECK 258,030, a HINT after a CHECK 45,186. They include loading the solver module and the menu handling, so they sit a few hundred instructions above the solver-only counts of Part T (302,052 = 11,023 table building + 246,397 `answer` + 44,632 `hint`). At the epic's two device rates (2.17 M instructions a second with the VM alone, the spike's figure in the D2 Decision; 670,000 a second, the research's B3 floor) the first HINT takes about 0.14 s to 0.45 s, the first CHECK 0.12 s to 0.39 s, and the later HINT 0.02 s to 0.07 s. No device time is measured yet; Part T is the calibration run. |
-| `pass-store`, B7.6's forced-exit timings | uncalibrated: expected outcome estimated from logged figures | `docs/crosshatch/game-canvas.md` ("The forced exit, the worst case") estimates the blank to start about 100 ms in with a joined VM, from a 91 ms resume write measured on an X4 Pro, and says the whole is unmeasured. Part P is the first run. |
-| Part B step 5 (a) and (b), a second tap before or after the seat's frame is published | uncalibrated: no estimate | The expected result of each try depends on tap timing against a 1.7 s refresh; the counts are what is recorded, and no figure is predicted. |
+| `pass-store`, B7.6's forced-exit timings | uncalibrated: expected outcome estimated from logged figures, not a host ratio | `docs/crosshatch/game-canvas.md` ("The forced exit, the worst case") estimates the blank to start about 100 ms in with a joined VM, from a 91 ms resume write measured on an X4 Pro, and says the whole is unmeasured. Part P is the first run. |
+| Part B step 5 (a) and (b), a second tap before or after the seat's frame is published | uncalibrated: no expected outcome estimated | The expected result of each try depends on tap timing against a 1.7 s refresh; the counts are what is recorded, and no figure is predicted. |
 | the three games' rounds (Parts U, B, S) | no timing band | Nothing in a round's outcome depends on time. The dropped-touch lines are counted as a rate, with no expected figure; the owner decides at e5-r2. |
 | `loop`, `slow-restart`, `timing`, the epic-pass-and-play fixtures | not in this packet | Their calibration is the earlier packets'. |
 
@@ -51,9 +51,9 @@ All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.
 
 ## Part I: install and the heap (R12; `owner-e4-games-cap`; deferral 8.10)
 
-1. At Home, with no game installed and no inbox file, wait for two `[MEM]` lines. Record `Free`, `Min Free` and `MaxAlloc`, and the PSRAM line.
+1. At Home, with no game installed and no inbox file, wait for two `[MEM]` lines. Record `Free`, `Min Free` and `MaxAlloc`, and the PSRAM line. Then open Games with nothing installed ("No games found"), wait for two more `[MEM]` lines and record them: that is the Games list's own cost, so step 3's delta below is what three games cost. Back to Home.
 2. Put `sudoku.chgame`, `ultimate-tic-tac-toe.chgame` and `battleship.chgame` in `/games/`. Home, Games. Watch for "Installing games..." and the three rows (Sudoku "Solo", Ultimate Tic-Tac-Toe "Pass and play", Battleship "Pass and play"). Any note popup, a `.bad` file, or a log line `OOM: installer` is a device failure: the installer's 5,888 B `Job` is one contiguous internal-heap block (entry 10; deferral 8.10), and these lines are how it would show.
-3. On the Games list with exactly the three games installed, wait for three `[MEM]` lines and record all three (`Free`, `Min Free`, `MaxAlloc`, and the PSRAM line). That is the launcher's free heap for `owner-e4-games-cap`; its delta against step 1 is what three games cost.
+3. On the Games list with exactly the three games installed, wait for three `[MEM]` lines and record all three (`Free`, `Min Free`, `MaxAlloc`, and the PSRAM line). That is the launcher's free heap for `owner-e4-games-cap`; its delta against the empty Games list is what three games cost. For deferral 8.10, `MaxAlloc` at Home before the install is the largest internal block just before `installAll` allocated its 5,888 B `Job`: a number the install fitted in, not how close it came (nothing logs the block at `installAll`).
 4. From a computer, read `/.games/<id>/.pkg` for the three games (and later for the others): the second line must equal the hash in the table.
 5. Return to this list after each game in Parts U, B and S and note one `[MEM]` line there each time, so a leak across games shows.
 
@@ -63,7 +63,7 @@ The first-party games are laid out in a fixed 466 × 788 box. Judge the look at 
 
 1. **3 taps:** Home, Games, Ultimate Tic-Tac-Toe, New game (the title screen offers New game "Pass and play"; there is no Options row, the game has no setting and one mode). Count: Games, the row, New game. The header reads "Player 1 (X) to move", the small boards the first player may play in are highlighted (the first move may go anywhere).
 2. Play the round to its end (a win or a draw), tapping a cell directly, with no hand-off screen (the game is open). Check: a tap on a taken cell shows "That cell is taken"; a tap outside the highlighted boards shows "Play in the highlighted board"; the question button (top right) opens HOW TO PLAY and a tap closes it, and the page's text fits with nothing clipped (deferrals 8.1 #2 and 8.4: the real font fit).
-3. **Sleep mid-round:** about ten moves in, press the power button. Wake (Home), Games, Ultimate Tic-Tac-Toe, Continue: the same board and turn. Log: a `VM stopped` line for the sleep, then `Resuming at ver N` after Continue.
+3. **Sleep mid-round:** about ten moves in, press the power button. Wake (Home), Games, Ultimate Tic-Tac-Toe, Continue: the same board and turn. Log: a `VM stopped` line for the sleep, then `Resuming at ver N` after Continue. An open pass match shows nothing private, so no `blank screen pushed` line is expected; with Sleep Screen "None", note any ghost of the board on the panel.
 4. Finish the round. At the end the header names the winner and the end-of-round menu offers Play again and Leave. Play again once: an empty board, seat 1 to move.
 5. Leave. Record the `VM stopped; arena peak N bytes, stack high-water N bytes free, least at a hook N bytes` line that follows (it carries no game id: it follows the `ultimate-tic-tac-toe: ... -> Leaving` line). Note a `[MEM]` line on the Games list.
 
@@ -71,7 +71,7 @@ The first-party games are laid out in a fixed 466 × 788 box. Judge the look at 
 
 A hidden pass game: after each move that passes the turn, the mover's frame stays under a "Tap to pass" banner, then a hand-off screen ("Player N's turn", "I'm ready"), then the next seat's frame, as in epic-pass-and-play's B3. Placement is one seat at a time; each ship placed is a move that keeps the turn.
 
-**A known fleet.** The round has two seats, both you. Place both fleets the same way, so every shot is known: ship 1 (5 long) by tapping the first square of row 1, ship 2 (4) row 2, ship 3 (3) row 3, ship 4 (3) row 4, ship 5 (2) row 5, all across from column 1 (the first tap of a ship is its first square; rotation stays "across"). The 17 squares are then rows 1 to 5, columns 1 to 5, 4, 3, 3 and 2. Each seat's first shot is a deliberate miss at row 10, column 10 (step 3), so seat 1, who fires first, wins on its 18th shot: the round is 35 shots.
+**A known fleet.** The round has two seats, both you. Place both fleets the same way, so every shot is known: ship 1 (5 long) by tapping the first square of row 1, ship 2 (4) row 2, ship 3 (3) row 3, ship 4 (3) row 4, ship 5 (2) row 5, all across from column 1 (the first tap of a ship is its first square; rotation stays "across"). The 17 squares are then rows 1 to 5, columns 1 to 5, 4, 3, 3 and 2. Each seat's first shot is a deliberate miss at row 10, column 10 (step 3), so seat 1, who fires first, wins on its 18th shot: the round is 35 shots. Keep a tally of the shots as you go (each seat's count and its hits): the deliberate repeat shot is rejected and so uses no shot, and step 5's tries fire at known squares and count. If the order drifts so that seat 2 reaches its 17th hit first, seat 2 wins and step 6 is the same with seat 2 as the winner.
 
 1. **3 taps:** Home, Games, Battleship, New game ("Pass and play"). The hand-off screen comes first ("Player 1's turn"); "I'm ready" shows seat 1's frame ("Player 1: place ships", the 10 × 10 board, a tray of five ships, and the buttons Rotate, Random, Clear, Ready).
 2. **Sleep mid-placement (R11):** place two ships, then press the power button at once. Wake, Games, Battleship, Continue: the hand-off screen names the saved turn seat (Player 1). "I'm ready": the two ships are still on the board and the prompt names the third. Place the other three, then Ready. The hand-off screen names Player 2. Place seat 2's fleet; sleep once more mid-placement, after the first ship, and Continue (seat 2's hand-off, one ship kept); finish and Ready. Log: a `VM stopped` line at each sleep and `Resuming at ver N` after each Continue; with a seat's frame on the panel (placement is one) the forced exit also logs `battleship: forced exit: blank screen pushed (half refresh)`.
@@ -94,13 +94,13 @@ A hidden pass game: after each move that passes the turn, the mover's frame stay
    - MENU, HOW TO PLAY opens a page, and a tap closes it (this loads the `help` module in the middle of play: any error view naming "script recursion too deep to load a module" is a failure: deferral 8.4 #1);
    - HINT once and CHECK once (the timing is Part T's).
    Look at the panel for J1 to J5 now, while the notes and the shading are up (J6 is the Sticky, which this run cannot answer).
-3. **Sleep mid-round:** with some digits and notes placed, press the power button. Wake, Games, Sudoku, Continue: the grid, digits, notes and elapsed time are back; the selection, the focused digit and a HINT or CHECK mark are gone (a resume is not an edit; the epic's D5). Log: `Resuming at ver N`.
+3. **Sleep mid-round:** with some digits and notes placed, press the power button. Wake, Games, Sudoku, Continue: the grid, digits, notes and elapsed time are back; the selection, the focused digit and a HINT or CHECK mark are gone (a resume is not an edit; the epic's D5). Log: a `VM stopped` line for the sleep (no `blank screen pushed`: a solo match shows nothing private) and `Resuming at ver N` after Continue.
 4. Solve the grid. "Solved", "Time m:ss" and the band appear, and, since you used HINT, "No best time after a hint". The "Best m:ss" line shows only for a solve with no HINT: it is not checked on the device unless you also play one more Easy round with no HINT (Play again), which is optional.
 5. Leave. Record the `VM stopped` line that follows `sudoku: ... -> Leaving`, and a `[MEM]` line on the Games list.
 
 ## Part T: HINT and CHECK on the costliest Expert puzzle (R12, B3)
 
-**Why this puzzle:** `games/sudoku/puzzles.lua` files each puzzle under the hardest technique the solver needs and keeps one only if its worst single call, the first HINT or CHECK on it, costs at most 1,000,000 instructions. The costliest kept Expert puzzle is `0034ee8363e5` (index 59 of 100): 224,973 instructions in the orientation the bank tool graded. The game deals each puzzle under a random symmetry (digit relabelling, band, stack, row and column swaps, transposition), and the symmetry changes the cost; measured on 2026-10-05 over 3,000 random symmetries of this puzzle, the costliest was 302,052 (11,023 table building, 246,397 `answer`, 44,632 `hint`), 34% above the bank's figure (in a smaller sample, all 100 Expert puzzles at 40 symmetries each, the costliest call was also this puzzle's, 280,243). Both are far under the 1 M cap and the 2 M budget. **The shipped Sudoku cannot be forced** to this puzzle: `setup` picks the puzzle and the symmetry at random, and nothing logs which puzzle was dealt. So Part T uses `sudoku-costly`, which deals that costliest symmetry every time; and step 6 times the shipped game on a random Expert deal as a cross-check, with the grid recorded.
+**Why this puzzle:** `games/sudoku/puzzles.lua` files each puzzle under the hardest technique the solver needs and keeps one only if its worst single call, the first HINT or CHECK on it, costs at most 1,000,000 instructions. The costliest kept Expert puzzle in the orientation the bank tool graded is `0034ee8363e5` (index 59 of 100): 224,973 instructions. The game deals each puzzle under a random symmetry (digit relabelling, band, stack, row and column swaps, transposition), and the symmetry changes the cost; measured on 2026-10-05 over 3,000 random symmetries of this puzzle, the costliest found was 302,052 (11,023 table building, 246,397 `answer`, 44,632 `hint`), 34% above the bank's figure (in a smaller sample, all 100 Expert puzzles at 40 symmetries each, the costliest call was also this puzzle's, 280,243). So 302,052 is the worst found, not shown to be the worst possible: the other 99 Expert puzzles got 40 symmetries each, and the Easy, Medium and Hard puzzles none. Both figures are far under the 1 M cap and the 2 M budget. **The shipped Sudoku cannot be forced** to this puzzle: `setup` picks the puzzle and the symmetry at random, and nothing logs which puzzle was dealt. So Part T uses `sudoku-costly`, which deals that costliest symmetry found every time; and step 6 times the shipped game on a random Expert deal as a cross-check, with the grid recorded.
 
 The grid `sudoku-costly` deals (0 is empty; 26 clues, 55 empty cells), and its one solution (the game's solver and a separate backtracking search agree):
 
@@ -119,24 +119,31 @@ grid           solution
 
 On the host this grid's first HINT selects the cell at row 5, column 5 and reads "Only cell (row)"; a CHECK on the untouched grid reads "All correct".
 
-**How the time is read.** The firmware logs no tap and no call time (a call over 3 s logs `a call ran over 3000 ms; stopping the VM` and shows the error view). So time each call from a phone video of the panel with a finger visibly on the key: from the finger touching the key to the first visible change. That time holds the touch, the call and the start of the fast refresh (about 0.67 s on this panel in the epic-pass-and-play log), so it is an upper bound on the call. To take the touch and the refresh out, first time a **control** the same way, three times: a tap on MENU (the panel opens with no solver call), and subtract its median from each HINT or CHECK time; call the difference the call's time. The pass bar is the one the epic set (D2): no `a call ran over 3000 ms` line, no error view, and a call time under 1.5 s (half the watchdog); over 1.5 s the bank's cost cap is lowered (D2). Record the raw video times, the control and the difference, and cross-check with the matching `sudoku-costly: frame N pushed in M ms` line.
+**How the time is read.** The firmware logs no tap and no call time (a call over 3 s logs `a call ran over 3000 ms; stopping the VM` and shows the error view). So time each call from a phone video of the panel with a finger visibly on the key: from the finger touching the key to the first visible change. That time holds the touch, the call and the start of the fast refresh (about 0.67 s on this panel in the epic-pass-and-play log), so it is an upper bound on the call. To take the touch and the refresh out, first time a **control** the same way, three times: a tap on MENU (the panel opens with no solver call), and subtract its median from each HINT or CHECK time; call the difference the call's time. The pass bar is the one the epic set (D2): no `a call ran over 3000 ms` line, no error view, and a call time under 1.5 s (half the watchdog); over 1.5 s the bank's cost cap is lowered (D2). Time each of steps 2 to 4 three times where it can be repeated (a resume repeats it by sleeping again), at 60 frames a second if the phone has it (30 otherwise), and record the raw video times, the control and the difference. Be plain about what this can show: a pass or fail against the 3 s watchdog and the 1.5 s bar. Touch latency and the refresh are as large as the 0.02 to 0.45 s the estimates predict, so it cannot tell the 2.17 M from the 670,000 instructions a second, and the rate stays uncalibrated unless the numbers separate clearly. Cross-check with the matching `sudoku-costly: frame N pushed in M ms` line.
 
 1. Install `sudoku-costly.chgame` (Part I's heap readings are already taken). **3 taps:** Home, Games, Sudoku costly, New game (its Options row offers Difficulty, which does nothing here: the deal is fixed). It deals the grid above at once. Check the grid against the picture, then time the control: tap MENU and close it three times.
 2. **First CHECK on a fresh VM:** tap MENU, then CHECK. The message reads "All correct". Time it (host cost 258,030: it pays the answer).
 3. **HINT after the CHECK:** MENU, HINT. Row 5, column 5 is selected, with "Only cell (row)". Time it (host cost 45,186: the answer is cached).
-4. **First HINT on a fresh VM:** press the power button, wake, Games, Sudoku costly, Continue (a resume starts a new VM and drops the cached answer), then MENU, HINT. Time it (host cost 302,708: it pays the answer and the hint). This is the worst single call.
+4. **First HINT on a fresh VM:** press the power button, wake, Games, Sudoku costly, Continue (a resume starts a new VM and drops the cached answer), then MENU, HINT. Time it (host cost 302,708: it pays the answer and the hint). This is the worst call found.
 5. Heap and a solve at Expert: tap MENU, make sure SHADE PEERS is on and set "NOTES AS: DIGITS", then FILL NOTES (every candidate in every empty cell, the heaviest frame; look at J2 to J4 here); tap a cell and a pad key to focus a digit; UNDO once (it restores the notes the fill replaced). Then enter the solution above, cell then digit, for the 55 empty cells. After about 20 digits, CHECK reads "All correct"; then enter one deliberate wrong digit: CHECK reads "1 wrong digit", and HINT reads "Wrong digit" and selects it; fix it and finish. The grid ends on "Solved". Any out-of-memory fault (an error view naming memory, a `Script error:` line) is a device failure (Assumption A2). Leave and record the `VM stopped` line that follows `sudoku-costly: ... -> Leaving`.
-6. **The shipped Sudoku at Expert:** Games, Sudoku, Options, Difficulty to Expert, Back, New game. Time the first CHECK, then the first HINT after a sleep and Continue, as in steps 2 to 4, and photograph the dealt grid as the record of which puzzle it was. Leave and record the `VM stopped` line. Then set Difficulty back to Easy, and Remove "Sudoku costly".
+6. **The shipped Sudoku at Expert:** Games, Sudoku, Options, Difficulty to Expert, Back, New game. Time the first CHECK, then the first HINT after a sleep and Continue, as in steps 2 to 4, and photograph the dealt grid (which puzzle it was cannot be read off a photograph: the orchestrator can match it against the bank under every symmetry offline, if the cross-check matters). Leave and record the `VM stopped` line. Then set Difficulty back to Easy, and Remove "Sudoku costly".
 
 ## Part P: B7.6, a sleep with a dirty store (`pass-store`; e6pre-13)
 
 The forced exit now writes the resume file, retries the delete and flushes `ch.store` before it pushes the blank (e6pre-10); B7.6 is the first device run of that order. Put `pass-store.chgame` in `/games/`, open Games (it installs), and read its `.pkg` hash.
 
 1. Pass store, New game ("Pass and play"). "I'm ready": seat 1's frame ("Player 1", "Player 1's secret: apple", "Moves: 0").
-2. Make a move (tap the frame), tap the banner, tap "I'm ready" for seat 2, make a second move less than 5 s after the first (a `ch.store.set` per move: the second set is held for the 5 s flush), and press the power button at once, with seat 2's frame under its banner. If a `pass-store: saved ch.store` line appears before you press power, the store was not dirty: repeat from step 1.
+2. **The dirty store.** Each move calls `ch.store.set`, and `GameSaveStore::flushIfDue` writes a dirty store only when 5 s have passed since the store's last write, which is the match's start until the first `pass-store: saved ch.store` line. A move made more than 5 s after that is flushed on the next loop pass; one made within 5 s of it stays dirty until the 5 s are up. So press the power button within 5 s of the match's start with a move made in that time (the first move's own flush, due at 5 s, may otherwise log `saved ch.store` normally, which is not an error), by one of two routes:
+   - **From the start:** tap New game, then "I'm ready" at once (the hand-off screen takes about 1.7 s to push), tap the frame (a move) and press power with seat 1's frame under its banner, all inside 5 s of New game. If a `pass-store: saved ch.store` line appears before you press power, the 5 s passed first: try the second route.
+   - **After a flush:** once a `saved ch.store` line has appeared, make a move within 5 s of it and press power at once.
+   Try each route up to five times and write down each attempt's gap from the log. If neither can be hit by hand (the hand-off pushes are about 1.7 s each), write "not reachable by hand" with the attempts: B7.6 then stays unanswered, and the owner chooses between a longer store interval for a test build and accepting the host-only evidence.
 3. Expect, in this order: `Exiting activity: GameMatch`, `VM stopped; arena peak ...`, `pass-store: saved ch.store (N bytes)` (the dirty store), then `pass-store: forced exit: blank screen pushed (half refresh)`. A second `saved resume.bin` line need not appear: the last move's resume file is written when the turn passes. A line `pass-store: forced exit past 1500 ms; skipped the resume write` (or `the resume.bin delete`, or `the ch.store flush`) is a finding for the owner (deferral 5.6, resolved by e6pre-10 in its order, reopened by such a line): the alternatives are a start-time bound for the blank on its own thread, or an async push.
 4. Compute the gaps from the `[millis]` prefixes: `Exiting activity: GameMatch` to `saved ch.store`; `saved ch.store` to `blank screen pushed` (the half refresh, 1,654 ms in the epic-pass-and-play log); and `Exiting activity: GameMatch` to `blank screen pushed`. The estimate (unmeasured as a whole) is about 100 ms from the exit to the blank's start with a joined VM, plus the store write (42 to 96 ms in the epic-pass-and-play log), then the half refresh (1,654 ms there): about 1.8 s in all. Any gap or stall far above that, a card step that took over 1,000 ms, or a missing `saved` line is the "card stall" the ticket asks about.
-5. Wake, Games, Pass store, Continue: the hand-off screen names seat 1 (the turn after the second move), and "I'm ready" shows the frame with "Moves: 2". Leave. Then Remove "Pass store".
+5. Wake, Games, Pass store, Continue: the hand-off screen names the seat whose turn it was after the last move, and "I'm ready" shows its frame with the move count of the moves made. Leave. Then Remove "Pass store".
+
+## Part Z: end of the run
+
+Put back what the run changed: Settings, Display, Sleep Screen and Controls, Short Power Button Click to the values you noted in "Order and card state"; the games' remembered toggles (SHOW REMAINING, SHADE PEERS, NOTES AS) and Difficulty to their defaults if you changed them; Remove any game still installed that you do not want (`pass-store` and `sudoku-costly` were removed in Parts P and T); and delete the `/.games-data/` folders of this run's games from a computer if the card goes back to normal use. Send the photos and videos with the results and name each by its step id; save the serial log as `entry5.log` whole.
 
 ## Serial lines that carry each figure
 
@@ -176,7 +183,7 @@ Also from the ticket, recorded for their owners, not fixed here: whether a stack
 
 ## Owner answers: this epic's deferrals
 
-The open items in `deferred-work.md` under `## 8.1` to `## 8.4`, `## 8.8` to `## 8.11`, `## e5-close`, `## e6pre-13`, `## e5-r5`, `## e5-r2` and `## owner-e4-games-cap`. Items marked "Resolved" are left out: 8.1 #3, 8.2 #1, 8.3 #1 and #3's text (its residue is row 8.3 #3 below), and `## e5-close`'s V3 (resolved by entry 7: `PassResumeTest`, host). "Checked here" says what this run shows; "Confirm" asks the owner to keep the item deferred as written, or reassign it.
+The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under `## 8.1` to `## 8.4`, `## 8.8` to `## 8.11`, `## e5-close`, `## e6pre-13`, `## e5-r5`, `## e5-r2` and `## owner-e4-games-cap`. Items marked "Resolved" are left out: 8.1 #3, 8.2 #1, 8.3 #1 and #3's text (its residue is row 8.3 #3 below), and `## e5-close`'s V3 (resolved by entry 7: `PassResumeTest`, host). "Checked here" says what this run shows; "Confirm" asks the owner to keep the item deferred as written, or reassign it.
 
 | Section, item | Summary | Status, trigger | Checked here | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -198,8 +205,8 @@ The open items in `deferred-work.md` under `## 8.1` to `## 8.4`, `## 8.8` to `##
 | 8.11 #1 | The X4 Pro's inset values {9, 7, 3, 7} are typed in three places nothing ties together (the SDK profile, the games check's `CANVAS_466`, the simulator shim) | Deferred (medium): an SDK bump could change them | J5 shows the device's real canvas; Confirm | |
 | 8.11 #3 | Nothing in CI proves the simulator's X4 Pro shim is in effect | Deferred (low) | Confirm | |
 | `## e5-close` 5.13 | Device check of ticket 5.13's plain tap targets: a fast double tap on the Result banner, the first move after "I'm ready", a contact held across the transition | Owed since epic-pass-and-play | Part B step 5 | |
-| `## e5-close` leak | The abandoned VM leaks 1,240 B on the device, not the 1,032 B the earlier records say | Deferred; trigger: the next change to `GameVM::abandon` or the arena, or a device report | Not run: it needs `loop.chgame`'s "Stuck in one C call" (`pack_device_run.py` writes it); Confirm | |
-| `## e5-close` F13 | The launcher row shows no sign of a save, and New game over a save relies on a `peek` cached when the title screen opened | Deferred (unverified) | Not run; Confirm | |
+| `## e5-close` leak | The abandoned VM leaks 1,240 B on the device, not the 1,032 B the earlier records say | Deferred; trigger: the next change to `GameVM::abandon` or the arena, or a device report | Not run in this packet: it needs `loop.chgame`'s "Stuck in one C call" (`pack_device_run.py` writes it). The trigger names the next device run, which is this one: the owner chooses to run it now or keep it deferred | |
+| `## e5-close` F13 | The launcher row shows no sign of a save, and New game over a save relies on a `peek` cached when the title screen opened | Deferred (unverified) | Not run in this packet (it needs a save to appear after the title screen's `peek`). The trigger names the next change to that path or a report: the owner chooses to run it now or keep it deferred | |
 | `## e5-close` D2, D3, D4, AI-10 | Duplicated mode mappings and style blocks; the same package hash and builders hard-coded across test suites | Deferred to epic-play-nearby's refactor sweep | Confirm | |
 | `## e6pre-13` | B7.6: a sleep with a dirty store on an X4 Pro; record when the blank starts and whether the resume write and the `ch.store` flush land | Owed since e6pre-10 | Part P | |
 | `## e5-r5` (1) | The same B7.6, still open after e6pre-10's reordering | Owed | Part P | |
@@ -209,10 +216,10 @@ The open items in `deferred-work.md` under `## 8.1` to `## 8.4`, `## 8.8` to `##
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Pending.** The dry run on the epic head failed on a bug in the release script's packer path; the orchestrator is fixing it as entry 8.12 and fills in this section after a re-run. Leave it as it is until then. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Pending.** The first dry run failed on a bug in the release script's packer path; entry 8.12 fixed it, and the orchestrator re-ran the dry run on the epic head and fills in this section. Leave it as it is until then. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
 - Run link: 
-- Commit the run built (must be the epic head, or a head whose commits since `daedbeab` change only `_bmad-output/`, so `games/<id>/` is the same): 
+- Commit the run built (the epic head at the time of the run, after entry 8.12; it is valid when `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer are unchanged since `daedbeab`, so the packages and the firmware are the ones above): 
 - Date and conclusion: 
 
 The release's package table (`| Package | Package hash | SHA-256 |`) against this packet's. The package hash must be equal; the SHA-256 of the file is equal only when the runner's zlib deflates the same bytes as this machine's (the packer says the same folder gives the same bytes on one toolchain).
@@ -225,22 +232,65 @@ The release's package table (`| Package | Package hash | SHA-256 |`) against thi
 
 ## What to record
 
-In entry 5's plan, under "Owner's results" (R12's list):
+In this packet (the single home of the results). The owner's answers go in the J, A and deferral tables above; everything else goes in the "Value recorded" column of this table and in the "Step results" table after it (R12's list):
 
-| Item | What to write |
-| --- | --- |
-| Firmware | The commit and `firmware.bin` SHA-256 flashed (this packet's are under "Firmware"; the file arrives as a session file and its hash is checked), and the hashes `/.games/<id>/.pkg` shows for the three games, `pass-store` and `sudoku-costly` |
-| Steps | Pass or fail, with a sentence, for I1 to I5, U1 to U5, B1 to B7 (B5's a, b, c separately), S1 to S5, T1 to T6, P1 to P5 |
-| Taps from Home | The tap count for each game's first round (at most 3) |
-| `VM stopped` | The line for each of Ultimate tic-tac-toe, Battleship, Sudoku, and `sudoku-costly` (arena peak, stack high-water, least at a hook), and whether any stack figure is under 512 B |
-| Launcher free heap | The `[MEM]` lines at Home with no game, on the Games list with three games, and after each game (`Free`, `Min Free`, `MaxAlloc`, PSRAM) |
-| Dropped touches | The count of `dropped a touch before the frame was on the panel` after "I'm ready", with the hand-off count over the same span, and the other two dropped-touch counts |
-| 5.13's checks | The result of B5 a, b and c, three tries each |
-| Sleep from Over | Whether a ghost of a seat's frame showed before or after the sleep (photos) |
-| HINT and CHECK | The three times on `sudoku-costly` (first CHECK, HINT after it, first HINT after a resume), each as the raw video time, the MENU control and the difference, the same on the shipped Sudoku's random Expert deal with its first grid row, and whether any run hit the 3 s watchdog |
-| B7.6 | The log lines of Part P step 3 with their `[millis]`, the three computed gaps, and any `skipped` or `forced exit past 1500 ms` line |
-| Install | Whether all five packages installed with no note and no `OOM: installer` line |
-| Faults | Any reset, watchdog banner, `abandoning it`, `script recursion too deep`, `OOM`, or `Script error:` line |
-| Judgements | The owner's answers to J1 to J6, A1 to A3, and each deferral row |
-| Dry run | The release dry run's link and its package table, matching this packet's hashes |
-| Failures | Each device failure as a new story in this epic's PR |
+| Item | What to write | Value recorded |
+| --- | --- | --- |
+| Firmware | The commit and `firmware.bin` SHA-256 flashed (this packet's are under "Firmware"; the file arrives as a session file and its hash is checked), and the hashes `/.games/<id>/.pkg` shows for the three games, `pass-store` and `sudoku-costly` | |
+| Steps | Pass or fail for each step in the Step results table below | |
+| Taps from Home | The tap count for each game's first round (at most 3) | |
+| `VM stopped` | The line for each of Ultimate tic-tac-toe, Battleship, Sudoku, and `sudoku-costly` (arena peak, stack high-water, least at a hook), and whether any stack figure is under 512 B | |
+| Launcher free heap | The `[MEM]` lines at Home with no game, on the Games list with three games, and after each game (`Free`, `Min Free`, `MaxAlloc`, PSRAM) | |
+| Dropped touches | The count of `dropped a touch before the frame was on the panel` after "I'm ready", with the hand-off count over the same span, and the other two dropped-touch counts | |
+| 5.13's checks | The result of B5 a, b and c, three tries each | |
+| Sleep from Over | Whether a ghost of a seat's frame showed before or after the sleep (photos) | |
+| HINT and CHECK | The three times on `sudoku-costly` (first CHECK, HINT after it, first HINT after a resume), each as the raw video time, the MENU control and the difference, the same on the shipped Sudoku's random Expert deal with its first grid row, and whether any run hit the 3 s watchdog | |
+| B7.6 | The log lines of Part P step 3 with their `[millis]`, the three computed gaps, and any `skipped` or `forced exit past 1500 ms` line | |
+| Install | Whether all five packages installed with no note and no `OOM: installer` line | |
+| Faults | Any reset, watchdog banner, `abandoning it`, `script recursion too deep`, `OOM`, or `Script error:` line | |
+| Judgements | The owner's answers to J1 to J6, A1 to A3, and each deferral row | |
+| Dry run | The release dry run's link and its package table, matching this packet's hashes | |
+| Failures | Each device failure as a new story in this epic's PR | |
+
+### Step results
+
+One row per step: pass or fail, the log excerpt that shows it (with its `[millis]` prefix), and notes. A step not run says why.
+
+| Step | Result | Log excerpt | Notes |
+| --- | --- | --- | --- |
+| I1 | | | |
+| I2 | | | |
+| I3 | | | |
+| I4 | | | |
+| I5 | | | |
+| U1 | | | |
+| U2 | | | |
+| U3 | | | |
+| U4 | | | |
+| U5 | | | |
+| B1 | | | |
+| B2 | | | |
+| B3 | | | |
+| B4 | | | |
+| B5a | | | |
+| B5b | | | |
+| B5c | | | |
+| B6 | | | |
+| B7 | | | |
+| S1 | | | |
+| S2 | | | |
+| S3 | | | |
+| S4 | | | |
+| S5 | | | |
+| T1 | | | |
+| T2 | | | |
+| T3 | | | |
+| T4 | | | |
+| T5 | | | |
+| T6 | | | |
+| P1 | | | |
+| P2 | | | |
+| P3 | | | |
+| P4 | | | |
+| P5 | | | |
+| Z | | | |

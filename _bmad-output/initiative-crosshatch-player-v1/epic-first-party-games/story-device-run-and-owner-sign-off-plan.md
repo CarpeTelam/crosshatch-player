@@ -22,6 +22,12 @@ deferred:
   - summary: `make_sudoku_costly.py` has no committed test that it still matches the shipped game or that the grid costs what the packet says; it re-checks only that GRID has exactly one solution, SOLUTION.
     location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py
     severity: low
+  - summary: The script `make_sudoku_costly.py` and `count_sudoku_costly.lua` write the game's state shape (`l`, `v`, `n`, `u`, `t`) by hand, so a change to `games/sudoku/main.lua`'s `setup` or state would show only on a device or the simulator.
+    location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py, count_sudoku_costly.lua
+    severity: low
+  - summary: The 302,052-instruction figure is the worst found (3,000 symmetries of one puzzle, 40 of each other Expert puzzle, none of Easy, Medium or Hard), not the worst possible.
+    location: games/sudoku/puzzles.lua (the bank's cost cap), test/game_script/first_party/sudoku/tools/make_bank.py
+    severity: low
 context: []
 ---
 
@@ -58,10 +64,10 @@ context: []
 - [x] `device-run-packet/*.chgame`, `HASHES.txt` -- pack the three games and `pass-store`; add `sudoku-costly` -- hashes the owner compares
 - [x] `device-run-packet/make_sudoku_costly.py` -- derive a Sudoku with its first deal fixed to the costliest Expert grid -- the shipped game cannot be forced to a puzzle
 - [x] `device-run-packet.md` -- steps, serial lines, panel judgements, answer tables, calibration, dry-run section, What to record
-- [x] this plan -- `## Owner's results` for the owner's answers after the run
+- [x] this plan -- points at the packet, which is the single home of the results
 
 **Acceptance Criteria:**
-- Given the packet, when the owner follows it from a flashed X4 Pro, then each R12 item has a step, the serial line that carries it, and a place to record it.
+- Given the packet, when the owner follows it from a flashed X4 Pro, then each R12 item has a step, the serial line that carries it, and a place to record it in the packet's own tables.
 - Given the epic Notes and `deferred-work.md`, when the packet is read, then every `Assumption for entry 5:` line and every open item of the named entries appears as an owner question.
 
 ## Implementation Notes
@@ -70,8 +76,8 @@ context: []
 - The brief gave the inbox as `/games/inbox`; the code's inbox is `/games` (`GamePaths.h` `INBOX_DIR`), so the packet says `/games/`.
 - The shipped Sudoku deals a random puzzle and symmetry (`setup`) and logs neither, so HINT and CHECK cannot be timed on `0034ee8363e5` there. The packet's `sudoku-costly` fixes the deal; the costliest of 3,000 symmetries of that puzzle is 302,052 host instructions, against the bank's 224,973 (unsymmetrised): recorded under `deferred`, not acted on (3.3 times under the 1 M cap).
 - `make_sudoku_costly.py` is a packet file, not a fork script (`docs/crosshatch/fork-scripts.md`): it lives beside the packet, packs nothing into `games/`, and is not run by CI.
-- `firmware-x4pro-daedbeab.bin` (5.9 MB) is not committed; the orchestrator hands it to the owner as a session file (SendUserFile), and its SHA-256 and size are in the packet.
-- The release dry run (R13) failed on a bug in the release script's packer path; the orchestrator fixes it as entry 8.12 and fills the packet's R13 section after a re-run, so it stays pending here.
+- `firmware-x4pro-daedbeab.bin` (5.9 MB) is not committed; the orchestrator sent it to the owner as a session file, and its SHA-256 and size are in the packet; a rebuild is not promised to be byte-identical, and the packet says so.
+- The release dry run (R13) failed on a bug in the release script's packer path; the orchestrator fixes it as entry 8.12 and fills the packet's R13 section after a re-run, so it stays pending here. The dry-run commit rule is the orchestrator's: the epic head at the time of the run, valid when `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer are unchanged since `daedbeab`.
 - Review patches (pass 1): see the Review Triage Log. `count_sudoku_costly.lua` was added to the packet folder so the host figures can be re-derived, and `sudoku-costly` was repacked (`d964af5a1278ea7f`) so its `setup` still loads the bank.
 
 ## Plan Change Log
@@ -102,6 +108,29 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 | 18 | edge, verification-gap | Step 5(c) "no tap-driven change" names no observable; two host-figure scopes side by side | low, patch | Reworded; covered by #9. |
 | 19 | intent-alignment | Descriptive: the content is asserted by reading, not executed; the firmware was outside the folder | no verdict | The lens checked strings against the sources and found no mismatch; the delivery route is #8. |
 
+Pass 2 (the follow-up pass, `followup_review_recommended` from pass 1), over `daedbeab..d379cfdb` with four fresh context-free lenses (blind-hunter, edge-case-hunter, verification-gap, intent-alignment), again over documents. Verdicts: 0 high, 2 medium, 15 low, 0 false, and one descriptive report. Two mediums were patched, so `followup_review_recommended` stays true by the rule; the orchestrator's procedure runs this one follow-up pass only, and every patch is to the packet's text or its two helper scripts.
+
+| # | Lens | Finding | Verdict, route | Evidence and action |
+|---|------|---------|----------------|---------------------|
+| 20 | edge | Part P's "second move less than 5 s after the first" does not keep the store dirty: the 5 s runs from the store's last write | medium, patch | `GameSaveStore::flushIfDue` returns unless the store is dirty and 5 s (`FLUSH_INTERVAL_MS`) have passed since `lastWriteMs`, which starts at the match's start and moves at each flush. A move after the window is flushed on the next loop pass. Step 2 now gives two routes (power within 5 s of the match's start, or a move within 5 s after a `saved ch.store` line), five tries each, and a "not reachable by hand" outcome. |
+| 21 | blind, intent | The results have two homes: the packet's answer columns and the plan's one-paragraph "Owner's results" | medium, patch | The packet is the single home (orchestrator's choice): a "Value recorded" column and a "Step results" table (every step id), and the plan only points there and records the sign-off. |
+| 22 | blind, edge | The dry-run commit rule contradicts the branch's state, and entry 8.12 changes `scripts/` | low, patch | Restated as the orchestrator gave it: the epic head at the time of the run, valid when `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer are unchanged since `daedbeab`; the intro no longer calls `daedbeab` the head. |
+| 23 | blind, edge, intent | Firmware: no durable path, a rebuild has no hash, size equality and "Sudoku installs" do not show the build is `daedbeab`'s | low, patch | The orchestrator has sent the file and the three packages; the packet says to check the hash before flashing, that a rebuild is not promised byte-identical and is not an equal fallback, and that the install shows only a cap of at least 36; the scratch path and the absolute cache path are gone. |
+| 24 | blind | "Costliest" and "the worst single call" overclaim: one puzzle got 3,000 symmetries | low, patch | Reworded to "the worst found", with the search's coverage; added to `deferred`. |
+| 25 | blind | Part T's method cannot separate the two device rates | low, patch | The packet says it can show only pass or fail against the 3 s and 1.5 s bars, adds repeats and the frame rate, and keeps the rate uncalibrated. |
+| 26 | blind, edge, verification-gap | `count_sudoku_costly.lua` hard-codes 11,023 and the menu rows | low, patch | The table building is derived (first minus second grade call, on a fresh solver); rows are named constants with asserts; the docstring says the hook counts VM instructions only and gives the expected output. Both reproduced the packet's figures. |
+| 27 | blind, edge | `make_sudoku_costly.py` read `values` outside its guard, and its schema coupling was unstated | low, patch | Moved inside the guard; the docstring states the coupling; added to `deferred`. |
+| 28 | blind | Hashes are copied by hand in several places with no mechanical check | low, patch | A `sha256sum *.chgame` command and the count script were added to Verification. |
+| 29 | blind | Part B's shot bookkeeping is under-specified | low, patch | A tally instruction, and seat 2 winning is handled the same. |
+| 30 | blind | The heap baseline mixes the Games list's cost into the three games' cost, and 8.10's block is not logged | low, patch | An empty-Games reading was added as the baseline; the packet says `MaxAlloc` at Home shows the install fitted, not by how much. |
+| 31 | blind | No end-of-run restore; U and S sleep expectations missing; photos and the "which puzzle" record | low, patch | Part Z added; U and S say no blank line is expected; photos go with the results named by step id; the shipped-Sudoku grid can be matched offline by the orchestrator. |
+| 32 | blind | The e5-close leak and F13 rows say "Not run; Confirm" though their trigger is the next device run | low, patch | The rows ask the owner to run them now or keep them deferred. |
+| 33 | blind | `deferred-work.md` is never cited by path | low, patch | The deferral section cites `_bmad-output/implementation-artifacts/deferred-work.md`. |
+| 34 | edge | The calibration table's labels differ from the AI-5 phrase | low, patch | The `pass-store` row reads "uncalibrated: expected outcome estimated from logged figures, not a host ratio"; the Part B row "uncalibrated: no expected outcome estimated". |
+| 35 | blind | The plan's `review_loop_iteration` and status said nothing of pass 1's follow-up | low, patch | This log records both passes. |
+| 36 | verification-gap | No finding beyond the 11,023 literal (#26) | no verdict | The lens re-did the arithmetic and grepped every quoted log line in `src/`. |
+| 37 | intent-alignment | Descriptive: the flash procedure pointed at an earlier packet, and the per-step results had no form | no verdict | Flash steps are inline now (#23); the form is #21. |
+
 ## Design Notes
 
 - Where the intent settles each choice: the three `Assumption` lines and the owner Decisions are epic Notes lines 111 to 124; the heap and stack figures are R12 and the epic-api-freeze item (under 512 B free reopens the C-stack decision); HINT's 1.5 s bar is the D2 Decision (half the 3 s watchdog, cap lowered if the device is slower).
@@ -114,6 +143,8 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 - `git status --short` -- expected: only `_bmad-output/.../device-run-packet.md`, `device-run-packet/`, and this plan
 - `python3 scripts/pack_game.py games/<id> <dir>` for the three games, twice -- expected: the same hash and bytes (`3c657cfcb2e461dc`, `a7e63b542144938b`, `10a07de10cb14489`)
 - `python3 _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py <dir>` twice -- expected: `d964af5a1278ea7f` both times
+- `cd device-run-packet && sha256sum *.chgame` -- expected: the SHA-256 column of the packet's package table
+- `lua device-run-packet/count_sudoku_costly.lua games/sudoku` (a host Lua 5.5.1) -- expected: 258030, 45186, 302708 and a solver sum of 302052
 - `python3 scripts/check_upstream_touches.py`, `./bin/clang-format-fix` twice -- expected: pass, nothing new in `git status`
 - `flock /tmp/crosshatch-build.lock sh -c 'pio run -e x4pro'` -- expected: SUCCESS; recorded in the packet (5,935,632 B). No `pio check`, `default` build, or `sim.sh`: the commit changes no source.
 
@@ -122,4 +153,11 @@ Pass 1. The four lenses (blind-hunter, edge-case-hunter, verification-gap, inten
 
 ## Owner's results
 
-Filled in after the device run, per the packet's "What to record": the firmware and package hashes, each step's result, the serial lines, HINT's and CHECK's times, the release dry run's link and table, and the owner's answers to J1 to J6, A1 to A3 and each deferral; `deferred-work.md`'s five entries get their outcomes from this section.
+The results are not recorded here. The packet is their single home: the owner's answers in its J, A and deferral tables, and the step results, figures and log excerpts in its "What to record" and "Step results" tables. After the run and sign-off, record here only the outcome:
+
+- Device run date and the owner:
+- Firmware flashed (commit and SHA-256) and the dry run's link:
+- Sign-off (the owner's words and date):
+- Device failures, each as a new story in this epic's PR:
+
+`deferred-work.md`'s `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2` and `## owner-e4-games-cap` get their outcomes from the packet's rows; the orchestrator carries them there.
