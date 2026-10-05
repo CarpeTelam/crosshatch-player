@@ -3,7 +3,7 @@ title: 'Sudoku'
 type: 'feature'
 ticket: '3'
 created: '2026-10-05'
-status: 'built'
+status: done
 baseline_revision: '847e7bc246b4bde7ed15417eece498e629f8efcd'
 route: 'full'
 route_source: 'auto'
