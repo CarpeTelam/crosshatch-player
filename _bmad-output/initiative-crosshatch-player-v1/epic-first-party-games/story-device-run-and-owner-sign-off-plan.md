@@ -19,7 +19,7 @@ deferred:
   - summary: No Sticky firmware is built (the orchestrator decided not to), so J6 and the Sticky halves of 8.9 #2 and #4 are not answerable this run: an owner-facing item for a later Sticky pass.
     location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet.md (J6, 8.9 #2 and #4 Sticky halves)
     severity: low
-  - summary: `make_sudoku_costly.py` has no committed test that it still matches the shipped game or that the grid costs what the packet says; it re-checks only that GRID has exactly one solution, SOLUTION.
+  - summary: "`make_sudoku_costly.py` has no committed test that it still matches the shipped game or that the grid costs what the packet says; it re-checks only that GRID has exactly one solution, SOLUTION."
     location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py
     severity: low
   - summary: The script `make_sudoku_costly.py` and `count_sudoku_costly.lua` write the game's state shape (`l`, `v`, `n`, `u`, `t`) by hand, so a change to `games/sudoku/main.lua`'s `setup` or state would show only on a device or the simulator.
