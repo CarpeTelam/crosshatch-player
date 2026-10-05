@@ -11,9 +11,9 @@
       "over": 131073
     },
     "members": {
-      "limit": 32,
-      "at": 32,
-      "over": 33
+      "limit": 64,
+      "at": 64,
+      "over": 65
     },
     "images": {
       "limit": 32,

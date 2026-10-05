@@ -246,7 +246,10 @@ TEST_F(InstallerTest, ADuplicateMemberEndsBad) {
   expectRejected("g.chgame", package, Error::BadMember);
 }
 
+// Level 1 allows 64 members (the owner's Decision of 2026-10-05, epic-first-party-games Notes): 64 install, and a 65th
+// ends the package Bad as TooManyMembers. The test follows the constant, so this pins the number it follows.
 TEST_F(InstallerTest, MoreMembersThanTheLimitEndsBad) {
+  static_assert(GameCore::PACKAGE_MEMBERS == 64, "API level 1 allows 64 members");
   std::vector<Member> extra;
   for (size_t i = 0; i + 2 < GameCore::PACKAGE_MEMBERS + 1; ++i)
     extra.push_back({"m" + std::to_string(i) + ".lua", {}});

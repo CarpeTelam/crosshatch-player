@@ -22,8 +22,10 @@ class StoreSlot;
 // loop task; the VM never touches Storage. Move-only, since it owns the block.
 class GameAssets {
  public:
-  // AD-15 package limits, applied to what a hand-placed game holds.
-  static constexpr size_t MAX_SOURCES = 32;
+  // AD-15 package limits, applied to what a hand-placed game holds. MAX_SOURCES mirrors the package's member cap, as
+  // the images' cap mirrors MAX_IMAGES, so that a package the installer accepts (any mix of .lua members within
+  // PACKAGE_MEMBERS) also loads.
+  static constexpr size_t MAX_SOURCES = GameCore::PACKAGE_MEMBERS;
   static constexpr size_t MAX_SOURCE_BYTES = GameCore::LUA_SOURCES_BYTES;
 
   // Why a load failed; the match shows each as a translated reason (AD-14).

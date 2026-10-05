@@ -14,8 +14,10 @@ namespace GameCore {
 
 // The whole .chgame file.
 inline constexpr size_t PACKAGE_BYTES = 256 * 1024;
-// Members of the zip, folders included.
-inline constexpr size_t PACKAGE_MEMBERS = 32;
+// Members of the zip, folders included. 64, not the 32 a first version held: Sudoku's 27 note images, its manifest, and
+// its 8 Lua modules make 36 (the owner's Decision of 2026-10-05, epic-first-party-games Notes). The installer's Job
+// holds one Member (56 B) for each, so each member of the cap costs 56 B of the installer's one heap block.
+inline constexpr size_t PACKAGE_MEMBERS = 64;
 // One member, uncompressed.
 inline constexpr size_t MEMBER_BYTES = 128 * 1024;
 // The stem of a .lua or .png member name: [a-z0-9_]{1,32}.

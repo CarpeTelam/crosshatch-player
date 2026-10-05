@@ -410,7 +410,7 @@ limit images_count 32
 # manifest.json's own objects and arrays (the device's JSON parser, StreamingJsonParser::MAX_NESTING,
 # refuses a 33rd open bracket; the packer refuses the same manifest).
 limit package_bytes 262144
-limit package_members_count 32
+limit package_members_count 64
 limit member_bytes 131072
 limit lua_sources_bytes 262144
 limit member_stem_bytes 32

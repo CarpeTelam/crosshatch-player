@@ -421,7 +421,7 @@ class FileReader {
 // Sorts the members by name (the order the package hash takes), and refuses a name that appears twice. Its own function
 // because the Member copy it moves through, in listMembers' frame, took that past 256 B.
 [[gnu::noinline]] Error sortMembers(Job& job) {
-  // Insertion sort: at most 32 names, and std::sort would cost about 1 KB of flash for them.
+  // Insertion sort: at most PACKAGE_MEMBERS (64) names, and std::sort would cost about 1 KB of flash for them.
   for (size_t i = 1; i < job.memberCount; ++i) {
     const Member moving = job.members[i];
     size_t at = i;
