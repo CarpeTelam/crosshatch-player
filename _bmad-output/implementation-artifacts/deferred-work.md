@@ -1150,3 +1150,21 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-check-every-game-at-the-x4-pro-s-466-pixel-canvas-plan.md`
   summary: Nothing in CI proves the simulator's X4 Pro shim is in effect: the simulator job only builds simulator_x4pro.
   evidence: The shim was proven here by the startup log line ("[SIM] X4 Pro bezel insets {9, 7, 3, 7}" in build/sim/sim.log) and by the shots (the Sudoku grid's border at screen x 14 to 466). A change of PlatformIO's include handling, or of the library's selectDevice, could silently return the simulated X4 Pro to 474 x 788 with every host test green. A CI step that starts the simulator and greps the log, or a check in sim.sh, would settle it. Location: .claude/skills/run-crosshatch-player/shim/BoardConfig.h, .github/workflows/crosshatch-ci.yml (simulator-build). Severity: low.
+
+## 8.5
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: The bank tool grades each Expert puzzle in its filed orientation only; the game deals a random symmetry, and the costliest Expert puzzle's worst of 3,000 symmetries (302,052 host instructions) is 34% above the bank's recorded 224,973.
+  evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: test/game_script/first_party/sudoku/tools/make_bank.py, grade.lua. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: No Sticky firmware is built (the orchestrator decided not to), so J6 and the Sticky halves of 8.9
+  evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet.md (J6, 8.9. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: `make_sudoku_costly.py` has no committed test that it still matches the shipped game or that the grid costs what the packet says; it re-checks only that GRID has exactly one solution, SOLUTION.
+  evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: The script `make_sudoku_costly.py` and `count_sudoku_costly.lua` write the game's state shape (`l`, `v`, `n`, `u`, `t`) by hand, so a change to `games/sudoku/main.lua`'s `setup` or state would show only on a device or the simulator.
+  evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet/make_sudoku_costly.py, count_sudoku_costly.lua. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: The 302,052-instruction figure is the worst found (3,000 symmetries of one puzzle, 40 of each other Expert puzzle, none of Easy, Medium or Hard), not the worst possible.
+  evidence: Recorded by entry 5's two review passes (see the plan's Review Triage Log). Location: games/sudoku/puzzles.lua (the bank's cost cap), test/game_script/first_party/sudoku/tools/make_bank.py. Severity: low.
