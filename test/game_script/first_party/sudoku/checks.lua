@@ -1,19 +1,18 @@
 -- The game's own checks (first_party/README.md, `checks.lua`): every puzzle in the bank (one solution, at the band it
 -- is filed under), the costliest puzzle of each band through the game's calls (symmetry, HINT, CHECK, FILL NOTES), the
--- header of puzzles.lua, and setup. The game's rules (rejections, the undo ring, the clash rule, the taps, the toggles
--- and best times, the layout) are pinned by rules.lua and the modules beside it, which the rounds call from their
--- `steps` functions: this VM holds the solver, the counter, and the bank, most of the 256 KB the sandbox allows, and is
--- built to stay inside it:
+-- header of puzzles.lua, setup, and the installed note images. The game's rules (rejections, the undo ring, the clash
+-- rule, the taps, the toggles and best times, the layout) are pinned by rules.lua and the modules beside it, which the
+-- rounds call from their `steps` functions. This file's VM is a check VM, so it has the check's own heap and
+-- instruction budget (host::CHECK_*, README, "The check VMs' limits"), not the device's 256 KB and 2,000,000; it still
+-- holds the solver, the counter, and the bank, and keeps the shape it had when it shared the device's limits:
 --   - the puzzles go in batches (CHUNKS), sized from the instructions each batch took, so none passes the budget of
---     one call (2,000,000); regenerating the bank means sizing them again, and the check that they cover it fails until
---     then;
+--     one call (2,000,000: the device's, still the measure of what a game call may cost); regenerating the bank means
+--     sizing them again, and the check that they cover it fails until then;
 --   - the entries share one run function and a plan of integers, so an entry is a name and a pointer;
---   - the stack is grown early and kept (see deep), because the allocator can no longer find room to grow it later.
--- The headroom is thin: 5 to 8 KB of the 256 KB by one measure, about 3.5 KB by the other (README, "The checks VM
--- heap"). Measured by adding a global string of n bytes to this file before its last `collectgarbage("collect")` and
--- running the Sudoku checks: on this tree they pass at n = 6,500 and fail at n = 6,600 ("not enough memory"); on
--- e84e5fa3 they passed at 5,000 and failed at 8,000, so a change here or to a module it loads must be measured again
--- that way, and what does not fit goes to those modules (the rounds' VM) as the rules did.
+--   - the stack is grown early and kept (see deep).
+-- The four calls on a band's costliest puzzle (COSTLY) are the ones that prove a game call fits the device's budget
+-- through this VM's guard: each runs through within_device_budget, which raises when the call spent the device's
+-- 2,000,000 instructions, counted on the same hook, though this VM's own budget is far above it.
 -- A module that loads while another module is loading is the games check's own finding, not this file's: it fails
 -- main's load that nests deeper than main plus one level, as the device refuses it (first_party/README.md, "Module
 -- loading"), so this file loads main and what it needs plainly.
@@ -24,10 +23,10 @@ local counter = require("counter")
 local solver = require("solver")
 local puzzles = require("puzzles")
 
--- The sandbox's allocator is first-fit in a region that fills with small holes, and the independent counter recurses
--- deep, so its Lua stack needs a block the heap can no longer give once a collection has shrunk the stack back. So the
--- stack is grown after the modules are loaded and their garbage collected (the biggest holes there will be), and each
--- entry runs under a deep call (deep), where a collection finds the stack in use and leaves it its size.
+-- The independent counter recurses deep, so its Lua stack grows: it is grown after the modules are loaded and their
+-- garbage collected, and each entry runs under a deep call (deep), where a collection finds the stack in use and leaves it
+-- its size. (With the device's 256 KB heap the first-fit allocator could no longer find room to grow it later; a check VM's
+-- heap has the room, and the shape stays.)
 local function deep(n, f)
   if n == 0 then return f() end
   local r = deep(n - 1, f)
@@ -164,12 +163,32 @@ function costly(band, kind)
   local index = puzzles.costly[band][1]
   local s, digits = new_state(band, index), select(2, puzzles.get(band, index))
   s.v = game.symmetry(digits, math.random)
-  COSTLY[kind][2](s, digits)
+  -- The call's cost is measured against the device's budget, not this VM's (within_device_budget, ScriptVm.h).
+  within_device_budget(COSTLY[kind][2], s, digits)
 end
 
 for band = 1, 4 do
   for kind, row in ipairs(COSTLY) do add(BAND[band] .. ": " .. row[1], 1 << 24 | band << 8 | kind) end
 end
+
+-- The note images ------------------------------------------------------------------------------------------------------
+
+-- The 27 installed note images (note_g1..9, note_b1..9, note_h1..9: make_note_images.py) are NOTE_W x NOTE_H, as
+-- layout.note_tile places them, read from the package the installer wrote (host.image_size, ScriptVm.h). A swapped or
+-- resized PNG is make_note_images.py --check's (a ctest of its own); this is what the game places them by.
+add("the 27 note images are NOTE_W x NOTE_H", function()
+  local seen = 0
+  for _, set in ipairs({ "g", "b", "h" }) do
+    for k = 1, 9 do
+      local name = "note_" .. set .. k
+      local w, h = host.image_size(name)
+      eq(w, layout.NOTE_W, name .. " width")
+      eq(h, layout.NOTE_H, name .. " height")
+      seen = seen + 1
+    end
+  end
+  eq(seen, 27)
+end)
 
 -- Setup ----------------------------------------------------------------------------------------------------------------
 

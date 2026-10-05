@@ -133,7 +133,8 @@ TEST_F(GameVmTest, AnInputEventReachesLuaAndItsFrameIsTheNextOne) {
   ASSERT_TRUE(tapAndWaitFrame(100, 200));  // below the banner: a move, so the square is drawn there
   renderer->forgetAll();
   ASSERT_TRUE(vm->drawFront(*renderer, viewport, replay));
-  // The game draws a 40 x 40 square centred on the tap, in canvas pixels; the canvas is at (3, 6).
+  // The game draws a 40 x 40 square centred on the tap, in canvas pixels; the canvas is at (3, 6): the double's own
+  // origin, whose odd x + y no device has (the Sticky's is (3, 9)).
   EXPECT_EQ(renderer->pixel(3 + 100, 6 + 200), GfxRenderer::PixelBlack);
   EXPECT_EQ(renderer->pixel(3 + 100 - 19, 6 + 200 - 19), GfxRenderer::PixelBlack);
   EXPECT_EQ(renderer->pixel(3 + 100 + 30, 6 + 200), GfxRenderer::PixelWhite);
@@ -967,8 +968,8 @@ return game
 )");
   ASSERT_TRUE(prepare("probe"));
   ASSERT_TRUE(startAndWaitFirstFrame());
-  // The test canvas, the Sticky's 474 x 788 of the 480 x 800 screen (width first), and 3 glyphs of the double's
-  // advances.
+  // The test canvas, 474 x 788 of the 480 x 800 screen (the Sticky's size, at the double's own origin (3, 6); width
+  // first), and 3 glyphs of the double's advances.
   EXPECT_TRUE(logHas("screen\t474\t788\tabc small\t" + std::to_string(3 * match::SMALL_ADVANCE) + "\tabc large\t" +
                      std::to_string(3 * match::LARGE_ADVANCE)));
 }

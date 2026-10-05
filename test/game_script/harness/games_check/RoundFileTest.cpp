@@ -61,7 +61,8 @@ class RoundFileTest : public ::testing::Test {
   // The round `text` evaluates to, against `game`'s manifest; the error when it is none.
   bool load(const std::string& text, Round& round, const Game& game, std::string& error,
             const std::vector<ModuleText>& modules = {}) {
-    auto vm = OwnedVm::create(GameScript::GameSources{}, modules, GameCore::NO_IMAGES, 1, error);
+    auto vm = OwnedVm::create(GameScript::GameSources{}, modules, GameCore::NO_IMAGES, 1, error,
+                              games_check::CANVAS_474, games_check::VmLimits::check());
     EXPECT_TRUE(vm) << error;
     return vm && loadRound(std::move(vm), "sample", text, game.facts, round, error);
   }

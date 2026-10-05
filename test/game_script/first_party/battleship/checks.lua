@@ -2,7 +2,8 @@
 -- directly, against a fleet validator written here and not shared with the game. The rounds prove the rules play out
 -- through taps; these pin each rule by itself. What the draw puts on the canvas beyond text (secrecy at the level of
 -- the commands, icon and shape kinds, seat 0's Over frame) is pinned by draws.lua, which the rounds call from their
--- `steps` functions: this VM has no room to draw frames (first_party/README.md, "The checks VM heap").
+-- `steps` functions (they were kept out of this file when its VM had the device's 256 KB and no room to draw frames; the check
+-- VMs' limits are larger now: first_party/README.md, "The check VMs' limits").
 local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")
@@ -163,20 +164,22 @@ local function geometry()
     local boards = { big = boardRect(L.big), small = boardRect(L.small), over1 = boardRect(L.over[1]),
                      over2 = boardRect(L.over[2]) }
     for name, rect in pairs(boards) do insideCanvas(rect, w, h, at .. " " .. name) end
-    -- The dialog's top edge measured at y 268 of the panel in the simulator, and the canvas starts 9 px down the panel
-    -- on the X4 Pro, so 259 in canvas pixels. The dialog and Result's banner belong to the host, not to the box, so the
-    -- two bounds are in canvas pixels and only for the 788-tall canvases the devices give (the 480 x 800 panel moves
-    -- the box 6 px down and the host's centred parts by their own rule).
-    if h == 788 then
-      assert(boards.over1.y + boards.over1.h <= 259, at .. " the over boards reach into the end-of-round dialog")
+    -- The dialog's top edge and Result's banner belong to the host, not to the box: host.dialog_top and host.banner_top
+    -- (HostBounds.h, which measures them on the simulator's screenshots), in canvas pixels, hold for the 788-tall
+    -- canvases the devices give (host.canvas_h; the 480 x 800 panel moves the box 6 px down and the host's centred parts by
+    -- their own rule).
+    if h == host.canvas_h then
+      assert(boards.over1.y + boards.over1.h <= host.dialog_top, at .. " the over boards reach into the end-of-round dialog")
     end
     apart(boards.big, boards.small, at .. " the big and small boards")
     apart(boards.over1, boards.over2, at .. " the over boards")
-    -- The firing column: right of the small board, inside the canvas, above Result's banner (about y 649).
+    -- The firing column: right of the small board, inside the canvas, above Result's banner (host.banner_top).
     local col = L.column
     insideCanvas(col, w, h, at .. " column")
     apart(col, boards.small, at .. " the column and the small board")
-    if h == 788 then assert(col.y + col.h <= 649, at .. " the column reaches Result's banner") end
+    if h == host.canvas_h then
+      assert(col.y + col.h <= host.banner_top, at .. " the column reaches Result's banner")
+    end
     assert(col.x + col.w <= ox + 466 - 8, at .. " the column leaves the box's right margin")
     -- The question button.
     local q = L.question_rect

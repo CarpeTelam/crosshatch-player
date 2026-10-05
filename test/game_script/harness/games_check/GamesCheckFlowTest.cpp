@@ -10,6 +10,7 @@
 #include <Memory.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -81,7 +82,7 @@ class HiddenFlowPinTest : public match::ScreenTest {
 
   // RoundPlayer's side: the game as the fake card holds it, played by the scenario's taps with every local seat not
   // drawn.
-  games_check::RoundReport playWithRoundPlayer(const Scenario& scenario) {
+  games_check::RoundReport playWithRoundPlayer(const Scenario& scenario, const bool restoreProbe = false) {
     MatchStore refStore;
     EXPECT_TRUE(refStore.allocate(scenario.id.c_str(), 0));
     GameAssets assets;
@@ -102,16 +103,18 @@ class HiddenFlowPinTest : public match::ScreenTest {
     facts.hostModes = GameCore::Manifest::MODE_PASS;
 
     std::string error;
-    auto script = games_check::OwnedVm::create(assets.sources(), {}, assets.images(), 1, error);
+    auto script = games_check::OwnedVm::create(assets.sources(), {}, assets.images(), 1, error, games_check::CANVAS_474,
+                                               games_check::VmLimits::check());
     EXPECT_TRUE(script) << error;
     games_check::Round round;
     EXPECT_TRUE(games_check::loadRound(std::move(script), "pinned", scenario.round, facts, round, error)) << error;
-    games_check::GameUnderCheck under;
+    games_check::GameUnderCheck under(games_check::CANVAS_474);
     under.sources = &assets.sources();
     under.images = &assets.images();
     under.facts = facts;
     games_check::PlayOptions options;
     options.drawEveryLocalSeat = false;
+    options.restoreProbe = restoreProbe;
     return games_check::playRound(round, under, options);
   }
 
@@ -149,6 +152,30 @@ class HiddenFlowPinTest : public match::ScreenTest {
           break;
       }
     }
+  }
+
+  // GameVM's side of Continue: the VM seeded with `snapshot` at `ver` (setResume, as GameVM::run does on a saved
+  // match), started, and its hidden hand-off left for the turn seat (the match asks for it with showTurnSeat).
+  void resumeWithGameVm(const std::string& id, const std::vector<uint8_t>& snapshot, const uint16_t ver) {
+    store = makeUniqueNoThrow<MatchStore>();
+    ASSERT_NE(store, nullptr);
+    ASSERT_TRUE(store->allocate(id.c_str(), static_cast<uint32_t>(fakertos::S().nowMs.load())));
+    GameAssets assets;
+    ASSERT_EQ(assets.load(id.c_str(), store->saves(), store->slot()), GameAssets::LoadResult::Ok);
+    vm =
+        GameVM::create(std::move(assets), viewport, replay, id.c_str(), store->slot(), GameCore::Roster::pass(2), true);
+    ASSERT_NE(vm, nullptr);
+    ASSERT_TRUE(vm->setResume(snapshot, ver));
+    ASSERT_TRUE(vm->start());
+    // A restored snapshot is already saved, so nothing is pending: the VM says it resumed.
+    ASSERT_TRUE(waitFor([&] {
+      for (const std::string& line : fakelog::snapshot()) {
+        if (line.find("Resuming at ver " + std::to_string(ver)) != std::string::npos) return true;
+      }
+      return false;
+    }));
+    const uint32_t request = vm->showTurnSeat();
+    ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
   }
 
   // The lines the game itself logged (ch.log), in order: the VM logs each as "INF <game id>: <line>".
@@ -210,6 +237,46 @@ TEST_F(HiddenFlowPinTest, ATurnKeptAndARejectedTapAreDrawnAsGameVMDrawsThem) {
                           {{100, 200}, {10, 200}, {100, 200}, {100, 200}, {100, 200}}};
   EXPECT_THE_SAME_FLOW(scenario, games_check::test::HIDDEN_KEEPS_TURN_LOG.size());
   EXPECT_EQ(gameLines("keeps-turn"), games_check::test::HIDDEN_KEEPS_TURN_LOG);
+}
+
+// The restore probe (PlayOptions::restoreProbe) is a double of GameVM's Continue: a new VM, `Session::restore`, `start`
+// with no `setup`, then the frames. It is more permissive in one way: it draws every local seat, where the device draws
+// the turn seat alone (a hidden save resumes on the hand-off screen and draws the turn seat when the player takes the
+// device), so its draws are a superset of the device's. This pins the two to the same sequence: neither runs `setup`,
+// both compute the restored snapshot's status first, and the device's draw is one of the probe's.
+TEST_F(HiddenFlowPinTest, TheRestoreProbeStartsAGameFromASnapshotAsGameVMsResumeDoes) {
+  installGame("resume-pin", R"lua(
+local game = {}
+function game.setup(ctx) ch.log("setup") return { seats = ctx.seats, taps = 0 } end
+function game.status(state)
+  ch.log("status taps " .. state.taps)
+  return { turn = state.taps % state.seats + 1 }
+end
+function game.apply(state, seat, move) state.taps = state.taps + 1 return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui) ch.log("draw for seat " .. seat) ch.gfx.clear("white") end
+return game
+)lua");
+  // One tap moves seat 1's turn to seat 2 (taps 1), where the round stops: the probe after the last step restores that.
+  const Scenario scenario{
+      "resume-pin",
+      R"lua(return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200 } } })lua",
+      {After::Passes},
+      {{100, 200}}};
+  const games_check::RoundReport played = playWithRoundPlayer(scenario, true);
+  ASSERT_TRUE(played.ok()) << played.failures.front();
+  // The probe's game: no setup, the restored snapshot's status, then every local seat's frame.
+  const std::vector<std::string> probe = {"status taps 1", "draw for seat 1", "draw for seat 2"};
+  EXPECT_EQ(played.restoreLog, probe);
+
+  fakelog::clearLines();
+  resumeWithGameVm("resume-pin", games_check::test::encodeState("{ seats = 2, taps = 1 }"), 2);
+  ASSERT_FALSE(HasFatalFailure());
+  // GameVM's: no setup, the same status first, and the turn seat's frame (seat 2: one move made) among the probe's.
+  const std::vector<std::string> device = gameLines("resume-pin");
+  EXPECT_EQ(device, (std::vector<std::string>{"status taps 1", "draw for seat 2"}));
+  EXPECT_EQ(device.front(), played.restoreLog.front());
+  EXPECT_NE(std::find(played.restoreLog.begin(), played.restoreLog.end(), device.back()), played.restoreLog.end());
 }
 
 }  // namespace

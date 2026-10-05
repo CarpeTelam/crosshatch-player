@@ -10,8 +10,30 @@
 // by running the same snippets through LuaGame (DirectGame) and through this class.
 //
 // Every entry into Lua (opening the libraries, a chunk, a call) is one lua_pcall under CallGuard::arm, so each has
-// its own CallGuard::INSTRUCTION_BUDGET (2,000,000) and no Lua error escapes to the C++ caller. A returned value is
-// kept in the registry under an int reference, and read with `inspect`, whose callback must not raise.
+// its own instruction budget and no Lua error escapes to the C++ caller. A returned value is kept in the registry
+// under an int reference, and read with `inspect`, whose callback must not raise.
+//
+// The limits are a VmLimits the caller names. With VmLimits::device() the VM is the device's sandbox to the letter
+// (CallGuard::INSTRUCTION_BUDGET, 2,000,000, the device's heap in the rig): the load-nesting probe and the
+// equivalence tests use it. With VmLimits::check() it runs only the check's own code and differs from the device in
+// four ways, each of which makes it more permissive and none stricter:
+//   - a larger budget (host::CHECK_INSTRUCTION_BUDGET), counted by a wrapper count hook that replaces CallGuard's
+//     (CallGuard::INSTRUCTION_BUDGET is a lib constant, and lib/ is not this check's to change); a call event, and
+//     every recorded fault (a binding or memory fault re-installs CallGuard::hook), still go to CallGuard's. The
+//     budget fault is a Binding fault in CallGuard's terms and reads "<chunk>:<line>: instruction budget exceeded", as
+//     the device's does; the VM result is a Fault either way;
+//   - a larger Lua heap (the rig's region and cap, host::CHECK_LUA_HEAP_BYTES);
+//   - the Lua global `host` (HostBounds.h's numbers as dialog_top, dialog_bottom, banner_top, canvas_h, and
+//     image_size(name) -> w, h over the installed images) and `within_device_budget(f, ...)`, which runs `f` and raises
+//     when it spent the device's 2,000,000 instructions or more, counted on the same hook from a fresh interval, so a
+//     check can still prove that a game call fits the device's budget;
+//   - CallGuard's throw hook records a memory error only while CallGuard::hook is installed, which a check VM's is not,
+//   so
+//     a check VM watches the arena itself: it takes ArenaAllocator::luaCapRefusals() + luaRegionRefusals() when a call
+//     is armed, and any growth (checked in the count hook, which raises "not enough memory" through guard.raiseStatic
+//     so it is sticky as the device's is, and again after the call) makes the call a Fault, whatever the script's own
+//     pcall caught. Any refused allocation is a fault in a check VM, even one Lua would have recovered from by
+//     collecting and retrying: the cap is 4 times the device's, so a refusal means the check is out of room.
 
 #include <ArenaAllocator.h>
 #include <CallGuard.h>
@@ -32,6 +54,7 @@
 #include "GamesCheckRig.h"
 
 struct lua_State;
+struct lua_Debug;
 
 namespace games_check {
 
@@ -56,8 +79,10 @@ class ScriptVm {
   static constexpr int NO_REF = -2;
 
   // Everything borrowed must outlive the VM. `ports.random` also seeds math.random (openSandbox) and the Lua state.
+  // `limits` has no default; the arena must have been split and capped to match (GamesCheckRig::create does).
   ScriptVm(GameScript::ArenaAllocator& arena, const GameScript::GameSources& sources,
-           const GameScript::HostPorts& ports, const GameScript::Canvas& canvas, const GameCore::GameImages& images);
+           const GameScript::HostPorts& ports, const GameScript::Canvas& canvas, const GameCore::GameImages& images,
+           const VmLimits& limits);
   ~ScriptVm();
   ScriptVm(const ScriptVm&) = delete;
   ScriptVm& operator=(const ScriptVm&) = delete;
@@ -94,6 +119,13 @@ class ScriptVm {
  private:
   static int trampoline(lua_State* L);
   static int messageHandler(lua_State* L);
+  // A check VM's count hook (see above), and the two globals it registers.
+  static void countHook(lua_State* L, lua_Debug* ar);
+  static int withinDeviceBudget(lua_State* L);
+  static int imageSize(lua_State* L);
+  // ArenaAllocator refusals (cap or region) since the call was armed.
+  bool refusedSinceArm() const;
+  static void openHost(lua_State* L);
   void close();
 
   GameScript::ArenaAllocator& arena;
@@ -101,6 +133,12 @@ class ScriptVm {
   const GameCore::GameImages& images;
   const GameScript::HostPorts ports;
   const GameScript::Canvas canvas;
+  const VmLimits limits;
+  // A check VM's count of instructions this entry has spent, in whole hook intervals, and the text of its budget fault
+  // (CallGuard::raiseStatic keeps the pointer until the next arm()).
+  uint64_t spent = 0;
+  size_t refusalsAtArm = 0;
+  char budgetText[GameScript::CallGuard::MESSAGE_CAPACITY] = {};
   GameScript::GameTimer pendingTimer;
   GameScript::BindingContext bindings;
   GameScript::CallGuard guard;
@@ -121,10 +159,11 @@ class OwnedVm {
  public:
   // Null, with `error` set, on a companion module whose name is no module name or that a game module already has
   // (the game's module wins nowhere: a clash is a failure), or when memory ran out. `game` and `images` must outlive
-  // the result; the extras are copied. `seed` seeds the VM's math.random: checks.lua's is 1. `canvas` is `ch.screen`.
+  // the result; the extras are copied. `seed` seeds the VM's math.random: checks.lua's is 1. `canvas` is `ch.screen`
+  // and `limits` the VM's bounds; neither has a default, so a caller that leaves one out does not compile.
   static std::unique_ptr<OwnedVm> create(const GameScript::GameSources& game, const std::vector<ModuleText>& extras,
                                          const GameCore::GameImages& images, uint32_t seed, std::string& error,
-                                         CanvasSize canvas = CANVAS_474);
+                                         CanvasSize canvas, const VmLimits& limits);
   ~OwnedVm();
 
   ScriptVm& vm() { return *script; }

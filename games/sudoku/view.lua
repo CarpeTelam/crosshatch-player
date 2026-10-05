@@ -66,14 +66,14 @@ end
 local function draw_end(state, ui)
   local L = layout.get()
   local cx, oy = L.ox + board.W // 2, L.oy
-  ch.gfx.text(cx, oy + 80, "Solved", "large", "black", "center")
-  ch.gfx.text(cx, oy + 160, "Time " .. view.time(state.t), "medium", "black", "center")
+  ch.gfx.text(cx, oy + 60, "Solved", "large", "black", "center")
+  ch.gfx.text(cx, oy + 120, NAMES[state.l], "small", "black", "center")
+  ch.gfx.text(cx, oy + 164, "Time " .. view.time(state.t), "medium", "black", "center")
   if state.h then
-    ch.gfx.text(cx, oy + 210, "No best time after a hint", "medium", "black", "center")
+    ch.gfx.text(cx, oy + 214, "No best time after a hint", "medium", "black", "center")
   elseif ui.best then
-    ch.gfx.text(cx, oy + 210, "Best " .. view.time(ui.best), "medium", "black", "center")
+    ch.gfx.text(cx, oy + 214, "Best " .. view.time(ui.best), "medium", "black", "center")
   end
-  ch.gfx.text(cx, oy + 260, NAMES[state.l], "small", "black", "center")
 end
 
 -- A pencil mark k of the cell whose rectangle starts at x, y: a dot at the slot's centre cx, cy (grey ring, or solid

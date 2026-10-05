@@ -124,7 +124,9 @@ TEST(ZipDirectoryTest, TheEocdMustBeTheLastTwentyTwoBytes) {
 
 TEST(ZipDirectoryTest, TheEocdCountMustBeTheDirectorysCount) {
   const Bytes zip = makeZip(THREE);
-  for (const uint16_t wrong : {0, 1, 2, 4, 32, 33, 100, 0xFFFE}) {
+  // 64 and 65 are the member cap and the first count above it (GameCore::PACKAGE_MEMBERS): a wrong count on either side
+  // of the cap is the directory's mismatch, not a refusal for its size.
+  for (const uint16_t wrong : {0, 1, 2, 4, 64, 65, 100, 0xFFFE}) {
     Bytes total = zip;
     put16At(total, eocdAt(total) + 10, wrong);
     put16At(total, eocdAt(total) + 8, wrong);
@@ -149,8 +151,9 @@ TEST(ZipDirectoryTest, MoreEntriesThanAPackageMayHoldAreRefusedAfterAtMostTheLim
 
 TEST(ZipDirectoryTest, AnEocdCountAboveTheLimitOverAShortDirectoryIsACountMismatchNotTooMany) {
   Bytes zip = makeZip(THREE);
-  put16At(zip, eocdAt(zip) + 10, 40);
-  put16At(zip, eocdAt(zip) + 8, 40);
+  const auto over = static_cast<uint16_t>(GameCore::PACKAGE_MEMBERS + 1);
+  put16At(zip, eocdAt(zip) + 10, over);
+  put16At(zip, eocdAt(zip) + 8, over);
   EXPECT_EQ(walk(zip).status, Status::CountMismatch);
 }
 

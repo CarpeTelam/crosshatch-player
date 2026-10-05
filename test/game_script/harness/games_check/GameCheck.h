@@ -27,13 +27,21 @@ namespace games_check {
 // The three folders a check reads: the games root (`<games>/<id>/`), the companion root
 // (`<companion>/<id>/{rounds/*.lua, checks.lua, top-level modules}`), and where pack_games.py wrote the packages.
 //
-// `canvas` is `ch.screen` for the rounds and the game's own checks: the check names no game, so it plays every game on
-// each canvas it is given (GamesCheckTest: the Sticky's 474 x 788 and the X4 Pro's 466 x 788).
+// `canvas` is `ch.screen` for the rounds, the game's own checks and the module-loading probe: the check names no game,
+// so it plays every game on each canvas it is given (GamesCheckTest: the Sticky's 474 x 788 and the X4 Pro's 466 x
+// 788). It has no default: a Roots built without one does not compile, so no caller plays the Sticky's canvas by
+// accident.
 struct Roots {
+  Roots(std::string gamesRoot, std::string companionRoot, std::string packedRoot, const CanvasSize canvasUnderCheck)
+      : games(std::move(gamesRoot)),
+        companion(std::move(companionRoot)),
+        packed(std::move(packedRoot)),
+        canvas(canvasUnderCheck) {}
+
   std::string games;
   std::string companion;
   std::string packed;
-  CanvasSize canvas = CANVAS_474;
+  CanvasSize canvas;
 };
 
 // What a check found: failures end a test red, notes (a skipped mode, a count) are logged and never fail it.
@@ -57,14 +65,19 @@ Report checkPackage(const Roots& roots, const std::string& id);
 
 // The game's own checks (C2): `<companion>/<id>/checks.lua`, a module in the game's sandbox (math.random seeded 1) that
 // returns a non-empty list of {name, run}. Loading it is one guarded call and each run() another, each with a fresh
-// 2,000,000-instruction budget. A check that raises fails by name and the rest run; a guard fault fails that check and
-// stops the game's remaining checks, counted; a missing or empty list fails. No checks.lua: none run (a note).
+// instruction budget: the check VM's (host::CHECK_INSTRUCTION_BUDGET, well above the device's; `host` and
+// `within_device_budget` are there, ScriptVm.h). A check that raises fails by name and the rest run; a guard fault
+// fails that check and stops the game's remaining checks, counted; a missing or empty list fails. No checks.lua is a
+// failure naming the file: every game this check plays is a first-party game, and each has its own checks.
 Report runGameChecks(const Roots& roots, const std::string& id);
 
 // Every round of `<companion>/<id>/rounds/*.lua`, played in the modes the manifest declares and this host can start;
 // each other declared mode (`nearby`) is a note ("skipped"), never a failure. No rounds (the folder missing or empty)
-// is a failure, and a failing round does not stop the ones after it. `details`, when given, receives each round's whole
-// report (its frames and log) by round name, for the engine tests; `options` are RoundPlayer's.
+// is a failure, and a failing round does not stop the ones after it. So is any entry of `rounds/` that is not a regular
+// file whose name ends exactly `.lua` (`x.LUA`, `x.lua.txt`, a directory): it names the entry, and the valid rounds
+// beside it still play. The round file's VM is a check VM (VmLimits::check()); the played game's is the device's.
+// `details`, when given, receives each round's whole report (its frames and log) by round name, for the engine tests;
+// `options` are RoundPlayer's.
 using RoundDetails = std::vector<std::pair<std::string, RoundReport>>;
 Report playRounds(const Roots& roots, const std::string& id, RoundDetails* details = nullptr,
                   const PlayOptions& options = {});

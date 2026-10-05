@@ -21,6 +21,7 @@ namespace {
 using games_check::ModuleText;
 using games_check::OwnedVm;
 using games_check::ScriptVm;
+using games_check::VmLimits;
 using games_check::VmResult;
 using GameScriptTestSupport::DirectGame;
 
@@ -63,7 +64,9 @@ class ScriptVmTest : public GameScriptTestSupport::LuaGameTest {
 
   // A ScriptVm over the fixture's arena, ports, sources, and canvas; on the heap (it holds a CallGuard and the binding
   // context).
-  std::unique_ptr<ScriptVm> newVm() { return makeUniqueNoThrow<ScriptVm>(arena, sources, ports, canvas, images); }
+  std::unique_ptr<ScriptVm> newVm() {
+    return makeUniqueNoThrow<ScriptVm>(arena, sources, ports, canvas, images, VmLimits::device());
+  }
 
   static bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
@@ -102,7 +105,7 @@ class ScriptVmTest : public GameScriptTestSupport::LuaGameTest {
   games_check::LoadNesting probe(const std::vector<Module>& modules) {
     useSources(modules);
     std::string error;
-    auto owned = OwnedVm::create(sources, {}, images, 1, error);
+    auto owned = OwnedVm::create(sources, {}, images, 1, error, games_check::CANVAS_474, VmLimits::device());
     EXPECT_TRUE(owned) << error;
     if (!owned) return {};
     return games_check::probeLoadNesting(*owned);
@@ -184,6 +187,76 @@ TEST_F(ScriptVmTest, EveryEntryHasItsOwnInstructionBudget) {
   }
 }
 
+// Row 4: a VM that runs only the check's own code has larger limits than the device's; the played game and the probe
+// keep the device's. The device VM and a LuaGame agree on both limits, and a check VM differs from them there only.
+TEST_F(ScriptVmTest, ADeviceVmFaultsAtTheDevicesBudgetAndHeapAsALuaGameDoes) {
+  const std::string spin = "(function() for i = 1, 3000000 do end return 1 end)()";
+  EXPECT_TRUE(has(viaGame(spin), "instruction budget exceeded")) << viaGame(spin);
+  EXPECT_TRUE(has(viaVm(spin), "instruction budget exceeded")) << viaVm(spin);
+  const std::string heap =
+      "(function() local t = {} for i = 1, 400 do t[i] = string.rep('x', 900) .. i end return #t end)()";
+  EXPECT_TRUE(has(viaGame(heap), "not enough memory")) << viaGame(heap);
+  EXPECT_TRUE(has(viaVm(heap), "not enough memory")) << viaVm(heap);
+  // The check's globals are no part of the device's sandbox.
+  const std::string globals = "tostring(host) .. ' ' .. tostring(within_device_budget)";
+  EXPECT_EQ(viaGame(globals), "nil nil");
+  EXPECT_EQ(viaVm(globals), "nil nil");
+}
+
+TEST_F(ScriptVmTest, ACheckVmHasTheLargerLimitsTheGlobalsAndStillFaultsPastThem) {
+  useSources({});
+  std::string error;
+  auto owned = OwnedVm::create(sources, {}, images, 1, error, games_check::CANVAS_474, VmLimits::check());
+  ASSERT_TRUE(owned) << error;
+  ScriptVm& vm = owned->vm();
+  int ref = ScriptVm::NO_REF;
+  // 3 M instructions and about 360 KB of heap: past the device's limits, inside the check's.
+  EXPECT_TRUE(vm.runChunk("for i = 1, 3000000 do end return 1", "@spin.lua", ref).ok());
+  EXPECT_TRUE(
+      vm.runChunk("local t = {} for i = 1, 400 do t[i] = string.rep('x', 900) .. i end return #t", "@heap.lua", ref)
+          .ok());
+  // The check's own limits: 16 M instructions, with the chunk and line the device's message names; and the 1 MB heap.
+  const VmResult looped = vm.runChunk("while true do end", "@loop.lua", ref);
+  EXPECT_EQ(looped.kind, VmResult::Kind::Fault);
+  EXPECT_TRUE(has(looped.message, "loop.lua:1: instruction budget exceeded")) << looped.message;
+  const VmResult caught = vm.runChunk("pcall(function() while true do end end) return 1", "@caught.lua", ref);
+  EXPECT_EQ(caught.kind, VmResult::Kind::Fault) << caught.message;
+  const VmResult bomb =
+      vm.runChunk("local t = {} for i = 1, 3000 do t[i] = string.rep('x', 900) .. i end return #t", "@bomb.lua", ref);
+  EXPECT_EQ(bomb.kind, VmResult::Kind::Fault) << bomb.message;
+  EXPECT_TRUE(has(bomb.message, "not enough memory")) << bomb.message;
+  // A heap-cap error the script's own pcall catches does not end the call Ok: any refused allocation is a fault in a
+  // check VM (the guard's memory hook is not installed there), the script returns normally, and the call still comes
+  // back a Fault.
+  const VmResult swallowed = vm.runChunk(
+      "local ok = pcall(function() local t = {} for i = 1, 3000 do t[i] = string.rep('x', 900) .. i end return #t end) "
+      "return ok",
+      "@swallowed.lua", ref);
+  EXPECT_EQ(swallowed.kind, VmResult::Kind::Fault) << swallowed.message;
+  EXPECT_TRUE(has(swallowed.message, "not enough memory")) << swallowed.message;
+  // And within_device_budget does not run a function once the call has faulted that way.
+  const VmResult after = vm.runChunk(
+      "pcall(function() local t = {} for i = 1, 3000 do t[i] = string.rep('x', 900) .. i end end) "
+      "within_device_budget(function() ran = true end) return 1",
+      "@after-fault.lua", ref);
+  EXPECT_EQ(after.kind, VmResult::Kind::Fault) << after.message;
+  int64_t ran = 0;
+  EXPECT_TRUE(vm.runChunk("return ran == nil and 1 or 2", "@ran.lua", ref).ok());
+  vm.inspect(ref, [](lua_State* L, void* out) { *static_cast<int64_t*>(out) = lua_tointeger(L, -1); }, &ran);
+  EXPECT_EQ(ran, 1) << "a function ran under within_device_budget after the call had faulted";
+  // The VM is usable after a fault, as after one in a device VM: the next entry starts with a fresh budget.
+  EXPECT_TRUE(vm.runChunk("return 1", "@after.lua", ref).ok());
+  // The limits are the named constants.
+  EXPECT_EQ(VmLimits::device().luaHeapBytes, GameScript::LUA_HEAP_BYTES);
+  EXPECT_EQ(VmLimits::device().luaRegionBytes, GameScript::LUA_REGION_BYTES);
+  EXPECT_EQ(VmLimits::device().instructionBudget, GameScript::CallGuard::INSTRUCTION_BUDGET);
+  EXPECT_EQ(VmLimits::check().luaHeapBytes, games_check::host::CHECK_LUA_HEAP_BYTES);
+  EXPECT_EQ(VmLimits::check().instructionBudget, games_check::host::CHECK_INSTRUCTION_BUDGET);
+  EXPECT_GT(VmLimits::check().luaHeapBytes, GameScript::LUA_HEAP_BYTES);
+  EXPECT_GT(VmLimits::check().instructionBudget, GameScript::CallGuard::INSTRUCTION_BUDGET);
+  EXPECT_EQ(VmLimits::deviceLess(16384).luaHeapBytes, GameScript::LUA_HEAP_BYTES - 16384);
+}
+
 TEST_F(ScriptVmTest, AReturnedFunctionIsKeptAndCalledWithTheDecodedState) {
   useSources({});
   auto vmOwner = newVm();
@@ -212,7 +285,7 @@ TEST_F(ScriptVmTest, CompanionModulesAreRequirableAndAClashWithTheGamesOwnIsAFai
   useSources({{"main", "return {}"}, {"util", "return { answer = 42 }"}});
   std::string error;
   auto owned = OwnedVm::create(sources, {ModuleText{"helpers", "return { twice = function(n) return n * 2 end }"}},
-                               images, 1, error);
+                               images, 1, error, games_check::CANVAS_474, VmLimits::check());
   ASSERT_TRUE(owned) << error;
   int ref = ScriptVm::NO_REF;
   const VmResult ran =
@@ -222,10 +295,12 @@ TEST_F(ScriptVmTest, CompanionModulesAreRequirableAndAClashWithTheGamesOwnIsAFai
   owned->vm().inspect(ref, [](lua_State* L, void* out) { *static_cast<int64_t*>(out) = lua_tointeger(L, -1); }, &value);
   EXPECT_EQ(value, 84);
 
-  EXPECT_FALSE(OwnedVm::create(sources, {ModuleText{"util", "return {}"}}, images, 1, error));
+  EXPECT_FALSE(OwnedVm::create(sources, {ModuleText{"util", "return {}"}}, images, 1, error, games_check::CANVAS_474,
+                               VmLimits::check()));
   EXPECT_TRUE(has(error, "util.lua")) << error;
   EXPECT_TRUE(has(error, "game's own modules")) << error;
-  EXPECT_FALSE(OwnedVm::create(sources, {ModuleText{"Bad-Name", "return {}"}}, images, 1, error));
+  EXPECT_FALSE(OwnedVm::create(sources, {ModuleText{"Bad-Name", "return {}"}}, images, 1, error,
+                               games_check::CANVAS_474, VmLimits::check()));
   EXPECT_TRUE(has(error, "no module name")) << error;
 }
 
@@ -283,7 +358,7 @@ TEST_F(ScriptVmTest, TheLoadNestingProbeCountsAFirstRequireOnlyAndLeavesRequireA
   // sandbox's own error).
   useSources({{"main", "return {}"}, {"a", "return { a = 1 }"}});
   std::string error;
-  auto owned = OwnedVm::create(sources, {}, images, 1, error);
+  auto owned = OwnedVm::create(sources, {}, images, 1, error, games_check::CANVAS_474, VmLimits::device());
   ASSERT_TRUE(owned) << error;
   games_check::probeLoadNesting(*owned);
   int ref = ScriptVm::NO_REF;
@@ -303,7 +378,7 @@ TEST_F(ScriptVmTest, TheLoadNestingProbeCountsAFirstRequireOnlyAndLeavesRequireA
 TEST_F(ScriptVmTest, ALoadNestingProbeThatRaisesOrAnswersNoStringIsAnErrorNotAFinding) {
   useSources({{"main", "return {}"}});
   std::string error;
-  auto owned = OwnedVm::create(sources, {}, images, 1, error);
+  auto owned = OwnedVm::create(sources, {}, images, 1, error, games_check::CANVAS_474, VmLimits::device());
   ASSERT_TRUE(owned) << error;
   const games_check::LoadNesting raised = games_check::probeLoadNesting(*owned, "error('probe broke')");
   EXPECT_TRUE(has(raised.error, "probe broke")) << raised.error;
@@ -326,7 +401,7 @@ TEST_F(ScriptVmTest, TheSeedMakesMathRandomRepeatOrDiffer) {
   useSources({});
   auto draw = [&](const uint32_t seed) {
     std::string error;
-    auto owned = OwnedVm::create(sources, {}, images, seed, error);
+    auto owned = OwnedVm::create(sources, {}, images, seed, error, games_check::CANVAS_474, VmLimits::check());
     EXPECT_TRUE(owned) << error;
     int ref = ScriptVm::NO_REF;
     int64_t value = -1;

@@ -107,7 +107,8 @@ local function onBoard(B, x, y)
   return x >= B.x and x <= B.x + side and y >= B.y and y <= B.y + side
 end
 
--- The recorder: a function making a known number of calls gives that count and one text line per call, a name the engine
+-- The recorder: a function making a known number of calls gives that count and one text line per call, as the engine
+-- counts them (ChBindings.cpp: a `clear` is one command, a `refresh` none, which on_call still sees), a name the engine
 -- lacks (a misspelled ch.gfx function) raises, and ch.gfx is the real table again after an error inside the function.
 function draws.recorder()
   local text, count = trace.record(function()
@@ -119,6 +120,16 @@ function draws.recorder()
   eq(select(2, text:gsub("\n", "\n")), 2, "text lines break")
   eq(text, 'clear("white")\nrect(1, 2, 3, 4, "black", true)\ntext(5, 6, "a, b", "small", "black")', "the recorded text")
   eq(select(2, trace.record(function() end)), 0, "an empty function")
+  -- A frame with a clear and a refresh in it: the refresh asks for a refresh and appends no command to the frame.
+  local calls = {}
+  local framed, framed_count = trace.record(function()
+    ch.gfx.clear("white")
+    ch.gfx.refresh("full")
+    ch.gfx.rect(1, 2, 3, 4, "black", true)
+  end, function(name) calls[#calls + 1] = name end)
+  eq(framed_count, 2, "commands of a frame with a clear and a refresh")
+  eq(framed, 'clear("white")\nrect(1, 2, 3, 4, "black", true)', "the text of a frame with a refresh")
+  eq(table.concat(calls, ","), "clear,refresh,rect", "on_call sees a refresh")
   -- A newline inside a text argument stays inside its command's line (%q would break the line there).
   local broken, broken_count = trace.record(function() ch.gfx.text(1, 2, "a\nb", "small", "black") end)
   eq(broken_count, 1, "a text with a newline")
@@ -379,6 +390,77 @@ function draws.sameAtBothCanvases()
     assert(#a >= 5, screen[1] .. ": a frame of " .. #a .. " commands")
     sameShifted(a, b, 4, screen[1])
   end
+end
+
+-- The ink of a frame, for every screen the game has: its first command is clear("white") and no other is a clear; every
+-- line is black, except the white cross a hit draws inside its black bar (both ends inside one filled black rect); every
+-- text, icon, circle and rect is black, except the inverted Ready button (a filled black rect, its "check" icon and its
+-- "Ready" label white, once the fleet is placed). A game that cleared its page black or drew its grid white drew the right
+-- commands in the wrong ink, which the commands alone do not show.
+function draws.ink()
+  local own, other = build(ACROSS), build(DOWN)
+  local sunk = (other:gsub("%l", string.upper))
+  local hit = shotAt(own, { 1, 1 })
+  local screens = {
+    { "placing", stateWith({ f = { build({ ACROSS[1], ACROSS[2] }), fleet.EMPTY }, p = 1 }), 1, {} },
+    { "placing, fleet ready", stateWith({ f = { own, fleet.EMPTY }, p = 1 }), 1, {} },
+    { "placing with a message", stateWith({}), 1, { message = "Ships cannot overlap" } },
+    { "waiting", stateWith({ f = { own, fleet.EMPTY }, p = 2 }), 1, {} },
+    { "firing", (function() local s = firing(hit, shotAt(other, { 10, 10 }, { 1, 10 }), 1)
+      s.l = { 1, 10, 10, 0, 0 } return s end)(), 1, {} },
+    { "help", stateWith({}), 1, { help = true } },
+    { "over", firing(shotAt(own, { 8, 3 }, { 1, 1 }), sunk, 1), 0, {} },
+  }
+  local inverted_seen, hits_seen = false, false
+  for _, screen in ipairs(screens) do
+    local what = screen[1]
+    local events = eventsAt(ch.screen.w, ch.screen.h, screen[2], screen[3], screen[4])
+    assert(#events >= 5, what .. ": a frame of " .. #events .. " commands")
+    eq(events[1].name, "clear", what .. ": the first command")
+    eq(events[1][1], "white", what .. ": the page is cleared to")
+    -- The filled black rects so far: what a white line or a white label may lie in.
+    local black = {}
+    local function inside(px, py)
+      for _, r in ipairs(black) do
+        if px >= r[1] and px <= r[1] + r[3] and py >= r[2] and py <= r[2] + r[4] then return true end
+      end
+      return false
+    end
+    for k, e in ipairs(events) do
+      local at = what .. ": command " .. k .. " (" .. e.name .. ")"
+      if k > 1 then assert(e.name ~= "clear", what .. ": a clear after the first command") end
+      if e.name == "rect" then
+        eq(e[5], "black", at .. " is drawn")
+        if e[6] then black[#black + 1] = e end
+      elseif e.name == "line" then
+        if e[5] == "white" then
+          assert(inside(e[1], e[2]) and inside(e[3], e[4]), at .. " is white and lies outside any filled black bar (a hit's cross is the only white line)")
+          hits_seen = true
+        else
+          eq(e[5], "black", at .. " is drawn")
+        end
+      elseif e.name == "circle" then
+        eq(e[4], "black", at .. " is drawn")
+      elseif e.name == "icon" then
+        if e[5] == "white" then
+          eq(e[1], "check", at .. ": the only white icon is the inverted Ready button's")
+          assert(inside(e[2] + 16, e[3] + 16), at .. " is white outside a filled black button")
+          inverted_seen = true
+        else
+          eq(e[5], "black", at .. " " .. tostring(e[1]) .. " is drawn")
+        end
+      elseif e.name == "text" then
+        if e[5] == "white" then
+          eq(e[3], "Ready", at .. ": the only white text is the inverted Ready button's label")
+          assert(inside(e[1], e[2] + 8), at .. " is white outside a filled black button")
+        else
+          eq(e[5], "black", at .. " '" .. tostring(e[3]) .. "' is drawn")
+        end
+      end
+    end
+  end
+  assert(inverted_seen, "no screen drew the inverted Ready button")
+  assert(hits_seen, "no screen drew a hit's white cross")
 end
 
 -- A canvas under 466 x 788 is unsupported: the first draw says so in one line naming both canvases, no later draw does, and

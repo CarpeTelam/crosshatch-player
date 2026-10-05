@@ -2,7 +2,7 @@
 -- grid, its highlight fills, pad counts, strokes, selection frames, and note tiles, and the grounds and numerals of a
 -- board, read through a recording `ch.gfx`. A round's `steps(state)` calls them; rules.lua says why they live in a
 -- round's VM. marks.lua holds the pins on what each toggle and each change of screen draws, apart from this so that a
--- round that calls only these does not load that module's compiled code (first_party/README.md, "The checks VM heap").
+-- round that calls only these does not load that module's compiled code (first_party/README.md, "The check VMs' limits").
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
@@ -13,10 +13,12 @@ local digit_of, units_of = pins.digit_of, pins.units_of
 local drawn = {}
 
 -- The commands of a frame, counted. TEST DOUBLE for the engine's ch.gfx (which faults outside a draw call, keeps a
--- frame to 2,048 commands, and checks an image's name against the package): it counts every call as one command, as the
--- engine does (board.draw_grid says 28 commands, and the first check below pins that this double counts it so), and
--- hands each image call to `on_image` and every call, image included, to `on_call(name, ...)` instead of keeping the
--- calls (a round's VM has no room for a frame's worth of tables). It takes its function names from the real ch.gfx's
+-- frame to 2,048 commands, and checks an image's name against the package): it counts as the engine does (ChBindings.cpp):
+-- every call is one command (`clear` included) except `refresh`, which asks for a refresh of the frame and appends no
+-- command, so it is not counted (board.draw_grid says 28 commands, and the first check below pins that this double
+-- counts it so; marks.lua pins a frame with a clear and a refresh in it), and hands each image call to `on_image` and
+-- every call, image and refresh included, to `on_call(name, ...)` instead of keeping the calls (a round's VM has no
+-- room for a frame's worth of tables). It takes its function names from the real ch.gfx's
 -- own keys, so a name the engine lacks (a misspelled call in a draw) raises here too. It is more permissive than the
 -- device: it clips nothing, takes any arguments, and does not look an image up, so a name that is not in the package
 -- passes it (the games check's rounds, drawing the real ch.gfx, fault on one). A failed draw leaves no recorder
@@ -27,7 +29,7 @@ local function record(f, on_image, on_call)
   for name, value in pairs(ch.gfx) do
     if type(value) == "function" then
       gfx[name] = function(...)
-        count = count + 1
+        if name ~= "refresh" then count = count + 1 end
         if name == "image" and on_image then on_image(...) end
         if on_call then on_call(name, ...) end
       end
@@ -44,16 +46,38 @@ end
 -- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (the
 -- clues) and `dark` (SHADE PEERS), by cell, the pad's remaining counts (by digit), the diagonal strokes (by cell,
 -- counting lines: a stroke is eight), the outlines inside a cell (its selection frame, by cell and inset from the
--- cell's edge, as the colour drawn), and the full refreshes. A command that is this game's but outside its place (a
--- fill that is no cell's, a count that is not on a key) is an error here.
+-- cell's edge, as the colour drawn), and the full refreshes; the dots (the circles each note slot of a cell draws, by
+-- cell and mark, as "radius/colour/filled" in order), the pad keys' outlines (by key and inset), the rail's buttons (the
+-- fill, icon and label of each), the MENU rows' icons, the white text, the first command, and every call counted. A
+-- command that is this game's but outside its place (a fill that is no cell's, a count that is not on a key, a circle
+-- outside the grid) is an error here.
 local function watch()
-  local seen = { light = {}, dark = {}, frame = {}, count = {}, rising = {}, falling = {}, full = 0 }
+  local seen = { light = {}, dark = {}, frame = {}, count = {}, rising = {}, falling = {}, full = 0, circle = {}, keys = {},
+                 rail = {}, menu = {}, white_text = {}, texts = {}, calls = 0, refreshes = 0, commands = 0 }
   local at = {}
   for d = 1, 9 do
     local x, y, w = layout.key_rect(d)
     at[(x + w - 8) .. "," .. (y + 4)] = d
   end
   local function on_call(name, a, b, c, d, e, f)
+    -- What every frame holds: the first command is the clear, nothing clears again, no axis-aligned line (the grid) is
+    -- drawn in any ink but black, and the white text is gathered (expect_marks says which text may be white).
+    seen.calls = seen.calls + 1
+    if name == "refresh" then
+      seen.refreshes = seen.refreshes + 1
+    else
+      seen.commands = seen.commands + 1
+      if seen.commands == 1 then
+        seen.first = { name, a }
+      elseif name == "clear" then
+        seen.cleared_again = true
+      end
+    end
+    if name == "line" and (a == c or b == d) and e ~= "black" then seen.light_grid_line = e end
+    if name == "text" then
+      seen.texts[#seen.texts + 1] = { x = a, y = b, str = c, size = d, color = e }
+      if e ~= "black" then seen.white_text[#seen.white_text + 1] = { x = a, y = b, str = c, size = d, color = e } end
+    end
     -- Every command starts on the canvas, and a rect or a line ends on it (a text's width is the device's metrics, not
     -- this check's; an image's name is its first argument).
     local w, h = ch.screen.w, ch.screen.h
@@ -93,6 +117,48 @@ local function watch()
     elseif name == "refresh" and a == "full" then
       seen.full = seen.full + 1
     end
+    -- The dots: a note slot's circles, by the cell and mark whose slot holds the centre.
+    if name == "circle" then
+      local cell = assert(layout.cell_at(a, b), "a circle outside the grid")
+      local x, y, w = layout.cell_rect(cell)
+      local slot = w // 3
+      local k = (b - y) // slot * 3 + (a - x) // slot + 1
+      seen.circle[cell] = seen.circle[cell] or {}
+      seen.circle[cell][k] = (seen.circle[cell][k] and seen.circle[cell][k] .. "," or "") .. c .. "/" .. d .. "/" .. tostring(e)
+    end
+    -- The pad: each key's outline at insets 0 to 3 (inset 0 is the key's own, 1 to 3 the focus frame), unfilled.
+    if name == "rect" and f ~= true then
+      for key = 1, 9 do
+        local kx, ky, kw, kh = layout.key_rect(key)
+        local inset = a - kx
+        if inset >= 0 and inset <= 3 and b - ky == inset and c == kw + 1 - 2 * inset and d == kh + 1 - 2 * inset then
+          seen.keys[key] = seen.keys[key] or {}
+          seen.keys[key][inset] = e
+        end
+      end
+    end
+    -- The rail: each button's rectangle (filled while NOTES is on), its icon, and its label.
+    for i = 1, layout.RAIL do
+      local rx, ry, rw, rh = layout.rail_rect(i)
+      if name == "rect" and a == rx and b == ry and c == rw + 1 and d == rh + 1 then
+        seen.rail[i] = seen.rail[i] or {}
+        seen.rail[i].filled = f == true
+        seen.rail[i].outline = e
+      elseif name == "icon" and b == rx + 10 and c == ry + (rh - 32) // 2 then
+        seen.rail[i] = seen.rail[i] or {}
+        seen.rail[i].icon, seen.rail[i].icon_color = a, e
+      elseif name == "text" and a == rx + 54 and b == ry + rh // 2 - layout.DY.small then
+        seen.rail[i] = seen.rail[i] or {}
+        seen.rail[i].label, seen.rail[i].label_color = c, e
+      end
+    end
+    -- The MENU's rows: each row's icon.
+    if name == "icon" then
+      for i = 1, layout.ROWS do
+        local mx, my, _, mh = layout.menu_rect(i)
+        if b == mx + 12 and c == my + (mh - 32) // 2 then seen.menu[i] = { icon = a, color = e } end
+      end
+    end
   end
   return seen, on_call
 end
@@ -119,12 +185,98 @@ local function clashing(v)
   return out
 end
 
+local RAIL = { { "pencil-simple", "NOTES" }, { "eraser", "ERASE" }, { "arrow-u-up-left", "UNDO" }, { "gear-six", "MENU" } }
+
+-- What a frame is drawn in, from the first command to the last: it begins with clear("white") and clears once, its grid
+-- lines are black, and the text is black, with the named inversions only: the focused digit's numerals (white, on their
+-- black ground; one per cell holding it), and the NOTES button's label while NOTES is on (white on its black fill).
+local function expect_ink(seen, s, ui)
+  eq(seen.first and seen.first[1], "clear", "the first command")
+  eq(seen.first[2], "white", "the page is cleared to")
+  eq(seen.cleared_again, nil, "a clear after the first command")
+  eq(seen.light_grid_line, nil, "an axis-aligned line (the grid) in an ink but black")
+  local whites, wanted = {}, 0
+  for c = 1, 81 do
+    local d = digit_of(s.v:byte(c))
+    if d and d == ui.foc then wanted = wanted + 1 end
+  end
+  for _, t in ipairs(seen.white_text) do
+    eq(t.color, "white", "a text that is neither black nor white")
+    whites[#whites + 1] = t
+  end
+  eq(#whites, wanted + (ui.pencil and 1 or 0), "the texts drawn white (the focused digit's numerals and the NOTES label)")
+  for _, t in ipairs(whites) do
+    assert((t.size == "large" and t.str == tostring(ui.foc)) or (t.size == "small" and t.str == "NOTES" and ui.pencil),
+      "a white text that is no inversion: '" .. tostring(t.str) .. "'")
+  end
+end
+
+-- The dots: with notes as dots (ui.dots), each mark a cell shows (a stored mark its neighbours' digits do not rule out)
+-- is drawn in its slot as the circles of draw_mark, in this order: the focused digit a solid black dot of radius 5; any
+-- other a ring (a "dark" disc of radius 5 with a white one of radius 2 inside it), and when the cell is on a "dark"
+-- ground (SHADE PEERS and a peer of the selected cell) a white disc of radius 6 under the ring first, so the ring's inner
+-- white shows. No other slot has a circle, and notes as digit images (not ui.dots) draw no circle at all.
+local function expect_dots(seen, s, ui)
+  local cand, notes = grid.candidates(s.v), { string.unpack(grid.FMT, s.n) }
+  local sel_row, sel_col, sel_box
+  if ui.sel then sel_row, sel_col, sel_box = units_of(ui.sel) end
+  local shown = 0
+  for c = 1, 81 do
+    local want = {}
+    if ui.dots and s.v:byte(c) == 48 then
+      local ground = false
+      if ui.shade and ui.sel then
+        local row, col, box = units_of(c)
+        ground = row == sel_row or col == sel_col or box == sel_box
+      end
+      local visible = notes[c] & cand[c]
+      for k = 1, 9 do
+        if visible & (1 << k - 1) ~= 0 then
+          shown = shown + 1
+          want[k] = k == ui.foc and "5/black/true"
+            or ((ground and "6/white/true," or "") .. "5/dark/true,2/white/true")
+        end
+      end
+    end
+    local got = seen.circle[c] or {}
+    for k = 1, 9 do eq(got[k], want[k], "the dot commands of mark " .. k .. " of cell " .. c) end
+  end
+  eq(next(seen.circle) ~= nil, shown > 0, "a circle drawn where no dot is")
+  return shown
+end
+
+-- The pad: every key is outlined in black (inset 0), and the focused digit's key also at insets 1 to 3 in black, no other
+-- key at those.
+local function expect_pad(seen, ui)
+  for d = 1, 9 do
+    local f = seen.keys[d] or {}
+    eq(f[0], "black", "key " .. d .. " outline")
+    for inset = 1, 3 do eq(f[inset], ui.foc == d and "black" or nil, "key " .. d .. " focus frame at inset " .. inset) end
+  end
+end
+
+-- The rail: NOTES, ERASE, UNDO, MENU, each a black outline with its icon and label, and NOTES alone inverted while it is on:
+-- a filled black button with a white icon and label.
+local function expect_rail(seen, ui)
+  for i = 1, layout.RAIL do
+    local b = seen.rail[i] or {}
+    local on = i == 1 and ui.pencil and true or false
+    eq(b.outline, "black", "rail button " .. i .. " outline")
+    eq(b.filled, on, "rail button " .. i .. " fill")
+    eq(b.icon, RAIL[i][1], "rail button " .. i .. " icon")
+    eq(b.label, RAIL[i][2], "rail button " .. i .. " label")
+    eq(b.icon_color, on and "white" or "black", "rail button " .. i .. " icon colour")
+    eq(b.label_color, on and "white" or "black", "rail button " .. i .. " label colour")
+  end
+end
+
 -- Pins what a frame of state `s` and ui draws to what the interaction table says, cell by cell: every clue that is not
 -- a copy of the focused digit (black ground) is filled `light`, once; SHADE PEERS fills `dark` exactly the selected
 -- cell's row, column, and box cells that are neither a clue nor a copy of the focused digit, once each, and nothing
 -- when it is off or nothing is selected; SHOW REMAINING puts nine counts on the keys (nine less the digit's cells,
 -- clues and the player's, never below 0) and none when off; every clashing cell has a rising stroke and every
--- CHECK-marked cell a falling one (eight lines each), and no other cell has either.
+-- CHECK-marked cell a falling one (eight lines each), and no other cell has either; and the dots, the pad's focus frame,
+-- the rail's buttons, and the ink (expect_dots, expect_pad, expect_rail, expect_ink above).
 local function expect_marks(seen, s, ui)
   local clash = clashing(s.v)
   local sel_row, sel_col, sel_box
@@ -144,6 +296,10 @@ local function expect_marks(seen, s, ui)
     if d then left[d] = left[d] - 1 end
   end
   for d = 1, 9 do eq(seen.count[d], ui.rem and tostring(math.max(left[d], 0)) or nil, "the count on key " .. d) end
+  expect_dots(seen, s, ui)
+  expect_pad(seen, ui)
+  expect_rail(seen, ui)
+  expect_ink(seen, s, ui)
 end
 
 -- The selection frame of cell sel: black outlines at insets 0 and 1 and, with `halo`, white ones at 2 to 4 (a selected
@@ -230,6 +386,7 @@ function drawn.frame(state, digits)
   local ui = {}
   game.input(s, 1, ui, { kind = "timer" })
   ui.dots, ui.shade, ui.rem, ui.foc, ui.sel, ui.check = not digits, true, true, 5, empty[1], {}
+  ui.pencil = true -- NOTES is on: the rail's first button is the inverted one
   for c = 1, 81 do
     ui.check[c] = true
   end
@@ -260,6 +417,9 @@ function drawn.frame(state, digits)
   local seen, on_call = watch()
   local commands = record(function() game.draw(s, 1, ui) end, on_image, on_call)
   assert(commands <= 2048, "the worst frame is " .. commands .. " commands")
+  -- The count is the engine's: every call a command but the refresh, which the first frame of a ui asks for.
+  assert(seen.refreshes >= 1, "the first frame asks for no refresh")
+  eq(commands, seen.calls - seen.refreshes, "commands counted against calls, a refresh being none")
   expect_marks(seen, s, ui)
   -- The selected cell holds marks: a frame of two black outlines when they are images (they start at inset 2), the
   -- halo frame of its "dark" ground when they are dots (as built).
@@ -273,14 +433,17 @@ function drawn.frame(state, digits)
   end
   eq(images, digits and shown or 0, "marks drawn")
   -- SHADE PEERS off, then nothing selected: no cell is shaded, so every mark is a B or G (on_image reads ui.shade,
-  -- ui.sel). The selected cell, on no ground, still has marks: the two black outlines for images and the plain frame
-  -- (black at 1 and 2, white at 3) for dots; with nothing selected there is no frame.
+  -- ui.sel), and a dot is a ring with no white disc under it. The selected cell, on no ground, still has marks: the two
+  -- black outlines for images and the plain frame (black at 1 and 2, white at 3) for dots; with nothing selected there
+  -- is no frame. NOTES is off from here on, so the rail's first button is drawn plain.
+  ui.pencil = false
   for i, change in ipairs({ function() ui.shade = false end, function() ui.shade, ui.sel = true, nil end }) do
     change()
     images = 0
     local again, on_again = watch()
     record(function() game.draw(s, 1, ui) end, on_image, on_again)
     eq(images, digits and shown or 0, "marks drawn")
+    expect_marks(again, s, ui)
     if i == 2 then
       eq(next(again.frame), nil, "a frame with nothing selected")
     elseif digits then
