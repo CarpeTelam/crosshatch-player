@@ -14,10 +14,9 @@
 --   { "w", cell, digit, dt } write (the digit the cell holds clears it), { "n", cell, digit, dt } toggle a note,
 --   { "e", cell, dt } erase, { "u", dt } undo, { "f", dt } fill notes, { "h", dt } HINT was used.
 -- ui (never saved, so empty after a resume): sel, foc, pencil, panel, note, msg, check, the toggles, and the clock.
--- The sandbox's 256 KB cap counts garbage as well as live data, and this game keeps about 120 KB live (code, tables, and
--- the bank once dealt from). The collector's default pause (200) lets the heap grow to twice what is live before it
--- starts again, which ran a round out of memory; 150 keeps the peak near 180 KB.
-collectgarbage("incremental", 150)
+-- The sandbox's 256 KB cap counts garbage as well as live data, so the heap is kept small: the bank is dealt from once
+-- and the help page is loaded when it is first drawn. The collector runs at this Lua's default pause; no setting
+-- here changes it (`collectgarbage("incremental", n)` takes no pause in this Lua, only `"param"` does).
 -- A module that is loaded while another is loading needs the C stack twice over: the device refuses it ("script recursion
 -- too deep to load a module") where the host checks do not. So a module another one needs is loaded before it, from
 -- main or from a function body, never by the other module's own load, and each later require finds it loaded.
@@ -163,7 +162,7 @@ end
 local function move(ui, kind, cell, digit)
   local now = ch.time.ms()
   local dt = math.max(0, now - ui.last)
-  ui.prev, ui.last = ui.last, now
+  ui.prev, ui.last, ui.was_msg, ui.was_check = ui.last, now, ui.msg, ui.check
   if EDIT[kind] then ui.msg, ui.check = nil, nil end
   if kind == "w" or kind == "n" then return { kind, cell, digit, dt } end
   if kind == "e" then return { kind, cell, dt } end
@@ -305,6 +304,7 @@ function game.input(state, seat, ui, ev)
   local kind = ev.kind
   if kind == "rejected" then
     ui.note, ui.last = ev.reason, ui.prev or ui.last
+    ui.msg, ui.check = ui.was_msg, ui.was_check -- a refused move changed nothing, so HINT's and CHECK's marks stay
     return nil
   end
   if kind == "over" then

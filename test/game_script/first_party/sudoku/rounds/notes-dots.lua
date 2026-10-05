@@ -9,6 +9,7 @@ return {
   seed = 21,
   steps = function(state)
     rules.taps(state)
+    rules.frame(state, false)
     local steps = taps.rail({}, 1, { move = false })
     local cand, empties, first = grid.candidates(state.v), taps.empties(state), nil
     for i = 1, 3 do

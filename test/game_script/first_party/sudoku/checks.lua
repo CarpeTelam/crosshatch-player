@@ -2,14 +2,31 @@
 -- is filed under), the costliest puzzle of each band through the game's calls (symmetry, HINT, CHECK, FILL NOTES), the
 -- header of puzzles.lua, and setup. The game's rules (rejections, the undo ring, the clash rule, the taps, the toggles
 -- and best times, the layout) are pinned by rules.lua, which the rounds call from their `steps` functions: this VM
--- holds the solver, the counter, and the bank, about 150 KB of the 256 KB the sandbox allows, and is built to stay
+-- holds the solver, the counter, and the bank, most of the 256 KB the sandbox allows, and is built to stay
 -- inside it:
 --   - the puzzles go in batches (CHUNKS), sized from the instructions each batch took, so none passes the budget of
 --     one call (2,000,000); regenerating the bank means sizing them again, and the check that they cover it fails until
 --     then;
 --   - the entries share one run function and a plan of integers, so an entry is a name and a pointer;
 --   - the stack is grown early and kept (see deep), because the allocator can no longer find room to grow it later.
+-- A module that loads while another module is loading needs the C stack twice over, and the device refuses a third
+-- level ("script recursion too deep to load a module") where this harness sets no headroom and accepts any depth. So
+-- main's own load is watched: the wrapper below counts how deep a module not yet loaded is required from, and the
+-- check that follows allows main and the one level it loads. It stands in for the device's refusal and is stricter in
+-- one way only (it counts depth, where the device counts C stack), so it can fail a load the device would take.
+local real_require, seen, depth, deepest = require, {}, 0, 0
+function require(name)
+  if seen[name] then return real_require(name) end
+  seen[name] = true
+  depth = depth + 1
+  deepest = math.max(deepest, depth)
+  local module = real_require(name)
+  depth = depth - 1
+  return module
+end
 local game = require("main")
+require = real_require
+assert(deepest <= 2, "a module loads inside a module that loads inside main: depth " .. deepest)
 local grid = require("grid")
 local layout = require("layout")
 local counter = require("counter")
@@ -153,14 +170,14 @@ local COSTLY = {
   end },
 }
 function costly(band, kind)
-  local at = puzzles.costly[band][1]
-  local s, digits = new_state(band, at), select(2, puzzles.get(band, at))
+  local index = puzzles.costly[band][1]
+  local s, digits = new_state(band, index), select(2, puzzles.get(band, index))
   s.v = game.symmetry(digits, math.random)
   COSTLY[kind][2](s, digits)
 end
 
 for band = 1, 4 do
-  for kind, entry in ipairs(COSTLY) do add(BAND[band] .. ": " .. entry[1], 1 << 24 | band << 8 | kind) end
+  for kind, row in ipairs(COSTLY) do add(BAND[band] .. ": " .. row[1], 1 << 24 | band << 8 | kind) end
 end
 
 -- Setup ----------------------------------------------------------------------------------------------------------------

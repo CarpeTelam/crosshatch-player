@@ -1,4 +1,4 @@
--- HINT on a grid with no wrong digit names the rule the ladder needs for the next cell, with the unit of an only-cell hint,, and the solve that follows sets
+-- HINT on a grid with no wrong digit names the rule the ladder needs for the next cell, with the unit of an only-cell hint, and the solve that follows sets
 -- no best time.
 local taps = require("taps")
 local solver = require("solver")

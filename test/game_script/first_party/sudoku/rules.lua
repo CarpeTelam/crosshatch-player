@@ -1,6 +1,6 @@
 -- rules.lua: the game's rules pinned one by one, each on the grid a round dealt (its `steps(state)` calls them, so every
 -- rule is checked beside the round that plays it through taps). A failure is an error that names its line. They live
--- here, in the round's own VM, and not in checks.lua: that VM holds the solver, the counter, and the bank (about 110 KB
+-- here, in the round's own VM, and not in checks.lua: that VM holds the solver, the counter, and the bank (most
 -- of the 256 KB the sandbox allows, with a heap the allocator fragments), and had no room left for them.
 local game = require("main")
 local grid = require("grid")
@@ -93,6 +93,7 @@ function rules.apply(state)
   for d = 9, 1, -1 do
     if grid.peer_has(s.v, c2, d) then held = d end
   end
+  assert(held, "c2 has no peer digit to rule a mark out")
   rejects(s, { "n", c2, held, 0 }, NOMARK)
   mv(s, "f")
   rejects(s, { "f", 0 }, "Nothing to fill")
@@ -310,8 +311,9 @@ function rules.store(state)
   eq(select(2, solve(1, 65000)), 65000)
   eq(select(2, solve(1, 70000)), 65000)
   eq(select(2, solve(1, 60000)), 60000)
-  eq((solve(1, 1000, true)), 60000)
-  eq(select(2, solve(1, 1000, true)), 60000)
+  local shown, kept = solve(1, 1000, true)
+  eq(shown, 60000)
+  eq(kept, 60000)
   eq(select(2, solve(3, 90000)), 90000)
   eq(select(2, solve(1, 59999)), 59999)
   ch.store.set({})
@@ -371,16 +373,22 @@ function rules.clock(state)
     tap(s, ui, 0, 0)
     clock = 5000
     on_cell(s, ui, clue)
+    local marks = { [3] = true }
+    ui.msg, ui.check = "1 wrong digit", marks
     local erase = on_rail(s, ui, 2)
     eq(erase[1], "e")
     eq(erase[3], 5000)
     game.input(s, 1, ui, { kind = "rejected", reason = CLUE })
     eq(ui.note, CLUE)
+    eq(ui.msg, "1 wrong digit") -- a refused move leaves HINT's and CHECK's marks, an accepted edit (below) ends them
+    eq(ui.check, marks)
     clock = 7000
     on_cell(s, ui, cell)
     local move = on_key(s, ui, candidate(s, cell))
     eq(move[4], 7000)
     eq(game.apply(s, 1, move).t, 7000)
+    eq(ui.msg, nil)
+    eq(ui.check, nil)
   end)
 end
 
@@ -409,6 +417,70 @@ function rules.reset(state)
     assert(ui.rem and not ui.shade and ui.dots)
     ch.store.set({})
   end)
+end
+
+-- The commands of a frame, counted. TEST DOUBLE for the engine's ch.gfx (which faults outside a draw call, keeps a frame
+-- to 2,048 commands, and checks an image's name against the package): it counts every call as one command, as the
+-- engine does (board.draw_grid says 28 commands, and the first check below pins that this double counts it so), and
+-- hands each image call to `on_image` instead of keeping the calls (a round's VM has no room for a frame's worth of
+-- tables). It is more permissive than the device: it clips nothing and does not look an image up, so a name that is not
+-- in the package passes it (the games check's rounds, drawing the real ch.gfx, fault on one).
+local function record(f, on_image)
+  local count = 0
+  local gfx = setmetatable({}, {
+    __index = function(_, name)
+      return function(...)
+        count = count + 1
+        if name == "image" and on_image then on_image(...) end
+      end
+    end,
+  })
+  local real = ch.gfx
+  ch.gfx = gfx
+  local ok, err = pcall(f)
+  ch.gfx = real
+  if not ok then error(err, 0) end
+  return count
+end
+
+-- The worst frame of the dealt grid: every empty cell holds all nine notes (the ones a neighbour's digit rules out stay
+-- hidden), SHADE PEERS, SHOW REMAINING, and a CHECK stroke on every cell are on, a digit is focused, and a cell is
+-- selected. It stays inside the engine's 2,048 commands; with notes as images (`digits`), each shown mark is one image of
+-- the focus colour its digit calls for, set inside its cell clear of the 3 px block lines (an image keeps a one-pixel
+-- paper margin, so 2 px from each cell edge keeps the paper off the lines); with dots, no image is drawn.
+function rules.frame(state, digits)
+  eq(record(function() require("board").draw_grid(layout.get()) end), 28)
+  local s = fresh(state)
+  local cand, notes, empty = grid.candidates(s.v), {}, empties(s)
+  for c = 1, 81 do
+    notes[c] = s.v:byte(c) == 48 and 0x1FF or 0
+  end
+  s.n = string.pack(grid.FMT, table.unpack(notes))
+  local ui = {}
+  game.input(s, 1, ui, { kind = "timer" })
+  ui.dots, ui.shade, ui.rem, ui.foc, ui.sel, ui.check = not digits, true, true, 5, empty[1], {}
+  for c = 1, 81 do
+    ui.check[c] = true
+  end
+  local L, images = layout.get(), 0
+  local function on_image(name, x, y, color)
+    images = images + 1
+    local set, d = name:match("^note_([gb])([1-9])$")
+    assert(set and color == "black", "an image is a note image: " .. tostring(name))
+    eq(set == "b", tonumber(d) == ui.foc, name .. " focus colour")
+    local cx, cy = layout.cell_rect(layout.cell_at(x + 5, y + 7))
+    local dx, dy = x - cx, y - cy
+    assert(dx >= 2 and dx + 10 <= L.cell - 1 and dy >= 2 and dy + 14 <= L.cell - 1, name .. " at " .. dx .. ", " .. dy)
+  end
+  local commands = record(function() game.draw(s, 1, ui) end, on_image)
+  assert(commands <= 2048, "the worst frame is " .. commands .. " commands")
+  local shown = 0
+  for _, c in ipairs(empty) do
+    for d = 1, 9 do
+      if cand[c] & (1 << d - 1) ~= 0 then shown = shown + 1 end
+    end
+  end
+  eq(images, digits and shown or 0, "marks drawn")
 end
 
 return rules
