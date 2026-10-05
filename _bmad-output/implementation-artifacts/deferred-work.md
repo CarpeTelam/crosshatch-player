@@ -1117,3 +1117,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-refactor-sweep-plan.md`
   summary: The instruction margin of Battleship's `draw-commands` round (about 30 full frames drawn inside one `steps(state)` call) is unmeasured.
   evidence: The round passes, so it is under the 2,000,000 budget of one `steps` call; the sandbox has no instruction counter a check can read, so the margin is not a figure (same reason as the Sudoku `toggles` item). Adding a scenario that crosses the budget fails the round with "instruction budget exceeded" instead of a named pin; splitting the round in two is the fix then. Reason deferred: no measurement is possible without a counting hook the sandbox lacks. Location: test/game_script/first_party/battleship/rounds/draw-commands.lua, test/game_script/first_party/battleship/draws.lua. Severity: low.
+
+## 8.10
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-raise-the-package-file-cap-to-64-plan.md`
+  summary: The installer's Job is one contiguous internal-heap block, now 5,888 B (was 4,096 B); whether a fragmented S3 heap can still allocate it is unmeasured.
+  evidence: makeUniqueNoThrow<Job> uses the internal heap, not PSRAM. installAll logs "OOM: installer" and reports OutOfMemory when it fails, so the failure is clean; the device run (entry 5) can log the largest free block at installAll to settle it. Location: src/games/GamePackageInstaller.cpp:80. Severity: medium (unverified).
