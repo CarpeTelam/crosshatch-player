@@ -506,6 +506,32 @@ class GamesTest(unittest.TestCase):
         self.assertEqual({p['package_hash'] for p in packages}, {'0123456789abcdef'})
         self.assertEqual((self.dir / 'dist' / 'mines.chgame').read_bytes(), b'PK-- mines\n')
 
+    def test_relative_project_dir_packs(self):
+        # CI runs `pack-games --project-dir src --dist release/dist` from the directory above the checkout, where the
+        # packer's path must not be taken relative to the child's own working directory (src/src/scripts/...).
+        tree = self.dir / 'src'
+        (tree / 'games' / 'mines').mkdir(parents=True)
+        (tree / 'games' / 'mines' / 'main.lua').write_text('-- mines\n')
+        (tree / 'scripts').mkdir()
+        (tree / 'scripts' / 'pack_game.py').write_text(PACKER_OK)
+        (self.dir / 'out').mkdir()
+        previous = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            args = ['pack-games', '--plan', 'plan.json', '--project-dir', 'src', '--dist', 'release/dist']
+            self.assertEqual(quiet(fr.main, args), 0)
+            # A relative out_dir is resolved the same way: the child must write where the parent looks.
+            packer = pathlib.Path('src') / 'scripts' / 'pack_game.py'
+            package, _ = fr.pack_one(pathlib.Path('src'), packer, 'mines', 'out')
+        finally:
+            os.chdir(previous)
+        packages = json.loads(self.plan.read_text())['packages']
+        self.assertEqual([p['asset'] for p in packages], ['mines.chgame'])
+        self.assertEqual((self.dir / 'release' / 'dist' / 'mines.chgame').read_bytes(), b'PK-- mines\n')
+        self.assertFalse((tree / 'release').exists())
+        self.assertEqual(package, pathlib.Path('out') / 'mines.chgame')
+        self.assertEqual((self.dir / 'out' / 'mines.chgame').read_bytes(), b'PK-- mines\n')
+
     def test_failing_packer_fails(self):
         self.add_game('mines')
         self.packer('import sys\nprint("0123456789abcdef")\nsys.exit(3)\n')

@@ -625,9 +625,11 @@ def tree_digest(directory):
 
 def pack_one(project_dir, packer, game_id, out_dir):
     """(package path, package hash) or raise Failure."""
+    # The child runs in project_dir, so a relative packer or out_dir (--project-dir src) would resolve against it twice.
+    packer_path, out_path = pathlib.Path(packer).absolute(), pathlib.Path(out_dir).absolute()
     try:
         result = subprocess.run(
-            [sys.executable, str(packer), f'games/{game_id}', str(out_dir)],
+            [sys.executable, str(packer_path), f'games/{game_id}', str(out_path)],
             cwd=project_dir,
             stdout=subprocess.PIPE,
             text=True,
