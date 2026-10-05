@@ -1072,3 +1072,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-the-games-check-and-ultimate-tic-tac-toe-plan.md`
   summary: The games check sees only text commands, so no round or check can assert a highlight fill, an icon, or a won board's big mark.
   evidence: `RoundPlayer.cpp` keeps each frame's text commands only (verification-gap lens): removing the `light` fill loop or the won-board mark in `main.lua` leaves every round and check green. Only the simulator screenshots show them. Fixing it changes the games check (entry 8's files), which this entry's intent excludes. Location: test/game_script/harness/games_check/RoundPlayer.cpp:126-138. Severity: low.
+
+## 8.2
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-battleship-plan.md`
+  summary: Nothing observes the non-text commands a seat's draw emits, so a draw that read the other seat's fleet directly (not through `views`) would leak ship positions on the target board and stay green.
+  evidence: Checks cannot call `draw` (`ch.gfx` outside draw is an error, `ScriptVm.h:9`), and a round's `shows` matches only text commands of the step seat's frame (`RoundPlayer.cpp` `shows`). Secrecy is pinned on `game.views` and `fleet.mask` (checks `secrecy`, `viewsPerSeat`, `maskOverAWholeGame`; mutant (e)); by reading, `drawFiring` draws `views(...).target` only. Closing it needs a harness hook (a frame-command inspection in rounds or a recording `ch.gfx` for checks), and `test/game_script/harness/**` is in this ticket's Never list. Location: test/game_script/harness/games_check/RoundPlayer.cpp (shows); games/battleship/main.lua drawFiring. Severity: medium.
