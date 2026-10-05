@@ -3,7 +3,7 @@ title: 'Sudoku digit notes in three bold sets, and the greys swapped'
 type: 'feature'
 ticket: '9'
 created: '2026-10-05'
-status: built
+status: done
 baseline_revision: 'af31d7655f1117c5c20eb333f1c287f5f71ce495'
 route: 'full'
 route_source: 'auto'
