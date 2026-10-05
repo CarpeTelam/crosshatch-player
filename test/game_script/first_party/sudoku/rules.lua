@@ -453,8 +453,8 @@ end
 -- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (the
 -- clues) and `dark` (SHADE PEERS), by cell, the pad's remaining counts (by digit), the diagonal strokes (by cell,
 -- counting lines: a stroke is eight), the outlines inside a cell (its selection frame, by cell and inset from the cell's
--- edge, as the colour drawn), and the full refreshes. A command that is this game's but outside its place (a fill that is no cell's, a count that is
--- not on a key) is an error here.
+-- edge, as the colour drawn), and the full refreshes. A command that is this game's but outside its place (a fill that
+-- is no cell's, a count that is not on a key) is an error here.
 local function watch()
   local seen = { light = {}, dark = {}, frame = {}, count = {}, rising = {}, falling = {}, full = 0 }
   local at = {}
@@ -528,8 +528,9 @@ end
 -- Pins what a frame of state `s` and ui draws to what the interaction table says, cell by cell: every clue that is not a
 -- copy of the focused digit (black ground) is filled `light`, once; SHADE PEERS fills `dark` exactly the selected cell's
 -- row, column, and box cells that are neither a clue nor a copy of the focused digit, once each, and nothing when it is
--- off or nothing is selected; SHOW REMAINING puts nine counts on the keys (nine less the digit's cells, clues and the player's, never below 0) and none when off; every clashing cell
--- has a rising stroke and every CHECK-marked cell a falling one (eight lines each), and no other cell has either.
+-- off or nothing is selected; SHOW REMAINING puts nine counts on the keys (nine less the digit's cells, clues and the
+-- player's, never below 0) and none when off; every clashing cell has a rising stroke and every CHECK-marked cell a
+-- falling one (eight lines each), and no other cell has either.
 local function expect_marks(seen, s, ui)
   local clash = clashing(s.v)
   local sel_row, sel_col, sel_box
@@ -552,13 +553,27 @@ local function expect_marks(seen, s, ui)
 end
 
 -- The selection frame of cell sel: black outlines at insets 0 and 1 and, with `halo`, white ones at 2 to 4 (a selected
--- cell with no digit notes on a "dark" ground); without it nothing is drawn at insets 2 to 4, where a digit note's
--- image starts. No other cell has a frame.
+-- cell with no digit notes on a "dark" ground); without it a black one at 2 (a digit note image's blank margin) and
+-- nothing at 3 and 4, where its glyph starts. No other cell has a frame.
 local function expect_frame(seen, sel, halo)
   local f = assert(seen.frame[sel], "no selection frame")
   eq(f[0], "black", "frame inset 0")
   eq(f[1], "black", "frame inset 1")
-  for i = 2, 4 do eq(f[i], halo and "white" or nil, "frame inset " .. i) end
+  eq(f[2], halo and "white" or "black", "frame inset 2")
+  for i = 3, 4 do eq(f[i], halo and "white" or nil, "frame inset " .. i) end
+  for c in pairs(seen.frame) do eq(c, sel, "a frame on another cell") end
+end
+
+-- The selection frame of a cell on a ground that is not "dark" or black (a clue, or any cell with SHADE PEERS off) and
+-- with no digit notes to show: black outlines at insets 1 and 2 with a white one at 3, and nothing at 0 or 4. No other
+-- cell has a frame.
+local function expect_plain(seen, sel)
+  local f = assert(seen.frame[sel], "no selection frame")
+  eq(f[0], nil, "frame inset 0")
+  eq(f[1], "black", "frame inset 1")
+  eq(f[2], "black", "frame inset 2")
+  eq(f[3], "white", "frame inset 3")
+  eq(f[4], nil, "frame inset 4")
   for c in pairs(seen.frame) do eq(c, sel, "a frame on another cell") end
 end
 
@@ -569,6 +584,39 @@ local function peer(c, sel)
   return a == sa or b == sb or e == se
 end
 
+-- Where layout.note_tile puts a digit note's image, on the canvases of both boards: the Sticky's 474 x 788 (51 px cells,
+-- a 16 px row pitch) and the X4 Pro's 466 x 788 (BoardConfig insets 9, 7, 3, 7: 50 px cells, a 15 px row pitch). The
+-- row is literal, the column is the slot's (4, 20, 36) or one pixel on for the dither nudge, the image lies inside
+-- offsets 2..cell - 2 of the cell on both axes (no cell line, no block line), and its origin's x + y is even, odd for
+-- an inverted one, whatever the cell's corner.
+local function expect_tiles()
+  local real = ch.screen.w
+  local ok, err = pcall(function()
+    for _, canvas in ipairs({ { w = 474, cell = 51, pitch = 16 }, { w = 466, cell = 50, pitch = 15 } }) do
+      ch.screen.w = canvas.w
+      eq(layout.get().cell, canvas.cell, "the cell of a canvas " .. canvas.w .. " wide")
+      for x = 0, 1 do
+        for y = 0, 1 do
+          for _, inverted in ipairs({ false, true }) do
+            for k = 1, 9 do
+              local tx, ty = layout.note_tile(x, y, k, inverted)
+              local name = "image " .. k .. " at " .. x .. ", " .. y .. " on " .. canvas.w
+              local col = 4 + 16 * ((k - 1) % 3)
+              eq(ty, y + 2 + canvas.pitch * ((k - 1) // 3), name .. " y")
+              assert(tx - x == col or tx - x == col + 1, name .. " x " .. tx)
+              assert(tx - x >= 2 and tx - x + layout.NOTE_W <= canvas.cell - 1, name .. " is off the cell across")
+              assert(ty - y >= 2 and ty - y + layout.NOTE_H <= canvas.cell - 1, name .. " is off the cell down")
+              eq((tx + ty) % 2, inverted and 1 or 0, name .. " dither phase")
+            end
+          end
+        end
+      end
+    end
+  end)
+  ch.screen.w = real
+  if not ok then error(err, 0) end
+end
+
 -- The worst frame of the dealt grid: every empty cell holds all nine notes (the ones a neighbour's digit rules out stay
 -- hidden), SHADE PEERS, SHOW REMAINING, and a CHECK stroke on every cell are on, a digit is focused, and a cell is
 -- selected. It stays inside the engine's 2,048 commands; with notes as images (`digits`), each shown mark is one image of
@@ -576,6 +624,7 @@ end
 -- cell on both axes so it covers no cell line or block line, with the dither parity the tile's baked checker needs;
 -- with dots, no image is drawn.
 function rules.frame(state, digits)
+  expect_tiles()
   eq(record(function() require("board").draw_grid(layout.get()) end), 28)
   local s = fresh(state)
   local cand, notes, empty = grid.candidates(s.v), {}, empties(s)
@@ -628,13 +677,36 @@ function rules.frame(state, digits)
     end
   end
   eq(images, digits and shown or 0, "marks drawn")
-  -- SHADE PEERS off, then nothing selected: no cell is shaded, so every mark is a B or G (on_image reads ui.shade, ui.sel).
-  for _, change in ipairs({ function() ui.shade = false end, function() ui.shade, ui.sel = true, nil end }) do
+  -- SHADE PEERS off, then nothing selected: no cell is shaded, so every mark is a B or G (on_image reads ui.shade,
+  -- ui.sel). The selected cell, on no ground, still has marks: the two black outlines for images and the plain frame
+  -- (black at 1 and 2, white at 3) for dots; with nothing selected there is no frame.
+  for i, change in ipairs({ function() ui.shade = false end, function() ui.shade, ui.sel = true, nil end }) do
     change()
     images = 0
-    record(function() game.draw(s, 1, ui) end, on_image)
+    local again, on_again = watch()
+    record(function() game.draw(s, 1, ui) end, on_image, on_again)
     eq(images, digits and shown or 0, "marks drawn")
+    if i == 2 then
+      eq(next(again.frame), nil, "a frame with nothing selected")
+    elseif digits then
+      expect_frame(again, ui.sel, false)
+    else
+      expect_plain(again, ui.sel)
+    end
   end
+  -- A selected cell whose stored notes are all ruled out by a neighbour's digit shows no marks, so it keeps the halo
+  -- frame of its "dark" ground, as an image or a dot would not.
+  local sel, hidden = empty[1], 0
+  for d = 1, 9 do
+    if cand[sel] & (1 << d - 1) == 0 then hidden = hidden | (1 << d - 1) end
+  end
+  assert(hidden ~= 0, "the selected cell has a hidden note to store")
+  notes[sel] = hidden
+  s.n = string.pack(grid.FMT, table.unpack(notes))
+  ui.sel = sel
+  local quiet, on_quiet = watch()
+  record(function() game.draw(s, 1, ui) end, nil, on_quiet)
+  expect_frame(quiet, sel, true)
 end
 
 -- The marks `game.draw` of state `st` with `u` makes, as watch gathers them.
@@ -796,6 +868,18 @@ function rules.look(state)
   end
   record(function() game.draw(s, 1, ui) end, nil, on_call)
   expect_frame(seen, sel, true)
+  -- A selected clue (not the focused digit's) is on the "light" ground, so it has the plain frame, not the halo.
+  for c = 1, 81 do
+    if s.v:byte(c) >= 49 and s.v:byte(c) <= 57 and s.v:byte(c) - 48 ~= ui.foc then
+      ui.sel = c
+      break
+    end
+  end
+  assert(ui.sel ~= sel, "a clue to select")
+  local plain, on_plain = watch()
+  record(function() game.draw(s, 1, ui) end, nil, on_plain)
+  expect_plain(plain, ui.sel)
+  ui.sel = sel
   local kinds = { black = 0, light = 0, dark = 0, none = 0 }
   for c = 1, 81 do
     local x, y, w, hh = layout.cell_rect(c)

@@ -245,10 +245,11 @@ def main(argv):
     if args.check:
         wanted = images()
         different += sorted(p.name for p in args.out.glob('note_*.png') if p.name not in wanted)
-        layout = args.out / 'layout.lua'
-        found = re.search(r'layout\.NOTE_W, layout\.NOTE_H = (\d+), (\d+)', layout.read_text()) if layout.is_file() else None
-        if not found or (int(found.group(1)), int(found.group(2))) != (IMAGE_W, IMAGE_H):
-            different.append('layout.lua NOTE_W, NOTE_H')
+        # layout.lua sits beside the images only in the game's own folder; a scratch folder has just the images.
+        if args.out == OUT:
+            found = re.search(r'layout\.NOTE_W, layout\.NOTE_H = (\d+), (\d+)', (OUT / 'layout.lua').read_text())
+            if not found or (int(found.group(1)), int(found.group(2))) != (IMAGE_W, IMAGE_H):
+                different.append('layout.lua NOTE_W, NOTE_H')
     for name, data in images().items():
         path = args.out / name
         if args.check:

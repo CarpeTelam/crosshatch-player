@@ -71,8 +71,8 @@ local function draw_end(state, ui)
 end
 
 -- A pencil mark k of the cell whose rectangle starts at x, y: a dot at the slot's centre cx, cy (grey ring, or solid
--- black for the focused digit; `paper` puts a white disc behind a ring on a grounded cell so its inner white shows), or
--- the digit's own image at layout.note_tile. Images come in three sets (make_note_images.py): in a "dark" cell (SHADE
+-- black for the focused digit; a `ground` puts a white disc behind a ring so its inner white shows), or the digit's own
+-- image at layout.note_tile. Images come in three sets (make_note_images.py): in a "dark" cell (SHADE
 -- PEERS) H, whose checker continues the ground's, drawn "black" and, for the focused digit, "white" (an inverted
 -- tile, placed to match); in any other cell B for the focused digit and G for the rest, all "black".
 local function draw_mark(ui, k, cx, cy, x, y, focused, ground)
@@ -148,9 +148,9 @@ local function draw_board(state, ui)
   if sel then
     local x, y, w, h = layout.cell_rect(sel)
     if marked[sel] and not ui.dots then
-      -- A digit note's image starts at inset 2 (its last row ends at 49, one pixel of paper), so the frame is the two
-      -- black outlines at 0 and 1 and no halo; dot notes keep the frame of their ground, as built.
-      frame(x, y, w, h, "black", 0, 1)
+      -- A digit note's image starts at inset 2 and its glyph at 3 (inset 2 is the image's blank margin), so the frame is
+      -- the three black outlines at 0 to 2 and no halo; dot notes keep the frame of their ground, as built.
+      frame(x, y, w, h, "black", 0, 2)
     elseif ground[sel] == "dark" or ground[sel] == "black" then
       frame(x, y, w, h, "white", 2, 4)
       frame(x, y, w, h, "black", 0, 1)
