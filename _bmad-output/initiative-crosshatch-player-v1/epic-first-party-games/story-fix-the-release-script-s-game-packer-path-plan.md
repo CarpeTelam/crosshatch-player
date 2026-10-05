@@ -3,7 +3,7 @@ title: 'Fix the release script''s game-packer path'
 type: 'bugfix'
 ticket: '12'
 created: '2026-10-05'
-status: 'built'
+status: done
 baseline_revision: 'ffbb4c7fa65038e4ee797c78528aa4687a978d58'
 route: 'oneshot'
 route_source: 'auto'
