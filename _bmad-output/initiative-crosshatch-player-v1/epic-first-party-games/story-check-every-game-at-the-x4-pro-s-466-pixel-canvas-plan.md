@@ -3,7 +3,7 @@ title: 'Check every game at the X4 Pro''s 466-pixel canvas'
 type: 'feature'
 ticket: '11'
 created: '2026-10-05'
-status: built
+status: done
 baseline_revision: '7699d2e0705b8978fc5d4785a92fa02b88df99f1'
 route: 'full'
 route_source: 'auto'
