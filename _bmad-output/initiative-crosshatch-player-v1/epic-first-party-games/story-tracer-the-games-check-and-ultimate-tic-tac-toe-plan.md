@@ -3,188 +3,193 @@ title: 'Tracer: the games check and Ultimate tic-tac-toe'
 type: 'feature'
 ticket: '1'
 created: '2026-10-04'
-status: 'draft'
+status: 'built'
+baseline_revision: 'd3795e885a93a86f324d19fdccb873289f54dbe0'
 route: 'full'
 route_source: 'auto'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'thorough'
+review_source: 'pinned'
+lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
   - '{project-root}/AGENTS.md'
+  - '{project-root}/test/game_script/first_party/README.md'
   - '{project-root}/test/game_script/fixtures/README.md'
   - '{project-root}/docs/crosshatch/api-level-1.txt'
 warnings: [oversized]
-deferred: []
+deferred:
+  - summary: >-
+      A rejected move after the round is over, or a malformed move, gets "Play in the highlighted board", though no board is highlighted then.
+    evidence: |-
+      `game.apply` uses one reason for every unplayable move (blind-hunter and edge-case-hunter). The device delivers no input once the round is over and `input` only builds well-formed moves, so a player never meets it; `checks.lua` pins the current wording, so a "Round is over" reason is a rule change for the owner's wording.
+    location: >-
+      games/ultimate-tic-tac-toe/main.lua (apply)
+    severity: low
+  - summary: >-
+      The HOW TO PLAY page is checked for fit only at the harness canvas (474x788) under stand-in text metrics, and has no scroll or paging for a canvas as narrow as 320 px.
+    evidence: |-
+      `helpPageFits` in checks.lua reads `ch.screen`, which a check cannot change, so the 320x480 and 480x800 canvases are not covered; seven wrapped paragraphs at a 28 px step may pass the bottom on a narrow canvas. No v1 device has such a canvas (X4 Pro and Sticky: 474 x 788), and only the simulator or a device shows real font fit.
+    location: >-
+      games/ultimate-tic-tac-toe/main.lua (help_lines), test/game_script/first_party/ultimate-tic-tac-toe/checks.lua (helpPageFits)
+    severity: low
+  - summary: >-
+      The games check sees only text commands, so no round or check can assert a highlight fill, an icon, or a won board's big mark.
+    evidence: |-
+      `RoundPlayer.cpp` keeps each frame's text commands only (verification-gap lens): removing the `light` fill loop or the won-board mark in `main.lua` leaves every round and check green. Only the simulator screenshots show them. Fixing it changes the games check (entry 8's files), which this entry's intent excludes.
+    location: >-
+      test/game_script/harness/games_check/RoundPlayer.cpp:126-138
+    severity: low
 ---
 
 <intent-contract>
 
 ## Intent
 
-**Problem:** No PR check packs, installs, or plays `games/<id>/`, so a broken first-party game first fails at release (epic Notes, pre-inception audit, 2026-10-04), and there is no first-party game at all. Entries 2 and 3 (Battleship, Sudoku) build on this entry's three interfaces: the rounds file, the companion folder's `checks.lua`, and the 9x9 board module.
+**Problem:** There is no first-party game yet: the games check (entry 8, merged) has nothing to play, and entries 2 and 3 (Battleship, Sudoku) need a finished game, a proven 9x9 board module, and a companion folder to copy the pattern from.
 
-**Approach:** A generic harness target `test/game_script/harness/games_check.cmake` finds every `<games root>/<id>/` at configure time, packs it with the real `pack_game.py`, installs it with the real installer, runs the game's `checks.lua` and every round of its companion folder `test/game_script/first_party/<id>/` headlessly over `Session` and `MatchRounds`, and fails on the epic's R10 list; `games-check` in `crosshatch-ci.yml` runs it. The tracer game is `games/ultimate-tic-tac-toe/` (R1, R3, R6, R8) with the board module (`board.lua`) entry 3 copies once, a HOW TO PLAY page behind a `question` icon button, and its rounds and checks in its companion folder.
+**Approach:** Add `games/ultimate-tic-tac-toe/` (R1, R6, R8) with the board module `board.lua` (R3, interface fixed by epic Notes Decision C3, which entry 3 copies once) and a HOW TO PLAY page behind a `question` icon button, and its companion folder `test/game_script/first_party/ultimate-tic-tac-toe/` (rounds in the Decision C1 format, a `checks.lua` in the Decision C2 interface, a dev tool under `tools/`), then show it running in the simulator.
 
 ## Boundaries & Constraints
 
-**Always:** Every new file is under `games/`, `test/game_script/`, `.github/workflows/crosshatch-ci.yml` (a Game path), or is this plan and its screenshots; no upstream file changes, so `check_upstream_touches.py` stays green with no ledger edit. The check names no game, and its own tests use fixtures (`test/game_script/fixtures/`) or text they write into the build directory, never `games/` (R2). `games/ultimate-tic-tac-toe/` is self-contained: its own text (not `tr()`), `main.lua` plus `board.lua`, no `icon.png`, no path outside itself named in it. Every drawing command, icon, and `ctx` field stays within `api-level-1.txt`. Every snapshot stays at or under 700 B (R9). Lua is 5.5 (`global` is reserved). Local variables in C++ stay under 256 B, buffers go on the heap, and allocation uses `makeUniqueNoThrow` or `new (std::nothrow)` where it can fail (AGENTS.md; the host tests follow it too, since this code is the template for later entries). No `Serial.print*`; the check logs through `std::cerr`/gtest, which is host-only.
+**Always:** Every new file is under `games/ultimate-tic-tac-toe/`, `test/game_script/first_party/ultimate-tic-tac-toe/`, or is this plan or its screenshots; no upstream file changes, so `check_upstream_touches.py` stays green with no ledger edit. `games/ultimate-tic-tac-toe/` is self-contained (R2): its own text (not `tr()`), `manifest.json`, `main.lua`, `board.lua`, no `icon.png`, no path outside itself named in it. Every drawing command, icon, and `ctx` field stays within `api-level-1.txt`; every snapshot at or under 700 B (R9); Lua is 5.5 (`global` is reserved); no call nears the 2,000,000-instruction budget or `frame_commands_count`. Rounds and checks name no path outside their companion folder.
 
-**Never:** Change `src/`, `lib/`, `docs/crosshatch/api-level-1.txt`, `API_SURFACE_CRC`, `platformio.ini`, the freeink-sdk pointer, `.skills/`, upstream's `ci.yml`, or any existing harness file (the new suite is one more `harness/*.cmake`, which the harness globs; `test/CMakeLists.txt` is untouched). Add `labeled` or another event to `crosshatch-ci.yml`. Commit scratch trees or generated files. Put a game, round, or fixture-copy of a game in `games/` for a test. Pass `games/` to another harness target.
+**Never:** Change `src/`, `lib/`, `docs/crosshatch/api-level-1.txt`, `API_SURFACE_CRC`, `platformio.ini`, the freeink-sdk pointer, `.skills/`, upstream's `ci.yml`, `crosshatch-ci.yml`, `test/CMakeLists.txt`, or any file of the games check (`test/game_script/harness/`, `first_party/README.md`); add a `nearby` mode, a zoomed view, or an API entry; name a game in `test/game_script/harness/` or `scripts/`; commit scratch trees or generated files; put a fixture or engine test in `games/`.
 
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
-| Green game | `games/<id>/` packs, installs, its checks and rounds pass | each `GamesCheck` test of the id passes; skipped declared modes are logged | none |
-| Pack failure | the packer exits non-zero for the folder | the id's package test fails with the packer's stderr | the other ids still run |
-| Load or Lua fault | `setup`, `apply`, `status`, `input`, or `draw` raises, exceeds 2,000,000 instructions, or a frame passes `frame_commands_count` | the round fails naming round, step, and `errorMessage()` | the round stops; later rounds run |
-| Snapshot over 700 B | any snapshot after `begin` or a step is larger | failure naming round, step, and the size | none |
-| Wrong outcome | final status differs from the round's `winners` (or an `unfinished` round is over) | failure naming expected and actual winners | none |
-| Rejected tap | step with `move = false` | `ver` unchanged and, if `shows` is set, the seat's next frame holds that text | a step that moves anyway, or lacks the text, fails |
-| Wrong seat | step names a seat other than the one shown | failure (the device delivers input to the shown seat only) | none |
-| No rounds / companion without game | `rounds/` missing or empty; `first_party/<id>/` with no `games/<id>/` | failure | none |
-| Round for another mode | round `mode` not in the manifest, or not `solo`/`pass` | failure | none |
-| Declared `nearby` | manifest lists `nearby` | logged as skipped, no failure | none |
-| Hidden manifest | `hidden` true, `pass` | the hidden flow plays (below); every local seat is still drawn after each step | none |
-| `checks.lua` fails | a check raises, the file is missing a list, or a guard fault | failure naming the check; a guard fault stops that game's remaining checks, counted | none |
-| Seed | same seed twice / another seed | identical / different `math.random` draws in `setup` | none |
-| UTTT forced board | last move in cell c, board c open | next move must be in board c (else rejected "Play in the highlighted board"), and board c is highlighted | |
-| UTTT finished target | board c won or full | any open board may be played | |
-| UTTT big result | three won small boards in a line / no live line left | `winners` = that seat / `{}` | |
+| Package | `games/ultimate-tic-tac-toe/` | `GamesCheckTest` packs, installs, and loads it; the manifest is `pass`, seats 2/2, not hidden | none |
+| Forced board | last move in cell c, board c open | the next move must be in board c; board c alone is highlighted | a move elsewhere is rejected "Play in the highlighted board" |
+| Finished target | board c won or full | any open board may be played; every open board is highlighted | a tap in a won or full board is rejected the same way |
+| Taken cell | tap on an occupied cell of a playable board | no move | rejected "That cell is taken" |
+| Small board result | three in a line in a small board / its 9 cells full | board closed, drawn as a big mark / a `light` fill | none |
+| Big result | three won boards in a line / no live line left (every line holds both marks or a full board) | `winners` = that seat / `{}` | none |
+| HOW TO PLAY | tap the `question` button; then any tap | the rules page replaces the board, no move; the next tap closes it, no move | none |
+| Tap off the grid | tap outside the 9x9 grid | no move | none |
+| Board geometry | `layout` at 474x788, 480x800, 320x480 | `L = {x, y, cell, size, block}` as Decision C3; `cell_at` inverts `cell_rect` for all 81 cells and is `nil` outside | a failing check names itself |
+| Snapshot and frames | every step of every round, every seat drawn | snapshot at most 700 B; no fault, frame within limits | the check fails the round |
 
 </intent-contract>
 
 ## Code Map
 
-Read, never edit:
-- `test/game_script/LuaGameFixture.h` -- `LuaGameTest::SessionGame`, the arena/frames/canvas/`HostPorts` wiring, `frontCommands()`; the model for the check's rig. The check cannot derive from it (it is gtest-bound): copy the wiring into `GamesCheckRig`.
-- `lib/GameScript/LuaGame.cpp` 191-374 -- `load()` (state, `BindingContext` fields, `guard.install`) and `enter()` (`guard.arm`, `lua_pcall`, fault vs status): `ScriptVm` mirrors these with public pieces (`ArenaAllocator::luaAlloc`, `openSandbox`, `openChLibrary`, `setBindingContext`, `CallGuard`).
-- `lib/GameScript/MatchRounds.h` -- `begin`, `beginAgain`, `play(event, seat)`, `draw(seat)`, `start`, `step`; `lib/GameCore/SeatShown.h`, `MatchLifecycle.h`; `src/games/GameVM.cpp` 295-340 (`stepHandOff`), 260-293 (`drawShown`, `showSeatNow`) -- the hidden flow the driver follows.
-- `lib/GameCore/Session.h` (`ver()`, `status()`, `snapshot()`, `draw(seat)`), `Roster.h` (`pass`, `passSeats`), `Manifest.h` (`ManifestReader`, `ManifestSettings`, `SettingValues`), `src/games/GameRegistry.h` (`readGame`), `GameAssets.h`, `MatchStore.h`, `GamePackageInstaller.h`, `GameHostCaps.h`.
-- `test/game_script/harness/packed_fixtures.cmake`, `pack_fixtures.py`, `PackedFixturesTest.cpp` -- the pack-then-install pattern, `HalDisplay display;`, `gtest_discover_tests`. `installer.cmake`, `match.cmake` -- `game_installer_src`, `game_harness_src`, `game_harness_core`, `game_match_src`. Linking `game_installer_src` with `game_harness_src` and `game_harness_core` in one executable links cleanly (probed during planning with a scratch executable that called `installAll()` and `GameAssets::load` with a `MatchStore`; removed afterwards).
-- `test/game_script/fixtures/pass-open`, `pass-hidden`, `pass-art`, `tracer` -- engine scratch games (their `ch.log` lines name each seat's calls).
-- `test/game_script/harness/GameVmTest.cpp` 215-300 and `MatchSupport.h` -- the GameVM hidden-flow tests and rig the pin test reuses.
+Read, never edit (all under `/home/user/epic-first-party-games-lane-a/`):
+- `test/game_script/first_party/README.md` -- the rounds format (C1: `{mode, settings?, seed?, steps, winners | unfinished}`, step `{seat, x, y, wait?, move?, shows?}`, `steps` may be a function of the decoded state), the `checks.lua` interface (C2), what the check proves; an open pass round's step seat is the turn seat; a step after the round ends fails.
+- `test/game_script/harness/games_check/{GameCheck,RoundPlayer,RoundFile,ScriptVm}.cpp` -- how rounds and checks run (read to resolve a doubt, do not edit); `ScriptVm` stands in for the device sandbox (`os`, `load`, `package` nil; `require` finds the game's modules and the companion's top-level `.lua` files; `ch.gfx` only inside `draw`; text metrics are the harness's stand-ins).
+- `test/game_script/fixtures/pass-open/main.lua` -- the shape of a two-seat open pass game (`status`, `apply`, `input` with `rejected` and `over` events, seat 0's frame); `docs/crosshatch/api-level-1.txt` (icons `x`, `circle`, `question`; limits); `docs/crosshatch/game-icons.md`; `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md` sections 1 to 4, 7; `scripts/pack_game.py` (what a package may hold).
+- `.claude/skills/run-crosshatch-player/SKILL.md`, `docs/crosshatch/game-canvas.md` -- the simulator driver and the end-of-round menu (screenshots, after the review).
 
-New, all under `/home/user/epic-first-party-games-lane-a/`:
-- `test/game_script/harness/games_check.cmake`, `harness/pack_games.py`, `harness/games_check/*` (core library, glue, tests), `test/game_script/first_party/README.md`, `.../ultimate-tic-tac-toe/{checks.lua, taps.lua, rounds/*.lua, tools/make_rounds.py}`.
+New:
 - `games/ultimate-tic-tac-toe/{manifest.json, main.lua, board.lua}`.
-- `.github/workflows/crosshatch-ci.yml` -- the `games-check` job and its `needs` line (also its header comment).
+- `test/game_script/first_party/ultimate-tic-tac-toe/{checks.lua, taps.lua, rounds/{won-by-seat-1,won-by-seat-2,drawn,forced-board,rejected-move}.lua, tools/make_rounds.py}`.
+- `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-screenshots/*.png` (five shots; the build agent takes them after the review, not the implementer).
 
 ## Tasks & Acceptance
 
-**Execution** (in this order; group 1 stands alone and can be a separate commit if the orchestrator splits the ticket):
-
-Group 1, the check.
-- [ ] `test/game_script/harness/games_check/ScriptVm.{h,cpp}` -- class over `lua_State`: `ScriptVm(arena, sources, ports, canvas, images)`, `load()` (state from `luaAlloc`, `openSandbox`, `openChLibrary`, installs a `CallGuard`), `call(chunkText, name, fn)` running a function under `guard.arm` with the 2,000,000-instruction budget and reporting `Ok | Error(message) | Fault(message)`. Extra sources are the companion folder's top-level `*.lua` modules (a name clash with a game module is a failure). Stands in for the device sandbox: pinned by `ScriptVmTest.cpp` (same snippets through `DirectGame` and `ScriptVm`: `os`, `load`, `package` are nil, `require` finds package modules, a loop faults at the budget, `ch.gfx` outside `draw` errors).
-- [ ] `games_check/RoundFile.{h,cpp}` + `RoundFileTest.cpp` -- evaluates `rounds/<name>.lua` in a `ScriptVm` and converts the returned table into `Round` (C1 below); unknown keys, wrong types, empty `steps`, both or neither of `winners`/`unfinished`, `seed` not an integer, a setting id or value the manifest lacks are errors naming the key.
-- [ ] `games_check/RoundPlayer.{h,cpp}` -- plays one `Round` over `LuaGame`, `Session`, `MatchRounds` (D1): fresh `LuaGame` per round with `SeededRandom(seed)` as `HostPorts::random`, a `FakeClock` the steps advance, the device canvas 474x788, `setSettings`; solo uses `start`/`step`, open pass the same, hidden follows `stepHandOff` (D2); after `begin` and every step it checks the snapshot size, draws every local seat (and seat 0 once over), reads each frame's text commands, and records failures. Option `drawEveryLocalSeat` (default true).
-- [ ] `games_check/GameCheck.{h,cpp}` -- installer-bound glue: packed `.chgame` onto the fake card, `installAll()`, `GameRegistry::readGame`, `GameAssets::load` through a `MatchStore`, `ManifestReader` settings, then `runChecks` (C2) and `playRounds` (modes: play `solo`/`pass` the manifest declares and `gameHostCaps()` can start; log each other declared mode as skipped), returning a `Report` of failures and notes.
-- [ ] `games_check/SeededRandom.h` -- `GameCore::IRandom` over a splitmix32 stream from the round's seed; no process-wide state.
-- [ ] `harness/pack_games.py` -- for each id runs `pack_game.py <root>/<id> <out>`, writes `<id>.hash` on success or `<id>.packerror` with stderr on failure, then a `packed.stamp`; exit 0 after every id was tried, 2 for usage; never fails the build for a game's fault (the test does).
-- [ ] `harness/games_check.cmake` -- cache variables `GAMES_CHECK_GAMES_ROOT` (default `games/`) and `GAMES_CHECK_COMPANION_ROOT` (default `test/game_script/first_party`), made absolute; ids = directories of each root, found with `CONFIGURE_DEPENDS` globs; one custom command (inputs: every file of the games root, `pack_games.py`, `pack_game.py`, `fork_common.py`, `ApiLevel.h`, `names.txt`) and a `packed_games` target; library `games_check_core` (ScriptVm, RoundFile, RoundPlayer; links `game_harness_core`, `lua_vendored`); executables `GamesCheckTest` (production), `GamesCheckEngineTest` (self-tests), each compiling `Session.cpp` and `MatchLifecycle.cpp` and linking `game_installer_src game_harness_src game_harness_core GTest::gtest_main`; `GamesCheckFlowTest` (the pin, D2) linking `game_match_src`, `games_check_core`, `GTest::gtest_main`. Definitions: roots, ids, `PACKED_GAMES_DIR`, scratch dir, `PACK_GAME_PY`, `PYTHON_EXECUTABLE`, `MATCH_FIXTURES_DIR`. `gtest_discover_tests(... PROPERTIES LABELS games-check)` for all three; `GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST` for an empty id list.
-- [ ] `games_check/GamesCheckTest.cpp` -- per game id: `ThePackageInstallsAndLoads` (packerror absent, installer reports 1 installed, registry lists it `check.ok()`, the hash equals the packer's), `TheGamesOwnChecksPass`, `EveryRoundPlaysAsItsFileSays` (no rounds is a failure); per companion id: `HasAGame`.
-- [ ] `games_check/GamesCheckEngineTest.cpp` -- the committed negative and positive cases of the I/O matrix over scratch trees the test writes into the build directory (copies and edits of `fixtures/pass-open`, `pass-hidden`, `pass-art`, a `math.random` scratch game, packed by the real packer through `std::system`): pack failure, Lua error, instruction-budget fault, frame-limit fault, snapshot 701 B red and 700 B green, wrong winners, no rounds, companion without game, undeclared-mode round, `nearby` skipped, failing and passing `checks.lua`, a check that exceeds the budget, the hidden flow over `pass-hidden`, settings over `pass-art`, seeds (same seed same draws, different seed different).
-- [ ] `games_check/GamesCheckFlowTest.cpp` -- the pin (D2): over `pass-hidden`, the seats drawn and the input and apply lines of `RoundPlayer` with `drawEveryLocalSeat` off equal `GameVM`'s hidden flow's log lines for the same four taps.
-
-Group 2, the game.
-- [ ] `games/ultimate-tic-tac-toe/board.lua` -- C3. `manifest.json` -- id `ultimate-tic-tac-toe`, name "Ultimate Tic-Tac-Toe", version "1.0.0", api 1, seats 2/2, modes `["pass"]`, hidden false, no icon (the launcher's default mark). `main.lua` -- the rules and drawing (Design Notes).
-- [ ] `test/game_script/first_party/ultimate-tic-tac-toe/rounds/{won-by-seat-1,won-by-seat-2,drawn,forced-board,rejected-move}.lua`, `taps.lua` (cell to canvas tap through `board`), `checks.lua` (board geometry at 474x788, 480x800, 320x480; every win line; apply rejections), `tools/make_rounds.py` (stdlib; an independent Python implementation of the rules that searches playouts and prints the move lists committed in the rounds; not run by CI).
-- [ ] `test/game_script/first_party/README.md` -- the companion folder (layout, the rounds format, the `checks.lua` interface, the cache variables, how to run `GamesCheckTest`, how a game leaves with its folder).
-
-Group 3, CI and evidence.
-- [ ] `.github/workflows/crosshatch-ci.yml` -- job `games-check` (checkout with submodules, `apt-get install cmake ninja-build`, googletest cache as `ci.yml`, configure, `cmake --build build/test --target GamesCheckTest GamesCheckEngineTest GamesCheckFlowTest`, `ctest --test-dir build/test -L games-check --output-on-failure`), added to `Crosshatch Test Status` `needs`, and one line in the header comment.
-- [ ] `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-screenshots/` -- the five simulator shots of Verification.
+**Execution:**
+- [ ] `games/ultimate-tic-tac-toe/board.lua` -- the C3 module exactly: `layout(w, h, opts?)`, `cell_rect(L, row, col)`, `block_rect(L, brow, bcol)`, `cell_at(L, x, y)`, `draw_grid(L)`; no game rule in it, nothing named for tic-tac-toe, so entry 3 copies it unchanged -- R3, Decision C3.
+- [ ] `games/ultimate-tic-tac-toe/manifest.json` -- id `ultimate-tic-tac-toe`, name "Ultimate Tic-Tac-Toe", version "1.0.0", api 1, seats 2/2, modes `["pass"]`, hidden false, no icon -- R1.
+- [ ] `games/ultimate-tic-tac-toe/main.lua` -- the rules, `input`, and `draw` as Design Notes' UTTT section says -- R6, R8, R9.
+- [ ] `test/game_script/first_party/ultimate-tic-tac-toe/taps.lua` -- module `taps`: `taps.tap(b, c)` returns the canvas centre of cell c of small board b through `board` and `ch.screen`; `taps.steps(moves)` turns a move list `{{b, c}, ...}` into steps alternating seats 1, 2; the `question` button's centre; so rounds read as move lists.
+- [ ] `.../rounds/{won-by-seat-1,won-by-seat-2,drawn,forced-board,rejected-move}.lua` -- the five rounds (Design Notes) -- Verify's round kinds.
+- [ ] `.../checks.lua` -- list of `{name, run}`: board geometry at the three sizes (values of Decision C3), `cell_at` and `cell_rect` agree for all 81 cells at each size and `cell_at` is `nil` just outside, `block_rect` covers its nine cells, every win line wins (small boards and big, both marks), the draw rule (a state with no live line is a draw, one live line is not), apply rejections (taken cell, wrong board, closed board, out-of-range or non-integer `b`/`c`), the forced-board hand-over (to c when open, to any when closed).
+- [ ] `.../tools/make_rounds.py` -- stdlib only, an independent Python implementation of the rules (it shares no code or constants with `main.lua`); searches seeded random playouts for a win by each seat and a draw, and builds the forced-board and rejected-move move lists; prints the move lists in the Lua syntax the rounds hold. Not run by CI; its docstring says how to run it.
+- [ ] `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-screenshots/` -- five simulator shots (Verification) -- the build agent, after the review.
 
 **Acceptance Criteria:**
-- Given `games/ultimate-tic-tac-toe/`, when `ctest -L games-check` runs, then its package, checks, and every round pass, and the five rounds include a win by each seat, a draw, a forced-board round, and a rejected move.
-- Given a scratch game root where a game fails to pack, raises a Lua error, exceeds a budget or frame limit, grows a snapshot past 700 B, loses its rounds, or fails its `checks.lua`, when `GamesCheckTest` runs against it, then it fails, and it passes for scratch rounds over `fixtures/pass-hidden/` and `fixtures/pass-art/`.
-- Given the finished tree, when `test/game_script/harness/` and `scripts/` are searched for the names of the three first-party games, then no harness code or script names one (fixture names excepted).
-- Given the PR, when CI runs, then `games-check` runs the three executables and `Crosshatch Test Status` waits for it.
-- Given the packed game in `fs_/games/`, when Games is opened in the simulator, then it installs and a pass round plays with the playable small boards highlighted.
+- Given the finished tree, when `ctest -L games-check` runs, then `GamesCheckTest` passes the package, the game's checks, and all five rounds, which include a win by each seat, a draw, a forced-board round, and a rejected move, and no snapshot passes 700 B.
+- Given a scratch copy of the game with the forced-board rule or the draw rule removed, when the real target runs over it, then the rounds fail (the rounds prove the rules).
+- Given the packed game in `fs_/games/`, when Games is opened in the simulator, then it installs and a pass round plays with the playable small boards highlighted, a won small board shows as a big mark, the `question` button opens the HOW TO PLAY page, and the end-of-round menu opens over the final frame.
+- Given `test/game_script/harness/` and `scripts/`, when searched for the three first-party games' names, then no harness code or script names one (fixture names excepted), and `check_upstream_touches.py` passes with no ledger edit.
 
 ## Implementation Notes
+
+Built by one implementation subagent from this plan (route: full). Choices inside the plan, none changing an outcome the Notes settle: a move is `{b, c}` (positional); every unplayable tap (out of range, closed board, outside the forced board, after the round is over) gets "Play in the highlighted board", an occupied cell "That cell is taken"; the `question` button's tap area is 80 x 100 px at the top right (icon 64 px); the game table carries two extra fields, `playable(state)` and `help_lines()`, which `checks.lua` uses (the runtime ignores extra fields; `checks.lua` runs them); grid lines are 1 px `black` lines (`light` and `dark` are fills only); the HOW TO PLAY text is seven paragraphs wrapped with `ch.text_width` at a 28 px line step. `tools/make_rounds.py` found seeds 2423 (seat 1 wins in 29 moves), 2664 (seat 2 wins in 32), 2733 (draw in 44), 1828 (the forced-board list); `rejected-move` is hand-composed and checked by the tool. Risks it named: text fit is unproven under the host's stand-in metrics (the simulator screenshots show it); a 128 px won-board mark would not fit a block on a 320 px canvas (fine at 474 and 480). Build agent's verification of the diff: the full host suite 1749/1749 and `-L games-check` 71/71 pass, the game's three tests and `HasAGame` among them.
+
+After the review (patches applied by the build agent, the implementation subagent having finished): the won mark takes the largest icon size that fits its block; the cells of won boards are not drawn; `checks.lua` gained the ninth-cell-line case and a draw with a small board still open (`121201212`); the finished rounds' last step has `shows` for the header; `make_rounds.py` now finds a `forced-board` list whose target was won before the move (seed 3497, which also holds the own-cell case) and a `drawn` list that leaves a small board open (seed 703, 51 moves); `forced-board.lua` and `drawn.lua` hold those lists. Found by the build agent's mutant run, not by a lens: with the draw rule replaced by "draw only when no small board is open" every check and round still passed (the first `drawn` list ended with all boards closed); the new check and list turn that mutant red.
 
 ## Plan Change Log
 
 - 2026-10-04 (orchestrator, after the owner's checkpoint): approved C1 (amended: `steps` may be a function of the decoded initial state), C2, C3, and D1 to D3, recorded as epic Notes Decisions of 2026-10-04. The owner split this ticket: groups 1 and 3 (the games check, its tests, the CI job, `first_party/README.md`) are now entry 8 (`story-the-games-check-plan.md`), which merges first; this entry keeps group 2 (Ultimate tic-tac-toe, `board.lua`, its companion folder, its rounds and checks) and the screenshots, and plays through entry 8's check. Status reset to draft so the next run narrows this plan to group 2 and the screenshots against the narrowed entry in `tickets.toml`.
+- 2026-10-04 (build agent, planning, entry 8 merged into the tree): narrowed to group 2 and the screenshots. Removed the games check's tasks, its I/O rows, its code map, the three engine executables, the `games-check` job and the fresh-tree run (no CI gate or workflow changes here), and the planning run's `## Auto Run Result`. The `<intent-contract>` was the combined ticket's text; it is rewritten to the narrowed entry's `tickets.toml` description, as entry 8's plan did, not preserved verbatim. UTTT's Design Notes below follow the approved plan's group 2, with the choices the Notes leave to the builder listed under "Builder's picks".
 
 ## Review Triage Log
 
+### 2026-10-05 - Review pass
+- verdicts: 18 findings - high 0, medium 2, low 14, false 2, maybe-false 0
+- findings:
+  - `[false]` `reject` blind: `apply` ignores `seat` and takes the mark from `state.m` -- game-api-seed section 2: "The runtime passes moves to `apply` only from the seat that `status` names", so a wrong-seat move never reaches `apply`; the fixtures do the same.
+  - `[low]` `defer` blind: one reason ("Play in the highlighted board") for malformed and after-over moves -- real wording gap, not reachable by a player; deferred (edge-case lens finding E2 is the same root).
+  - `[low]` `patch` blind: hard-coded 32 and 128 px icon sizes, a 128 px mark spills on a 320 px canvas -- patched: the won mark takes the largest icon size that fits its block (128, 64, or 32 px); the small cell icon stays 32 (a 34 px cell holds it). Edge-case lens E1 is the same root.
+  - `[low]` `defer` blind: HOW TO PLAY fit is checked only at the harness canvas -- deferred (no narrow device in v1).
+  - `[low]` `patch` blind: forced-board round's comment says "already won" but its won target is the move's own cell -- patched: `make_rounds.py` now requires the target to be won before the move (seed 3497 rows), the round and its comment say what they cover, and the own-cell case stays in the same round. Edge-case lens E3 and E4 are the same root.
+  - `[low]` `reject` blind: nothing ties the committed rounds to `make_rounds.py` -- by the plan, the tool is not run by CI; the rounds' `winners` and `move` flags are what prove the lists against `main.lua`, and a changed rule fails a round.
+  - `[medium]` `patch` blind: line-vs-full precedence in a small board is untested -- patched: `checks.lua` forcedBoardHandOver plays a ninth cell that completes a line and asserts the board is won, not "3" (verification-gap lens VG1 is the same root).
+  - `[low]` `patch` blind: a won board's nine cell icons are drawn and then covered -- patched: the cells of won boards are skipped.
+  - `[low]` `reject` blind: UI cues (winning line, last move, header collision at 320 px) -- new features the approved design does not name, not defects; no v1 device has a 320 px canvas.
+  - `[false]` `reject` blind: integral floats from the host would be refused -- the codec keeps integers as integers and tap coordinates are integers (the fixtures use `//` on them); no float path is shown.
+  - `[low]` `reject` blind: duplicated `LINES` and reason strings in `checks.lua`, public `help_lines`, `setup` ignores `ctx` -- the check's constants are an independent pin on purpose, `help_lines` is in the plan, and a fix adds code for no named harm.
+  - `[low]` `patch` edge E1: large icon overflows a block under 128 px -- see the hard-coded icon sizes row; patched.
+  - `[low]` `defer` edge E2: after-over and malformed moves get the board reason -- see the reason-wording row; deferred.
+  - `[low]` `patch` edge E3: `forced_board` accepts a target the move itself won -- see the forced-board comment row; patched in the tool.
+  - `[low]` `patch` edge E4: `forced-board.lua` claim -- see the forced-board comment row; patched.
+  - `[medium]` `patch` verification-gap VG1: the ninth cell completing a line is not pinned -- see the precedence row; patched.
+  - `[low]` `patch` verification-gap VG2: the header text is never asserted -- patched: the last step of each finished round has `shows` "Player 1 (X) wins", "Player 2 (O) wins", or "Draw"; the fills, icons, and big marks cannot be seen by the harness, deferred (entry 8's files).
+  - `[low]` `reject` intent-alignment: expectations live at the simulator surface while the diff's tests are headless -- true and planned for: the screenshots under Verification are the simulator evidence; nothing to change in the diff.
+
 ## Design Notes
 
-**The three choices for the owner's checkpoint** (epic Notes, 2026-10-04: "Entries 1 and 3 get a plan checkpoint"; "entry 1's checkpoint is where the owner approves the rounds file format, the companion folder's `checks.lua` interface, and the 9x9 board module's interface"). Recorded as Decisions in the epic Notes once approved, before entries 2 and 3 are dispatched.
+**Interfaces fixed by the owner (epic Notes, 2026-10-04):** C1 the rounds file, C2 `checks.lua`, C3 `board.lua` (`layout` -> `{x, y, cell, size, block}` with `opts.top` 120, `bottom` 40, `margin` 4, `cell = min((w - 2*margin)//9, (h - top - bottom)//9)`, `size = 9*cell`, `block = 3*cell`, `x = (w - size)//2`, `y = top`: 51 px cells at x = 7, y = 120 on 474x788, 52 on 480x800, 34 on 320x480; `cell_rect` and `block_rect` return `x, y, w, h`, rows and columns 1-based; `cell_at` returns `row, col` or `nil`; `draw_grid` draws 1 px lines on every cell edge and 3 px black lines on every block edge and the border, about 30 commands, nothing else; all pure except `draw_grid`). The games check as built: README's rounds and `checks.lua` text; the driver is `Session`/`MatchRounds`, so `input`, `apply`, `status`, and `draw` for every local seat run on every step.
 
-C1, the rounds file `rounds/<name>.lua` (a Lua chunk evaluated in the game's sandbox VM: `ch.screen` is the 474x788 device canvas, `require` finds the game's modules and the companion folder's top-level `.lua` files, so a round computes taps with the game's own `board`; it returns):
+**UTTT (R6, R8; `first-party-games.md`, Ultimate tic-tac-toe; the approved plan's group 2):**
+- `state = {c = <81 chars, "0" empty, "1" x, "2" circle; cell c of small board b is char (b-1)*9+c>, w = <9 chars, one per small board: "0" open, "1" or "2" won by that seat, "3" full with no line>, n = <forced small board 0..9, 0 = any open one>, m = <moves played>}` (about 120 B). `status`: `{over = true, winners = {mark}}` when `w` holds three of a mark in a line; `{over = true, winners = {}}` when no line is live for either mark (a line is live for a mark when each of its three `w` chars is "0" or that mark); else `{turn = m % 2 + 1}`. Seat 1 plays x, seat 2 circle.
+- `apply(state, seat, move)` with `move = {b, c}`: reject a non-integer or out-of-range `b` or `c`, or a board that is not playable (closed, or not the forced one), with "Play in the highlighted board"; an occupied cell with "That cell is taken". Otherwise place the mark, close the small board (won by a line of its nine cells, or full), set `n = c` when board c is open else 0, `m = m + 1`. Every reason is within `reject_reason_bytes` (64).
+- `input`: a `tap` on the `question` button (medium icon, top right, tap area at least 64 px) sets `ui.help` and makes no move; any tap while `ui.help` closes it, no move; otherwise clear `ui.message`, map the tap through `board.cell_at` to a global (row, col), then to `(b, c)`, return `{b, c}` or `nil` off the grid; a `rejected` event sets `ui.message`; `over` and others return `nil`.
+- `draw`: clear white; header text "Player N (X) to move" / "Player N (O) to move" (N the turn seat; at seat 0 or over, the result: "Player N (X) wins" or "Draw"); the `question` icon; `light` fill under every playable small board (the forced one, else every open one; none when over); `light` fill under a full board; `board.draw_grid`; `x` and `circle` icons at 32 px centred in each cell; a won board drawn over its cells and lines as a white fill inside the block lines with a 128 px mark centred; `ui.message` in "small" text under the board. The HOW TO PLAY page replaces all of it: a title and the rules and controls in "small" text, wrapped by `ch.text_width` so it fits whatever the font metrics are. Fewer than 100 drawing commands plus at most 81 icons, far inside `frame_commands_count` and `frame_icon_image_pixels`.
+- HOW TO PLAY text covers: seat 1 is X and seat 2 is O; tap an empty cell; the cell's place in its small board is the small board the other player must play in next; when that board is won or full they play in any open board; three in a row in a small board wins it; three won boards in a row win the game; no line left to make is a draw; the highlighted boards are the playable ones; the question button opens this page, a tap closes it.
+- Snapshot and frames: under 700 B throughout (R9); the check's every-seat draw covers the frame limits.
 
-```lua
-return {
-  mode = "pass",                   -- "solo" | "pass"; must be a mode the manifest declares
-  settings = { level = "Easy" },   -- optional: setting id -> value (else the manifest's default)
-  seed = 1,                        -- optional integer (default 1): seeds the game's random source
-  steps = {                        -- at least one, one tap each, in order
-    { seat = 1, x = 120, y = 300 },
-    { seat = 2, x = 60, y = 300, move = false, shows = "That cell is taken" },
-    -- optional: wait = <ms> (the clock advances first); move = false (the tap must not change
-    -- the state, default true = it must, ver + 1); shows = "text" (a text command containing it
-    -- in `seat`'s frame after the step)
-  },
-  winners = { 1 },                 -- the round must be over with exactly these ({} = draw), or
-  -- unfinished = true,            -- the round must still be on after the last step
-}
-```
-Mode is per round, not a cross product, because the modes differ in play (solo: seat 1 plays every move) and the epic only has single-mode games (R1: UTTT and Battleship `pass`, Sudoku `solo`); R10's "in each declared mode it can play" is read as: each round runs in its `mode`, a declared mode with no round is not a failure, and a declared mode the host cannot play (`nearby`) is logged as skipped. Taps, not moves, because `Session` takes a move only from `input` (`Session::handle`), so only a tap exercises `input`, `apply`, `status`, and `draw` together. Timer events are not delivered; `wait` only moves `ch.time.ms()` (Sudoku's elapsed time). Alternatives rejected: JSON (raw pixel lists for 81 cells are unreadable), moves into `LuaGame::apply` (skips `input` and the Session).
+**Rounds (C1):** all `mode = "pass"`, move lists `{b, c}` through `taps.steps`; `won-by-seat-1`, `won-by-seat-2` (`winners = {1}` and `{2}`, each ends with three won boards in a line), `drawn` (`winners = {}` by the no-live-line rule), `forced-board` (`unfinished = true`: a move sends the opponent to board c, a tap in another board is `move = false` with `shows = "Play in the highlighted board"`, the legal reply follows, and later a move sends the opponent to a won board so a free choice is played), `rejected-move` (`unfinished = true`: a tap on an occupied cell is `move = false` with `shows = "That cell is taken"`; the `question` button is `move = false` with `shows = "HOW TO PLAY"`; a tap closes it, `move = false`; a tap off the grid is `move = false`; then a legal move). The lists come from `tools/make_rounds.py`'s independent rules: its agreement with `main.lua` is what the round `winners` prove, so it must not share code with the game.
 
-C2, `checks.lua`, loaded as module `checks` in the same sandbox VM (same libraries, `ch`, canvas, `require`; `math.random` seeded 1, so a check calls `math.randomseed(n)` for its own seed and `require("main")` for the game table, then `setup(ctx)` with the settings it chooses):
+**Builder's picks the Notes leave open** (none changes an outcome they settle): the header and message wording; a closed board's tap uses the forced-board reason (the highlighted boards are the ones that can be played); the won mark is `"regular"` weight; a full board is `light` as the approved design says (a full board is never playable, so the two uses of `light` never meet); extra fields on the game table (for example a `playable(state)` helper for `checks.lua`) are allowed only if the runtime ignores them, which `checks.lua` or a round must confirm by running.
 
-```lua
-return {
-  { name = "every win line wins", run = function() ... end },  -- failing = raising (assert or error)
-}
-```
-Each `run()` is its own guarded call with a fresh 2,000,000-instruction budget, so many checks may total far over it (Sudoku: one per bank puzzle); loading the module is one call too. A failure names the check and the Lua message and later checks still run; a guard fault (budget, stack, memory) fails that check and stops the game's remaining checks, which the report counts. No entries, or a non-list, is a failure. The VM is built from public `lib/GameScript` pieces, so no engine file changes.
+**Settled by existing text:** no `icon.png` and no manifest icon (`first-party-games.md`: the launcher's default mark; entry 1's `tickets.toml` description); text is the game's own, not `tr()` (R2); modes `["pass"]` only (R1; epic-play-nearby adds `nearby`); no zoomed view (R6); the check, not this entry, checks the package and the frames (R10).
 
-C3, `board.lua` (copied once into `games/sudoku/` by entry 3, then owned by each):
-`board.layout(w, h, opts?)` -> `L = {x, y, cell, size, block}` (`opts`: `top` default 120, `bottom` 40, `margin` 4; `cell = min((w - 2*margin)//9, (h - top - bottom)//9)`, `size = 9*cell`, `block = 3*cell`, `x = (w - size)//2`, `y = top`; 51 px on 474x788); `board.cell_rect(L, row, col)` and `board.block_rect(L, brow, bcol)` -> `x, y, w, h`; `board.cell_at(L, x, y)` -> `row, col` or `nil` outside the grid; `board.draw_grid(L)` draws 1 px lines on every cell edge and 3 px black lines on every block edge and the border (about 30 commands), nothing else. Pure except `draw_grid`, which needs `draw`'s context.
-
-**Settled by existing text.** Driver at the `Session`/`MatchRounds` level, not `GameVM` (D1; the builder's pick the ticket allows): the check must draw every local seat after each step (R10, epic Notes 2026-10-04), which `GameVM` never does (it draws the shown seat only); a seat's frame in a non-turn seat is what `nearby` needs (epic Notes, Handoff to epic-play-nearby). It is deterministic (no threads or clock), so no flake bar applies, and a per-round seed needs only an `IRandom` (`LuaGame::load` and `openSandbox` take `HostPorts::random`), not the target stub `screen_stubs/esp_random.h` the ticket's unknown feared. Real pieces: the real packer, installer, registry, `GameAssets`, `LuaGame`, `Session`, `MatchRounds`, `seatShown`, and `gameHostCaps()`.
-
-D2, the hidden flow (R10; spine AD-21; `GameVM::stepHandOff`): for a `hidden` pass manifest the driver draws nothing after `begin` (HandOff); shows the turn seat (`seatShown(Playing)`); delivers a step only to the shown seat (else the step fails); after a move with `!over && turn != seat` shows the mover (Result), then HandOff, then the new turn seat; once over it shows seat 0. Each guard in `stepHandOff` it follows: a seat other than the shown one gets no input; a move that ends the round is RoundOver, never a turn change; seat 0 is drawn when the status is over. It is a double of `GameVM`'s hand-off, more permissive in one way (no timer hold, no queued events) and stricter in none; `GamesCheckFlowTest` pins that its draw and input sequence on `pass-hidden` equals `GameVM`'s (retro AI-4). No existing function is moved or rewritten, so no `git log -L` reading applies.
-
-D3, committed negative tests, plus one-off evidence: the engine tests are committed (cheap, they guard the check itself and need no nested build); the epic's "scratch trees turn the target red" is also shown once on the real target by reconfiguring with the two cache variables pointed at scratch roots in the build directory (recorded in Verification, nothing committed). The red cases there are copies of `games/ultimate-tic-tac-toe/` edited in the scratch tree.
-
-D4, the check runs only `ScriptVm`-evaluated rounds against what the installer wrote (`GameAssets`), not the source folder, so it plays what ships.
-
-UTTT (R6, R8; first-party-games.md): `state = {c = <81-char string 0/1/2>, w = <9-char: 0 open, 1 or 2 won, 3 full>, n = <forced board 0..9, 0 any>, m = <moves>}` (about 120 B); `status` turn = `m % 2 + 1` or over; the winner is a line of won boards (`winners {mark}`); a draw when every line holds both marks or a full board; `apply({b, c})` rejects "Play in the highlighted board", "That cell is taken"; the next forced board is `c` when open, else 0. `input` maps a tap to `(b, c)` via `board.cell_at`; a tap on the `question` button (medium, top right) sets `ui.help`, and a tap while it is open closes it and makes no move; `rejected` events set `ui.message`. `draw`: header ("X to move" or the result), the `question` icon, `light` fill under playable boards, `x`/`circle` icons at 32 px in cells, a won board filled white with a 128 px mark, a full board `light`, then `board.draw_grid`; HOW TO PLAY replaces the board with the rules and the controls in `"small"` text. Fewer than 100 draw commands plus 81 icons, far inside `frame_commands_count` and `frame_icon_image_pixels`.
-
-No firmware source changes: `pio run`, `pio check`, and the sibling-env builds cover files this entry does not touch (the host code is not in any env), so they are not run; `sim.sh build x4pro` is, for the screenshots.
+No existing function is moved or rewritten, so no `git log -L` reading applies; no test double is added or extended (the check's doubles are entry 8's). No firmware source changes: `pio run`, `pio check`, and the sibling-env builds cover files this entry does not touch, so they are not run; `sim.sh build x4pro` is, for the screenshots.
 
 ## Verification
 
-**Commands** (host tests and fast checks first; locks as AGENTS.md says):
-- `flock /tmp/crosshatch-hosttest.lock sh -c 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test'` then `ctest --test-dir build/test --output-on-failure -j` -- expected: all pass, including `-L games-check`.
-- `ctest --test-dir build/test -L games-check --repeat until-fail:20` -- expected: pass (determinism).
-- One-off red/green on the real target, scratch roots in `build/test/games_check_scratch/` (never committed): reconfigure with `-DGAMES_CHECK_GAMES_ROOT=... -DGAMES_CHECK_COMPANION_ROOT=...`, run `ctest -L games-check` for a copy of the game that fails to pack, raises a Lua error, grows a snapshot past 700 B, loses its `rounds/`, fails a scratch `checks.lua` (each red), and for scratch rounds over `fixtures/pass-hidden/` and `fixtures/pass-art/` (green); then reset the variables. Record each result.
+**Commands** (host tests and fast checks first; locks as AGENTS.md says; `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`):
+- `flock /tmp/crosshatch-hosttest.lock sh -c 'cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test'`, then `ctest --test-dir build/test --output-on-failure -j` -- expected: all pass, including `-L games-check` (the game's three tests and `HasAGame`).
+- `ctest --test-dir build/test -L games-check --repeat until-fail:20` -- expected: pass.
+- One-off mutants, scratch roots in `build/test/games_check_scratch/` (never committed): reconfigure with `-DGAMES_CHECK_GAMES_ROOT=... -DGAMES_CHECK_COMPANION_ROOT=...` over copies of the game with (a) the forced-board rejection removed, (b) the no-live-line draw removed, (c) a snapshot padded past 700 B, run `ctest -L games-check` -- expected: each red; then reset with `-UGAMES_CHECK_GAMES_ROOT -UGAMES_CHECK_COMPANION_ROOT` and the real target green. Record each result.
 - `grep -rniE 'tic-tac|ultimate|sudoku|battleship' test/game_script/harness scripts` -- expected: no match in harness code or `scripts/` (fixture names excepted).
-- `for t in scripts/*_test.py; do python3 $t; done`, `python3 scripts/check_upstream_touches.py`, `./bin/clang-format-fix` twice -- expected: pass, second run changes nothing.
-- After review and patches, once: `sim.sh build x4pro` (under the build lock, `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`), then the screenshots below.
-- The `games-check` job's commands once from a fresh tree of the commit (`git clone` the worktree into the scratchpad `8.1/fresh`, `git submodule update --init --recursive`; or the `git archive` recipe): configure, build the three targets, `ctest -L games-check`; the plan says which tree it was. Delete it afterwards.
+- `python3 tools/make_rounds.py` in the companion folder -- expected: runs and prints move lists the rounds hold (not run by CI).
+- `for t in scripts/*_test.py; do python3 $t; done`, `python3 scripts/check_upstream_touches.py`, `./bin/clang-format-fix` twice -- expected: pass, the second run changes nothing.
+- After review and patches, once: `sim.sh build x4pro` under the build lock, then the screenshots below.
 
 **Manual checks:** simulator screenshots in `story-tracer-screenshots/`, each looked at: `installed.png` (Games list with the package installed from `fs_/games/`), `pass-round.png` (small boards the next move may use highlighted), `won-board.png` (a won small board), `how-to-play.png` (the page behind the `question` button), `over-menu.png` (the end-of-round menu over the final frame).
 
 ## Auto Run Result
 
-Status: ready-for-dev (halted after planning, as the orchestrator asked). Nothing is implemented, reviewed, or committed; the plan file is the only new file and is left uncommitted. `lenses_ran` is empty, `deferred` is empty, `followup_review_recommended` is false.
+**Summary.** `games/ultimate-tic-tac-toe/` is a pass-mode, two-seat package (manifest, `main.lua` with the rules, input, drawing and the HOW TO PLAY page behind the `question` button, and `board.lua` exactly as Decision C3), with its companion folder `test/game_script/first_party/ultimate-tic-tac-toe/`: five rounds (a win by each seat, a draw with a small board still open, a forced-board round, a rejected-move round), `taps.lua`, an 11-check `checks.lua`, and `tools/make_rounds.py`, an independent Python rules oracle that finds the move lists. The games check of entry 8 packs, installs and plays all of it. No upstream, `src/`, `lib/`, API, CI, or harness file changed.
 
-**For the owner's checkpoint** (Design Notes C1, C2, C3 hold the full text; approve or amend, then record as Notes Decisions before entries 2 and 3 run):
-1. C1, the rounds file: a Lua chunk `rounds/<name>.lua` returning `{mode, settings?, seed?, steps = {{seat, x, y, wait?, move?, shows?}...}, winners | unfinished}`, taps only, one `mode` per round (not a cross product of rounds and modes).
-2. C2, `checks.lua`: returns a list of `{name, run}`; each `run()` is its own guarded call with a fresh 2,000,000-instruction budget; a guard fault stops that game's remaining checks.
-3. C3, `board.lua`: `layout(w, h, opts?)`, `cell_rect`, `block_rect`, `cell_at`, `draw_grid`; 51 px cells on 474x788.
-Builder's picks the ticket allowed (D1, D2): a `Session`/`MatchRounds` driver, not `GameVM`, because the check must draw every local seat after each step and `GameVM` never does; the hidden flow follows `GameVM::stepHandOff`, pinned by a test against `GameVM`. D3: the negative cases are committed engine tests over scratch trees the tests write, plus a one-off run of the real target against scratch roots.
+**Files** (all new): `games/ultimate-tic-tac-toe/{manifest.json, main.lua, board.lua}`; `test/game_script/first_party/ultimate-tic-tac-toe/{checks.lua, taps.lua, rounds/{won-by-seat-1,won-by-seat-2,drawn,forced-board,rejected-move}.lua, tools/make_rounds.py}`; five screenshots below; this plan.
 
-**Files** (all new): `test/game_script/harness/{games_check.cmake, pack_games.py, games_check/*}`, `test/game_script/first_party/{README.md, ultimate-tic-tac-toe/...}`, `games/ultimate-tic-tac-toe/{manifest.json, main.lua, board.lua}`, a `games-check` job in `.github/workflows/crosshatch-ci.yml`, five screenshots under `story-tracer-screenshots/`. No upstream file, no `src/`, `lib/`, or API change; no ledger edit needed (all are Game paths).
+**Review** (thorough; four lenses): 18 findings, high 0, medium 2, low 14, false 2. Patched (8 rows, 5 entries): the ninth cell that completes a line (medium, pinned by a check), the forced-board round covering a target won before the move, the won mark's icon size by block, the redundant icons in won boards, the header text asserted by the finished rounds. Deferred (3, all low): the reject reason for after-over and malformed moves, HOW TO PLAY fit on a narrow canvas, and the harness seeing text commands only (fills, icons, big marks unasserted). Rejected with reasons in the triage log: seat unchecked (the runtime passes the turn seat only), rounds not tied to the tool by CI (by the plan), UI cues (new features), floats (none reachable), duplicated constants, and the simulator-surface note (answered by the screenshots). Follow-up review recommended: false (one entry of medium patched, no high).
 
-**Review:** not run (planning only). **Verification:** none yet. Planning evidence: configuring `test/` in this worktree works; a scratch executable linking `game_installer_src`, `game_harness_src`, `game_harness_core`, and `Session.cpp`/`MatchLifecycle.cpp` and calling `GamePackageInstaller::installAll()` and `GameAssets::load` through a `MatchStore` built and linked cleanly (scratch files removed, tree clean apart from this plan).
+**Verification** (on the tree committed here):
+- Host build and `ctest --test-dir build/test -j`: 1749/1749 pass; `ctest -L games-check`: 71/71, among them `ThePackageInstallsAndLoads`, `TheGamesOwnChecksPass` (11 checks), `EveryRoundPlaysAsItsFileSays` (five rounds, no snapshot over 700 B, every seat drawn each step) for the game and `HasAGame`; `--repeat until-fail:20` over the label passes.
+- Mutants over scratch roots in `build/test/games_check_scratch/` (deleted; both cache variables reset and the real target green after): (a) forced-board rule removed: `TheGamesOwnChecksPass` and `EveryRoundPlaysAsItsFileSays` red; (b) draw only when no small board is open: red (`drawRule` check and `drawn` step 51) after the post-review patch, green before it (see Implementation Notes); (c) 700 B of padding in the state: `EveryRoundPlaysAsItsFileSays` red.
+- `grep -rniE 'tic-tac|ultimate|sudoku|battleship' test/game_script/harness scripts`: no match. `scripts/*_test.py`: all pass. `python3 scripts/check_upstream_touches.py`: PASS. `./bin/clang-format-fix` run twice: no change (no formatting-only change outside this entry's paths). `python3 .../tools/make_rounds.py` runs in about 7 s and prints the committed lists.
+- `sim.sh build x4pro` (shared build cache, build lock): SUCCESS, 1 m 40 s. The package packed with `scripts/pack_game.py` (4,241 bytes), copied to `fs_/games/`, installed by opening Games, and played in the simulator. No firmware source changed, so `pio run`, `pio check`, and the other envs were not run.
+- Screenshots in `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-screenshots/`, each looked at:
+  - `installed.png`: the Games list with "Ultimate Tic-Tac-Toe / Pass and play" installed from `fs_/games/`, with the launcher's default mark.
+  - `pass-round.png`: a round after three moves, "Player 2 (O) to move", with only the forced small board (top right) highlighted.
+  - `won-board.png`: seat 1 has won small board 4 (a big X over it) and the next move is forced into the highlighted board 1.
+  - `how-to-play.png`: the HOW TO PLAY page opened by the `question` button, wrapped to fit.
+  - `over-menu.png`: "Player 1 (X) wins" with the end-of-round menu (Play again, Leave) over the final frame.
 
-**Residual risks:** (1) Size: about 25 new files and two deliverables; the plan marks `oversized`. Recommendation: let the orchestrator split group 1 (the check, proven over fixture scratch trees and a minimal round over `fixtures/pass-open/`) from group 2 (the game, its rounds, screenshots), as the ticket's own Notes allow; group 1 is a clean first commit. (2) The `GameVM` pin test links `game_match_src`, a separate executable, because mixing it with `game_installer_src` was not probed. (3) Round move lists (win by each seat, draw) come from the Python oracle in `tools/make_rounds.py`; a draw may need a playout search. (4) Real device font metrics differ from the harness's stand-in metrics, so the check does not prove text fits; the screenshots and the device run (entry 5) do.
+**Residual risks.** Text fit is shown only by these simulator frames and the host's stand-in metrics, not a device run (entry 5). The big mark and highlight are unobserved by any test (deferred). HOW TO PLAY has no scroll for a canvas narrower than the X4 Pro's. `make_rounds.py` is not run by CI; the rounds' own `winners` and `move` flags are what prove its lists against `main.lua`. Memory, flash and timing: unmeasured (no firmware change).

@@ -1,0 +1,9 @@
+{
+  "id": "ultimate-tic-tac-toe",
+  "name": "Ultimate Tic-Tac-Toe",
+  "version": "1.0.0",
+  "api": 1,
+  "seats": { "min": 2, "max": 2 },
+  "modes": ["pass"],
+  "hidden": false
+}
