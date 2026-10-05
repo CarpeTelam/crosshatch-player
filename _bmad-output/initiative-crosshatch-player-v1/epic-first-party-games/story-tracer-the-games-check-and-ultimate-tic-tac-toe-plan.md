@@ -3,7 +3,7 @@ title: 'Tracer: the games check and Ultimate tic-tac-toe'
 type: 'feature'
 ticket: '1'
 created: '2026-10-04'
-status: 'built'
+status: done
 baseline_revision: 'd3795e885a93a86f324d19fdccb873289f54dbe0'
 route: 'full'
 route_source: 'auto'

@@ -1060,3 +1060,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-the-games-check-plan.md`
   summary: The games check and `ctest -L games-check` are documented only in `test/game_script/first_party/README.md` and a CI comment, not in AGENTS.md or `docs/contributing/`.
   evidence: A contributor adding a game under `games/` reads AGENTS.md first and finds no mention of the check, its label, or the rule that a game leaving the repository takes its companion folder with it. The fix edits AGENTS.md (an agent-context file, the owner's), so it is deferred, not patched. Location: AGENTS.md, docs/contributing/. Severity: low.
+
+## 8.1
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-the-games-check-and-ultimate-tic-tac-toe-plan.md`
+  summary: A rejected move after the round is over, or a malformed move, gets "Play in the highlighted board", though no board is highlighted then.
+  evidence: `game.apply` uses one reason for every unplayable move (blind-hunter and edge-case-hunter). The device delivers no input once the round is over and `input` only builds well-formed moves, so a player never meets it; `checks.lua` pins the current wording, so a "Round is over" reason is a rule change for the owner's wording. Location: games/ultimate-tic-tac-toe/main.lua (apply). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-the-games-check-and-ultimate-tic-tac-toe-plan.md`
+  summary: The HOW TO PLAY page is checked for fit only at the harness canvas (474x788) under stand-in text metrics, and has no scroll or paging for a canvas as narrow as 320 px.
+  evidence: `helpPageFits` in checks.lua reads `ch.screen`, which a check cannot change, so the 320x480 and 480x800 canvases are not covered; seven wrapped paragraphs at a 28 px step may pass the bottom on a narrow canvas. No v1 device has such a canvas (X4 Pro and Sticky: 474 x 788), and only the simulator or a device shows real font fit. Location: games/ultimate-tic-tac-toe/main.lua (help_lines), test/game_script/first_party/ultimate-tic-tac-toe/checks.lua (helpPageFits). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-tracer-the-games-check-and-ultimate-tic-tac-toe-plan.md`
+  summary: The games check sees only text commands, so no round or check can assert a highlight fill, an icon, or a won board's big mark.
+  evidence: `RoundPlayer.cpp` keeps each frame's text commands only (verification-gap lens): removing the `light` fill loop or the won-board mark in `main.lua` leaves every round and check green. Only the simulator screenshots show them. Fixing it changes the games check (entry 8's files), which this entry's intent excludes. Location: test/game_script/harness/games_check/RoundPlayer.cpp:126-138. Severity: low.
