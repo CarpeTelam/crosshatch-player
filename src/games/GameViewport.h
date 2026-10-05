@@ -7,8 +7,8 @@ class GfxRenderer;
 // The script canvas (AD-7): where on the renderer's logical screen the game draws,
 // and the size exposed to it. FrameReplay maps canvas to screen with it and the
 // match maps touches back (GameTouch.h), so drawing and touches always agree. The
-// canvas is the logical screen minus the board's bezel insets: on the X4 Pro and
-// the Sticky alike, 474 x 788 of the 480 x 800 portrait screen.
+// canvas is the logical screen minus the board's bezel insets: on the X4 Pro 466 x 788,
+// on the Sticky 474 x 788 of the 480 x 800 portrait screen.
 class GameViewport {
  public:
   GameViewport() = default;

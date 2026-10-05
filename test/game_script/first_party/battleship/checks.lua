@@ -123,7 +123,9 @@ end
 
 -- ---- layout ----
 
-local SIZES = { { 474, 788 }, { 480, 800 } }
+-- The Sticky's 474 x 788, the X4 Pro's 466 x 788 (BoardConfig insets 9, 7, 3, 7), and the 480 x 800 panel. The game lays
+-- out one 466 x 788 box (layout.W x layout.H) centred in the canvas, so these differ only in where the box starts.
+local SIZES = { { 474, 788 }, { 466, 788 }, { 480, 800 } }
 
 local function boardRect(B) return { x = B.x, y = B.y, w = 10 * B.cell, h = 10 * B.cell } end
 
@@ -140,33 +142,42 @@ local function geometry()
     local w, h = size[1], size[2]
     local L = layout.compute(w, h)
     local at = w .. "x" .. h
+    local ox, oy = (w - 466) // 2, (h - 788) // 2
+    eq(L.ox, ox, at .. " box x")
+    eq(L.oy, oy, at .. " box y")
+    eq(layout.fits(w, h), true, at .. " fits the box")
     eq(L.big.cell, 44, at .. " big cell")
-    eq(L.big.x, (w - 440) // 2, at .. " big x")
-    eq(L.big.y, 52, at .. " big y")
+    eq(L.big.x, ox + 13, at .. " big x")
+    eq(L.big.y, oy + 52, at .. " big y")
     eq(L.small.cell, 28, at .. " small cell")
     eq(L.small.x, L.big.x, at .. " small x")
-    eq(L.small.y, 500, at .. " small y")
+    eq(L.small.y, oy + 500, at .. " small y")
     eq(L.over[1].cell, 18, at .. " over cell")
-    eq(L.over[1].y, 72, at .. " over y")
-    eq(L.over[2].y, 72, at .. " over y of the second board")
-    eq(L.over_label_y, 44, at .. " over label y")
+    eq(L.over[1].y, oy + 72, at .. " over y")
+    eq(L.over[2].y, oy + 72, at .. " over y of the second board")
+    eq(L.over_label_y, oy + 44, at .. " over label y")
     -- Each label's text box (small text: the game's 24 px line step) ends 4 px or more above the boards it names.
     assert(L.over_label_y + SMALL_LINE + 4 <= L.over[1].y, at .. " the over labels must end at least 4 px above their boards")
     eq(L.over[2].x - L.over[1].x, 194, at .. " over boards are 14 px apart")
-    eq(L.over[1].x - (w - (L.over[2].x + 180)), 0, at .. " over boards are centred")
+    eq(L.over[1].x - ox - (466 - (L.over[2].x - ox + 180)), 0, at .. " over boards are centred in the box")
     local boards = { big = boardRect(L.big), small = boardRect(L.small), over1 = boardRect(L.over[1]),
                      over2 = boardRect(L.over[2]) }
     for name, rect in pairs(boards) do insideCanvas(rect, w, h, at .. " " .. name) end
     -- The dialog's top edge measured at y 268 of the panel in the simulator, and the canvas starts 9 px down the panel
-    -- on the X4 Pro (474 x 788 in 480 x 800), so 259 in canvas pixels.
-    assert(boards.over1.y + boards.over1.h <= 259, at .. " the over boards reach into the end-of-round dialog")
+    -- on the X4 Pro, so 259 in canvas pixels. The dialog and Result's banner belong to the host, not to the box, so the
+    -- two bounds are in canvas pixels and only for the 788-tall canvases the devices give (the 480 x 800 panel moves
+    -- the box 6 px down and the host's centred parts by their own rule).
+    if h == 788 then
+      assert(boards.over1.y + boards.over1.h <= 259, at .. " the over boards reach into the end-of-round dialog")
+    end
     apart(boards.big, boards.small, at .. " the big and small boards")
     apart(boards.over1, boards.over2, at .. " the over boards")
     -- The firing column: right of the small board, inside the canvas, above Result's banner (about y 649).
     local col = L.column
     insideCanvas(col, w, h, at .. " column")
     apart(col, boards.small, at .. " the column and the small board")
-    assert(col.y + col.h <= 649, at .. " the column reaches Result's banner")
+    if h == 788 then assert(col.y + col.h <= 649, at .. " the column reaches Result's banner") end
+    assert(col.x + col.w <= ox + 466 - 8, at .. " the column leaves the box's right margin")
     -- The question button.
     local q = L.question_rect
     eq(q.w, 72, at .. " question width")
@@ -195,6 +206,36 @@ local function geometry()
     assert(trayW <= 10 * L.big.cell, at .. " the ship tray is wider than the board")
     eq(L.over_counts_y + 28 + 24 <= h, true, at .. " the shot counts are off the canvas")
   end
+end
+
+-- Every number of `a` shifted `dx` right in `b`: the keys that are an x (x, and the box's ox) are `dx` further, the others
+-- equal; the canvas size (w, h at the top) is left out.
+local function shifted(a, b, dx, path)
+  for key, value in pairs(a) do
+    local at = path .. "." .. tostring(key)
+    if path == "L" and (key == "w" or key == "h") then
+      eq(type(b[key]), "number", at)
+    elseif type(value) == "table" then
+      assert(type(b[key]) == "table", at .. " is missing")
+      shifted(value, b[key], dx, at)
+    else
+      eq(b[key], (key == "x" or key == "ox") and value + dx or value, at)
+    end
+  end
+  for key in pairs(b) do assert(a[key] ~= nil, path .. "." .. tostring(key) .. " is extra") end
+end
+
+-- One layout everywhere: the Sticky's is the X4 Pro's 4 px right, and a canvas under the box is laid out as the box at 0, 0
+-- (unsupported, never adapted).
+local function sameLayoutEverywhere()
+  local home = layout.compute(466, 788)
+  shifted(home, layout.compute(474, 788), 4, "L")
+  shifted(home, layout.compute(320, 480), 0, "L")
+  eq(layout.fits(320, 480), false, "320 x 480 fits the box")
+  eq(layout.fits(466, 787), false, "466 x 787 fits the box")
+  eq(layout.fits(465, 788), false, "465 x 788 fits the box")
+  eq(layout.compute(466, 788).ox, 0, "the X4 Pro's box x")
+  eq(layout.compute(474, 788).ox, 4, "the Sticky's box x")
 end
 
 local function cellAtInvertsCellRect()
@@ -837,12 +878,13 @@ end
 
 local function helpPageFits()
   local lines, bottom = game.help_lines()
+  local L = layout.compute(ch.screen.w, ch.screen.h)
   assert(#lines > 0, "the page has text")
-  assert(bottom <= ch.screen.h - 40, "the page fits the canvas under the harness metrics")
+  assert(bottom <= L.oy + layout.H - 40, "the page fits the box under the harness metrics")
   for _, line in ipairs(lines) do
-    assert(ch.text_width(line.text, "small") <= ch.screen.w - 48, "a help line is wider than the page")
+    assert(ch.text_width(line.text, "small") <= layout.W - 48, "a help line is wider than the page")
   end
-  assert(ch.text_width("HOW TO PLAY", "large") <= ch.screen.w - 48, "the page title is too wide")
+  assert(ch.text_width("HOW TO PLAY", "large") <= layout.W - 48, "the page title is too wide")
   local text = ""
   for _, line in ipairs(lines) do text = text .. " " .. line.text:lower() end
   for _, word in ipairs({ "rotate", "random", "clear", "ready", "overlap", "touch", "10 by 10", "sunk", "twice", "look away" }) do
@@ -896,11 +938,12 @@ local function textFits()
     assert(wrapCount(reason, "small", L.column.w) <= 3, "'" .. reason .. "' takes over three lines in the column")
   end
   -- The over view's counts fit their line.
-  assert(ch.text_width("Player 1 fired 100 shots", "small") <= ch.screen.w - 2 * L.over[1].x, "a shot count is too wide")
+  assert(ch.text_width("Player 1 fired 100 shots", "small") <= layout.W - 2 * (L.over[1].x - L.ox), "a shot count is too wide")
 end
 
 return {
-  { name = "layout at two canvas sizes", run = geometry },
+  { name = "layout at the X4 Pro's, the Sticky's, and a larger canvas", run = geometry },
+  { name = "the Sticky's layout is the X4 Pro's 4 px right, and a smaller canvas gets the box at 0, 0", run = sameLayoutEverywhere },
   { name = "cell_at inverts cell_rect for the 100 cells of all four boards and is nil outside", run = cellAtInvertsCellRect },
   { name = "the taps module hits its targets and no other", run = tapTargets },
   { name = "the ship table", run = shipTable },

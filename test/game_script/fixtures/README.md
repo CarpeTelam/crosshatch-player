@@ -103,8 +103,8 @@ about half the pixels white, runs of one or two pixels, the worst case for the r
 
 | Band | Frame | Commands |
 | --- | --- | --- |
-| 1 | `gray.png` once, at the canvas's top-left (373,512 canvas pixels on the 474 x 788 canvas) | 1 |
-| 2 | Two gray images, eighteen 128 px `circle` fill icons in white, and 15 one-row strips of the image at the bottom edge, 1,048,576 pixels in all on the 474 x 788 canvas (worked out from `ch.screen` on any other) | 36 (with the clear) |
+| 1 | `gray.png` once, at the canvas's top-left (373,512 canvas pixels on the Sticky's 474 x 788 canvas, the test canvas) | 1 |
+| 2 | Two gray images, eighteen 128 px `circle` fill icons in white, and 15 one-row strips of the image at the bottom edge, 1,048,576 pixels in all on the 474 x 788 test canvas (worked out from `ch.screen` on any other) | 36 (with the clear) |
 | 3 | 2,048 filled rects of the whole canvas, in `light`, `black`, `white`, `dark` in turn, the last `dark`; the screen ends dark gray | 2,048 |
 
 The simulator's frames for the three bands are in

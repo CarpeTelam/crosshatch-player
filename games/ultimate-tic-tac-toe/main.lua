@@ -21,8 +21,19 @@ local LINES = {
 }
 local WRONG_BOARD = "Play in the highlighted board"
 local TAKEN = "That cell is taken"
-local HELP_X = 80 -- the question button's tap area: this far from the right edge, and
-local HELP_Y = 100 -- this far from the top
+local HELP_X = 80 -- the question button's tap area: this far from the box's right edge, and
+local HELP_Y = 100 -- this far from the box's top
+-- Both are in the box: the Sticky's 4 px side margins and anything outside the box are a miss.
+
+-- The game lays out one fixed 466 x 788 box (board.lua), centred in the canvas, and never adapts to a smaller canvas:
+-- it says so once per VM.
+local said = false
+local function sayUnsupported()
+  if said or board.fits(ch.screen.w, ch.screen.h) then return end
+  said = true
+  ch.log("Ultimate Tic-Tac-Toe: the canvas is " .. ch.screen.w .. " x " .. ch.screen.h
+    .. " and the game needs " .. board.W .. " x " .. board.H .. ": unsupported, laid out from the canvas's corner")
+end
 
 local HELP_PARAGRAPHS = {
   "Seat 1 plays X and seat 2 plays O. Take turns: tap an empty cell to put your mark in it.",
@@ -104,7 +115,10 @@ function game.apply(state, seat, move)
   return state
 end
 
-local function tapIsHelp(ev) return ev.x >= ch.screen.w - HELP_X and ev.y >= 0 and ev.y < HELP_Y end
+local function tapIsHelp(ev)
+  local ox, oy = board.origin(ch.screen.w, ch.screen.h)
+  return ev.x >= ox + board.W - HELP_X and ev.x < ox + board.W and ev.y >= oy and ev.y < oy + HELP_Y
+end
 
 function game.input(state, seat, ui, ev)
   if ev.kind == "rejected" then
@@ -145,11 +159,12 @@ local function wrap(text, size, maxw)
   return lines
 end
 
--- The HOW TO PLAY page's lines as { y, text } and the y below the last one, wrapped to the canvas width.
+-- The HOW TO PLAY page's lines as { y, text } and the y below the last one, wrapped to the box's width.
 function game.help_lines()
-  local out, y = {}, 100
+  local _, oy = board.origin(ch.screen.w, ch.screen.h)
+  local out, y = {}, oy + 100
   for _, paragraph in ipairs(HELP_PARAGRAPHS) do
-    for _, line in ipairs(wrap(paragraph, "small", ch.screen.w - 48)) do
+    for _, line in ipairs(wrap(paragraph, "small", board.W - 48)) do
       out[#out + 1] = { y = y, text = line }
       y = y + 28
     end
@@ -159,10 +174,11 @@ function game.help_lines()
 end
 
 local function drawHelp()
+  local ox, oy = board.origin(ch.screen.w, ch.screen.h)
   ch.gfx.clear("white")
-  ch.gfx.text(24, 30, "HOW TO PLAY", "large", "black")
+  ch.gfx.text(ox + 24, oy + 30, "HOW TO PLAY", "large", "black")
   local lines = game.help_lines()
-  for _, line in ipairs(lines) do ch.gfx.text(24, line.y, line.text, "small", "black") end
+  for _, line in ipairs(lines) do ch.gfx.text(ox + 24, line.y, line.text, "small", "black") end
 end
 
 local function header(state)
@@ -175,14 +191,15 @@ local function header(state)
 end
 
 function game.draw(state, seat, ui)
+  sayUnsupported()
   if ui.help then
     drawHelp()
     return
   end
   local L = board.layout(ch.screen.w, ch.screen.h)
   ch.gfx.clear("white")
-  ch.gfx.text(L.x, 40, header(state), "medium", "black")
-  ch.gfx.icon("question", ch.screen.w - 72, 12, "medium", "black")
+  ch.gfx.text(L.x, L.oy + 40, header(state), "medium", "black")
+  ch.gfx.icon("question", L.ox + board.W - 72, L.oy + 12, "medium", "black")
 
   -- Under the grid: the playable boards and the full ones in light gray.
   local playable = game.playable(state)

@@ -265,7 +265,7 @@ class LuaGameTest : public ::testing::Test {
   std::vector<uint8_t> storeBytes = std::vector<uint8_t>(GameScript::Codec::STORE_LIMIT);
   GameScript::StoreSlot store{storeBytes.data(), storeBytes.size()};
   GameScript::HostPorts ports{random, clock, log, store};
-  // The X4 Pro's portrait canvas size, with the stand-in text metrics.
+  // The 480 x 800 portrait panel (no device's canvas), with the stand-in text metrics.
   GameScript::Canvas canvas{480, 800, GameScript::TextMetrics::standIn()};
   std::string text;
   std::vector<GameScript::SourceSpan> spans;

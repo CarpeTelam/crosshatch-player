@@ -15,8 +15,11 @@ function taps.tap(b, c)
   return x + w // 2, y + h // 2
 end
 
--- The centre x, y of the question button.
-function taps.help() return ch.screen.w - 40, 48 end
+-- The centre x, y of the question button, in the 466 x 788 box (board.origin).
+function taps.help()
+  local ox, oy = board.origin(ch.screen.w, ch.screen.h)
+  return ox + board.W - 40, oy + 48
+end
 
 -- A canvas point outside the 9 x 9 grid (below it) and clear of the question button.
 function taps.off_grid()

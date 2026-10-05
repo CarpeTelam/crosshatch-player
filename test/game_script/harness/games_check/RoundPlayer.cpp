@@ -61,7 +61,7 @@ class Player {
     } else {
       roster = GameCore::Roster::solo();
     }
-    rig = GamesCheckRig::create(round.seed);
+    rig = GamesCheckRig::create(round.seed, game.canvas);
     if (!rig) {
       fail(0, "out of memory");
       return false;

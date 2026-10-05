@@ -41,7 +41,7 @@ using harness::rowsOf;
 using harness::speckle;
 using Px = GfxRenderer::Pixel;
 
-// The canvas on the 480 x 800 screen, off the corner as on the boards: 474 x 788 at (3, 6).
+// The canvas on the 480 x 800 screen, off the corner as on the Sticky: 474 x 788 at (3, 6).
 constexpr int OX = 3;
 constexpr int OY = 6;
 constexpr int CW = 474;
@@ -428,7 +428,7 @@ TEST_F(FrameReplayTest, TheCanvasIsTheScreenLessTheBezelInsets) {
   EXPECT_EQ(v.originY(), 1);
   EXPECT_EQ(v.width(), 480 - 4 - 2);
   EXPECT_EQ(v.height(), 800 - 1 - 3);
-  const GameViewport boards = GameViewport::forRenderer(GfxRenderer());  // the double's default: the boards' 474 x 788
+  const GameViewport boards = GameViewport::forRenderer(GfxRenderer());  // the double's default: the Sticky's 474 x 788
   EXPECT_EQ(boards.width(), CW);
   EXPECT_EQ(boards.height(), CH);
   EXPECT_EQ(boards.originX(), OX);

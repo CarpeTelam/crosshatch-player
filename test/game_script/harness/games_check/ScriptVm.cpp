@@ -281,13 +281,14 @@ OwnedVm::~OwnedVm() {
 }
 
 std::unique_ptr<OwnedVm> OwnedVm::create(const GameScript::GameSources& game, const std::vector<ModuleText>& extras,
-                                         const GameCore::GameImages& images, const uint32_t seed, std::string& error) {
+                                         const GameCore::GameImages& images, const uint32_t seed, std::string& error,
+                                         const CanvasSize canvas) {
   std::unique_ptr<OwnedVm> owned(new (std::nothrow) OwnedVm());
   if (!owned) {
     error = "out of memory";
     return nullptr;
   }
-  owned->rigOwner = GamesCheckRig::create(seed);
+  owned->rigOwner = GamesCheckRig::create(seed, canvas);
   if (!owned->rigOwner) {
     error = "out of memory";
     return nullptr;

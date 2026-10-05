@@ -41,7 +41,7 @@ using match::markFills;
 using match::waitFor;
 using Button = MappedInputManager::Button;
 
-// Where a screen tap lands on canvas point (x, y): the canvas is 474 x 788 at (3, 6).
+// Where a screen tap lands on canvas point (x, y): the canvas is the test canvas, the Sticky's 474 x 788 at (3, 6).
 constexpr int CANVAS_X = 3;
 constexpr int CANVAS_Y = 6;
 

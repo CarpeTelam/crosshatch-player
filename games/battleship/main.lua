@@ -40,6 +40,15 @@ local LABELS = { rotate = "Rotate", random = "Random", clear = "Clear", ready = 
 
 local function canvas() return layout.compute(ch.screen.w, ch.screen.h) end
 
+-- The game lays out one fixed 466 x 788 box (layout.lua) and never adapts to a smaller canvas: it says so once per VM.
+local said = false
+local function sayUnsupported()
+  if said or layout.fits(ch.screen.w, ch.screen.h) then return end
+  said = true
+  ch.log("Battleship: the canvas is " .. ch.screen.w .. " x " .. ch.screen.h .. " and the game needs " .. layout.W
+    .. " x " .. layout.H .. ": unsupported, laid out from the canvas's corner")
+end
+
 function game.setup(ctx)
   return { f = { fleet.EMPTY, fleet.EMPTY }, p = 1, t = 1 }
 end
@@ -191,11 +200,12 @@ local function wrap(text, size, maxw)
   return lines
 end
 
--- The HOW TO PLAY page's lines as { y, text } and the y below the last one, wrapped to the canvas width.
+-- The HOW TO PLAY page's lines as { y, text } and the y below the last one, wrapped to the box's width.
 function game.help_lines()
-  local out, y = {}, 90
+  local L = canvas()
+  local out, y = {}, L.oy + 90
   for _, paragraph in ipairs(HELP_PARAGRAPHS) do
-    for _, line in ipairs(wrap(paragraph, "small", ch.screen.w - 48)) do
+    for _, line in ipairs(wrap(paragraph, "small", L.W - 48)) do
       out[#out + 1] = { y = y, text = line }
       y = y + 28
     end
@@ -205,12 +215,13 @@ function game.help_lines()
 end
 
 local function drawHelp()
-  ch.gfx.text(24, 24, "HOW TO PLAY", "large", "black")
-  for _, line in ipairs(game.help_lines()) do ch.gfx.text(24, line.y, line.text, "small", "black") end
+  local L = canvas()
+  ch.gfx.text(L.ox + 24, L.oy + 24, "HOW TO PLAY", "large", "black")
+  for _, line in ipairs(game.help_lines()) do ch.gfx.text(L.ox + 24, line.y, line.text, "small", "black") end
 end
 
 local function drawHeader(L, state, seat)
-  ch.gfx.text(L.big.x, 12, game.headline(state, seat), "medium", "black")
+  ch.gfx.text(L.big.x, L.oy + 12, game.headline(state, seat), "medium", "black")
   ch.gfx.icon("question", L.question.x, L.question.y, "small", "black")
 end
 
@@ -397,6 +408,7 @@ local function drawBoth(L, state)
 end
 
 function game.draw(state, seat, ui)
+  sayUnsupported()
   ch.gfx.clear("white")
   if ui.help then
     drawHelp()
@@ -405,7 +417,7 @@ function game.draw(state, seat, ui)
   local L = canvas()
   local over = game.status(state).over
   if seat == 0 then
-    ch.gfx.text(L.big.x, 12, game.headline(state, 0), "medium", "black")
+    ch.gfx.text(L.big.x, L.oy + 12, game.headline(state, 0), "medium", "black")
     if over then drawBoth(L, state) end
     return
   end

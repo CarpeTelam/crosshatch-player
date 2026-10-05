@@ -53,6 +53,8 @@ repair: `setup` exits 1 without changing the file rather than drop the settings
 around the markers, and `check` exits 1 saying so, so restore them by hand.
 `scripts/sim_sh_test.py` tests both commands on scratch repositories.
 The envs are `simulator_x4pro`, `simulator_sticky`, and `simulator` (X4).
+`x4pro` runs the device's bezel insets (a 466 x 788 game canvas, from `shim/BoardConfig.h`); `sticky` keeps the default
+(474 x 788).
 
 ## Run: live session (agent path)
 

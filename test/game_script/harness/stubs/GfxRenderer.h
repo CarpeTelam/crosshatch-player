@@ -52,7 +52,8 @@ class GfxRenderer {
   // ---- What FrameReplay, GameIconDraw, and GameViewport call ----
   int getScreenWidth() const { return width; }
   int getScreenHeight() const { return height; }
-  // The bezel a game canvas leaves out: 474 x 788 of 480 x 800, as the real boards do.
+  // The bezel a game canvas leaves out: 474 x 788 of 480 x 800, the Sticky's canvas (the X4 Pro's insets give 466 x
+  // 788).
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const {
     *outTop = insetTop;
     *outRight = insetRight;

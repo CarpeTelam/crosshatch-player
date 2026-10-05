@@ -7,6 +7,9 @@ local board = require("board")
 
 local view = {}
 
+-- The game lays out one fixed 466 x 788 box (layout.lua) and never adapts to a smaller canvas: it says so once per VM.
+local said = false
+
 local DIG = grid.DIG
 local NAMES = { "Easy", "Medium", "Hard", "Expert" }
 local MENU_ICONS = { "lightbulb", "plus", "check", "eye", "square", "pencil-simple", "question", "x" }
@@ -39,12 +42,14 @@ local function stroke(x, y, w, h, rising)
 end
 
 local function draw_help()
-  ch.gfx.text(24, 24, "HOW TO PLAY", "large", "black")
-  for _, line in ipairs((require("help").lines())) do ch.gfx.text(24, line.y, line.text, "small", "black") end
+  local L = layout.get()
+  ch.gfx.text(L.ox + 24, L.oy + 24, "HOW TO PLAY", "large", "black")
+  for _, line in ipairs((require("help").lines())) do ch.gfx.text(L.ox + 24, line.y, line.text, "small", "black") end
 end
 
 local function draw_menu(ui)
-  ch.gfx.text(24, 13, "MENU", "medium", "black")
+  local L = layout.get()
+  ch.gfx.text(L.ox + 24, L.oy + 13, "MENU", "medium", "black")
   local labels = {
     "HINT", "FILL NOTES", "CHECK", "SHOW REMAINING: " .. (ui.rem and "ON" or "OFF"),
     "SHADE PEERS: " .. (ui.shade and "ON" or "OFF"), "NOTES AS: " .. (ui.dots and "DOTS" or "DIGITS"),
@@ -59,15 +64,16 @@ local function draw_menu(ui)
 end
 
 local function draw_end(state, ui)
-  local cx = ch.screen.w // 2
-  ch.gfx.text(cx, 80, "Solved", "large", "black", "center")
-  ch.gfx.text(cx, 160, "Time " .. view.time(state.t), "medium", "black", "center")
+  local L = layout.get()
+  local cx, oy = L.ox + board.W // 2, L.oy
+  ch.gfx.text(cx, oy + 80, "Solved", "large", "black", "center")
+  ch.gfx.text(cx, oy + 160, "Time " .. view.time(state.t), "medium", "black", "center")
   if state.h then
-    ch.gfx.text(cx, 210, "No best time after a hint", "medium", "black", "center")
+    ch.gfx.text(cx, oy + 210, "No best time after a hint", "medium", "black", "center")
   elseif ui.best then
-    ch.gfx.text(cx, 210, "Best " .. view.time(ui.best), "medium", "black", "center")
+    ch.gfx.text(cx, oy + 210, "Best " .. view.time(ui.best), "medium", "black", "center")
   end
-  ch.gfx.text(cx, 260, NAMES[state.l], "small", "black", "center")
+  ch.gfx.text(cx, oy + 260, NAMES[state.l], "small", "black", "center")
 end
 
 -- A pencil mark k of the cell whose rectangle starts at x, y: a dot at the slot's centre cx, cy (grey ring, or solid
@@ -99,7 +105,7 @@ local function draw_board(state, ui)
   local ds, clash, cand = { v:byte(1, 81) }, grid.clashes(v), grid.candidates(v)
   local notes = { string.unpack(grid.FMT, state.n) }
   local ground, marked = {}, {}
-  ch.gfx.text(L.x, 13, ui.note or ui.msg or ("Sudoku - " .. NAMES[state.l]), "medium", "black")
+  ch.gfx.text(L.x, L.oy + 13, ui.note or ui.msg or ("Sudoku - " .. NAMES[state.l]), "medium", "black")
 
   -- Grounds: the focused digit's copies black, a clue light, and the rest of the selected cell's units dark. Priority
   -- in that order.
@@ -187,6 +193,11 @@ end
 
 -- Draws the frame for state and ui; over is whether the grid is solved.
 function view.draw(state, ui, over)
+  if not said and not board.fits(ch.screen.w, ch.screen.h) then
+    said = true
+    ch.log("Sudoku: the canvas is " .. ch.screen.w .. " x " .. ch.screen.h .. " and the game needs " .. board.W .. " x "
+      .. board.H .. ": unsupported, laid out from the canvas's corner")
+  end
   ch.gfx.clear("white")
   local shown = over and "end" or ui.panel or "board"
   if ui.shown ~= shown then

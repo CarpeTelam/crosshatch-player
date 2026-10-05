@@ -26,10 +26,14 @@ namespace games_check {
 
 // The three folders a check reads: the games root (`<games>/<id>/`), the companion root
 // (`<companion>/<id>/{rounds/*.lua, checks.lua, top-level modules}`), and where pack_games.py wrote the packages.
+//
+// `canvas` is `ch.screen` for the rounds and the game's own checks: the check names no game, so it plays every game on
+// each canvas it is given (GamesCheckTest: the Sticky's 474 x 788 and the X4 Pro's 466 x 788).
 struct Roots {
   std::string games;
   std::string companion;
   std::string packed;
+  CanvasSize canvas = CANVAS_474;
 };
 
 // What a check found: failures end a test red, notes (a skipped mode, a count) are logged and never fail it.
@@ -46,8 +50,9 @@ struct Report {
 
 // The id's package installs and loads: no `.packerror` (else its text, the packer's stderr, is the failure), the
 // installer reports one game installed, the registry lists it with a manifest that passes this host's check, and the
-// hash it read back is the one the packer printed, and main.lua's load nests no module loads beyond
-// MAX_LOAD_NESTING (ScriptVm.h: the double of the device's parser-headroom refusal, one rule for every game).
+// hash it read back is the one the packer printed, and main.lua's load nests no module loads beyond MAX_LOAD_NESTING
+// (ScriptVm.h: the double of the device's parser-headroom refusal, one rule for every game). The module-loading probe
+// runs at the root's canvas (roots.canvas), so a load that reads ch.screen sees the canvas under check.
 Report checkPackage(const Roots& roots, const std::string& id);
 
 // The game's own checks (C2): `<companion>/<id>/checks.lua`, a module in the game's sandbox (math.random seeded 1) that

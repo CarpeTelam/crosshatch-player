@@ -271,7 +271,8 @@ Report checkPackage(const Roots& roots, const std::string& id) {
   // load that raises or faults is no nesting finding: the rounds name it.
   std::vector<ModuleText> none;
   std::string error;
-  auto probe = OwnedVm::create(installed->assets->sources(), none, installed->assets->images(), CHECKS_SEED, error);
+  auto probe = OwnedVm::create(installed->assets->sources(), none, installed->assets->images(), CHECKS_SEED, error,
+                               roots.canvas);
   if (!probe) {
     report.fail("the module-loading probe could not start: " + error);
   } else {
@@ -334,7 +335,8 @@ Report runGameChecks(const Roots& roots, const std::string& id) {
     return report;
   }
   std::string error;
-  auto owned = OwnedVm::create(installed->assets->sources(), modules, installed->assets->images(), CHECKS_SEED, error);
+  auto owned = OwnedVm::create(installed->assets->sources(), modules, installed->assets->images(), CHECKS_SEED, error,
+                               roots.canvas);
   if (!owned) {
     report.fail("checks.lua: " + error);
     return report;
@@ -437,11 +439,12 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
   under.facts.settings = &installed->reader->settings();
   under.facts.hostMaxSeats = gameHostCaps().maxSeats;
   under.facts.hostModes = installed->check.modes;
+  under.canvas = roots.canvas;
 
   // A name clash between a companion module and the game's own is the folder's fault, not a round's: said once.
   {
     std::string clash;
-    if (!OwnedVm::create(*under.sources, modules, *under.images, 1, clash)) {
+    if (!OwnedVm::create(*under.sources, modules, *under.images, 1, clash, roots.canvas)) {
       report.fail(id + ": " + clash);
       return report;
     }
@@ -454,7 +457,7 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
       continue;
     }
     std::string error;
-    auto vm = OwnedVm::create(*under.sources, modules, *under.images, 1, error);
+    auto vm = OwnedVm::create(*under.sources, modules, *under.images, 1, error, roots.canvas);
     if (!vm) {
       report.fail("round '" + name + "': " + error);
       continue;

@@ -3,7 +3,7 @@
 -- one round, rounds/draw-commands.lua, in its `steps(state)`; an error that names the first thing wrong fails that round.
 -- They live here, in the round's own VM, and not in checks.lua: that VM holds the game's modules and the 55 KB of checks
 -- (about 190 KB of the sandbox's 256 KB, once compiled), and a frame's draw leaves about 47 KB of garbage, so a check that
--- draws frames faulted "not enough memory" there. Sudoku's rules.lua is the same arrangement.
+-- draws frames faulted "not enough memory" there. Sudoku's pin modules are the same arrangement.
 local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")
@@ -303,6 +303,94 @@ function draws.over()
       assert(labels[2] + SMALL_LINE + 4 <= top, what .. ": the label must end at least 4 px above its board")
     end
   end
+end
+
+-- Runs f() with ch.screen as w x h and puts it back, also when f raises.
+local function withCanvas(w, h, f)
+  local rw, rh = ch.screen.w, ch.screen.h
+  ch.screen.w, ch.screen.h = w, h
+  local ok, err = pcall(f)
+  ch.screen.w, ch.screen.h = rw, rh
+  if not ok then error(err, 0) end
+end
+
+-- The lines f() sends to ch.log.
+local function logged(f)
+  local real, lines = ch.log, {}
+  ch.log = function(...) lines[#lines + 1] = table.concat({ ... }, " ") end
+  local ok, err = pcall(f)
+  ch.log = real
+  if not ok then error(err, 0) end
+  return lines
+end
+
+-- The commands that carry an x, and which of their arguments are one.
+local X_ARGS = { line = { 1, 3 }, rect = { 1 }, circle = { 1 }, text = { 1 }, icon = { 2 }, image = { 2 } }
+
+-- The commands of `a` against `b`: the same, `b` with every x `dx` further right.
+local function sameShifted(a, b, dx, what)
+  eq(#b, #a, what .. ": commands")
+  for i, e in ipairs(a) do
+    local o = b[i]
+    eq(o.name, e.name, what .. ": command " .. i)
+    assert(X_ARGS[e.name] or e.name == "clear" or e.name == "refresh", what .. ": a command with unknown coordinates: " .. e.name)
+    local x = {}
+    for _, k in ipairs(X_ARGS[e.name] or {}) do x[k] = dx end
+    local n = 0
+    for k in pairs(e) do
+      if math.type(k) == "integer" and k > n then n = k end
+    end
+    for k = 1, n do
+      local want = e[k]
+      if x[k] then want = want + x[k] end
+      eq(o[k], want, what .. ": command " .. i .. " (" .. e.name .. ") argument " .. k)
+    end
+  end
+end
+
+-- The frame of game.draw(state, seat, ui) as the list of its commands, with ch.screen as w x h.
+local function eventsAt(w, h, state, seat, ui)
+  local events
+  withCanvas(w, h, function()
+    collectgarbage("collect")
+    events = {}
+    trace.record(function() game.draw(state, seat, ui) end, function(name, ...) events[#events + 1] = { name = name, ... } end)
+  end)
+  return events
+end
+
+-- One layout at every canvas: the Sticky's 474 x 788 frame of each screen is the X4 Pro's 466 x 788 frame with every x 4
+-- px further right, nothing more and nothing different.
+function draws.sameAtBothCanvases()
+  local own, other = build(ACROSS), build(DOWN)
+  local sunk = (other:gsub("%l", string.upper))
+  local screens = {
+    { "placing", stateWith({ f = { build({ ACROSS[1], ACROSS[2] }), fleet.EMPTY }, p = 1 }), 1, {} },
+    { "placing with a message", stateWith({}), 1, { message = "Ships cannot overlap" } },
+    { "waiting", stateWith({ f = { own, fleet.EMPTY }, p = 2 }), 1, {} },
+    { "firing", (function() local s = firing(shotAt(own, { 6, 6 }), shotAt(other, { 10, 10 }, { 1, 10 }), 1)
+      s.l = { 1, 10, 10, 0, 0 } return s end)(), 1, {} },
+    { "help", stateWith({}), 1, { help = true } },
+    { "over", firing(shotAt(own, { 8, 3 }), sunk, 1), 0, {} },
+  }
+  for _, screen in ipairs(screens) do
+    local a = eventsAt(466, 788, screen[2], screen[3], screen[4])
+    local b = eventsAt(474, 788, screen[2], screen[3], screen[4])
+    assert(#a >= 5, screen[1] .. ": a frame of " .. #a .. " commands")
+    sameShifted(a, b, 4, screen[1])
+  end
+end
+
+-- A canvas under 466 x 788 is unsupported: the first draw says so in one line naming both canvases, no later draw does, and
+-- nothing faults. A supported canvas logs nothing.
+function draws.smallCanvas()
+  eq(#logged(function() eventsAt(466, 788, stateWith({}), 1, {}) end), 0, "log lines from a draw at 466 x 788")
+  eq(#logged(function() eventsAt(474, 788, stateWith({}), 1, {}) end), 0, "log lines from a draw at 474 x 788")
+  local first = logged(function() eventsAt(320, 480, stateWith({}), 1, {}) end)
+  eq(#first, 1, "log lines from the first draw at 320 x 480")
+  assert(first[1]:find("320 x 480", 1, true) and first[1]:find("466 x 788", 1, true), "the line names both canvases: " .. first[1])
+  eq(#logged(function() eventsAt(320, 480, stateWith({}), 1, {}) end), 0, "log lines from the second draw")
+  eq(#logged(function() eventsAt(320, 480, stateWith({}), 1, { help = true }) end), 0, "log lines from a help draw")
 end
 
 return draws
