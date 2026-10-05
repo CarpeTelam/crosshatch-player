@@ -14,6 +14,8 @@ local GAP = 8
 local KEY_MAX = 80
 layout.ROWS = 8 -- the MENU panel's rows
 layout.RAIL = 4 -- the rail's buttons
+layout.NOTE_W, layout.NOTE_H = 12, 16 -- a digit note's image (make_note_images.py checks them against its own size)
+local NOTE_PITCH = 16 -- the distance from one note image to the next, across and down
 
 -- The y offset from the middle of a line of text to the top of its box, per size, so a numeral is drawn centred (the
 -- built-in fonts' ascent and digit height; the simulator frames settle them).
@@ -90,6 +92,18 @@ function layout.menu_at(x, y)
   local i = (y - L.row_y) // L.row_h + 1
   if x < L.row_x or x >= L.row_x + L.row_w or y < L.row_y or i > layout.ROWS then return nil end
   return i
+end
+
+-- The canvas point X0, Y0 of the note image for mark k (1..9) of the cell whose rectangle starts at x, y, for the 51 px
+-- cells of the 474 x 788 canvas: three columns and three rows of 12 x 16 images at a 16 px pitch, inside the cell's grid
+-- lines (offsets 2..49 down and 4..48 across; the 1 px cell line is offset 0 and a 3 px block line covers offsets 0..1
+-- and 50). The image's checker is baked in, so its origin's x + y must be even (odd for an `inverted` one, drawn
+-- "white", which swaps the checker) to continue the screen's "dark" dither, which is black where screen x + y is even;
+-- the canvas origin's x + y is even on both boards. The one pixel nudge `a` keeps that true from cell to cell, whose
+-- pitch of 51 px is odd.
+function layout.note_tile(x, y, k, inverted)
+  local a = (x + y + (inverted and 1 or 0)) % 2
+  return x + 4 + NOTE_PITCH * ((k - 1) % 3) + a, y + 2 + NOTE_PITCH * ((k - 1) // 3)
 end
 
 -- The centre x, y of a rectangle.

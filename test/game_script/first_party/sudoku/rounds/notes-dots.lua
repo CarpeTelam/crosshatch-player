@@ -9,6 +9,7 @@ return {
   steps = function(state)
     rules.taps(state)
     rules.frame(state, false)
+    rules.look(state)
     local steps = taps.rail({}, 1, { move = false })
     taps.notes_three(steps, state)
     return steps

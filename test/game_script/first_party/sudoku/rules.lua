@@ -450,23 +450,32 @@ local function record(f, on_image, on_call)
   return count
 end
 
--- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (by
--- cell), the pad's remaining counts (by digit), the diagonal strokes (by cell, counting lines: a stroke is eight), and
--- the full refreshes. A command that is this game's but outside its place (a fill that is no cell's, a count that is
+-- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (the
+-- clues) and `dark` (SHADE PEERS), by cell, the pad's remaining counts (by digit), the diagonal strokes (by cell,
+-- counting lines: a stroke is eight), the outlines inside a cell (its selection frame, by cell and inset from the cell's
+-- edge, as the colour drawn), and the full refreshes. A command that is this game's but outside its place (a fill that is no cell's, a count that is
 -- not on a key) is an error here.
 local function watch()
-  local seen = { light = {}, count = {}, rising = {}, falling = {}, full = 0 }
+  local seen = { light = {}, dark = {}, frame = {}, count = {}, rising = {}, falling = {}, full = 0 }
   local at = {}
   for d = 1, 9 do
     local x, y, w = layout.key_rect(d)
     at[(x + w - 8) .. "," .. (y + 4)] = d
   end
   local function on_call(name, a, b, c, d, e, f)
-    if name == "rect" and e == "light" then
-      local cell = assert(layout.cell_at(a + 1, b + 1), "a light fill outside the grid")
+    if name == "rect" and (e == "light" or e == "dark") then
+      local cell = assert(layout.cell_at(a + 1, b + 1), "a " .. e .. " fill outside the grid")
       local x, y, w, h = layout.cell_rect(cell)
-      assert(f == true and a == x + 1 and b == y + 1 and c == w - 1 and d == h - 1, "a light fill that is no cell's")
-      seen.light[cell] = (seen.light[cell] or 0) + 1
+      assert(f == true and a == x + 1 and b == y + 1 and c == w - 1 and d == h - 1, "a " .. e .. " fill that is no cell's")
+      seen[e][cell] = (seen[e][cell] or 0) + 1
+    elseif name == "rect" and f ~= true and layout.cell_at(a, b) then
+      local cell = layout.cell_at(a, b)
+      local x, y, w = layout.cell_rect(cell)
+      local inset = a - x
+      if b - y == inset and c == w - 2 * inset then
+        seen.frame[cell] = seen.frame[cell] or {}
+        seen.frame[cell][inset] = e
+      end
     elseif name == "text" and d == "small" and f == "right" then
       local key = assert(at[a .. "," .. b], "a right-aligned count that is on no key")
       assert(seen.count[key] == nil, "two counts on key " .. key)
@@ -516,10 +525,10 @@ local function clashing(v)
   return out
 end
 
--- Pins what a frame of state `s` and ui draws to what the interaction table says, cell by cell: SHADE PEERS fills `light`
--- exactly the selected cell's row, column, and box cells that are neither a clue (dark ground) nor a copy of the focused
--- digit (black ground), once each, and nothing when it is off or nothing is selected; SHOW REMAINING puts nine counts on
--- the keys (nine less the digit's cells, clues and the player's, never below 0) and none when off; every clashing cell
+-- Pins what a frame of state `s` and ui draws to what the interaction table says, cell by cell: every clue that is not a
+-- copy of the focused digit (black ground) is filled `light`, once; SHADE PEERS fills `dark` exactly the selected cell's
+-- row, column, and box cells that are neither a clue nor a copy of the focused digit, once each, and nothing when it is
+-- off or nothing is selected; SHOW REMAINING puts nine counts on the keys (nine less the digit's cells, clues and the player's, never below 0) and none when off; every clashing cell
 -- has a rising stroke and every CHECK-marked cell a falling one (eight lines each), and no other cell has either.
 local function expect_marks(seen, s, ui)
   local clash = clashing(s.v)
@@ -533,7 +542,8 @@ local function expect_marks(seen, s, ui)
       local row, col, box = units_of(c)
       shaded = row == sel_row or col == sel_col or box == sel_box
     end
-    eq(seen.light[c], shaded and 1 or nil, "light fills of cell " .. c)
+    eq(seen.light[c], clue and not (d == ui.foc) and 1 or nil, "light fills of cell " .. c)
+    eq(seen.dark[c], shaded and 1 or nil, "dark fills of cell " .. c)
     eq(seen.rising[c], clash[c] and 8 or nil, "clash strokes of cell " .. c)
     eq(seen.falling[c], ui.check and ui.check[c] and 8 or nil, "CHECK strokes of cell " .. c)
     if d then left[d] = left[d] - 1 end
@@ -541,11 +551,30 @@ local function expect_marks(seen, s, ui)
   for d = 1, 9 do eq(seen.count[d], ui.rem and tostring(math.max(left[d], 0)) or nil, "the count on key " .. d) end
 end
 
+-- The selection frame of cell sel: black outlines at insets 0 and 1 and, with `halo`, white ones at 2 to 4 (a selected
+-- cell with no digit notes on a "dark" ground); without it nothing is drawn at insets 2 to 4, where a digit note's
+-- image starts. No other cell has a frame.
+local function expect_frame(seen, sel, halo)
+  local f = assert(seen.frame[sel], "no selection frame")
+  eq(f[0], "black", "frame inset 0")
+  eq(f[1], "black", "frame inset 1")
+  for i = 2, 4 do eq(f[i], halo and "white" or nil, "frame inset " .. i) end
+  for c in pairs(seen.frame) do eq(c, sel, "a frame on another cell") end
+end
+
+-- Whether cell c is in a row, column, or box of cell sel: what SHADE PEERS shades.
+local function peer(c, sel)
+  local a, b, e = units_of(c)
+  local sa, sb, se = units_of(sel)
+  return a == sa or b == sb or e == se
+end
+
 -- The worst frame of the dealt grid: every empty cell holds all nine notes (the ones a neighbour's digit rules out stay
 -- hidden), SHADE PEERS, SHOW REMAINING, and a CHECK stroke on every cell are on, a digit is focused, and a cell is
 -- selected. It stays inside the engine's 2,048 commands; with notes as images (`digits`), each shown mark is one image of
--- the focus colour its digit calls for, set inside its cell clear of the 3 px block lines (an image keeps a one-pixel
--- paper margin, so 2 px from each cell edge keeps the paper off the lines); with dots, no image is drawn.
+-- the set and colour its cell and digit call for (see on_image below), at layout.note_tile, inside offsets 2..49 of its
+-- cell on both axes so it covers no cell line or block line, with the dither parity the tile's baked checker needs;
+-- with dots, no image is drawn.
 function rules.frame(state, digits)
   eq(record(function() require("board").draw_grid(layout.get()) end), 28)
   local s = fresh(state)
@@ -563,17 +592,34 @@ function rules.frame(state, digits)
   local L, images = layout.get(), 0
   local function on_image(name, x, y, color)
     images = images + 1
-    local set, d = name:match("^note_([gb])([1-9])$")
-    assert(set and color == "black", "an image is a note image: " .. tostring(name))
-    eq(set == "b", tonumber(d) == ui.foc, name .. " focus colour")
-    local cx, cy = layout.cell_rect(layout.cell_at(x + 5, y + 7))
+    local set, d = name:match("^note_([gbh])([1-9])$")
+    assert(set, "an image is a note image: " .. tostring(name))
+    d = tonumber(d)
+    local c = layout.cell_at(x + layout.NOTE_W // 2, y + layout.NOTE_H // 2)
+    local cx, cy = layout.cell_rect(c)
+    -- A peer of the selection is shaded, so it takes H, the focused digit's drawn "white"; any other cell takes B for
+    -- the focused digit and G for the rest, all "black".
+    local shaded, focused = ui.shade and ui.sel ~= nil and peer(c, ui.sel), d == ui.foc
+    eq(set, shaded and "h" or (focused and "b" or "g"), name .. " set")
+    eq(color, shaded and focused and "white" or "black", name .. " colour")
+    local inverted = shaded and focused
+    local tx, ty = layout.note_tile(cx, cy, d, inverted)
+    eq(x, tx, name .. " x")
+    eq(y, ty, name .. " y")
     local dx, dy = x - cx, y - cy
-    assert(dx >= 2 and dx + 10 <= L.cell - 1 and dy >= 2 and dy + 14 <= L.cell - 1, name .. " at " .. dx .. ", " .. dy)
+    assert(
+      dx >= 2 and dx + layout.NOTE_W <= L.cell - 1 and dy >= 2 and dy + layout.NOTE_H <= L.cell - 1,
+      name .. " at " .. dx .. ", " .. dy
+    )
+    eq((x + y) % 2, inverted and 1 or 0, name .. " dither phase")
   end
   local seen, on_call = watch()
   local commands = record(function() game.draw(s, 1, ui) end, on_image, on_call)
   assert(commands <= 2048, "the worst frame is " .. commands .. " commands")
   expect_marks(seen, s, ui)
+  -- The selected cell holds marks: a frame of two black outlines when they are images (they start at inset 2), the
+  -- halo frame of its "dark" ground when they are dots (as built).
+  expect_frame(seen, ui.sel, not digits)
   eq(seen.full, 1, "full refreshes of the first frame")
   local shown = 0
   for _, c in ipairs(empty) do
@@ -582,6 +628,13 @@ function rules.frame(state, digits)
     end
   end
   eq(images, digits and shown or 0, "marks drawn")
+  -- SHADE PEERS off, then nothing selected: no cell is shaded, so every mark is a B or G (on_image reads ui.shade, ui.sel).
+  for _, change in ipairs({ function() ui.shade = false end, function() ui.shade, ui.sel = true, nil end }) do
+    change()
+    images = 0
+    record(function() game.draw(s, 1, ui) end, on_image)
+    eq(images, digits and shown or 0, "marks drawn")
+  end
 end
 
 -- The marks `game.draw` of state `st` with `u` makes, as watch gathers them.
@@ -636,13 +689,14 @@ function rules.draw_marks(state)
     local _, clue = digit_of(s.v:byte(c))
     if clue and (row == sel_row or col == sel_col or box == sel_box) then clue_peers = clue_peers + 1 end
   end
-  assert(next(seen.light) and clue_peers > 0 and not seen.light[peer], "SHADE PEERS has nothing to tell apart here")
+  assert(next(seen.dark) and clue_peers > 0 and not seen.dark[peer], "SHADE PEERS has nothing to tell apart here")
+  assert(next(seen.light), "no clue is filled light")
   -- Off, nothing selected, nothing focused: the fills follow (and the counts and strokes stay as they are).
   ui.shade = false
-  assert(next(marks_of(s, ui).light) == nil, "SHADE PEERS off still fills")
+  assert(next(marks_of(s, ui).dark) == nil, "SHADE PEERS off still fills")
   expect_marks(marks_of(s, ui), s, ui)
   ui.shade, ui.sel = true, nil
-  assert(next(marks_of(s, ui).light) == nil, "no selection still fills")
+  assert(next(marks_of(s, ui).dark) == nil, "no selection still fills")
   expect_marks(marks_of(s, ui), s, ui)
   ui.sel, ui.foc = sel, nil
   expect_marks(marks_of(s, ui), s, ui)
@@ -711,6 +765,62 @@ function rules.draw_marks(state)
   solved.v = answer(solved)
   eq(refreshes(solved, u), 1, "the end screen")
   eq(refreshes(solved, u), 0, "the end screen, drawn again")
+end
+
+-- The grounds and numeral colours of a board with SHADE PEERS on, a cell selected, and a digit focused: every empty cell
+-- but the selected one holds the dealt grid's answer as the player's digit. A focused digit's copies are "black" with a
+-- "white" numeral (outranking clue and shade), a clue is "light" with a black numeral, a peer of the selection that is
+-- neither is "dark" with a black numeral, and every other cell has no ground and a black numeral.
+function rules.look(state)
+  local s = fresh(state)
+  local solved, empty, v = answer(s), empties(s), {}
+  for c = 1, 81 do
+    v[c] = s.v:byte(c) == 48 and string.char(solved:byte(c) + 48) or s.v:sub(c, c)
+  end
+  local sel = empty[1]
+  v[sel] = "0"
+  s.v = table.concat(v)
+  local ui = {}
+  game.input(s, 1, ui, { kind = "timer" })
+  ui.shade, ui.dots, ui.sel, ui.foc = true, false, sel, digit_at(s, empty[2])
+  local grounds, numerals = {}, {}
+  local seen, watched = watch()
+  local function on_call(name, ...)
+    watched(name, ...)
+    local x, y, w, h, color, filled = ...
+    if name == "rect" and filled and w == layout.get().cell - 1 and h == layout.get().cell - 1 then
+      grounds[x .. "," .. y] = color
+    elseif name == "text" and h == "large" then
+      numerals[x .. "," .. y] = { str = w, color = color }
+    end
+  end
+  record(function() game.draw(s, 1, ui) end, nil, on_call)
+  expect_frame(seen, sel, true)
+  local kinds = { black = 0, light = 0, dark = 0, none = 0 }
+  for c = 1, 81 do
+    local x, y, w, hh = layout.cell_rect(c)
+    local cx, cy = layout.centre(x, y, w, hh)
+    local d, clue, shaded = tonumber(s.v:sub(c, c)) or s.v:byte(c) - 96, s.v:byte(c) <= 57, peer(c, sel)
+    local want, ink = nil, "black"
+    if c == sel then
+      want = "dark"
+    elseif d == ui.foc then
+      want, ink = "black", "white"
+    elseif clue then
+      want = "light"
+    elseif shaded then
+      want = "dark"
+    end
+    eq(grounds[x + 1 .. "," .. y + 1], want, "ground of cell " .. c)
+    kinds[want or "none"] = kinds[want or "none"] + 1
+    if c ~= sel then
+      local n = numerals[cx .. "," .. cy - layout.DY.large]
+      assert(n, "numeral of cell " .. c)
+      eq(n.str, tostring(d), "numeral of cell " .. c)
+      eq(n.color, ink, "numeral colour of cell " .. c)
+    end
+  end
+  for _, kind in ipairs({ "black", "light", "dark", "none" }) do assert(kinds[kind] > 0, "no " .. kind .. " cell") end
 end
 
 return rules
