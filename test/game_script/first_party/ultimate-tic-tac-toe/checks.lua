@@ -410,8 +410,10 @@ local function icons(events)
   return out
 end
 
--- The recorder counts as the engine does: board.draw_grid is documented as 28 commands (20 lines, 8 filled rects), and a
--- function the engine's ch.gfx lacks raises on the recorder too, which is then gone.
+-- The recorder counts as the engine does (ChBindings.cpp): board.draw_grid is documented as 28 commands (20 lines, 8 filled
+-- rects), a `clear` is one command, a `refresh` is none (it asks for a refresh of the frame and appends nothing, so it is
+-- neither counted nor in the text, and on_call still sees it), and a function the engine's ch.gfx lacks raises on the
+-- recorder too, which is then gone.
 local function recorderCounts()
   local text, count = trace.record(function() board.draw_grid(layout()) end)
   eq(count, 28, "draw_grid commands")
@@ -431,6 +433,16 @@ local function recorderCounts()
   local seen = {}
   trace.record(function() ch.gfx.rect(1, 2, 3, 4, "light", true) end, function(name, ...) seen = { name, ... } end)
   eq(table.concat({ seen[1], seen[2], seen[3], seen[4], seen[5], seen[6], tostring(seen[7]) }, ","), "rect,1,2,3,4,light,true", "on_call")
+  -- A frame with a clear and a refresh in it: the clear is one command, the refresh none; on_call sees all three calls.
+  local names = {}
+  local framed, framed_count = trace.record(function()
+    ch.gfx.clear("white")
+    ch.gfx.refresh("full")
+    ch.gfx.rect(1, 2, 3, 4, "black", true)
+  end, function(name) names[#names + 1] = name end)
+  eq(framed_count, 2, "commands of a frame with a clear and a refresh")
+  eq(framed, 'clear("white")\nrect(1, 2, 3, 4, "black", true)', "the text of a frame with a refresh")
+  eq(table.concat(names, ","), "clear,refresh,rect", "on_call sees a refresh")
 end
 
 -- The highlight: `light` fills exactly the small boards the next move may be in (and the full ones), under the grid, and
@@ -522,6 +534,64 @@ local function helpPageHasNoBoard()
   end
 end
 
+-- The ink of a frame: its first command is clear("white") (and no other), every line is black (the grid), every text and icon
+-- is black (this game inverts nothing), and a rect is black (the grid's block lines), light (the highlight) or white (a
+-- won board's fill). A game that cleared its page black or drew its grid white drew the right commands in the wrong ink,
+-- which the commands alone do not show.
+local function frameInkIsBlackOnWhite()
+  local won = stateWith({ w = "120000000", n = 0, m = 9, c = chars(81, "0", {
+    [1] = "1", [2] = "1", [3] = "1", [13] = "2", [14] = "2", [15] = "2", [23] = "1", [25] = "2", [81] = "1" }) })
+  local states = { stateWith({}), stateWith({ n = 5 }), won, stateWith({ w = "111000000", n = 0 }) }
+  local screens = { {}, { message = "That cell is taken" }, { help = true } }
+  for i, st in ipairs(states) do
+    for _, ui in ipairs(screens) do
+      local what = "state " .. i .. (ui.help and " help" or ui.message and " message" or "")
+      local events = frame(st, ui)
+      assert(#events > 0, what .. ": an empty frame")
+      eq(events[1].name, "clear", what .. ": the first command")
+      eq(events[1][1], "white", what .. ": the page is cleared to")
+      for k, e in ipairs(events) do
+        if k > 1 then assert(e.name ~= "clear", what .. ": a clear after the first command") end
+        if e.name == "line" or e.name == "text" then
+          eq(e[5], "black", what .. ": a " .. e.name .. " (command " .. k .. ") is drawn")
+        elseif e.name == "icon" then
+          eq(e[5], "black", what .. ": the icon " .. tostring(e[1]) .. " (command " .. k .. ") is drawn")
+        elseif e.name == "rect" then
+          assert(e[5] == "black" or e[5] == "light" or e[5] == "white", what .. ": a rect (command " .. k .. ") in " .. tostring(e[5]))
+          if e[5] == "black" then eq(e[6], true, what .. ": a black rect (command " .. k .. ") is a filled block line") end
+        end
+      end
+    end
+  end
+end
+
+-- The host draws its end-of-round dialog over the canvas from host.dialog_top (HostBounds.h) down to host.dialog_bottom
+-- once the round is over, so no text of the frame the player is left with may sit in that band: every text box (2 *
+-- DY[size] tall as the other first-party games' are: small 26, medium 30, large 54; the box's height is a device font
+-- metric this host lacks) ends at or above the dialog or starts at or below it. The frames are the over frames: a won
+-- game and a drawn one, with and without the "message" line. Sudoku's level name once sat at y 260 under the dialog.
+local TEXT_BOX = { small = 26, medium = 30, large = 54 }
+local function endFrameClearsTheDialog()
+  local drawn = stateWith({ w = "121122211", n = 0 })
+  local over = { stateWith({ w = "111000000", n = 0 }), stateWith({ w = "222000000", n = 0 }), drawn }
+  for i, st in ipairs(over) do
+    for _, ui in ipairs({ {}, { message = "That cell is taken" } }) do
+      local events = frame(st, ui)
+      local texts = 0
+      for _, e in ipairs(events) do
+        if e.name == "text" then
+          texts = texts + 1
+          local top, bottom = e[2], e[2] + TEXT_BOX[e[4]]
+          assert(bottom <= host.dialog_top or top >= host.dialog_bottom,
+            "over state " .. i .. ": the text '" .. tostring(e[3]) .. "' (y " .. top .. " to " .. bottom .. ") is under the dialog (y "
+            .. host.dialog_top .. " to " .. host.dialog_bottom .. ")")
+        end
+      end
+      assert(texts > 0, "over state " .. i .. " draws no text")
+    end
+  end
+end
+
 return {
   { name = "board layout at the X4 Pro's, the Sticky's, and a larger canvas", run = geometry },
   { name = "a canvas under 466 x 788 is laid out from its corner and logged once", run = smallCanvas },
@@ -541,4 +611,6 @@ return {
   { name = "a won board has a white fill and one big mark, a small mark is one icon", run = wonBoards },
   { name = "the question mark holds its tap point", run = questionMark },
   { name = "the help page draws text only", run = helpPageHasNoBoard },
+  { name = "a frame is cleared white, its grid and text and icons are black", run = frameInkIsBlackOnWhite },
+  { name = "the end frame's text is clear of the host's end-of-round dialog", run = endFrameClearsTheDialog },
 }

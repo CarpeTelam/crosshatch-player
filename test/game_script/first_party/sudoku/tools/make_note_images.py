@@ -23,8 +23,10 @@ tall, so three rows exactly fill the 48 pixels (offsets 2..49) of a 51 pixel cel
 The images are 1-bit grayscale PNGs holding only black and white, so the installer's converter has nothing to dither.
 
 --check also fails on a note_*.png in the folder that is not one of the 27 (it would count against the package's image
-limit), and when games/sudoku/layout.lua's NOTE_W and NOTE_H are not IMAGE_W and IMAGE_H. Nothing in CI runs this tool, so
-it is run by hand whenever the glyphs, the phase rule, or layout.note_tile change.
+limit), and when games/sudoku/layout.lua's NOTE_W and NOTE_H are not IMAGE_W and IMAGE_H. `--check` runs in CI: the
+games check registers it as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckNoteImages), so a swapped
+or resized PNG fails the games-check job. Writing the images (no flag) is still by hand, whenever the glyphs, the phase
+rule, or layout.note_tile change.
 
 Exit codes: 0 done (or --check found no difference), 1 --check found a difference.
 """

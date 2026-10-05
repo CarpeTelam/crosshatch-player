@@ -8,9 +8,10 @@ local grid = require("grid")
 local layout = require("layout")
 local solver = require("solver")
 
--- The rounds' VM is within a few KB of the 256 KB heap (README, "The checks VM heap"), and a frame's draw leaves tens
--- of KB of garbage, so a round could fault "not enough memory": generational collection, with a full one at the start
--- of the heavy pins (taps in interaction.lua, frame and look in drawn.lua) and at the end of the last two.
+-- The rounds' VM was within a few KB of the device's 256 KB heap and a frame's draw leaves tens of KB of garbage, so a round
+-- could fault "not enough memory" (README, "The check VMs' limits"; a check VM has a 1 MB heap now, and this stays as built):
+-- generational collection, with a full one at the start of the heavy pins (taps in interaction.lua, frame and look in
+-- drawn.lua) and at the end of the last two.
 collectgarbage("generational")
 
 local CLUE, NOMARK, ZEROS = "Clues cannot be changed", "That mark is not possible", string.rep("\0", 162)

@@ -1,9 +1,9 @@
 -- canvases.lua: one layout on every canvas, pinned from rounds/canvases.lua. The Sticky's 474 x 788 gets the X4 Pro's
 -- 466 x 788 layout and frames with every x 4 px right (the game lays out one 466 x 788 box and centres it), and a
 -- canvas under 466 x 788 is unsupported: laid out from its corner and said so once in ch.log. It is a module of its
--- own, called by a round whose VM loads none of the pin modules (rules.lua, drawn.lua, and the rest), because the heap
--- is 256 KB and a frame's draw leaves tens of KB of garbage (first_party/README.md, "The checks VM heap"): it keeps no
--- table of a frame's commands, only a digest.
+-- own, called by a round whose VM loads none of the pin modules (rules.lua, drawn.lua, and the rest), as built when that VM
+-- had the device's 256 KB heap and a frame's draw left tens of KB of garbage (first_party/README.md, "The check VMs'
+-- limits"): it keeps no table of a frame's commands, only a digest.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
@@ -44,7 +44,9 @@ end
 -- A digest of the frame `draw` makes with ch.screen as w x h, every x taken `dx` back first: the commands folded in
 -- order into a number (the numbers as they are, a string by its length and every byte), kept at every 32nd command too,
 -- so a difference is placed within 32. A command that carries no x and is no clear or refresh is an error, so a draw
--- call this table does not know cannot go unchecked. Returns the digests and the number of commands.
+-- call this table does not know cannot go unchecked. A `refresh` is folded into the digest (a frame that asks for one
+-- differently differs) but is no command: the engine appends nothing for it (ChBindings.cpp), so it is not counted, and a
+-- `clear` is one. Returns the digests and the number of commands.
 local function digests(w, h, dx, draw)
   local marks, count, h0 = {}, 0, 0
   local function fold(v)
@@ -76,6 +78,7 @@ local function digests(w, h, dx, draw)
     fold(e)
     fold(f)
     fold(g)
+    if name == "refresh" then return end
     count = count + 1
     if count % 32 == 0 then marks[count // 32] = h0 end
   end

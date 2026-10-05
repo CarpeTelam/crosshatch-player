@@ -1,6 +1,6 @@
 -- interaction.lua: what taps do, how the toggles are kept, and what starts a ui over, pinned on the grid a round dealt
 -- (a round's `steps(state)` calls them; rules.lua says why they live in a round's VM). Apart from rules.lua so that a
--- round that calls only these does not load that module's compiled code (first_party/README.md, "The checks VM heap").
+-- round that calls only these does not load that module's compiled code (first_party/README.md, "The check VMs' limits").
 local game = require("main")
 local pins = require("pins")
 local eq, fresh, empties, answer, mv = pins.eq, pins.fresh, pins.empties, pins.answer, pins.mv

@@ -41,7 +41,8 @@ using match::markFills;
 using match::waitFor;
 using Button = MappedInputManager::Button;
 
-// Where a screen tap lands on canvas point (x, y): the canvas is the test canvas, the Sticky's 474 x 788 at (3, 6).
+// Where a screen tap lands on canvas point (x, y): the canvas is the double's own, 474 x 788 at (3, 6) of the screen:
+// an odd origin parity (3 + 6) that no device has (the Sticky's origin is (3, 9)).
 constexpr int CANVAS_X = 3;
 constexpr int CANVAS_Y = 6;
 

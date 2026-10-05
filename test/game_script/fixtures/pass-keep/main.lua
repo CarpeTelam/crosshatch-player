@@ -1,5 +1,6 @@
--- pass-keep fixture: the engine's one hidden pass game whose move can keep the turn (pass-hidden's
--- every move passes it). A tap above y = 200 is a "keep" move: the mover's `kept` count goes up by
+-- pass-keep fixture: a fixture hidden pass game whose move can keep the turn (pass-hidden's every move
+-- passes it); the tests' own HIDDEN_KEEPS_TURN_GAME (games_check/TestSupport.h) and Battleship's
+-- placement moves keep the turn too, so it is the engine's simplest such game, not its only one. A tap above y = 200 is a "keep" move: the mover's `kept` count goes up by
 -- one and the turn stays, so the match stays in Playing on the same seat's frame. A tap at or
 -- below y = 200 is a "pass" move: the turn goes to the next seat and `kept` resets. The frame
 -- shows "Player S", "Kept: K", and "Passes: P". The round never ends. The log lines name the

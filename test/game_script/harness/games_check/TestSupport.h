@@ -41,8 +41,10 @@ inline std::vector<uint8_t> encodeState(const std::string& tableExpression) {
 
 // A hidden two-seat pass game of the tests' own whose seats move twice each (the turn passes after every second tap),
 // and whose tap left of x = 50 is rejected: a move that keeps the turn and a rejected tap, the two cases pass-hidden
-// (one move, one turn) never plays. Every call logs its seat, as pass-hidden's do. Shared by the engine tests (the log
-// RoundPlayer produces) and the flow pin (the log GameVM's hidden flow produces).
+// (one move, one turn) never plays. It is not the engine's only kept-turn game: the `pass-keep` fixture and
+// Battleship's placement moves (a seat's placement keeps the turn until its fleet is ready) keep the turn too. Every
+// call logs its seat, as pass-hidden's do. Shared by the engine tests (the log RoundPlayer produces) and the flow pin
+// (the log GameVM's hidden flow produces).
 inline constexpr const char* HIDDEN_KEEPS_TURN_MANIFEST =
     R"({"id": "keeps-turn", "name": "Keeps turn", "version": "1.0.0", "api": 1, "seats": {"min": 2, "max": 2}, "modes": ["pass"], "hidden": true})";
 

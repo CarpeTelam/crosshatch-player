@@ -34,7 +34,7 @@ std::vector<std::string> idsFrom(const char* csv) {
   return ids;
 }
 
-Roots roots(const CanvasSize canvas = games_check::CANVAS_474) {
+Roots roots(const CanvasSize canvas) {
   return Roots{GAMES_CHECK_GAMES_ROOT, GAMES_CHECK_COMPANION_ROOT, PACKED_GAMES_DIR, canvas};
 }
 
@@ -59,11 +59,17 @@ class CompanionFolderTest : public ::testing::TestWithParam<std::string> {};
 
 }  // namespace
 
-TEST_P(GamesCheckTest, ThePackageInstallsAndLoads) { expectGreen(games_check::checkPackage(roots(), GetParam())); }
+TEST_P(GamesCheckTest, ThePackageInstallsAndLoads) {
+  expectGreen(games_check::checkPackage(roots(games_check::CANVAS_474), GetParam()));
+}
 
-TEST_P(GamesCheckTest, TheGamesOwnChecksPass) { expectGreen(games_check::runGameChecks(roots(), GetParam())); }
+TEST_P(GamesCheckTest, TheGamesOwnChecksPass) {
+  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_474), GetParam()));
+}
 
-TEST_P(GamesCheckTest, EveryRoundPlaysAsItsFileSays) { expectGreen(games_check::playRounds(roots(), GetParam())); }
+TEST_P(GamesCheckTest, EveryRoundPlaysAsItsFileSays) {
+  expectGreen(games_check::playRounds(roots(games_check::CANVAS_474), GetParam()));
+}
 
 TEST_P(GamesCheck466Test, ThePackageInstallsAndLoads) {
   expectGreen(games_check::checkPackage(roots(games_check::CANVAS_466), GetParam()));
@@ -77,7 +83,24 @@ TEST_P(GamesCheck466Test, EveryRoundPlaysAsItsFileSays) {
   expectGreen(games_check::playRounds(roots(games_check::CANVAS_466), GetParam()));
 }
 
-TEST_P(CompanionFolderTest, HasAGame) { expectGreen(games_check::companionHasGame(roots(), GetParam())); }
+// Every round again with the restore probe (the Continue seam, row 6 of the cross-story review): before each step and
+// after the last, the current snapshot is restored into a new game, which starts with every seat's `ui` empty and draws
+// every local seat. The device builds its VM that way on Continue; no round played through it before.
+TEST_P(GamesCheckTest, EveryRoundRestoresFromItsSnapshot) {
+  games_check::PlayOptions options;
+  options.restoreProbe = true;
+  expectGreen(games_check::playRounds(roots(games_check::CANVAS_474), GetParam(), nullptr, options));
+}
+
+TEST_P(GamesCheck466Test, EveryRoundRestoresFromItsSnapshot) {
+  games_check::PlayOptions options;
+  options.restoreProbe = true;
+  expectGreen(games_check::playRounds(roots(games_check::CANVAS_466), GetParam(), nullptr, options));
+}
+
+TEST_P(CompanionFolderTest, HasAGame) {
+  expectGreen(games_check::companionHasGame(roots(games_check::CANVAS_474), GetParam()));
+}
 
 INSTANTIATE_TEST_SUITE_P(Games, GamesCheckTest, ::testing::ValuesIn(idsFrom(GAMES_CHECK_GAME_IDS)), testName);
 INSTANTIATE_TEST_SUITE_P(Games466, GamesCheck466Test, ::testing::ValuesIn(idsFrom(GAMES_CHECK_GAME_IDS)), testName);

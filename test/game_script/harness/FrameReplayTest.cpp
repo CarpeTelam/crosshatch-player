@@ -41,7 +41,8 @@ using harness::rowsOf;
 using harness::speckle;
 using Px = GfxRenderer::Pixel;
 
-// The canvas on the 480 x 800 screen, off the corner as on the Sticky: 474 x 788 at (3, 6).
+// The canvas on the 480 x 800 screen, off the corner: the double's own, 474 x 788 at (3, 6), an odd origin parity no
+// device has (the Sticky's origin is (3, 9), the X4 Pro's (7, 9)).
 constexpr int OX = 3;
 constexpr int OY = 6;
 constexpr int CW = 474;

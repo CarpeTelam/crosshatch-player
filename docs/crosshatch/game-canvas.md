@@ -24,12 +24,13 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
 No other screen may use this exception; a new screen that is not a game canvas follows touch-and-ui.md.
 
 A game's canvas is the logical screen less the board's bezel insets (`GameViewport::forRenderer`), so its size differs by
-device: the X4 Pro and the Paper Mono give 466 x 788, the Sticky 474 x 788. A game designs for a 466 x 788 box and centres
-it in `ch.screen` (an offset of `(ch.screen.w - 466) // 2` on each side, so the Sticky shows the same pixel layout with 4 px
-of white at each side) rather than adapting its layout to the width it was given. A canvas smaller than 466 x 788 is
-unsupported: the game does not adapt, it logs one line saying so and lays out from the canvas's corner, so part of it is
-clipped. The games check plays every round and check of every game at both 466 x 788 and 474 x 788 (spine AD-7, amended
-2026-10-05).
+device: the X4 Pro gives 466 x 788 (insets {9, 7, 3, 7}) and the Sticky 474 x 788 (the default insets {9, 3, 3, 3}). The
+Paper Mono's profile carries the X4 Pro's insets too, but no Paper Mono env sets `FREEINK_CAP_GAMES`, so it runs no games
+today. A game designs for a 466 x 788 box and centres it in `ch.screen` (an offset of `(ch.screen.w - 466) // 2` on each
+side, so the Sticky shows the same pixel layout with 4 px of white at each side) rather than adapting its layout to the width
+it was given. A canvas smaller than 466 x 788 is unsupported: the game does not adapt, it logs one line saying so and lays out
+from the canvas's corner, so part of it is clipped. The games check plays every round and check of every game at both
+466 x 788 and 474 x 788 (spine AD-7, amended 2026-10-05).
 
 Drawing is in canvas pixels too, and its coordinates and sizes (`x`, `y`, `w`, `h`, `r`, and a line's ends) saturate to
 −32,768..32,767 when a `ch.gfx` command is recorded (`DisplayList`), before `FrameReplay` clips it to the canvas. A

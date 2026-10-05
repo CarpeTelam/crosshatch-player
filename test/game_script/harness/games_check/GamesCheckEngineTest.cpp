@@ -118,9 +118,11 @@ class GamesCheckEngineTest : public ::testing::Test {
   fs::path games() const { return root / "games"; }
   fs::path companion() const { return root / "companion"; }
   fs::path packed() const { return root / "packed"; }
-  Roots roots(const games_check::CanvasSize canvas = games_check::CANVAS_474) const {
+  Roots roots(const games_check::CanvasSize canvas) const {
     return Roots{games().string(), companion().string(), packed().string(), canvas};
   }
+  // The Sticky's canvas, which most of these tests need no other of.
+  Roots sticky() const { return roots(games_check::CANVAS_474); }
 
   static void write(const fs::path& path, const std::string& text) {
     fs::create_directories(path.parent_path());
@@ -214,15 +216,16 @@ TEST_F(GamesCheckEngineTest, AGreenGamePassesAllThreeChecks) {
   copyGame("pass-open", "pass-open");
   round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
   round("pass-open", "x-wins-in-solo", X_WINS_IN_SOLO);
+  checks("pass-open", "return { { name = 'adds', run = function() assert(1 + 1 == 2) end } }");
   pack({"pass-open"});
-  expectGreen(games_check::checkPackage(roots(), "pass-open"));
-  expectGreen(games_check::runGameChecks(roots(), "pass-open"));
-  const Report rounds = games_check::playRounds(roots(), "pass-open");
+  expectGreen(games_check::checkPackage(sticky(), "pass-open"));
+  expectGreen(games_check::runGameChecks(sticky(), "pass-open"));
+  const Report rounds = games_check::playRounds(sticky(), "pass-open");
   expectGreen(rounds);
   EXPECT_TRUE(noted(rounds, "round 'x-wins-in-pass' (pass) played to its end")) << rounds.text();
   EXPECT_TRUE(noted(rounds, "round 'x-wins-in-solo' (solo) played to its end")) << rounds.text();
-  EXPECT_TRUE(noted(games_check::runGameChecks(roots(), "pass-open"), "no checks.lua"));
-  expectGreen(games_check::companionHasGame(roots(), "pass-open"));
+  EXPECT_TRUE(noted(games_check::runGameChecks(sticky(), "pass-open"), "1 of 1 checks passed"));
+  expectGreen(games_check::companionHasGame(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, APackFailureFailsThatIdsPackageTestWithThePackersStderrAndTheOtherIdsStillRun) {
@@ -231,29 +234,29 @@ TEST_F(GamesCheckEngineTest, APackFailureFailsThatIdsPackageTestWithThePackersSt
   fs::remove(games() / "no-main" / "main.lua");
   round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
   pack({"no-main", "pass-open"});
-  const Report bad = games_check::checkPackage(roots(), "no-main");
+  const Report bad = games_check::checkPackage(sticky(), "no-main");
   expectRed(bad, {"scripts/pack_game.py refused games/no-main/", "error:"});
   // The game's other checks fail the same way, and name the packer, not a missing file.
-  expectRed(games_check::runGameChecks(roots(), "no-main"), {"pack_game.py refused"});
-  expectRed(games_check::playRounds(roots(), "no-main"), {"pack_game.py refused"});
+  expectRed(games_check::runGameChecks(sticky(), "no-main"), {"pack_game.py refused"});
+  expectRed(games_check::playRounds(sticky(), "no-main"), {"pack_game.py refused"});
   // The id packed after it is untouched.
-  expectGreen(games_check::checkPackage(roots(), "pass-open"));
-  expectGreen(games_check::playRounds(roots(), "pass-open"));
+  expectGreen(games_check::checkPackage(sticky(), "pass-open"));
+  expectGreen(games_check::playRounds(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, AnIdThePackerWasNeverRunForHasNoPackage) {
   copyGame("pass-open", "pass-open");
   pack(std::vector<std::string>{});
-  expectRed(games_check::checkPackage(roots(), "pass-open"), {"no package pass-open.chgame"});
+  expectRed(games_check::checkPackage(sticky(), "pass-open"), {"no package pass-open.chgame"});
 }
 
 TEST_F(GamesCheckEngineTest, APackageTheInstallerAcceptsIsListedWithThePackersHash) {
   copyGame("pass-art", "pass-art");
   pack({"pass-art"});
-  expectGreen(games_check::checkPackage(roots(), "pass-art"));
+  expectGreen(games_check::checkPackage(sticky(), "pass-art"));
   // A hash that is not the packer's is a failure.
   write(packed() / "pass-art.hash", "0123456789abcdef\n");
-  expectRed(games_check::checkPackage(roots(), "pass-art"), {"is not the packer's 0123456789abcdef"});
+  expectRed(games_check::checkPackage(sticky(), "pass-art"), {"is not the packer's 0123456789abcdef"});
 }
 
 TEST_F(GamesCheckEngineTest, AGameTheHostCannotStartFailsThePackageTest) {
@@ -263,7 +266,7 @@ TEST_F(GamesCheckEngineTest, AGameTheHostCannotStartFailsThePackageTest) {
        "\"seats\": { \"min\": 9, \"max\": 9 }");
   edit("too-many-seats", "manifest.json", "\"modes\": [\"solo\", \"pass\"]", "\"modes\": [\"pass\"]");
   pack({"too-many-seats"});
-  expectRed(games_check::checkPackage(roots(), "too-many-seats"), {"unavailable on this host"});
+  expectRed(games_check::checkPackage(sticky(), "too-many-seats"), {"unavailable on this host"});
 }
 
 TEST_F(GamesCheckEngineTest, APackOverAnOldFailureStartsCleanSoAFixedGameIsGreenAndItsPackErrorIsGone) {
@@ -272,13 +275,13 @@ TEST_F(GamesCheckEngineTest, APackOverAnOldFailureStartsCleanSoAFixedGameIsGreen
   const std::string source = games_check::test::readTextFile(main.string());
   fs::remove(main);
   pack({"pass-open"});
-  expectRed(games_check::checkPackage(roots(), "pass-open"), {"pack_game.py refused"});
+  expectRed(games_check::checkPackage(sticky(), "pass-open"), {"pack_game.py refused"});
   ASSERT_TRUE(fs::exists(packed() / "pass-open.packerror"));
   // The same output folder, packed again after the fix: the old error must not outlive it.
   write(main, source);
   pack({"pass-open"});
   EXPECT_FALSE(fs::exists(packed() / "pass-open.packerror"));
-  expectGreen(games_check::checkPackage(roots(), "pass-open"));
+  expectGreen(games_check::checkPackage(sticky(), "pass-open"));
 }
 
 // ---- module loading (the device refuses a module's load nested two deep inside main's) ----
@@ -288,7 +291,7 @@ TEST_F(GamesCheckEngineTest, AModuleThatLoadsInsideAModuleThatLoadsInsideMainFai
   write(games() / "nested" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
   write(games() / "nested" / "b.lua", "return { b = true }\n");
   pack({"nested"});
-  const Report report = games_check::checkPackage(roots(), "nested");
+  const Report report = games_check::checkPackage(sticky(), "nested");
   expectRed(report,
             {"main > a > b", "3 deep, at most 2", "script recursion too deep to load a module",
              "Require 'b' from main.lua before 'a' (deepest first, so each later require finds its module loaded), "
@@ -300,7 +303,7 @@ TEST_F(GamesCheckEngineTest, AModuleThatLoadsInsideAModuleThatLoadsInsideMainFai
   write(games() / "deeper" / "b.lua", "require(\"c\")\nreturn {}\n");
   write(games() / "deeper" / "c.lua", "return {}\n");
   pack({"deeper"});
-  expectRed(games_check::checkPackage(roots(), "deeper"),
+  expectRed(games_check::checkPackage(sticky(), "deeper"),
             {"main > a > b > c", "4 deep", "require 'b': script recursion too deep",
              "Require 'c', then 'b' from main.lua before 'a'"});
   // The advice works: main requiring c, then b, then a loads each from main alone.
@@ -309,7 +312,7 @@ TEST_F(GamesCheckEngineTest, AModuleThatLoadsInsideAModuleThatLoadsInsideMainFai
   write(games() / "fixed" / "b.lua", "require(\"c\")\nreturn {}\n");
   write(games() / "fixed" / "c.lua", "return {}\n");
   pack({"fixed"});
-  expectGreen(games_check::checkPackage(roots(), "fixed"));
+  expectGreen(games_check::checkPackage(sticky(), "fixed"));
 }
 
 TEST_F(GamesCheckEngineTest, ModulesRequiredFlatOrAlreadyLoadedAreGreenAndSoIsALazyRequire) {
@@ -334,9 +337,9 @@ TEST_F(GamesCheckEngineTest, ModulesRequiredFlatOrAlreadyLoadedAreGreenAndSoIsAL
   write(games() / "raises-late" / "b.lua", "return {}\n");
   pack({"flat", "cached", "lazy", "raises", "faults", "raises-late"});
   for (const char* id : {"flat", "cached", "lazy", "raises", "faults"}) {
-    expectGreen(games_check::checkPackage(roots(), id));
+    expectGreen(games_check::checkPackage(sticky(), id));
   }
-  expectRed(games_check::checkPackage(roots(), "raises-late"), {"main > a > b"});
+  expectRed(games_check::checkPackage(sticky(), "raises-late"), {"main > a > b"});
 }
 
 TEST_F(GamesCheckEngineTest, AProbeThatCannotReadAChainFailsThePackageTestInsteadOfPassingIt) {
@@ -346,7 +349,7 @@ TEST_F(GamesCheckEngineTest, AProbeThatCannotReadAChainFailsThePackageTestInstea
       "locked", soloManifest("locked"),
       loadingGame("require = nil\nsetmetatable(_G, { __newindex = function() error(\"globals are locked\") end })\n"));
   pack({"locked"});
-  expectRed(games_check::checkPackage(roots(), "locked"), {"the module-loading probe failed", "globals are locked"});
+  expectRed(games_check::checkPackage(sticky(), "locked"), {"the module-loading probe failed", "globals are locked"});
 }
 
 // ---- faults ----
@@ -361,7 +364,7 @@ TEST_F(GamesCheckEngineTest, ALuaErrorFailsTheRoundNamingRoundStepAndMessageAndL
 return { mode = "pass", steps = { { seat = 1, x = 5, y = 5, move = false } }, unfinished = true }
 )lua");
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(report, {"round 'a-breaks', step 1", "boom in apply", "main.lua:"});
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
   EXPECT_TRUE(noted(report, "round 'b-never-taps-a-square' (pass) played to its end")) << report.text();
@@ -372,7 +375,7 @@ TEST_F(GamesCheckEngineTest, ASetupErrorFailsTheRoundAtItsBeginning) {
   edit("pass-open", "main.lua", "function game.setup(ctx)\n", "function game.setup(ctx)\n  error(\"setup broke\")\n");
   round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
   pack({"pass-open"});
-  expectRed(games_check::playRounds(roots(), "pass-open"), {"round 'x-wins-in-pass', begin", "setup broke"});
+  expectRed(games_check::playRounds(sticky(), "pass-open"), {"round 'x-wins-in-pass', begin", "setup broke"});
 }
 
 TEST_F(GamesCheckEngineTest, AStatusOrDrawErrorOnALaterStepFailsThatStep) {
@@ -385,8 +388,8 @@ TEST_F(GamesCheckEngineTest, AStatusOrDrawErrorOnALaterStepFailsThatStep) {
   round("status-breaks", "x-wins-in-pass", X_WINS_IN_PASS);
   round("draw-breaks", "x-wins-in-pass", X_WINS_IN_PASS);
   pack({"status-breaks", "draw-breaks"});
-  expectRed(games_check::playRounds(roots(), "status-breaks"), {"round 'x-wins-in-pass', step 2", "status broke"});
-  expectRed(games_check::playRounds(roots(), "draw-breaks"), {"round 'x-wins-in-pass', step 3", "draw broke"});
+  expectRed(games_check::playRounds(sticky(), "status-breaks"), {"round 'x-wins-in-pass', step 2", "status broke"});
+  expectRed(games_check::playRounds(sticky(), "draw-breaks"), {"round 'x-wins-in-pass', step 3", "draw broke"});
 }
 
 TEST_F(GamesCheckEngineTest, AGameThatDoesNotLoadFailsEveryRound) {
@@ -394,7 +397,7 @@ TEST_F(GamesCheckEngineTest, AGameThatDoesNotLoadFailsEveryRound) {
   round("broken", "one", ONE_TAP);
   round("broken", "two", ONE_TAP);
   pack({"broken"});
-  const Report report = games_check::playRounds(roots(), "broken");
+  const Report report = games_check::playRounds(sticky(), "broken");
   expectRed(report,
             {"round 'one', begin", "round 'two', begin", "the game did not load", "main.lua must return a table"});
   EXPECT_EQ(report.failures.size(), 2u) << report.text();
@@ -406,7 +409,7 @@ TEST_F(GamesCheckEngineTest, AnInstructionBudgetFaultFailsTheRound) {
        "  if ev.kind == \"tap\" then\n    while true do end\n    ch.log(\"tap for seat \" .. seat)");
   round("pass-open", "spins", X_WINS_IN_PASS);
   pack({"pass-open"});
-  expectRed(games_check::playRounds(roots(), "pass-open"), {"round 'spins', step 1", "instruction budget exceeded"});
+  expectRed(games_check::playRounds(sticky(), "pass-open"), {"round 'spins', step 1", "instruction budget exceeded"});
 }
 
 TEST_F(GamesCheckEngineTest, AFrameOverTheCommandLimitFailsTheRound) {
@@ -416,7 +419,7 @@ TEST_F(GamesCheckEngineTest, AFrameOverTheCommandLimitFailsTheRound) {
        "\"black\", true) end");
   round("pass-open", "fills-the-frame", X_WINS_IN_PASS);
   pack({"pass-open"});
-  expectRed(games_check::playRounds(roots(), "pass-open"),
+  expectRed(games_check::playRounds(sticky(), "pass-open"),
             {"round 'fills-the-frame', begin", "draw for seat 1 failed", "frame is full"});
 }
 
@@ -436,10 +439,10 @@ TEST_F(GamesCheckEngineTest, ASnapshotOf701BytesFailsAndOneOf700BytesPasses) {
   round("red-701", "one-tap", ONE_TAP);
   pack({"green-700", "red-701"});
   RoundDetails details;
-  expectGreen(games_check::playRounds(roots(), "green-700", &details));
+  expectGreen(games_check::playRounds(sticky(), "green-700", &details));
   ASSERT_EQ(details.size(), 1u);
   EXPECT_EQ(details[0].second.maxSnapshotBytes, 700u);
-  const Report red = games_check::playRounds(roots(), "red-701");
+  const Report red = games_check::playRounds(sticky(), "red-701");
   expectRed(red, {"round 'one-tap', begin", "the snapshot is 701 B", "over the 700 B"});
 }
 
@@ -458,7 +461,7 @@ return { mode = "solo", unfinished = true,
   steps = { { seat = 1, x = 1, y = 1 }, { seat = 1, x = 1, y = 1 }, { seat = 1, x = 1, y = 1 } } }
 )lua");
   pack({"grows"});
-  expectRed(games_check::playRounds(roots(), "grows"), {"round 'three-taps', step 2", "the snapshot is "});
+  expectRed(games_check::playRounds(sticky(), "grows"), {"round 'three-taps', step 2", "the snapshot is "});
 }
 
 // ---- outcomes ----
@@ -478,7 +481,7 @@ return { mode = "pass", steps = { { seat = 1, x = 97, y = 270 } }, winners = { 1
 )lua");
   round("pass-open", "e-right", X_WINS_IN_PASS);
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(report,
             {"round 'a-wrong-winner', step 5: expected winners {2}, got {1}",
              "round 'b-a-draw', step 5: expected winners {}, got {1}",
@@ -498,17 +501,17 @@ TEST_F(GamesCheckEngineTest, AGameWithNoRoundsFails) {
   write(companion() / "only-a-readme" / "rounds" / "README.md", "not a round");
   pack({"no-folder", "empty-folder", "only-a-readme"});
   for (const char* id : {"no-folder", "empty-folder", "only-a-readme"}) {
-    expectRed(games_check::playRounds(roots(), id), {"no rounds"});
+    expectRed(games_check::playRounds(sticky(), id), {"no rounds"});
     // The package itself is fine: the game's other tests are not affected.
-    expectGreen(games_check::checkPackage(roots(), id));
+    expectGreen(games_check::checkPackage(sticky(), id));
   }
 }
 
 TEST_F(GamesCheckEngineTest, ACompanionFolderWithoutAGameFails) {
   round("ghost", "one", ONE_TAP);
-  expectRed(games_check::companionHasGame(roots(), "ghost"), {"has no game", "ghost"});
+  expectRed(games_check::companionHasGame(sticky(), "ghost"), {"has no game", "ghost"});
   copyGame("pass-open", "pass-open");
-  expectGreen(games_check::companionHasGame(roots(), "pass-open"));
+  expectGreen(games_check::companionHasGame(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, ARoundForAnUndeclaredModeFails) {
@@ -518,7 +521,7 @@ return { mode = "pass", steps = { { seat = 1, x = 1, y = 1 } }, unfinished = tru
 )lua");
   round("solo-only", "b-solo", ONE_TAP);
   pack({"solo-only"});
-  const Report report = games_check::playRounds(roots(), "solo-only");
+  const Report report = games_check::playRounds(sticky(), "solo-only");
   expectRed(report, {"rounds/a-pass.lua", "mode 'pass' is not one the manifest declares"});
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
   EXPECT_TRUE(noted(report, "round 'b-solo' (solo) played to its end"));
@@ -532,7 +535,7 @@ return { mode = "nearby", steps = { { seat = 1, x = 1, y = 1 } }, unfinished = t
 )lua");
   round("pass-open", "b-pass", X_WINS_IN_PASS);
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(report, {"rounds/a-nearby.lua", "mode 'nearby' is not solo or pass"});
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
 }
@@ -542,8 +545,8 @@ TEST_F(GamesCheckEngineTest, ADeclaredNearbyIsSkippedAndLoggedNeverAFailure) {
   edit("pass-open", "manifest.json", "\"modes\": [\"solo\", \"pass\"]", "\"modes\": [\"solo\", \"pass\", \"nearby\"]");
   round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
   pack({"pass-open"});
-  expectGreen(games_check::checkPackage(roots(), "pass-open"));
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  expectGreen(games_check::checkPackage(sticky(), "pass-open"));
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectGreen(report);
   EXPECT_TRUE(noted(report, "declared mode nearby skipped: this host cannot start it")) << report.text();
 }
@@ -566,7 +569,7 @@ TEST_F(GamesCheckEngineTest, AMalformedRoundFileFailsNamingTheKeyAndTheOtherRoun
   round("pass-open", "h-raises", "error('this file raises')");
   round("pass-open", "i-right", X_WINS_IN_PASS);
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(report, {"a-unknown-key.lua: 'colour'", "b-wrong-type.lua: steps[1].x must be an integer",
                      "c-no-steps.lua: steps is empty", "d-both.lua: winners and unfinished are both set",
                      "e-neither.lua: neither winners nor unfinished", "f-seed.lua: seed must be an integer",
@@ -591,7 +594,7 @@ return {
 }
 )lua");
   pack({"pass-open"});
-  const Report report = games_check::runGameChecks(roots(), "pass-open");
+  const Report report = games_check::runGameChecks(sticky(), "pass-open");
   expectRed(report, {"check 'the board is wrong' failed", "cell 3 is empty"});
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
   EXPECT_TRUE(noted(report, "2 of 3 checks passed")) << report.text();
@@ -609,7 +612,7 @@ return {
 }
 )lua");
   pack({"pass-open"});
-  const Report report = games_check::runGameChecks(roots(), "pass-open");
+  const Report report = games_check::runGameChecks(sticky(), "pass-open");
   expectGreen(report);
   EXPECT_TRUE(noted(report, "3 of 3 checks passed")) << report.text();
 }
@@ -625,7 +628,7 @@ return {
 }
 )lua");
   pack({"pass-open"});
-  const Report report = games_check::runGameChecks(roots(), "pass-open");
+  const Report report = games_check::runGameChecks(sticky(), "pass-open");
   expectRed(report, {"check 'spins' faulted", "instruction budget exceeded",
                      "the remaining 2 of the game's 4 checks were not run"});
   EXPECT_EQ(report.failures.size(), 1u) << "the checks after the fault must not run: " << report.text();
@@ -648,7 +651,7 @@ TEST_F(GamesCheckEngineTest, AMissingOrEmptyOrMalformedListFailsAndALoadErrorOrF
         Case{"return { { run = function() end } }", "check #1 must be a table with a non-empty string `name`"},
         Case{"error('load broke')", "load broke"}, Case{"while true do end", "instruction budget exceeded"}}) {
     checks("pass-open", test.checks);
-    expectRed(games_check::runGameChecks(roots(), "pass-open"), {"checks.lua", test.expected});
+    expectRed(games_check::runGameChecks(sticky(), "pass-open"), {"checks.lua", test.expected});
   }
 }
 
@@ -657,7 +660,8 @@ TEST_F(GamesCheckEngineTest, ChecksLuaRunsWithMathRandomSeededOne) {
   pack({"pass-open"});
   const auto firstDraw = [](const uint32_t seed) {
     std::string error;
-    auto vm = games_check::OwnedVm::create(GameScript::GameSources{}, {}, GameCore::NO_IMAGES, seed, error);
+    auto vm = games_check::OwnedVm::create(GameScript::GameSources{}, {}, GameCore::NO_IMAGES, seed, error,
+                                           games_check::CANVAS_474, games_check::VmLimits::check());
     int ref = games_check::ScriptVm::NO_REF;
     int64_t value = -1;
     if (vm && vm->vm().runChunk("return math.random(1000000000)", "@draw.lua", ref).ok()) {
@@ -670,18 +674,26 @@ TEST_F(GamesCheckEngineTest, ChecksLuaRunsWithMathRandomSeededOne) {
   ASSERT_NE(seedOne, firstDraw(2)) << "the seed must show in the draw, or this test proves nothing";
   checks("pass-open", "return { { name = 'seeded', run = function() assert(math.random(1000000000) == " +
                           std::to_string(seedOne) + ", 'math.random is not seeded 1') end } }");
-  expectGreen(games_check::runGameChecks(roots(), "pass-open"));
+  expectGreen(games_check::runGameChecks(sticky(), "pass-open"));
   checks("pass-open", "return { { name = 'seeded', run = function() assert(math.random(1000000000) == " +
                           std::to_string(firstDraw(2)) + ", 'math.random is not seeded 1') end } }");
-  expectRed(games_check::runGameChecks(roots(), "pass-open"), {"math.random is not seeded 1"});
+  expectRed(games_check::runGameChecks(sticky(), "pass-open"), {"math.random is not seeded 1"});
 }
 
-TEST_F(GamesCheckEngineTest, NoChecksLuaRunsNoChecks) {
+// Every game this check plays is a first-party game with its own checks: a game with none is a failure that names the
+// file (cross-story review, row 12; it was a note on stderr and a green test).
+TEST_F(GamesCheckEngineTest, AGameWithNoChecksLuaFailsNamingTheFile) {
   copyGame("pass-open", "pass-open");
+  round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
   pack({"pass-open"});
-  const Report report = games_check::runGameChecks(roots(), "pass-open");
-  expectGreen(report);
-  EXPECT_TRUE(noted(report, "no checks.lua")) << report.text();
+  const Report report = games_check::runGameChecks(sticky(), "pass-open");
+  expectRed(report, {"checks.lua", "is missing", (fs::path("pass-open") / "checks.lua").string().c_str()});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  // Its other tests are untouched: the rounds still play.
+  expectGreen(games_check::playRounds(sticky(), "pass-open"));
+  // A checks.lua beside it is what makes the game green.
+  checks("pass-open", "return { { name = 'adds', run = function() assert(1 + 1 == 2) end } }");
+  expectGreen(games_check::runGameChecks(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, ACompanionModuleCanBeRequiredByRoundsAndChecksAndAClashWithTheGamesOwnFails) {
@@ -696,17 +708,17 @@ return { mode = "solo", steps = { { seat = 1, x = grid.x(0), y = grid.y(0) } }, 
   checks("pass-open",
          "local grid = require('grid') return { { name = 'grid', run = function() assert(grid.x(1) == 237) end } }");
   pack({"pass-open"});
-  expectGreen(games_check::playRounds(roots(), "pass-open"));
-  expectGreen(games_check::runGameChecks(roots(), "pass-open"));
+  expectGreen(games_check::playRounds(sticky(), "pass-open"));
+  expectGreen(games_check::runGameChecks(sticky(), "pass-open"));
   // A companion `main.lua` has the name of the game's own module: the folder is wrong, whatever it holds.
   module("pass-open", "main", "return {}");
-  expectRed(games_check::playRounds(roots(), "pass-open"),
+  expectRed(games_check::playRounds(sticky(), "pass-open"),
             {"main.lua", "has the name of one of the game's own modules"});
-  expectRed(games_check::runGameChecks(roots(), "pass-open"),
+  expectRed(games_check::runGameChecks(sticky(), "pass-open"),
             {"checks.lua", "has the name of one of the game's own modules"});
   fs::remove(companion() / "pass-open" / "main.lua");
   module("pass-open", "Bad-Name", "return {}");
-  expectRed(games_check::playRounds(roots(), "pass-open"), {"Bad-Name.lua", "no module name"});
+  expectRed(games_check::playRounds(sticky(), "pass-open"), {"Bad-Name.lua", "no module name"});
 }
 
 // ---- taps ----
@@ -722,7 +734,7 @@ return { mode = "pass", unfinished = true, steps = {
 } }
 )lua");
   pack({"pass-open"});
-  expectGreen(games_check::playRounds(roots(), "pass-open"));
+  expectGreen(games_check::playRounds(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, ATapThatBreaksItsStepsMoveRuleOrShowsRuleFails) {
@@ -741,7 +753,7 @@ return { mode = "pass", unfinished = true, steps = {
   { seat = 1, x = 97, y = 270 }, { seat = 2, x = 97, y = 270, move = false, shows = "Nothing like this" } } }
 )lua");
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(report, {"round 'a-rejected-without-move-false', step 2: the tap did not move",
                      "round 'b-moves-though-move-false', step 1: the tap moved",
                      "round 'c-off-the-board-without-move-false', step 1: the tap did not move",
@@ -766,7 +778,7 @@ return { mode = "pass", winners = { 1 }, steps = {
 )lua");
   pack({"pass-open"});
   expectRed(
-      games_check::playRounds(roots(), "pass-open"),
+      games_check::playRounds(sticky(), "pass-open"),
       {"round 'a-seat-2-first', step 1: the step is for seat 2, but the device shows seat 1 and reads input for that "
        "seat only",
        "round 'b-seat-1-twice', step 2: the step is for seat 1, but the device shows seat 2",
@@ -786,7 +798,7 @@ TEST_F(GamesCheckEngineTest, TheHiddenFlowPlaysPassHiddenAndEveryLocalSeatIsStil
   round("pass-hidden", "four-taps", HIDDEN_FOUR_TAPS);
   pack({"pass-hidden"});
   RoundDetails details;
-  expectGreen(games_check::playRounds(roots(), "pass-hidden", &details));
+  expectGreen(games_check::playRounds(sticky(), "pass-hidden", &details));
   const games_check::RoundReport* played = detail(details, "four-taps");
   ASSERT_NE(played, nullptr);
   EXPECT_TRUE(played->over);
@@ -812,7 +824,7 @@ TEST_F(GamesCheckEngineTest, WithDrawEveryLocalSeatOffTheHiddenFlowDrawsExactlyT
   RoundDetails details;
   PlayOptions options;
   options.drawEveryLocalSeat = false;
-  expectGreen(games_check::playRounds(roots(), "pass-hidden", &details, options));
+  expectGreen(games_check::playRounds(sticky(), "pass-hidden", &details, options));
   const games_check::RoundReport* played = detail(details, "four-taps");
   ASSERT_NE(played, nullptr);
   // GameVM's hidden flow (GamesCheckFlowTest pins it): seat 1 shown, a tap, its own frame again under the banner, then
@@ -836,12 +848,12 @@ TEST_F(GamesCheckEngineTest, AFrameOnlyAnUnshownSeatWouldDrawStillFailsBecauseEv
 return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200 }, { seat = 2, x = 100, y = 200 } } }
 )lua");
   pack({"pass-hidden"});
-  expectRed(games_check::playRounds(roots(), "pass-hidden"),
+  expectRed(games_check::playRounds(sticky(), "pass-hidden"),
             {"round 'one-move', begin", "draw for seat 2 failed", "seat 2's first frame broke"});
   // Without the option the round plays as the device would show it: this is what the check exists to improve on.
   PlayOptions options;
   options.drawEveryLocalSeat = false;
-  expectGreen(games_check::playRounds(roots(), "pass-hidden", nullptr, options));
+  expectGreen(games_check::playRounds(sticky(), "pass-hidden", nullptr, options));
 }
 
 TEST_F(GamesCheckEngineTest, AHiddenStepForTheWrongSeatOrAfterTheEndFails) {
@@ -858,7 +870,7 @@ return { mode = "pass", winners = {}, steps = {
   { seat = 1, x = 100, y = 200 } } }
 )lua");
   pack({"pass-hidden"});
-  expectRed(games_check::playRounds(roots(), "pass-hidden"),
+  expectRed(games_check::playRounds(sticky(), "pass-hidden"),
             {"round 'a-seat-2-first', step 1: the step is for seat 2, but the device shows seat 1",
              "round 'b-the-same-seat-twice', step 2: the step is for seat 1, but the device shows seat 2",
              "round 'c-a-fifth-tap', step 5: the round is already over (winners {})"});
@@ -870,11 +882,11 @@ TEST_F(GamesCheckEngineTest, AHiddenMoveThatKeepsTheTurnAndARejectedTapRedrawThe
   writeGame("keeps-turn", games_check::test::HIDDEN_KEEPS_TURN_MANIFEST, games_check::test::HIDDEN_KEEPS_TURN_GAME);
   round("keeps-turn", "keeps-and-rejects", games_check::test::HIDDEN_KEEPS_TURN_ROUND);
   pack({"keeps-turn"});
-  expectGreen(games_check::playRounds(roots(), "keeps-turn"));
+  expectGreen(games_check::playRounds(sticky(), "keeps-turn"));
   RoundDetails details;
   PlayOptions options;
   options.drawEveryLocalSeat = false;
-  expectGreen(games_check::playRounds(roots(), "keeps-turn", &details, options));
+  expectGreen(games_check::playRounds(sticky(), "keeps-turn", &details, options));
   const games_check::RoundReport* played = detail(details, "keeps-and-rejects");
   ASSERT_NE(played, nullptr);
   EXPECT_EQ(played->log, games_check::test::HIDDEN_KEEPS_TURN_LOG);
@@ -901,7 +913,7 @@ return { mode = "solo", unfinished = true, steps = {
 )lua");
   pack({"clock"});
   RoundDetails details;
-  expectGreen(games_check::playRounds(roots(), "clock", &details));
+  expectGreen(games_check::playRounds(sticky(), "clock", &details));
   const games_check::RoundReport* played = detail(details, "waits");
   ASSERT_NE(played, nullptr);
   const std::vector<std::string> applies = logLines(*played, "apply at ");
@@ -922,7 +934,7 @@ TEST_F(GamesCheckEngineTest, AStepAfterTheRoundIsOverFailsInSoloWhetherItMovesOr
   round("pass-open", "b-no-move-after-the-end",
         "return { mode = 'solo', winners = { 1 }, steps = {" + five + ", { seat = 1, x = 5, y = 5, move = false } } }");
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(
       report,
       {"round 'a-moves-after-the-end', step 6: the round is already over (winners {1}); a step cannot follow its end",
@@ -936,7 +948,7 @@ TEST_F(GamesCheckEngineTest, ASoloRoundDrawsOnlyItsOneSeatNeverSeatZeroEvenOnceO
   round("pass-open", "x-wins-in-solo", X_WINS_IN_SOLO);
   pack({"pass-open"});
   RoundDetails details;
-  expectGreen(games_check::playRounds(roots(), "pass-open", &details));
+  expectGreen(games_check::playRounds(sticky(), "pass-open", &details));
   const games_check::RoundReport* played = detail(details, "x-wins-in-solo");
   ASSERT_NE(played, nullptr);
   EXPECT_TRUE(played->over);
@@ -977,7 +989,7 @@ return { mode = "solo", settings = { board = "Medium" }, unfinished = true, step
   { seat = 1, x = 100, y = 200, shows = "Mode: solo" }, { seat = 1, x = 100, y = 200, shows = "Board: Medium" } } }
 )lua");
   pack({"pass-art"});
-  const Report report = games_check::playRounds(roots(), "pass-art");
+  const Report report = games_check::playRounds(sticky(), "pass-art");
   expectGreen(report);
   EXPECT_TRUE(noted(report, "round 'a-chosen' (pass) played to its end")) << report.text();
 
@@ -985,7 +997,7 @@ return { mode = "solo", settings = { board = "Medium" }, unfinished = true, step
   round("pass-art", "a-chosen", R"lua(
 return { mode = "pass", settings = { level = "Easy" }, unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Level: Hard" } } }
 )lua");
-  expectRed(games_check::playRounds(roots(), "pass-art"),
+  expectRed(games_check::playRounds(sticky(), "pass-art"),
             {"round 'a-chosen', step 1: seat 1's next frame does not show 'Level: Hard'"});
 }
 
@@ -1001,7 +1013,7 @@ TEST_F(GamesCheckEngineTest, TheSeedDecidesMathRandomTheSameSeedRepeatsAndAnothe
   round("draws", "e-one", roundWith("seed = 1, "));
   pack({"draws"});
   RoundDetails details;
-  expectGreen(games_check::playRounds(roots(), "draws", &details));
+  expectGreen(games_check::playRounds(sticky(), "draws", &details));
   const auto draws = [&](const std::string& name) {
     const games_check::RoundReport* played = detail(details, name);
     EXPECT_NE(played, nullptr) << name;
@@ -1063,10 +1075,10 @@ TEST_F(GamesCheckEngineTest, TheRoundsAndTheGamesOwnChecksSeeTheCanvasTheRootsNa
     }
     expectGreen(games_check::runGameChecks(roots(canvas), "canvas"));
   }
-  // The default canvas, which every older test relies on, is the Sticky's 474 x 788.
-  RoundDetails byDefault;
-  expectGreen(games_check::playRounds(roots(), "canvas", &byDefault));
-  const games_check::RoundReport* played = detail(byDefault, "taps");
+  // sticky(), which most of these tests use, is the Sticky's 474 x 788: the helper names it, no code defaults to it.
+  RoundDetails onTheSticky;
+  expectGreen(games_check::playRounds(sticky(), "canvas", &onTheSticky));
+  const games_check::RoundReport* played = detail(onTheSticky, "taps");
   ASSERT_NE(played, nullptr);
   EXPECT_EQ(logLines(*played, "screen ").front(), "screen 474x788");
 }
@@ -1099,7 +1111,7 @@ return { mode = "pass", winners = { 1 }, steps = function(state)
 end }
 )lua");
   pack({"pass-open"});
-  expectGreen(games_check::playRounds(roots(), "pass-open"));
+  expectGreen(games_check::playRounds(sticky(), "pass-open"));
 }
 
 TEST_F(GamesCheckEngineTest, AStepsFunctionThatRaisesExceedsItsBudgetOrReturnsNoListFailsTheRound) {
@@ -1114,7 +1126,7 @@ TEST_F(GamesCheckEngineTest, AStepsFunctionThatRaisesExceedsItsBudgetOrReturnsNo
         "return { mode = 'pass', unfinished = true, steps = function(state) return { { seat = 1, x = 1 } } end }");
   round("pass-open", "e-fine", X_WINS_IN_PASS);
   pack({"pass-open"});
-  const Report report = games_check::playRounds(roots(), "pass-open");
+  const Report report = games_check::playRounds(sticky(), "pass-open");
   expectRed(
       report,
       {"round 'a-raises', begin: rounds/a-raises.lua: steps(state): rounds/a-raises.lua:1: no steps for you",
@@ -1123,6 +1135,422 @@ TEST_F(GamesCheckEngineTest, AStepsFunctionThatRaisesExceedsItsBudgetOrReturnsNo
        "round 'd-bad-step', begin: rounds/d-bad-step.lua: steps(state)'s result[1].y is missing"});
   EXPECT_EQ(report.failures.size(), 4u) << report.text();
   EXPECT_TRUE(noted(report, "round 'e-fine' (pass) played to its end"));
+}
+
+// ---- the cross-story review's fixes (epic-first-party-games, e8-xr) ----
+
+constexpr games_check::CanvasSize CANVASES[] = {games_check::CANVAS_474, games_check::CANVAS_466};
+
+// A solo game of the tests' own whose `apply` fills the Lua heap with live strings until the heap holds `kb` KB (the
+// cap counts what Lua holds, garbage included, so this is the played game's own high-water mark, as Sudoku's HINT is).
+std::string heapGame(const int kb) {
+  return "local KB = " + std::to_string(kb) + R"lua(
+local keep = {}
+local game = {}
+function game.setup(ctx) return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move)
+  while collectgarbage("count") < KB do keep[#keep + 1] = string.rep("x", 900) .. #keep end
+  return state
+end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+return game
+)lua";
+}
+
+// Row 5: the played game keeps 16 KiB of room under the device's Lua heap cap. The cap counts garbage and a first-fit
+// region, so the exact statement is that the round still plays with the cap that much lower.
+TEST_F(GamesCheckEngineTest, APlayedGameThatNeedsMoreThanTheCapLessTheMarginFailsNamingTheMarginAndTheCapTried) {
+  writeGame("hungry", soloManifest("hungry"), heapGame(250));
+  writeGame("frugal", soloManifest("frugal"), heapGame(200));
+  round("hungry", "one-tap", ONE_TAP);
+  round("frugal", "one-tap", ONE_TAP);
+  pack({"hungry", "frugal"});
+  // 250 KB fits the device's 262,144 B cap with 6 KB to spare, and 200 KB leaves 56 KB.
+  expectGreen(games_check::playRounds(sticky(), "frugal"));
+  const Report report = games_check::playRounds(sticky(), "hungry");
+  expectRed(report,
+            {"round 'one-tap', step 1", "not enough memory", "heap margin", "245760 B", "16384 B lower", "262144 B"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  // The gate is the margin play only: the same round passes with it off, so the first play is the device's.
+  PlayOptions options;
+  options.heapMargin = false;
+  expectGreen(games_check::playRounds(sticky(), "hungry", nullptr, options));
+  // A game the device's cap itself refuses fails the first play, with no margin note.
+  writeGame("over-the-cap", soloManifest("over-the-cap"), heapGame(300));
+  round("over-the-cap", "one-tap", ONE_TAP);
+  pack({"over-the-cap"});
+  const Report over = games_check::playRounds(sticky(), "over-the-cap");
+  expectRed(over, {"round 'one-tap', step 1", "not enough memory"});
+  EXPECT_FALSE(mentions(over, "heap margin")) << over.text();
+}
+
+// A round whose `steps` is a function is resolved once: the margin play reuses its list (resolving twice would call a
+// function that reads the round's VM again and could not tell the plays apart).
+TEST_F(GamesCheckEngineTest, TheMarginPlayDoesNotResolveAStepsFunctionAgain) {
+  writeGame("once", soloManifest("once"), heapGame(150));
+  // `steps` counts its calls in a global of the round file's VM and fails the second time.
+  round("once", "counted", R"lua(
+calls = (calls or 0) + 1
+return { mode = "solo", unfinished = true, steps = function(state)
+  calls = calls + 1
+  assert(calls == 2, "steps(state) ran again")
+  return { { seat = 1, x = 100, y = 300 } }
+end }
+)lua");
+  pack({"once"});
+  expectGreen(games_check::playRounds(sticky(), "once"));
+}
+
+// A game that sets module state in `setup` and draws from it: the live VM has run `setup`, a VM restored from the
+// snapshot (Continue) has not. Every seat's `ui` starts empty there too.
+constexpr const char* SETUP_ONLY_GAME = R"lua(
+local ready = false
+local game = {}
+function game.setup(ctx) ready = true return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) state.n = state.n + 1 return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  assert(ready, "module state set in setup is gone")
+  ch.gfx.clear("white")
+end
+return game
+)lua";
+
+// Row 6: Continue builds a new VM, restores the snapshot and starts every seat's `ui` empty; no round took that path.
+TEST_F(GamesCheckEngineTest, TheRestoreProbeFailsAGameThatFaultsWhenDrawnFromASnapshotNamingTheStepAndThePhase) {
+  writeGame("setup-only", soloManifest("setup-only"), SETUP_ONLY_GAME);
+  round("setup-only", "two-taps", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = 100, y = 300 }, { seat = 1, x = 100, y = 300 } } }
+)lua");
+  pack({"setup-only"});
+  // The live VM plays it clean, so without the probe the game passes.
+  expectGreen(games_check::playRounds(sticky(), "setup-only"));
+  PlayOptions options;
+  options.restoreProbe = true;
+  const Report report = games_check::playRounds(sticky(), "setup-only", nullptr, options);
+  expectRed(report, {"round 'two-taps', step 1", "restoring the snapshot into a new game before this step",
+                     "failed at draw for seat 1", "module state set in setup is gone"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+}
+
+TEST_F(GamesCheckEngineTest, TheRestoreProbeNamesTheStartPhaseWhenStatusFaultsOnTheRestoredState) {
+  // `start` after a restore computes the restored state's status alone (Session::start): a game whose status leans on
+  // what `setup` left in the module fails there, and the probe says `start`, not `draw`.
+  writeGame("status-needs-setup", soloManifest("status-needs-setup"), R"lua(
+local ready = false
+local game = {}
+function game.setup(ctx) ready = true return { n = 0 } end
+function game.status(state)
+  assert(ready, "status ran before setup")
+  return { turn = 1 }
+end
+function game.apply(state, seat, move) return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+return game
+)lua");
+  round("status-needs-setup", "one-tap", ONE_TAP);
+  pack({"status-needs-setup"});
+  expectGreen(games_check::playRounds(sticky(), "status-needs-setup"));
+  PlayOptions options;
+  options.restoreProbe = true;
+  expectRed(games_check::playRounds(sticky(), "status-needs-setup", nullptr, options),
+            {"round 'one-tap', step 1", "failed at start", "status ran before setup"});
+}
+
+TEST_F(GamesCheckEngineTest, TheRestoreProbeRunsAfterTheLastStepToo) {
+  // The probe's draw raises only when the snapshot holds n == 1, which is the state after the round's one and last
+  // step: the probes before step 1 (n == 0) pass, the one after the step is what fails.
+  writeGame("late", soloManifest("late"), R"lua(
+local game = {}
+local lives = 0
+function game.setup(ctx) lives = lives + 1 return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) state.n = state.n + 1 return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  assert(lives > 0 or state.n == 0, "a restored game drew a moved state")
+  ch.gfx.clear("white")
+end
+return game
+)lua");
+  round("late", "one-tap", ONE_TAP);
+  pack({"late"});
+  PlayOptions options;
+  options.restoreProbe = true;
+  const Report report = games_check::playRounds(sticky(), "late", nullptr, options);
+  expectRed(report, {"round 'one-tap', step 1", "after the last step", "failed at draw for seat 1",
+                     "a restored game drew a moved state"});
+  EXPECT_FALSE(mentions(report, "before this step")) << report.text();
+}
+
+TEST_F(GamesCheckEngineTest, TheRestoreProbeLeavesAGameThatRestoresCleanGreenInEveryModeAndOnBothCanvases) {
+  copyGame("pass-open", "pass-open");
+  copyGame("pass-hidden", "pass-hidden");
+  round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
+  round("pass-open", "x-wins-in-solo", X_WINS_IN_SOLO);
+  round("pass-hidden", "four-taps", HIDDEN_FOUR_TAPS);
+  pack({"pass-open", "pass-hidden"});
+  PlayOptions options;
+  options.restoreProbe = true;
+  for (const games_check::CanvasSize canvas : CANVASES) {
+    expectGreen(games_check::playRounds(roots(canvas), "pass-open", nullptr, options));
+    expectGreen(games_check::playRounds(roots(canvas), "pass-hidden", nullptr, options));
+  }
+}
+
+// Row 11: the device drops a tap that starts off the canvas (GameTouch::toEvent), and x 466 to 473 exists on the
+// Sticky's 474 canvas only.
+TEST_F(GamesCheckEngineTest, ATapOffTheCanvasUnderCheckFailsItsStepNamingTheTapAndTheCanvas) {
+  writeGame("taps", soloManifest("taps"), padGame(10));
+  const auto tap = [](const std::string& x, const std::string& y) {
+    return "return { mode = 'solo', unfinished = true, steps = { { seat = 1, x = " + x + ", y = " + y + " } } }";
+  };
+  round("taps", "a-x-470", tap("470", "300"));
+  round("taps", "b-x-negative", tap("-1", "300"));
+  round("taps", "c-y-at-the-height", tap("100", "788"));
+  round("taps", "d-x-466", tap("466", "300"));
+  round("taps", "e-y-negative", tap("100", "-5"));
+  round("taps", "f-x-474", tap("474", "300"));
+  round("taps", "g-last-pixel", tap("465", "787"));
+  pack({"taps"});
+  const Report sticky474 = games_check::playRounds(roots(games_check::CANVAS_474), "taps");
+  expectRed(sticky474, {"round 'b-x-negative', step 1: the tap (-1, 300) is off the 474 x 788 canvas under check",
+                        "round 'c-y-at-the-height', step 1: the tap (100, 788) is off the 474 x 788 canvas",
+                        "round 'e-y-negative', step 1: the tap (100, -5) is off the 474 x 788 canvas",
+                        "round 'f-x-474', step 1: the tap (474, 300) is off the 474 x 788 canvas",
+                        "the device drops a tap that starts there"});
+  EXPECT_EQ(sticky474.failures.size(), 4u) << sticky474.text();
+  EXPECT_TRUE(noted(sticky474, "round 'a-x-470' (solo) played to its end")) << sticky474.text();
+  EXPECT_TRUE(noted(sticky474, "round 'd-x-466' (solo) played to its end")) << sticky474.text();
+  const Report x4pro = games_check::playRounds(roots(games_check::CANVAS_466), "taps");
+  expectRed(x4pro, {"round 'a-x-470', step 1: the tap (470, 300) is off the 466 x 788 canvas under check",
+                    "round 'd-x-466', step 1: the tap (466, 300) is off the 466 x 788 canvas"});
+  EXPECT_EQ(x4pro.failures.size(), 6u) << x4pro.text();
+  EXPECT_TRUE(noted(x4pro, "round 'g-last-pixel' (solo) played to its end")) << x4pro.text();
+}
+
+// Row 12: a mis-named round is no round the check can skip in silence.
+TEST_F(GamesCheckEngineTest, AnEntryOfRoundsThatIsNotARegularLuaFileFailsNamingItAndTheValidRoundsStillPlay) {
+  copyGame("pass-open", "pass-open");
+  round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "x.LUA", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "x.lua.txt", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "sub" / "x.lua", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "README.md", "notes");
+  pack({"pass-open"});
+  const Report report = games_check::playRounds(sticky(), "pass-open");
+  expectRed(report, {"rounds/x.LUA is not a round", "rounds/x.lua.txt is not a round", "rounds/sub/ is not a round",
+                     "rounds/README.md is not a round", "regular file whose name ends exactly `.lua`"});
+  EXPECT_EQ(report.failures.size(), 4u) << report.text();
+  EXPECT_TRUE(noted(report, "round 'x-wins-in-pass' (pass) played to its end")) << report.text();
+}
+
+// Row 13: a hidden step that ends the round shows seat 0's frame; `shows` for the mover is not met by the check's own
+// sweep of the mover's frame, which the device never shows then.
+TEST_F(GamesCheckEngineTest, AHiddenShowsIsMetOnlyByAFrameTheFlowDrewNotByTheEveryLocalSeatDraw) {
+  copyGame("pass-hidden", "pass-hidden");
+  const auto four = [](const std::string& shows) {
+    return R"lua(
+return { mode = "pass", winners = {}, steps = {
+  { seat = 1, x = 100, y = 200 }, { seat = 2, x = 100, y = 200 }, { seat = 1, x = 100, y = 200 },
+  { seat = 2, x = 100, y = 200, shows = ")lua" +
+           shows + R"lua(" } } }
+)lua";
+  };
+  // The fourth tap ends the round: the device shows seat 0's "Everyone: ...". Seat 2's own frame ("Player 2's secret:
+  // river") is drawn only by the sweep, so it must not meet `shows`.
+  round("pass-hidden", "a-sweep-only", four("Player 2's secret: river"));
+  round("pass-hidden", "b-the-flow", four("the secrets were apple and river"));
+  pack({"pass-hidden"});
+  const Report report = games_check::playRounds(sticky(), "pass-hidden");
+  expectRed(report, {"round 'a-sweep-only', step 4: seat 0's next frame does not show 'Player 2's secret: river'",
+                     "'Everyone: the secrets were apple and river'"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  EXPECT_TRUE(noted(report, "round 'b-the-flow' (pass) played to its end")) << report.text();
+  // Mid-round, the mover's own frame (seat 1's, under the Result banner) is the flow's: it still meets `shows`.
+  round("pass-hidden", "a-sweep-only", R"lua(
+return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Player 1's secret: apple" } } }
+)lua");
+  round("pass-hidden", "b-the-flow", R"lua(
+return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Moves: 1" } } }
+)lua");
+  expectGreen(games_check::playRounds(sticky(), "pass-hidden"));
+}
+
+// Row 9: a round's `steps(state)` and a module's load see the canvas under check, not the Sticky's by default. The
+// round VM's log is not in a report, so each reads `ch.screen.w` into the x of a tap, and the failure names that tap.
+TEST_F(GamesCheckEngineTest, ARoundsStepsFunctionAndAModuleLoadSeeTheCanvasTheRootsNameAtBothSizes) {
+  writeGame("canvas", soloManifest("canvas"), CANVAS_LOG_GAME);
+  module("canvas", "seen", "return { w = ch.screen.w, h = ch.screen.h }");
+  round("canvas", "a-steps", R"lua(
+return { mode = "solo", unfinished = true, steps = function(state) return { { seat = 1, x = ch.screen.w, y = 5 } } end }
+)lua");
+  round("canvas", "b-module", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = require("seen").w, y = 5 } } }
+)lua");
+  round("canvas", "c-file", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = ch.screen.w, y = 5 } } }
+)lua");
+  round("canvas", "d-height", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = 5, y = require("seen").h } } }
+)lua");
+  pack({"canvas"});
+  for (const games_check::CanvasSize canvas : CANVASES) {
+    const std::string w = std::to_string(canvas.width);
+    const Report report = games_check::playRounds(roots(canvas), "canvas");
+    // The tap is at x = the width the round's VM saw, which the played game's canvas then says is off by one pixel.
+    expectRed(report, {("round 'a-steps', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'b-module', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'c-file', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'd-height', step 1: the tap (5, 788) is off the " + w + " x 788 canvas").c_str()});
+    EXPECT_EQ(report.failures.size(), 4u) << report.text();
+  }
+}
+
+// The same for the package-load probe and the game's checks: a main.lua that nests modules only on a 466-wide canvas.
+TEST_F(GamesCheckEngineTest, TheModuleLoadingProbeAndTheChecksSeeTheCanvasTheRootsNameAtBothSizes) {
+  writeGame("nests-at-466", soloManifest("nests-at-466"),
+            loadingGame("if ch.screen.w == 466 then require(\"a\") end\n"));
+  write(games() / "nests-at-466" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
+  write(games() / "nests-at-466" / "b.lua", "return { b = true }\n");
+  checks("nests-at-466", "return { { name = 'seen', run = function() assert(ch.screen.w == " +
+                             std::to_string(games_check::CANVAS_466.width) +
+                             ", 'checks.lua saw ' .. ch.screen.w) end } }");
+  pack({"nests-at-466"});
+  expectGreen(games_check::checkPackage(roots(games_check::CANVAS_474), "nests-at-466"));
+  expectRed(games_check::checkPackage(roots(games_check::CANVAS_466), "nests-at-466"), {"main > a > b"});
+  expectRed(games_check::runGameChecks(roots(games_check::CANVAS_474), "nests-at-466"), {"checks.lua saw 474"});
+  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_466), "nests-at-466"));
+}
+
+// Row 1: once the round is over the host draws its dialog (y 259 to 527) over the frame the device shows.
+std::string endGame(const std::string& drawBody) {
+  return std::string(R"lua(
+local game = {}
+function game.setup(ctx) return { n = 0, seats = ctx.seats } end
+function game.status(state)
+  if state.n >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(state, seat, move) state.n = state.n + 1 return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+)lua") + drawBody +
+         "\nend\nreturn game\n";
+}
+
+TEST_F(GamesCheckEngineTest, ATextFrameStartedInsideTheHostsEndOfRoundDialogFailsTheRoundNamingTheTextAndTheBand) {
+  writeGame("under", soloManifest("under"), endGame("ch.gfx.text(40, 260, 'Easy', 'small', 'black')"));
+  writeGame("above", soloManifest("above"),
+            endGame("ch.gfx.text(40, 258, 'Easy', 'small', 'black') ch.gfx.text(40, 528, 'Best', 'small', 'black')"));
+  writeGame("last-row", soloManifest("last-row"), endGame("ch.gfx.text(40, 527, 'Edge', 'small', 'black')"));
+  for (const char* id : {"under", "above", "last-row"})
+    round(id, "one-tap", "return { mode = 'solo', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }");
+  pack({"under", "above", "last-row"});
+  for (const games_check::CanvasSize canvas : CANVASES) {
+    expectRed(games_check::playRounds(roots(canvas), "under"),
+              {"round 'one-tap', step 1: the round is over", "starts the text 'Easy' at y 260",
+               "inside the host's end-of-round dialog (y 259 up to 528", "seat 1's frame"});
+    // 258 is above the band and 528 is the first row below it: both are clear. A text at 527 starts inside it.
+    expectGreen(games_check::playRounds(roots(canvas), "above"));
+    expectRed(games_check::playRounds(roots(canvas), "last-row"), {"starts the text 'Edge' at y 527"});
+  }
+  // The bounds were measured on 788-tall canvases: another height is not pinned.
+  const games_check::CanvasSize shorter{474, 700};
+  expectGreen(games_check::playRounds(roots(shorter), "under"));
+}
+
+TEST_F(GamesCheckEngineTest, OnlyTheFrameTheDeviceShowsOnceTheRoundIsOverCountsForTheDialogBand) {
+  // A pass round: seat 0's frame is the end screen the device shows; seats 1 and 2 are the check's own sweep, which the
+  // host never puts under the dialog.
+  writeGame("pass-end", soloManifest("pass-end", R"(["pass"])", R"({"min": 2, "max": 2})"),
+            endGame("if seat == 0 then ch.gfx.text(40, 100, 'Done', 'small', 'black') else ch.gfx.text(40, 300, "
+                    "'Hidden in the sweep only', 'small', 'black') end"));
+  writeGame("pass-end-under", soloManifest("pass-end-under", R"(["pass"])", R"({"min": 2, "max": 2})"),
+            endGame("if seat == 0 then ch.gfx.text(40, 300, 'Done', 'small', 'black') end"));
+  const std::string roundText = "return { mode = 'pass', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }";
+  round("pass-end", "one-tap", roundText);
+  round("pass-end-under", "one-tap", roundText);
+  pack({"pass-end", "pass-end-under"});
+  expectGreen(games_check::playRounds(sticky(), "pass-end"));
+  expectRed(games_check::playRounds(sticky(), "pass-end-under"), {"seat 0's frame starts the text 'Done' at y 300"});
+}
+
+// ---- the check VMs' limits (row 4) ----
+
+TEST_F(GamesCheckEngineTest, ACheckOrStepsFunctionMayExceedTheDevicesLimitsButThePlayedGameAndTheProbeMayNot) {
+  // 3 M instructions and about 600 KB of Lua heap: past the device's 2 M and 256 KB, inside the check VM's 16 M and
+  // 1 MB.
+  const std::string heavy =
+      "local t = {} for i = 1, 650 do t[i] = string.rep('x', 900) .. i end "
+      "assert(collectgarbage('count') > 580, 'the heap is ' .. collectgarbage('count') .. ' KB') "
+      "for i = 1, 3000000 do end";
+  writeGame("heavy", soloManifest("heavy"), padGame(10));
+  checks("heavy", "return { { name = 'heavy', run = function() " + heavy + " end } }");
+  round("heavy", "steps-are-heavy",
+        "return { mode = 'solo', unfinished = true, steps = function(state) " + heavy +
+            " return { { seat = 1, x = 100, y = 300 } } end }");
+  // The same work as the played game's own `apply`, as the probe's main load, fails.
+  writeGame("heavy-apply", soloManifest("heavy-apply"),
+            "local game = {}\nfunction game.setup(ctx) return { n = 0 } end\n"
+            "function game.status(state) return { turn = 1 } end\n"
+            "function game.apply(state, seat, move) " +
+                heavy +
+                " return state end\n"
+                "function game.input(state, seat, ui, ev) if ev.kind == 'tap' then return { tap = true } end end\n"
+                "function game.draw(state, seat, ui) ch.gfx.clear('white') end\nreturn game\n");
+  round("heavy-apply", "one-tap", ONE_TAP);
+  // main's load does the work first and nests modules after: the probe (the device's limits) faults before it nests
+  // and finds nothing; a check-limit probe would get through and find main > a > b.
+  writeGame("heavy-load", soloManifest("heavy-load"), loadingGame(heavy + "\nrequire(\"a\")\n"));
+  write(games() / "heavy-load" / "a.lua", "require(\"b\")\nreturn {}\n");
+  write(games() / "heavy-load" / "b.lua", "return {}\n");
+  pack({"heavy", "heavy-apply", "heavy-load"});
+  expectGreen(games_check::runGameChecks(sticky(), "heavy"));
+  expectGreen(games_check::playRounds(sticky(), "heavy"));
+  expectRed(games_check::playRounds(sticky(), "heavy-apply"), {"round 'one-tap', step 1"});
+  expectGreen(games_check::checkPackage(sticky(), "heavy-load"));
+  // The check VM has its own limits too: a loop is still a fault, at 16 M.
+  checks("heavy", "return { { name = 'spins', run = function() while true do end end } }");
+  expectRed(games_check::runGameChecks(sticky(), "heavy"), {"check 'spins' faulted", "instruction budget exceeded"});
+}
+
+TEST_F(GamesCheckEngineTest, AChecksVmHasHostAndWithinDeviceBudgetAndTheDevicesBudgetIsStillMeasuredThroughIt) {
+  copyGame("pack-images", "pack-images");
+  checks("pack-images", R"lua(
+return {
+  { name = "host bounds", run = function()
+      assert(host.dialog_top == 259 and host.dialog_bottom == 528 and host.banner_top == 640 and host.canvas_h == 788)
+    end },
+  { name = "image sizes", run = function()
+      local w, h = host.image_size("badge")
+      assert(w == 100 and h == 60, w .. " x " .. h)
+      assert(not pcall(host.image_size, "absent"))
+    end },
+  { name = "within the device's budget", run = function()
+      local a, b = within_device_budget(function(x, y) for i = 1, 1000000 do end return x, y end, 7, 8)
+      assert(a == 7 and b == 8, "results and arguments pass through")
+    end },
+  { name = "the budget is the device's", run = function()
+      within_device_budget(function() for i = 1, 3000000 do end end)
+    end },
+  { name = "fresh interval", run = function()
+      for i = 1, 1500 do end  -- leaves the hook's count partway through an interval
+      within_device_budget(function() for i = 1, 1990000 do end end)
+    end },
+}
+)lua");
+  pack({"pack-images"});
+  const Report report = games_check::runGameChecks(sticky(), "pack-images");
+  expectRed(report,
+            {"check 'the budget is the device's' failed", "within_device_budget", "the device's budget is 2000000"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  EXPECT_TRUE(noted(report, "4 of 5 checks passed")) << report.text();
 }
 
 }  // namespace

@@ -12,8 +12,10 @@
 // the library selects the profile (HalGPIO::begin does, at startup), so a screenshot shows the device's canvas. The
 // library, the SDK, and the firmware sources are untouched; the Sticky keeps the default insets, which are its own.
 //
-// A double of the SDK's X4 Pro profile, in one value: if the SDK's insets change, this one does not follow (the canvas
-// sizes the games check plays, GamesCheckRig.h, are typed to the same {9, 7, 3, 7}).
+// A double of the SDK's X4 Pro profile, in one value: if the SDK's insets change, this one does not follow. The games
+// check types the same {9, 7, 3, 7} (GamesCheckRig.h's X4_PRO_INSETS) and a host test pins that copy to the SDK's own
+// header (test/game_script/harness/games_check/BoardInsetsTest.cpp, AreTheSdksBoardProfilesInsets); this literal is not
+// read by it, so a change of the SDK's insets fails that test and is then made here by hand.
 //
 // When this header is in effect the simulator's startup log has a "[SIM] X4 Pro bezel insets" line, which is how a
 // build is known to use it. Every translation unit gets the header, so one that cannot see the library's BoardConfig.h

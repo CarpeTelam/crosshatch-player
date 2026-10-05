@@ -271,8 +271,9 @@ Report checkPackage(const Roots& roots, const std::string& id) {
   // load that raises or faults is no nesting finding: the rounds name it.
   std::vector<ModuleText> none;
   std::string error;
+  // The probe runs main.lua's own load, which is the game's: the device's limits.
   auto probe = OwnedVm::create(installed->assets->sources(), none, installed->assets->images(), CHECKS_SEED, error,
-                               roots.canvas);
+                               roots.canvas, VmLimits::device());
   if (!probe) {
     report.fail("the module-loading probe could not start: " + error);
   } else {
@@ -331,12 +332,15 @@ Report runGameChecks(const Roots& roots, const std::string& id) {
   const bool hasChecks =
       std::any_of(modules.begin(), modules.end(), [](const ModuleText& m) { return m.name == "checks"; });
   if (!hasChecks) {
-    report.note(id + ": no checks.lua, so no game checks ran");
+    // The early return stays: with no checks.lua there is no VM to build and nothing to run.
+    report.fail((fs::path(roots.companion) / id / "checks.lua").string() +
+                " is missing: every first-party game has its own checks (the interface is in "
+                "test/game_script/first_party/README.md), so a game with none has no check of its own rules");
     return report;
   }
   std::string error;
   auto owned = OwnedVm::create(installed->assets->sources(), modules, installed->assets->images(), CHECKS_SEED, error,
-                               roots.canvas);
+                               roots.canvas, VmLimits::check());
   if (!owned) {
     report.fail("checks.lua: " + error);
     return report;
@@ -420,11 +424,25 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
 
   const fs::path folder = fs::path(roots.companion) / id / "rounds";
   std::vector<fs::path> files;
+  std::vector<std::string> misnamed;
   std::error_code listing;
   for (const auto& entry : fs::directory_iterator(folder, listing)) {
-    if (entry.is_regular_file() && entry.path().extension() == ".lua") files.push_back(entry.path());
+    const std::string file = entry.path().filename().string();
+    // A round is a regular file named <name>.lua: not `x.LUA`, `x.lua.txt`, `.lua`, a directory, or anything else,
+    // which a skipped entry would leave unplayed and unnoticed beside the valid rounds.
+    const bool named = file.size() > 4 && file.compare(file.size() - 4, 4, ".lua") == 0;
+    if (entry.is_regular_file() && named) {
+      files.push_back(entry.path());
+    } else {
+      misnamed.push_back(file + (entry.is_directory() ? "/" : ""));
+    }
   }
   std::sort(files.begin(), files.end());
+  std::sort(misnamed.begin(), misnamed.end());
+  for (const std::string& entry : misnamed) {
+    report.fail("rounds/" + entry + " is not a round: an entry of " + folder.string() +
+                " must be a regular file whose name ends exactly `.lua`, so it is never silently skipped");
+  }
   if (files.empty()) {
     report.fail("no rounds: " + folder.string() + " is missing or holds no .lua file");
     return report;
@@ -432,19 +450,18 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
   std::vector<ModuleText> modules;
   if (!readModules(roots, id, modules, report)) return report;
 
-  GameUnderCheck under;
+  GameUnderCheck under(roots.canvas);
   under.sources = &installed->assets->sources();
   under.images = &installed->assets->images();
   under.facts.manifest = &manifest;
   under.facts.settings = &installed->reader->settings();
   under.facts.hostMaxSeats = gameHostCaps().maxSeats;
   under.facts.hostModes = installed->check.modes;
-  under.canvas = roots.canvas;
 
   // A name clash between a companion module and the game's own is the folder's fault, not a round's: said once.
   {
     std::string clash;
-    if (!OwnedVm::create(*under.sources, modules, *under.images, 1, clash, roots.canvas)) {
+    if (!OwnedVm::create(*under.sources, modules, *under.images, 1, clash, roots.canvas, VmLimits::check())) {
       report.fail(id + ": " + clash);
       return report;
     }
@@ -457,7 +474,7 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
       continue;
     }
     std::string error;
-    auto vm = OwnedVm::create(*under.sources, modules, *under.images, 1, error, roots.canvas);
+    auto vm = OwnedVm::create(*under.sources, modules, *under.images, 1, error, roots.canvas, VmLimits::check());
     if (!vm) {
       report.fail("round '" + name + "': " + error);
       continue;

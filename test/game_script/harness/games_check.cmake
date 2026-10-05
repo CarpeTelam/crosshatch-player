@@ -11,10 +11,14 @@
 # Targets:
 #   packed_games          pack_games.py over every id of the games root (one custom command; its output is packed.stamp)
 #   games_check_core      ScriptVm, RoundFile, RoundPlayer: the scripts' VM, the round file, the round's player
-#   GamesCheckTest        the production check: three tests per game id, one per companion id (HasAGame)
-#   GamesCheckEngineTest  the check's own tests: scratch trees under the build folder, never games/ or first_party/
+#   GamesCheckTest        the production check: eight tests per game id (the package, the game's own checks, every round,
+#                         every round restored from its snapshot: each on the Sticky's 474 x 788 canvas and the X4 Pro's
+#                         466 x 788), and one per companion id (HasAGame); see GamesCheckTest.cpp
+#   GamesCheckEngineTest  the check's own tests: scratch trees under the build folder, never games/ or first_party/; it also
+#                         holds BoardInsetsTest, which compiles the SDK's BoardConfig.h through board_stubs/ (that file alone)
 #   GamesCheckFlowTest    pins the hidden flow of RoundPlayer to GameVM's (it links the match's screen doubles)
-# All three are labelled games-check: `ctest -L games-check`. Needs installer.cmake and match.cmake's libraries by name.
+#   GamesCheckNoteImages  a plain ctest: Sudoku's make_note_images.py --check, when the tool exists
+# All are labelled games-check: `ctest -L games-check`. Needs installer.cmake and match.cmake's libraries by name.
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -96,7 +100,14 @@ add_executable(GamesCheckEngineTest
   ${GAMES_CHECK_DIR}/GamesCheckEngineTest.cpp
   ${GAMES_CHECK_DIR}/ScriptVmTest.cpp
   ${GAMES_CHECK_DIR}/RoundFileTest.cpp
+  ${GAMES_CHECK_DIR}/BoardInsetsTest.cpp
   ${GAMES_CHECK_INSTALLER_SOURCES})
+# BoardInsetsTest.cpp compiles the SDK's own BoardConfig.h, which wants the Arduino core: board_stubs/ stands in for it,
+# for that one file, and the header needs a device selected (the X4 Pro, whose profile the test reads). The real header
+# goes last on the path: the harness's own home_stubs/BoardConfig.h (HomeTabsTest) is in no executable of this suite.
+set_source_files_properties(${GAMES_CHECK_DIR}/BoardInsetsTest.cpp PROPERTIES
+  INCLUDE_DIRECTORIES "${GAMES_CHECK_DIR}/board_stubs;${REPO_ROOT}/freeink-sdk/libs/hardware/BoardConfig/include"
+  COMPILE_DEFINITIONS "FREEINK_DEVICE_X4PRO=1")
 target_compile_definitions(GamesCheckEngineTest PRIVATE
   ${GAMES_CHECK_COMMON_DEFINITIONS}
   GAME_SCRIPT_FIXTURES_DIR="${REPO_ROOT}/test/game_script/fixtures"
@@ -104,6 +115,16 @@ target_compile_definitions(GamesCheckEngineTest PRIVATE
 target_include_directories(GamesCheckEngineTest PRIVATE ${REPO_ROOT}/test/game_script)
 target_link_libraries(GamesCheckEngineTest PRIVATE ${GAMES_CHECK_INSTALLER_LIBS})
 gtest_discover_tests(GamesCheckEngineTest PROPERTIES LABELS games-check)
+
+# Sudoku's note images: `make_note_images.py --check` compares the 27 committed PNGs with what the tool generates (a swapped
+# or resized image, a stray note_*.png, a NOTE_W or NOTE_H the images do not have), plain Python with the standard
+# library only. It is a ctest and not a target, so the games-check job (`ctest -L games-check`) runs it with no workflow
+# edit and no build step; it exists only while the tool does (a companion root without it, a scratch tree, has no test).
+set(GAMES_CHECK_NOTE_IMAGES_TOOL ${GAMES_CHECK_COMPANION_ROOT_ABS}/sudoku/tools/make_note_images.py)
+if(EXISTS ${GAMES_CHECK_NOTE_IMAGES_TOOL})
+  add_test(NAME GamesCheckNoteImages COMMAND ${Python3_EXECUTABLE} ${GAMES_CHECK_NOTE_IMAGES_TOOL} --check)
+  set_tests_properties(GamesCheckNoteImages PROPERTIES LABELS games-check)
+endif()
 
 add_executable(GamesCheckFlowTest ${GAMES_CHECK_DIR}/GamesCheckFlowTest.cpp)
 # MatchSupport.h, the rig GameVmTest and this suite share.
