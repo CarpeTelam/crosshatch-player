@@ -12,7 +12,7 @@ using GameTouch::Kind;
 
 namespace {
 
-// The X4 Pro and Sticky portrait screen and canvas (default bezel insets).
+// The portrait screen and the Sticky's canvas (the default bezel insets; the X4 Pro's are {9, 7, 3, 7}).
 constexpr int SCREEN_W = 480;
 constexpr int SCREEN_H = 800;
 const GameViewport VIEWPORT(3, 9, 474, 788);

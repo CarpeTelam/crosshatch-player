@@ -3,15 +3,31 @@
 -- cells. Rows and columns are 1-based. Everything is pure except draw_grid, which needs draw's context.
 local board = {}
 
--- layout(w, h, opts?) -> L = { x, y, cell, size, block } for a canvas of w x h pixels: the largest cell that fits
--- between opts.margin (default 4) at each side and opts.top (120) and opts.bottom (40) above and below, centred.
+-- The design box every layout is made in: 466 x 788, the X4 Pro's canvas. A larger canvas (the Sticky's 474 x 788)
+-- centres the box, so the cells and tap targets are the same on every device; a smaller one is unsupported.
+board.W, board.H = 466, 788
+
+-- origin(w, h) -> ox, oy: where the box starts on a canvas of w x h pixels, centred and never negative.
+function board.origin(w, h)
+  return math.max(0, (w - board.W) // 2), math.max(0, (h - board.H) // 2)
+end
+
+-- fits(w, h): whether a canvas of w x h pixels holds the box.
+function board.fits(w, h) return w >= board.W and h >= board.H end
+
+-- layout(w, h, opts?) -> L = { x, y, cell, size, block, ox, oy } for a canvas of w x h pixels: the largest cell that
+-- fits the box between opts.margin (default 4) at each side and opts.top (120) and opts.bottom (40) above and below,
+-- centred in the box; the box sits at ox, oy on the canvas.
 function board.layout(w, h, opts)
   opts = opts or {}
   local top = opts.top or 120
   local bottom = opts.bottom or 40
   local margin = opts.margin or 4
-  local cell = math.min((w - 2 * margin) // 9, (h - top - bottom) // 9)
-  return { x = (w - 9 * cell) // 2, y = top, cell = cell, size = 9 * cell, block = 3 * cell }
+  local ox, oy = board.origin(w, h)
+  local cell = math.min((board.W - 2 * margin) // 9, (board.H - top - bottom) // 9)
+  return {
+    x = ox + (board.W - 9 * cell) // 2, y = oy + top, cell = cell, size = 9 * cell, block = 3 * cell, ox = ox, oy = oy,
+  }
 end
 
 -- The canvas rectangle x, y, w, h of the cell at row, col.

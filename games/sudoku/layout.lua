@@ -1,6 +1,8 @@
 -- layout.lua: where everything is on the canvas, from ch.screen and the board module. Pure geometry: input, draw, and
 -- the game's companion checks and rounds all ask it, so a tap is computed from the same numbers the screen is drawn
--- with. Every target is at least 44 px on the 474 x 788 canvas.
+-- with. Everything is laid out in one fixed 466 x 788 box (board.W x board.H, the X4 Pro's canvas) centred in the
+-- canvas, so the Sticky's 474 x 788 has the same cells and targets 4 px to the right; a canvas smaller than the box is
+-- unsupported (the box then starts at 0, 0). Every target is at least 44 px.
 --
 -- The page, top to bottom: the header line, the 9 x 9 grid, then the pad (3 x 3 keys that abut) with the rail (NOTES,
 -- ERASE, UNDO, MENU: four buttons that abut, together exactly as tall as the pad) to its right. The MENU panel
@@ -23,19 +25,19 @@ layout.DY = { small = 13, medium = 15, large = 27 }
 
 local cache, cw, chh
 
--- The geometry for the canvas: board.layout's table (x, y, cell, size, block) with the rest added.
+-- The geometry for the canvas: board.layout's table (x, y, cell, size, block, ox, oy) with the rest added.
 function layout.get()
   local w, h = ch.screen.w, ch.screen.h
   if cache and cw == w and chh == h then return cache end
   local L = board.layout(w, h, { top = TOP, bottom = 2 * GAP + 3 * 72 })
   L.pad_y = L.y + L.size + GAP
   L.kw = L.size * 2 // 9 -- a key's width, so the pad is two thirds of the grid
-  L.kh = math.min(KEY_MAX, (h - L.pad_y - GAP) // 3) // 4 * 4
+  L.kh = math.min(KEY_MAX, (board.H - (L.pad_y - L.oy) - GAP) // 3) // 4 * 4
   L.rail_x = L.x + 3 * L.kw + GAP
   L.rail_w = L.x + L.size - L.rail_x
   L.bh = 3 * L.kh // 4 -- four buttons as tall as the three rows of keys
-  L.row_h = math.min(80, (h - 72 - 16) // layout.ROWS)
-  L.row_y, L.row_x, L.row_w = 72, 24, w - 48
+  L.row_h = math.min(80, (board.H - 72 - 16) // layout.ROWS)
+  L.row_y, L.row_x, L.row_w = L.oy + 72, L.ox + 24, board.W - 48
   cache, cw, chh = L, w, h
   return L
 end
@@ -96,14 +98,13 @@ end
 
 -- The canvas point X0, Y0 of the note image for mark k (1..9) of the cell whose rectangle starts at x, y: three columns
 -- and three rows of 12 x 16 images inside the cell's grid lines (the 1 px cell line is offset 0 and a 3 px block line
--- covers offsets 0..1 and cell - 1, so the images lie in offsets 2..cell - 2). The 51 px cells of the 474 x 788 canvas
--- (the Sticky) take a 16 px row pitch (offsets 2..49 down, 4..48 across); the 50 px cells of the 466 x 788 canvas (the
--- X4 Pro, whose BoardConfig insets are 9, 7, 3, 7) have 47 rows, so their rows go at a 15 px pitch and each image's
--- one pixel margin overlaps the next (the margins agree: white for G and B, the ground's own checker for H). The
--- image's checker is baked in, so its origin's x + y must be even (odd for an `inverted` one, drawn "white", which
--- swaps the checker) to continue the screen's "dark" dither, which is black where screen x + y is even; the canvas
--- origin's x + y is even on both boards (3 + 9, 7 + 9). The one pixel nudge `a` keeps that true from cell to cell and
--- from row to row.
+-- covers offsets 0..1 and cell - 1, so the images lie in offsets 2..cell - 2). The cells are 50 px on every canvas,
+-- with 47 rows, so the rows go at a 15 px pitch and each image's one pixel margin overlaps the next (the margins
+-- agree: white for G and B, the ground's own checker for H). The image's checker is baked in, so its origin's x + y
+-- must be even (odd for an `inverted` one, drawn "white", which swaps the checker) to continue the screen's "dark"
+-- dither, which is black where screen x + y is even; the canvas origin's x + y is even on both boards (3 + 9, 7 + 9),
+-- and the box's offset on the Sticky's 474 x 788 is 4 in x, so the box's phase holds there. The one pixel nudge `a`
+-- keeps that true from cell to cell and from row to row.
 function layout.note_tile(x, y, k, inverted)
   local row = (k - 1) // 3
   local pitch_y = (layout.get().cell - 3 - layout.NOTE_H) // 2
@@ -114,7 +115,10 @@ end
 -- The centre x, y of a rectangle.
 function layout.centre(x, y, w, h) return x + w // 2, y + h // 2 end
 
--- The HOW TO PLAY page's text area: x, the first line's y, and the width in pixels.
-function layout.help_area() return 24, 80, ch.screen.w - 48 end
+-- The HOW TO PLAY page's text area: x, the first line's y, and the width in pixels, in the box.
+function layout.help_area()
+  local L = layout.get()
+  return L.ox + 24, L.oy + 80, board.W - 48
+end
 
 return layout

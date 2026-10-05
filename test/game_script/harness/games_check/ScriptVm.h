@@ -121,9 +121,10 @@ class OwnedVm {
  public:
   // Null, with `error` set, on a companion module whose name is no module name or that a game module already has
   // (the game's module wins nowhere: a clash is a failure), or when memory ran out. `game` and `images` must outlive
-  // the result; the extras are copied. `seed` seeds the VM's math.random: checks.lua's is 1.
+  // the result; the extras are copied. `seed` seeds the VM's math.random: checks.lua's is 1. `canvas` is `ch.screen`.
   static std::unique_ptr<OwnedVm> create(const GameScript::GameSources& game, const std::vector<ModuleText>& extras,
-                                         const GameCore::GameImages& images, uint32_t seed, std::string& error);
+                                         const GameCore::GameImages& images, uint32_t seed, std::string& error,
+                                         CanvasSize canvas = CANVAS_474);
   ~OwnedVm();
 
   ScriptVm& vm() { return *script; }

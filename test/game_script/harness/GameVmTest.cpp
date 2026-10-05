@@ -967,7 +967,8 @@ return game
 )");
   ASSERT_TRUE(prepare("probe"));
   ASSERT_TRUE(startAndWaitFirstFrame());
-  // 474 x 788 of the 480 x 800 screen (width first), and 3 glyphs of the double's advances.
+  // The test canvas, the Sticky's 474 x 788 of the 480 x 800 screen (width first), and 3 glyphs of the double's
+  // advances.
   EXPECT_TRUE(logHas("screen\t474\t788\tabc small\t" + std::to_string(3 * match::SMALL_ADVANCE) + "\tabc large\t" +
                      std::to_string(3 * match::LARGE_ADVANCE)));
 }

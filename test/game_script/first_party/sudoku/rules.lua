@@ -11,6 +11,12 @@ local solver = require("solver")
 
 local rules = {}
 
+-- The round's VM is within a few KB of the 256 KB heap (README, "The checks VM heap"), and a frame's draw leaves tens of KB of
+-- garbage, so a round could fault "not enough memory": generational collection, with a full one at the start of the heavy
+-- pins below (taps, frame, look) and at the end of the last two. Without them most runs fault; with them about one play in
+-- 1,600 still does (README has the measurements, and says why more collections made it worse).
+collectgarbage("generational")
+
 local CLUE, NOMARK, ZEROS = "Clues cannot be changed", "That mark is not possible", string.rep("\0", 162)
 
 local function eq(got, want, what)
@@ -217,6 +223,7 @@ end
 
 -- Taps select, write, clear, note, focus, and erase as the interaction table says.
 function rules.taps(state)
+  collectgarbage("collect")
   local s, ui = fresh(state), {}
   local a, b, clue = empties(s)[1], empties(s)[2], s.v:find("[1-9]")
   eq(on_cell(s, ui, a), nil)
@@ -584,15 +591,15 @@ local function peer(c, sel)
   return a == sa or b == sb or e == se
 end
 
--- Where layout.note_tile puts a digit note's image, on the canvases of both boards: the Sticky's 474 x 788 (51 px cells,
--- a 16 px row pitch) and the X4 Pro's 466 x 788 (BoardConfig insets 9, 7, 3, 7: 50 px cells, a 15 px row pitch). The
--- row is literal, the column is the slot's (4, 20, 36) or one pixel on for the dither nudge, the image lies inside
+-- Where layout.note_tile puts a digit note's image, on the canvases of both boards: the Sticky's 474 x 788 and the X4 Pro's
+-- 466 x 788 (BoardConfig insets 9, 7, 3, 7), which lay out the same 466 x 788 box: 50 px cells and a 15 px row pitch on
+-- both. The row is literal, the column is the slot's (4, 20, 36) or one pixel on for the dither nudge, the image lies inside
 -- offsets 2..cell - 2 of the cell on both axes (no cell line, no block line), and its origin's x + y is even, odd for
 -- an inverted one, whatever the cell's corner.
 local function expect_tiles()
   local real = ch.screen.w
   local ok, err = pcall(function()
-    for _, canvas in ipairs({ { w = 474, cell = 51, pitch = 16 }, { w = 466, cell = 50, pitch = 15 } }) do
+    for _, canvas in ipairs({ { w = 474, cell = 50, pitch = 15 }, { w = 466, cell = 50, pitch = 15 } }) do
       ch.screen.w = canvas.w
       eq(layout.get().cell, canvas.cell, "the cell of a canvas " .. canvas.w .. " wide")
       for x = 0, 1 do
@@ -624,6 +631,7 @@ end
 -- cell on both axes so it covers no cell line or block line, with the dither parity the tile's baked checker needs;
 -- with dots, no image is drawn.
 function rules.frame(state, digits)
+  collectgarbage("collect")
   expect_tiles()
   eq(record(function() require("board").draw_grid(layout.get()) end), 28)
   local s = fresh(state)
@@ -707,6 +715,7 @@ function rules.frame(state, digits)
   local quiet, on_quiet = watch()
   record(function() game.draw(s, 1, ui) end, nil, on_quiet)
   expect_frame(quiet, sel, true)
+  collectgarbage("collect")
 end
 
 -- The marks `game.draw` of state `st` with `u` makes, as watch gathers them.
@@ -844,6 +853,7 @@ end
 -- "white" numeral (outranking clue and shade), a clue is "light" with a black numeral, a peer of the selection that is
 -- neither is "dark" with a black numeral, and every other cell has no ground and a black numeral.
 function rules.look(state)
+  collectgarbage("collect")
   local s = fresh(state)
   local solved, empty, v = answer(s), empties(s), {}
   for c = 1, 81 do
@@ -905,6 +915,7 @@ function rules.look(state)
     end
   end
   for _, kind in ipairs({ "black", "light", "dark", "none" }) do assert(kinds[kind] > 0, "no " .. kind .. " cell") end
+  collectgarbage("collect")
 end
 
 return rules

@@ -6,6 +6,7 @@
 // order of its `draw`, `tap`, `apply`, and `over` log lines, which name the seat of every call. A change to GameVM's
 // hand-off that RoundPlayer does not follow fails here, and the other way round.
 
+#include <GfxRenderer.h>
 #include <Memory.h>
 #include <gtest/gtest.h>
 
@@ -212,3 +213,24 @@ TEST_F(HiddenFlowPinTest, ATurnKeptAndARejectedTapAreDrawnAsGameVMDrawsThem) {
 }
 
 }  // namespace
+
+// RoundPlayer's canvas sizes are doubles of GameViewport::forRenderer on a board: the 480 x 800 portrait screen less
+// the board profile's bezel insets (top, right, bottom, left), which the host cannot ask a profile for. The Sticky's
+// are the default {9, 3, 3, 3} and the X4 Pro's {9, 7, 3, 7} (freeink-sdk BoardConfig.h, XTEINK_X4_PRO; the simulator's
+// shim, .claude/skills/run-crosshatch-player/shim/BoardConfig.h, sets the same). The sizes are more permissive than a
+// board in one way: they ignore orientation, and every game plays portrait.
+TEST(CanvasSizesTest, AreTheViewportsOfTheTwoBoardsInsets) {
+  GfxRenderer sticky(480, 800);
+  sticky.setInsets(9, 3, 3, 3);
+  const GameViewport stickyView = GameViewport::forRenderer(sticky);
+  EXPECT_EQ(stickyView.width(), games_check::CANVAS_474.width);
+  EXPECT_EQ(stickyView.height(), games_check::CANVAS_474.height);
+  GfxRenderer x4pro(480, 800);
+  x4pro.setInsets(9, 7, 3, 7);
+  const GameViewport x4proView = GameViewport::forRenderer(x4pro);
+  EXPECT_EQ(x4proView.width(), games_check::CANVAS_466.width);
+  EXPECT_EQ(x4proView.height(), games_check::CANVAS_466.height);
+  // Where the X4 Pro's canvas starts: (7, 9), an even x + y, which the note tiles' dither phase relies on.
+  EXPECT_EQ(x4proView.originX(), 7);
+  EXPECT_EQ(x4proView.originY(), 9);
+}

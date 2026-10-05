@@ -18,7 +18,8 @@ return {
     end
     assert(help.CREDIT == "Puzzles from the Sudoku Exchange puzzle bank (sudokuexchange.com), public domain.")
     assert(table.concat(page, " "):find(help.CREDIT, 1, true), "the credit is on the page, word for word")
-    assert(bottom <= ch.screen.h - 40, "the page fits the canvas under the harness's metrics")
+    local box = require("layout").get().oy + require("board").H
+    assert(bottom <= box - 40, "the page fits the box under the harness's metrics")
     local steps = taps.menu_row({}, 7, { move = false, shows = credit })
     taps.menu(steps, 1, { move = false, shows = "Sudoku - Easy" })
     return steps

@@ -21,6 +21,7 @@ HalDisplay display;
 
 namespace {
 
+using games_check::CanvasSize;
 using games_check::Report;
 using games_check::Roots;
 
@@ -33,7 +34,9 @@ std::vector<std::string> idsFrom(const char* csv) {
   return ids;
 }
 
-Roots roots() { return Roots{GAMES_CHECK_GAMES_ROOT, GAMES_CHECK_COMPANION_ROOT, PACKED_GAMES_DIR}; }
+Roots roots(const CanvasSize canvas = games_check::CANVAS_474) {
+  return Roots{GAMES_CHECK_GAMES_ROOT, GAMES_CHECK_COMPANION_ROOT, PACKED_GAMES_DIR, canvas};
+}
 
 std::string testName(const ::testing::TestParamInfo<std::string>& info) {
   return games_check::testNameOf(info.param, info.index);
@@ -45,7 +48,12 @@ void expectGreen(const Report& report) {
   EXPECT_TRUE(report.ok()) << report.text();
 }
 
+// Every game is played on both canvases, the Sticky's 474 x 788 (GamesCheckTest) and the X4 Pro's 466 x 788
+// (GamesCheck466Test, the owner's Decision of 2026-10-05): the check names no game, so a game that breaks on either
+// canvas fails a test of its own id here.
 class GamesCheckTest : public ::testing::TestWithParam<std::string> {};
+
+class GamesCheck466Test : public ::testing::TestWithParam<std::string> {};
 
 class CompanionFolderTest : public ::testing::TestWithParam<std::string> {};
 
@@ -57,11 +65,25 @@ TEST_P(GamesCheckTest, TheGamesOwnChecksPass) { expectGreen(games_check::runGame
 
 TEST_P(GamesCheckTest, EveryRoundPlaysAsItsFileSays) { expectGreen(games_check::playRounds(roots(), GetParam())); }
 
+TEST_P(GamesCheck466Test, ThePackageInstallsAndLoads) {
+  expectGreen(games_check::checkPackage(roots(games_check::CANVAS_466), GetParam()));
+}
+
+TEST_P(GamesCheck466Test, TheGamesOwnChecksPass) {
+  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_466), GetParam()));
+}
+
+TEST_P(GamesCheck466Test, EveryRoundPlaysAsItsFileSays) {
+  expectGreen(games_check::playRounds(roots(games_check::CANVAS_466), GetParam()));
+}
+
 TEST_P(CompanionFolderTest, HasAGame) { expectGreen(games_check::companionHasGame(roots(), GetParam())); }
 
 INSTANTIATE_TEST_SUITE_P(Games, GamesCheckTest, ::testing::ValuesIn(idsFrom(GAMES_CHECK_GAME_IDS)), testName);
+INSTANTIATE_TEST_SUITE_P(Games466, GamesCheck466Test, ::testing::ValuesIn(idsFrom(GAMES_CHECK_GAME_IDS)), testName);
 INSTANTIATE_TEST_SUITE_P(Companions, CompanionFolderTest, ::testing::ValuesIn(idsFrom(GAMES_CHECK_COMPANION_IDS)),
                          testName);
 // With games/ missing or empty (and no companion folder) there is nothing to instantiate, which is no error.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GamesCheckTest);
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GamesCheck466Test);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CompanionFolderTest);

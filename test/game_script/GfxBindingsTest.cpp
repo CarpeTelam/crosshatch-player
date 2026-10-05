@@ -952,7 +952,7 @@ TEST_F(GfxBindingsTest, TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas) {
     int16_t w;
     int16_t h;
   };
-  // The X4 Pro's and Sticky's 474 x 788, the test canvas, and one too small to hold the icons apart.
+  // The Sticky's 474 x 788 (the test canvas; the X4 Pro's is 466 x 788), and one too small to hold the icons apart.
   const Size sizes[] = {{474, 788}, {480, 800}, {300, 500}};
   for (const Size size : sizes) {
     canvas = GameScript::Canvas{size.w, size.h, GameScript::TextMetrics::standIn()};

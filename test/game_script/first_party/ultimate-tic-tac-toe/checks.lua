@@ -43,19 +43,49 @@ local function rejects(state, move, reason, what)
   eq(state.c .. state.w .. state.n .. state.m, before, what .. " leaves the state as it was")
 end
 
-local SIZES = { { 474, 788, 51, 7 }, { 480, 800, 52, 6 }, { 320, 480, 34, 7 } }
+-- w, h, cell, x, y, ox, oy: the game lays out one 466 x 788 box (board.W x board.H) centred in the canvas, so on the
+-- X4 Pro's 466 x 788 the box is the canvas, on the Sticky's 474 x 788 it is 4 px in, and on the 480 x 800 panel (no
+-- device) it is at 7, 6; the cell is 50 px on all three.
+local SIZES = {
+  { 474, 788, 50, 12, 120, 4, 0 },
+  { 466, 788, 50, 8, 120, 0, 0 },
+  { 480, 800, 50, 15, 126, 7, 6 },
+}
 
 local function geometry()
   for _, size in ipairs(SIZES) do
-    local w, h, cell, x = size[1], size[2], size[3], size[4]
+    local w, h, cell, x, y, ox, oy = table.unpack(size)
     local L = board.layout(w, h)
     local at = w .. "x" .. h
     eq(L.cell, cell, at .. " cell")
     eq(L.size, 9 * cell, at .. " size")
     eq(L.block, 3 * cell, at .. " block")
     eq(L.x, x, at .. " x")
-    eq(L.y, 120, at .. " y")
+    eq(L.y, y, at .. " y")
+    eq(L.ox, ox, at .. " box x")
+    eq(L.oy, oy, at .. " box y")
+    eq(select(2, board.origin(w, h)), oy, at .. " origin y")
+    eq(board.fits(w, h), true, at .. " fits the box")
   end
+end
+
+-- Runs f() with ch.screen as w x h and puts it back, also when f raises.
+local function withCanvas(w, h, f)
+  local rw, rh = ch.screen.w, ch.screen.h
+  ch.screen.w, ch.screen.h = w, h
+  local ok, err = pcall(f)
+  ch.screen.w, ch.screen.h = rw, rh
+  if not ok then error(err, 0) end
+end
+
+-- The lines f() sends to ch.log.
+local function logged(f)
+  local real, lines = ch.log, {}
+  ch.log = function(...) lines[#lines + 1] = table.concat({ ... }, " ") end
+  local ok, err = pcall(f)
+  ch.log = real
+  if not ok then error(err, 0) end
+  return lines
 end
 
 local function cellAtInvertsCellRect()
@@ -217,8 +247,9 @@ end
 
 local function helpPageFits()
   local lines, bottom = game.help_lines()
+  local _, oy = board.origin(ch.screen.w, ch.screen.h)
   assert(#lines > 0, "the page has text")
-  assert(bottom <= ch.screen.h - 40, "the page fits the canvas under the harness metrics")
+  assert(bottom <= oy + board.H - 40, "the page fits the box under the harness metrics")
 end
 
 -- ---- what the draw puts on the canvas (trace.lua) ----
@@ -231,6 +262,97 @@ local function frame(s, ui)
 end
 
 local function layout() return board.layout(ch.screen.w, ch.screen.h) end
+
+-- A canvas under the box is unsupported, never adapted: the box starts at 0, 0 (the layout is the 466 x 788 one), no
+-- cell is under 44 px, and a draw says so in one line, once.
+local function smallCanvas()
+  local L = board.layout(320, 480)
+  eq(board.fits(320, 480), false, "320 x 480 fits the box")
+  eq(board.fits(466, 787), false, "466 x 787 fits the box")
+  eq(L.ox, 0, "box x on a small canvas")
+  eq(L.oy, 0, "box y on a small canvas")
+  local home = board.layout(466, 788)
+  eq(L.x, home.x, "x on a small canvas")
+  eq(L.y, home.y, "y on a small canvas")
+  eq(L.cell, home.cell, "cell on a small canvas")
+  withCanvas(320, 480, function()
+    local first = logged(function() frame(stateWith({})) end)
+    eq(#first, 1, "log lines from the first draw on a 320 x 480 canvas")
+    assert(first[1]:find("320 x 480", 1, true) and first[1]:find("466 x 788", 1, true),
+      "the line names both canvases: " .. first[1])
+    eq(#logged(function() frame(stateWith({})) end), 0, "log lines from the second draw")
+    eq(#logged(function() frame(stateWith({}), { help = true }) end), 0, "log lines from a help draw")
+  end)
+end
+
+-- The commands that carry an x, and which of their arguments are one.
+local X_ARGS = { line = { 1, 3 }, rect = { 1 }, circle = { 1 }, text = { 1 }, icon = { 2 }, image = { 2 } }
+
+-- Whether the commands of two frames are the same, the second with every x `dx` further right.
+local function sameShifted(a, b, dx, what)
+  eq(#b, #a, what .. ": commands")
+  for i, e in ipairs(a) do
+    local o = b[i]
+    eq(o.name, e.name, what .. ": command " .. i)
+    local x = {}
+    for _, k in ipairs(X_ARGS[e.name] or {}) do x[k] = dx end
+    assert(X_ARGS[e.name] or e.name == "clear" or e.name == "refresh", what .. ": a command with unknown coordinates: " .. e.name)
+    local n = 0
+    for k in pairs(e) do
+      if math.type(k) == "integer" and k > n then n = k end
+    end
+    for k = 1, n do
+      local want = e[k]
+      if x[k] then want = want + x[k] end
+      eq(o[k], want, what .. ": command " .. i .. " (" .. e.name .. ") argument " .. k)
+    end
+  end
+end
+
+-- One layout at every canvas: on the Sticky's 474 x 788 every rectangle and tap point of the X4 Pro's 466 x 788 is 4 px
+-- right (the 4 px margins are white and miss), and the draw is the 466 draw shifted by 4: no second set of numbers.
+local function sameLayoutEverywhere()
+  local home, wide = board.layout(466, 788), board.layout(474, 788)
+  eq(wide.x - home.x, 4, "x shift")
+  eq(wide.y, home.y, "y")
+  for row = 1, 9 do
+    for col = 1, 9 do
+      local hx, hy, hw, hh = board.cell_rect(home, row, col)
+      local wx, wy, ww, wh = board.cell_rect(wide, row, col)
+      eq(table.concat({ wx, wy, ww, wh }, ","), table.concat({ hx + 4, hy, hw, hh }, ","), "cell " .. row .. "," .. col)
+    end
+  end
+  eq(board.cell_at(wide, wide.x - 1, wide.y), nil, "a tap left of the grid")
+  eq(board.cell_at(wide, wide.x + wide.size, wide.y), nil, "a tap right of the grid")
+  local taps = require("taps")
+  local states = {
+    stateWith({}),
+    stateWith({ w = "120000000", n = 0, m = 9, c = chars(81, "0", { [1] = "1", [2] = "1", [3] = "1", [13] = "2", [14] = "2",
+                                                                    [15] = "2", [23] = "1", [25] = "2", [81] = "1" }) }),
+    stateWith({ n = 5, m = 1, c = chars(81, "0", { [41] = "1" }) }),
+  }
+  for i, st in ipairs(states) do
+    for _, ui in ipairs({ {}, { message = "That cell is taken" }, { help = true } }) do
+      local a, b
+      withCanvas(466, 788, function() a = frame(st, ui) end)
+      withCanvas(474, 788, function() b = frame(st, ui) end)
+      sameShifted(a, b, 4, "state " .. i .. (ui.help and " help" or ui.message and " message" or ""))
+    end
+  end
+  -- The question button's tap area is the box's: the Sticky's right margin is a miss, and every other tap moves with it.
+  for _, dx in ipairs({ 0, 4 }) do
+    withCanvas(466 + dx, 788, function()
+      local tx, ty = taps.help()
+      local u = {}
+      game.input(stateWith({}), 1, u, { kind = "tap", x = tx, y = ty })
+      eq(u.help, true, "the help tap opens the page at " .. 466 + dx)
+      u = {}
+      game.input(stateWith({}), 1, u, { kind = "tap", x = 466 + dx - 1, y = ty })
+      eq(u.help, dx == 0 or nil, "a tap at the canvas's last column at " .. 466 + dx)
+    end)
+  end
+end
+
 
 -- The small boards whose block a `light` fill covers, sorted, as "1,5" (each exactly: a light fill that is no block is
 -- an error). rect(x, y, w, h, color, filled).
@@ -388,7 +510,9 @@ local function helpPageHasNoBoard()
 end
 
 return {
-  { name = "board layout at three canvas sizes", run = geometry },
+  { name = "board layout at the X4 Pro's, the Sticky's, and a larger canvas", run = geometry },
+  { name = "a canvas under 466 x 788 is laid out from its corner and logged once", run = smallCanvas },
+  { name = "the Sticky's layout and draw are the X4 Pro's shifted by 4", run = sameLayoutEverywhere },
   { name = "cell_at inverts cell_rect for all 81 cells and is nil outside", run = cellAtInvertsCellRect },
   { name = "block_rect covers its nine cells", run = blockRectCoversItsCells },
   { name = "every line wins a small board, for both marks", run = smallLineWins },

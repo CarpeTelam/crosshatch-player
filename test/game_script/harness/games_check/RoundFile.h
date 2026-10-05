@@ -2,8 +2,8 @@
 
 // A round file (rounds/<name>.lua of a game's companion folder) read into a Round: one scripted playthrough of a game
 // in one mode, with the winners it must end with. The file is a chunk run in a ScriptVm (the game's sandbox;
-// `ch.screen` is the 474 x 788 device canvas; `require` finds the game's modules and the companion folder's top-level
-// .lua files) that returns
+// `ch.screen` is a device canvas, the Sticky's 474 x 788 or the X4 Pro's 466 x 788 (the check plays both); `require`
+// finds the game's modules and the companion folder's top-level .lua files) that returns
 //
 //   { mode = "pass", settings = { level = "Easy" }, seed = 1,
 //     steps = { { seat = 1, x = 120, y = 300 }, ... },      -- or: steps = function(state) return { ... } end

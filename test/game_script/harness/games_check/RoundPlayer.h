@@ -1,10 +1,10 @@
 #pragma once
 
 // Plays one Round headlessly over a game's own LuaGame, a Session, and the production round loop (MatchRounds): a fresh
-// LuaGame per round, SeededRandom(seed) as its HostPorts::random, a clock the steps advance, the 474 x 788 device
-// canvas, and the round's settings (or the manifest's defaults) as ctx.settings. Solo and open pass rounds use
-// MatchRounds' start and step, as GameVM does. A hidden pass round follows GameVM::stepHandOff (spine AD-21, D2 of the
-// games check's plan):
+// LuaGame per round, SeededRandom(seed) as its HostPorts::random, a clock the steps advance, the device canvas (the
+// Sticky's 474 x 788 by default; GameUnderCheck::canvas, which the check sets to each device's in turn), and the
+// round's settings (or the manifest's defaults) as ctx.settings. Solo and open pass rounds use MatchRounds' start and
+// step, as GameVM does. A hidden pass round follows GameVM::stepHandOff (spine AD-21, D2 of the games check's plan):
 //
 //   - nothing is drawn after the round begins (the hand-off screen), then the turn seat is shown (seatShown(Playing));
 //   - a step is delivered to the shown seat only: a step naming another seat is a failure (the device reads no input
@@ -47,6 +47,8 @@ struct GameUnderCheck {
   const GameScript::GameSources* sources = nullptr;
   const GameCore::GameImages* images = nullptr;
   GameFacts facts;
+  // `ch.screen` for the round: the Sticky's 474 x 788 unless the check plays the X4 Pro's 466 x 788.
+  CanvasSize canvas = CANVAS_474;
 };
 
 struct PlayOptions {

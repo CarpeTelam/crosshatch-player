@@ -23,8 +23,9 @@ modules (a clash is a failure). `checks.lua` is such a module, named `checks`. A
 ## Rounds
 
 `rounds/<name>.lua` is a chunk run in the game's sandbox (`ScriptVm`: the same libraries, `ch`, and instruction budget a
-game gets; `ch.screen` is the 474 x 788 device canvas; `require` finds the game's modules and the companion's top-level
-modules). It returns
+game gets; `ch.screen` is a device canvas, the Sticky's 474 x 788 or the X4 Pro's 466 x 788: the check plays every round and
+every check on both, and a game lays out one 466 x 788 box centred in either; `require` finds the game's modules and the
+companion's top-level modules). It returns
 
 ```lua
 return { mode = "pass", settings = { level = "Easy" }, seed = 1,
@@ -180,6 +181,17 @@ fills with small holes, so a heap that is nearly full fails with "not enough mem
 - Sudoku's checks VM holds the solver, the counter, and the bank, with a headroom of 5 to 8 KB (6,500 B passed and 6,600 B
   failed on this tree: a global string of n bytes added before the last collection). Its rules, and what its draw marks on the
   board, are pinned in `rules.lua`, called from the rounds' `steps(state)`, where the VM has room.
+- Sudoku's rounds VM is within a few KB of the heap too (about 170 KB live at the start of `steps`: the game's modules, the
+  solver, and `rules.lua` compiled; `rules.frame`'s worst frame peaks near 227 KB of the 256 KB): `rules.lua` runs
+  generational collection with a full one at the start of its heavy pins. Measured on separate processes: without them the
+  Sudoku rounds fault "not enough memory" in 93 of 150 runs (150 of 150 under `setarch -R`); with them 0 in 400 processes and,
+  in `ctest -R sudoku_1 --repeat until-fail:200`, 1 failure in about 1,600 plays of the rounds (a heap fault again, once as
+  "stack overflow (string slice too long)", which is a stack that could not grow). Which process faults varies run to run, so
+  the free space is fragmented by something address-dependent that was not pinned; two cheaper-looking changes made it
+  worse (requiring the solver lazily: about 3% of plays; a full collection before every recorded draw: 17%), so do not add
+  collections or move loads here without re-measuring with separate processes. The one-layout-on-every-canvas pins
+  (`canvases.lua`, called from `rounds/canvases.lua`) load neither `rules.lua` nor `taps.lua` and keep a digest of a frame, not
+  its commands. The real fix is a smaller live set (splitting `rules.lua`, which is most of it).
 - Battleship's checks VM holds about 190 KB once `checks.lua` is compiled, and one frame's draw leaves about 47 KB of garbage,
   so the draw-level pins are in `draws.lua`, all called from one round, `rounds/draw-commands.lua`, whose `steps(state)` runs in a
   VM with the game's modules and none of the checks. UTTT's are in its `checks.lua`, which has room.

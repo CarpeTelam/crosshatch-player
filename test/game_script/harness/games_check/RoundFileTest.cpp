@@ -132,7 +132,8 @@ TEST_F(RoundFileTest, ADrawIsEmptyWinnersAndUnfinishedIsItsOwnEnding) {
 TEST_F(RoundFileTest, TheFileRunsInTheSandboxOnTheDeviceCanvasWithTheCompanionsModules) {
   Round round;
   std::string error;
-  // ch.screen is the 474 x 788 device canvas, and require finds a companion module.
+  // ch.screen is a device canvas (here the default, the Sticky's 474 x 788; the games check plays the X4 Pro's 466 x
+  // 788 too), and require finds a companion module.
   ASSERT_TRUE(load(R"lua(
 local helpers = require("helpers")
 assert(ch.screen.w == 474 and ch.screen.h == 788, "canvas")

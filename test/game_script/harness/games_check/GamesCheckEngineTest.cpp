@@ -118,7 +118,9 @@ class GamesCheckEngineTest : public ::testing::Test {
   fs::path games() const { return root / "games"; }
   fs::path companion() const { return root / "companion"; }
   fs::path packed() const { return root / "packed"; }
-  Roots roots() const { return Roots{games().string(), companion().string(), packed().string()}; }
+  Roots roots(const games_check::CanvasSize canvas = games_check::CANVAS_474) const {
+    return Roots{games().string(), companion().string(), packed().string(), canvas};
+  }
 
   static void write(const fs::path& path, const std::string& text) {
     fs::create_directories(path.parent_path());
@@ -1010,6 +1012,78 @@ TEST_F(GamesCheckEngineTest, TheSeedDecidesMathRandomTheSameSeedRepeatsAndAnothe
   EXPECT_NE(draws("a-seven"), draws("c-eight"));
   EXPECT_EQ(draws("d-none"), draws("e-one")) << "no seed is seed 1";
   EXPECT_NE(draws("d-none"), draws("a-seven"));
+}
+
+// A solo game of the tests' own that logs the canvas it was given (`ch.screen`), draws a frame, and raises in draw on a
+// canvas that is exactly 466 wide, the way a layout that clips only on the X4 Pro would.
+constexpr const char* CANVAS_GAME = R"lua(
+local game = {}
+function game.setup(ctx) return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  ch.log("screen " .. ch.screen.w .. "x" .. ch.screen.h)
+  assert(ch.screen.w ~= 466, "the board is clipped at 466 wide")
+  ch.gfx.clear("white")
+end
+return game
+)lua";
+
+// The same, with no fault in draw: only the log line.
+constexpr const char* CANVAS_LOG_GAME = R"lua(
+local game = {}
+function game.setup(ctx) return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  ch.log("screen " .. ch.screen.w .. "x" .. ch.screen.h)
+  ch.gfx.clear("white")
+end
+return game
+)lua";
+
+TEST_F(GamesCheckEngineTest, TheRoundsAndTheGamesOwnChecksSeeTheCanvasTheRootsName) {
+  writeGame("canvas", soloManifest("canvas"), CANVAS_LOG_GAME);
+  round("canvas", "taps", ONE_TAP);
+  checks("canvas",
+         "return { { name = 'canvas', run = function() ch.log('checks ' .. ch.screen.w .. 'x' .. ch.screen.h) "
+         "assert(ch.screen.h == 788) end } }");
+  pack({"canvas"});
+  for (const games_check::CanvasSize canvas : {games_check::CANVAS_474, games_check::CANVAS_466}) {
+    RoundDetails details;
+    expectGreen(games_check::playRounds(roots(canvas), "canvas", &details));
+    const games_check::RoundReport* played = detail(details, "taps");
+    ASSERT_NE(played, nullptr);
+    const std::vector<std::string> seen = logLines(*played, "screen ");
+    ASSERT_FALSE(seen.empty());
+    for (const std::string& line : seen) {
+      EXPECT_EQ(line, "screen " + std::to_string(canvas.width) + "x" + std::to_string(canvas.height));
+    }
+    expectGreen(games_check::runGameChecks(roots(canvas), "canvas"));
+  }
+  // The default canvas, which every older test relies on, is the Sticky's 474 x 788.
+  RoundDetails byDefault;
+  expectGreen(games_check::playRounds(roots(), "canvas", &byDefault));
+  const games_check::RoundReport* played = detail(byDefault, "taps");
+  ASSERT_NE(played, nullptr);
+  EXPECT_EQ(logLines(*played, "screen ").front(), "screen 474x788");
+}
+
+TEST_F(GamesCheckEngineTest, AGameThatBreaksOnlyAtTheX4ProCanvasFailsTheCheckThereAndOnlyThere) {
+  writeGame("clipped", soloManifest("clipped"), CANVAS_GAME);
+  round("clipped", "taps", ONE_TAP);
+  checks("clipped",
+         "return { { name = 'fits', run = function() assert(ch.screen.w ~= 466, 'the grid is off the canvas') "
+         "end } }");
+  pack({"clipped"});
+  expectGreen(games_check::playRounds(roots(games_check::CANVAS_474), "clipped"));
+  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_474), "clipped"));
+  expectRed(games_check::playRounds(roots(games_check::CANVAS_466), "clipped"),
+            {"round 'taps'", "the board is clipped at 466 wide"});
+  expectRed(games_check::runGameChecks(roots(games_check::CANVAS_466), "clipped"),
+            {"check 'fits' failed", "the grid is off the canvas"});
 }
 
 TEST_F(GamesCheckEngineTest, AStepsFunctionOfTheDecodedInitialStatePlaysTheRound) {
