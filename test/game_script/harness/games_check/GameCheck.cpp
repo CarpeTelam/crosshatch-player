@@ -266,6 +266,39 @@ Report checkPackage(const Roots& roots, const std::string& id) {
   if (installedHash != installed->packerHash) {
     report.fail("the installer's package hash " + installedHash + " is not the packer's " + installed->packerHash);
   }
+  // A module that loads inside another module's load needs the C stack twice over, and the device refuses a third
+  // level; this host sets no stack headroom and would take any depth, so main's own load is probed (ScriptVm.h). A
+  // load that raises or faults is no nesting finding: the rounds name it.
+  std::vector<ModuleText> none;
+  std::string error;
+  auto probe = OwnedVm::create(installed->assets->sources(), none, installed->assets->images(), CHECKS_SEED, error);
+  if (!probe) {
+    report.fail("the module-loading probe could not start: " + error);
+  } else {
+    const LoadNesting nesting = probeLoadNesting(*probe);
+    if (!nesting.error.empty()) {
+      report.fail("the module-loading probe failed: " + nesting.error);
+    } else if (nesting.depth > MAX_LOAD_NESTING) {
+      // The chain is "main > m1 > m2 > ... > mk": requiring mk, ..., m2 from main.lua first (deepest first), then m1,
+      // leaves every later require a cache hit.
+      std::vector<std::string> names;
+      for (size_t from = 0, at; from <= nesting.chain.size(); from = at + 3) {
+        at = nesting.chain.find(" > ", from);
+        if (at == std::string::npos) at = nesting.chain.size();
+        names.push_back(nesting.chain.substr(from, at - from));
+      }
+      std::string first;
+      for (size_t i = names.size() - 1; i >= 2; --i) first += (first.empty() ? "'" : ", then '") + names[i] + "'";
+      report.fail(
+          "modules load inside one another while main.lua loads: " + nesting.chain + " (" +
+          std::to_string(nesting.depth) + " deep, at most " + std::to_string(MAX_LOAD_NESTING) +
+          "). The device refuses a module's load that starts with too little of the VM stack left (\"require '" +
+          names.back() + "': script recursion too deep to load a module\"). Require " + first +
+          " from main.lua before '" + names[1] +
+          "' (deepest first, so each later require finds its module loaded), or from a function body (setup, draw, "
+          "input), so that no module's own load requires one that is not loaded yet.");
+    }
+  }
   return report;
 }
 

@@ -56,14 +56,15 @@ function layout.compute(w, h)
   end
   L.message = { x = x, y = below + 172 }
 
-  -- Seat 0 at Over: both fleets side by side above the end-of-round dialog (18 px cells, so they end at y 246, clear of
-  -- the dialog's top edge at about 259), a label above each, the shot counts below.
+  -- Seat 0 at Over: both fleets side by side above the end-of-round dialog (18 px cells from y 72, so they end at y 252,
+  -- clear of the dialog's top edge at about 259), a label above each (small text at y 44, a 24 px box that ends 4 px
+  -- above the boards), the shot counts below.
   local oc = math.min(18, (w - 24) // 20)
   local total = 2 * layout.BOARD * oc + 14
   local ox = (w - total) // 2
   L.over = {
-    { x = ox, y = 66, cell = oc },
-    { x = ox + layout.BOARD * oc + 14, y = 66, cell = oc },
+    { x = ox, y = 72, cell = oc },
+    { x = ox + layout.BOARD * oc + 14, y = 72, cell = oc },
   }
   L.over_label_y = 44
   L.over_counts_y = 570

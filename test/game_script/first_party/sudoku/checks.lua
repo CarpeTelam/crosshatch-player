@@ -9,24 +9,14 @@
 --     then;
 --   - the entries share one run function and a plan of integers, so an entry is a name and a pointer;
 --   - the stack is grown early and kept (see deep), because the allocator can no longer find room to grow it later.
--- A module that loads while another module is loading needs the C stack twice over, and the device refuses a third
--- level ("script recursion too deep to load a module") where this harness sets no headroom and accepts any depth. So
--- main's own load is watched: the wrapper below counts how deep a module not yet loaded is required from, and the
--- check that follows allows main and the one level it loads. It stands in for the device's refusal and is stricter in
--- one way only (it counts depth, where the device counts C stack), so it can fail a load the device would take.
-local real_require, seen, depth, deepest = require, {}, 0, 0
-function require(name)
-  if seen[name] then return real_require(name) end
-  seen[name] = true
-  depth = depth + 1
-  deepest = math.max(deepest, depth)
-  local module = real_require(name)
-  depth = depth - 1
-  return module
-end
+-- The headroom is thin: 5 to 8 KB of the 256 KB. Measured by adding a global string of n bytes to this file before its
+-- last `collectgarbage("collect")` and running the Sudoku checks: on this tree they pass at n = 6,500 and fail at n =
+-- 6,600 ("not enough memory"); on e84e5fa3 they passed at 5,000 and failed at 8,000, so a change here or to a module it
+-- loads must be measured again that way, and what does not fit goes to rules.lua (the rounds' VM) as the rules did.
+-- A module that loads while another module is loading is the games check's own finding, not this file's: it fails
+-- main's load that nests deeper than main plus one level, as the device refuses it (first_party/README.md, "Module
+-- loading"), so this file loads main and what it needs plainly.
 local game = require("main")
-require = real_require
-assert(deepest <= 2, "a module loads inside a module that loads inside main: depth " .. deepest)
 local grid = require("grid")
 local layout = require("layout")
 local counter = require("counter")

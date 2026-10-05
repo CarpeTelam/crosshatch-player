@@ -83,6 +83,21 @@ end
 return game
 )lua";
 
+// A solo game of the tests' own whose main.lua is `top` (statements, run when main loads) and then a game table that
+// draws a blank frame; `setupBody` is the body of its setup, for a require made later than the load.
+std::string loadingGame(const std::string& top, const std::string& setupBody = "") {
+  return top + R"lua(
+local game = {}
+function game.setup(ctx) )lua" +
+         setupBody + R"lua( return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+return game
+)lua";
+}
+
 std::string soloManifest(const std::string& id, const std::string& modes = R"(["solo"])",
                          const std::string& seats = R"({"min": 1, "max": 1})") {
   return "{\"id\": \"" + id + "\", \"name\": \"" + id + "\", \"version\": \"1.0.0\", \"api\": 1, \"seats\": " + seats +
@@ -262,6 +277,74 @@ TEST_F(GamesCheckEngineTest, APackOverAnOldFailureStartsCleanSoAFixedGameIsGreen
   pack({"pass-open"});
   EXPECT_FALSE(fs::exists(packed() / "pass-open.packerror"));
   expectGreen(games_check::checkPackage(roots(), "pass-open"));
+}
+
+// ---- module loading (the device refuses a module's load nested two deep inside main's) ----
+
+TEST_F(GamesCheckEngineTest, AModuleThatLoadsInsideAModuleThatLoadsInsideMainFailsThePackageTestNamingTheChain) {
+  writeGame("nested", soloManifest("nested"), loadingGame("require(\"a\")\n"));
+  write(games() / "nested" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
+  write(games() / "nested" / "b.lua", "return { b = true }\n");
+  pack({"nested"});
+  const Report report = games_check::checkPackage(roots(), "nested");
+  expectRed(report,
+            {"main > a > b", "3 deep, at most 2", "script recursion too deep to load a module",
+             "Require 'b' from main.lua before 'a' (deepest first, so each later require finds its module loaded), "
+             "or from a function body"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  // The chain is the deepest one, whatever the rest of main does.
+  writeGame("deeper", soloManifest("deeper"), loadingGame("require(\"a\")\n"));
+  write(games() / "deeper" / "a.lua", "require(\"b\")\nreturn {}\n");
+  write(games() / "deeper" / "b.lua", "require(\"c\")\nreturn {}\n");
+  write(games() / "deeper" / "c.lua", "return {}\n");
+  pack({"deeper"});
+  expectRed(games_check::checkPackage(roots(), "deeper"),
+            {"main > a > b > c", "4 deep", "require 'c': script recursion too deep",
+             "Require 'c', then 'b' from main.lua before 'a'"});
+  // The advice works: main requiring c, then b, then a loads each from main alone.
+  writeGame("fixed", soloManifest("fixed"), loadingGame("require(\"c\")\nrequire(\"b\")\nrequire(\"a\")\n"));
+  write(games() / "fixed" / "a.lua", "require(\"b\")\nreturn {}\n");
+  write(games() / "fixed" / "b.lua", "require(\"c\")\nreturn {}\n");
+  write(games() / "fixed" / "c.lua", "return {}\n");
+  pack({"fixed"});
+  expectGreen(games_check::checkPackage(roots(), "fixed"));
+}
+
+TEST_F(GamesCheckEngineTest, ModulesRequiredFlatOrAlreadyLoadedAreGreenAndSoIsALazyRequire) {
+  // main requires both: each loads from main alone.
+  writeGame("flat", soloManifest("flat"), loadingGame("require(\"a\")\nrequire(\"b\")\n"));
+  write(games() / "flat" / "a.lua", "return { a = true }\n");
+  write(games() / "flat" / "b.lua", "return { b = true }\n");
+  // main requires b, then a, and a requires b: b is already loaded, so a's load nests nothing.
+  writeGame("cached", soloManifest("cached"), loadingGame("require(\"b\")\nrequire(\"a\")\n"));
+  write(games() / "cached" / "a.lua", "local b = require(\"b\")\nreturn { a = b }\n");
+  write(games() / "cached" / "b.lua", "return { b = true }\n");
+  // a function body of main requires a, which requires b: not probed (only main's own load is), documented and pinned.
+  writeGame("lazy", soloManifest("lazy"), loadingGame("", "require(\"a\")"));
+  write(games() / "lazy" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
+  write(games() / "lazy" / "b.lua", "return { b = true }\n");
+  // main's own load raising is no nesting finding, and a chain read before it raised still is one.
+  writeGame("raises", soloManifest("raises"), loadingGame("error(\"main broke\")\n"));
+  // A guard fault in main's own load (the instruction budget) is no nesting finding either: the rounds name it.
+  writeGame("faults", soloManifest("faults"), loadingGame("while true do end\n"));
+  writeGame("raises-late", soloManifest("raises-late"), loadingGame("require(\"a\")\nerror(\"main broke\")\n"));
+  write(games() / "raises-late" / "a.lua", "require(\"b\")\nreturn {}\n");
+  write(games() / "raises-late" / "b.lua", "return {}\n");
+  pack({"flat", "cached", "lazy", "raises", "faults", "raises-late"});
+  for (const char* id : {"flat", "cached", "lazy", "raises", "faults"}) {
+    expectGreen(games_check::checkPackage(roots(), id));
+  }
+  expectRed(games_check::checkPackage(roots(), "raises-late"), {"main > a > b"});
+}
+
+TEST_F(GamesCheckEngineTest, AProbeThatCannotReadAChainFailsThePackageTestInsteadOfPassingIt) {
+  // main removes `require` and locks the globals, so the probe's own `require = real` raises outside its pcall: the
+  // chunk fails, which is the probe's failure and not main's, and must not read as "no nesting".
+  writeGame(
+      "locked", soloManifest("locked"),
+      loadingGame("require = nil\nsetmetatable(_G, { __newindex = function() error(\"globals are locked\") end })\n"));
+  pack({"locked"});
+  expectRed(games_check::checkPackage(roots(), "locked"), {"the module-loading probe failed", "globals are locked"});
 }
 
 // ---- faults ----

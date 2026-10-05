@@ -100,7 +100,7 @@ ctest --test-dir build/test -L games-check --output-on-failure
   start) are logged, not failed.
 - `GamesCheckEngineTest` tests the check over scratch trees it writes in the build folder: every way a game can fail it
   (does not pack, raises, passes a budget or the frame limit, grows a snapshot past 700 bytes, ends with other winners, has no
-  rounds) and the rounds it must pass.
+  rounds, loads a module inside a module's load) and the rounds it must pass.
 - `GamesCheckFlowTest` pins the hidden flow of the player to `GameVM`'s.
 
 Both roots are cache variables, for a one-off run over scratch trees (made absolute against the repository root):
@@ -112,12 +112,92 @@ cmake -S test -B build/test -DGAMES_CHECK_GAMES_ROOT=/scratch/games -DGAMES_CHEC
 Reset them with `-UGAMES_CHECK_GAMES_ROOT -UGAMES_CHECK_COMPANION_ROOT` (or `-D` with the defaults, `games` and
 `test/game_script/first_party`).
 
+## Module loading
+
+A module another module's own load requires needs the C stack twice over, and the device refuses a third level: the sandbox
+will not parse a module with under 10 KiB of its 16 KiB VM stack free, and fails the game with `require 'x': script
+recursion too deep to load a module` (`Sandbox.cpp`, `CallGuard::PARSE_HEADROOM_BYTES`). The simulator refused Sudoku's
+`main > layout > board` that way while every host check passed, because this host sets no stack headroom. So the games
+check carries the rule for every game, in `ThePackageInstallsAndLoads`: **while `main.lua` loads, at most main and one module
+loading inside it** (`MAX_LOAD_NESTING` 2). A module another one needs is required from main first, or from a function body
+(`setup`, `draw`, `input`), never by the other module's own load; every later `require` finds it loaded.
+
+The probe (`probeLoadNesting` in `games_check/ScriptVm.cpp`) wraps `require` to count a name the first time it is required
+(a cache hit loads nothing, so it never nests), runs `pcall(require, "main")`, and reports the deepest chain, as `main > a >
+b`. Its result for the cases that matter:
+
+| `main.lua` | Result |
+| --- | --- |
+| requires `a` and `b` | green |
+| requires `b`, then `a`, and `a` requires `b` | green: `b` is already loaded when `a` loads |
+| requires `a`, and `a` requires `b` (not loaded) | red, names `main > a > b`, says to require `b` from main first or from a function body |
+| a function body requires `a`, and `a` requires `b` | green: **not probed**, the author's to keep shallow |
+| raises while loading | no nesting finding: the rounds name the error (a chain read before it raised still counts) |
+
+It is a double of the sandbox's refusal and says where it differs: stricter in one way (it counts depth, not bytes, so it
+can fail a load the device takes) and more permissive in another (only main's own load is probed, so a module required later,
+in a function body, is not). It is a depth rule because this host's frames are about a third of the simulator's, so no byte
+margin is a usable bound here. `ScriptVmTest` pins it to the sandbox: at a modelled stack margin where a real `LuaGame` loads
+the flat game, it refuses the nested one with the message above, and the probe flags exactly the nested game.
+
+## Observing draw commands
+
+A round sees only the text commands of a frame (`shows`), and `ch.gfx` outside the engine's draw call is an error, so a check
+cannot call a game's `draw` on the real table. What a draw puts on the canvas beyond text (a highlight fill, an icon, a won
+board's mark, which cells a frame fills, whether it asks for a full refresh) is read through a **recording `ch.gfx`**, swapped
+in while a function runs. The rounds format does not carry it (that would change the format); a check, or a round's
+`steps(state)`, calls `game.draw(state, seat, ui)` under the recorder and reads the commands.
+
+Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, Sudoku's `record` in `rules.lua`),
+and each takes its function names from the real `ch.gfx`'s keys, so a misspelled call raises on the recorder too. `trace.record(f,
+on_call)` runs `f`, returns the commands as text, one `name(args)` a line in drawing order, and their number, calls
+`on_call(name, ...)` for each as it is drawn, and puts the real `ch.gfx` back, also when `f` raises (the error is raised again as
+it was); Sudoku's `record(f, on_image, on_call)` returns the count only and hands the calls to its hooks. A check turns the
+commands into whatever it pins: the boards a `light` fill covers, the icons and where they sit, the lines of a stroke, the
+refreshes.
+
+- *Secrecy for a hidden game.* Draw two states that differ only in what a seat must not see (the other seat's intact ships)
+  and compare that seat's frames command by command; the failure names the first command that differs. Run it for every frame
+  a seat can show (firing, waiting, placing) with a positive control (a difference a frame may show makes the comparison
+  fail) and a least command count, so a comparison of empty frames cannot pass. Battleship's `draws.lua` does this.
+- *Kinds and places.* Pin which commands may fall in a region (the target board holds grid lines, outlines, and shot icons,
+  and nothing filled), which icons a frame may hold, and the order of fills (a highlight under the grid, a won board's white
+  fill before its mark).
+- *The double's limits.* The recorder is a double of the engine's `ch.gfx`. It counts each call as one command, as the engine
+  does; a check pins that against a known count (UTTT: `board.draw_grid`'s documented 28 commands; Battleship: `draws.recorder`,
+  a function with three calls, an unknown name that raises, and the real `ch.gfx` back after an error; Sudoku: `rules.frame`'s
+  `draw_grid` count, and `rules.draw_marks` raising on a misspelled call). It is more permissive
+  than the device: no argument is checked (a bad colour or size passes), nothing is clipped, no frame limit (2,048 commands)
+  or icon and image budget applies, and an icon or image name is not looked up. The rounds, which draw the real `ch.gfx` in
+  every frame, are what find those.
+
+## The checks VM heap
+
+The sandbox's Lua heap is 256 KB (`lua_heap_bytes`) and counts garbage as well as live data. The game's modules, `checks.lua`
+(compiled, about 3.5 times its source), and everything it requires share it, and the allocator is first-fit in a region that
+fills with small holes, so a heap that is nearly full fails with "not enough memory" before the cap. Two games are there:
+
+- Sudoku's checks VM holds the solver, the counter, and the bank, with a headroom of 5 to 8 KB (6,500 B passed and 6,600 B
+  failed on this tree: a global string of n bytes added before the last collection). Its rules, and what its draw marks on the
+  board, are pinned in `rules.lua`, called from the rounds' `steps(state)`, where the VM has room.
+- Battleship's checks VM holds about 190 KB once `checks.lua` is compiled, and one frame's draw leaves about 47 KB of garbage,
+  so the draw-level pins are in `draws.lua`, all called from one round, `rounds/draw-commands.lua`, whose `steps(state)` runs in a
+  VM with the game's modules and none of the checks. UTTT's are in its `checks.lua`, which has room.
+
+When a check faults "not enough memory", measure with `collectgarbage("count")` after a full collection at its start, and move
+what draws frames (the heaviest thing a check does) into a module a round's `steps` function calls. A round's VM has the
+game's modules and the round's own, and a 2,000,000-instruction budget for `steps(state)`: loop over a frame's commands once,
+not once per cell.
+
 ## What the check proves, and what it does not
 
 It proves that the package the packer makes installs and loads, that every round of every mode the host can start plays as its
-file says over the same Lua sandbox, `Session`, and round loop the match uses, that no frame of any seat faults, and that the
-game's own checks pass. `ScriptVm` stands in for the device sandbox and the hidden flow for `GameVM`'s hand-off; each is pinned by
-a test (`ScriptVmTest`, `GamesCheckFlowTest`). It does not prove that text fits: the host canvas measures with the harness's
+file says over the same Lua sandbox, `Session`, and round loop the match uses, that no frame of any seat faults, that the
+game's own checks pass, and that main's load nests no module loads deeper than the device takes (above). `ScriptVm` stands in for
+the device sandbox (its load-nesting probe for the sandbox's parser-headroom refusal) and the hidden flow for `GameVM`'s hand-off;
+each is pinned by a test (`ScriptVmTest`, `GamesCheckFlowTest`). A round sees text commands only; what a draw puts on the canvas beyond text is read by
+a game's checks and rounds through its recording `ch.gfx` (above), which proves the commands and not how they look, so a
+screenshot still shows the look. It does not prove that text fits: the host canvas measures with the harness's
 stand-in text metrics, not the device's fonts, so only a run on the device shows that a line fits its box. It plays no timer
 events, no swipes, no long presses, and no nearby match.
 

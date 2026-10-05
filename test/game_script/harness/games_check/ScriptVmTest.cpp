@@ -66,6 +66,47 @@ class ScriptVmTest : public GameScriptTestSupport::LuaGameTest {
   std::unique_ptr<ScriptVm> newVm() { return makeUniqueNoThrow<ScriptVm>(arena, sources, ports, canvas, images); }
 
   static bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+  // Whether a real LuaGame (DirectGame) loads the modules with its stack floor set so that exactly `margin` bytes of
+  // stack below this frame are usable by a require: the floor is this frame minus the parser headroom a require needs,
+  // minus `margin`. False, with the game's message in `message`, when the sandbox refuses a load. Not inlined, so the
+  // frame the floor is taken from is the same for every margin.
+  __attribute__((noinline)) bool loadsAtMargin(const std::vector<Module>& modules, const size_t margin,
+                                               std::string& message) {
+    useSources(modules);
+    auto game = makeUniqueNoThrow<DirectGame>(arena, frames, sources, ports, canvas);  // large: on the heap
+    game->setStackFloor(reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) -
+                        GameScript::CallGuard::PARSE_HEADROOM_BYTES - margin);
+    const GameScript::Outcome outcome = game->start();
+    message = outcome == GameScript::Outcome::Ok ? "" : game->errorMessage();
+    return outcome == GameScript::Outcome::Ok;
+  }
+
+  // The least margin at which the sandbox takes `modules`: loading is monotonic in the margin, so it is bisected.
+  size_t leastMargin(const std::vector<Module>& modules) {
+    std::string message;
+    size_t low = 0, high = 1u << 20;  // far more than any frame of this host
+    EXPECT_TRUE(loadsAtMargin(modules, high, message)) << message;
+    while (low < high) {
+      const size_t middle = (low + high) / 2;
+      if (loadsAtMargin(modules, middle, message)) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    return low;
+  }
+
+  // The probe's answer for `modules` in an OwnedVm of the same sources.
+  games_check::LoadNesting probe(const std::vector<Module>& modules) {
+    useSources(modules);
+    std::string error;
+    auto owned = OwnedVm::create(sources, {}, images, 1, error);
+    EXPECT_TRUE(owned) << error;
+    if (!owned) return {};
+    return games_check::probeLoadNesting(*owned);
+  }
 };
 
 TEST_F(ScriptVmTest, TheForbiddenLibrariesAreNilInBoth) {
@@ -186,6 +227,99 @@ TEST_F(ScriptVmTest, CompanionModulesAreRequirableAndAClashWithTheGamesOwnIsAFai
   EXPECT_TRUE(has(error, "game's own modules")) << error;
   EXPECT_FALSE(OwnedVm::create(sources, {ModuleText{"Bad-Name", "return {}"}}, images, 1, error));
   EXPECT_TRUE(has(error, "no module name")) << error;
+}
+
+TEST_F(ScriptVmTest, TheLoadNestingProbeFlagsWhatTheSandboxRefusesAtAModelledStackMargin) {
+  // The same two games, one that requires both modules from main and one whose module requires the other (main > a >
+  // b), through the sandbox with a stack floor that leaves only `margin` bytes below this frame for a require (the
+  // modelled task stack of SandboxTest.RequireNeedsParserHeadroom, with the margin as the unknown): the sandbox
+  // takes the flat game at the least margin that fits it, refuses the nested one there ("script recursion too deep
+  // to load a module": its second require starts a frame deeper), and takes it only with more. The probe, a depth
+  // rule that needs no stack model, flags exactly the nested one. This host's frames are about a third of the
+  // simulator's, so what the margin is does not matter; that it separates the two games the way the probe does does.
+  const std::vector<Module> flat = {{"main", "require('a') require('b') return { setup = function() return {} end }"},
+                                    {"a", "return { a = true }"},
+                                    {"b", "return { b = true }"}};
+  const std::vector<Module> nested = {{"main", "require('a') return { setup = function() return {} end }"},
+                                      {"a", "require('b') return { a = true }"},
+                                      {"b", "return { b = true }"}};
+  const size_t flatMargin = leastMargin(flat);
+  std::string message;
+  EXPECT_TRUE(loadsAtMargin(flat, flatMargin, message)) << message;
+  ASSERT_GT(flatMargin, 0u) << "the flat game needs some stack";
+  EXPECT_FALSE(loadsAtMargin(flat, flatMargin - 1, message)) << "the least margin is least";
+  EXPECT_FALSE(loadsAtMargin(nested, flatMargin, message)) << "the sandbox took the nested game at the flat margin";
+  EXPECT_TRUE(has(message, "script recursion too deep to load a module")) << message;
+  EXPECT_TRUE(has(message, "require 'b'")) << message;
+  EXPECT_GT(leastMargin(nested), flatMargin);
+
+  const games_check::LoadNesting flatProbe = probe(flat);
+  EXPECT_EQ(flatProbe.depth, 2u) << flatProbe.chain;
+  EXPECT_LE(flatProbe.depth, games_check::MAX_LOAD_NESTING);
+  const games_check::LoadNesting nestedProbe = probe(nested);
+  EXPECT_EQ(nestedProbe.chain, "main > a > b");
+  EXPECT_EQ(nestedProbe.depth, 3u);
+  EXPECT_GT(nestedProbe.depth, games_check::MAX_LOAD_NESTING);
+}
+
+TEST_F(ScriptVmTest, TheLoadNestingProbeCountsAFirstRequireOnlyAndLeavesRequireAsItWas) {
+  // A module already loaded does not nest: main requires b, then a, and a requires b.
+  const games_check::LoadNesting cached =
+      probe({{"main", "require('b') require('a') return {}"}, {"a", "require('b') return {}"}, {"b", "return {}"}});
+  EXPECT_EQ(cached.depth, 2u) << cached.chain;
+  // A require in a function body is not run while main loads, so it is not probed.
+  const games_check::LoadNesting lazy = probe({{"main", "return { setup = function() require('a') end }"},
+                                               {"a", "require('b') return {}"},
+                                               {"b", "return {}"}});
+  EXPECT_EQ(lazy.chain, "main");
+  // A main that raises still reports the chain it reached, and one with no module requires reports main alone.
+  const games_check::LoadNesting raised =
+      probe({{"main", "require('a') error('main broke')"}, {"a", "require('b') return {}"}, {"b", "return {}"}});
+  EXPECT_EQ(raised.chain, "main > a > b");
+  const games_check::LoadNesting plain = probe({{"main", "return {}"}});
+  EXPECT_EQ(plain.chain, "main");
+  EXPECT_EQ(plain.depth, 1u);
+  // The wrapper is gone afterwards: require is the sandbox's again, and a module still loads (and a failed one is the
+  // sandbox's own error).
+  useSources({{"main", "return {}"}, {"a", "return { a = 1 }"}});
+  std::string error;
+  auto owned = OwnedVm::create(sources, {}, images, 1, error);
+  ASSERT_TRUE(owned) << error;
+  games_check::probeLoadNesting(*owned);
+  int ref = ScriptVm::NO_REF;
+  const VmResult ran =
+      owned->vm().runChunk("return tostring(require('a').a) .. tostring(pcall(require, 'absent'))", "@after.lua", ref);
+  ASSERT_TRUE(ran.ok()) << ran.message;
+  std::string text;
+  owned->vm().inspect(
+      ref,
+      [](lua_State* L, void* out) {
+        if (lua_type(L, -1) == LUA_TSTRING) *static_cast<std::string*>(out) = lua_tostring(L, -1);
+      },
+      &text);
+  EXPECT_EQ(text, "1false");
+}
+
+TEST_F(ScriptVmTest, ALoadNestingProbeThatRaisesOrAnswersNoStringIsAnErrorNotAFinding) {
+  useSources({{"main", "return {}"}});
+  std::string error;
+  auto owned = OwnedVm::create(sources, {}, images, 1, error);
+  ASSERT_TRUE(owned) << error;
+  const games_check::LoadNesting raised = games_check::probeLoadNesting(*owned, "error('probe broke')");
+  EXPECT_TRUE(has(raised.error, "probe broke")) << raised.error;
+  EXPECT_EQ(raised.depth, 0u);
+  const games_check::LoadNesting number = games_check::probeLoadNesting(*owned, "return 5");
+  EXPECT_FALSE(number.error.empty());
+  EXPECT_EQ(number.depth, 0u);
+  // A guard fault is not the probe's error: the instruction budget in the chunk is main's kind of failure, ignored.
+  const games_check::LoadNesting faulted = games_check::probeLoadNesting(*owned, "while true do end");
+  EXPECT_TRUE(faulted.error.empty()) << faulted.error;
+  EXPECT_EQ(faulted.depth, 0u);
+  // The real probe on a main that raises at once: the chain is main alone.
+  const games_check::LoadNesting plainRaise = probe({{"main", "error('main broke')"}});
+  EXPECT_TRUE(plainRaise.error.empty());
+  EXPECT_EQ(plainRaise.chain, "main");
+  EXPECT_EQ(plainRaise.depth, 1u);
 }
 
 TEST_F(ScriptVmTest, TheSeedMakesMathRandomRepeatOrDiffer) {

@@ -3,8 +3,8 @@
 // The games check's glue to the installer: what a game folder's package does on the fake SD card, and the three things
 // the check runs on what the installer wrote (GameAssets, not the source folder, so it plays what ships):
 //
-//   checkPackage   the real packer's package installs with the real installer, the registry lists it whole, and its
-//                  hash is the packer's
+//   checkPackage   the real packer's package installs with the real installer, the registry lists it whole, its
+//                  hash is the packer's, and main.lua's load nests no deeper than the device takes
 //   runGameChecks  the companion folder's checks.lua (C2)
 //   playRounds     every rounds/<name>.lua of the companion folder (C1), each over RoundPlayer
 //
@@ -46,7 +46,8 @@ struct Report {
 
 // The id's package installs and loads: no `.packerror` (else its text, the packer's stderr, is the failure), the
 // installer reports one game installed, the registry lists it with a manifest that passes this host's check, and the
-// hash it read back is the one the packer printed.
+// hash it read back is the one the packer printed, and main.lua's load nests no module loads beyond
+// MAX_LOAD_NESTING (ScriptVm.h: the double of the device's parser-headroom refusal, one rule for every game).
 Report checkPackage(const Roots& roots, const std::string& id);
 
 // The game's own checks (C2): `<companion>/<id>/checks.lua`, a module in the game's sandbox (math.random seeded 1) that
