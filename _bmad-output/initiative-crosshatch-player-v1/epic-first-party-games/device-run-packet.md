@@ -216,19 +216,21 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Pending.** The first dry run failed on a bug in the release script's packer path; entry 8.12 fixed it, and the orchestrator re-ran the dry run on the epic head and fills in this section. Leave it as it is until then. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Passed, 2026-10-05.** The first dry run (run 37291529964, on `daedbeab`) failed at "Pack the games" on a bug in the release script's packer path; entry 8.12 fixed it (`54c2a4ea`), and the orchestrator re-ran the dry run on the epic head after it. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
-- Run link: 
-- Commit the run built (the epic head at the time of the run, after entry 8.12; it is valid when `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer are unchanged since `daedbeab`, so the packages and the firmware are the ones above): 
-- Date and conclusion: 
+- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/37294652408 (job "Build and check" 111712918087; artifact `fork-release`, ID 11339206638, kept 7 days)
+- Commit the run built (the epic head at the time of the run, after entry 8.12; it is valid when `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer are unchanged since `daedbeab`, so the packages and the firmware are the ones above): `42b084bb`. `git diff daedbeab 42b084bb -- games scripts/pack_game.py src lib freeink-sdk` is empty, so the condition holds.
+- Date and conclusion: 2026-10-05, 10:08 to 10:29 UTC, success. "Build and check the release envs" built and checked `crosspoint-1.6.5-ch.4-x4pro.bin` (5,893,584 B, SHA-256 `0ac4bc3f8b18bf902b658718e01e939e2e6eabbfaafe9ffab000003319752415`) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,782,704 B, SHA-256 `c0ef3b122e59f4b75d2d580d8eb5c56f49c74f192bee0126412bdcf1d2f9390d`), both "passed"; "Pack the games" packed the three games; "Tag and publish" was skipped, as a dry run does. These release `.bin` files are the `gh_release` envs, not the `x4pro` build this packet flashes, so their size and hash differ from the firmware above by design.
 
 The release's package table (`| Package | Package hash | SHA-256 |`) against this packet's. The package hash must be equal; the SHA-256 of the file is equal only when the runner's zlib deflates the same bytes as this machine's (the packer says the same folder gives the same bytes on one toolchain).
 
 | Package | This packet's package hash | The dry run's package hash | This packet's SHA-256 | The dry run's SHA-256 |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `3c657cfcb2e461dc` | | `959f3673c8d66d732ce2fd831d312543f2be4c286c9bec4811f877f608bb8dbc` | |
-| `ultimate-tic-tac-toe.chgame` | `a7e63b542144938b` | | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` | |
-| `battleship.chgame` | `10a07de10cb14489` | | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` | |
+| `sudoku.chgame` | `3c657cfcb2e461dc` | `3c657cfcb2e461dc` | `959f3673c8d66d732ce2fd831d312543f2be4c286c9bec4811f877f608bb8dbc` | `959f3673c8d66d732ce2fd831d312543f2be4c286c9bec4811f877f608bb8dbc` |
+| `ultimate-tic-tac-toe.chgame` | `a7e63b542144938b` | `a7e63b542144938b` | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` |
+| `battleship.chgame` | `10a07de10cb14489` | `10a07de10cb14489` | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` |
+
+All three package hashes and all three file SHA-256 values are equal: the runner packed byte-identical files.
 
 ## What to record
 
