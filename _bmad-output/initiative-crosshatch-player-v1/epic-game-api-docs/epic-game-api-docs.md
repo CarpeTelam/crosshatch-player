@@ -28,6 +28,7 @@ Completed at inception. This epic owns CAP-9.
 2. Given only those three files, an AI writes a new game that installs through the inbox and plays a round on a device.
 3. The docs name no path or file outside themselves, so they move to a starter repo unchanged.
 4. Merged to `develop`; `ch.d.lua`, the icon catalog, and `game-api.md` agree with `docs/crosshatch/api-level-1.txt`, which the host test checks.
+5. **Added 2026-10-05 (owner):** Sudoku draws all its note digits from one cell sheet through `ch.gfx.image`'s cell (Notes, image cells), replacing its separate same-size note images, and plays a round on a device.
 
 ## Boundaries
 
@@ -56,4 +57,5 @@ Author docs in `docs/crosshatch/` only. Not the byte-formats doc (epic-script-ru
   - `ch.gfx.image(name, x, y, color, cell?)` takes an optional 1-based cell, counted left to right, then top to bottom; without it the whole image draws, as today. A cell given for an image with no `cells` entry, or outside its sheet, is a script error. `frame_icon_image_pixels` charges the cell, not the sheet.
   - Runtime: the cell in `DisplayList`'s image command and its hash; a source origin and size in `GameImageBlit::runs` (it reads pixels through `blackAt`, so a cell needs no byte alignment); the cell size beside `ImageSpan`. Contract: `api-level-1.txt` entries (the `manifest` key, the `fn` signature, the cell limits) with `API_SURFACE_CRC` and the surface tests; `package_vectors.json`; `formats.md`; a fixture in `test/game_script/fixtures/`.
   - Not pixel source rectangles passed by scripts: the install-time check catches a bad sheet before any match, and authors pick cells by number, not by magic pixel offsets (CAP-9).
+  - Test case (owner, 2026-10-05): Sudoku's note digits, 27 package images of one size (epic-first-party-games R4 planned 18; the game as built has 27), become one sheet: suggested as 9 columns (digits 1 to 9) by 3 rows (one per note style), so a note is cell `(style - 1) * 9 + digit`. The refactor is this epic's, in `games/sudoku/` (Done when 5), and cuts Sudoku's package by 26 members. It changes Sudoku's package hash, so a player's Sudoku saves from an earlier fork release are discarded (spec Non-goals: no save migration); land it before the freezing release, which epic-api-freeze's gating already ensures.
   - Size: one story, or two (package side, runtime side). Budget: it adds firmware code, so it needs a flash and static-RAM share before it starts; measure the base first (epic-api-freeze's Budget note).
