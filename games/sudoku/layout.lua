@@ -14,6 +14,8 @@ local GAP = 8
 local KEY_MAX = 80
 layout.ROWS = 8 -- the MENU panel's rows
 layout.RAIL = 4 -- the rail's buttons
+layout.NOTE_W, layout.NOTE_H = 12, 16 -- a digit note's image (make_note_images.py checks them against its own size)
+local NOTE_PITCH = 16 -- the distance from one note image to the next across (down, note_tile gives it)
 
 -- The y offset from the middle of a line of text to the top of its box, per size, so a numeral is drawn centred (the
 -- built-in fonts' ascent and digit height; the simulator frames settle them).
@@ -90,6 +92,23 @@ function layout.menu_at(x, y)
   local i = (y - L.row_y) // L.row_h + 1
   if x < L.row_x or x >= L.row_x + L.row_w or y < L.row_y or i > layout.ROWS then return nil end
   return i
+end
+
+-- The canvas point X0, Y0 of the note image for mark k (1..9) of the cell whose rectangle starts at x, y: three columns
+-- and three rows of 12 x 16 images inside the cell's grid lines (the 1 px cell line is offset 0 and a 3 px block line
+-- covers offsets 0..1 and cell - 1, so the images lie in offsets 2..cell - 2). The 51 px cells of the 474 x 788 canvas
+-- (the Sticky) take a 16 px row pitch (offsets 2..49 down, 4..48 across); the 50 px cells of the 466 x 788 canvas (the
+-- X4 Pro, whose BoardConfig insets are 9, 7, 3, 7) have 47 rows, so their rows go at a 15 px pitch and each image's
+-- one pixel margin overlaps the next (the margins agree: white for G and B, the ground's own checker for H). The
+-- image's checker is baked in, so its origin's x + y must be even (odd for an `inverted` one, drawn "white", which
+-- swaps the checker) to continue the screen's "dark" dither, which is black where screen x + y is even; the canvas
+-- origin's x + y is even on both boards (3 + 9, 7 + 9). The one pixel nudge `a` keeps that true from cell to cell and
+-- from row to row.
+function layout.note_tile(x, y, k, inverted)
+  local row = (k - 1) // 3
+  local pitch_y = (layout.get().cell - 3 - layout.NOTE_H) // 2
+  local a = (x + y + pitch_y * row + (inverted and 1 or 0)) % 2
+  return x + 4 + NOTE_PITCH * ((k - 1) % 3) + a, y + 2 + pitch_y * row
 end
 
 -- The centre x, y of a rectangle.

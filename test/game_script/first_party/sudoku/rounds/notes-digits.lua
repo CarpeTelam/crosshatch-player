@@ -8,6 +8,7 @@ return {
   seed = 22,
   steps = function(state)
     rules.frame(state, true)
+    rules.look(state)
     local steps = taps.menu_row({}, 6, { move = false, shows = "NOTES AS: DIGITS" })
     taps.menu(steps, 8, { move = false })
     taps.rail(steps, 1, { move = false })

@@ -70,21 +70,26 @@ local function draw_end(state, ui)
   ch.gfx.text(cx, 260, NAMES[state.l], "small", "black", "center")
 end
 
--- A pencil mark of digit d in the slot of a cell: a dot (grey ring, or solid black for the focused digit) or the
--- digit's own image (grey, or black for the focused digit), at the slot's centre. An image has a one-pixel paper
--- margin and a slot is 17 px in a 51 px cell, so the top and bottom rows move 1 px inward to keep the paper off the
--- 3 px block lines.
-local function draw_mark(ui, d, cx, cy, focused, paper, row)
+-- A pencil mark k of the cell whose rectangle starts at x, y: a dot at the slot's centre cx, cy (grey ring, or solid
+-- black for the focused digit; a `ground` puts a white disc behind a ring so its inner white shows), or the digit's own
+-- image at layout.note_tile. Images come in three sets (make_note_images.py): in a "dark" cell (SHADE
+-- PEERS) H, whose checker continues the ground's, drawn "black" and, for the focused digit, "white" (an inverted
+-- tile, placed to match); in any other cell B for the focused digit and G for the rest, all "black".
+local function draw_mark(ui, k, cx, cy, x, y, focused, ground)
   if ui.dots then
     if focused then
       ch.gfx.circle(cx, cy, 5, "black", true)
     else
-      if paper then ch.gfx.circle(cx, cy, 6, "white", true) end
+      if ground then ch.gfx.circle(cx, cy, 6, "white", true) end
       ch.gfx.circle(cx, cy, 5, "dark", true)
       ch.gfx.circle(cx, cy, 2, "white", true)
     end
+  elseif ground == "dark" then
+    local tx, ty = layout.note_tile(x, y, k, focused)
+    ch.gfx.image("note_h" .. k, tx, ty, focused and "white" or "black")
   else
-    ch.gfx.image((focused and "note_b" or "note_g") .. d, cx - 5, cy - 6 - row, "black")
+    local tx, ty = layout.note_tile(x, y, k, false)
+    ch.gfx.image((focused and "note_b" or "note_g") .. k, tx, ty, "black")
   end
 end
 
@@ -93,20 +98,21 @@ local function draw_board(state, ui)
   local sel, foc = ui.sel, ui.foc
   local ds, clash, cand = { v:byte(1, 81) }, grid.clashes(v), grid.candidates(v)
   local notes = { string.unpack(grid.FMT, state.n) }
-  local ground = {}
+  local ground, marked = {}, {}
   ch.gfx.text(L.x, 13, ui.note or ui.msg or ("Sudoku - " .. NAMES[state.l]), "medium", "black")
 
-  -- Grounds: a clue dark, the focused digit's copies black, the selected cell's units light.
+  -- Grounds: the focused digit's copies black, a clue light, and the rest of the selected cell's units dark. Priority
+  -- in that order.
   for c = 1, 81 do
     local a, b, e = grid.units(c)
     local g
     if foc and DIG[ds[c]] == foc then
       g = "black"
     elseif ds[c] >= 49 and ds[c] <= 57 then
-      g = "dark"
+      g = "light"
     elseif ui.shade and sel then
       local sa, sb, se = grid.units(sel)
-      if a == sa or b == sb or e == se then g = "light" end
+      if a == sa or b == sb or e == se then g = "dark" end
     end
     if g then
       local x, y, w, h = layout.cell_rect(c)
@@ -121,15 +127,16 @@ local function draw_board(state, ui)
     local d, g = DIG[ds[c]], ground[c]
     local cx, cy = layout.centre(x, y, w, h)
     if d then
-      text_at(string.char(48 + d), "large", (g == "dark" or g == "black") and "white" or "black", cx, cy)
+      text_at(string.char(48 + d), "large", g == "black" and "white" or "black", cx, cy)
     else
       -- Marks a neighbour's digit rules out are hidden, never erased.
       local visible, slot = notes[c] & cand[c], w // 3
+      marked[c] = visible ~= 0
       if visible ~= 0 then
         local ox, oy = x + (w - 3 * slot) // 2 + slot // 2, y + (h - 3 * slot) // 2 + slot // 2
         for k = 1, 9 do
           if visible & (1 << k - 1) ~= 0 then
-            draw_mark(ui, k, ox + (k - 1) % 3 * slot, oy + (k - 1) // 3 * slot, k == foc, g ~= nil, (k - 1) // 3)
+            draw_mark(ui, k, ox + (k - 1) % 3 * slot, oy + (k - 1) // 3 * slot, x, y, k == foc, g)
           end
         end
       end
@@ -140,7 +147,11 @@ local function draw_board(state, ui)
 
   if sel then
     local x, y, w, h = layout.cell_rect(sel)
-    if ground[sel] == "dark" or ground[sel] == "black" then
+    if marked[sel] and not ui.dots then
+      -- A digit note's image starts at inset 2 and its glyph at 3 (inset 2 is the image's blank margin), so the frame is
+      -- the three black outlines at 0 to 2 and no halo; dot notes keep the frame of their ground, as built.
+      frame(x, y, w, h, "black", 0, 2)
+    elseif ground[sel] == "dark" or ground[sel] == "black" then
       frame(x, y, w, h, "white", 2, 4)
       frame(x, y, w, h, "black", 0, 1)
     else
