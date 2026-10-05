@@ -125,13 +125,28 @@ touches = ["games/sudoku/note_*.png (the 18 old images replaced by the 27 new)",
 stays_out = ["src/**", "lib/**", "docs/crosshatch/api-level-1.txt", "games/ultimate-tic-tac-toe/ and games/battleship/", "Sudoku's dot notes, the focused digit's copies, and the menu, help, end, and Options screens", "test/game_script/harness/** and test/game_script/fixtures/**", ".github/workflows/**", "every upstream file"]
 
 [[entry]]
+id = 11
+type = "story"
+title = "Check every game at the X4 Pro's 466-pixel canvas"
+description = "The owner's 2026-10-05 Decision on the X4 Pro's canvas: the device gives a game 466 × 788 (bezel insets {9, 7, 3, 7}), not the 474 × 788 every check and simulator shot in this epic used. The games check plays each game's rounds and checks at 466 × 788 as well as 474 × 788 (a second canvas in the check's own code, which names no game, so `ch.screen` is 466 wide for those runs), and each game is fixed where it breaks at 466: Ultimate tic-tac-toe's board and HOW TO PLAY page, Battleship's two boards, controls, and Over screen, and Sudoku's grid, pad, rail, note tiles (entry 9 fixed their pitch), and pages. The simulator gains a way to run with the X4 Pro's insets, so the packet's shots show what the device shows; and the two comments that say 474 for the X4 Pro (`docs/crosshatch/api-level-1.txt`'s frame-pixels note and `src/games/GameViewport.h`) are corrected to 466 for the X4 Pro and 474 for the Sticky."
+verify = "Host suites pass with the games check playing every round and check of all three games at both 466 × 788 and 474 × 788 (a scratch mutant that breaks a game only at 466 turns the check red); every `scripts/*_test.py`, `python3 scripts/check_upstream_touches.py`, and `./bin/clang-format-fix` twice pass; `ApiLevelTest` and `ApiSurfaceTest` pass with the comment change (`API_SURFACE_CRC` follows only if the comment is part of the surface); simulator screenshots at the X4 Pro's 466 canvas for each game (Ultimate tic-tac-toe in play and its HOW TO PLAY page; Battleship placement, firing, and Over; Sudoku with digit notes in a SHADE PEERS row, the pad and rail, and the menu), each looked at for clipping and overlap; if a change reaches `src/` or the simulator's firmware build, `pio run -e x4pro` and `-e default` and `pio check` as AGENTS.md gives it."
+covers = ["R3", "R4", "R6", "R7", "R10", "R12"]
+after = [9]
+hitl = false
+risk = "medium"
+unknown = "How the simulator takes the X4 Pro's insets (its board profile, a sim option, or a build flag) without touching an upstream file the ledger does not list; the builder settles it and records it. Whether the games check's second canvas needs a change outside the check's own files."
+references = ["freeink-sdk/libs/hardware/BoardConfig/include/BoardConfig.h (ViewableInsets; the X4 Pro and Sticky profiles)", "src/games/GameViewport.h and GameViewport.cpp (forRenderer)", "lib/GfxRenderer/GfxRenderer.cpp getOrientedViewableTRBL", "docs/crosshatch/api-level-1.txt (the frame-pixels note)", "test/game_script/harness/games_check/ (the check's canvas)", ".claude/skills/run-crosshatch-player/SKILL.md"]
+touches = ["games/**", "test/game_script/first_party/**", "the games-check target's files under test/game_script/harness", "docs/crosshatch/api-level-1.txt (the frame-pixels comment only)", "src/games/GameViewport.h (the comment only)", "the simulator's board-profile selection (fork files only)", "_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-*-screenshots/"]
+stays_out = ["every API limit, enum, or entry in api-level-1.txt", "lib/** beyond what the simulator's profile selection needs in fork files", "freeink-sdk (never move the submodule pointer)", "every upstream file the ledger does not list", ".github/workflows/ci.yml"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9]
+after = [4, 9, 11]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
