@@ -597,7 +597,20 @@ end
 -- toggles' off states, and the full refresh: once on the first frame and on each change between the board, the MENU, the
 -- HOW TO PLAY page, and the end screen, never on a tap of the board.
 function rules.draw_marks(state)
-  assert(not pcall(record, function() ch.gfx.rectt(0, 0, 1, 1, "black") end), "a misspelled ch.gfx call does not raise")
+  -- The recorder: a misspelled call raises naming it, ch.gfx is the real table again after any error, the error comes
+  -- back as it was, and on_call sees each command.
+  local real = ch.gfx
+  local ok, err = pcall(record, function() ch.gfx.rectt(0, 0, 1, 1, "black") end)
+  assert(not ok and tostring(err):find("rectt", 1, true), "a misspelled ch.gfx call does not raise: " .. tostring(err))
+  eq(ch.gfx, real, "ch.gfx after a misspelled call")
+  ok, err = pcall(record, function() ch.gfx.clear("white") error("boom", 0) end)
+  eq(ok, false, "an error in the drawing function")
+  eq(err, "boom", "the error is raised again as it was")
+  eq(ch.gfx, real, "ch.gfx after an error in the drawing function")
+  local names = {}
+  eq(record(function() ch.gfx.clear("white") ch.gfx.line(1, 2, 3, 4, "dark") end, nil,
+    function(name) names[#names + 1] = name end), 2, "commands recorded")
+  eq(table.concat(names, ","), "clear,line", "on_call sees each command in order")
   local s, ui = fresh(state), {}
   game.input(s, 1, ui, { kind = "timer" })
   local cells = empties(s)

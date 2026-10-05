@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/AGENTS.md'
   - '{project-root}/test/game_script/first_party/README.md'
@@ -66,6 +66,13 @@ deferred:
       Measured by the implementer on this tree: a live string of n bytes added to checks.lua before its last collection passes at 6,500 B and fails at 6,600 B (entry 3 measured 5 to 8 KB at `e84e5fa3`). Documented in first_party/README.md ("The checks VM heap") and checks.lua's header. The fix (a smaller load, or a larger heap for the check's own VMs) is an arena or bank decision the sweep does not take; the bank is fixed (Decision D1), and entry 5 may only lower the cost cap.
     location: >-
       test/game_script/first_party/sudoku/checks.lua
+    severity: low
+  - summary: >-
+      The instruction margin of Battleship's `draw-commands` round (about 30 full frames drawn inside one `steps(state)` call) is unmeasured.
+    evidence: |-
+      The round passes, so it is under the 2,000,000 budget of one `steps` call; the sandbox has no instruction counter a check can read, so the margin is not a figure (same reason as the Sudoku `toggles` item). Adding a scenario that crosses the budget fails the round with "instruction budget exceeded" instead of a named pin; splitting the round in two is the fix then. Reason deferred: no measurement is possible without a counting hook the sandbox lacks.
+    location: >-
+      test/game_script/first_party/battleship/rounds/draw-commands.lua, test/game_script/first_party/battleship/draws.lua
     severity: low
 ---
 
@@ -178,6 +185,43 @@ Review patches (implementation subagent, re-engaged): the probe fails on a chunk
   - `[low]` `[patch]` `ScriptVm.h` says a raising main gives an empty chain, but the wrapper records `main` before its load so a raise gives chain "main", depth 1 — real comment error; fix the comment.
   - `[medium]` `[patch]` the `deferred-work.md` evidence lines contradict the Resolved summaries — same root as the blind-hunter row; patched there.
 
+### 2026-10-05 — Follow-up review pass
+- verdicts: 30 findings — high 0, medium 0, low 27, false 3, maybe-false 0 (blind-hunter 17, edge-case-hunter 10, verification-gap 3, intent-alignment descriptive only, no findings). Triaged from the lens reports saved in the scratchpad's `8.4/lenses-followup/`; the build agent applied the patches itself because the first-pass implementation subagent was not addressable from this run.
+- findings:
+  - Blind Hunter
+  - `[low]` `[patch]` the probe's failure text quotes the deepest module (`names.back()`) as the one the device refuses, and the engine test pins `require 'c'` for `main > a > b > c` — real: `Sandbox.cpp` refuses the first load that starts with under `PARSE_HEADROOM_BYTES` free, which is the third level (`b`), and the fault is final, so `c` is never reached; fix: quote `names[2]`, say the refusal is at the third level, test pins `require 'b'`. Same root as the edge-case and verification-gap rows on the same text.
+  - `[low]` `[reject]` a guard fault in main's load after it nested loses the chain and passes — a fault is final, so the same game's rounds (each loads main) fail on it with the sandbox's own message; the header documents "no finding: the rounds name it" and the `faults` test pins it; a C-side counter adds state to name a fault that is already named.
+  - `[low]` `[reject]` the probe's wrapper is not robust to a non-string or malformed name, a cycle, or a failing nested load — the sandbox's own `require` raises for each of those in main's load, so the game is red in its rounds whatever the probe counts; a stale chain entry needs main to catch that error and go on, which no game does; guards in the wrapper would only duplicate the sandbox's name check.
+  - `[low]` `[reject]` the chain is a string split twice and `for (size_t from = 0, at; ...)` / `i >= 2` look fragile — both loops are correct (`at` is assigned before use, `i` stops at 1 because the branch runs only with depth over 2); no divergence is named, a refactor is no fix.
+  - `[low]` `[reject]` the `script` argument of `probeLoadNesting` is a test seam in a production header — the header says what it is for; the harness is test code, and a second function only to hide an optional argument adds surface.
+  - `[low]` `[patch]` Sudoku's `record` has no test that it restores `ch.gfx`, re-raises the error as it was, or calls `on_call` — real (the verification-gap lens ran three mutants, all green); fix: `rules.draw_marks` pins the misspelled call's message, `ch.gfx` back after each error, the error `"boom"` unchanged, and `on_call` order; the mutant without the restore is now red in `EveryRoundPlaysAsItsFileSays`.
+  - `[false]` `[reject]` `draw_marks` has no GC discipline and may run out of heap order-dependently — the round runs deterministically on a fixed seed and passes under the full suite (1763 of 1763); no failure is shown, and the 256 KB cap counts garbage only for Battleship's 47 KB frames, which collect in `frame()`.
+  - `[low]` `[reject]` `c1`/`c2` unasserted and `c3` may equal `c2` in `draw_marks` — the round's puzzle is a bank puzzle fixed by Decision D1 and the dealt grid passes; the first row with two empties cannot be missing with over nine empties, and `c2 == c3` needs a degenerate grid; a bank change reopens the bank's checks anyway. Same root as the edge-case row.
+  - `[low]` `[reject]` the Over label gap rests on a copied, unmeasured `SMALL_LINE = 24` — carried from the first pass (the 24 is the game's own wrap step, named in both places); the simulator screenshot measured about 6 px of gap on the shipped layout.
+  - `[low]` `[reject]` three recorders drift independently — carried from the first pass (R2: each game keeps its own copies; no drift check).
+  - `[low]` `[patch]` `%q` writes a newline in a text argument as backslash plus a raw newline, so one command spans two lines and `sameFrames`' index and `least` count are wrong — real but no draw in the three games passes one; fix is a direct correction: `text_of` in both `trace.lua` copies escapes it as `\n`, and `draws.recorder` pins that a text with a newline stays one line (the mutant without the escape is red). Same root as the edge-case row.
+  - `[low]` `[reject]` `draws.kinds` raises a Lua compare error on a `refresh` or `image` command and a line starting off the board escapes `onBoard` — Battleship draws neither, a future one fails the round loudly rather than passing, and grid lines start on the board's edge, which `onBoard` includes.
+  - `[low]` `[reject]` `draws.secrecy` never varies `ui` — `ui` is built from the seat's own taps and holds no fleet; the pin is on state (the other fleet's intact ships), which is what the README claims ("two states that differ only in what a seat must not see").
+  - `[low]` `[reject]` the mutants the `deferred-work.md` entries name have no committed script — they are the build records' own runs, named as such; committing mutant scripts is a new harness feature, not this sweep's.
+  - `[low]` `[patch]` the `deferred-work.md` entries say `rules.draw_marks` and `rules.frame` are both called from five rounds, but `draw_marks` is called from `toggles` only — real wording error in entries that entry 5 reads; fix: each says which function is called from which round.
+  - `[low]` `[reject]` the resolved entries repeat the old text in `summary` and `evidence` with no status field — the file's own format is free prose, and the first pass rewrote them deliberately.
+  - `[low]` `[reject]` the nesting rule is documented only in the test README, applies to games under `games/` only, and the heap figures are hand measurements — same root as the deferred `## 8.8` item (docs outside this entry's touches, the owner confirms at entry 5); the heap figures are dated and measured (6,500 / 6,600 B) and documented as such.
+  - Edge Case Hunter
+  - `[low]` `[patch]` the quoted device refusal names the deepest module — same root as the blind-hunter row; patched there.
+  - `[false]` `[reject]` seat 0's mid-round frames (placing, firing) are never compared, so a `drawBoth` mutant for seat 0 stays green — `SeatShown.h` shows a pass match draws seat 0 only once the round is over (`state == Over || status.over`); the engine never draws seat 0 mid-round, and the verification-gap lens's mutant run agrees.
+  - `[false]` `[reject]` seats 1 and 2 at Over are not compared — `seatShown` returns seat 0 at Over for several local seats, so seats 1 and 2 are never drawn there.
+  - `[low]` `[reject]` a fault in main's load discards the chain already read — same root as the blind-hunter fault row.
+  - `[low]` `[reject]` an odd or retried name inflates or undercounts the depth — same root as the blind-hunter wrapper row and the first pass's retried-load row (carried).
+  - `[low]` `[reject]` `draws.kinds` on a non-numeric first argument — same root as the blind-hunter row.
+  - `[low]` `[defer]` the instruction margin of `rounds/draw-commands.lua` and of `draw_marks` is unmeasured — the round passes, so it is under 2,000,000; no counting hook exists; the Sudoku `toggles` margin is already deferred, and the Battleship round is a new deferred item.
+  - `[low]` `[reject]` `draw_marks` fails if `c2 == c3` — same root as the blind-hunter row.
+  - `[low]` `[patch]` `%q` newline splits a command's line — same root as the blind-hunter row; patched there.
+  - `[low]` `[reject]` the plan's "no snapshot or round changes" claim is wrong now that a round is added — its fix is to edit this plan's text; the Implementation Notes record the new round and the edited ones.
+  - Verification Gap
+  - `[low]` `[patch]` Sudoku's recorder guarantees (restore, error as raised, `on_call`) are pinned by no test — same root as the blind-hunter row; the lens's three mutants were green, the restore mutant is now red.
+  - `[low]` `[patch]` the quoted refusal for chains deeper than three names the wrong module (`names.back()`) and the engine test pins it — same root as the blind-hunter row; patched there.
+  - `[low]` `[reject]` the advice names one chain per run, so a module with two unloaded requires takes a second iteration — the wording is accurate for the named chain; naming every chain needs the probe to track branches, for a message read once per fix.
+
 ## Design Notes
 
 **Why a depth rule and not a stack floor.** The sandbox refuses a module's parse with under `PARSE_HEADROOM_BYTES` (10 KiB) of the 16 KiB VM stack free (`Sandbox.cpp`); the simulator refused Sudoku's `main > layout > board` (`story-sudoku-plan.md`, review row "found at the simulator step"). The device figure is unmeasured. Prototype, measured 2026-10-05 on this Release host build (reverted): `RoundPlayer` with `lua->setStackFloor(frame - VM_STACK_BYTES)` accepts a module chain five deep and refuses the sixth, so the host's frames are about a third of the simulator's and bytes are no usable bound here; a depth rule, as Sudoku's `checks.lua` already used (`deepest <= 2`, first requires only), gives the simulator's answer on any build. The probe is stricter in one way (depth, not bytes: it can fail a load the device takes) and more permissive in another (only main's own load is probed, so a module required in a function body, `draw` or `input` is not, and lazily loaded nesting is the author's). It is `ScriptVm`'s double of `Sandbox.cpp`'s refusal; the pin test shows a stack margin at which the sandbox itself refuses the nested game and accepts the flat one, and the probe agrees on both.
@@ -205,6 +249,10 @@ Review patches (implementation subagent, re-engaged): the probe fails on a chunk
 - No firmware file changed (`src/`, `lib/`, `platformio.ini`), so no `pio run` or `pio check`. Flash, RAM, and device timing: unmeasured.
 - Fresh tree: a `git archive` tree of code commit `bc3d0d5e` plus every submodule's archive (nested ones included), not a clone, reusing the warm `~/.platformio`: the `games-check` job's configure (`cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release`), build of `GamesCheckTest GamesCheckEngineTest GamesCheckFlowTest` (145 steps, 49 s), and `ctest -L games-check --output-on-failure --no-tests=error`: 85 of 85 pass. The gate reads no git history. The commit was then amended with this plan text only; no other file changed after the measurement.
 
+**Follow-up pass results (build agent, after its patches; the commit is the one this pass adds):**
+- Host: full `ctest --test-dir build/test -j4` 1763 of 1763 pass (`-L games-check` 85 of 85); every `scripts/*_test.py` passes; `scripts/check_upstream_touches.py` PASS; `./bin/clang-format-fix` twice, nothing outside this story's paths changed. Mutants run on the patches, each red and then reverted: Sudoku's `record` without its `ch.gfx` restore (`EveryRoundPlaysAsItsFileSays` for sudoku fails), and Battleship's `trace.lua` without the newline escape (`EveryRoundPlaysAsItsFileSays` for battleship fails).
+- No firmware file changed, so no `pio run`, `pio check`, or `sim.sh build`. This pass changed tests, Lua in companion folders, one check message, and `deferred-work.md`: no gate or workflow, so no new fresh-tree run; the first pass's fresh-archive run of the games-check job (85 of 85) stands for the workflow commands, and the host suite above covers this pass's tree. Flash, RAM, and timing: unmeasured.
+
 **Manual checks:** the Over screenshot shows the labels clear of the boards and the boards clear of the dialog.
 
 ## Auto Run Result
@@ -224,3 +272,5 @@ Review patches (implementation subagent, re-engaged): the probe fails on a chunk
 **Formatting.** `./bin/clang-format-fix` changed no file outside this story's paths.
 
 **Residual risks.** The nesting probe is a depth rule calibrated on one simulator observation; the device's depth limit is unmeasured (entry 5's run would show a lazy chain). The recorder doubles check no arguments, clip nothing, and apply no frame limits. Battleship's pins fail as a round. Entry 9 (lane B) edits Sudoku's `view.lua`, layout, and companion checks, so `rules.frame`'s SHADE PEERS and stroke pins will change at that merge; the orchestrator resolves it. Screenshots: `story-refactor-sweep-screenshots/over-menu.png` shows Battleship's Over frame with the labels clear of the boards.
+
+**Follow-up review pass (2026-10-05).** The four lenses read the whole sweep diff against `4137d947` (plan and PNG left out), weighted on the five patched areas. 30 findings: high 0, medium 0, low 27, false 3. Patched (8 rows, 4 fixes, all low): the probe's failure text now quotes the first third-level module the device refuses (`names[2]`, not the deepest) and the engine test pins `require 'b'` for `main > a > b > c` (two lenses); Sudoku's `rules.draw_marks` pins that `record` raises on a misspelled call by name, restores `ch.gfx` after any error, raises the error as it was, and calls `on_call` in order; both `trace.lua` recorders keep a newline inside a text argument on its command's line, pinned in Battleship's `draws.recorder`; the `deferred-work.md` entries say `draw_marks` is called from `toggles` and `frame` from the other four rounds. Deferred: 1 new item (Battleship `draw-commands` instruction margin; the `deferred` list now holds 8). Rejected with reasons in the Review Triage Log: 21, among them seat 0's mid-round frames and seats 1 and 2 at Over (`SeatShown.h`: the engine draws seat 0 only at Over; Battleship is a pass match), a fault in main's load (the rounds name it), and the wrapper's odd names (the sandbox's own `require` fails them). `followup_review_recommended: false`: this pass patched no `high`. Files this pass changed: `GameCheck.cpp`, `GamesCheckEngineTest.cpp`, `battleship/{trace,draws}.lua`, `ultimate-tic-tac-toe/trace.lua`, `sudoku/rules.lua`, `deferred-work.md`, this plan. `./bin/clang-format-fix` changed no file outside this story's paths.

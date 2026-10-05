@@ -16,7 +16,7 @@ local function text_of(...)
   local parts = {}
   for i = 1, select("#", ...) do
     local v = select(i, ...)
-    parts[i] = type(v) == "string" and string.format("%q", v) or tostring(v)
+    parts[i] = type(v) == "string" and (string.format("%q", v):gsub("\\\n", "\\n")) or tostring(v)
   end
   return table.concat(parts, ", ")
 end

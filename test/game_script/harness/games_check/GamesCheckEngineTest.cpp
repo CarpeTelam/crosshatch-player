@@ -299,7 +299,7 @@ TEST_F(GamesCheckEngineTest, AModuleThatLoadsInsideAModuleThatLoadsInsideMainFai
   write(games() / "deeper" / "c.lua", "return {}\n");
   pack({"deeper"});
   expectRed(games_check::checkPackage(roots(), "deeper"),
-            {"main > a > b > c", "4 deep", "require 'c': script recursion too deep",
+            {"main > a > b > c", "4 deep", "require 'b': script recursion too deep",
              "Require 'c', then 'b' from main.lua before 'a'"});
   // The advice works: main requiring c, then b, then a loads each from main alone.
   writeGame("fixed", soloManifest("fixed"), loadingGame("require(\"c\")\nrequire(\"b\")\nrequire(\"a\")\n"));

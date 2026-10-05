@@ -292,9 +292,13 @@ Report checkPackage(const Roots& roots, const std::string& id) {
       report.fail(
           "modules load inside one another while main.lua loads: " + nesting.chain + " (" +
           std::to_string(nesting.depth) + " deep, at most " + std::to_string(MAX_LOAD_NESTING) +
-          "). The device refuses a module's load that starts with too little of the VM stack left (\"require '" +
-          names.back() + "': script recursion too deep to load a module\"). Require " + first +
-          " from main.lua before '" + names[1] +
+          "). The device refuses a module's load that starts with too little of the VM stack left, the first one at "
+          "the third "
+          "level (\"require '" +
+          names[2] +
+          "': script recursion too deep to load a module\"; the fault is final, so no deeper module "
+          "is reached). Require " +
+          first + " from main.lua before '" + names[1] +
           "' (deepest first, so each later require finds its module loaded), or from a function body (setup, draw, "
           "input), so that no module's own load requires one that is not loaded yet.");
     }

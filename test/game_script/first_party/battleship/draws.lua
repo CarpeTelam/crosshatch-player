@@ -119,6 +119,10 @@ function draws.recorder()
   eq(select(2, text:gsub("\n", "\n")), 2, "text lines break")
   eq(text, 'clear("white")\nrect(1, 2, 3, 4, "black", true)\ntext(5, 6, "a, b", "small", "black")', "the recorded text")
   eq(select(2, trace.record(function() end)), 0, "an empty function")
+  -- A newline inside a text argument stays inside its command's line (%q would break the line there).
+  local broken, broken_count = trace.record(function() ch.gfx.text(1, 2, "a\nb", "small", "black") end)
+  eq(broken_count, 1, "a text with a newline")
+  eq(select(2, broken:gsub("\n", "\n")), 0, "a newline in a text argument breaks the line")
   local real = ch.gfx
   local seen = {}
   trace.record(function() ch.gfx.line(1, 2, 3, 4, "dark") end, function(name, ...) seen = { name, ... } end)
