@@ -78,6 +78,34 @@ function taps.solve(list, state, opts)
   return list
 end
 
+-- The notes rounds' play: NOTES must be on already. Notes the first two candidates of each of the state's first three
+-- empty cells, taps the first digit noted (a focus: no move), and taps the first cell's first digit as a note again (the
+-- mark comes off). Returns the list.
+function taps.notes_three(list, state)
+  local cand, empties, first = grid.candidates(state.v), taps.empties(state), nil
+  for i = 1, 3 do
+    local c, n = empties[i], 0
+    for d = 1, 9 do
+      if cand[c] & (1 << d - 1) ~= 0 and n < 2 then
+        n = n + 1
+        first = first or { c, d }
+        taps.note(list, c, d)
+      end
+    end
+  end
+  taps.key(list, first[2], { move = false })
+  taps.note(list, first[1], first[2])
+  return list
+end
+
+-- The solve rounds' steps: the state's answer written into every empty cell, the clock moved 83 seconds before the last
+-- digit, so the end screen's best time (the only one, kept for the band) is 1:23, which the last step shows.
+function taps.solve_best(state)
+  local steps = taps.solve({}, state, { wait = 83000 })
+  steps[#steps].shows = "Best 1:23"
+  return steps
+end
+
 -- A digit (1..9) a cell cannot hold in the answer, and a digit a peer of the cell does not rule out when there is one
 -- (the wrong digit a round writes is a legal-looking one).
 function taps.wrong_digit(state, c)

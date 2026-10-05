@@ -143,4 +143,31 @@ class OwnedVm {
 // True when `name` can be a module name: [a-z0-9_]{1,32}, as GameAssets loads them.
 bool isModuleName(const std::string& name);
 
+// The most modules that may be loading at once while main.lua loads: main itself and the one it requires. The device's
+// sandbox refuses to parse a module with under CallGuard::PARSE_HEADROOM_BYTES of its 16 KiB VM stack free
+// (Sandbox.cpp `require`: "script recursion too deep to load a module"), and a module that loads inside another
+// module's load (main > a > b) is what ran a game out of it in the simulator. This host's frames are about a third of
+// the simulator's, so bytes are no usable bound here; a depth is, and it answers as the simulator does on any build.
+inline constexpr size_t MAX_LOAD_NESTING = 2;
+
+// The deepest chain of modules loading inside one another while main.lua loads: `depth` modules, named `chain` as
+// "main > a > b". A main whose load raises still has the chain it reached (just "main" when it raises at once: depth
+// 1). Empty and 0 only when the probe's chunk itself faulted (a guard fault in main's own load, which the rounds name:
+// no finding) or failed (`error` is then set: the probe is broken, and that is a failure of the check, not a pass).
+struct LoadNesting {
+  size_t depth = 0;
+  std::string chain;
+  std::string error;  // the probe could not read a chain: its chunk raised, or answered with no string
+};
+
+// ScriptVm's double of Sandbox.cpp's parser-headroom refusal, as a depth rule. It wraps the global `require` to count a
+// name the first time it is required (a cache hit never nests), runs `pcall(require, "main")`, restores `require`, and
+// reports the deepest chain. Stricter than the device in one way: it counts depth, not bytes, so it can refuse a load
+// the device takes. More permissive in another: only main's own load is probed, so a module required in a function body
+// (setup, draw, input, a helper main calls later) is not, and nesting loaded lazily is the author's. ScriptVmTest pins
+// it to the sandbox at a modelled stack margin where the sandbox refuses the nested game and takes the flat one.
+// Runs one guarded chunk on `owned`'s VM, which it leaves with `main` loaded (or not): use a VM of its own. `script`
+// replaces the probe's chunk, for a test that reaches the failure branches; leave it null.
+LoadNesting probeLoadNesting(OwnedVm& owned, const char* script = nullptr);
+
 }  // namespace games_check

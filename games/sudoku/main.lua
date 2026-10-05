@@ -17,9 +17,10 @@
 -- The sandbox's 256 KB cap counts garbage as well as live data, so the heap is kept small: the bank is dealt from once
 -- and the help page is loaded when it is first drawn. The collector runs at this Lua's default pause; no setting
 -- here changes it (`collectgarbage("incremental", n)` takes no pause in this Lua, only `"param"` does).
--- A module that is loaded while another is loading needs the C stack twice over: the device refuses it ("script recursion
--- too deep to load a module") where the host checks do not. So a module another one needs is loaded before it, from
--- main or from a function body, never by the other module's own load, and each later require finds it loaded.
+-- A module that is loaded while another is loading needs the C stack twice over: the device refuses a third level
+-- ("script recursion too deep to load a module"), and the games check fails a main whose load nests that deep. So a
+-- module another one needs is loaded before it, from main or from a function body, never by the other module's own
+-- load, and each later require finds it loaded.
 require("board")
 local grid = require("grid")
 local layout = require("layout")

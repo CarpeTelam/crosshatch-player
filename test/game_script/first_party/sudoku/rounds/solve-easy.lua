@@ -8,9 +8,7 @@ return {
   settings = { level = "Easy" },
   seed = 11,
   steps = function(state)
-    local steps = taps.solve({}, state, { wait = 83000 })
-    steps[#steps].shows = "Best 1:23"
-    return steps
+    return taps.solve_best(state)
   end,
   winners = { 1 },
 }

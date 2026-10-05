@@ -1,7 +1,10 @@
 -- The game's own checks (first_party/README.md, `checks.lua`): the board module's geometry and the rules, called
--- directly. The rounds prove the rules play out through taps; these pin each rule by itself.
+-- directly, and what the draw puts on the canvas beyond text (the highlight, the icons, a won board's mark), read
+-- through trace.lua's recording `ch.gfx`. The rounds prove the rules play out through taps; these pin each rule by
+-- itself.
 local board = require("board")
 local game = require("main")
+local trace = require("trace")
 
 local LINES = {
   { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 },
@@ -218,6 +221,172 @@ local function helpPageFits()
   assert(bottom <= ch.screen.h - 40, "the page fits the canvas under the harness metrics")
 end
 
+-- ---- what the draw puts on the canvas (trace.lua) ----
+
+-- The commands game.draw makes for state `s` and `ui`, seat 1: a list of { name = "rect", <arguments in order> }.
+local function frame(s, ui)
+  local events = {}
+  trace.record(function() game.draw(s, 1, ui or {}) end, function(name, ...) events[#events + 1] = { name = name, ... } end)
+  return events
+end
+
+local function layout() return board.layout(ch.screen.w, ch.screen.h) end
+
+-- The small boards whose block a `light` fill covers, sorted, as "1,5" (each exactly: a light fill that is no block is
+-- an error). rect(x, y, w, h, color, filled).
+local function lit(events)
+  local L, boards = layout(), {}
+  for _, e in ipairs(events) do
+    if e.name == "rect" and e[5] == "light" then
+      local found
+      for b = 1, 9 do
+        local x, y, w, h = board.block_rect(L, (b - 1) // 3 + 1, (b - 1) % 3 + 1)
+        if e[1] == x and e[2] == y and e[3] == w and e[4] == h and e[6] == true then found = b end
+      end
+      assert(found, "a light fill that is no small board's block: " .. e[1] .. "," .. e[2] .. " " .. e[3] .. "x" .. e[4])
+      boards[#boards + 1] = found
+    end
+  end
+  table.sort(boards)
+  return table.concat(boards, ",")
+end
+
+local function indexOf(events, wanted)
+  for i, e in ipairs(events) do
+    if wanted(e) then return i end
+  end
+end
+
+local function lastIndexOf(events, wanted)
+  local at
+  for i, e in ipairs(events) do
+    if wanted(e) then at = i end
+  end
+  return at
+end
+
+local function isLine(e) return e.name == "line" end
+
+local function icons(events)
+  local out = {}
+  for _, e in ipairs(events) do
+    if e.name == "icon" then out[#out + 1] = e end
+  end
+  return out
+end
+
+-- The recorder counts as the engine does: board.draw_grid is documented as 28 commands (20 lines, 8 filled rects), and a
+-- function the engine's ch.gfx lacks raises on the recorder too, which is then gone.
+local function recorderCounts()
+  local text, count = trace.record(function() board.draw_grid(layout()) end)
+  eq(count, 28, "draw_grid commands")
+  local lines, rects = 0, 0
+  for line in text:gmatch("[^\n]+") do
+    if line:find("^line%(") then lines = lines + 1 end
+    if line:find("^rect%(") then rects = rects + 1 end
+  end
+  eq(lines, 20, "draw_grid lines")
+  eq(rects, 8, "draw_grid rects")
+  local real = ch.gfx
+  eq(select(2, trace.record(function() end)), 0, "an empty function draws nothing")
+  local ok, err = pcall(trace.record, function() ch.gfx.sparkle(1, 2) end)
+  eq(ok, false, "a function the engine lacks")
+  assert(tostring(err):find("sparkle", 1, true), "the error names the function: " .. tostring(err))
+  eq(ch.gfx, real, "ch.gfx after a raised error")
+  local seen = {}
+  trace.record(function() ch.gfx.rect(1, 2, 3, 4, "light", true) end, function(name, ...) seen = { name, ... } end)
+  eq(table.concat({ seen[1], seen[2], seen[3], seen[4], seen[5], seen[6], tostring(seen[7]) }, ","), "rect,1,2,3,4,light,true", "on_call")
+end
+
+-- The highlight: `light` fills exactly the small boards the next move may be in (and the full ones), under the grid, and
+-- none once the round is over.
+local function highlight()
+  local forced = frame(stateWith({ n = 5 }))
+  eq(lit(forced), "5", "the forced board")
+  eq(lit(frame(stateWith({}))), "1,2,3,4,5,6,7,8,9", "any board on a new round")
+  eq(lit(frame(stateWith({ w = "102300000", n = 0 }))), "2,4,5,6,7,8,9", "open boards and the full one, not the won")
+  eq(lit(frame(stateWith({ w = "000300000", n = 8 }))), "4,8", "the forced board and the full one")
+  eq(lit(frame(stateWith({ w = "111000000", n = 0 }))), "", "no highlight once the round is over")
+  eq(lit(frame(stateWith({ w = "121122211", n = 0 }))), "", "no highlight once the round is drawn")
+  local first = indexOf(forced, isLine)
+  local last = lastIndexOf(forced, function(e) return e.name == "rect" and e[5] == "light" end)
+  assert(first and last and last < first, "the highlight is drawn under the grid")
+end
+
+-- A won board: a white fill inside its block lines, then one big mark (X for seat 1, O for seat 2) over its cells, and
+-- the cells of a won board are not drawn; the cells of the others are small marks, one icon each.
+local function wonBoards()
+  local L = layout()
+  local s = stateWith({ w = "120000000", n = 0, m = 9, c = chars(81, "0", {
+    [1] = "1", [2] = "1", [3] = "1", [13] = "2", [14] = "2", [15] = "2", -- boards 1 and 2: their lines
+    [23] = "1", [25] = "2", -- board 3, not won
+    [81] = "1" }) })
+  local events = frame(s)
+  local all = icons(events)
+  eq(#all, 1 + 2 + 3, "icons: the question mark, two big marks, three small")
+  local grid = lastIndexOf(events, isLine)
+  for b, want in ipairs({ "x", "circle" }) do
+    local x, y, w = board.block_rect(L, 1, b)
+    local fill = indexOf(events, function(e)
+      return e.name == "rect" and e[5] == "white" and e[6] == true and e[1] == x + 2 and e[2] == y + 2 and e[3] == w - 3 and e[4] == w - 3
+    end)
+    assert(fill, "board " .. b .. " has no white fill inside its block lines")
+    local big = indexOf(events, function(e)
+      return e.name == "icon" and e[1] == want and e[4] == "large" and e[2] >= x and e[3] >= y and e[2] + 128 <= x + w and e[3] + 128 <= y + w
+    end)
+    assert(big, "board " .. b .. " has no large " .. want .. " inside its block")
+    assert(grid < fill and fill < big, "board " .. b .. ": the fill comes after the grid and before the mark")
+    local e = events[big]
+    assert(math.abs((e[2] - x) - (x + w - (e[2] + 128))) <= 1 and math.abs((e[3] - y) - (y + w - (e[3] + 128))) <= 1,
+      "board " .. b .. "'s mark is not centred")
+  end
+  -- Small marks: board 3 cell 5 (X) and cell 7 (O), board 9 cell 9 (X), each a 32 px icon centred in its cell, black; none
+  -- in the won boards 1 and 2.
+  local smalls = {}
+  for _, e in ipairs(all) do
+    if e[4] == "small" then smalls[#smalls + 1] = e end
+  end
+  eq(#smalls, 3, "small marks")
+  for i, want in ipairs({ { "x", 3, 5 }, { "circle", 3, 7 }, { "x", 9, 9 } }) do
+    local e = smalls[i]
+    local row = ((want[2] - 1) // 3) * 3 + (want[3] - 1) // 3 + 1
+    local col = ((want[2] - 1) % 3) * 3 + (want[3] - 1) % 3 + 1
+    local x, y, w, h = board.cell_rect(L, row, col)
+    eq(e[1], want[1], "small mark " .. i .. " icon")
+    eq(e[5], "black", "small mark " .. i .. " colour")
+    assert(e[2] >= x and e[3] >= y and e[2] + 32 <= x + w and e[3] + 32 <= y + h, "small mark " .. i .. " is outside its cell")
+    assert(math.abs((e[2] - x) - (x + w - (e[2] + 32))) <= 1 and math.abs((e[3] - y) - (y + h - (e[3] + 32))) <= 1,
+      "small mark " .. i .. " is not centred in its cell")
+  end
+  -- No won board, no white fill and no big mark.
+  local plain = frame(stateWith({ c = chars(81, "0", { [5] = "1" }), m = 1, n = 5 }))
+  eq(indexOf(plain, function(e) return e.name == "rect" and e[5] == "white" end), nil, "a white fill with no board won")
+  eq(#icons(plain), 2, "icons with one mark and no board won")
+  -- A mark in a board a draw closed as full (no line) is still a small mark: nothing covers it.
+  local full = frame(stateWith({ w = "300000000", c = chars(81, "0", { [1] = "1", [2] = "2" }) }))
+  eq(#icons(full), 3, "icons with a full board")
+end
+
+-- The question mark: one icon at the top right whose square holds the tap point the rounds use for it.
+local function questionMark()
+  local taps = require("taps")
+  local q = icons(frame(stateWith({})))
+  eq(#q, 1, "icons on an empty board")
+  eq(q[1][1], "question", "the header icon")
+  local tx, ty = taps.help()
+  assert(q[1][2] <= tx and tx < q[1][2] + 64 and q[1][3] <= ty and ty < q[1][3] + 64, "the help tap is outside the question icon")
+  assert(q[1][2] + 64 <= ch.screen.w and q[1][3] >= 0, "the question icon is off the canvas")
+end
+
+-- The help page draws text only: no board, no icon, no fill.
+local function helpPageHasNoBoard()
+  local events = frame(stateWith({ n = 5 }), { help = true })
+  assert(#events > 5, "the help page draws its text")
+  for _, e in ipairs(events) do
+    assert(e.name == "clear" or e.name == "text", "the help page draws a " .. e.name)
+  end
+end
+
 return {
   { name = "board layout at three canvas sizes", run = geometry },
   { name = "cell_at inverts cell_rect for all 81 cells and is nil outside", run = cellAtInvertsCellRect },
@@ -230,4 +399,9 @@ return {
   { name = "an out-of-range or non-integer move is rejected", run = badMoves },
   { name = "the forced board passes to the played cell's board, or to any open one", run = forcedBoardHandOver },
   { name = "the HOW TO PLAY page fits the canvas", run = helpPageFits },
+  { name = "the recorder counts as the engine does: draw_grid is 28 commands", run = recorderCounts },
+  { name = "the highlight fills exactly the boards the next move may be in, under the grid", run = highlight },
+  { name = "a won board has a white fill and one big mark, a small mark is one icon", run = wonBoards },
+  { name = "the question mark holds its tap point", run = questionMark },
+  { name = "the help page draws text only", run = helpPageHasNoBoard },
 }

@@ -1,7 +1,9 @@
 -- rules.lua: the game's rules pinned one by one, each on the grid a round dealt (its `steps(state)` calls them, so every
 -- rule is checked beside the round that plays it through taps). A failure is an error that names its line. They live
 -- here, in the round's own VM, and not in checks.lua: that VM holds the solver, the counter, and the bank (most
--- of the 256 KB the sandbox allows, with a heap the allocator fragments), and had no room left for them.
+-- of the 256 KB the sandbox allows, with a heap the allocator fragments), and had no room left for them. So do the
+-- pins on what the draw marks on the board (record, watch, expect_marks, rules.frame, rules.draw_marks): the highlight
+-- fills, the pad counts, the strokes, and the full refresh, read through a recording `ch.gfx`.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
@@ -422,25 +424,121 @@ end
 -- The commands of a frame, counted. TEST DOUBLE for the engine's ch.gfx (which faults outside a draw call, keeps a frame
 -- to 2,048 commands, and checks an image's name against the package): it counts every call as one command, as the
 -- engine does (board.draw_grid says 28 commands, and the first check below pins that this double counts it so), and
--- hands each image call to `on_image` instead of keeping the calls (a round's VM has no room for a frame's worth of
--- tables). It is more permissive than the device: it clips nothing and does not look an image up, so a name that is not
--- in the package passes it (the games check's rounds, drawing the real ch.gfx, fault on one).
-local function record(f, on_image)
+-- hands each image call to `on_image` and every call, image included, to `on_call(name, ...)` instead of keeping the
+-- calls (a round's VM has no room for a frame's worth of tables). It takes its function names from the real ch.gfx's own
+-- keys, so a name the engine lacks (a misspelled call in a draw) raises here too. It is more permissive than the device:
+-- it clips nothing, takes any arguments, and does not look an image up, so a name that is not in the package passes it
+-- (the games check's rounds, drawing the real ch.gfx, fault on one). A failed draw leaves no recorder installed: ch.gfx is
+-- restored and the error raised again.
+local function record(f, on_image, on_call)
   local count = 0
-  local gfx = setmetatable({}, {
-    __index = function(_, name)
-      return function(...)
+  local gfx = {}
+  for name, value in pairs(ch.gfx) do
+    if type(value) == "function" then
+      gfx[name] = function(...)
         count = count + 1
         if name == "image" and on_image then on_image(...) end
+        if on_call then on_call(name, ...) end
       end
-    end,
-  })
+    end
+  end
   local real = ch.gfx
   ch.gfx = gfx
   local ok, err = pcall(f)
   ch.gfx = real
   if not ok then error(err, 0) end
   return count
+end
+
+-- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (by
+-- cell), the pad's remaining counts (by digit), the diagonal strokes (by cell, counting lines: a stroke is eight), and
+-- the full refreshes. A command that is this game's but outside its place (a fill that is no cell's, a count that is
+-- not on a key) is an error here.
+local function watch()
+  local seen = { light = {}, count = {}, rising = {}, falling = {}, full = 0 }
+  local at = {}
+  for d = 1, 9 do
+    local x, y, w = layout.key_rect(d)
+    at[(x + w - 8) .. "," .. (y + 4)] = d
+  end
+  local function on_call(name, a, b, c, d, e, f)
+    if name == "rect" and e == "light" then
+      local cell = assert(layout.cell_at(a + 1, b + 1), "a light fill outside the grid")
+      local x, y, w, h = layout.cell_rect(cell)
+      assert(f == true and a == x + 1 and b == y + 1 and c == w - 1 and d == h - 1, "a light fill that is no cell's")
+      seen.light[cell] = (seen.light[cell] or 0) + 1
+    elseif name == "text" and d == "small" and f == "right" then
+      local key = assert(at[a .. "," .. b], "a right-aligned count that is on no key")
+      assert(seen.count[key] == nil, "two counts on key " .. key)
+      seen.count[key] = c
+    elseif name == "line" and a ~= c and b ~= d then
+      local cell = assert(layout.cell_at((a + c) // 2, (b + d) // 2), "a stroke outside the grid")
+      local into = b > d and seen.rising or seen.falling
+      into[cell] = (into[cell] or 0) + 1
+    elseif name == "refresh" and a == "full" then
+      seen.full = seen.full + 1
+    end
+  end
+  return seen, on_call
+end
+
+-- The digit of a cell's byte and whether it is a clue, from the notation alone ("1".."9" a clue, "a".."i" the player's).
+local function digit_of(b)
+  if b >= 49 and b <= 57 then return b - 48, true end
+  if b >= 97 and b <= 105 then return b - 96, false end
+end
+
+-- The row, column, and box (0 to 8 each) of cell c, by arithmetic: no grid.lua.
+local function units_of(c)
+  local row, col = (c - 1) // 9, (c - 1) % 9
+  return row, col, row // 3 * 3 + col // 3
+end
+
+-- The cells whose digit repeats in a row, column, or box, as a set.
+local function clashing(v)
+  local out = {}
+  for unit = 1, 3 do
+    local homes = {}
+    for c = 1, 81 do
+      local d = digit_of(v:byte(c))
+      if d then
+        local key = select(unit, units_of(c)) * 10 + d
+        homes[key] = homes[key] or {}
+        homes[key][#homes[key] + 1] = c
+      end
+    end
+    for _, cells in pairs(homes) do
+      if #cells > 1 then
+        for _, c in ipairs(cells) do out[c] = true end
+      end
+    end
+  end
+  return out
+end
+
+-- Pins what a frame of state `s` and ui draws to what the interaction table says, cell by cell: SHADE PEERS fills `light`
+-- exactly the selected cell's row, column, and box cells that are neither a clue (dark ground) nor a copy of the focused
+-- digit (black ground), once each, and nothing when it is off or nothing is selected; SHOW REMAINING puts nine counts on
+-- the keys (nine less the digit's cells, clues and the player's, never below 0) and none when off; every clashing cell
+-- has a rising stroke and every CHECK-marked cell a falling one (eight lines each), and no other cell has either.
+local function expect_marks(seen, s, ui)
+  local clash = clashing(s.v)
+  local sel_row, sel_col, sel_box
+  if ui.sel then sel_row, sel_col, sel_box = units_of(ui.sel) end
+  local left = { 9, 9, 9, 9, 9, 9, 9, 9, 9 }
+  for c = 1, 81 do
+    local d, clue = digit_of(s.v:byte(c))
+    local shaded = false
+    if ui.shade and ui.sel and not clue and not (d and d == ui.foc) then
+      local row, col, box = units_of(c)
+      shaded = row == sel_row or col == sel_col or box == sel_box
+    end
+    eq(seen.light[c], shaded and 1 or nil, "light fills of cell " .. c)
+    eq(seen.rising[c], clash[c] and 8 or nil, "clash strokes of cell " .. c)
+    eq(seen.falling[c], ui.check and ui.check[c] and 8 or nil, "CHECK strokes of cell " .. c)
+    if d then left[d] = left[d] - 1 end
+  end
+  for d = 1, 9 do eq(seen.count[d], ui.rem and tostring(math.max(left[d], 0)) or nil, "the count on key " .. d) end
 end
 
 -- The worst frame of the dealt grid: every empty cell holds all nine notes (the ones a neighbour's digit rules out stay
@@ -472,8 +570,11 @@ function rules.frame(state, digits)
     local dx, dy = x - cx, y - cy
     assert(dx >= 2 and dx + 10 <= L.cell - 1 and dy >= 2 and dy + 14 <= L.cell - 1, name .. " at " .. dx .. ", " .. dy)
   end
-  local commands = record(function() game.draw(s, 1, ui) end, on_image)
+  local seen, on_call = watch()
+  local commands = record(function() game.draw(s, 1, ui) end, on_image, on_call)
   assert(commands <= 2048, "the worst frame is " .. commands .. " commands")
+  expect_marks(seen, s, ui)
+  eq(seen.full, 1, "full refreshes of the first frame")
   local shown = 0
   for _, c in ipairs(empty) do
     for d = 1, 9 do
@@ -481,6 +582,135 @@ function rules.frame(state, digits)
     end
   end
   eq(images, digits and shown or 0, "marks drawn")
+end
+
+-- The marks `game.draw` of state `st` with `u` makes, as watch gathers them.
+local function marks_of(st, u)
+  local seen, on_call = watch()
+  record(function() game.draw(st, 1, u) end, nil, on_call)
+  return seen
+end
+
+-- The marks a draw adds to the board, each on a grid the test sets up and checked against expect_marks's own arithmetic:
+-- SHADE PEERS and the focus ground (a legal digit written in a peer of the selected cell, which is then not shaded), SHOW
+-- REMAINING with a digit past its nine, the strokes of a clash (rising) and of CHECK (falling) on cells that overlap, the
+-- toggles' off states, and the full refresh: once on the first frame and on each change between the board, the MENU, the
+-- HOW TO PLAY page, and the end screen, never on a tap of the board.
+function rules.draw_marks(state)
+  -- The recorder: a misspelled call raises naming it, ch.gfx is the real table again after any error, the error comes
+  -- back as it was, and on_call sees each command.
+  local real = ch.gfx
+  local ok, err = pcall(record, function() ch.gfx.rectt(0, 0, 1, 1, "black") end)
+  assert(not ok and tostring(err):find("rectt", 1, true), "a misspelled ch.gfx call does not raise: " .. tostring(err))
+  eq(ch.gfx, real, "ch.gfx after a misspelled call")
+  ok, err = pcall(record, function() ch.gfx.clear("white") error("boom", 0) end)
+  eq(ok, false, "an error in the drawing function")
+  eq(err, "boom", "the error is raised again as it was")
+  eq(ch.gfx, real, "ch.gfx after an error in the drawing function")
+  local names = {}
+  eq(record(function() ch.gfx.clear("white") ch.gfx.line(1, 2, 3, 4, "dark") end, nil,
+    function(name) names[#names + 1] = name end), 2, "commands recorded")
+  eq(table.concat(names, ","), "clear,line", "on_call sees each command in order")
+  local s, ui = fresh(state), {}
+  game.input(s, 1, ui, { kind = "timer" })
+  local cells = empties(s)
+  local sel = cells[1]
+  local sel_row, sel_col, sel_box = units_of(sel)
+  local peer
+  for _, c in ipairs(cells) do
+    local row, col, box = units_of(c)
+    if c ~= sel and (row == sel_row or col == sel_col or box == sel_box) then
+      peer = c
+      break
+    end
+  end
+  assert(peer, "the first empty cell has no empty peer")
+  local foc = candidate(s, peer)
+  mv(s, "w", peer, foc)
+  ui.rem, ui.shade, ui.dots, ui.sel, ui.foc = true, true, true, sel, foc
+  local seen = marks_of(s, ui)
+  expect_marks(seen, s, ui)
+  local clue_peers = 0
+  for c = 1, 81 do
+    local row, col, box = units_of(c)
+    local _, clue = digit_of(s.v:byte(c))
+    if clue and (row == sel_row or col == sel_col or box == sel_box) then clue_peers = clue_peers + 1 end
+  end
+  assert(next(seen.light) and clue_peers > 0 and not seen.light[peer], "SHADE PEERS has nothing to tell apart here")
+  -- Off, nothing selected, nothing focused: the fills follow (and the counts and strokes stay as they are).
+  ui.shade = false
+  assert(next(marks_of(s, ui).light) == nil, "SHADE PEERS off still fills")
+  expect_marks(marks_of(s, ui), s, ui)
+  ui.shade, ui.sel = true, nil
+  assert(next(marks_of(s, ui).light) == nil, "no selection still fills")
+  expect_marks(marks_of(s, ui), s, ui)
+  ui.sel, ui.foc = sel, nil
+  expect_marks(marks_of(s, ui), s, ui)
+  ui.foc = foc
+  -- SHOW REMAINING: off shows no count; with a digit in every empty cell, digit 1 is past its nine and shows 0.
+  ui.rem = false
+  assert(next(marks_of(s, ui).count) == nil, "SHOW REMAINING off still counts")
+  ui.rem = true
+  local flooded = fresh(state)
+  flooded.v = (s.v:gsub("0", "a"))
+  seen = marks_of(flooded, ui)
+  expect_marks(seen, flooded, ui)
+  eq(seen.count[1], "0", "the count of a digit past its nine")
+
+  -- Strokes: a clash (two equal digits in a row) and CHECK on overlapping cells.
+  local by_row, c1, c2 = {}, nil, nil
+  for _, c in ipairs(cells) do
+    local row = (c - 1) // 9
+    by_row[row] = by_row[row] or {}
+    table.insert(by_row[row], c)
+    if #by_row[row] == 2 and not c1 then c1, c2 = by_row[row][1], by_row[row][2] end
+  end
+  local twins = fresh(state)
+  for _, c in ipairs({ c1, c2 }) do twins.v = twins.v:sub(1, c - 1) .. "b" .. twins.v:sub(c + 1) end
+  local c3 = cells[#cells]
+  ui.check = { [c3] = true, [c1] = true }
+  seen = marks_of(twins, ui)
+  expect_marks(seen, twins, ui)
+  assert(seen.rising[c1] and seen.rising[c2], "the twins do not clash")
+  assert(seen.falling[c1] and seen.falling[c3] and not seen.falling[c2], "CHECK strokes the cells it marks only")
+  ui.check = nil
+  seen = marks_of(fresh(state), ui)
+  expect_marks(seen, fresh(state), ui)
+  assert(next(seen.rising) == nil and next(seen.falling) == nil, "a dealt grid with no CHECK has a stroke")
+
+  -- The full refresh, frame by frame through the taps that change the screen.
+  local function refreshes(st, u) return marks_of(st, u).full end
+  local u, t = {}, fresh(state)
+  eq(refreshes(t, u), 1, "the first frame")
+  eq(refreshes(t, u), 0, "the same frame again")
+  on_cell(t, u, cells[2])
+  eq(refreshes(t, u), 0, "a tap that selects a cell")
+  on_key(t, u, 5)
+  eq(refreshes(t, u), 0, "a tap on the pad")
+  on_rail(t, u, 1)
+  eq(refreshes(t, u), 0, "NOTES")
+  on_rail(t, u, 4)
+  eq(u.panel, "menu")
+  eq(refreshes(t, u), 1, "the MENU opens")
+  eq(refreshes(t, u), 0, "the MENU, drawn again")
+  on_menu(t, u, 4)
+  ch.store.set({}) -- the toggle wrote SHOW REMAINING to ch.store; put the defaults back for what runs after
+  eq(refreshes(t, u), 0, "a toggle inside the MENU")
+  on_menu(t, u, 7)
+  eq(u.panel, "help")
+  eq(refreshes(t, u), 1, "HOW TO PLAY opens")
+  tap(t, u, 0, 0)
+  eq(u.panel, nil)
+  eq(refreshes(t, u), 1, "the page closes onto the board")
+  on_rail(t, u, 4)
+  eq(refreshes(t, u), 1, "the MENU opens again")
+  on_menu(t, u, 8)
+  eq(u.panel, nil)
+  eq(refreshes(t, u), 1, "CLOSE returns to the board")
+  local solved = fresh(state)
+  solved.v = answer(solved)
+  eq(refreshes(solved, u), 1, "the end screen")
+  eq(refreshes(solved, u), 0, "the end screen, drawn again")
 end
 
 return rules

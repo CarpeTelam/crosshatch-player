@@ -1,6 +1,8 @@
 -- The game's own checks (first_party/README.md, `checks.lua`): the layout, the fleet rules, and `apply` called
 -- directly, against a fleet validator written here and not shared with the game. The rounds prove the rules play out
--- through taps; these pin each rule by itself.
+-- through taps; these pin each rule by itself. What the draw puts on the canvas beyond text (secrecy at the level of
+-- the commands, icon and shape kinds, seat 0's Over frame) is pinned by draws.lua, which the rounds call from their
+-- `steps` functions: this VM has no room to draw frames (first_party/README.md, "The checks VM heap").
 local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")
@@ -17,6 +19,8 @@ local OFF_BOARD = "That ship would go off the board"
 local OVERLAP = "Ships cannot overlap"
 local NO_ROOM = "No room for the other ships; tap Clear"
 local ALREADY = "You already fired there"
+
+local SMALL_LINE = 24 -- the height of a line of small text: the game's own step for a wrapped message
 
 local KEYS = { "a", "b", "c", "d", "e" }
 local LENGTHS = { a = 5, b = 4, c = 3, d = 3, e = 2 }
@@ -143,7 +147,11 @@ local function geometry()
     eq(L.small.x, L.big.x, at .. " small x")
     eq(L.small.y, 500, at .. " small y")
     eq(L.over[1].cell, 18, at .. " over cell")
-    eq(L.over[1].y, 66, at .. " over y")
+    eq(L.over[1].y, 72, at .. " over y")
+    eq(L.over[2].y, 72, at .. " over y of the second board")
+    eq(L.over_label_y, 44, at .. " over label y")
+    -- Each label's text box (small text: the game's 24 px line step) ends 4 px or more above the boards it names.
+    assert(L.over_label_y + SMALL_LINE + 4 <= L.over[1].y, at .. " the over labels must end at least 4 px above their boards")
     eq(L.over[2].x - L.over[1].x, 194, at .. " over boards are 14 px apart")
     eq(L.over[1].x - (w - (L.over[2].x + 180)), 0, at .. " over boards are centred")
     local boards = { big = boardRect(L.big), small = boardRect(L.small), over1 = boardRect(L.over[1]),

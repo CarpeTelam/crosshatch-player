@@ -217,6 +217,65 @@ bool isModuleName(const std::string& name) {
   return true;
 }
 
+LoadNesting probeLoadNesting(OwnedVm& owned, const char* script) {
+  // `seen` marks a name the first time it is required; the second time it is a cache hit (or a cycle the sandbox
+  // names), which loads nothing, so it does not nest. The wrapper re-raises what the load raised, as the sandbox's
+  // require would, so main's own error is main's (the outer pcall drops it: the rounds name it).
+  static const char PROBE[] = R"lua(
+local real, seen, chain, deepest = require, {}, {}, ""
+local depth = 0
+local function wrapped(name)
+  if seen[name] then return real(name) end
+  seen[name] = true
+  chain[#chain + 1] = name
+  if #chain > depth then
+    depth, deepest = #chain, table.concat(chain, " > ")
+  end
+  local got = table.pack(pcall(real, name))
+  chain[#chain] = nil
+  if not got[1] then error(got[2], 0) end
+  return table.unpack(got, 2, got.n)
+end
+require = wrapped
+pcall(require, "main")
+require = real
+return deepest
+)lua";
+  LoadNesting nesting;
+  ScriptVm& vm = owned.vm();
+  int ref = ScriptVm::NO_REF;
+  const VmResult ran = vm.runChunk(script ? script : PROBE, "@load-nesting-probe", ref);
+  if (ran.ok()) {
+    bool text = false;
+    struct Read {
+      LoadNesting* nesting;
+      bool* text;
+    } read{&nesting, &text};
+    vm.inspect(
+        ref,
+        [](lua_State* L, void* out) {
+          auto& read = *static_cast<Read*>(out);
+          if (lua_type(L, -1) != LUA_TSTRING) return;
+          read.nesting->chain = lua_tostring(L, -1);
+          *read.text = true;
+        },
+        &read);
+    if (!text) nesting.error = "the probe answered with no chain";
+  } else if (!ran.fault()) {
+    // A fault is main's own (the instruction budget, the heap): the rounds name it. An error is the probe's.
+    nesting.error = ran.message;
+  }
+  vm.release(ref);
+  if (!nesting.chain.empty()) {
+    // The names are [a-z0-9_]{1,32}, so " > " separates them.
+    nesting.depth = 1;
+    for (size_t at = nesting.chain.find(" > "); at != std::string::npos; at = nesting.chain.find(" > ", at + 3)) {
+      ++nesting.depth;
+    }
+  }
+  return nesting;
+}
+
 OwnedVm::~OwnedVm() {
   script.reset();  // closes the state, which returns its heap to the rig's arena, before the rig goes
 }
