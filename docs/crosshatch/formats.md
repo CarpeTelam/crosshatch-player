@@ -334,7 +334,7 @@ limit, a `.bmp` (images are `.png` only; the installer converts them), and the s
 | Limit | Constant (`lib/GameCore/PackageLimits.h`, `GameImages.h`) | Value |
 | --- | --- | --- |
 | Package file | `PACKAGE_BYTES` | 262,144 B |
-| Members | `PACKAGE_MEMBERS` | 32 |
+| Members | `PACKAGE_MEMBERS` | 64 |
 | One member, uncompressed | `MEMBER_BYTES` | 131,072 B |
 | The `.lua` members together, uncompressed (`GameAssets::MAX_SOURCE_BYTES`) | `LUA_SOURCES_BYTES` | 262,144 B |
 | Name of a `.lua` or `.png` member, without its extension | `MEMBER_STEM_BYTES` | 32 |
