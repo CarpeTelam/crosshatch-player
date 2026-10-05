@@ -140,6 +140,21 @@ touches = ["games/**", "test/game_script/first_party/**", "the games-check targe
 stays_out = ["every API limit, enum, or entry in api-level-1.txt", "lib/** beyond what the simulator's profile selection needs in fork files", "freeink-sdk (never move the submodule pointer)", "every upstream file the ledger does not list", ".github/workflows/ci.yml"]
 
 [[entry]]
+id = 12
+type = "story"
+title = "Fix the release script's game-packer path"
+description = "R13's dry run of `crosshatch-release.yml` on the epic head failed at Pack the games: `scripts/fork_release.py` `pack_one` runs `scripts/pack_game.py` with `cwd=project_dir` but passes the packer as a path relative to the previous directory, so with `--project-dir src` (as CI runs it) it looks for `src/src/scripts/pack_game.py` and every game fails to pack (epic Notes, the Finding of 2026-10-05). Resolve the packer (and any other path `pack_games` hands a subprocess that changes directory) so it is correct for a relative `--project-dir`, with a `fork_release_test.py` case that runs `pack-games` with a relative project directory, as CI does, over a tree holding a game. No change to the workflow file."
+verify = "`python3 scripts/fork_release_test.py` and every `scripts/*_test.py` pass, the new case failing on the old code; `python3 scripts/check_upstream_touches.py` and `./bin/clang-format-fix` twice pass; `fork_release.py pack-games` run from a parent directory with `--project-dir <relative tree>` over a `git archive` of this commit packs the three games with the hashes `pack_game.py` prints for each `games/<id>/`."
+covers = ["R13"]
+after = []
+hitl = false
+risk = "low"
+unknown = "None."
+references = ["scripts/fork_release.py (pack_one, pack_games)", "scripts/fork_release_test.py", ".github/workflows/crosshatch-release.yml (Pack the games)", "docs/crosshatch/fork-scripts.md"]
+touches = ["scripts/fork_release.py", "scripts/fork_release_test.py"]
+stays_out = [".github/workflows/**", "games/**", "src/**", "lib/**", "every upstream file"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
