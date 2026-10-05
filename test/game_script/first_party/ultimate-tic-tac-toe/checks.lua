@@ -255,9 +255,22 @@ end
 -- ---- what the draw puts on the canvas (trace.lua) ----
 
 -- The commands game.draw makes for state `s` and `ui`, seat 1: a list of { name = "rect", <arguments in order> }.
+-- The commands of a frame of state s, in order. Each rect, line, text, and image starts on the canvas the frame is drawn for
+-- (ch.screen), and a rect or a line ends on it too: a text's width is the device's metrics, which this check does not have.
 local function frame(s, ui)
   local events = {}
-  trace.record(function() game.draw(s, 1, ui or {}) end, function(name, ...) events[#events + 1] = { name = name, ... } end)
+  trace.record(function() game.draw(s, 1, ui or {}) end, function(name, ...)
+    local e = { name = name, ... }
+    local k = name == "image" and 2 or 1
+    if ch.screen.w >= 466 and ch.screen.h >= 788 and (name == "rect" or name == "line" or name == "text" or name == "image") then
+      local x, y = e[k], e[k + 1]
+      local ex, ey = x, y
+      if name == "rect" then ex, ey = x + e[3], y + e[4] elseif name == "line" then ex, ey = e[3], e[4] end
+      assert(x >= 0 and y >= 0 and ex >= 0 and ey >= 0 and x <= ch.screen.w and ex <= ch.screen.w and y <= ch.screen.h
+        and ey <= ch.screen.h, "a " .. name .. " command is outside the " .. ch.screen.w .. " x " .. ch.screen.h .. " canvas")
+    end
+    events[#events + 1] = e
+  end)
   return events
 end
 
@@ -275,6 +288,7 @@ local function smallCanvas()
   eq(L.x, home.x, "x on a small canvas")
   eq(L.y, home.y, "y on a small canvas")
   eq(L.cell, home.cell, "cell on a small canvas")
+  assert(L.cell >= 44, "a cell under 44 px on a small canvas")
   withCanvas(320, 480, function()
     local first = logged(function() frame(stateWith({})) end)
     eq(#first, 1, "log lines from the first draw on a 320 x 480 canvas")
@@ -340,19 +354,18 @@ local function sameLayoutEverywhere()
     end
   end
   -- The question button's tap area is the box's: the Sticky's right margin is a miss, and every other tap moves with it.
-  for _, dx in ipairs({ 0, 4 }) do
-    withCanvas(466 + dx, 788, function()
+  for _, w in ipairs({ 466, 474 }) do
+    withCanvas(w, 788, function()
       local tx, ty = taps.help()
       local u = {}
       game.input(stateWith({}), 1, u, { kind = "tap", x = tx, y = ty })
-      eq(u.help, true, "the help tap opens the page at " .. 466 + dx)
+      eq(u.help, true, "the help tap opens the page at " .. w)
       u = {}
-      game.input(stateWith({}), 1, u, { kind = "tap", x = 466 + dx - 1, y = ty })
-      eq(u.help, dx == 0 or nil, "a tap at the canvas's last column at " .. 466 + dx)
+      game.input(stateWith({}), 1, u, { kind = "tap", x = w - 1, y = ty })
+      eq(u.help, w == 466 or nil, "a tap at the canvas's last column at " .. w)
     end)
   end
 end
-
 
 -- The small boards whose block a `light` fill covers, sorted, as "1,5" (each exactly: a light fill that is no block is
 -- an error). rect(x, y, w, h, color, filled).

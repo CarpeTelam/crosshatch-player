@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/AGENTS.md'
   - '{project-root}/docs/crosshatch/api-level-1.txt'
@@ -25,11 +25,11 @@ deferred:
       test/game_script/harness/games_check/GamesCheckRig.h (CANVAS_466), .claude/skills/run-crosshatch-player/shim/BoardConfig.h
     severity: medium
   - summary: >-
-      Sudoku's rounds VM is within a few KB of the 256 KB Lua heap, so a round's steps(state) still faults about once in 1,600 plays; the check's gate can fail a PR for it, and the cause (what makes it vary per process) was not pinned.
+      Sudoku's checks VM (`TheGamesOwnChecksPass`) is still thin: about 3.5 KB below the 262,144 B Lua cap, so a future addition to `checks.lua`, `solver`, `counter`, or the bank can turn the required games-check red.
     evidence: |-
-      Measured on this tree, separate processes: without the collector lines in rules.lua the Sudoku rounds fault "not enough memory" in 93 of 150 runs (150 of 150 under setarch -R); with them 0 in 400 processes, 0 in 20 full ctest runs, 0 in three of four `ctest -R sudoku_1 --repeat until-fail:200` runs and one failure in the other (a 466 rounds test: "stack overflow (string slice too long)", a stack that could not grow), so about 1 in 1,600 plays; rules.frame's worst frame peaks near 227 KB of 256 KB over about 170 KB live. Which process faults varies run to run (ASLR off gives the same result every fresh process, so an address-dependent heap layout, not pinned). Two cheaper-looking changes made it worse and were backed out: requiring the solver lazily (about 3% of plays) and a full collection before every recorded draw (17% of processes). The brief's bar (until-fail:200 on each flaky test) was not reached in the first run and passed in the next three, so it is a known residual risk, not a proven fix. A smaller live set (splitting rules.lua, most of the 170 KB) would settle it.
+      Measured on this tree by lowering the cap in a scratch build (not committed): it passes at 258,600 B and fails at 258,300 B on each of 40 fixed arena addresses, so the margin is stable across runs (spread under 300 B) but small; the rounds VM, which was the flaky one, now has about 24 KB. UTTT's checks VM passes down to 250,000 B (it failed once at 245,000 B and passed at 240,000 B, so about 12 KB at worst) and Battleship's down to 240,000 B. Cutting it needs the bank, solver, and counter (about 100 KB of the live set) out of one VM, for example by verifying the bank from rounds.
     location: >-
-      test/game_script/first_party/sudoku/rules.lua (collectgarbage calls), test/game_script/first_party/README.md ("The checks VM heap")
+      test/game_script/first_party/sudoku/checks.lua, test/game_script/first_party/README.md ("The checks VM heap")
     severity: medium
   - summary: >-
       Nothing in CI proves the simulator's X4 Pro shim is in effect: the simulator job only builds simulator_x4pro.
@@ -152,6 +152,42 @@ Written by the planner before the implementation subagent starts: the harness ca
     - `[false]` `[reject]` the unsupported-canvas log is untested on a device — no device gives one; it is pinned at 320 x 480 in each game's checks.
     - `[false]` `[reject]` `SKILL.md` assumes the Sticky's insets — the Sticky shots (pixel-identical to the X4 Pro's inside the box) are the evidence.
 
+### 2026-10-05 — Review pass (follow-up pass, `followup_pass`)
+- verdicts: 28 findings (rows below; the lenses' 13 + 2 + 5 + 6 = 26, two rows split) — high 0, medium 8, low 17, false 3, maybe-false 0; routes: patch 10, defer 4 (all in `deferred`, carried), reject 14. Four lenses ran again as context-free subagents on the whole diff since the baseline (Blind Hunter 13 findings, Edge Case Hunter 2, Verification Gap 3 filed and 2 `Other findings`, Intent Alignment 6 divergences, judged as findings). The first pass's rows were carried where the claim and the code were unchanged.
+- findings:
+  - Blind Hunter
+    - `[medium]` `[defer]` `carried` the insets {9, 7, 3, 7} are typed in four places and `CanvasSizesTest` types its own — same as the first pass's deferred item.
+    - `[low]` `[defer]` `carried` the simulator shim fails silently when `<BoardConfig.h>` is not found and nothing automated checks it — same as the first pass's deferred item (low).
+    - `[medium]` `[patch]` the timing fixture's pixel-budget test has no 466 x 788 size, and `GameTouchTest`/`FrameReplayTest` have no X4 Pro origin — `{466, 788}` added to `TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas` (passes: band 2 is exactly the budget at 466, which the fixture's owner runs on the X4 Pro); the touch and replay mapping is engine code this entry does not touch and `CanvasSizesTest` pins the viewport's origin, so no new touch test (reject for that part, low).
+    - `[medium]` `[patch]` the README's Sudoku heap numbers contradicted each other ("5 to 8 KB" against "3.5 KB"), one sentence was unwrapped, and about 25 lines of incident narrative sat in the contributor README — the two measures are named as two measures in `README.md` and `sudoku/checks.lua`, the narrative is cut to the cause, the rule, and the measured margins (the full account is in Design Notes).
+    - `[low]` `[reject]` the flake fix is bundled into the canvas change — it is this follow-up pass's own commit (the orchestrator asked for it here), separate from the first pass's commit; moved pins are listed in Design Notes and every original pin line is accounted for (a line-by-line count of the old file against the five new ones leaves only renames).
+    - `[low]` `[reject]` `expect_tiles` is vacuous (both entries 50 px / 15 px) — same as the first pass's `false` row, carried: it pins `layout.get`'s cache keyed by width and the parity on both widths.
+    - `[medium]` `[patch]` nothing checks that every command at 466 stays inside the canvas for Ultimate tic-tac-toe and Sudoku — UTTT's `frame()` and Sudoku's `watch` recorder now assert that every rect, line, text, and image starts on the canvas and every rect and line ends on it (UTTT's gated to canvases of at least 466 x 788, since the 320 x 480 case is laid out off the canvas by design); a text's width is the device's metrics, which the check does not have.
+    - `[low]` `[reject]` the 466 pass repeats canvas-independent work (the package load, the bank verification) — about 1.4 s a game; the intent has the check play every round and check at both canvases, and splitting out the canvas-independent ones needs a tag per check for no named harm.
+    - `[low]` `[reject]` `CANVAS_474` is a silent default argument — every production call site in `GameCheck.cpp` and `RoundPlayer.cpp` passes `roots.canvas` or `game.canvas` (read: lines 275, 339, 447, 460, `under.canvas`); only tests of the harness itself use the default.
+    - `[low]` `[reject]` `carried` helpers are copied across games — by design, R2 (first pass).
+    - `[low]` `[reject]` `carried` a canvas under 466 x 788 is "unsupported" only by a log line, and the doc's list of boards — owner Decision 2026-10-05 (the epic Notes); the doc's boards are the Decision's.
+    - `[medium]` `[patch]` the Sticky's layout changed (cells 51 to 50 px) and no Sticky screenshot is in the packet, and an unchanged manifest `version` may not refresh an installed copy — six Sticky shots (all three games) copied into the packet (Verification); the installer replaces `/.games/<id>/` with the new folder whatever the version and writes the new package hash to `.pkg` (`GamePackageInstaller.cpp` `commit`), nothing compares versions, so an installed copy refreshes when the package is installed again.
+    - `[low]` `[patch]` Battleship's dialog and banner bounds subtract `oy`, which weakens them on 480 x 800 — both bounds are now in canvas pixels and only for the 788-tall canvases the devices give (the dialog and banner are the host's, not the box's).
+    - `[low]` `[patch]` UTTT `smallCanvas` says no cell is under 44 px and asserts nothing — an assertion added; the stray double blank line in UTTT's `checks.lua` removed.
+    - `[low]` `[reject]` the digest's `fold` maps `nil` and `false` to one value, and `CanvasSizesTest` sits outside the anonymous namespace of `GamesCheckFlowTest.cpp` — a rect with `filled` omitted at one canvas only has no cause in the layout code, and the test's place is a tidy-up with no named harm.
+  - Edge Case Hunter
+    - `[low]` `[patch]` the UTTT help-tap loop tests a 470-wide canvas, not the Sticky's 474 — the loop now runs 466 and 474, the tap at `w - 1` hits at 466 and misses at 474.
+    - `[low]` `[reject]` the shim sets the insets only in `selectDevice`, so a read before `HalGPIO::begin` sees 474 — nothing reads the insets before `begin` (the game viewport is made on a game's start), and the log line prints once per `selectDevice`, which runs once at startup.
+  - Verification Gap
+    - `[medium]` `[patch]` the timing fixture has no 466 size — same as above.
+    - `[medium]` `[defer]` `carried` the 466 premise is typed twice and never read from the SDK profile — same as the first pass's deferred item.
+    - `[low]` `[defer]` `carried` the simulator's bezel override has no automated check — same as the first pass's deferred item (low).
+    - `[low]` `[patch]` the UTTT help-tap loop (a 470-wide canvas) — same as above.
+    - `[low]` `[reject]` `tapIsHelp`'s lower y bound is tested only at `oy = 0` — no device has a taller canvas.
+  - Intent Alignment (descriptive; each divergence judged)
+    - `[low]` `[reject]` `carried` the check proves layout on a typed canvas, not through the real viewport and device fonts — first pass.
+    - `[false]` `[reject]` the checks are self-consistent geometry, not pixels — the pixels are the 15 simulator shots in the packet (nine X4 Pro, six Sticky), each looked at; the geometry pins are the gate the intent names.
+    - `[low]` `[reject]` `carried` the simulator surface is not tested — first pass; the shots are committed now.
+    - `[false]` `[reject]` the games were redesigned rather than only fixed — the owner's Decisions of 2026-10-05 (the epic Notes) ask for the fixed 466 x 788 box.
+    - `[medium]` `[patch]` Sudoku's memory stability is covered only by README prose and the checks VM is still thin — the rounds VM's margin went from under 3 KB to about 24 KB and the proof bar is recorded in Verification; the checks VM stays at about 3.5 KB and is a deferred item (stable across 40 arena addresses).
+    - `[false]` `[reject]` the 466 pass doubles the Sudoku VMs under the required label — the run adds about 3 s; the cost is the intent's.
+
 ## Design Notes
 
 - Sources that settle the choices: the epic Notes Decisions of 2026-10-05 (the 466 canvas; the fixed box; Sudoku's 50 px cells; "the centring offset is even on 474, so the note tiles' dither phase holds"; a smaller canvas is unsupported and logged, not adapted; whether level 1 promises a minimum canvas is epic-api-freeze's). `tickets.toml` entry 11's `unknown`: the simulator takes the insets from `.claude/skills/run-crosshatch-player/shim/BoardConfig.h` (a fork file, only `simulator_x4pro`'s `-I`), and the games check's second canvas needs no change outside the check's own files (`GamesCheckTest.cpp` and the files beside it).
@@ -159,6 +195,14 @@ Written by the planner before the implementation subagent starts: the harness ca
 - Smaller-than-box reading: "a canvas smaller than 466 x 788 is unsupported, and each game says so in a log line rather than laying out off the canvas" is built as: one `ch.log` line once per VM from `draw`, and the box origin clamped at (0, 0); no other adaptation exists, so no outcome differs between readings on any supported canvas.
 - Tap targets: the box's targets are the 466 ones (a tap in the 4 px margins is a miss), the same on both boards.
 - No function is moved: `board.layout`, `layout.compute`, `layout.get` keep their callers; each only gains `ox`/`oy`. `layout.get`'s cache key stays `w, h`.
+
+**Follow-up pass: the Sudoku rounds' memory fault (the orchestrator's must-fix).**
+- Cause, measured (scratch builds, not committed): with the arena at one fixed address (mmap), three processes made the same 688,832 `luaAlloc` calls, call for call; with ASLR the sequences differ from about the 1,330th call, where the order of a table's rehash (776 B) and a code-vector growth (64 B) swaps (read with gdb: `luaH_resize` from `llex` in one process, `luaM_growaux_` from `addk` in another). Lua 5.5's compiler keys a function's `nil` constant by its own constants table (`nilK`, `lcode.c`), and `hashpointer` takes the low 32 bits of an address, so the arena's ASLR base moves that key's node and the table's rehash. The string-hash seed is not the cause: `ScriptVm` and `LuaGame` pass `ports.random.next32()` to `lua_newstate`, seeded by the round. The cap was refused 14 to 28 times in most rounds (the heap lives at the cap and emergency collections do the work), and a stack growth cannot collect, so a few KB of margin left a rare ordering that failed.
+- Not reproduced on demand: 600 fixed arena addresses (19,200 plays) at the real cap on the old tree did not fault, so the 1-in-1,600 rate is the first pass's figure, not measured again; what was measured is the margin: the old tree's worst round (`notes-digits`) failed at a cap of 259,000 B and passed at 259,500 B, the new tree's worst (`notes-dots`) fails at 236,000 B and passes at 238,000 B (60 fixed addresses all passed at 238,000 B).
+- Not taken: pinning the arena address in the rig (mmap hint) would make the check repeat, but only where the kernel honours the address (not under ASAN's shadow range or on a host that refuses the hint, and a round holds two rigs at once), so the margin is the fix. A `luai_makeseed` constant would not have helped (the seed is passed in).
+- The split: `rules.lua` (920 lines) into `pins.lua` (shared helpers, `digit_of`, `units_of`, `with_clock`, the generational collection), `rules.lua` (apply, undo_cell, undo_fill, ring, clash, hint, layout, clock), `interaction.lua` (taps, store, reset), `drawn.lua` (record, watch, expect_*, frame, look) and `marks.lua` (draw_marks). Each moved function is verbatim; the guards it carries: `rules.taps`, `frame`, and `look` start with `collectgarbage("collect")` and `frame` and `look` end with one (the heap), `record` puts the real `ch.gfx` back after an error, `expect_tiles` puts `ch.screen.w` back after an error, `with_clock` puts the real `ch.time` back after an error (all three unchanged), and `answer` caches solutions per clue string (unchanged). The one edit is the clock: `rules.clock` and `interaction.reset` shared a module-level `clock` local, which is now `pins.time.now`. Every original non-comment line is accounted for (a count of the old file's lines against the five new files leaves only the renamed function headers and the clock). The rounds that call them require the module that holds them (`notes-digits`, `solve-*`: `drawn`; `notes-dots`: `interaction` and `drawn`; `toggles`: `interaction` and `marks`). A module requires the game's modules before `pins`, so `pins`'s own requires are cache hits and nothing nests (the load-nesting rule is main's).
+- The checks VM is not changed and stays at about 3.5 KB; it is a deferred item (stable on 40 fixed addresses: passes at 258,600 B, fails at 258,300 B).
+- Orchestrator's other points: the manifest `version` is not compared (the installer replaces `/.games/<id>/` by id and writes the package hash to `.pkg`, `GamePackageInstaller.cpp` `commit`), so an unchanged `1.0.0` with new contents refreshes on install; the Sticky shots are in the packet.
 
 ## Verification
 
@@ -192,6 +236,19 @@ Written by the planner before the implementation subagent starts: the harness ca
 
 **Recorded by the implementation (before the review patches; host tests and fast checks only):** scratch mutants, restored after each run, each turned the games check red: UTTT x +1 at 474 only and y +1 at 466 only (board layout, small-canvas and same-layout checks); Battleship cell 43 at 466 only (layout, same-layout, and `draw-commands` round) and a header x +1 at 474 only (`draw-commands`); Sudoku `rail_x` +1 at 466 only and the MENU title y +1 at 474 only (`rounds/canvases.lua`). The explicit-size pins run under both `Games/` and `Games466/`, so a one-canvas break is red in both suites. `ApiLevelTest` and `ApiSurfaceTest` pass unchanged: the comment edit does not move `API_SURFACE_CRC`.
 
+**Follow-up pass results (the final tree: the first commit `3fe30c4f` plus this pass's commit):**
+- Flake bar (the brief's): 20 full `ctest --test-dir build/test -j4` runs, each 1,775 of 1,775 passed, 0 failures; then `ctest -R sudoku --repeat until-fail:200 -j4` over the 7 Sudoku tests of both suites (`Games/` and `Games466/`, three tests each, and the companion test): 1,400 test runs, 0 failures (exit 0, 202 s). Both runs on the committed tree's files, after the review patches and the formatter.
+- Margin, measured by lowering the Lua cap in a scratch build (uncommitted instrumentation in `ArenaAllocator.cpp`, reverted): the rounds VM, old tree: worst round passes at 259,500 B and fails at 259,000 B of 262,144 B; new tree: passes at 238,000 B and fails at 236,000 B (60 fixed arena addresses all passed at 238,000 B). The checks VM: passes at 258,600 B, fails at 258,300 B on each of 40 fixed addresses, unchanged. UTTT passes down to 250,000 B, Battleship down to 240,000 B. Method and cause: Design Notes.
+- Host suites with the patches: `Games/` and `Games466/` for all three games, `TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas` now at 466 x 788 too, all pass; every `scripts/*_test.py` (13) passes, `python3 scripts/check_upstream_touches.py` PASS, `./bin/clang-format-fix` twice, nothing changed.
+- `sim.sh build x4pro` SUCCESS under the build lock (`PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`); no `src/` or simulator file changed in this pass, so no `pio run`, `pio check`, or Sticky rebuild.
+- Sticky screenshots (the Sticky's layout changed, 474 x 788 with 4 px of white each side; taken in the first pass on `simulator_sticky`, the games unchanged since, each looked at again), in the same folder `story-466-canvas-screenshots/`:
+  - `sticky-uttt-play.png` -- Ultimate tic-tac-toe in play, the grid at 50 px cells, the margins white.
+  - `sticky-uttt-help.png` -- its HOW TO PLAY page.
+  - `sticky-sudoku-menu.png` -- Sudoku's MENU panel.
+  - `sticky-sudoku-help.png` -- Sudoku's HOW TO PLAY page.
+  - `sticky-battleship-placement.png` -- Battleship's placement.
+  - `sticky-battleship-firing.png` -- Battleship firing after a hit, the hand-off dialog over the own fleet.
+
 ## Auto Run Result
 
 **Summary.** The games check plays every round and check of all three games at 474 x 788 and at 466 x 788 (a second canvas in the check's own files, naming no game); each game lays out one fixed 466 x 788 box centred in `ch.screen` (the Sticky's 474 gets 4 px of white at each side), logs one line and lays out from the corner on a canvas under the box, and a companion check per game pins that the 474 layout, tap targets, note tiles, and frame are the 466 ones shifted 4 px; the simulator's X4 Pro runs the device's insets (466 x 788 at (7, 9)) through a force-included header; the two 474-for-the-X4-Pro comments, and the other comments that said so, now say 466 for the X4 Pro and 474 for the Sticky; `docs/crosshatch/game-canvas.md` has the paragraph for game authors.
@@ -214,3 +271,21 @@ Written by the planner before the implementation subagent starts: the harness ca
 - No device run: the games were seen on the simulator's bitmap font and the harness's stand-in metrics, not the device's panel.
 - A canvas smaller than the box is laid out from its corner and clipped (no device gives one).
 - Formatting: `./bin/clang-format-fix` changed nothing outside this entry's paths (it reflowed a comment in the new shim header only).
+
+### Follow-up pass (2026-10-05)
+
+**Summary.** The Sudoku rounds' memory fault is fixed by cutting the rounds' heap: the cause (the arena's ASLR base reorders a load's first allocations through Lua's pointer-keyed `nil` constant) is measured, the old margin of under 3 KB is about 24 KB, and the brief's bar is met on the final tree (20 full `ctest` runs, 1,775 of 1,775 each, and 1,400 Sudoku test runs, no failure). `rules.lua` is split into `pins`, `rules`, `interaction`, `drawn`, and `marks`, so a round loads only the pins it calls.
+
+**Files.**
+- `test/game_script/first_party/sudoku/{pins,interaction,drawn,marks}.lua` (new), `rules.lua` (the rules only), `rounds/{notes-digits,notes-dots,solve-expert,solve-hard,toggles}.lua` (require the module they call), comment updates in `canvases.lua`, `rounds/canvases.lua`, `checks.lua`, `battleship/draws.lua`, and `README.md` ("The checks VM heap").
+- Review patches: `test/game_script/GfxBindingsTest.cpp` (a 466 x 788 size for the timing fixture), `ultimate-tic-tac-toe/checks.lua` (every command on the canvas; the help-tap loop at 466 and 474; a 44 px assertion), `sudoku/drawn.lua` (the same on-canvas assertion in `watch`), `battleship/checks.lua` (dialog and banner bounds in canvas pixels on 788-tall canvases).
+- `_bmad-output/.../story-466-canvas-screenshots/sticky-*.png` (six Sticky shots).
+
+**Review.** Four lenses ran again. 28 rows: medium 8, low 17, false 3; routes: patch 10, defer 4 (carried, in `deferred`), reject 14. Patched entries by verdict this pass: medium 4, low 6 (no `high`). Rejected rows carry their reasons in the triage log. Deferred: the inset values typed in several places, the simulator shim's missing automated check, and a new item for Sudoku's checks VM (about 3.5 KB margin, stable).
+
+**Follow-up review recommended: false.** No `high` was patched this pass. The unverified risks: the 1-in-1,600 fault could not be reproduced on demand, so the fix is shown by margin and by the flake bar, not by watching the old fault disappear; and Sudoku's checks VM is still at about 3.5 KB.
+
+**Residual risks.**
+- Sudoku's checks VM: about 3.5 KB below the cap; a future addition to `checks.lua`, the solver, the counter, or the bank can turn the required `games-check` red (deferred, medium).
+- No device run, no Sticky device run; shots are the simulator's.
+- Formatting: `./bin/clang-format-fix` changed nothing in this pass.

@@ -1,9 +1,9 @@
 -- canvases.lua: one layout on every canvas, pinned from rounds/canvases.lua. The Sticky's 474 x 788 gets the X4 Pro's
 -- 466 x 788 layout and frames with every x 4 px right (the game lays out one 466 x 788 box and centres it), and a
 -- canvas under 466 x 788 is unsupported: laid out from its corner and said so once in ch.log. It is a module of its
--- own, called by a round whose VM does not load rules.lua (the rounds' heaviest module), because the heap is 256 KB and
--- a frame's draw leaves tens of KB of garbage (first_party/README.md, "The checks VM heap"): it keeps no table of a
--- frame's commands, only a digest.
+-- own, called by a round whose VM loads none of the pin modules (rules.lua, drawn.lua, and the rest), because the heap
+-- is 256 KB and a frame's draw leaves tens of KB of garbage (first_party/README.md, "The checks VM heap"): it keeps no
+-- table of a frame's commands, only a digest.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
@@ -27,7 +27,7 @@ local function at_canvas(w, h, f)
 end
 
 -- Runs draw() with a recording `ch.gfx` that hands each command to on_call(name, ...): the names are the real table's
--- own keys, so a name the engine lacks raises here too (rules.lua's `record` is the fuller one; this is the part a
+-- own keys, so a name the engine lacks raises here too (drawn.lua's `record` is the fuller one; this is the part a
 -- digest needs).
 local function record(draw, on_call)
   local gfx = {}

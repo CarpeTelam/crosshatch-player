@@ -149,7 +149,7 @@ board's mark, which cells a frame fills, whether it asks for a full refresh) is 
 in while a function runs. The rounds format does not carry it (that would change the format); a check, or a round's
 `steps(state)`, calls `game.draw(state, seat, ui)` under the recorder and reads the commands.
 
-Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, Sudoku's `record` in `rules.lua`),
+Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, Sudoku's `record` in `drawn.lua`),
 and each takes its function names from the real `ch.gfx`'s keys, so a misspelled call raises on the recorder too. `trace.record(f,
 on_call)` runs `f`, returns the commands as text, one `name(args)` a line in drawing order, and their number, calls
 `on_call(name, ...)` for each as it is drawn, and puts the real `ch.gfx` back, also when `f` raises (the error is raised again as
@@ -166,8 +166,8 @@ refreshes.
   fill before its mark).
 - *The double's limits.* The recorder is a double of the engine's `ch.gfx`. It counts each call as one command, as the engine
   does; a check pins that against a known count (UTTT: `board.draw_grid`'s documented 28 commands; Battleship: `draws.recorder`,
-  a function with three calls, an unknown name that raises, and the real `ch.gfx` back after an error; Sudoku: `rules.frame`'s
-  `draw_grid` count, and `rules.draw_marks` raising on a misspelled call). It is more permissive
+  a function with three calls, an unknown name that raises, and the real `ch.gfx` back after an error; Sudoku: `drawn.frame`'s
+  `draw_grid` count, and `marks.draw_marks` raising on a misspelled call). It is more permissive
   than the device: no argument is checked (a bad colour or size passes), nothing is clipped, no frame limit (2,048 commands)
   or icon and image budget applies, and an icon or image name is not looked up. The rounds, which draw the real `ch.gfx` in
   every frame, are what find those.
@@ -178,20 +178,25 @@ The sandbox's Lua heap is 256 KB (`lua_heap_bytes`) and counts garbage as well a
 (compiled, about 3.5 times its source), and everything it requires share it, and the allocator is first-fit in a region that
 fills with small holes, so a heap that is nearly full fails with "not enough memory" before the cap. Two games are there:
 
-- Sudoku's checks VM holds the solver, the counter, and the bank, with a headroom of 5 to 8 KB (6,500 B passed and 6,600 B
-  failed on this tree: a global string of n bytes added before the last collection). Its rules, and what its draw marks on the
-  board, are pinned in `rules.lua`, called from the rounds' `steps(state)`, where the VM has room.
-- Sudoku's rounds VM is within a few KB of the heap too (about 170 KB live at the start of `steps`: the game's modules, the
-  solver, and `rules.lua` compiled; `rules.frame`'s worst frame peaks near 227 KB of the 256 KB): `rules.lua` runs
-  generational collection with a full one at the start of its heavy pins. Measured on separate processes: without them the
-  Sudoku rounds fault "not enough memory" in 93 of 150 runs (150 of 150 under `setarch -R`); with them 0 in 400 processes and,
-  in `ctest -R sudoku_1 --repeat until-fail:200`, 1 failure in about 1,600 plays of the rounds (a heap fault again, once as
-  "stack overflow (string slice too long)", which is a stack that could not grow). Which process faults varies run to run, so
-  the free space is fragmented by something address-dependent that was not pinned; two cheaper-looking changes made it
-  worse (requiring the solver lazily: about 3% of plays; a full collection before every recorded draw: 17%), so do not add
-  collections or move loads here without re-measuring with separate processes. The one-layout-on-every-canvas pins
-  (`canvases.lua`, called from `rounds/canvases.lua`) load neither `rules.lua` nor `taps.lua` and keep a digest of a frame, not
-  its commands. The real fix is a smaller live set (splitting `rules.lua`, which is most of it).
+- Sudoku's checks VM holds the solver, the counter, and the bank, and is the thinnest VM left. Two measures of its headroom,
+  each on this tree: a global string of n bytes added before its last collection passes at 6,500 B and fails at 6,600 B;
+  lowering the cap in a scratch build, it passes at 258,600 B and fails at 258,300 B of the 262,144 B (about 3.5 KB, the same
+  on 40 fixed arena addresses), the second counting the garbage a collection has not yet freed. Its rules, and what its draw
+  marks on the board, are pinned in `rules.lua` and the modules beside it, called from the rounds' `steps(state)`, where the
+  VM has room.
+- Sudoku's rounds VM had a margin under 3 KB (its worst round, `notes-digits`, passed at a cap of 259,500 B and failed at
+  259,000 B), and a round faulted "not enough memory" about once in 1,600 plays. It varied from process to process because
+  Lua's compiler keys a chunk's `nil` constant by the constants table's own address (`nilK` in `lcode.c`) and a table hashes
+  a pointer by its low 32 bits, so where ASLR put the arena changed when a table rehashed and so the order of a load's first
+  allocations (with the arena at one fixed address, three processes made the same 688,832 allocation calls); the string-hash
+  seed is not it, since the rig passes the round's own seed. A margin of a few KB cannot absorb that, so `rules.lua` is split
+  by what a round calls: `pins.lua` (the shared helpers), `rules.lua`, `interaction.lua` (taps, the toggles' store, the
+  reset), `drawn.lua` (`frame`, `look`, and the recorder), and `marks.lua` (`draw_marks`). A round now starts `steps` with
+  142 KB (`notes-digits`) to 161 KB (`toggles`) live, and the worst round (`notes-dots`) passes at a cap of 238,000 B and
+  fails at 236,000 B, a margin of about 24 KB (60 fixed arena addresses all passed at 238,000 B). Keep the generational
+  collection and the full collections in `pins.lua`, `interaction.lua`, and `drawn.lua`, and measure a round again at a
+  lowered cap before adding a load to it. The one-layout-on-every-canvas pins (`canvases.lua`, called from
+  `rounds/canvases.lua`) load none of the pin modules nor `taps.lua` and keep a digest of a frame, not its commands.
 - Battleship's checks VM holds about 190 KB once `checks.lua` is compiled, and one frame's draw leaves about 47 KB of garbage,
   so the draw-level pins are in `draws.lua`, all called from one round, `rounds/draw-commands.lua`, whose `steps(state)` runs in a
   VM with the game's modules and none of the checks. UTTT's are in its `checks.lua`, which has room.

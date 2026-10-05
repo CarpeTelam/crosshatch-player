@@ -164,15 +164,19 @@ local function geometry()
                      over2 = boardRect(L.over[2]) }
     for name, rect in pairs(boards) do insideCanvas(rect, w, h, at .. " " .. name) end
     -- The dialog's top edge measured at y 268 of the panel in the simulator, and the canvas starts 9 px down the panel
-    -- on the X4 Pro, so 259 in canvas pixels, the box's top being the canvas's.
-    assert(boards.over1.y + boards.over1.h - oy <= 259, at .. " the over boards reach into the end-of-round dialog")
+    -- on the X4 Pro, so 259 in canvas pixels. The dialog and Result's banner belong to the host, not to the box, so the
+    -- two bounds are in canvas pixels and only for the 788-tall canvases the devices give (the 480 x 800 panel moves
+    -- the box 6 px down and the host's centred parts by their own rule).
+    if h == 788 then
+      assert(boards.over1.y + boards.over1.h <= 259, at .. " the over boards reach into the end-of-round dialog")
+    end
     apart(boards.big, boards.small, at .. " the big and small boards")
     apart(boards.over1, boards.over2, at .. " the over boards")
     -- The firing column: right of the small board, inside the canvas, above Result's banner (about y 649).
     local col = L.column
     insideCanvas(col, w, h, at .. " column")
     apart(col, boards.small, at .. " the column and the small board")
-    assert(col.y + col.h - oy <= 649, at .. " the column reaches Result's banner")
+    if h == 788 then assert(col.y + col.h <= 649, at .. " the column reaches Result's banner") end
     assert(col.x + col.w <= ox + 466 - 8, at .. " the column leaves the box's right margin")
     -- The question button.
     local q = L.question_rect

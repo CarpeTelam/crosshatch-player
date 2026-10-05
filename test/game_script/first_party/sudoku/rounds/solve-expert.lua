@@ -2,14 +2,14 @@
 -- cell. The clock moves 83 seconds before the last digit, so the end screen's best time (the only one, kept for the
 -- band) is 1:23.
 local taps = require("taps")
-local rules = require("rules")
+local drawn = require("drawn")
 
 return {
   mode = "solo",
   settings = { level = "Expert" },
   seed = 14,
   steps = function(state)
-    rules.frame(state, false)
+    drawn.frame(state, false)
     return taps.solve_best(state)
   end,
   winners = { 1 },

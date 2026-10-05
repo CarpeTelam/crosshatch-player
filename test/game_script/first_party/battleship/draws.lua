@@ -3,7 +3,7 @@
 -- one round, rounds/draw-commands.lua, in its `steps(state)`; an error that names the first thing wrong fails that round.
 -- They live here, in the round's own VM, and not in checks.lua: that VM holds the game's modules and the 55 KB of checks
 -- (about 190 KB of the sandbox's 256 KB, once compiled), and a frame's draw leaves about 47 KB of garbage, so a check that
--- draws frames faulted "not enough memory" there. Sudoku's rules.lua is the same arrangement.
+-- draws frames faulted "not enough memory" there. Sudoku's pin modules are the same arrangement.
 local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")

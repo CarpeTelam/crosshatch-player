@@ -1,18 +1,19 @@
 -- The game's own checks (first_party/README.md, `checks.lua`): every puzzle in the bank (one solution, at the band it
 -- is filed under), the costliest puzzle of each band through the game's calls (symmetry, HINT, CHECK, FILL NOTES), the
 -- header of puzzles.lua, and setup. The game's rules (rejections, the undo ring, the clash rule, the taps, the toggles
--- and best times, the layout) are pinned by rules.lua, which the rounds call from their `steps` functions: this VM
--- holds the solver, the counter, and the bank, most of the 256 KB the sandbox allows, and is built to stay
--- inside it:
+-- and best times, the layout) are pinned by rules.lua and the modules beside it, which the rounds call from their
+-- `steps` functions: this VM holds the solver, the counter, and the bank, most of the 256 KB the sandbox allows, and is
+-- built to stay inside it:
 --   - the puzzles go in batches (CHUNKS), sized from the instructions each batch took, so none passes the budget of
 --     one call (2,000,000); regenerating the bank means sizing them again, and the check that they cover it fails until
 --     then;
 --   - the entries share one run function and a plan of integers, so an entry is a name and a pointer;
 --   - the stack is grown early and kept (see deep), because the allocator can no longer find room to grow it later.
--- The headroom is thin: 5 to 8 KB of the 256 KB. Measured by adding a global string of n bytes to this file before its
--- last `collectgarbage("collect")` and running the Sudoku checks: on this tree they pass at n = 6,500 and fail at n =
--- 6,600 ("not enough memory"); on e84e5fa3 they passed at 5,000 and failed at 8,000, so a change here or to a module it
--- loads must be measured again that way, and what does not fit goes to rules.lua (the rounds' VM) as the rules did.
+-- The headroom is thin: 5 to 8 KB of the 256 KB by one measure, about 3.5 KB by the other (README, "The checks VM
+-- heap"). Measured by adding a global string of n bytes to this file before its last `collectgarbage("collect")` and
+-- running the Sudoku checks: on this tree they pass at n = 6,500 and fail at n = 6,600 ("not enough memory"); on
+-- e84e5fa3 they passed at 5,000 and failed at 8,000, so a change here or to a module it loads must be measured again
+-- that way, and what does not fit goes to those modules (the rounds' VM) as the rules did.
 -- A module that loads while another module is loading is the games check's own finding, not this file's: it fails
 -- main's load that nests deeper than main plus one level, as the device refuses it (first_party/README.md, "Module
 -- loading"), so this file loads main and what it needs plainly.
