@@ -1,0 +1,12 @@
+{
+  "id": "sudoku",
+  "name": "Sudoku",
+  "version": "1.0.0",
+  "api": 1,
+  "seats": { "min": 1, "max": 1 },
+  "modes": ["solo"],
+  "hidden": false,
+  "settings": [
+    { "id": "level", "name": "Difficulty", "values": ["Easy", "Medium", "Hard", "Expert"], "default": "Easy" }
+  ]
+}
