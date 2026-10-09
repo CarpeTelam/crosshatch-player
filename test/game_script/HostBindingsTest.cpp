@@ -1,3 +1,4 @@
+#include <PauseClock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -105,6 +106,105 @@ std::string timerGame(const std::string& onTap) {
   std::string text = TIMER_GAME;
   text.replace(text.find("ON_TAP"), 6, onTap);
   return text;
+}
+
+// ch.time.ms is play time: the match's pause ledger (HostPorts::paused) takes the Paused intervals out, and ch.timer
+// stays on the raw clock.
+class PlayTimeTest : public HostBindingsTest {
+ protected:
+  // A game that shows ch.time.ms on a tap.
+  void useClockGame() {
+    useSource("main", "return { setup = function() return {} end,\n" + std::string(DRAW_UI_TEXT) +
+                          "  input = function(s, seat, ui) ui.text = ch.time.ms() end }");
+  }
+  // Taps and returns what the game drew for ch.time.ms.
+  std::string readClock(DirectGame& game) {
+    EXPECT_EQ(game.input(InputEvent{InputKind::Tap, 1, 1}), Outcome::Ok) << game.errorMessage();
+    EXPECT_EQ(game.draw(), Outcome::Ok) << game.errorMessage();
+    return frontText();
+  }
+
+  GameCore::PauseClock pauses;
+};
+
+TEST_F(PlayTimeTest, ThePausedIntervalIsLeftOutOfTimeMs) {
+  useClockGame();
+  ports.paused = &pauses;
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(5000);
+  pauses.enter(clock.nowMs());
+  clock.advance(30000);
+  pauses.leave(clock.nowMs());
+  clock.advance(2000);
+  EXPECT_EQ(readClock(game), "7000");
+}
+
+TEST_F(PlayTimeTest, AReadWhilePausedIsFrozenAtTheValueWhenThePauseBegan) {
+  useClockGame();
+  ports.paused = &pauses;
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(5000);
+  pauses.enter(clock.nowMs());
+  clock.advance(30000);
+  EXPECT_EQ(readClock(game), "5000");
+}
+
+TEST_F(PlayTimeTest, TwoPausesBothLeaveTheirIntervalOut) {
+  useClockGame();
+  ports.paused = &pauses;
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(1000);
+  pauses.enter(clock.nowMs());
+  clock.advance(20000);
+  pauses.leave(clock.nowMs());
+  clock.advance(1000);
+  pauses.enter(clock.nowMs());
+  clock.advance(10000);
+  pauses.leave(clock.nowMs());
+  clock.advance(1000);
+  EXPECT_EQ(readClock(game), "3000");
+}
+
+TEST_F(PlayTimeTest, WithALedgerAndNoPauseTimeMsStillCountsFromLoad) {
+  useClockGame();
+  ports.paused = &pauses;
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(readClock(game), "0");
+  clock.advance(250);
+  EXPECT_EQ(readClock(game), "250");
+}
+
+TEST_F(PlayTimeTest, ATimerSetBeforeAPauseFiresOnTheRawClock) {
+  useSource("main", timerGame(""));  // setup arms 1500 ms
+  ports.paused = &pauses;
+  SessionGame game(*this);
+  InputQueue& queue = game.queue;
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(1000);
+  pauses.enter(clock.nowMs());
+  clock.advance(499);
+  EXPECT_FALSE(pollTimer(game.game, queue));
+  clock.advance(1);
+  ASSERT_TRUE(pollTimer(game.game, queue));  // due at 1500 raw ms, the match paused or not
+  ASSERT_TRUE(deliverNext(game, queue));
+  EXPECT_EQ(frontText(), "ticks 1");
+}
+
+TEST_F(PlayTimeTest, WithNoLedgerTimeMsIsTheRawElapsedTime) {
+  useClockGame();
+  ASSERT_EQ(ports.paused, nullptr);
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(5000);
+  pauses.enter(clock.nowMs());  // a ledger the host did not hand over
+  clock.advance(30000);
+  pauses.leave(clock.nowMs());
+  clock.advance(2000);
+  EXPECT_EQ(readClock(game), "37000");
 }
 
 TEST_F(HostBindingsTest, ATimerReachesInputThroughTheQueueOnce) {

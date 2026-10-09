@@ -203,6 +203,7 @@ Outcome LuaGame::load() {
   bindings.guard = &guard;
   bindings.lockedSections = &lockedSections;
   bindings.clock = &ports.clock;
+  bindings.paused = ports.paused;
   bindings.startMs = ports.clock.nowMs();
   bindings.timer = &pendingTimer;
   bindings.store = &ports.store;

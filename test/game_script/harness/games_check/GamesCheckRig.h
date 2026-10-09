@@ -21,6 +21,7 @@
 #include <IGameLog.h>
 #include <LuaGame.h>
 #include <Memory.h>
+#include <PauseClock.h>
 #include <StoreSlot.h>
 
 #include <cstdint>
@@ -138,6 +139,8 @@ class GamesCheckRig {
   const GameScript::HostPorts& ports() const { return hostPorts; }
   const GameScript::Canvas& canvas() const { return hostCanvas; }
   RigClock& clock() { return rigClock; }
+  // The ledger ch.time.ms reads through HostPorts::paused, as the device's does; nothing pauses unless a step calls it.
+  GameCore::PauseClock& pauses() { return pauseClock; }
   RigLog& log() { return rigLog; }
 
  private:
@@ -149,7 +152,7 @@ class GamesCheckRig {
         frameBuffers(front.get(), back.get(), GameScript::MAX_BYTES),
         random(seed),
         slot(storeBytes.get(), GameScript::Codec::STORE_LIMIT),
-        hostPorts{random, rigClock, rigLog, slot},
+        hostPorts{random, rigClock, rigLog, slot, &pauseClock},
         hostCanvas{canvas.width, canvas.height, GameScript::TextMetrics::standIn()} {}
 
   bool allocated() const { return arenaBlock && front && back && storeBytes; }
@@ -163,6 +166,7 @@ class GamesCheckRig {
   SeededRandom random;
   RigClock rigClock;
   RigLog rigLog;
+  GameCore::PauseClock pauseClock;
   GameScript::StoreSlot slot;
   GameScript::HostPorts hostPorts;
   GameScript::Canvas hostCanvas;

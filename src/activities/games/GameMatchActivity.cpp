@@ -235,6 +235,11 @@ void GameMatchActivity::handle(const MatchEvent event) {
     return;
   }
   const MatchState to = lifecycle.state();
+  // ch.time.ms is play time: the VM's pause ledger takes the Paused interval out (the pause of Home included).
+  if (vm) {
+    if (to == MatchState::Paused) vm->matchPaused();
+    if (from == MatchState::Paused) vm->matchResumed();
+  }
   LOG_INF("GAME", "%s: %s -> %s on %s", manifest.id, MatchLifecycle::name(from), MatchLifecycle::name(to),
           MatchLifecycle::name(event));
   // The next view registers its own options; the old table must not route.

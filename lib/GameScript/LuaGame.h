@@ -20,6 +20,7 @@ namespace GameCore {
 class IClock;
 class IGameLog;
 class IRandom;
+class PauseClock;
 }  // namespace GameCore
 
 namespace GameScript {
@@ -31,12 +32,14 @@ struct GameSources;
 
 // The host services a game's VM borrows, each outliving it: seeds (the string
 // hash, math.random), the clock behind ch.time and ch.timer, the log behind ch.log
-// and print, and the match's ch.store slot.
+// and print, and the match's ch.store slot. `paused`, when set, is the match's ledger of the time
+// spent in Paused, which ch.time.ms leaves out; null (a host with no pause) counts all of it.
 struct HostPorts {
   GameCore::IRandom& random;
   GameCore::IClock& clock;
   GameCore::IGameLog& log;
   StoreSlot& store;
+  const GameCore::PauseClock* paused = nullptr;
 };
 
 // How a call into the game ended (GameCore's): a ScriptError ends the session

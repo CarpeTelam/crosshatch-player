@@ -212,6 +212,98 @@ TEST_F(MatchTest, BackPausesTheRoundAndResumeReturnsToTheCanvasOnAClearedScreen)
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);  // the menu sat over it: a full refresh
 }
 
+// A game that logs ch.time.ms on each tap.
+constexpr const char* CLOCK_GAME = R"(
+local game = {}
+function game.setup(ctx) return {} end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.log("clock " .. ch.time.ms())
+    return { tap = true }
+  end
+end
+return game
+)";
+
+// ch.time.ms is play time (epic-first-party-games, the game clock): the VM's pause ledger takes the Paused interval
+// out.
+TEST_F(MatchTest, TheGameClockLeavesThePauseOut) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(5000);
+  tapCanvas(100, 200);
+  frame();
+  ASSERT_TRUE(pump([&] { return logHas("clock 5000"); })) << "the first tap did not reach the game";
+  showFrame();
+
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(30000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(2000);
+  showFrame();  // a resumed round is redrawn; a tap made before its frame is dropped
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 7000"); })) << "the pause was counted: no tap read 7000 ms of play time";
+  EXPECT_FALSE(logHas("clock 37000"));
+}
+
+// The Home gesture pauses the round too (a pause of Home counts as Paused).
+TEST_F(MatchTest, TheGameClockLeavesOutAPauseMadeByTheHomeGesture) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(5000);
+  ASSERT_TRUE(activity->handleHomeGesture());
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(30000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(2000);
+  showFrame();
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 7000"); })) << "the pause was counted: no tap read 7000 ms of play time";
+  EXPECT_FALSE(logHas("clock 37000"));
+}
+
+TEST_F(MatchTest, TheGameClockLeavesOutTwoPausesInOneMatch) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(1000);
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(20000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(1000);
+  showFrame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(10000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(1000);
+  showFrame();
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 3000"); })) << "a pause was counted: no tap read 3000 ms of play time";
+  EXPECT_FALSE(logHas("clock 33000"));
+}
+
 TEST_F(MatchTest, TheKeysMoveAroundAMenuAndConfirmChoosesTheFocusedOption) {
   installFixture("tracer");
   enter("tracer");
