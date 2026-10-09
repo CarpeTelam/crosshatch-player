@@ -155,13 +155,28 @@ touches = ["scripts/fork_release.py", "scripts/fork_release_test.py"]
 stays_out = [".github/workflows/**", "games/**", "src/**", "lib/**", "every upstream file"]
 
 [[entry]]
+id = 13
+type = "story"
+title = "Stop the game clock while the match is paused"
+description = "Owner Decision of 2026-10-09 (cross-story row 20, settled; epic Notes): time in the pause menu must not count toward a Sudoku solve. Make `ch.time.ms()` report play time, the milliseconds since the game loaded minus every interval the match spent in `MatchState::Paused`, for every game and in the host doubles. The loop task enters and leaves Paused while the VM task reads the clock, so the paused total is shared safely (atomics, no lock in the binding). Every other state keeps counting. `ch.timer.after` and the GameTimer keep the clock they have today. Update the binding's comment and `docs/crosshatch/api-level-1.txt` where it describes `ch.time.ms`. Sudoku's sources do not change."
+verify = "Host suites pass, including a new test that a paused interval is left out of `ch.time.ms()` while a timer set across the pause fires as before, and one at the match level (Playing, Paused, Playing). Games check green at both canvases. Fork script tests, `scripts/check_upstream_touches.py` and `./bin/clang-format-fix` twice pass. `pio run -e x4pro` and `-e default`, `pio check` (default and `-e x4pro`) and the flash budget (`scripts/check_flash_budget.py` build on/off and compare against the epic base Measurement) pass, with the x4pro firmware's size and SHA-256 recorded. `sim.sh build x4pro`: open Sudoku, note the clock, pause about 30 s, resume, make a move, and solve a one-blank scratch puzzle, showing the time leaves the pause out."
+covers = ["R12"]
+after = []
+hitl = false
+risk = "medium"
+unknown = "Where the match's state change can reach the binding's clock without a new layer edge (`scripts/check_layers.py`)."
+references = ["lib/GameScript/ChBindings.cpp (timeMs) and ChBindings.h (BindingContext clock, startMs)", "src/games/GameClock.h", "src/activities/games/GameMatchActivity.cpp (MatchState::Paused)", "lib/GameScript/GameTimer.h", "docs/crosshatch/api-level-1.txt (fn ch.time.ms)", "games/sudoku/main.lua (fresh, move)", "cross-story-review.md row 20"]
+touches = ["lib/GameScript/**", "src/games/**", "src/activities/games/**", "test/**", "docs/crosshatch/api-level-1.txt"]
+stays_out = ["games/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9, 11]
+after = [4, 9, 11, 13]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
