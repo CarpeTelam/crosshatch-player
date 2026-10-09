@@ -106,4 +106,6 @@ The orchestrator ran this review on 2026-10-05, after entry 11 merged. The revie
 - `sudoku-solved-level-above-dialog.png` shows Solved, the level, Time and Best, all above the Game over dialog.
 - `sudoku-solved-no-best-after-hint.png` shows the widest end line, also above it.
 
-**Owner rows:** rows 20 (Sudoku's pause-menu time) and 21 (33–64-member packages on older firmware) wait on the owner's answers.
+**Owner rows:**
+- Row 21 is closed with no change; the owner decided on 2026-10-09 that the fork is pre-release.
+- Row 20: the owner decided on 2026-10-09 that pause-menu time does not count. Choosing how is open (epic Notes).
