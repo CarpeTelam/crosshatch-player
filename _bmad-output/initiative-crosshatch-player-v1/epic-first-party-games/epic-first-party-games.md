@@ -144,3 +144,9 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - The packet's files are valid zips, and `zipfile` reads every member. The release dry run packed byte-identical files. Battleship's only change from the installed package is two manifest keys.
   - So the bytes the device received are not the packet's: the transfer to the card, through the session file and the device's Wi-Fi upload, changed them.
   - The installer keeps each refused file as `/games/<name>.chgame.bad`. The owner can download those, and comparing them with the packet will show what changed.
+- Decision (owner, 2026-10-10, entry 15): reading D from the blocked plan's `## Auto Run Result`. A gap between an edge target and the 466 x 788 box's edge counts as that target's margin only when the gap is smaller than the target's own size, meaning a gap that could not hold another cell, key or row.
+  - Left and right margins snap on the targets' own rows: 8 px on Ultimate tic-tac-toe and Sudoku, 13 px on Battleship.
+  - Sudoku's pad and rail bottom snaps (34 px, against 80 px keys).
+  - Gaps that do not snap: Ultimate tic-tac-toe's top (120 px) and bottom (218 px), Sudoku's grid top (56 px), and Battleship's top (52 px) and button-row bottom (128 px). Taps on headers and message lines stay dead.
+  - Corners off every target's row and column do not snap, and no existing round changes outcome.
+  - A snapped Battleship placement tap goes through the same shift-back rule as an in-board tap. Battleship's button-row targets snap sideways into their margins, as Sudoku's pad does.
