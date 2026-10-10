@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -337,6 +338,12 @@ inline freeink::ui::Point readyButtonMiddle(const GfxRenderer& renderer) {
 
 // ---- the hidden hand-off screen as a push holds it (GameMatchTest's HiddenPassTest, ResumeMatchTest's PassResumeTest)
 // ----
+
+// Whether some text of `push` holds `part`.
+inline bool holds(const GfxRenderer::Shown& push, const std::string& part) {
+  return std::any_of(push.texts.begin(), push.texts.end(),
+                     [&](const std::string& text) { return text.find(part) != std::string::npos; });
+}
 
 // The middle of the splash band on the logical screen: it starts under the header, where the title screen's does
 // (GameSplashLayout::bandTop), and is 480 px tall.

@@ -26,14 +26,8 @@ namespace {
 using Button = MappedInputManager::Button;
 using GamePackageInstaller::Error;
 
-const std::string PKG = "v1\n0530a15766e91bf1\n";
-
-std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int api,
-                         const int seatsMin, const int seatsMax) {
-  return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"version\":\"1.0.0\",\"api\":" + std::to_string(api) +
-         ",\"seats\":{\"min\":" + std::to_string(seatsMin) + ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" +
-         modes + "]}";
-}
+using launcher::addGame;
+using launcher::dropMatch;
 
 std::string idOf(const int number) {
   char id[16];
@@ -77,23 +71,8 @@ class RemoveListTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
-  // The match ReturnTest's first case starts (never entered) goes as the manager would let it go.
-  void dropMatch() {
-    for (auto& replacement : activityManager.replacements) {
-      if (replacement) activityManager.destroyHolding(replacement);
-    }
-    activityManager.replacements.clear();
-  }
-
   // ---- the card ----
 
-  static void addGame(const std::string& id, const std::string& name, const std::string& modes = "\"solo\"",
-                      const int api = 1, const int seatsMin = 1, const int seatsMax = 1) {
-    const std::string dir = "/.games/" + id;
-    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, api, seatsMin, seatsMax));
-    fakesd::addFile(dir + "/main.lua", std::string("return {}\n"));
-    fakesd::addFile(dir + "/.pkg", PKG);
-  }
   static void addGames(const int count) {
     for (int i = 1; i <= count; ++i) addGame(idOf(i), nameOf(i));
   }
@@ -118,7 +97,7 @@ class RemoveListTest : public match::ScreenTest {
   }
   // A second launcher, as goToGames() builds one after a match ends or is left.
   void reopen() {
-    match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Discard);
+    match::letStartedMatchesGo([] { dropMatch(); }, match::Saves::Discard);
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
