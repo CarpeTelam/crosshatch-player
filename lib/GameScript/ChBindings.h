@@ -12,6 +12,7 @@ struct lua_State;
 namespace GameCore {
 class IClock;
 class IGameLog;
+class PauseClock;
 struct GameImages;
 }  // namespace GameCore
 
@@ -75,8 +76,11 @@ struct BindingContext {
   CallGuard* guard = nullptr;
   // Bindings inside a locked section right now (LuaGame's); see enterLockedSection.
   std::atomic<uint32_t>* lockedSections = nullptr;
-  // ch.time.ms reports clock milliseconds since startMs (the game's load).
+  // ch.time.ms reports play time: clock milliseconds since startMs (the game's load), less the time
+  // the match spent in Paused when `paused` is set (null: none, as for a host that never pauses).
+  // ch.timer keeps the raw clock.
   const GameCore::IClock* clock = nullptr;
+  const GameCore::PauseClock* paused = nullptr;
   uint64_t startMs = 0;
   // ch.timer's one pending timer (LuaGame's).
   GameTimer* timer = nullptr;

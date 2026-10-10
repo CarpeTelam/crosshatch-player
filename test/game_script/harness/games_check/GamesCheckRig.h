@@ -21,6 +21,7 @@
 #include <IGameLog.h>
 #include <LuaGame.h>
 #include <Memory.h>
+#include <PauseClock.h>
 #include <StoreSlot.h>
 
 #include <cstdint>
@@ -104,7 +105,7 @@ static_assert(VmLimits::device().luaHeapBytes == GameScript::LUA_HEAP_BYTES, "th
 static_assert(VmLimits::device().instructionBudget == GameScript::CallGuard::INSTRUCTION_BUDGET,
               "the device's instruction budget");
 
-// A clock the steps move (a step's `wait`); ch.time.ms counts from the game's load.
+// A clock the steps move (a step's `wait`); ch.time.ms reports play time from the game's load (this rig never pauses).
 class RigClock final : public GameCore::IClock {
  public:
   uint64_t nowMs() const override { return now; }
@@ -149,7 +150,7 @@ class GamesCheckRig {
         frameBuffers(front.get(), back.get(), GameScript::MAX_BYTES),
         random(seed),
         slot(storeBytes.get(), GameScript::Codec::STORE_LIMIT),
-        hostPorts{random, rigClock, rigLog, slot},
+        hostPorts{random, rigClock, rigLog, slot, &pauseClock},
         hostCanvas{canvas.width, canvas.height, GameScript::TextMetrics::standIn()} {}
 
   bool allocated() const { return arenaBlock && front && back && storeBytes; }
@@ -163,6 +164,8 @@ class GamesCheckRig {
   SeededRandom random;
   RigClock rigClock;
   RigLog rigLog;
+  // Passed as HostPorts::paused so the check VM runs the device's ch.time.ms code path (a ledger that never pauses).
+  GameCore::PauseClock pauseClock;
   GameScript::StoreSlot slot;
   GameScript::HostPorts hostPorts;
   GameScript::Canvas hostCanvas;

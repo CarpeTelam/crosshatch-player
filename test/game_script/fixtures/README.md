@@ -174,7 +174,8 @@ step that names a tap names the button press too.
    copy of `pass-art` without `handoff.png`, `pass-title.chgame` from `pack_device_run.py` (derived, never committed), shows `title.png` in
    the band instead.
 9. In `slow-restart`, play to the end of the round, choose Play again, then Back at once: the pause menu says
-   "Starting the next round", centred under "Paused".
+   "Starting the next round", centred under "Paused". Then choose Resume within about 1 s (the fixture's 2 s spin
+   counts play time, so a longer pause reaches the 3 s watchdog); expect the error view if you do not.
 10. In `pass-art`, set Options' Mode to "Solo" and Back: New game reads "Solo · Easy · Large"; with the new round's
     save of step 7 on the card (Leave it from its pause menu), New game asks "Start a new game?", "Solo", "This replaces the saved game.", Cancel focused.
 

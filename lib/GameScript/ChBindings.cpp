@@ -5,6 +5,7 @@
 #include <GameImages.h>
 #include <IClock.h>
 #include <IGameLog.h>
+#include <PauseClock.h>
 
 #include <climits>
 #include <cstdio>
@@ -308,10 +309,13 @@ int timerCancel(lua_State* L) {
   return 0;
 }
 
-// ch.time.ms(): milliseconds since the game loaded, for display only.
+// ch.time.ms(): play time in milliseconds, since the game loaded less the time the match was
+// paused, for display only. ch.timer.after is on the raw clock and is not affected.
 int timeMs(lua_State* L) {
   const BindingContext& context = *bindingContext(L);
-  lua_pushinteger(L, static_cast<lua_Integer>(context.clock->nowMs() - context.startMs));
+  const uint64_t ms = context.paused ? context.paused->playMs(*context.clock, context.startMs)
+                                     : context.clock->nowMs() - context.startMs;
+  lua_pushinteger(L, static_cast<lua_Integer>(ms));
   return 1;
 }
 

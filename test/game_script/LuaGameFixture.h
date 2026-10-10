@@ -45,7 +45,8 @@ class FakeClock : public GameCore::IClock {
   uint64_t nowMs() const override { return now; }
   void advance(uint64_t ms) { now += ms; }
 
-  uint64_t now = 1000000;  // any start; ch.time.ms counts from load()
+  uint64_t now =
+      1000000;  // any start; ch.time.ms reports play time from load() (these ports have no pause ledger, so all of it)
 };
 
 // Keeps every ch.log and print line, and whether `watched` (when set) was inside a

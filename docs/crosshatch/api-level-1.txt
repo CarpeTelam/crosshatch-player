@@ -84,6 +84,17 @@ fn ch.timer.after(ms)
 fn ch.timer.cancel()
 fn ch.store.get() -> table
 fn ch.store.set(t)
+# ch.time.ms() is play time, for display only (never in status or rules):
+# milliseconds since the game loaded, less every interval the match spent
+# paused (the pause menu, Home's included); it stands still while paused.
+# Every state but Paused keeps counting (Over, Result, and HandOff included).
+# A sleep and Continue start a new VM, which counts from 0. ch.timer.after
+# counts raw time, pauses included, so a timer set before a pause may fall due
+# while the match is paused. A call that busy-waits on ch.time.ms while the
+# match is paused stays in its loop until resume, and the runtime's 3 s
+# watchdog counts raw time, so a game must not wait on it.
+# This changes no entry line, so API_SURFACE_CRC and the API level stay as they
+# are (level 1 is not frozen).
 fn ch.time.ms() -> integer
 fn ch.log(...)
 

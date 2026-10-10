@@ -80,8 +80,8 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       frameBuffers(frameStorage.get(), frameStorage.get() + GameScript::MAX_BYTES, GameScript::MAX_BYTES),
       mailbox({frameStorage.get() + 2 * GameScript::MAX_BYTES, GameCore::SNAPSHOT_BYTES}),
       log(gameId),
-      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store}, canvas,
-           assets.images()),
+      game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store, &paused},
+           canvas, assets.images()),
       handOff(handOff) {
   game.setSettings(settings);
 }

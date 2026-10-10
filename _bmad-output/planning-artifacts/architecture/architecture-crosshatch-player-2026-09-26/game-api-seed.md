@@ -190,7 +190,7 @@ Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on
 | `ch.text_width(str, size)` | The width of `str` in pixels at `size`. Unlike the `ch.gfx` functions, it works anywhere, for example in `input` to hit-test a line of text. |
 | `ch.timer.after(ms)` | Delivers a `{kind = "timer"}` event to `input` after `ms` milliseconds (at least 1,000). One timer at a time: a new call replaces the pending one. For countdowns in parlor games. If time running out changes the game, return a move from `input` so it goes through `apply`. A timer that falls due after the round is over is never delivered. |
 | `ch.timer.cancel()` | Clears the pending timer. |
-| `ch.time.ms()` | Milliseconds since the game started. For display only; never use it in `status` or game rules. |
+| `ch.time.ms()` | Milliseconds of play since the game started, not counting time the match spent paused (the pause menu). ch.timer.after still counts all time. For display only; never use it in `status` or game rules. |
 | `ch.log(...)` | Writes to the device's debug log. `print` does the same. |
 
 ## 6. The Lua environment, limits, and errors

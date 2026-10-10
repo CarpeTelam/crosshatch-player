@@ -5,6 +5,7 @@
 #include <HalMemory.h>
 #include <LuaGame.h>
 #include <MatchRounds.h>
+#include <PauseClock.h>
 #include <Roster.h>
 #include <SeatShown.h>
 #include <VmFailure.h>
@@ -122,6 +123,11 @@ class GameVM {
   // its next event the VM cancels the pending timer and runs Session::start() and
   // draw(), so ver keeps counting (GameScript::MatchRounds).
   void playAgain();
+  // Loop task: the match entered / left MatchState::Paused. ch.time.ms leaves the time between
+  // them out (GameCore::PauseClock); ch.timer and the watchdog stay on the raw clock. Repeats are
+  // no-ops.
+  void matchPaused() { paused.enter(clock.nowMs()); }
+  void matchResumed() { paused.leave(clock.nowMs()); }
   // Frames published so far (0 before the first draw returns). Any task.
   uint32_t frameGen() const { return frameBuffers.frameGen(); }
 
@@ -263,6 +269,8 @@ class GameVM {
   SnapshotMailbox mailbox;
   GameRandom random;
   GameClock clock;
+  // The time the match spent in Paused (matchPaused); declared before `game`, whose HostPorts point at it.
+  GameCore::PauseClock paused;
   GameLog log;
   GameScript::InputQueue queue;
   GameScript::LuaGame game;
