@@ -107,7 +107,7 @@ VmResult ScriptVm::load() {
 }
 
 void ScriptVm::openHost(lua_State* L) {
-  lua_createtable(L, 0, 5);
+  lua_createtable(L, 0, 6);
   lua_pushinteger(L, host::DIALOG_TOP);
   lua_setfield(L, -2, "dialog_top");
   lua_pushinteger(L, host::DIALOG_BOTTOM);
@@ -118,6 +118,8 @@ void ScriptVm::openHost(lua_State* L) {
   lua_setfield(L, -2, "canvas_h");
   lua_pushcfunction(L, &ScriptVm::imageSize);
   lua_setfield(L, -2, "image_size");
+  lua_pushcfunction(L, &ScriptVm::launcherIcon);
+  lua_setfield(L, -2, "launcher_icon");
   lua_setglobal(L, "host");
   lua_pushcfunction(L, &ScriptVm::withinDeviceBudget);
   lua_setglobal(L, "within_device_budget");
@@ -133,6 +135,30 @@ int ScriptVm::imageSize(lua_State* L) {
   lua_pushinteger(L, images->spans[at].width);
   lua_pushinteger(L, images->spans[at].height);
   return 2;
+}
+
+// host.launcher_icon() -> source, name, weight: where the Games launcher draws the installed game's row icon from.
+// "package" (its icon.bmp), "library", name, "fill"|"regular" (the manifest's library icon), or "fallback" (the
+// Crosshatch mark). The pick is GameRowIcon::choose's, over the installed game on the fake card.
+int ScriptVm::launcherIcon(lua_State* L) {
+  const ScriptVm* vm = runningVm;
+  if (!vm || !vm->limits.checkCode) return luaL_error(L, "host.launcher_icon is for a check VM");
+  switch (vm->launcherIcon_.source) {
+    case LauncherIcon::Source::Package:
+      lua_pushliteral(L, "package");
+      return 1;
+    case LauncherIcon::Source::Library:
+      lua_pushliteral(L, "library");
+      lua_pushstring(L, vm->launcherIcon_.name.c_str());
+      lua_pushstring(L, vm->launcherIcon_.fill ? "fill" : "regular");
+      return 3;
+    case LauncherIcon::Source::Fallback:
+      lua_pushliteral(L, "fallback");
+      return 1;
+    case LauncherIcon::Source::Unset:
+      break;
+  }
+  return luaL_error(L, "host.launcher_icon: the caller set no pick");
 }
 
 // within_device_budget(f, ...): runs f(...) and returns its results, and raises (an ordinary Lua error, so the check

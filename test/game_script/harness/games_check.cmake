@@ -18,6 +18,7 @@
 #                         holds BoardInsetsTest, which compiles the SDK's BoardConfig.h through board_stubs/ (that file alone)
 #   GamesCheckFlowTest    pins the hidden flow of RoundPlayer to GameVM's (it links the match's screen doubles)
 #   GamesCheckNoteImages  a plain ctest: Sudoku's make_note_images.py --check, when the tool exists
+#   GamesCheckSudokuIcon  a plain ctest: Sudoku's make_icon.py --check (games/sudoku/icon.png), when the tool exists
 # All are labelled games-check: `ctest -L games-check`. Needs installer.cmake and match.cmake's libraries by name.
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -73,6 +74,8 @@ target_link_libraries(games_check_core PUBLIC game_harness_core lua_vendored)
 # The core the two installer-bound suites share: the glue and the Session pieces the linker asks for.
 set(GAMES_CHECK_INSTALLER_SOURCES
   ${GAMES_CHECK_DIR}/GameCheck.cpp
+  # The launcher's pick of a row icon (host.launcher_icon), over the installed game on the fake card.
+  ${REPO_ROOT}/src/games/GameRowIcon.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp)
@@ -124,6 +127,14 @@ set(GAMES_CHECK_NOTE_IMAGES_TOOL ${GAMES_CHECK_COMPANION_ROOT_ABS}/sudoku/tools/
 if(EXISTS ${GAMES_CHECK_NOTE_IMAGES_TOOL})
   add_test(NAME GamesCheckNoteImages COMMAND ${Python3_EXECUTABLE} ${GAMES_CHECK_NOTE_IMAGES_TOOL} --check)
   set_tests_properties(GamesCheckNoteImages PROPERTIES LABELS games-check)
+endif()
+
+# Sudoku's launcher icon: `make_icon.py --check` compares games/sudoku/icon.png with what the tool generates, as above. Which
+# icon the launcher then picks for an installed game is the games' own checks' (host.launcher_icon), not this.
+set(GAMES_CHECK_SUDOKU_ICON_TOOL ${GAMES_CHECK_COMPANION_ROOT_ABS}/sudoku/tools/make_icon.py)
+if(EXISTS ${GAMES_CHECK_SUDOKU_ICON_TOOL})
+  add_test(NAME GamesCheckSudokuIcon COMMAND ${Python3_EXECUTABLE} ${GAMES_CHECK_SUDOKU_ICON_TOOL} --check)
+  set_tests_properties(GamesCheckSudokuIcon PROPERTIES LABELS games-check)
 endif()
 
 add_executable(GamesCheckFlowTest ${GAMES_CHECK_DIR}/GamesCheckFlowTest.cpp)

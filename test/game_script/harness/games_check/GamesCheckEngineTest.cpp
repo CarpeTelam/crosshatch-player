@@ -1553,4 +1553,58 @@ return {
   EXPECT_TRUE(noted(report, "4 of 5 checks passed")) << report.text();
 }
 
+// ---- host.launcher_icon: the Games launcher's pick for the installed game (GameRowIcon::choose) ----
+
+// A checks.lua that passes when host.launcher_icon() answers exactly `want` (a Lua list of the answers, "source"
+// first).
+std::string launcherIconIs(const std::string& want) {
+  return "return { { name = 'launcher icon', run = function()\n"
+         "  local got = { host.launcher_icon() }\n"
+         "  local want = " +
+         want +
+         "\n"
+         "  assert(#got == #want, 'the answer has ' .. #got .. ' values, wanted ' .. #want)\n"
+         "  for i = 1, #want do assert(got[i] == want[i], 'value ' .. i .. ' is ' .. tostring(got[i])) end\n"
+         "end } }\n";
+}
+
+TEST_F(GamesCheckEngineTest, TheLauncherPicksAPackagesOwnIcon) {
+  copyGame("pack-images", "pack-images");
+  checks("pack-images", launcherIconIs("{ 'package' }"));
+  pack({"pack-images"});
+  expectGreen(games_check::runGameChecks(sticky(), "pack-images"));
+  // A check that expects something else fails by name: the answer is read, not assumed.
+  checks("pack-images", launcherIconIs("{ 'fallback' }"));
+  expectRed(games_check::runGameChecks(sticky(), "pack-images"),
+            {"check 'launcher icon' failed", "value 1 is package"});
+}
+
+TEST_F(GamesCheckEngineTest, ThePackagesIconWinsOverTheManifestsLibraryIcon) {
+  copyGame("pack-images", "pack-images");
+  edit("pack-images", "manifest.json", "\"modes\": [\"solo\"]", "\"modes\": [\"solo\"], \"icon\": \"spade\"");
+  checks("pack-images", launcherIconIs("{ 'package' }"));
+  pack({"pack-images"});
+  expectGreen(games_check::runGameChecks(sticky(), "pack-images"));
+}
+
+TEST_F(GamesCheckEngineTest, TheLauncherPicksTheManifestsLibraryIconInItsWeight) {
+  copyGame("pass-art", "pass-art");
+  checks("pass-art", launcherIconIs("{ 'library', 'spade', 'fill' }"));
+  copyGame("pass-art", "pass-regular");
+  edit("pass-regular", "manifest.json", "  \"icon_weight\": \"fill\",\n", "");
+  checks("pass-regular", launcherIconIs("{ 'library', 'spade', 'regular' }"));
+  pack({"pass-art", "pass-regular"});
+  expectGreen(games_check::runGameChecks(sticky(), "pass-art"));
+  expectGreen(games_check::runGameChecks(sticky(), "pass-regular"));
+  checks("pass-regular", launcherIconIs("{ 'library', 'spade', 'fill' }"));
+  expectRed(games_check::runGameChecks(sticky(), "pass-regular"), {"value 3 is regular"});
+}
+
+TEST_F(GamesCheckEngineTest, AGameWithNoIconGetsTheFallbackMark) {
+  copyGame("pass-open", "pass-open");
+  checks("pass-open", launcherIconIs("{ 'fallback' }"));
+  pack({"pass-open"});
+  expectGreen(games_check::runGameChecks(sticky(), "pass-open"));
+}
+
 }  // namespace

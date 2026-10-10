@@ -19,6 +19,7 @@
 #include "games/GameAssets.h"
 #include "games/GameHostCaps.h"
 #include "games/GameRegistry.h"
+#include "games/GameTouchLog.h"
 #include "games/GameVM.h"
 #include "games/MatchResume.h"
 
@@ -501,8 +502,15 @@ void GameMatchActivity::loopPlaying() {
   // GameTouch drops every edge swipe that is left.
   const GameTouch::Gesture gesture = readGesture();
   GameCore::GameEvent event;
-  const bool aimed =
-      GameTouch::toEvent(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event);
+  const GameTouch::Outcome outcome =
+      GameTouch::classify(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event);
+  const bool aimed = outcome == GameTouch::Outcome::Sent;
+  // The host's classification of each gesture read in Playing, and whether classify accepted it (GameTouchLog). A later
+  // drop has its own lines below, and the VM or the game declining a tap logs nothing. The formatter runs inside the
+  // macro's arguments, so a build that compiles LOG_DBG out pays nothing. Changes nothing below.
+  if (outcome != GameTouch::Outcome::NoGesture) {
+    LOG_DBG("GAME", "%s: touch %s", manifest.id, GameTouchLog::line(gesture, outcome, event).text);
+  }
   // The first seat frame after "I'm ready" accepts a touch made during its push (the owner's decision of 2026-10-03:
   // the hand-off needs one tap per step): once the VM has published the frame (!awaitingRound), a touch whose
   // touch-down came at or after the hand-off passed (playingSinceMs) is that seat's move, whatever the push has
@@ -674,6 +682,12 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
     touchDownFrame = frameDisplayed.load(std::memory_order_acquire);
     touchDownMs = static_cast<uint32_t>(millis());
     touchDownLatched = true;
+    touchFirstX = snap.touchX;
+    touchFirstY = snap.touchY;
+  }
+  if (snap.touchHeld || snap.touchPressed) {
+    touchLastX = snap.touchX;
+    touchLastY = snap.touchY;
   }
   // Whether a finger is still down on this pass; the latch is freed on any pass without one (loopPlaying reads this
   // pass's latch first): the lift, with a gesture or none, a long press that suppressed the rest of the contact, or a
@@ -683,6 +697,8 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
     gesture.kind = snap.longPress ? GameTouch::Kind::LongPress : GameTouch::Kind::Tap;
     gesture.x = snap.touchX;
     gesture.y = snap.touchY;
+    // A long press has no hold: the SDK fires it at 500 ms and suppresses the lift, so lastTouchHeldMs is stale.
+    if (!snap.longPress) gesture.heldMs = static_cast<int32_t>(gpio.lastTouchHeldMs());
     return gesture;
   }
   // A swipe needs its start point, which MappedInputManager::wasSwipe drops; the
@@ -695,6 +711,21 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
     gesture.kind = GameTouch::Kind::Swipe;
     renderer.tapToLogical(startX, startY, gesture.x, gesture.y);
     renderer.tapToLogical(endX, endY, gesture.endX, gesture.endY);
+    gesture.heldMs = static_cast<int32_t>(gpio.lastTouchHeldMs());
+    return gesture;
+  }
+  // A release with no tap, long press or swipe (on the device: held over 700 ms and moved 60 px or more net, went past
+  // 59 px and came back to under 60 px net, or was multi-finger): logged, never sent. Its points run from the first
+  // sample this loop saw down (isScreenTouchHeld returns the live point, so on a fast slide that can already be past
+  // the true touch-down) to the last one it saw; a contact it never saw down has none, and then lastTouchHeldMs is
+  // stale, so there is no hold either.
+  if (snap.touchReleased) {
+    gesture.kind = GameTouch::Kind::Ended;
+    gesture.x = touchDownLatched ? touchFirstX : -1;
+    gesture.y = touchDownLatched ? touchFirstY : -1;
+    gesture.endX = touchDownLatched ? touchLastX : -1;
+    gesture.endY = touchDownLatched ? touchLastY : -1;
+    gesture.heldMs = touchDownLatched ? static_cast<int32_t>(gpio.lastTouchHeldMs()) : -1;
   }
   return gesture;
 }
