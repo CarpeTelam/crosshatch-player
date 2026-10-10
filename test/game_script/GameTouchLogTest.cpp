@@ -106,6 +106,40 @@ TEST(GameTouchLogTest, EachUnknownIsLeftOut) {
 
 TEST(GameTouchLogTest, NoGestureHasNoLine) { EXPECT_EQ(lineFor(Gesture{}), ""); }
 
+// The longest lines the match can log: int16 screen and canvas coordinates and the largest hold, each with its outcome
+// named (the formatter takes the outcome as given). None may be cut, so the end of each line (the reason, or the hold)
+// is always there.
+TEST(GameTouchLogTest, TheLongestRealisticLinesAreNotCut) {
+  constexpr int FAR = 32767;
+  constexpr int NEG = -32768;
+  constexpr int32_t HOLD = 2147483647;
+  GameEvent canvas;
+  canvas.x = FAR;
+  canvas.y = FAR;
+  const struct {
+    Gesture gesture;
+    Outcome outcome;
+    const char* last;
+  } cases[] = {
+      {swipe(NEG, NEG, FAR, FAR, HOLD), Outcome::Sent, " canvas (32767,32767) held 2147483647 ms"},
+      {tap(FAR, FAR, HOLD), Outcome::Sent, " canvas (32767,32767) held 2147483647 ms"},
+      {Gesture{Kind::LongPress, FAR, FAR}, Outcome::Sent, " canvas (32767,32767)"},
+      {swipe(NEG, NEG, FAR, FAR, HOLD), Outcome::SystemEdge, " held 2147483647 ms: not sent, system edge swipe"},
+      {swipe(NEG, NEG, FAR, FAR, HOLD), Outcome::NoDirection, " held 2147483647 ms: not sent, no direction"},
+      {swipe(NEG, NEG, FAR, FAR, HOLD), Outcome::OffCanvas, " held 2147483647 ms: not sent, off the canvas"},
+      {tap(NEG, NEG, HOLD), Outcome::OffCanvas, " held 2147483647 ms: not sent, off the canvas"},
+      {ended(FAR, FAR, FAR, FAR, HOLD), Outcome::Ended,
+       " held 2147483647 ms: not sent, not a tap, long press or swipe"},
+  };
+  for (const auto& test : cases) {
+    const GameTouchLog::Line line = GameTouchLog::line(test.gesture, test.outcome, canvas);
+    const std::string text = line.text;
+    EXPECT_LT(std::strlen(line.text), sizeof(line.text) - 1) << text;
+    ASSERT_GE(text.size(), std::strlen(test.last)) << text;
+    EXPECT_EQ(text.substr(text.size() - std::strlen(test.last)), test.last) << text;
+  }
+}
+
 TEST(GameTouchLogTest, ALineThatDoesNotFitIsCutNotOverrun) {
   // Appends past the buffer through the formatter's own append: the text is cut to what fits, NUL-terminated, and keeps
   // its start.

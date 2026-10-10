@@ -12,8 +12,10 @@
 // input() sees, in canvas pixels. Pure, so it is host-tested.
 namespace GameTouch {
 
-// Ended is a contact that lifted with no tap, no long press and no swipe (it slid past the tap slop and was not a
-// swipe either). It never reaches a game; it exists so the log can say what became of the touch.
+// Ended is a contact that lifted with no tap, no long press and no swipe: on the device, one held over 700 ms that
+// moved 60 px or more net, one that went past 59 px and came back to under 60 px net, or a multi-finger contact (a
+// drift of 29 to 59 px that lifts quickly is still a tap). It never reaches a game; it exists so the log can say what
+// became of the touch.
 enum class Kind : uint8_t { None, Tap, LongPress, Swipe, Ended };
 
 // One gesture on the logical screen. A tap or long press is at (x, y); a swipe runs from (x, y) to (endX, endY); an

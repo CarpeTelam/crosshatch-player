@@ -1166,18 +1166,42 @@ TEST_F(TouchLogTest, ASystemEdgeSwipeIsLoggedAndNotSent) {
   expectOnlyTheMarkerReachedTheGame();
 }
 
-TEST_F(TouchLogTest, AContactThatEndsWithNoGestureIsLoggedWithItsFirstAndLastSample) {
+// The shapes below are ones the device ends with no gesture (the input double's liftWithoutTap says which): held over
+// 700 ms and moved 60 px or more net (a slow slide), or past 59 px and back to under 60 px net (out and back). A drift
+// of 29 to 59 px that lifts quickly is a tap on the device, not this.
+TEST_F(TouchLogTest, ASlowSlideIsLoggedAsAnEndedContactWithItsFirstAndLastSample) {
   start();
-  input->holdTouch(10, 20);
+  input->holdTouch(300, 400);
   frame();  // the first sample
-  fakertos::advance(300);
-  input->moveTouch(80, 30);
-  frame();  // the last sample
-  fakertos::advance(340);
-  input->liftWithoutTap();  // past the tap slop and no swipe
+  fakertos::advance(600);
+  input->moveTouch(380, 450);  // 94 px net, and gone past the tap slop: no long press at 500 ms either
+  frame();                     // the last sample
+  fakertos::advance(600);
+  input->liftWithoutTap();
   frame();
-  EXPECT_EQ(touchLines("contact ended screen (10,20)->(80,30) held 640 ms: not sent, not a tap, long press or swipe"),
-            1u);
+  EXPECT_EQ(
+      touchLines("contact ended screen (300,400)->(380,450) held 1200 ms: not sent, not a tap, long press or swipe"),
+      1u);
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+TEST_F(TouchLogTest, AnOutAndBackContactIsLoggedAsAnEndedContactNearItsStart) {
+  start();
+  input->holdTouch(300, 400);
+  frame();
+  fakertos::advance(300);
+  input->moveTouch(390, 400);  // a 90 px excursion
+  frame();
+  fakertos::advance(300);
+  input->moveTouch(310, 405);  // and back to 11 px net
+  frame();
+  fakertos::advance(100);
+  input->liftWithoutTap();
+  frame();
+  EXPECT_EQ(
+      touchLines("contact ended screen (300,400)->(310,405) held 700 ms: not sent, not a tap, long press or swipe"),
+      1u);
   EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
   expectOnlyTheMarkerReachedTheGame();
 }
@@ -1209,14 +1233,14 @@ TEST_F(TouchLogTest, ASlideAfterAPauseLogsItsOwnSamplesNotTheLatchOfTheContactBe
   fakelog::clearLines();
   input->holdTouch(300, 400);
   frame();
-  fakertos::advance(300);
+  fakertos::advance(600);
   input->moveTouch(380, 450);
   frame();
-  fakertos::advance(200);
+  fakertos::advance(600);
   input->liftWithoutTap();
   frame();
   EXPECT_EQ(
-      touchLines("contact ended screen (300,400)->(380,450) held 500 ms: not sent, not a tap, long press or swipe"),
+      touchLines("contact ended screen (300,400)->(380,450) held 1200 ms: not sent, not a tap, long press or swipe"),
       1u);
   EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
 }
@@ -1986,6 +2010,28 @@ TEST(InputDoubleTest, AHeldContactFollowsTheDevicesTouchPath) {
   EXPECT_FALSE(input.wasScreenTouchDown(x, y));
   EXPECT_TRUE(input.isScreenTouchHeld(x, y));
   EXPECT_EQ(x, 100);
+  input.liftWithoutTap();
+  input.clear();
+  // A long press reports the touch-down point, not the live one, and only for a contact within the tap slop.
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(120, 90);  // a nudge within 28 px
+  fakertos::advance(400);
+  ASSERT_TRUE(input.wasScreenLongPress(x, y)) << "500 ms down and still within the slop";
+  EXPECT_EQ(x, 100) << "the touch-down point";
+  EXPECT_EQ(y, 100);
+  input.clear();
+  input.liftTouch();
+  input.clear();
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(129, 100);  // 29 px: past the slop
+  fakertos::advance(400);
+  EXPECT_FALSE(input.wasScreenLongPress(x, y)) << "a contact that left the slop has no long press";
+  input.clear();
+  EXPECT_FALSE(input.wasScreenLongPress(x, y));
   input.liftWithoutTap();
   input.clear();
   // The same on the other axis.

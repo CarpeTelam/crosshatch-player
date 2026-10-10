@@ -714,10 +714,11 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
     gesture.heldMs = static_cast<int32_t>(gpio.lastTouchHeldMs());
     return gesture;
   }
-  // A release with no tap, long press or swipe (the contact slid past the tap slop and was no swipe): logged, never
-  // sent. Its points run from the first sample this loop saw down (isScreenTouchHeld returns the live point, so on a
-  // fast slide that can already be past the true touch-down) to the last one it saw; a contact it never saw down has
-  // none, and then lastTouchHeldMs is stale, so there is no hold either.
+  // A release with no tap, long press or swipe (on the device: held over 700 ms and moved 60 px or more net, went past
+  // 59 px and came back to under 60 px net, or was multi-finger): logged, never sent. Its points run from the first
+  // sample this loop saw down (isScreenTouchHeld returns the live point, so on a fast slide that can already be past
+  // the true touch-down) to the last one it saw; a contact it never saw down has none, and then lastTouchHeldMs is
+  // stale, so there is no hold either.
   if (snap.touchReleased) {
     gesture.kind = GameTouch::Kind::Ended;
     gesture.x = touchDownLatched ? touchFirstX : -1;

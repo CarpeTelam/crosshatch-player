@@ -15,7 +15,8 @@ converter has nothing to dither. By rule, with pixel (x, y) 0-based from the top
               (k = 0, 3, 6, 9) is 3 px wide, the rest 1 px. A vertical line spans y 5 to 59 and a horizontal one x 5 to
               59, so the four corners (4, 4), (60, 4), (4, 60) and (60, 60) stay white.
   black cells A 5 x 5 square in the grid cell (row r, column c) at x 6 + 6 * c, y 6 + 6 * r, for the nine (r, c) of
-              CELLS: one per row, per column and per 3 x 3 box.
+              CELLS: one per row, per column and per 3 x 3 box. The cells are drawn over the grid, so a cell next to a
+              box line (a 3 px line) merges with it; that is the owner's mock (option B), pixel for pixel.
 
 --check compares the committed file with what this writes (and fails if it is missing), in CI: the games check registers it
 as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckSudokuIcon). Writing the icon (no flag) is by hand,
@@ -79,7 +80,10 @@ def main(argv):
     path = args.out / NAME
     data = image()
     if args.check:
-        if not path.is_file() or path.read_bytes() != data:
+        if not path.is_file():
+            print(f'missing: {NAME}', file=sys.stderr)
+            return 1
+        if path.read_bytes() != data:
             print(f'differs: {NAME}', file=sys.stderr)
             return 1
         return 0
