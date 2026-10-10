@@ -16,7 +16,7 @@ local function add(list, x, y, extra)
 end
 
 -- A tap on cell c, pad key d, rail button i (1 NOTES, 2 ERASE, 3 UNDO, 4 MENU), or MENU row i (1 HINT, 2 FILL NOTES,
--- 3 CHECK, 4 SHOW REMAINING, 5 SHADE PEERS, 6 NOTES AS, 7 HOW TO PLAY, 8 CLOSE).
+-- 3 CHECK, 4 SHOW REMAINING, 5 SHADE PEERS, 6 NOTES AS, 7 TIMER, 8 HOW TO PLAY, 9 CLOSE).
 function taps.cell(list, c, extra)
   local x, y = layout.centre(layout.cell_rect(c))
   return add(list, x, y, extra)

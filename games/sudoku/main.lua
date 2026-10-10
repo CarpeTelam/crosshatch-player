@@ -13,7 +13,8 @@
 -- A move is a positional table ending in dt, the milliseconds since the move before it:
 --   { "w", cell, digit, dt } write (the digit the cell holds clears it), { "n", cell, digit, dt } toggle a note,
 --   { "e", cell, dt } erase, { "u", dt } undo, { "f", dt } fill notes, { "h", dt } HINT was used.
--- ui (never saved, so empty after a resume): sel, foc, pencil, panel, note, msg, check, the toggles, and the clock.
+-- ui (never saved, so empty after a resume): sel, foc, pencil, panel, note, msg, check, the toggles (TIMER among them),
+-- and the clock.
 -- The sandbox's 256 KB cap counts garbage as well as live data, so the heap is kept small: the bank is dealt from once
 -- and the help page is loaded when it is first drawn. The collector runs at this Lua's default pause; no setting
 -- here changes it (`collectgarbage("incremental", n)` takes no pause in this Lua, only `"param"` does).
@@ -156,7 +157,7 @@ local function fresh(ui, state)
   for k in pairs(ui) do ui[k] = nil end
   ui.sig, ui.last = sig, ch.time.ms()
   local s = read_store()
-  ui.rem, ui.shade, ui.dots = s.rem ~= false, s.shade ~= false, s.dots ~= false
+  ui.rem, ui.shade, ui.dots, ui.timer = s.rem ~= false, s.shade ~= false, s.dots ~= false, s.timer ~= false
 end
 
 -- The move to return: its dt is the time since the last one, an edit ends HINT's and CHECK's marks.
@@ -231,7 +232,7 @@ local function toggle(ui, key)
   ch.store.set(s)
 end
 
-local TOGGLES = { [4] = "rem", [5] = "shade", [6] = "dots" }
+local TOGGLES = { [4] = "rem", [5] = "shade", [6] = "dots", [7] = "timer" }
 
 -- A tap on MENU row i.
 local function menu_tap(state, ui, i)
@@ -244,7 +245,7 @@ local function menu_tap(state, ui, i)
   if i == 3 then return check(state, ui) end
   if TOGGLES[i] then
     toggle(ui, TOGGLES[i])
-  elseif i == 7 then
+  elseif i == 8 then
     ui.panel = "help"
   else
     ui.panel = nil
@@ -331,9 +332,27 @@ function game.input(state, seat, ui, ev)
   return nil
 end
 
+-- The play time the Solved screen would show now: the saved time plus the clock since the last move, capped.
+local function live(state, ui) return math.min(state.t + math.max(0, ch.time.ms() - ui.last), MAX_T) end
+
+-- The header shows whole minutes while the board is up and TIMER is on, redrawn when the minute changes: one timer is
+-- armed for the next minute boundary (at least 1,000 ms away, the least ch.timer.after takes), and only while the time
+-- is on screen, so a left text that hides it costs no redraw (every change of that text comes with an input, so a draw
+-- that arms again). Every other screen, TIMER off, a solved grid, and the last minute shown cancel it. Drawing arms it,
+-- so a resume (a new VM that draws first), a timer that fired, and every tap are covered in this one place;
+-- ch.time.ms leaves out a pause but ch.timer does not, so a timer that fires early finds the same minute and arms
+-- again for the boundary.
 function game.draw(state, seat, ui)
   fresh(ui, state)
-  require("view").draw(state, ui, game.status(state).over)
+  local over = game.status(state).over
+  local ms
+  if ui.timer and not over and ui.panel == nil then ms = live(state, ui) end
+  local shown = require("view").draw(state, ui, over, ms)
+  if shown and ms // 60000 < MAX_T // 60000 then
+    ch.timer.after(math.max(1000, (ms // 60000 + 1) * 60000 - ms))
+  else
+    ch.timer.cancel()
+  end
 end
 
 -- Exposed for the game's own checks, which call these without the engine around them.

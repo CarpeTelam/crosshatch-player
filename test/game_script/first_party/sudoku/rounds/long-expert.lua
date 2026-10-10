@@ -36,7 +36,7 @@ return {
     taps.menu_row(steps, 2, {})
     -- NOTES AS: DIGITS, then close the MENU.
     taps.menu_row(steps, 6, { move = false, shows = "NOTES AS: DIGITS" })
-    taps.menu(steps, 8, { move = false })
+    taps.menu(steps, 9, { move = false })
 
     -- The first digits, then CHECK: nothing wrong yet.
     local first = {}

@@ -21,7 +21,7 @@ return {
     assert(table.concat(page, " "):find(help.CREDIT, 1, true), "the credit is on the page, word for word")
     local box = require("layout").get().oy + require("board").H
     assert(bottom <= box - 40, "the page fits the box under the harness's metrics")
-    local steps = taps.menu_row({}, 7, { move = false, shows = credit })
+    local steps = taps.menu_row({}, 8, { move = false, shows = credit })
     taps.menu(steps, 1, { move = false, shows = "Sudoku - Easy" })
     return steps
   end,

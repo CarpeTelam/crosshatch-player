@@ -14,7 +14,7 @@ local layout = {}
 local TOP = 56 -- the header line's height
 local GAP = 8
 local KEY_MAX = 80
-layout.ROWS = 8 -- the MENU panel's rows
+layout.ROWS = 9 -- the MENU panel's rows
 layout.RAIL = 4 -- the rail's buttons
 layout.NOTE_W, layout.NOTE_H = 12, 16 -- a digit note's image (make_note_images.py checks them against its own size)
 local NOTE_PITCH = 16 -- the distance from one note image to the next across (down, note_tile gives it)
@@ -105,13 +105,13 @@ function layout.snap_rail(x, y)
   return board.snap(L, x, y, L.rail_x, L.pad_y, L.rail_w, layout.RAIL * L.bh, L.rail_w, L.bh)
 end
 
--- The rectangle of MENU panel row i (1..8).
+-- The rectangle of MENU panel row i (1..9).
 function layout.menu_rect(i)
   local L = layout.get()
   return L.row_x, L.row_y + (i - 1) * L.row_h, L.row_w, L.row_h
 end
 
--- The MENU panel row (1..8) under x, y, or nil.
+-- The MENU panel row (1..9) under x, y, or nil.
 function layout.menu_at(x, y)
   local L = layout.get()
   local i = (y - L.row_y) // L.row_h + 1

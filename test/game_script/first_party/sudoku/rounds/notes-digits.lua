@@ -10,7 +10,7 @@ return {
     drawn.frame(state, true)
     drawn.look(state)
     local steps = taps.menu_row({}, 6, { move = false, shows = "NOTES AS: DIGITS" })
-    taps.menu(steps, 8, { move = false })
+    taps.menu(steps, 9, { move = false })
     taps.rail(steps, 1, { move = false })
     taps.notes_three(steps, state)
     return steps
