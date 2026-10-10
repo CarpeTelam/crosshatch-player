@@ -13,6 +13,25 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   `gpio.wasSwipe` (which keeps the swipe's start point). `GameTouch::toEvent` maps them through `GameViewport` into
   canvas coordinates and drops any that start off the canvas, so the game's `input` receives `tap`, `long_press`, and
   `swipe` events in canvas pixels.
+- Each gesture read in a round in play (state Playing) is logged at `LOG_DBG` with the host's classification of it, one
+  line after `<id>: touch ` (`GameTouchLog`, a pure formatter the host tests pin; the formatter runs inside the macro's
+  arguments, so a build with `LOG_DBG` compiled out pays nothing, and there is no setting). "Sent" means `classify`
+  accepted it. A later drop keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch
+  that began ... before the hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in
+  builds with `LOG_LEVEL` 2 (the development envs of `platformio.ini` and the simulator); the release envs use 1 and
+  print none. A tap, long press or swipe prints its screen point(s) and, when the game
+  gets it, its canvas point: `tap screen (240,400) canvas (237,391) held 82 ms`, `long press screen (240,400) canvas
+  (237,391)`, `swipe left screen (400,400)->(150,420) canvas (397,391) held 120 ms`. `held` is the SDK's
+  `HalGPIO::lastTouchHeldMs()` as latched at release, so it can include the controller's release hold-over; a long
+  press has none (the SDK fires it at 500 ms and suppresses the lift, so the latched value is stale). A gesture the game
+  does not get says why after a colon: `tap screen (477,400) held 64 ms: not sent, off the canvas`, `swipe down screen
+  (240,5)->(240,300) held 90 ms: not sent, system edge swipe`. A contact that lifted with no tap, no long press and no
+  swipe (it slid past the tap slop, or was too slow or short for a swipe) is logged too and sends nothing: `contact ended
+  screen (10,20)->(80,30) held 640 ms: not sent, not a tap, long press or swipe`. The two points are the first sample
+  the loop saw to the last one it saw: `isScreenTouchHeld` returns the live point, so for
+  a fast slide the first can already be past the true touch-down. `screen unknown` (and no `held`, since the latched hold
+  is stale then) when the loop never saw the contact down. This is how a tap that did nothing is told from a
+  long press, a slide, or a tap off the canvas; it changes what no gesture does.
 - The system's edge gestures never reach the game. The Back gesture (a right swipe from the left 25 %) arrives as
   `Button::Back`; the Home gesture (an up swipe from the bottom 14 %, or the Home key) reaches `handleHomeGesture()`,
   which the match overrides; `ActivityManager` takes the light panel's down swipe first; and `GameTouch` drops every

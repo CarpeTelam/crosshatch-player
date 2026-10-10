@@ -190,6 +190,16 @@ add("the 27 note images are NOTE_W x NOTE_H", function()
   eq(seen, 27)
 end)
 
+-- The launcher icon -----------------------------------------------------------------------------------------------------
+
+-- The Games launcher picks the installed package's own icon for Sudoku's row (games/sudoku/icon.png, which the installer
+-- converts to icon.bmp; tools/make_icon.py writes it and its --check is a ctest of its own), not the Crosshatch mark and not
+-- a library icon. host.launcher_icon is GameRowIcon::choose over the installed game.
+add("the launcher draws the package's own icon", function()
+  local source = host.launcher_icon()
+  eq(source, "package", "the launcher's icon source")
+end)
+
 -- Setup ----------------------------------------------------------------------------------------------------------------
 
 add("setup: seeds, levels, symmetry sample", function()

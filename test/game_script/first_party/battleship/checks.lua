@@ -944,6 +944,15 @@ local function textFits()
   assert(ch.text_width("Player 1 fired 100 shots", "small") <= layout.W - 2 * (L.over[1].x - L.ox), "a shot count is too wide")
 end
 
+-- The Games launcher draws Battleship's row with the library's boat in the fill weight (the manifest's icon and
+-- icon_weight; the package ships no icon.png). host.launcher_icon is GameRowIcon::choose over the installed game.
+local function launcherIcon()
+  local source, name, weight = host.launcher_icon()
+  eq(source, "library", "the launcher's icon source")
+  eq(name, "boat", "the launcher's library icon")
+  eq(weight, "fill", "the launcher's icon weight")
+end
+
 return {
   { name = "layout at the X4 Pro's, the Sticky's, and a larger canvas", run = geometry },
   { name = "the Sticky's layout is the X4 Pro's 4 px right, and a smaller canvas gets the box at 0, 0", run = sameLayoutEverywhere },
@@ -979,4 +988,5 @@ return {
   { name = "waiting headlines and no question button on seat 0", run = waitingAndSeat0 },
   { name = "the HOW TO PLAY page fits the canvas", run = helpPageFits },
   { name = "header, prompt, and reason texts fit", run = textFits },
+  { name = "the launcher draws the boat in the fill weight", run = launcherIcon },
 }

@@ -24,6 +24,7 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 #include <set>
 
 class GfxRenderer;
@@ -128,9 +129,16 @@ class MappedInputManager {
   // event).
   static constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
   static constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
+  // A copy of freeink-sdk InputManager.h's private TOUCH_TAP_SLOP_PX (CopiedConstantsTest pins it): a contact that
+  // moves more than this in either axis from its touch-down point is no tap candidate any more.
+  static constexpr int TOUCH_TAP_SLOP_PX = 28;
   bool wasScreenTouchDown(int& x, int& y) const {
     sample();
-    if (contact.held && !contact.suppressed && millis() - contact.sinceMs >= TOUCH_DOWN_SELECT_DELAY_MS) {
+    // The device's wasScreenTouchDown reads InputManager::isTouchTapCandidate: the touch-down point (the first sample),
+    // and false once the contact has moved beyond the tap slop (touchMovedBeyondTapSlop, which stays set until the
+    // finger lifts). isScreenTouchHeld below is the live point.
+    if (contact.held && !contact.suppressed && !contact.beyondSlop &&
+        millis() - contact.sinceMs >= TOUCH_DOWN_SELECT_DELAY_MS) {
       x = contact.x;
       y = contact.y;
       return true;
@@ -146,8 +154,8 @@ class MappedInputManager {
     }
     if (contact.longPressThisFrame) {
       contact.suppressed = true;  // the real wasScreenLongPress consumes it: suppressTouchContact()
-      x = contact.x;
-      y = contact.y;
+      x = contact.liveX;
+      y = contact.liveY;
       return true;
     }
     return touch.longPress ? at(x, y) : false;
@@ -155,8 +163,8 @@ class MappedInputManager {
   bool isScreenTouchHeld(int& x, int& y) const {
     sample();
     if (contact.held && !contact.suppressed) {
-      x = contact.x;
-      y = contact.y;
+      x = contact.liveX;
+      y = contact.liveY;
       return true;
     }
     return touch.held ? at(x, y) : false;
@@ -272,8 +280,20 @@ class MappedInputManager {
   void holdTouch(const int x, const int y) {
     contact = Contact{};
     contact.held = true;
-    contact.x = x;
-    contact.y = y;
+    contact.x = contact.liveX = x;
+    contact.y = contact.liveY = y;
+  }
+  // The held finger slides to (x, y): isScreenTouchHeld reports it from now on. The touch-down point, the touch-down
+  // time and a tap's point are unchanged; once the finger is more than TOUCH_TAP_SLOP_PX from the touch-down point in
+  // either axis, wasScreenTouchDown reports nothing more for the contact, as the device's does. Nothing without a held
+  // contact.
+  void moveTouch(const int x, const int y) {
+    if (!contact.held) return;
+    contact.liveX = x;
+    contact.liveY = y;
+    if (std::abs(x - contact.x) > TOUCH_TAP_SLOP_PX || std::abs(y - contact.y) > TOUCH_TAP_SLOP_PX) {
+      contact.beyondSlop = true;
+    }
   }
   // The held finger lifts: the release this frame, and a tap at its touch-down point with its held time unless the
   // contact was suppressed; the release update sets the held time either way. A contact no update sampled (it came and
@@ -366,8 +386,11 @@ class MappedInputManager {
     bool suppressed = false;
     bool longPressFired = false;
     bool longPressThisFrame = false;  // the frame on which the long press is reported, on every read
-    int x = 0;
+    bool beyondSlop = false;          // moveTouch took the finger past TOUCH_TAP_SLOP_PX of its touch-down point
+    int x = 0;                        // the touch-down point (the first sample): a tap's point
     int y = 0;
+    int liveX = 0;  // the latest sample (moveTouch): what a read of the held contact reports
+    int liveY = 0;
     unsigned long sinceMs = 0;
   };
   mutable Contact contact;

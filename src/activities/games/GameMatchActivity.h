@@ -295,6 +295,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   uint32_t touchDownFrame = 0;
   uint32_t touchDownMs = 0;  // loop task: millis() at the same latch
   bool touchDownLatched = false;
+  // Loop task: the first sample of the contact this loop saw down (at the latch above; isScreenTouchHeld returns the
+  // live point, so for a fast slide it can be past the true touch-down) and the last one it saw, in logical screen
+  // pixels, for the touch log line of a contact that ends with no gesture. Meaningful only while touchDownLatched.
+  int touchFirstX = 0;
+  int touchFirstY = 0;
+  int touchLastX = 0;
+  int touchLastY = 0;
   // Loop task: readGesture saw a finger down on this pass (isScreenTouchHeld).
   bool contactHeld = false;
   // The last canvas push that changed the panel, written by render after displayBuffer returned (which it does once

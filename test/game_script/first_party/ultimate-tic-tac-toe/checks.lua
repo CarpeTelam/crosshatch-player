@@ -592,6 +592,13 @@ local function endFrameClearsTheDialog()
   end
 end
 
+-- The Games launcher draws this game's row with the default Crosshatch mark: the manifest names no icon and the package
+-- ships no icon.png. host.launcher_icon is GameRowIcon::choose over the installed game.
+local function launcherIcon()
+  local source = host.launcher_icon()
+  eq(source, "fallback", "the launcher's icon source")
+end
+
 return {
   { name = "board layout at the X4 Pro's, the Sticky's, and a larger canvas", run = geometry },
   { name = "a canvas under 466 x 788 is laid out from its corner and logged once", run = smallCanvas },
@@ -613,4 +620,5 @@ return {
   { name = "the help page draws text only", run = helpPageHasNoBoard },
   { name = "a frame is cleared white, its grid and text and icons are black", run = frameInkIsBlackOnWhite },
   { name = "the end frame's text is clear of the host's end-of-round dialog", run = endFrameClearsTheDialog },
+  { name = "the launcher draws the default Crosshatch mark", run = launcherIcon },
 }

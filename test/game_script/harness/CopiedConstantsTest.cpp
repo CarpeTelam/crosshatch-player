@@ -9,12 +9,13 @@
 
 #include "activities/games/GameMatchActivity.h"
 
-// The screen input double (screen_stubs/MappedInputManager.h) copies two device constants: the 90 ms a touch must be
-// held before wasScreenTouchDown reports it (src/MappedInputManager.cpp, file-local TOUCH_DOWN_SELECT_DELAY_MS) and the
-// 500 ms a contact must be held for a long press (freeink-sdk's InputManager.h, private TOUCH_LONG_PRESS_MS). These
-// tests read each device source as text and fail when either value, or its definition, moves away from the double's,
-// so a retune of the device cannot leave the host tests passing against the old number (epic-install-and-launcher
-// retro AI-4, R13). The reader of constexpr definitions is below.
+// The screen input double (screen_stubs/MappedInputManager.h) copies three device constants: the 90 ms a touch must be
+// held before wasScreenTouchDown reports it (src/MappedInputManager.cpp, file-local TOUCH_DOWN_SELECT_DELAY_MS), the
+// 500 ms a contact must be held for a long press (freeink-sdk's InputManager.h, private TOUCH_LONG_PRESS_MS) and the 28
+// px a contact may move and still be a tap candidate (the same header's private TOUCH_TAP_SLOP_PX). These tests read
+// each device source as text and fail when any value, or its definition, moves away from the double's, so a retune of
+// the device cannot leave the host tests passing against the old number (epic-install-and-launcher retro AI-4, R13).
+// The reader of constexpr definitions is below.
 
 namespace {
 
@@ -94,6 +95,14 @@ TEST(CopiedConstantsTest, TheDoublesLongPressIsTheDevicesTouchLongPress) {
   EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_LONG_PRESS_MS"),
             static_cast<long long>(MappedInputManager::TOUCH_LONG_PRESS_MS))
       << explain("TOUCH_LONG_PRESS_MS", INPUT_MANAGER_HEADER_PATH);
+}
+
+// The double's tap slop is the device's: a contact that moves more than this in either axis from its touch-down point
+// is no tap candidate (wasScreenTouchDown reports nothing more for it).
+TEST(CopiedConstantsTest, TheDoublesTapSlopIsTheDevicesTouchTapSlop) {
+  EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_TAP_SLOP_PX"),
+            static_cast<long long>(MappedInputManager::TOUCH_TAP_SLOP_PX))
+      << explain("TOUCH_TAP_SLOP_PX", INPUT_MANAGER_HEADER_PATH);
 }
 
 // The reader itself: it finds the one definition, and refuses none or two.

@@ -23,10 +23,11 @@
 //     budget fault is a Binding fault in CallGuard's terms and reads "<chunk>:<line>: instruction budget exceeded", as
 //     the device's does; the VM result is a Fault either way;
 //   - a larger Lua heap (the rig's region and cap, host::CHECK_LUA_HEAP_BYTES);
-//   - the Lua global `host` (HostBounds.h's numbers as dialog_top, dialog_bottom, banner_top, canvas_h, and
-//     image_size(name) -> w, h over the installed images) and `within_device_budget(f, ...)`, which runs `f` and raises
-//     when it spent the device's 2,000,000 instructions or more, counted on the same hook from a fresh interval, so a
-//     check can still prove that a game call fits the device's budget;
+//   - the Lua global `host` (HostBounds.h's numbers as dialog_top, dialog_bottom, banner_top, canvas_h,
+//     image_size(name) -> w, h over the installed images, and launcher_icon() -> source, name, weight: the Games
+//     launcher's pick for the installed game, set by the caller with setLauncherIcon) and `within_device_budget(f,
+//     ...)`, which runs `f` and raises when it spent the device's 2,000,000 instructions or more, counted on the same
+//     hook from a fresh interval, so a check can still prove that a game call fits the device's budget;
 //   - CallGuard's throw hook records a memory error only while CallGuard::hook is installed, which a check VM's is not,
 //   so
 //     a check VM watches the arena itself: it takes ArenaAllocator::luaCapRefusals() + luaRegionRefusals() when a call
@@ -49,6 +50,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "GamesCheckRig.h"
@@ -68,6 +70,15 @@ struct VmResult {
 
   bool ok() const { return kind == Kind::Ok; }
   bool fault() const { return kind == Kind::Fault; }
+};
+
+// Where the Games launcher draws a game's row icon from (GameRowIcon::choose over the installed game):
+// `host.launcher_icon()` answers it as "package", as "library", name, "fill" or "regular", or as "fallback".
+struct LauncherIcon {
+  enum class Source : uint8_t { Unset, Package, Library, Fallback };
+  Source source = Source::Unset;
+  std::string name;  // the library icon, for Library
+  bool fill = false;
 };
 
 class ScriptVm {
@@ -105,6 +116,9 @@ class ScriptVm {
   // The same with one argument, the state `snapshot` encodes, decoded into a table (pushSnapshot).
   VmResult callWithState(int functionRef, std::span<const uint8_t> snapshot, int& resultRef);
 
+  // What `host.launcher_icon()` answers; a check VM raises from it until this is called.
+  void setLauncherIcon(LauncherIcon pick) { launcherIcon_ = std::move(pick); }
+
   // Pushes the value kept under `ref`, calls `body` with it on top of the stack, and restores the stack. `body` runs
   // outside any protected call, so it must not raise: use lua_next, lua_type, lua_to* on values already typed, and
   // never a call that allocates or runs a metamethod (lua_getfield, lua_pushstring, lua_tolstring on a number).
@@ -123,6 +137,7 @@ class ScriptVm {
   static void countHook(lua_State* L, lua_Debug* ar);
   static int withinDeviceBudget(lua_State* L);
   static int imageSize(lua_State* L);
+  static int launcherIcon(lua_State* L);
   // ArenaAllocator refusals (cap or region) since the call was armed.
   bool refusedSinceArm() const;
   static void openHost(lua_State* L);
@@ -139,6 +154,7 @@ class ScriptVm {
   uint64_t spent = 0;
   size_t refusalsAtArm = 0;
   char budgetText[GameScript::CallGuard::MESSAGE_CAPACITY] = {};
+  LauncherIcon launcherIcon_;
   GameScript::GameTimer pendingTimer;
   GameScript::BindingContext bindings;
   GameScript::CallGuard guard;

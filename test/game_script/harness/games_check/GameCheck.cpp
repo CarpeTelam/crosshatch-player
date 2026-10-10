@@ -4,6 +4,7 @@
 #include <GameHostCaps.h>
 #include <GamePackageInstaller.h>
 #include <GameRegistry.h>
+#include <GameRowIcon.h>
 #include <HalMemoryStub.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -81,6 +82,9 @@ struct Installed {
   std::unique_ptr<MatchStore> store;
   std::unique_ptr<GameAssets> assets;
   std::string packerHash;
+  // The Games launcher's pick for the installed game (GameRowIcon::choose, as GamesLauncherActivity::choiceOf asks it);
+  // its name points into entry.manifest.
+  GameRowIcon::Choice launcherPick;
 };
 
 // Packs nothing: reads what pack_games.py wrote for `id`, installs it on an empty fake card, and loads it. False, with
@@ -130,6 +134,25 @@ bool installAndLoad(const Roots& roots, const std::string& id, Installed& out, R
     return false;
   }
   out.check = out.entry.manifest.check(gameHostCaps());
+  // The launcher reads the package's icon.bmp when there is one, and takes the manifest's library icon or the
+  // fallback mark when it cannot.
+  bool packageIconRead = false;
+  if (GameRowIcon::hasPackageIcon(id.c_str())) {
+    auto bits = makeUniqueNoThrow<uint8_t[]>(GameRowIcon::BYTES);
+    if (!bits) {
+      report.fail("out of memory");
+      return false;
+    }
+    packageIconRead = GameRowIcon::readPackageIcon(id.c_str(), bits.get());
+    if (!packageIconRead) {
+      // The launcher would fall back to another icon; a package that ships an icon.bmp it cannot read is the finding.
+      report.fail("the installed " + id +
+                  " has an icon.bmp the launcher cannot read (it is not a usable 64 x 64 icon)");
+      return false;
+    }
+  }
+  out.launcherPick = GameRowIcon::choose(packageIconRead, out.entry.manifest.icon,
+                                         out.entry.manifest.iconWeight == GameCore::Manifest::ICON_FILL);
   if (!out.store->allocate(id.c_str(), 0)) {
     report.fail("out of memory");
     return false;
@@ -346,6 +369,21 @@ Report runGameChecks(const Roots& roots, const std::string& id) {
     return report;
   }
   ScriptVm& vm = owned->vm();
+  LauncherIcon launcher;
+  switch (installed->launcherPick.source) {
+    case GameRowIcon::Source::PackageBmp:
+      launcher.source = LauncherIcon::Source::Package;
+      break;
+    case GameRowIcon::Source::Library:
+      launcher.source = LauncherIcon::Source::Library;
+      launcher.name = installed->launcherPick.name;
+      launcher.fill = installed->launcherPick.fill;
+      break;
+    case GameRowIcon::Source::Fallback:
+      launcher.source = LauncherIcon::Source::Fallback;
+      break;
+  }
+  vm.setLauncherIcon(std::move(launcher));
   int list = ScriptVm::NO_REF;
   const VmResult loaded = vm.requireModule("checks", list);
   if (!loaded.ok()) {

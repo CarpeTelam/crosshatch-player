@@ -1,0 +1,7 @@
+[25052] [DBG] [GAME] ultimate-tic-tac-toe: touch tap screen (400,300) canvas (393,291) held 68 ms
+[26578] [DBG] [GAME] ultimate-tic-tac-toe: touch long press screen (250,500) canvas (243,491)
+[26884] [DBG] [GAME] ultimate-tic-tac-toe: touch contact ended screen unknown: not sent, not a tap, long press or swipe
+[28132] [DBG] [GAME] ultimate-tic-tac-toe: touch contact ended screen (305,401)->(340,420) held 215 ms: not sent, not a tap, long press or swipe
+[53270] [DBG] [GAME] ultimate-tic-tac-toe: touch tap screen (477,400) held 68 ms: not sent, off the canvas
+[54380] [DBG] [GAME] ultimate-tic-tac-toe: touch tap screen (3,400) held 80 ms: not sent, off the canvas
+[55642] [DBG] [GAME] ultimate-tic-tac-toe: touch swipe left screen (400,400)->(200,410) canvas (393,391) held 239 ms

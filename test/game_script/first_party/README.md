@@ -113,11 +113,20 @@ fails by raising; the failure names the check and the rest still run. A guard fa
 frame limit) fails that check and stops the game's remaining checks, which the failure counts. A missing or empty list fails, and
 so does no `checks.lua` at all: every game this check plays is a first-party game with its own checks.
 
-A check VM has two globals a game's sandbox lacks: `host`, the host's numbers (`host.dialog_top`, `host.dialog_bottom`,
-`host.banner_top`, `host.canvas_h`, in canvas pixels, from `HostBounds.h`) and `host.image_size(name) -> w, h` over the
-installed images, and `within_device_budget(f, ...)`, which runs `f` and returns its results, and raises when it spent the
-device's 2,000,000 instructions or more. A check that measures what a game call costs calls it through that: a check VM's own
-budget is far above the device's.
+A check VM has two globals a game's sandbox lacks: `host`, the host's numbers and views of the installed game
+(`host.dialog_top`, `host.dialog_bottom`, `host.banner_top`, `host.canvas_h`, in canvas pixels, from `HostBounds.h`;
+`host.image_size(name) -> w, h` over the installed images; `host.launcher_icon() -> source, name, weight`, below), and
+`within_device_budget(f, ...)`, which runs `f` and returns its results, and raises when it spent the device's 2,000,000
+instructions or more. A check that measures what a game call costs calls it through that: a check VM's own budget is far
+above the device's.
+
+`host.launcher_icon()` answers which icon the Games launcher draws for the installed game's row. It is the real
+`GameRowIcon::choose` over the game as the real installer wrote it to the fake card, not a double: the package's
+`icon.bmp` when the package has an `icon.png`, else the manifest's `icon` in its `icon_weight`, else the Crosshatch mark.
+It returns `"package"`; or `"library", name, "fill"` (or `"regular"`); or `"fallback"`. The check names no game (R2), so
+each game's `checks.lua` states the pick it expects: Battleship's is `"library", "boat", "fill"`, Sudoku's is
+`"package"` and Ultimate Tic-Tac-Toe's is the default mark (`"fallback"`). `GamesCheckEngineTest` pins each of the four
+picks over scratch games.
 
 ## Running it
 
@@ -141,6 +150,10 @@ ctest --test-dir build/test -L games-check --output-on-failure
   `BoardInsetsTest`, which compiles the SDK's `BoardConfig.h` (through `harness/games_check/board_stubs/`, which stand in for
   the Arduino core) and pins the two canvases' bezel insets, and that both canvas origins have an even x + y, to the SDK's own
   profiles.
+- `GamesCheckSudokuIcon` is a plain ctest, no executable: Sudoku's `tools/make_icon.py --check`, which compares the committed
+  `games/sudoku/icon.png` (the launcher icon, a 64 x 64 1-bit grid) with what the stdlib-only generator writes, and exits 1
+  when it differs or is missing. It runs in the same job, exists while the tool does, and is `make_note_images.py`'s sibling;
+  which icon the launcher then picks is `sudoku/checks.lua`'s, through `host.launcher_icon`.
 - `GamesCheckFlowTest` pins the hidden flow of the player to `GameVM`'s.
 - `GamesCheckNoteImages` is a plain ctest, no executable: Sudoku's `tools/make_note_images.py --check`, which compares the 27
   committed note PNGs with what the tool generates (and `layout.lua`'s `NOTE_W` and `NOTE_H`). It runs in the same job, with no
