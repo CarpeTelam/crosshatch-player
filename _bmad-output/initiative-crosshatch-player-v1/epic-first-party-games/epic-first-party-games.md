@@ -150,3 +150,7 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - Gaps that do not snap: Ultimate tic-tac-toe's top (120 px) and bottom (218 px), Sudoku's grid top (56 px), and Battleship's top (52 px) and button-row bottom (128 px). Taps on headers and message lines stay dead.
   - Corners off every target's row and column do not snap, and no existing round changes outcome.
   - A snapped Battleship placement tap goes through the same shift-back rule as an in-board tap. Battleship's button-row targets snap sideways into their margins, as Sudoku's pad does.
+- Result (2026-10-10, entry 5's third device run, entry-14 firmware and entry-15 packages):
+  - All three packages installed. The launcher shows Battleship's filled boat and Sudoku's grid icon.
+  - Ultimate tic-tac-toe: 19 taps, none ignored. Twelve were on the right column, at canvas x 438 to 453. No tap landed in the new margin strip (x 458 to 465), so the snap is not yet seen on the device.
+  - Still open on the device: Sudoku's pause. Both pauses ended in Leave, not Resume. Also still open: B6, a sleep from Battleship's Over. The match was left mid-round.
