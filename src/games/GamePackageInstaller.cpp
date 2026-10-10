@@ -80,6 +80,7 @@ struct Job {
   Member members[GameCore::PACKAGE_MEMBERS];
   size_t memberCount = 0;
   char inboxPath[GamePaths::INBOX_PATH_BYTES];
+  uint32_t fileBytes = 0;    // the inbox file's size, read by listMembers, for the log line of a file that is no zip
   bool renameTried = false;  // commit reached the folder rename: /.games-tmp/<id> may share clusters with /.games/<id>
   char tmpDir[DIR_BYTES];    // /.games-tmp/<id> once this install has made it, else empty
   char finalDir[DIR_BYTES];  // /.games/<id>
@@ -495,7 +496,9 @@ struct DirectoryScan {
   HalFile file;
   if (!Storage.openFileForRead("GAME", job.inboxPath, file)) return Error::SdCard;
   const size_t fileBytes = file.size();
+  if (fileBytes == 0) return Error::Empty;
   if (fileBytes > GameCore::PACKAGE_BYTES) return Error::PackageTooBig;
+  job.fileBytes = static_cast<uint32_t>(fileBytes);  // under PACKAGE_BYTES
 
   job.memberCount = 0;
   DirectoryScan scan;
@@ -887,6 +890,8 @@ const char* describe(const Error error) {
       return "out of memory";
     case Error::NotAPackage:
       return "not a readable zip";
+    case Error::Empty:
+      return "the file is empty (0 bytes)";
     case Error::BadManifest:
       return "manifest.json missing or invalid";
     case Error::BadMember:
@@ -970,7 +975,13 @@ Report installAll() {
         ++judged;
         continue;
       }
-      LOG_ERR("GAME", "%s not installed: %s", names[i].text, describe(error));
+      if (error == Error::NotAPackage) {
+        // The size shows a truncated copy; the prefix is what device-run packets search for.
+        LOG_ERR("GAME", "%s not installed: %s (%lu bytes)", names[i].text, describe(error),
+                static_cast<unsigned long>(job->fileBytes));
+      } else {
+        LOG_ERR("GAME", "%s not installed: %s", names[i].text, describe(error));
+      }
       // Until the folder rename has been tried, /.games-tmp/<id> is ours alone; after it, mayRemoveTmp decides.
       if (job->tmpDir[0] != '\0' && Storage.exists(job->tmpDir) &&
           (!job->renameTried || mayRemoveTmp(job->manifest.id))) {
