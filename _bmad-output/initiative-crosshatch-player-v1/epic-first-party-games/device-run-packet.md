@@ -246,29 +246,31 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Stale since entry 14 changed `games/sudoku` and `games/battleship`; re-running on the epic head after `4a87ed90`.** The record below is the last run, on the head after entry 13. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Passed, 2026-10-10, on the head that carries entry 14's packages and firmware.** The run triggers `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact. It creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
 History:
-- Run 37291529964 on `daedbeab` failed at "Pack the games" on a bug in the release script's packer path, which entry 8.12 fixed (`54c2a4ea`).
-- Run 37294652408 on `42b084bb` passed, and its packages matched the first `sudoku.chgame` (`3c657cfcb2e461dc`) byte for byte.
-- The cross-story fixes (`e8-xr`, merged as `14428a56`) then changed `games/sudoku/view.lua` (the end screen), so the dry run ran again: run 37302020967 on `305fd677` passed with the packages below.
-- Entry 13 (`0c149819`) then changed firmware code but no game, so it ran once more on the head below.
+- Run 37291529964 on `daedbeab` failed at "Pack the games", on a bug in the release script's packer path. Entry 8.12 fixed it (`54c2a4ea`).
+- Run 37294652408 on `42b084bb` passed.
+- Run 37302020967 on `305fd677` passed, after the cross-story fixes changed Sudoku's end screen.
+- Run 38008690375 on `b5b379ff` passed, after entry 13 changed firmware code.
+- Entry 14 (`4a87ed90`) changed `games/sudoku` and `games/battleship` (the launcher icons) and firmware code, so it ran once more, on the head below.
 
-- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38008690375 (artifact `fork-release`, kept 7 days)
-- Commit the run built: `b5b379ff`, the epic head after entry 13. It is valid while `games/**` and `scripts/pack_game.py` stay as they are there; firmware changes after it need a new dry run only for the release firmware's build check.
-- Date and conclusion: 2026-10-10, 00:21 to 00:42 UTC, success.
-  - "Build and check the release envs" built and checked `crosspoint-1.6.5-ch.4-x4pro.bin` (5,894,032 B) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,783,152 B); both "passed".
+The current run:
+- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38017416791 (artifact `fork-release`, kept 7 days).
+- Commit the run built: `0894d8e3`, the epic head after entry 14. The record stays valid while `games/**` and `scripts/pack_game.py` stay as they are there.
+- Date and conclusion: 2026-10-10, 02:33 to 02:52 UTC, success.
+  - "Build and check the release envs" built and checked `crosspoint-1.6.5-ch.4-x4pro.bin` (5,894,112 B) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,783,312 B). Both passed.
   - "Pack the games" packed the three games.
   - "Tag and publish" was skipped, as a dry run does.
-  - Those release `.bin` files are the `gh_release` envs, not the `x4pro` build this packet flashes. Their size and hash differ from the firmware above by design.
+  - The release `.bin` files come from the `gh_release` envs, not the `x4pro` build this packet flashes. Their size and hash differ from the firmware above by design.
 
-The release's package table (`| Package | Package hash | SHA-256 |`) against this packet's. The package hash must be equal; the SHA-256 of the file is equal only when the runner's zlib deflates the same bytes as this machine's.
+The table below sets the release's package table (`| Package | Package hash | SHA-256 |`) against this packet's. The package hashes must be equal. The file SHA-256 values are equal only when the runner's zlib deflates the same bytes as this machine's.
 
 | Package | This packet's package hash | The dry run's package hash | This packet's SHA-256 | The dry run's SHA-256 |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `e35f23efd835450d` | `e35f23efd835450d` | `3e72bd57f74772d472220b7a5e32d404129be593fee515ffcdd6deed62ed435d` | `3e72bd57f74772d472220b7a5e32d404129be593fee515ffcdd6deed62ed435d` |
+| `sudoku.chgame` | `0d3f38fe297ddb6e` | `0d3f38fe297ddb6e` | `b3cd08528b8a495ced84a7fada1148fe81b1a42d78da8b13ee241b0b69f3f767` | `b3cd08528b8a495ced84a7fada1148fe81b1a42d78da8b13ee241b0b69f3f767` |
 | `ultimate-tic-tac-toe.chgame` | `a7e63b542144938b` | `a7e63b542144938b` | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` |
-| `battleship.chgame` | `10a07de10cb14489` | `10a07de10cb14489` | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` | `45c461bde92cebcb68d8b0bcf9601665312bd2c7fd3d9e7598e9d67756ffdb03` |
+| `battleship.chgame` | `a0de5525493b90da` | `a0de5525493b90da` | `77136f87cd017ffedfd27e793251b8aa50cf35c8e3c895613775c7252c8a5e50` | `77136f87cd017ffedfd27e793251b8aa50cf35c8e3c895613775c7252c8a5e50` |
 
 All three package hashes and all three file SHA-256 values are equal: the runner packed byte-identical files.
 
