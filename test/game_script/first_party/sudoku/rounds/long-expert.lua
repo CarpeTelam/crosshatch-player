@@ -1,9 +1,9 @@
--- One long Expert round that mixes everything that costs the played game heap, in the order that costs it most: HINT first
--- (it loads the solver, which took the played VM to about 176 to 192 KB of its 256 KB at the first HINT), then FILL NOTES,
--- digit notes (NOTES AS: DIGITS), CHECK with a wrong digit and without, and the rest of the grid written cell by cell, ending
--- on the end screen. It is played at the device's Lua heap cap, and then again with the cap 16 KiB lower (RoundPlayer.h,
--- HEAP_MARGIN_BYTES): if HINT, CHECK, FILL NOTES, the notes or the writes grow the played game's heap past that margin,
--- this round is the one that fails, naming the margin and the cap tried.
+-- One long Expert round that mixes everything that costs the played game heap, in the order that costs it most: HINT
+-- first (it loads the solver, which took the played VM to about 176 to 192 KB of its 256 KB at the first HINT), then
+-- FILL NOTES as dots, digit notes (NOTES AS: DIGITS), CHECK with a wrong digit and without, and the rest of the grid
+-- written cell by cell, ending on the end screen. It is played at the device's Lua heap cap, and then again with the
+-- cap 16 KiB lower (RoundPlayer.h, HEAP_MARGIN_BYTES): if HINT, CHECK, FILL NOTES, the notes or the writes grow the
+-- played game's heap past that margin, this round is the one that fails, naming the margin and the cap tried.
 local taps = require("taps")
 local grid = require("grid")
 local solver = require("solver")
@@ -32,8 +32,9 @@ return {
     -- HINT: the first thing, with the solver not yet loaded; its tap on the cell it selected lets go of it.
     local steps = taps.menu_row({}, 1, {})
     taps.cell(steps, cell, { move = false })
-    -- FILL NOTES: every candidate of every empty cell, as marks.
-    taps.menu_row(steps, 2, {})
+    -- NOTES AS: DOTS (the default is digits), then FILL NOTES: every candidate of every empty cell, as dots.
+    taps.menu_row(steps, 6, { move = false, shows = "NOTES AS: DOTS" })
+    taps.menu(steps, 2, {})
     -- NOTES AS: DIGITS, then close the MENU.
     taps.menu_row(steps, 6, { move = false, shows = "NOTES AS: DIGITS" })
     taps.menu(steps, 9, { move = false })
