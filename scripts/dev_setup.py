@@ -34,9 +34,13 @@ is already done, so a second run only checks. The steps, in order:
 
 A failed step is reported and the remaining steps still run.
 
+run() and run_checked() keep a command's stdout and stderr apart (the detached --warm builds' logs stay merged). A
+value parsed from a command (a path, a version, a package status) is read from its stdout only: uv prints a warning on
+stderr in cloud sessions (`UV_NATIVE_TLS` is deprecated), and that text must never become part of a path.
+
 Exit 0: every step passed or was skipped. Exit 2: at least one step failed (each is printed as `error: <step>: ...`,
-with the tail of the failing command's output), or a warm build could not be started. There is no exit 1: this script
-checks no rule.
+with the tail of the failing command's stdout, then its stderr), or a warm build could not be started. There is no
+exit 1: this script checks no rule.
 
 Usage: python3 scripts/dev_setup.py [--warm] [--root <repository root>] [--proxy-ca <file>]
        python3 scripts/dev_setup_test.py                     # the script's own tests; standard library only
@@ -145,31 +149,35 @@ def say(step, message):
     print(f'{step}: {message}', flush=True)
 
 
-def tail(text):
-    lines = text.strip().splitlines()[-OUTPUT_TAIL_LINES:]
+def tail(*texts):
+    """The last OUTPUT_TAIL_LINES lines of the non-empty texts joined in order (stdout, then stderr), indented."""
+    lines = '\n'.join(text.strip() for text in texts if text.strip()).splitlines()[-OUTPUT_TAIL_LINES:]
     return '\n'.join(f'    {line}' for line in lines)
 
 
 def run(command, cwd=None, env=None):
-    """Run command, capturing stdout and stderr together; return (exit code, output). A missing tool is a SetupError.
+    """Run command, capturing stdout and stderr on separate pipes; return (exit code, stdout, stderr). A missing tool
+    is a SetupError. A caller that parses the output reads stdout only: stderr carries warnings (uv's UV_NATIVE_TLS
+    deprecation), which is not part of the value.
 
     stdin is /dev/null: the hook's stdin carries its JSON input, which no command may read. env adds to os.environ.
     """
     try:
         proc = subprocess.run(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, errors='replace',
+                              stderr=subprocess.PIPE, text=True, errors='replace',
                               env=None if env is None else {**os.environ, **env})
     except OSError as exc:
         raise SetupError(f'cannot run {command[0]}: {exc}')
-    return proc.returncode, proc.stdout
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 def run_checked(command, cwd=None, env=None):
-    """run(), with a non-zero exit code a SetupError carrying the command and the tail of its output."""
-    code, output = run(command, cwd=cwd, env=env)
+    """run(), returning stdout; a non-zero exit code is a SetupError carrying the command and the tail of its stdout,
+    then its stderr."""
+    code, stdout, stderr = run(command, cwd=cwd, env=env)
     if code != 0:
-        raise SetupError(f'{shlex.join(str(part) for part in command)} failed ({code}):\n{tail(output)}')
-    return output
+        raise SetupError(f'{shlex.join(str(part) for part in command)} failed ({code}):\n{tail(stdout, stderr)}')
+    return stdout
 
 
 def require_uv():
@@ -187,9 +195,9 @@ def find_pio():
     """The uv tool's pio when uv knows it, else pio on PATH, else None."""
     uv = shutil.which('uv')
     if uv is not None:
-        code, output = run([uv, 'tool', 'dir', '--bin'])
+        code, stdout, _ = run([uv, 'tool', 'dir', '--bin'])
         if code == 0:
-            candidate = pathlib.Path(output.strip()) / 'pio'
+            candidate = pathlib.Path(stdout.strip()) / 'pio'
             if candidate.is_file():
                 return str(candidate)
     return shutil.which('pio')
@@ -304,16 +312,16 @@ class Setup:
         # Under the build lock: an install beside a running build can leave a toolchain half copied.
         with build_lock():
             say(step, f'running {shlex.join(command[1:])}')
-            code, output = run(command, cwd=self.root)
+            code, stdout, stderr = run(command, cwd=self.root)
             if code != 0:
                 if not self.penv_python.is_file():
-                    raise SetupError(f'pio pkg install failed ({code}) and left no penv:\n{tail(output)}')
+                    raise SetupError(f'pio pkg install failed ({code}) and left no penv:\n{tail(stdout, stderr)}')
                 say(step, f'pio pkg install failed ({code}); patching the penv and retrying once')
                 self.prepare_penv(step)
                 prepared = True
-                code, output = run(command, cwd=self.root)
+                code, stdout, stderr = run(command, cwd=self.root)
                 if code != 0:
-                    raise SetupError(f'pio pkg install failed again ({code}):\n{tail(output)}')
+                    raise SetupError(f'pio pkg install failed again ({code}):\n{tail(stdout, stderr)}')
         if not prepared:
             self.prepare_penv(step)
         try:
@@ -334,8 +342,8 @@ class Setup:
         """Give ~/.platformio/penv the proxy CA and the pioarduino pin."""
         if self.proxy_ca.is_file():
             append_proxy_ca(step, self.proxy_ca, certifi_bundle(self.penv_python))
-        code, output = run([str(self.penv_python), '-c', PIOARDUINO_VERSION_QUERY])
-        if code == 0 and output.strip() == PIOARDUINO_VERSION:
+        code, stdout, _ = run([str(self.penv_python), '-c', PIOARDUINO_VERSION_QUERY])
+        if code == 0 and stdout.strip() == PIOARDUINO_VERSION:
             say(step, f'ok: the penv has pioarduino {PIOARDUINO_VERSION}')
             return
         uv = require_uv()
@@ -371,15 +379,15 @@ class Setup:
             return
         install = ['apt-get', 'install', '-y', '--no-install-recommends', *missing]
         say(step, f'installing {" ".join(missing)}')
-        code, _ = run(install, env=APT_ENV)
+        code, _, _ = run(install, env=APT_ENV)
         if code != 0:  # a fresh image has no package lists yet
             run_checked(['apt-get', 'update'], env=APT_ENV)
             run_checked(install, env=APT_ENV)
 
     @staticmethod
     def package_installed(package):
-        code, output = run(['dpkg-query', '-W', '-f=${Status}', package])
-        return code == 0 and output.strip() == 'install ok installed'
+        code, stdout, _ = run(['dpkg-query', '-W', '-f=${Status}', package])
+        return code == 0 and stdout.strip() == 'install ok installed'
 
     # 7
     def warm(self, step):
