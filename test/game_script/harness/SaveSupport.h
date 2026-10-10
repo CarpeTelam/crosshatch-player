@@ -28,9 +28,12 @@ inline Bytes resumeBytes(const Bytes& snapshot, const uint16_t ver = 7,
                          const uint8_t (&hash)[GameSaveStore::PACKAGE_HASH_BYTES] = HASH_A, const uint8_t mode = 0,
                          const uint8_t seats = 1, const char* magic = "CHRS", const uint8_t fileVersion = 1,
                          const uint8_t codecVersion = 1) {
-  Bytes out(magic, magic + 4);
-  out.push_back(fileVersion);
-  out.push_back(codecVersion);
+  Bytes out = {static_cast<uint8_t>(magic[0]),
+               static_cast<uint8_t>(magic[1]),
+               static_cast<uint8_t>(magic[2]),
+               static_cast<uint8_t>(magic[3]),
+               fileVersion,
+               codecVersion};
   out.insert(out.end(), hash, hash + GameSaveStore::PACKAGE_HASH_BYTES);
   out.push_back(mode);
   out.push_back(seats);

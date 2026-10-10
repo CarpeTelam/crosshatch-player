@@ -61,7 +61,7 @@ Implemented by one subagent from this plan. Beyond its wording: `[this] { dropMa
 
 ## Review Triage Log
 
-All four lenses ran as context-free foreground subagents (blind-hunter, edge-case-hunter, verification-gap, intent-alignment). Counts: high 0, medium 0, low 1 (patched), false 0, rejected-low 9.
+All four lenses ran as context-free foreground subagents (blind-hunter, edge-case-hunter, verification-gap, intent-alignment). Counts: high 0, medium 0, low 2 (patched; the second from the orchestrator's review), false 0, rejected-low 9.
 
 | Finding | Verdict | Evidence / action |
 |---|---|---|
@@ -75,6 +75,7 @@ All four lenses ran as context-free foreground subagents (blind-hunter, edge-cas
 | Blind and edge: `magic` read as 4 bytes unchecked | low, rejected | Unchanged from the old `header()`; every call passes a literal of 4. |
 | Blind: header includes all of `GameSaveStore.h` for a constant | low, rejected | The bytes are still hand-written; the include only supplies the size. |
 | Edge: plan says six ModePicker calls, diff has seven | low, rejected | The fix edits this plan; recorded in Implementation Notes instead. |
+| Orchestrator: `resumeBytes` built `out` with `Bytes out(magic, magic + 4)`, which adds a `-Wstringop-overflow=` warning ("writing 8 bytes into a region of size between 2 and 4") the old copies did not | low, patch (follow-up commit) | Real: the rebuild showed it from `SaveSupport.h`. `out` now starts from an initializer list of the six header bytes; bytes unchanged. |
 | Verification-gap | none filed | Its other findings (ModePicker `dropMatch`, `.pkg` text in GameMatchTest, GameRegistryTest, GamePackageInstallerTest) are plan choices or unnamed helpers, with the reasons in Design Notes. |
 | Intent-alignment | descriptive | Diff implements the literal reading (one definition each, reasons recorded for those that stay); `tapCell` and ModePicker's `dropMatch` stay, with the reason in Design Notes. |
 
@@ -102,6 +103,7 @@ Both stay, with the reason:
 - Full `ctest -j4`: 1861 of 1861 passed before and after.
 - Touched suites (636 tests, regex over Match, Resume, Save, Launcher, Title, Pass, Hidden) with `--repeat until-fail:5`: all passed.
 - `check_upstream_touches.py` PASS; every `scripts/*_test.py` passes; `./bin/clang-format-fix` twice, nothing new.
+- After the orchestrator's follow-up (`resumeBytes` starts from an initializer list): `cmake --build build/test` rebuilt the three suites that include `SaveSupport.h`; `-Wstringop` warnings in that build output: 1, the `std::set<Bytes>` compare in `ResumeMatchTest.cpp` (`memcmp` bound exceeds maximum object size), none from `SaveSupport.h`. The baseline log `~/.cache/crosshatch/warm-hosttest.log` has 2 such lines, one per build pass in it, both from that same compare. `ctest -N` still 1861 and identical to the baseline list; full `ctest` 1861 of 1861; touched suites (636 tests) pass `--repeat until-fail:5`.
 
 ## Auto Run Result
 
