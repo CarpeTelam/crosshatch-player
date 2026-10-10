@@ -3,7 +3,7 @@ title: 'Log each game touch, and give Battleship and Sudoku their launcher icons
 type: 'feature'
 ticket: '14'
 created: '2026-10-10'
-status: built
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: '1ccef0db7e55d87224f36c588133fc640178c9c2'

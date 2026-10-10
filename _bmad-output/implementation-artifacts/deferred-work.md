@@ -1208,3 +1208,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-stop-the-game-clock-while-the-match-is-paused-plan.md`
   summary: The cost of the spinlocked 8-byte atomic loads in ch.time.ms() on the S3 (two per call, interrupts masked) is unmeasured.
   evidence: Recorded by entry 13's two review passes (the plan's Review Triage Log). Location: lib/GameCore/PauseClock.h. Severity: low.
+
+## 8.14
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-log-each-game-touch-and-give-battleship-and-sudoku-their-lau-plan.md`
+  summary: The device-run packet's Packages paragraph (and the packet's hand-run steps) still say little about where the new Battleship and Sudoku launcher icons and the touch lines show on the device, and cite no commit for the repack.
+  evidence: Recorded by entry 14's two review passes (the plan's Review Triage Log). Location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet.md (Packages). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-log-each-game-touch-and-give-battleship-and-sudoku-their-lau-plan.md`
+  summary: The packet's release dry-run record (R13) is stale: games/** changed after the dry run on b5b379ff (Battleship's manifest, Sudoku's icon.png), so "the packages below" are not the ones that run packed.
+  evidence: Recorded by entry 14's two review passes (the plan's Review Triage Log). Location: _bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/device-run-packet.md (release dry run). Severity: medium.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-log-each-game-touch-and-give-battleship-and-sudoku-their-lau-plan.md`
+  summary: The simulator's HalGPIO::wasTouchReleased ignores suppressTouchContact, so after a long press its lift logs one extra "contact ended screen unknown" line there; the SDK's InputManager reports no release for a suppressed contact.
+  evidence: Recorded by entry 14's two review passes (the plan's Review Triage Log). Location: the simulator library (crosspoint-simulator HalGPIO.cpp:680). Severity: low.

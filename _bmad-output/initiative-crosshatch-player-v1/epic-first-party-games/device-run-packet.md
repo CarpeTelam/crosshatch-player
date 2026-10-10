@@ -8,28 +8,44 @@ Files beside this one are in `device-run-packet/`: the five packages, `HASHES.tx
 
 ## Firmware
 
-- **Use the entry 13 firmware for the whole run:** `firmware-x4pro-0c149819.bin`.
-  - 5,936,048 B, SHA-256 `bdfd44e28b52e8f45ccd08a1c21467ee96bef015637e9af46a1ff47fb6bde800`.
-  - Built on 2026-10-10 from entry 13's lane at `e14dd42f`, which the epic branch merged as `0c149819`. The merge adds no firmware source beyond entry 13's.
-  - It makes `ch.time.ms()` leave out time spent in the pause menu, so Sudoku's elapsed time no longer counts a pause (owner Decision of 2026-10-09; entry 13).
-  - Flash: games on against off is +256,032 B, which is +416 B over the epic base Measurement; 20,448 B remain under the limit. Static RAM is +784 B, unchanged.
-  - The orchestrator sends it to the owner as a session file. **Check the received file's SHA-256 against the one above before flashing, and flash only a file that matches.**
-- **The earlier firmware.** `firmware-x4pro-daedbeab.bin` is 5,935,632 B, SHA-256 `823141498d4f0493b3c104288639dfcd340bc8364332a54e04eec38062971c9e`. Parts I, U and B already run on it stand, since none of them reads the clock. Re-flash before Part S, and record which firmware each part ran on.
+- **Second run: flash the entry 14 firmware.** File `firmware-x4pro-4a87ed90.bin`, 5,937,008 B, SHA-256 `0f10b8b4bc54145b561835a554df46f90814fb40c1160b37b361852df563b02d`.
+  - It was built on 2026-10-10 from entry 14's lane at `1acce4bf`; the epic branch merged that as `4a87ed90`.
+  - It holds entry 13's paused clock and entry 14's touch lines. While a game round is in play, each gesture logs one `[DBG] [GAME]` line with its kind (tap, long press, swipe, or a contact that ended as none of them), its screen point, and its canvas point when the game received it. A gesture the game did not receive logs the reason instead: off the canvas, or a system edge swipe.
+  - On the device a finger may drift up to 59 px and still be a tap. A move of 60 px or more within 700 ms is a swipe. A hold of 500 ms or more within 28 px is a long press.
+  - Flash, games on against off, is +256,992 B: +960 B over the epic base Measurement, leaving 19,488 B under the limit. Static RAM is +784 B, unchanged.
+  - The orchestrator sends it as a session file. **Check its SHA-256 before flashing, and flash only a file that matches.**
+- **First run (2026-10-09/10).** The whole first run used entry 13's `firmware-x4pro-0c149819.bin` (5,936,048 B, SHA-256 `bdfd44e28b52e8f45ccd08a1c21467ee96bef015637e9af46a1ff47fb6bde800`), flashed before Part I. Its results stand.
 - **Flashing.**
-  - Use CrossPoint Reader Flash Tools, or with no computer, the card. Upload the `.bin` with the device's Wi-Fi file transfer, then use Settings' firmware update from the SD card.
-  - A rebuild from a checkout is not promised to be byte-identical (two builds of one source gave different bytes). Use one only if the received file is lost, and write down that you did.
-  - It must be a build from entry 10 on: entry 10 raised the installer's package cap to 64 members, and Sudoku has 36.
-  - The firmware prints no commit at boot. So the checks are the file's hash before flashing, that Sudoku installs (Part I step 2), and in Part S that a pause leaves the time unchanged.
+  - Use CrossPoint Reader Flash Tools, or with no computer upload the `.bin` with the device's Wi-Fi file transfer and use Settings' firmware update from the SD card.
+  - A rebuild from a checkout is not promised to be byte-identical. It must be a build from entry 10 on, since Sudoku has 37 members against a 64-member cap.
 - **Serial log (needed for every figure).**
-  - With a computer: `pio device monitor -e x4pro` at 115200 baud, run in a loop that appends to one file: `while true; do pio device monitor -e x4pro | tee -a entry5.log; sleep 1; done`.
-  - With an Android phone: a USB serial terminal (for example "Serial USB Terminal") over a USB-C cable, logging to a file. Reconnect after each wake, and keep DTR and RTS off if connecting resets the reader.
-  - Each line starts `[<millis>] [<level>] [<origin>] `, so a gap between two lines is a time in ms.
-  - **The port goes away at every sleep** (deep sleep resets the chip). Note each sleep's time, so a line lost to the power-down is known to be lost. The lines the forced exit logs just before the port closes (`VM stopped`, `saved ch.store`, `blank screen pushed`) may not arrive. A sleep whose lines matter (Part P) is repeated until they do.
-  - The x4pro build logs at `LOG_LEVEL=2`. While the serial port is open, the firmware prints a `[MEM] Free: N bytes, Total: N bytes, Min Free: N bytes, MaxAlloc: N bytes` line (and a PSRAM line) every 10 s (`src/main.cpp`).
+  - With a computer: `pio device monitor -e x4pro` in a loop that appends to one file, `while true; do pio device monitor -e x4pro | tee -a entry5.log; sleep 1; done`.
+  - With an Android phone: a USB serial terminal over USB-C, logging to a file. Reconnect after each wake, and keep DTR and RTS off if connecting resets the reader.
+  - Each line starts `[<millis>] [<level>] [<origin>] `. The port goes away at every sleep, so note each sleep's time.
+  - The x4pro build logs at `LOG_LEVEL=2`. While the port is open, a `[MEM]` line comes every 10 s.
+
+## Second run (after entry 14)
+
+The first run answered every part except these three. Record each in "Step results" with the second run's firmware.
+
+1. **The Ultimate tic-tac-toe right column (the Finding of 2026-10-10).**
+   - Install the new `sudoku.chgame` and `battleship.chgame`; Ultimate tic-tac-toe's package is unchanged.
+   - Play a round of Ultimate tic-tac-toe and use the right column often.
+   - When a tap places no mark, note the time.
+   - Send the log. Each such tap's touch line gives its kind and point, which shows whether it was a long press, a tap outside the grid (canvas x 458 or more), a touch off the canvas, or something else.
+2. **Sudoku's pause (entry 13 on the device).**
+   - In a Sudoku round, note the time on screen, pause from Back for about 30 s, then resume.
+   - Make a move: the time must not have jumped by the pause.
+   - Solve or leave, as you like.
+3. **B6, a sleep from Battleship's Over.** Finish a Battleship round. On Over, press power instead of Play again. Note any ghost, wake, and confirm the title screen offers no Continue.
+
+Also check the launcher icons: Battleship's filled boat and Sudoku's grid.
 
 ## Packages
 
-All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed on 2026-10-05 for the tree at `daedbeab` (a second packing gave the same bytes). `sudoku.chgame` and `sudoku-costly.chgame` were packed again from `14428a56`, the merge of the cross-story fixes (`e8-xr`), whose only change to a shipped game is the Sudoku end screen in `games/sudoku/view.lua` (the level name moved above the host's end-of-round dialog). They replace the copies sent first (`3c657cfcb2e461dc` and `d964af5a1278ea7f`); the other three files are unchanged, and nothing under `src/`, `lib/` or `freeink-sdk` changed, so the firmware is still the one above. The three games are the three that the release workflow packs; `pass-store` and `sudoku-costly` exist only for this run. The touch lines of entry 14 need a firmware built from that entry's commit, which the firmware above does not carry.
+All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` prints at the epic head after entry 14 (`4a87ed90`). The orchestrator re-packed the three games there and they were byte-identical to these files.
+- `sudoku.chgame` and `battleship.chgame` changed in entry 14 (the launcher icons). `sudoku-costly.chgame` follows Sudoku.
+- `ultimate-tic-tac-toe.chgame` and `pass-store.chgame` are unchanged since the first run.
 
 | File | Packed from | Package hash | Bytes | SHA-256 of the file |
 | --- | --- | --- | --- | --- |
@@ -230,7 +246,7 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Passed, 2026-10-10, on the head that carries entry 13's firmware and the final packages.** The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Stale since entry 14 changed `games/sudoku` and `games/battleship`; re-running on the epic head after `4a87ed90`.** The record below is the last run, on the head after entry 13. The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
 History:
 - Run 37291529964 on `daedbeab` failed at "Pack the games" on a bug in the release script's packer path, which entry 8.12 fixed (`54c2a4ea`).
