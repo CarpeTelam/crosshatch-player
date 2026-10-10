@@ -29,9 +29,9 @@ Files beside this one are in `device-run-packet/`: the five packages, `HASHES.tx
 The first run answered every part except these three. Record each in "Step results" with the second run's firmware.
 
 1. **The Ultimate tic-tac-toe right column (the Finding of 2026-10-10).**
-   - Install the new `sudoku.chgame` and `battleship.chgame`; Ultimate tic-tac-toe's package is unchanged.
+   - Install the new `ultimate-tic-tac-toe.chgame`, `sudoku.chgame` and `battleship.chgame` (entry 15). Check their sizes match the table before uploading, and keep the serial log running during the upload: the reader logs `Starting upload: <file> (<N> bytes)`.
    - Play a round of Ultimate tic-tac-toe and use the right column often.
-   - When a tap places no mark, note the time.
+   - When a tap places no mark, note the time. Since entry 15, a tap at canvas x 458 to 465 beside the right column should place the mark.
    - Send the log. Each such tap's touch line gives its kind and point, which shows whether it was a long press, a tap outside the grid (canvas x 458 or more), a touch off the canvas, or something else.
 2. **Sudoku's pause (entry 13 on the device).**
    - In a Sudoku round, note the time on screen, pause from Back for about 30 s, then resume.
@@ -43,17 +43,18 @@ Also check the launcher icons: Battleship's filled boat and Sudoku's grid.
 
 ## Packages
 
-All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` prints at the epic head after entry 14 (`4a87ed90`). The orchestrator re-packed the three games there and they were byte-identical to these files.
-- `sudoku.chgame` and `battleship.chgame` changed in entry 14 (the launcher icons). `sudoku-costly.chgame` follows Sudoku.
-- `ultimate-tic-tac-toe.chgame` and `pass-store.chgame` are unchanged since the first run.
+All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed at the epic head after entry 15 (`00699a05`).
+- Entry 15 changed all three games: a tap in the margin beside an edge cell counts as that cell. `sudoku-costly.chgame` follows Sudoku.
+- `pass-store.chgame` is unchanged since the first run.
+- Check each file's size on the phone before uploading. In the second run, the upload delivered two 0-byte files.
 
 | File | Packed from | Package hash | Bytes | SHA-256 of the file |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `games/sudoku` (37 members) | `0d3f38fe297ddb6e` | 40,895 | `b3cd08528b8a495ced84a7fada1148fe81b1a42d78da8b13ee241b0b69f3f767` |
-| `ultimate-tic-tac-toe.chgame` | `games/ultimate-tic-tac-toe` | `a7e63b542144938b` | 4,824 | `1d65629a50a69ae18e56d15728edcb047d6d037b44e62ac71e07d8a0a22b35aa` |
-| `battleship.chgame` | `games/battleship` | `a0de5525493b90da` | 9,518 | `77136f87cd017ffedfd27e793251b8aa50cf35c8e3c895613775c7252c8a5e50` |
+| `sudoku.chgame` | `games/sudoku` (37 members) | `e1d2bd0eb8c1c750` | 41,779 | `3cf42355c65cf28d0c4635207bdc6535cc28c497b6fe34645c16086e6ce0bbc4` |
+| `ultimate-tic-tac-toe.chgame` | `games/ultimate-tic-tac-toe` | `cd11a6224228acd9` | 5,361 | `f7689860932dff3a7112efe07f61dc2a63d3b5fe8f87bb8a996b9a87add48b84` |
+| `battleship.chgame` | `games/battleship` | `d3fecc1e5fc245f6` | 10,167 | `8fe47f261cab5df7dddfcb4c619d7066b5f5afdfe85f591af3802ed1d7500d63` |
 | `pass-store.chgame` | `python3 scripts/pack_device_run.py <dir>` (B7.6) | `5a6bbba63ef264ee` | 1,218 | `ec4e1c656ca8bc62d5d9b3b631e51cfb72cfbcd55df388f44d026963192684e4` |
-| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `d55d98b7762b13f9` | 40,899 | `a934039096a3bd9ac1709eceb9d8f062aae71ab3847b4f702f89deb7c10e131c` |
+| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `815591c5695c16db` | 41,782 | `035d84a97eadcc7345afbc1e4bce8919e8c0349b886dcdc117ef427688b4c0aa` |
 
 - `pass-store` is the script's derived game: `pass-hidden` plus one `ch.store.set` per move, so a store flush can land in a sleep (its hash equals the one the epic-pass-and-play packet printed). The script's other twelve files are not needed here.
 - `sudoku-costly` is Sudoku with one change, so HINT and CHECK can be timed on the costliest Expert grid: its `setup` returns a fixed Expert grid instead of a random deal, and its id, name and Difficulty default (`Expert`) differ so it cannot be mistaken for the shipped game. The grid is bank puzzle `0034ee8363e5` (Expert, index 59, the costliest Expert call the bank tool recorded) under the one symmetry out of 3,000 random ones that cost most (below). `make_sudoku_costly.py` documents the edits; it is a packet file, not a repository script, and nothing under `games/` changes.
@@ -246,7 +247,7 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Passed, 2026-10-10, on the head that carries entry 14's packages and firmware.** The run triggers `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact. It creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Stale since entry 15 changed all three games; re-running on the epic head after `00699a05`.** The record below is the last run, on the head after entry 14. The run triggers `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact. It creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
 History:
 - Run 37291529964 on `daedbeab` failed at "Pack the games", on a bug in the release script's packer path. Entry 8.12 fixed it (`54c2a4ea`).

@@ -1226,3 +1226,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md`
   summary: The installer reports a 0-byte inbox file as "not a readable zip", which sent the second device run looking for corruption when the upload had simply delivered empty files.
   evidence: The owner's `sudoku.chgame.bad` and `battleship.chgame.bad` from the second run (2026-10-10) are 0 bytes each; the device logged "not installed: not a readable zip" for both. Saying "empty file" (and the size it got) for a file under the smallest valid zip would name the real fault. Location: src/games/GamePackageInstaller.cpp (the "not a readable zip" reason). Severity: low.
+
+## 8.15
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-count-a-tap-in-the-margin-beside-a-game-s-edge-cells-as-that-plan.md`
+  summary: Sudoku's MENU panel rows and the HOW TO PLAY pages (and Ultimate tic-tac-toe's and Battleship's help pages) do not snap a tap in the box's side margins.
+  evidence: Recorded by entry 15's review (the plan's Review Triage Log). Location: games/sudoku/main.lua (game.input, menu_tap branch), games/sudoku/layout.lua (menu_at). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-count-a-tap-in-the-margin-beside-a-game-s-edge-cells-as-that-plan.md`
+  summary: docs/crosshatch/game-canvas.md does not tell game authors that the first-party games snap a tap in the box's edge margin (a gap smaller than the target's size) to the edge target.
+  evidence: Recorded by entry 15's review (the plan's Review Triage Log). Location: docs/crosshatch/game-canvas.md. Severity: low.

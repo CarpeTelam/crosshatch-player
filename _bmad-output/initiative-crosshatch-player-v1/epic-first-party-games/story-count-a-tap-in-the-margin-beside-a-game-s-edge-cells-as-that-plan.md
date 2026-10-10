@@ -3,7 +3,7 @@ title: "Count a tap in the margin beside a game's edge cells as that cell"
 type: 'bugfix'
 ticket: '15'
 created: '2026-10-10'
-status: built
+status: done
 baseline_revision: '9c9fd3dfa088068c7944a5d607604d82a3835d9a'
 route: 'full'
 route_source: 'auto'
@@ -29,7 +29,6 @@ deferred:
     location: >-
       docs/crosshatch/game-canvas.md
     severity: low
-
 ---
 
 <intent-contract>
