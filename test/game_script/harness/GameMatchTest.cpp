@@ -34,6 +34,7 @@ using match::bandMiddleY;
 using match::blackIn;
 using match::expectBandShows;
 using match::expectSameFills;
+using match::holds;
 using match::iconFills;
 using match::installFixture;
 using match::installGame;
@@ -2304,11 +2305,6 @@ class HiddenPassTest : public MatchTest {
 
   // The push the last render made.
   const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }
-  // Whether some text of `push` holds `part`.
-  static bool holds(const GfxRenderer::Shown& push, const std::string& part) {
-    return std::any_of(push.texts.begin(), push.texts.end(),
-                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
-  }
 
   // The hand-off screen is asked for and drawn: a full refresh of the runtime's own screen, "Player N's turn" and the
   // "I'm ready" button, and nothing of any seat's frame. `seat` (1 on) is the N it names; 0 leaves it unchecked.

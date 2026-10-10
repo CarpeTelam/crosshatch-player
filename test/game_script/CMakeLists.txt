@@ -156,6 +156,7 @@ add_executable(GameSaveStoreTest
 )
 
 target_include_directories(GameSaveStoreTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/harness
   ${CMAKE_CURRENT_SOURCE_DIR}/harness/stubs
   ${REPO_ROOT}/lib/GameScript
   ${REPO_ROOT}/lib/GameCore
