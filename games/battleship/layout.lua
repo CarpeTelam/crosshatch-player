@@ -25,6 +25,31 @@ function layout.cell_at(board, px, py)
   return (py - board.y) // board.cell + 1, (px - board.x) // board.cell + 1
 end
 
+-- The rectangle { x, y, w, h } of a board's cells.
+function layout.board_rect(board)
+  local side = layout.BOARD * board.cell
+  return { x = board.x, y = board.y, w = side, h = side }
+end
+
+-- snap(L, px, py, rect, tw, th) -> px, py: a tap in the margin between the block rect and the edge of the box, on the
+-- same rows (left and right margins) or columns (top and bottom) as the block, moved onto the block's nearest edge
+-- pixel so the exact hit-test finds the edge target; any other point comes back unchanged. A gap counts as a margin
+-- only when it is smaller than a target's own size along its axis (tw at the sides, th above and below), and the box
+-- is the 466 x 788 one at L.ox, L.oy, so the Sticky's 4 px outside it never snap. cell_at and inside stay exact.
+function layout.snap(L, px, py, rect, tw, th)
+  local left, top = L.ox, L.oy
+  local right, bottom = left + L.W, top + layout.H
+  local rx, ry = rect.x + rect.w, rect.y + rect.h
+  if py >= rect.y and py < ry then
+    if px >= left and px < rect.x and rect.x - left < tw then return rect.x, py end
+    if px >= rx and px < right and right - rx < tw then return rx - 1, py end
+  elseif px >= rect.x and px < rx then
+    if py >= top and py < rect.y and rect.y - top < th then return px, rect.y end
+    if py >= ry and py < bottom and bottom - ry < th then return px, ry - 1 end
+  end
+  return px, py
+end
+
 -- Whether the point is inside the rectangle { x, y, w, h }.
 function layout.inside(rect, px, py)
   return px >= rect.x and py >= rect.y and px < rect.x + rect.w and py < rect.y + rect.h
@@ -66,6 +91,9 @@ function layout.compute(w, h)
   for i, name in ipairs(layout.BUTTONS) do
     L.buttons[name] = { x = x + (i - 1) * (bw + gap), y = below + 76, w = bw, h = 84 }
   end
+  -- The four buttons as one block, for the snap: its width is the board's, and a button's width is button_w.
+  L.button_row = { x = x, y = below + 76, w = 4 * bw + 3 * gap, h = 84 }
+  L.button_w = bw
   L.message = { x = x, y = below + 172 }
 
   -- Seat 0 at Over: both fleets side by side above the end-of-round dialog (18 px cells from y 72, so they end at y 252,

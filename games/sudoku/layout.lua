@@ -82,6 +82,29 @@ function layout.rail_at(x, y)
   return i
 end
 
+-- The three snaps below move a tap in the margin between a block and the box's edge onto that block's edge
+-- (board.snap: the same rows or columns as the block, a gap smaller than the target's own size), so a tap a few pixels
+-- off the grid, the pad or the rail's side counts as the edge cell, key or button. The exact functions above stay
+-- exact; the MENU panel and the HOW TO PLAY page have no snap. Each takes x, y and returns x, y.
+
+-- Over the grid (cell-sized targets): the 8 px at its sides; its top (56 px) and the gap to the pad do not snap.
+function layout.snap_cell(x, y)
+  local L = layout.get()
+  return board.snap(L, x, y, L.x, L.y, L.size, L.size, L.cell, L.cell)
+end
+
+-- Over the pad (kw x kh keys): the 8 px at its left and the 34 px under it.
+function layout.snap_key(x, y)
+  local L = layout.get()
+  return board.snap(L, x, y, L.x, L.pad_y, 3 * L.kw, 3 * L.kh, L.kw, L.kh)
+end
+
+-- Over the rail (rail_w x bh buttons): the 8 px at its right and the 34 px under it.
+function layout.snap_rail(x, y)
+  local L = layout.get()
+  return board.snap(L, x, y, L.rail_x, L.pad_y, L.rail_w, layout.RAIL * L.bh, L.rail_w, L.bh)
+end
+
 -- The rectangle of MENU panel row i (1..8).
 function layout.menu_rect(i)
   local L = layout.get()

@@ -10,6 +10,7 @@ return {
   seed = 31,
   steps = function(state)
     rules.layout()
+    rules.margins(state)
     local lines, bottom = help.lines()
     local credit, page = nil, {}
     for i, line in ipairs(lines) do

@@ -136,7 +136,7 @@ function game.input(state, seat, ui, ev)
     return nil
   end
   local L = board.layout(ch.screen.w, ch.screen.h)
-  local row, col = board.cell_at(L, ev.x, ev.y)
+  local row, col = board.tap_cell(L, ev.x, ev.y)
   if not row then return nil end
   local brow, crow = (row - 1) // 3 + 1, (row - 1) % 3 + 1
   local bcol, ccol = (col - 1) // 3 + 1, (col - 1) % 3 + 1

@@ -792,6 +792,188 @@ local function inputFiring()
   eq(tapCell(over, 1, {}, 7, 8), nil, "a tap after the round is over")
 end
 
+-- Runs f() with ch.screen as w x h and puts it back, also when f raises.
+local function withCanvas(w, h, f)
+  local rw, rh = ch.screen.w, ch.screen.h
+  ch.screen.w, ch.screen.h = w, h
+  local ok, err = pcall(f)
+  ch.screen.w, ch.screen.h = rw, rh
+  if not ok then error(err, 0) end
+end
+
+-- A tap in the margin between the big board (or the button row) and the box's edge, on the board's rows (the buttons'
+-- rows), counts as the edge cell (Rotate or Ready): 13 px against 44 px cells and 104 px buttons. The rows above (52
+-- px) and below the board, the strip between the board and the buttons, the 128 px under the buttons, the box's
+-- corners, and the Sticky's 4 px outside the box are not margins, and the question button wins over everything in its
+-- rectangle.
+local function marginTaps()
+  for _, size in ipairs(SIZES) do
+    local w, h = size[1], size[2]
+    withCanvas(w, h, function()
+      local L = layout.compute(w, h)
+      local at = w .. "x" .. h
+      local ox, oy = L.ox, L.oy
+      local cell, side = L.big.cell, 10 * L.big.cell
+      local left, right = ox, ox + layout.W - 1
+      local function input(state, x, y, vertical)
+        local ui = { vertical = vertical }
+        local move = game.input(state, 1, ui, tapEvent(x, y))
+        return move, ui
+      end
+      local function nothing(state, x, y, what)
+        local move, ui = input(state, x, y)
+        local acts = move ~= nil or ui.help or ui.vertical
+        assert(not acts, at .. ": " .. what .. " at " .. x .. "," .. y .. " acts")
+      end
+      local placing, shooting = stateWith({}), firing(build(ACROSS), build(DOWN))
+      local late = stateWith({ f = { build({ ACROSS[1], ACROSS[2], ACROSS[3], ACROSS[4] }), fleet.EMPTY } })
+      for row = 1, 10 do
+        local y0 = L.big.y + (row - 1) * cell
+        for _, y in ipairs({ y0, y0 + cell // 2, y0 + cell - 1 }) do
+          for x = left, L.big.x - 1 do
+            sameMove(input(placing, x, y), { "P", row, 1, "H" }, at .. " left margin across, row " .. row)
+            sameMove(input(placing, x, y, true), { "P", math.min(row, 6), 1, "V" },
+              at .. " left margin down, row " .. row)
+            sameMove(input(shooting, x, y), { "F", row, 1 }, at .. " left margin firing, row " .. row)
+          end
+          for x = L.big.x + side, right do
+            -- The Carrier across from column 10 starts at column 6, the Destroyer at 9; a ship down keeps its column.
+            sameMove(input(placing, x, y), { "P", row, 6, "H" }, at .. " right margin across, row " .. row)
+            sameMove(input(late, x, y), { "P", row, 9, "H" }, at .. " right margin, the Destroyer, row " .. row)
+            sameMove(input(placing, x, y, true), { "P", math.min(row, 6), 10, "V" },
+              at .. " right margin down, row " .. row)
+            sameMove(input(shooting, x, y), { "F", row, 10 }, at .. " right margin firing, row " .. row)
+          end
+        end
+      end
+      -- The button row: Rotate at the left margin, Ready at the right, on every row of the buttons; a firing tap there
+      -- is nothing, and so is a tap in the 8 px between two buttons.
+      local row = L.button_row
+      for _, y in ipairs({ row.y, row.y + row.h // 2, row.y + row.h - 1 }) do
+        for x = left, row.x - 1 do
+          local move, ui = input(placing, x, y)
+          assert(move == nil and ui.vertical == true, at .. ": the left margin at " .. x .. "," .. y .. " is no Rotate")
+          nothing(shooting, x, y, "a firing tap in the button row's margin")
+        end
+        for x = row.x + row.w, right do
+          sameMove(input(placing, x, y), { "Y" }, at .. " the right margin of the button row is Ready")
+          nothing(shooting, x, y, "a firing tap in the button row's margin")
+        end
+        local b = L.buttons
+        for x = b.rotate.x + b.rotate.w, b.random.x - 1 do nothing(placing, x, y, "the gap between two buttons") end
+      end
+      -- The margins at other rows: the title band (outside the question rectangle), the strip under the board, the
+      -- rows between the buttons and the box's end, and the corners of the board's and the buttons' rows.
+      local row_end = L.button_row.y + L.button_row.h
+      local no = { { L.big.y - 1 }, { L.big.y - 20 }, { oy }, { L.big.y + side }, { L.big.y + side + 40 },
+                   { L.button_row.y - 1 }, { row_end }, { row_end + 60 }, { oy + layout.H - 1 } }
+      for _, y in ipairs(no) do
+        for _, x in ipairs({ left, left + 6, L.big.x - 1, L.big.x + side, right - 6, right }) do
+          if not (layout.inside(L.question_rect, x, y[1])) then
+            nothing(placing, x, y[1], "a margin tap off the rows")
+            nothing(shooting, x, y[1], "a margin tap off the rows")
+          end
+        end
+      end
+      -- Above, below and between the board and the buttons, over the board's own columns and the buttons' own, no
+      -- gap is a margin (52 px above the board, 296 below it, 128 under the buttons): nothing happens.
+      local board_xs = { L.big.x, L.big.x + 200, L.big.x + side - 1 }
+      local b = L.buttons
+      local button_xs = { b.rotate.x, b.rotate.x + 50, b.random.x + 50, b.clear.x + 50, b.ready.x + 50,
+                          b.ready.x + b.ready.w - 1 }
+      local below = { row_end, row_end + 60, oy + layout.H - 1 }
+      local strip = { L.big.y + side, L.big.y + side + 40, L.button_row.y - 1 }
+      for _, state in ipairs({ placing, shooting }) do
+        local board_ys = { oy, L.big.y - 1, table.unpack(strip) }
+        for _, x in ipairs(board_xs) do
+          for _, y in ipairs(board_ys) do
+            if not layout.inside(L.question_rect, x, y) then nothing(state, x, y, "a tap over the board's columns") end
+          end
+          for _, y in ipairs(below) do nothing(state, x, y, "a tap under the buttons, over the board's columns") end
+        end
+      end
+      for _, x in ipairs(button_xs) do
+        for _, y in ipairs(below) do nothing(placing, x, y, "a tap under the buttons") end
+        for _, y in ipairs({ L.big.y + side, L.big.y + side + 40, L.button_row.y - 1 }) do
+          nothing(placing, x, y, "a tap in the strip above the buttons")
+        end
+        if not layout.inside(L.question_rect, x, oy) then nothing(placing, x, oy, "a tap in the title band") end
+      end
+      -- The question button first: every pixel of its rectangle, margins included, opens the page.
+      for _, state in ipairs({ placing, shooting }) do
+        for _, y in ipairs({ oy, oy + 25, oy + L.question_rect.h - 1 }) do
+          for x = L.question_rect.x, right do
+            local move, ui = input(state, x, y)
+            assert(move == nil and ui.help == true, at .. ": the question button at " .. x .. "," .. y)
+          end
+        end
+        -- One row below it is the board's first row, and the right margin there plays it.
+        local move = input(state, right, oy + layout.HEADER)
+        assert(move ~= nil, at .. ": the first board row's right margin is the question button's")
+      end
+      -- Outside the box, never (the Sticky's 4 px): a canvas wider than the box.
+      for _, x in ipairs({ left - 1, right + 1 }) do
+        if x >= 0 and x < w then
+          nothing(placing, x, L.big.y + 20, "a tap outside the box")
+          nothing(shooting, x, L.big.y + 20, "a tap outside the box")
+          nothing(placing, x, L.button_row.y + 20, "a tap outside the box")
+        end
+      end
+    end)
+  end
+end
+
+-- Over the box, in placing, at most one target answers (the question button, a button, a cell) after the snap, which
+-- is what the margins promise (two margins never meet); a point in neither a target nor a margin answers none. The
+-- sweep counts the targets from the layout, and game.input must agree: a move, a Rotate flip or the help page is an
+-- answer, and it answers exactly where one target does.
+local function onlyOneTarget()
+  local L = layout.compute(ch.screen.w, ch.screen.h)
+  local ox, oy = L.ox, L.oy
+  local state = stateWith({})
+  local function answers(x, y)
+    local n = 0
+    if layout.inside(L.question_rect, x, y) then n = n + 1 end
+    local qx, qy = layout.snap(L, x, y, L.button_row, L.button_w, L.buttons.rotate.h)
+    for _, name in ipairs(layout.BUTTONS) do
+      if layout.inside(L.buttons[name], qx, qy) then n = n + 1 end
+    end
+    local bx, by = layout.snap(L, x, y, boardRect(L.big), L.big.cell, L.big.cell)
+    if layout.cell_at(L.big, bx, by) then n = n + 1 end
+    return n
+  end
+  local function answered(x, y)
+    local ui = {}
+    local move = game.input(state, 1, ui, tapEvent(x, y))
+    return move ~= nil or ui.vertical == true or ui.help == true
+  end
+  local function edges(first, last, near)
+    local set = {}
+    for v = first, last, 12 do set[#set + 1] = v end
+    for _, v in ipairs(near) do
+      for d = -4, 4 do set[#set + 1] = v + d end
+    end
+    return set
+  end
+  local xs = edges(ox, ox + layout.W - 1, { ox + 13, ox + 453, L.question_rect.x, L.buttons.random.x - 8 })
+  for d = 0, 13 do xs[#xs + 1] = ox + d end
+  for d = 453, 465 do xs[#xs + 1] = ox + d end
+  local ys = edges(oy, oy + layout.H - 1, { oy + 52, oy + 492, L.button_row.y, L.button_row.y + 84 })
+  local count, zero = 0, 0
+  for _, y in ipairs(ys) do
+    for _, x in ipairs(xs) do
+      if x >= ox and x < ox + layout.W and y >= oy and y < oy + layout.H then
+        local n = answers(x, y)
+        assert(n <= 1, "more than one target answers at " .. x .. "," .. y)
+        assert(answered(x, y) == (n == 1), "game.input and the layout disagree at " .. x .. "," .. y)
+        count = count + n
+        zero = zero + (1 - n)
+      end
+    end
+  end
+  assert(count > 0 and zero > 0, "the sweep saw both answers and none")
+end
+
 local function inputHelpAndMessages()
   local s, ui = stateWith({}), {}
   local qx, qy = taps.help()
@@ -983,6 +1165,8 @@ return {
   { name = "shots and ships left are counted", run = shotCounts },
   { name = "taps while placing", run = inputPlacing },
   { name = "taps while firing", run = inputFiring },
+  { name = "taps in the margin beside the board and the buttons count as the edge target", run = marginTaps },
+  { name = "at most one target answers over the box, margins included", run = onlyOneTarget },
   { name = "the question button and messages", run = inputHelpAndMessages },
   { name = "the last-shot lines and shot counts each seat reads", run = shotLines },
   { name = "waiting headlines and no question button on seat 0", run = waitingAndSeat0 },
