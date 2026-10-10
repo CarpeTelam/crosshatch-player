@@ -1262,3 +1262,12 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-15-mode-table.md`
   summary: `scripts/pack_game.py` spells the three mode names again (`MODES = ('solo', 'pass', 'nearby')`) with no test tying it to `GameCore::MODE_TABLE`.
   evidence: Recorded by e6pre-15's review (the plan's Review Triage Log). A fourth mode added to `ModeTable.h` but not to the packer is refused at pack time only. Location: scripts/pack_game.py:82. Severity: low.
+
+## e6pre-16
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-16-dev-setup-stderr.md`
+  summary: `run()` in `scripts/dev_setup.py` has no timeout, so a hung child blocks the setup (and the SessionStart hook until its 900 s limit).
+  evidence: Recorded by e6pre-16's review (the plan's Review Triage Log); pre-existing. Location: scripts/dev_setup.py run(). Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-16-dev-setup-stderr.md`
+  summary: The first `apt-get install` failure's output is discarded when the retry after `apt-get update` fails differently.
+  evidence: Recorded by e6pre-16's review (the plan's Review Triage Log); pre-existing. Location: scripts/dev_setup.py Setup.system_packages. Severity: low.
