@@ -259,17 +259,17 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Passed, 2026-10-10, on the head that carries entry 15's packages.** The run triggers `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact. It creates no tag and no release. A dry run may use any branch, as the workflow's header says, so the epic branch qualifies.
+**Passed, 2026-10-10, on the head that carries entry 17's packages.** The run triggers `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact. It creates no tag and no release. A dry run may use any branch, as the workflow's header says, so the epic branch qualifies.
 
 History:
 - Run 37291529964 on `daedbeab` failed on the packer-path bug, which entry 8.12 fixed.
-- Runs 37294652408 (`42b084bb`), 37302020967 (`305fd677`), 38008690375 (`b5b379ff`) and 38017416791 (`0894d8e3`, after entry 14) passed.
-- Entry 15 (`00699a05`) changed all three games, so the run below repeats the check.
+- Runs 37294652408 (`42b084bb`), 37302020967 (`305fd677`), 38008690375 (`b5b379ff`), 38017416791 (`0894d8e3`, after entry 14) and 38021510551 (`19f7e197`, after entry 15) passed.
+- Entries 16 and 17 (`e4940989`) changed Sudoku, so the run below repeats the check.
 
 The latest run:
-- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38021510551 (artifact `fork-release`, kept 7 days)
-- Commit the run built: `19f7e197`, the epic head after entry 15. It stays valid while `games/**` and `scripts/pack_game.py` stay as they are there.
-- Date and conclusion: 2026-10-10, 03:42 to 04:03 UTC, success. Its steps:
+- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38025954968 (artifact `fork-release`, kept 7 days)
+- Commit the run built: `273fa892`, the epic head after entry 17. It stays valid while `games/**` and `scripts/pack_game.py` stay as they are there.
+- Date and conclusion: 2026-10-10, 04:59 to 05:19 UTC, success. Its steps:
   - "Build and check the release envs" passed for `crosspoint-1.6.5-ch.4-x4pro.bin` (5,894,112 B) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,783,312 B).
   - "Pack the games" packed the three games.
   - "Tag and publish" was skipped.
@@ -278,7 +278,7 @@ The table below sets the release's package table (`| Package | Package hash | SH
 
 | Package | This packet's package hash | The dry run's package hash | This packet's SHA-256 | The dry run's SHA-256 |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `e1d2bd0eb8c1c750` | `e1d2bd0eb8c1c750` | `3cf42355c65cf28d0c4635207bdc6535cc28c497b6fe34645c16086e6ce0bbc4` | `3cf42355c65cf28d0c4635207bdc6535cc28c497b6fe34645c16086e6ce0bbc4` |
+| `sudoku.chgame` | `f31b5a02a67a712a` | `f31b5a02a67a712a` | `a54e37cf7bf4a0dd9cae9162c81b30eda2e57a2d4a17abd615adec3c6b077108` | `a54e37cf7bf4a0dd9cae9162c81b30eda2e57a2d4a17abd615adec3c6b077108` |
 | `ultimate-tic-tac-toe.chgame` | `cd11a6224228acd9` | `cd11a6224228acd9` | `f7689860932dff3a7112efe07f61dc2a63d3b5fe8f87bb8a996b9a87add48b84` | `f7689860932dff3a7112efe07f61dc2a63d3b5fe8f87bb8a996b9a87add48b84` |
 | `battleship.chgame` | `d3fecc1e5fc245f6` | `d3fecc1e5fc245f6` | `8fe47f261cab5df7dddfcb4c619d7066b5f5afdfe85f591af3802ed1d7500d63` | `8fe47f261cab5df7dddfcb4c619d7066b5f5afdfe85f591af3802ed1d7500d63` |
 
