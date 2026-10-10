@@ -863,6 +863,54 @@ TEST_F(ListTest, ConfirmOpensTheSelectedRowAndTheNextPreviousKeysMoveTheSelectio
   EXPECT_EQ(openedTitle(), "Counter");
 }
 
+// Upstream e54c0087 (1f08ce93): every list steps on the key's press, and the release that ends it is not a step. The
+// launcher's navigateButtons follows the base's (its own walks rowCount(), not listCount()); the double's `press` is
+// the press edge and `release` the release frame.
+TEST_F(ListTest, ANextKeyStepsOnItsPressAndItsReleaseIsNotOneStepMore) {
+  installFixtureWithPkg("counter");  // Counter, Timer, Tracer, in that order
+  installFixtureWithPkg("timer");
+  installFixtureWithPkg("tracer");
+  open();
+  input->press(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(openedTitle(), "Timer") << "the press stepped once, before any release";
+
+  GamesLauncherActivity::forgetOpenedGame();
+  reopen();
+  input->press(Button::NavNext);
+  frame();
+  input->release(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(openedTitle(), "Timer") << "the release was not a second step";
+}
+
+// The same for Previous: from the first row it wraps to the last (Tracer), on the press alone.
+TEST_F(ListTest, APreviousKeyStepsOnItsPressAndItsReleaseIsNotOneStepMore) {
+  installFixtureWithPkg("counter");  // Counter, Timer, Tracer, in that order
+  installFixtureWithPkg("timer");
+  installFixtureWithPkg("tracer");
+  open();
+  input->press(Button::NavPrevious);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(openedTitle(), "Tracer") << "the press stepped once, before any release";
+
+  GamesLauncherActivity::forgetOpenedGame();
+  reopen();
+  input->press(Button::NavPrevious);
+  frame();
+  input->release(Button::NavPrevious);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(openedTitle(), "Tracer") << "the release was not a second step";
+}
+
 // ---- Back goes Home (## 3.6's neighbour: the tab the list is opened from is the row Home reselects) ----
 
 TEST_F(ListTest, BackGoesStraightHomeAndDoesNotPopTheStack) {

@@ -962,9 +962,12 @@ class ReadManifestTest(unittest.TestCase):
             return '{"tags": ' + '[' * (levels - 1) + ']' * (levels - 1) + ', "id": "demo"}'
         fits = manifest_text(x=json.loads(nested(pg.MAX_NESTING - 1)))
         over = manifest_text(x=json.loads(nested(pg.MAX_NESTING)))
-        # The constant is the device parser's own.
-        header = (REPO / 'lib' / 'JsonParser' / 'StreamingJsonParser.h').read_text()
-        self.assertRegex(header, rf'MAX_NESTING = {pg.MAX_NESTING};')
+        # The constant is the device parser's own, which lives in the SDK's JsonSax. The fork-script CI job checks out
+        # no submodule, so there `libs` is absent and the shared vectors (below) pin the constant alone. With the SDK
+        # checked out the header must be there: a later SDK move fails here instead of dropping the pin.
+        header = REPO / 'freeink-sdk' / 'libs' / 'network' / 'JsonSax' / 'include' / 'StreamingJsonParser.h'
+        if (REPO / 'freeink-sdk' / 'libs').is_dir():
+            self.assertRegex(header.read_text(), rf'MAX_NESTING = {pg.MAX_NESTING};')
         self.assertEqual(pg.json_nesting(fits), pg.MAX_NESTING)
         self.assertEqual(self.read(fits), [])
         self.refused(over, f'nests deeper than {pg.MAX_NESTING} levels')

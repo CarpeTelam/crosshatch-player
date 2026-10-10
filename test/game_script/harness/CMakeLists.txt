@@ -89,6 +89,7 @@ set(HARNESS_BASE_INCLUDES
     ${REPO_ROOT}/lib/GameCore
     ${REPO_ROOT}/lib/GameIcons
     ${REPO_ROOT}/lib/JsonParser
+    ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
     ${REPO_ROOT}/lib/Memory
     ${REPO_ROOT}/lib/Utf8
     ${REPO_ROOT}/src

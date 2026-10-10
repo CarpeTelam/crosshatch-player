@@ -172,6 +172,14 @@ class CheckLayersTest(unittest.TestCase):
                           'src/games/Other.cpp:1: src/games may not include <SecureHttpClient.h> '
                           '(sdk:SecureHttpClient.h)')
 
+    def test_sdk_json_parser_counts_as_lib_json_parser(self):
+        # The parser lives in the SDK's JsonSax, not in lib/JsonParser; the spine's Domain edge still names it.
+        code, out = self.run_check(self.tree({'lib/GameCore/Other.cpp': '#include <StreamingJsonParser.h>\n'}))
+        self.assertEqual(code, 0, out)
+        self.assert_fails({'src/games/Other.cpp': '#include <StreamingJsonParser.h>\n'},
+                          'src/games/Other.cpp:1: src/games may not include <StreamingJsonParser.h> '
+                          '(lib/JsonParser)')
+
     def test_lua_only_from_the_build_anchor(self):
         self.assert_fails({'src/games/Other.cpp': '#include <lua.hpp>\n'},
                           'src/games/Other.cpp:1: src/games may not include <lua.hpp> (lib/lua)')

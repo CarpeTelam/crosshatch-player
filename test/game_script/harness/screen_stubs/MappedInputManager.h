@@ -9,7 +9,10 @@
 // classification of a swipe, which the test scripts as the boolean it wants. mapLabels and
 // mapDirectionalLabels return their arguments in the real front-button order, with no remapping:
 // what the real mapper does to a label (AGENTS.md: users remap the front buttons) is not
-// exercised. isPressed is wasPressed (no held-versus-edge distinction).
+// exercised. wasPressed is the press edge (press, click) and isPressed is the level: the edge frame and every frame
+// of a `hold`, as the device's (the SDK's pressed edge and its held state), since upstream's
+// ButtonNavigator::onContinuous (e54c0087) reads the two apart: a pressed frame only steps once and restarts the
+// repeat.
 //
 // Held buttons (`hold`): getHeldTime() is what a test set with `hold(button, ms)` (one time for every button, as the
 // real manager's is for the button held: a test holds one at a time), and wasLongPressed(button,
@@ -81,7 +84,7 @@ class MappedInputManager {
   HomeButtonAction homeButtonAction() const { return homeAction; }
   bool wasLongPressed(const Button button, const unsigned long thresholdMs) const {
     if (longPressed.count(button) != 0) return true;
-    if (pressed.count(button) == 0) {
+    if (!isPressed(button)) {
       firedLongPress.erase(button);  // let go: the next hold can fire again
       return false;
     }
@@ -103,7 +106,7 @@ class MappedInputManager {
     }
     return consumed;
   }
-  bool isPressed(const Button button) const { return pressed.count(button) != 0; }
+  bool isPressed(const Button button) const { return pressed.count(button) != 0 || held.count(button) != 0; }
   bool hasTouch() const { return true; }
 
   bool wasScreenTapped(int& x, int& y) const { return touch.tapped ? at(x, y) : false; }
@@ -208,14 +211,11 @@ class MappedInputManager {
   bool wasMenuGesture() const { return menuGesture; }
   bool wasReaderMenuSwipeUp() const { return false; }
   bool wasLightPanelGesture() const { return false; }
-  bool wasAnyPressed() const { return !pressed.empty(); }
-  bool wasAnyReleased() const { return !released.empty(); }
   // MappedInputManager::getHeldTime's precedence: a button pressed or released this frame answers its hold (the button
   // hold a test set); else a tap's frame answers its contact's held time (rememberTouchHeldTime); else the button hold.
-  // More permissive than the device: the double's `pressed` is a level too (hold()), where the device's is an edge.
   unsigned long getHeldTime() const {
     if (homeAction != HomeButtonAction::Ignore) return 0;  // a mapped action has no contact duration
-    if (!pressed.empty() || !released.empty()) return heldMs;
+    if (!pressed.empty() || !held.empty() || !released.empty()) return heldMs;
     return touch.tapped ? touch.heldMs : heldMs;
   }
   const GfxRenderer& getRenderer() const { return *renderer; }
@@ -249,9 +249,11 @@ class MappedInputManager {
     released.insert(button);
   }
   void holdLong(const Button button) { longPressed.insert(button); }
-  // A button held down for `ms` so far, this frame: pressed (isPressed), and getHeldTime() is `ms`.
+  // A button held down for `ms` so far, this frame, after its press edge: isPressed but not wasPressed, and
+  // getHeldTime() is `ms`. The press edge itself is press() or click(): a test of a first hold frame presses, then
+  // holds on the frames after.
   void hold(const Button button, const unsigned long ms) {
-    pressed.insert(button);
+    held.insert(button);
     heldMs = ms;
   }
   // The home key reports `action` this frame, as HomeButtonInput hands it to the device's manager (homeButtonAction).
@@ -259,9 +261,9 @@ class MappedInputManager {
   // The X4 Pro's power click as Confirm, this frame. It stands in for the device with the power button set to Confirm
   // and the double-click frontlight on (src/main.cpp, setPowerConfirmClickFrame; MappedInputManager.cpp
   // wasPowerConfirmClick): a click held at most 300 ms becomes Confirm on the first update more than 500 ms after its
-  // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, wasAnyPressed and
-  // wasAnyReleased false, and getHeldTime() answers InputManager's span of the last press of the buttons
-  // (buttonPressFinish less buttonPressStart): `staleHeldMs`, long over. The hand-off screen acts on it at once.
+  // release, an update with no button edge, so wasPressed and wasReleased(Confirm) are true, and getHeldTime() answers
+  // InputManager's span of the last press of the buttons (buttonPressFinish less buttonPressStart): `staleHeldMs`, long
+  // over. The hand-off screen acts on it at once.
   void powerConfirmClick(const unsigned long staleHeldMs) {
     powerClick = true;
     heldMs = staleHeldMs;
@@ -367,6 +369,7 @@ class MappedInputManager {
     }
     contact.longPressThisFrame = false;
     pressed.clear();
+    held.clear();
     released.clear();
     longPressed.clear();
     heldMs = 0;
@@ -379,6 +382,7 @@ class MappedInputManager {
   }
 
   std::set<Button> pressed;
+  std::set<Button> held;  // hold()'s: the level of a held button, without its press edge
   std::set<Button> released;
   std::set<Button> longPressed;
   unsigned long heldMs = 0;

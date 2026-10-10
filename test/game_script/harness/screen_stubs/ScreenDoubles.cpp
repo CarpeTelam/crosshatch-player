@@ -82,6 +82,10 @@ void ActivityManager::goToFileTransfer() {
   calls.push_back("goToFileTransfer");
   ++asks.goToFileTransfer;
 }
+void ActivityManager::goToJoinNetwork() {
+  calls.push_back("goToJoinNetwork");
+  ++asks.goToJoinNetwork;
+}
 void ActivityManager::goToUsbDrive() {
   calls.push_back("goToUsbDrive");
   ++asks.goToUsbDrive;
@@ -102,6 +106,11 @@ void ActivityManager::goToLibrary() {
 void ActivityManager::goToBrowser() {
   calls.push_back("goToBrowser");
   ++asks.goToBrowser;
+}
+void ActivityManager::goToPlugins(const bool showOpds) {
+  calls.push_back("goToPlugins");
+  ++asks.goToPlugins;
+  lastShowOpds = showOpds;
 }
 void ActivityManager::goToReader(std::string path, bool) {
   calls.push_back("goToReader");
@@ -175,6 +184,7 @@ void ActivityManager::reset() {
   lastMessage.clear();
   lastHomeItem = HomeMenuItem::NONE;
   lastCleanInitialRefresh = false;
+  lastShowOpds = false;
   replacements.clear();
   pushedActivities.clear();
   onGoToGames = nullptr;

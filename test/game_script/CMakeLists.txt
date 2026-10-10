@@ -102,7 +102,7 @@ add_executable(GameScriptTest
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
-  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
   # TextMetrics decodes with the renderer's UTF-8 reader.
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
   # GameViewIconsTest lays out a real fui::optionDialog (ensureMinTouchRect, drawText).
@@ -114,6 +114,7 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
   ${REPO_ROOT}/lib/Utf8
   # GameTouch.h, GameIconBlit.h, GameImageBlit.h, and GameViewIcons.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
   ${REPO_ROOT}/src/games
@@ -152,7 +153,7 @@ add_executable(GameSaveStoreTest
   ${REPO_ROOT}/lib/GameScript/StoreSlot.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
-  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
 )
 
 target_include_directories(GameSaveStoreTest PRIVATE
@@ -160,6 +161,7 @@ target_include_directories(GameSaveStoreTest PRIVATE
   ${REPO_ROOT}/lib/GameScript
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/src/games
 )

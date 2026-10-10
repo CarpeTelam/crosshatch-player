@@ -61,14 +61,15 @@ disabled in the Actions tab and are never edited.
 Row 10's release probe (AD-25). After a failed release fetch, `OtaUpdater.cpp` calls
 `ForkReleaseProbe::latestReleaseMissing()` in `src/games/ForkReleaseProbe.cpp`, which requests
 `ForkRelease::LATEST_RELEASE_URL` once more with its own `freeink::SecureHttpClient` and reads a 404 as "no release
-yet". Read from `freeink-sdk` at `111fdcc7f0176c3ee38391a160ee296bf492dbd8`
+yet". Read from `freeink-sdk` at `32a265fa86498c014e13a5bc16133bb021cb620c`
 (`libs/network/SecureNet/include/SecureHttpClient.h`) and the fork sources, its four values are these. Timeout:
 15,000 ms each for the TCP connect, the TLS handshake, and every wait on the response, the SDK default (`_timeoutMs`);
 `HttpDownloader`'s release fetch sets 60,000 ms (`HTTP_TIMEOUT_MS`). Redirect limit: 0, the SDK default
 (`_followRedirects`), so a 3xx comes back as the status and the probe answers false; `HttpDownloader` follows up to
-5 hops (`MAX_REDIRECTS`). TLS mode: HTTPS through the SDK's wolfSSL client with peer verification off (`setInsecure()`),
-which needs `FREEINK_NET_WOLFSSL=1` from `[base]` `build_flags` (without it the connect fails and the probe answers
-false); the same mode as `HttpDownloader`'s wolfSSL path. User agent: `CrossPoint-ESP32-` followed by
+5 hops (`kMaxRedirects` in the SDK's `ResumableFetch.h`, which its release fetch now runs through). TLS mode: HTTPS
+through the SDK's wolfSSL client with peer verification off (`setInsecure()`), which needs `FREEINK_NET_WOLFSSL=1`
+from `[base]` `build_flags` (without it the connect fails and the probe answers false); the same mode as
+`HttpDownloader`'s wolfSSL path. User agent: `CrossPoint-ESP32-` followed by
 `CROSSPOINT_VERSION` (`setUserAgent`), the same as `HttpDownloader`'s. The probe also opens a fresh connection
 (`setReuse(false)`). These are written as prose and a numbered list on purpose: the check reads every table row and
 bullet under this heading as a ledger path.
@@ -77,7 +78,7 @@ Probe re-check list. A merge that changes any of these re-reads the four values 
 `HttpDownloader`'s handling of non-200 statuses, in the same merge, and updates the paragraph; the fork release dry
 run alone does not cover them:
 
-1. `src/network/HttpDownloader.*`: the release fetch's own values, and its reporting of every non-200 final status as
+1. `src/network/HttpDownloader.*`: the release fetch's own values, and its reporting of every non-2xx final status as
    a bare failure, which is why the probe exists.
 2. `[base]` `build_flags` in `platformio.ini`: `FREEINK_NET_WOLFSSL` and the wolfSSL defines choose the TLS stack of
    both.
