@@ -274,6 +274,45 @@ TEST_F(InstallerTest, NotAZipEndsBad) {
   expectRejected("tiny.chgame", tiny, Error::NotAPackage);
 }
 
+// e6pre-19: a file of 1 byte or more that is no zip is still NotAPackage, and its log line keeps the prefix that
+// device-run packets search for and gives the size, so a truncated copy shows as one.
+TEST_F(InstallerTest, ANonZipLogLineKeepsItsPrefixAndGivesTheFileSize) {
+  const Bytes one = toBytes("P");
+  drop("one.chgame", one);
+  expectRejected("one.chgame", one, Error::NotAPackage);
+  EXPECT_TRUE(fakelog::any("ERR GAME: one.chgame not installed: not a readable zip (1 bytes)"));
+
+  SetUp();
+  const Bytes junk = toBytes("this is not a zip file at all, just text long enough to hold an end record");
+  drop("junk.chgame", junk);
+  expectRejected("junk.chgame", junk, Error::NotAPackage);
+  EXPECT_TRUE(fakelog::any("ERR GAME: junk.chgame not installed: not a readable zip (" + std::to_string(junk.size()) +
+                           " bytes)"));
+}
+
+// e6pre-19: a 0-byte file (what an upload that delivered nothing leaves) gets its own reason, is moved aside like any
+// invalid package, and says so in the log without the size suffix of a non-zip (describe already says 0 bytes).
+TEST_F(InstallerTest, AnEmptyFileEndsBadAsEmpty) {
+  drop("empty.chgame", Bytes{});
+  ASSERT_TRUE(GamePackageInstaller::hasInbox());
+  expectRejected("empty.chgame", Bytes{}, Error::Empty);
+  EXPECT_TRUE(fakelog::any("ERR GAME: empty.chgame not installed: the file is empty (0 bytes)"));
+  EXPECT_FALSE(fakelog::any("not a readable zip"));
+  EXPECT_STREQ(GamePackageInstaller::describe(Error::Empty), "the file is empty (0 bytes)");
+}
+
+TEST_F(InstallerTest, AnEmptyFileDoesNotKeepAValidPackageBesideItFromInstalling) {
+  drop("empty.chgame", Bytes{});
+  drop("g.chgame", gamePackage("g"));
+  const GamePackageInstaller::Report report = install();
+  EXPECT_EQ(report.installed, 1);
+  EXPECT_EQ(report.failed, 1);
+  EXPECT_EQ(report.firstError, Error::Empty);
+  EXPECT_STREQ(report.firstFile, "empty.chgame");
+  EXPECT_TRUE(exists(INBOX + "empty.chgame.bad"));
+  EXPECT_TRUE(exists("/.games/g/.pkg"));
+}
+
 // ---- images --------------------------------------------------------------------------------------
 
 TEST_F(InstallerTest, ConvertsIconPngToA64x64IconBmpAndDropsThePng) {

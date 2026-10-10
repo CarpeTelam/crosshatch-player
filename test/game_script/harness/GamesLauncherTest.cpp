@@ -108,6 +108,8 @@ const char* expectedText(const Error error) {
       return tr(STR_GAMES_OUT_OF_MEMORY);
     case Error::NotAPackage:
       return tr(STR_GAMES_INSTALL_NOT_A_PACKAGE);
+    case Error::Empty:
+      return tr(STR_GAMES_INSTALL_EMPTY);
     case Error::BadManifest:
       return tr(STR_GAMES_INSTALL_BAD_MANIFEST);
     case Error::BadMember:
@@ -1316,7 +1318,7 @@ TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
   std::vector<int> withText;
   for (int value = 0; value < 256; ++value)
     if (expectedText(static_cast<Error>(value))) withText.push_back(value);
-  ASSERT_GE(withText.size(), 19u) << "the nineteen reasons that exist today";
+  ASSERT_GE(withText.size(), 20u) << "the twenty reasons that exist today";
 
   // Two reasons that read alike would let a swap through.
   for (size_t i = 0; i < withText.size(); ++i)

@@ -9,11 +9,11 @@
 // For each file it validates the package (AD-15), extracts it to /.games-tmp/<id>/,
 // converts its images to .bmp, replaces any /.games/<id>/ with the new folder, writes .pkg
 // last as the commit marker, and deletes the inbox file. Validation comes first and touches no card
-// folder: the file's size, then the zip's directory (ZipDirectory), then each member as it streams
-// (its declared size as a cap, no bytecode, its CRC). /.games-data/<id>/ is never touched.
-// A package that is not valid is renamed <name>.chgame.bad. An installed package whose inbox file will not delete is
-// renamed <name>.chgame.installed instead, so it does not install again on every visit. All file access goes through
-// Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
+// folder: the file's size (0 bytes is Empty, over PACKAGE_BYTES is PackageTooBig), then the zip's directory
+// (ZipDirectory), then each member as it streams (its declared size as a cap, no bytecode, its CRC). /.games-data/<id>/
+// is never touched. A package that is not valid is renamed <name>.chgame.bad. An installed package whose inbox file
+// will not delete is renamed <name>.chgame.installed instead, so it does not install again on every visit. All file
+// access goes through Storage / HalFile. Runs on the loop task, and takes seconds for a package with images.
 namespace GamePackageInstaller {
 
 // Why one inbox file was not installed. SdCard and OutOfMemory are the card's or the device's
@@ -24,7 +24,8 @@ enum class Error : uint8_t {
   None,
   SdCard,       // a read, write, rename, or delete on the SD card failed
   OutOfMemory,  // a buffer for the install could not be allocated
-  NotAPackage,  // not a zip this device can read
+  NotAPackage,  // not a zip this device can read (a file of 1 byte or more)
+  Empty,        // the inbox file is 0 bytes, which an upload that delivered nothing leaves; checked before the zip
   BadManifest,  // manifest.json missing, malformed, or failing Manifest::check (Invalid)
   BadMember,    // a member name off the whitelist, or the same name twice
   NoMain,       // main.lua missing
