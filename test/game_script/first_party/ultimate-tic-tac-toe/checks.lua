@@ -592,6 +592,153 @@ local function endFrameClearsTheDialog()
   end
 end
 
+-- The move of the cell at row, col of the 9 x 9 grid, as game.input gives it.
+local function moveAt(row, col)
+  return ((row - 1) // 3) * 3 + (col - 1) // 3 + 1, ((row - 1) % 3) * 3 + (col - 1) % 3 + 1
+end
+
+-- What game.input answers to a tap at x, y (the move's board and cell, or nil), and the ui it left.
+local tapState
+local function tapped(x, y)
+  local ui = {}
+  tapState = tapState or stateWith({}) -- input reads the state and changes nothing in it
+  local move = game.input(tapState, 1, ui, { kind = "tap", x = x, y = y })
+  if move == nil then return nil, nil, ui end
+  return move[1], move[2], ui
+end
+
+-- A tap in the margin between the grid and the box's edge, on a row of the grid, is the cell at that edge (the owner's
+-- finger on the right column lands at x 450 to 460 and the grid ends at 457); the margin above and below the grid, the
+-- corners, the help button and the Sticky's 4 px outside the box are not.
+local function marginTaps()
+  local taps = require("taps")
+  for _, size in ipairs(SIZES) do
+    local w, h = size[1], size[2]
+    withCanvas(w, h, function()
+      local L = board.layout(w, h)
+      local ox, oy = L.ox, L.oy
+      local at = w .. "x" .. h
+      local right, bottom = L.x + L.size, L.y + L.size
+      for row = 1, 9 do
+        local y = L.y + (row - 1) * L.cell
+        for _, dy in ipairs({ 0, L.cell // 2, L.cell - 1 }) do
+          for x = right, ox + board.W - 1 do
+            local b, c = tapped(x, y + dy)
+            local wb, wc = moveAt(row, 9)
+            assert(b == wb and c == wc, at .. ": tap " .. x .. "," .. y + dy .. " is not row " .. row .. " col 9")
+          end
+          for x = ox, L.x - 1 do
+            local b, c = tapped(x, y + dy)
+            local wb, wc = moveAt(row, 1)
+            assert(b == wb and c == wc, at .. ": tap " .. x .. "," .. y + dy .. " is not row " .. row .. " col 1")
+          end
+        end
+      end
+      -- taps.margin is the tap the rounds use for an edge cell, and tap_cell is cell_at inside the grid.
+      for _, cell in ipairs({ { 3, 3 }, { 6, 6 }, { 9, 9 }, { 1, 1 }, { 4, 4 }, { 7, 7 } }) do
+        local x, y = taps.margin(cell[1], cell[2])
+        local b, c = tapped(x, y)
+        assert(b == cell[1] and c == cell[2], at .. ": taps.margin of " .. cell[1] .. "," .. cell[2] .. " plays "
+          .. tostring(b) .. "," .. tostring(c))
+      end
+      for row = 1, 9 do
+        for col = 1, 9 do
+          local x, y = board.cell_rect(L, row, col)
+          for _, d in ipairs({ 0, L.cell - 1 }) do
+            local r1, c1 = board.tap_cell(L, x + d, y + d)
+            assert(r1 == row and c1 == col, at .. ": tap_cell differs from cell_at at " .. row .. "," .. col)
+          end
+        end
+      end
+      -- Nothing outside the box answers, nor a corner, the header above the grid, or the message area below it.
+      for _, row in ipairs({ 1, 5, 9 }) do
+        local y = L.y + (row - 1) * L.cell + L.cell // 2
+        for _, x in ipairs({ ox - 1, ox + board.W }) do
+          if x >= 0 and x < w then eq(tapped(x, y), nil, at .. ": a tap at " .. x .. " outside the box") end
+        end
+      end
+      for _, x in ipairs({ ox, L.x - 1, L.x, right - 1, right, ox + board.W - 1 }) do
+        for _, y in ipairs({ L.y - 1, bottom }) do
+          eq(tapped(x, y), nil, at .. ": a corner or edge tap at " .. x .. "," .. y .. " is no cell")
+        end
+      end
+      for y = oy, L.y - 1, 7 do
+        for x = ox, ox + board.W - 1, 7 do
+          local b = tapped(x, y)
+          eq(b, nil, at .. ": a header tap at " .. x .. "," .. y .. " plays")
+        end
+      end
+      for y = bottom, oy + board.H - 1, 7 do
+        for x = ox, ox + board.W - 1, 7 do
+          eq(tapped(x, y), nil, at .. ": a tap below the grid at " .. x .. "," .. y .. " plays")
+        end
+      end
+      local ox_, oy_ = taps.off_grid()
+      eq(tapped(ox_, oy_), nil, at .. ": the tap 40 px below the grid")
+      local hx, hy = taps.help()
+      local b, _, ui = tapped(hx, hy)
+      eq(b, nil, at .. ": the help tap plays")
+      eq(ui.help, true, at .. ": the help tap opens the page")
+    end)
+  end
+end
+
+-- board.snap by itself, over a block a layout makes ({ top = 30, bottom = 30 } puts the grid 30 px under the box's top)
+-- and over blocks 30 and 60 px from the box's bottom: a gap smaller than the target's size snaps, an equal or bigger
+-- one does not, and a point off the block's rows or columns never does.
+local function snapRule()
+  for _, size in ipairs(SIZES) do
+    local w, h = size[1], size[2]
+    local L = board.layout(w, h, { top = 30, bottom = 30 })
+    local at = w .. "x" .. h
+    local ox, oy = L.ox, L.oy
+    eq(L.y, oy + 30, at .. " grid top")
+    for _, x in ipairs({ L.x, L.x + 200, L.x + L.size - 1 }) do
+      for y = oy, L.y - 1 do
+        local sx, sy = board.snap(L, x, y, L.x, L.y, L.size, L.size, L.cell, L.cell)
+        assert(sx == x and sy == L.y, at .. ": the top margin at " .. x .. "," .. y .. " does not snap to row 1")
+        local row, col = board.tap_cell(L, x, y)
+        assert(row == 1 and col == (x - L.x) // L.cell + 1, at .. ": tap_cell in the top margin")
+      end
+    end
+    -- A gap of 50 (the cell) or more is not a margin: the default layout's 120.
+    local D = board.layout(w, h)
+    for y = oy, D.y - 1 do
+      local sx, sy = board.snap(D, D.x + 10, y, D.x, D.y, D.size, D.size, D.cell, D.cell)
+      assert(sx == D.x + 10 and sy == y, at .. ": the 120 px top margin snaps at " .. y)
+    end
+    -- The bottom: a block ending 30 px above the box's bottom snaps, one 60 px above does not, one 50 does not.
+    local bottom = oy + board.H
+    for _, case in ipairs({ { 30, true }, { 49, true }, { 50, false }, { 60, false } }) do
+      local gap, snaps = case[1], case[2]
+      local by, bh = bottom - gap - 100, 100
+      for y = by + bh, bottom - 1 do
+        local sx, sy = board.snap(L, L.x + 20, y, L.x, by, 90, bh, 50, 50)
+        if snaps then
+          assert(sx == L.x + 20 and sy == by + bh - 1, at .. ": the " .. gap .. " px bottom gap does not snap at " .. y)
+        else
+          assert(sx == L.x + 20 and sy == y, at .. ": the " .. gap .. " px bottom gap snaps at " .. y)
+        end
+      end
+      -- Off the block's columns, never.
+      local sx, sy = board.snap(L, L.x + 90, bottom - 1, L.x, by, 90, bh, 50, 50)
+      assert(sx == L.x + 90 and sy == bottom - 1, at .. ": a point off the block's columns snaps")
+    end
+    -- The sides: a point off the block's rows does not snap, and an inside point is unchanged.
+    local sx, sy = board.snap(L, ox, L.y - 1, L.x, L.y, L.size, L.size, L.cell, L.cell)
+    assert(sx == ox and sy == L.y - 1, at .. ": a corner snaps")
+    sx, sy = board.snap(L, L.x + 5, L.y + 5, L.x, L.y, L.size, L.size, L.cell, L.cell)
+    assert(sx == L.x + 5 and sy == L.y + 5, at .. ": a point inside the block moves")
+    -- Outside the box, never: the Sticky's 4 px, whatever the gap.
+    if ox > 0 then
+      sx, sy = board.snap(L, ox - 1, L.y + 5, L.x, L.y, L.size, L.size, L.cell, L.cell)
+      assert(sx == ox - 1 and sy == L.y + 5, at .. ": a point left of the box snaps")
+      sx, sy = board.snap(L, ox + board.W, L.y + 5, L.x, L.y, L.size, L.size, L.cell, L.cell)
+      assert(sx == ox + board.W and sy == L.y + 5, at .. ": a point right of the box snaps")
+    end
+  end
+end
+
 -- The Games launcher draws this game's row with the default Crosshatch mark: the manifest names no icon and the package
 -- ships no icon.png. host.launcher_icon is GameRowIcon::choose over the installed game.
 local function launcherIcon()
@@ -620,5 +767,9 @@ return {
   { name = "the help page draws text only", run = helpPageHasNoBoard },
   { name = "a frame is cleared white, its grid and text and icons are black", run = frameInkIsBlackOnWhite },
   { name = "the end frame's text is clear of the host's end-of-round dialog", run = endFrameClearsTheDialog },
+  { name = "a tap in the margin beside the grid's first or last column is that cell, no other margin is",
+    run = marginTaps },
+  { name = "board.snap moves a point in a margin smaller than the target onto the block's edge, no other",
+    run = snapRule },
   { name = "the launcher draws the default Crosshatch mark", run = launcherIcon },
 }

@@ -27,6 +27,33 @@ function taps.off_grid()
   return L.x + L.size // 2, L.y + L.size + 40
 end
 
+-- The canvas x, y of a tap in the margin beside cell c of board b, for a cell in column 1 (4 px left of the grid, x 4
+-- in the box) or column 9 (2 px right of the grid's edge, the margin's third pixel: x 460 on the X4 Pro, where the
+-- owner's finger landed) of the 9 x 9 grid, on the cell's row.
+function taps.margin(b, c)
+  local row = ((b - 1) // 3) * 3 + (c - 1) // 3 + 1
+  local col = ((b - 1) % 3) * 3 + (c - 1) % 3 + 1
+  assert(col == 1 or col == 9, "cell " .. c .. " of board " .. b .. " is not in the grid's first or last column")
+  local L = layout()
+  local _, y, _, h = board.cell_rect(L, row, col)
+  return col == 1 and L.x - 4 or L.x + L.size + 2, y + h // 2
+end
+
+-- A canvas point in the corner of the margin: right of the grid and one pixel above it, on no cell's row or column,
+-- so a tap there is ignored.
+function taps.corner()
+  local L = layout()
+  return L.x + L.size + 2, L.y - 1
+end
+
+-- Like taps.step, for a cell of the first or last column tapped in the margin beside it.
+function taps.margin_step(seat, b, c, extra)
+  local x, y = taps.margin(b, c)
+  local step = { seat = seat, x = x, y = y }
+  for key, value in pairs(extra or {}) do step[key] = value end
+  return step
+end
+
 -- One step: seat taps cell c of board b; `extra` adds its keys (move = false, shows = "...").
 function taps.step(seat, b, c, extra)
   local x, y = taps.tap(b, c)

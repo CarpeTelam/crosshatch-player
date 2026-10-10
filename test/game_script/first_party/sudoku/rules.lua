@@ -218,6 +218,132 @@ function rules.layout()
   eq(layout.menu_at(L.row_x, L.row_y - 1), nil)
 end
 
+-- A tap in the margin between the grid, the pad or the rail and the box's edge acts as the target beside it, through
+-- game.input: the 8 px at the grid's sides, the pad's left and the 34 px under it, the rail's right and the 34 px under
+-- it, each on the target's own rows or columns. Nothing else answers: the grid's top, the gap between the grid and the
+-- pad (and between the pad and the rail), the corners, and the Sticky's 4 px outside the box. The exact lookups stay
+-- exact (rules.layout), and over the box at most one of cell, key and rail answers.
+function rules.margins(state)
+  with_clock(function()
+    local L = layout.get()
+    local s = fresh(state)
+    local c = empties(s)[1]
+    mv(s, "w", c, 3) -- a digit of the player's own, so ERASE has something to erase and a key writes it
+    local left, top = L.ox, L.oy
+    local right, bottom = L.ox + 465, L.oy + 787
+    local pad_end = L.x + 3 * L.kw -- the pad's columns L.x .. pad_end - 1
+    local rail_end, pad_bottom = L.rail_x + L.rail_w, L.pad_y + 3 * L.kh
+    -- What a tap at x, y does with the player's digit at c selected: the move and what the ui keeps.
+    local function seen(x, y)
+      local ui = {}
+      on_cell(s, ui, c)
+      local m = tap(s, ui, x, y)
+      return table.concat({ tostring(m and m[1]), tostring(m and m[2]), tostring(m and m[3]), tostring(ui.sel),
+                            tostring(ui.foc), tostring(ui.pencil), tostring(ui.panel) }, ",")
+    end
+    local nothing = seen(left, top)
+    local function acts(x, y, cx, cy, what)
+      local want = seen(cx, cy)
+      assert(want ~= nothing, what .. ": its own tap does nothing")
+      eq(seen(x, y), want, what .. " from " .. x .. "," .. y)
+    end
+    local function ignored(x, y, what) eq(seen(x, y), nothing, what .. " at " .. x .. "," .. y) end
+    local function centre_of(rect, i) return layout.centre(rect(i)) end
+
+    for r = 1, 9 do
+      for _, dy in ipairs({ 0, L.cell // 2, L.cell - 1 }) do
+        local y = L.y + (r - 1) * L.cell + dy
+        for x = left, L.x - 1 do
+          local cx, cy = centre_of(layout.cell_rect, (r - 1) * 9 + 1)
+          acts(x, y, cx, cy, "the grid's left margin, row " .. r)
+        end
+        for x = L.x + L.size, right do
+          local cx, cy = centre_of(layout.cell_rect, r * 9)
+          acts(x, y, cx, cy, "the grid's right margin, row " .. r)
+        end
+      end
+    end
+    for row = 0, 2 do
+      for _, dy in ipairs({ 0, L.kh // 2, L.kh - 1 }) do
+        local y = L.pad_y + row * L.kh + dy
+        for x = left, L.x - 1 do
+          local cx, cy = centre_of(layout.key_rect, row * 3 + 1)
+          acts(x, y, cx, cy, "the pad's left margin, row " .. row + 1)
+        end
+      end
+    end
+    for col = 0, 2 do
+      for _, dx in ipairs({ 0, L.kw // 2, L.kw - 1 }) do
+        local x = L.x + col * L.kw + dx
+        for y = pad_bottom, bottom do
+          local cx, cy = centre_of(layout.key_rect, 6 + col + 1)
+          acts(x, y, cx, cy, "the pad's bottom margin, column " .. col + 1)
+        end
+      end
+    end
+    for i = 1, layout.RAIL do
+      for _, dy in ipairs({ 0, L.bh // 2, L.bh - 1 }) do
+        local y = L.pad_y + (i - 1) * L.bh + dy
+        for x = rail_end, right do
+          local cx, cy = centre_of(layout.rail_rect, i)
+          acts(x, y, cx, cy, "the rail's right margin, button " .. i)
+        end
+      end
+    end
+    for _, x in ipairs({ L.rail_x, L.rail_x + L.rail_w // 2, rail_end - 1 }) do
+      for y = L.pad_y + layout.RAIL * L.bh, bottom do
+        local cx, cy = centre_of(layout.rail_rect, 4)
+        acts(x, y, cx, cy, "the rail's bottom margin")
+      end
+    end
+
+    -- No answer: the header, the grid's foot and the pad's head (all x), the gap between pad and rail, the corners,
+    -- and the 4 px outside the box on the Sticky.
+    for y = top, L.y - 1, 5 do
+      for _, x in ipairs({ left, L.x, L.x + 200, L.x + L.size - 1, right }) do ignored(x, y, "the header") end
+    end
+    for y = L.y + L.size, L.pad_y - 1 do
+      for _, x in ipairs({ left, L.x - 1, L.x, L.x + 200, L.x + L.size - 1, L.x + L.size, right }) do
+        ignored(x, y, "the gap under the grid")
+      end
+    end
+    for x = pad_end, L.rail_x - 1 do
+      for _, y in ipairs({ L.pad_y, L.pad_y + L.kh, pad_bottom - 1, pad_bottom, bottom }) do
+        ignored(x, y, "the gap beside the pad")
+      end
+    end
+    for _, y in ipairs({ pad_bottom, bottom }) do
+      for _, x in ipairs({ left, L.x - 1, rail_end, right }) do ignored(x, y, "the bottom corner") end
+    end
+    if L.ox > 0 then
+      for _, x in ipairs({ left - 1, right + 1 }) do
+        for _, y in ipairs({ L.y + 20, L.pad_y + 20, L.pad_y + 3 * L.bh }) do ignored(x, y, "outside the box") end
+      end
+    end
+
+    -- Over the box at most one of the three answers, and the gaps' points answer none. Every 8th pixel, and every pixel
+    -- of the margins and gaps.
+    local function onlyone(x, y, gap)
+      local n = 0
+      if layout.cell_at(layout.snap_cell(x, y)) then n = n + 1 end
+      if layout.key_at(layout.snap_key(x, y)) then n = n + 1 end
+      if layout.rail_at(layout.snap_rail(x, y)) then n = n + 1 end
+      assert(n <= 1, "more than one target answers at " .. x .. "," .. y)
+      if gap then eq(n, 0, "a gap answers at " .. x .. "," .. y) end
+    end
+    for y = top, bottom do
+      local edge = y < L.y + 4 or (y >= L.y + L.size - 4 and y < L.pad_y + 4) or y >= pad_bottom - 4
+      for x = left, right do
+        local fine = x < L.x + 4 or x >= L.x + L.size - 4 or (x >= pad_end - 4 and x < L.rail_x + 4)
+        if (edge or y % 8 == 0) and (fine or x % 8 == 0) then
+          local gap = (y >= L.y + L.size and y < L.pad_y) or (y >= pad_bottom and x >= pad_end and x < L.rail_x)
+          onlyone(x, y, gap)
+        end
+      end
+    end
+  end)
+end
+
 -- The clock: moves carry the time since the move before, and a refused move's time is not lost.
 function rules.clock(state)
   with_clock(function()

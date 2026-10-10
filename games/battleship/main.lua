@@ -160,15 +160,19 @@ function game.input(state, seat, ui, ev)
   end
   if game.status(state).over then return nil end
   local m = mode(state, seat)
+  -- A tap in the margin beside the edge cells or buttons counts as that target (layout.snap); exact hits come first.
+  local bigRect = layout.board_rect(L.big)
+  local bpx, bpy = layout.snap(L, ev.x, ev.y, bigRect, L.big.cell, L.big.cell)
   if m == "placing" then
-    if layout.inside(L.buttons.rotate, ev.x, ev.y) then
+    local qx, qy = layout.snap(L, ev.x, ev.y, L.button_row, L.button_w, L.buttons.rotate.h)
+    if layout.inside(L.buttons.rotate, qx, qy) then
       ui.vertical = not ui.vertical
       return nil
     end
-    if layout.inside(L.buttons.random, ev.x, ev.y) then return { "R" } end
-    if layout.inside(L.buttons.clear, ev.x, ev.y) then return { "C" } end
-    if layout.inside(L.buttons.ready, ev.x, ev.y) then return { "Y" } end
-    local row, col = layout.cell_at(L.big, ev.x, ev.y)
+    if layout.inside(L.buttons.random, qx, qy) then return { "R" } end
+    if layout.inside(L.buttons.clear, qx, qy) then return { "C" } end
+    if layout.inside(L.buttons.ready, qx, qy) then return { "Y" } end
+    local row, col = layout.cell_at(L.big, bpx, bpy)
     if not row then return nil end
     -- The tapped square is the ship's first; a ship that would pass the edge is shifted back to fit.
     local index = fleet.next_ship(state.f[seat])
@@ -178,7 +182,7 @@ function game.input(state, seat, ui, ev)
     end
     return { "P", row, math.min(col, fleet.SIZE + 1 - len), "H" }
   elseif m == "firing" then
-    local row, col = layout.cell_at(L.big, ev.x, ev.y)
+    local row, col = layout.cell_at(L.big, bpx, bpy)
     if row then return { "F", row, col } end
   end
   return nil

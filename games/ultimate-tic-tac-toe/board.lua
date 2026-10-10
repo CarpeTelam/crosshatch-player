@@ -46,6 +46,31 @@ function board.cell_at(L, x, y)
   return (y - L.y) // L.cell + 1, (x - L.x) // L.cell + 1
 end
 
+-- snap(L, x, y, bx, by, bw, bh, tw, th) -> x, y: a tap in the margin between a block of targets and the edge of the
+-- box, on the same rows (left and right margins) or columns (top and bottom margins) as the block, moved onto the
+-- block's nearest edge pixel so the exact hit-test finds the edge target; any other point comes back unchanged. The
+-- block is bx, by, bw, bh on the canvas and its targets tw x th; a gap counts as a margin only when it is smaller than
+-- a target's own size along its axis (a tw wide gap at the sides, a th tall one above and below). The box is the
+-- 466 x 788 one at L.ox, L.oy, so the Sticky's 4 px outside it never snap. The block's own points are unchanged.
+function board.snap(L, x, y, bx, by, bw, bh, tw, th)
+  local left, top = L.ox, L.oy
+  local right, bottom = left + board.W, top + board.H
+  if y >= by and y < by + bh then
+    if x >= left and x < bx and bx - left < tw then return bx, y end
+    if x >= bx + bw and x < right and right - (bx + bw) < tw then return bx + bw - 1, y end
+  elseif x >= bx and x < bx + bw then
+    if y >= top and y < by and by - top < th then return x, by end
+    if y >= by + bh and y < bottom and bottom - (by + bh) < th then return x, by + bh - 1 end
+  end
+  return x, y
+end
+
+-- The row, col of the cell a tap at canvas point x, y means: the cell under it, or the edge cell its margin leads to
+-- (snap), or nil. cell_at stays exact.
+function board.tap_cell(L, x, y)
+  return board.cell_at(L, board.snap(L, x, y, L.x, L.y, L.size, L.size, L.cell, L.cell))
+end
+
 -- 1 px lines on every cell edge, then 3 px black lines on every block edge and the border: 28 commands.
 function board.draw_grid(L)
   for i = 0, 9 do

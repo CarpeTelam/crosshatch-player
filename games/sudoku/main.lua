@@ -319,14 +319,14 @@ function game.input(state, seat, ui, ev)
     return nil
   end
   if ui.panel == "menu" then return menu_tap(state, ui, layout.menu_at(ev.x, ev.y)) end
-  local c = layout.cell_at(ev.x, ev.y)
+  local c = layout.cell_at(layout.snap_cell(ev.x, ev.y))
   if c then
     ui.sel = ui.sel ~= c and c or nil
     return nil
   end
-  local d = layout.key_at(ev.x, ev.y)
+  local d = layout.key_at(layout.snap_key(ev.x, ev.y))
   if d then return pad_tap(state, ui, d) end
-  local i = layout.rail_at(ev.x, ev.y)
+  local i = layout.rail_at(layout.snap_rail(ev.x, ev.y))
   if i then return rail_tap(state, ui, i) end
   return nil
 end
