@@ -154,3 +154,7 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - All three packages installed. The launcher shows Battleship's filled boat and Sudoku's grid icon.
   - Ultimate tic-tac-toe: 19 taps, none ignored. Twelve were on the right column, at canvas x 438 to 453. No tap landed in the new margin strip (x 458 to 465), so the snap is not yet seen on the device.
   - Still open on the device: Sudoku's pause. Both pauses ended in Leave, not Resume. Also still open: B6, a sleep from Battleship's Over. The match was left mid-round.
+- Decision (owner, 2026-10-10, entry 16): Sudoku shows its play time during a puzzle, and the menu gets a TIMER toggle, on by default. Built in this epic, before entry 5 closes.
+  - The header shows whole minutes ("12 min") on its right, redrawn once a minute. A ticking m:ss would push the e-ink panel every second, and a tap made during a push waits for it.
+  - It is the same play time the Solved screen shows, so pause-menu time is not counted (entry 13).
+  - Entry 5's next device run checks the header time across a pause, which also settles the open pause check.

@@ -200,13 +200,28 @@ touches = ["games/**", "test/game_script/first_party/**"]
 stays_out = ["src/**", "lib/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
 
 [[entry]]
+id = 16
+type = "story"
+title = "Show Sudoku's play time in the header, with a TIMER toggle in the menu"
+description = "Owner request during entry 5 (epic Notes, the Decision of 2026-10-10 on the timer). While a puzzle is being played, Sudoku's header line shows the play time on its right as whole minutes (\"0 min\", \"12 min\"), the same time the Solved screen shows as m:ss: the saved `t` plus the play time since the last move, so pause-menu time is not counted (entry 13), and it stops at 99 min as `t` stops at 99:59. It is redrawn only when the shown minute changes, from a `ch.timer` armed for the next minute boundary, never each second, so an e-ink push never lands between taps more than once a minute. The MENU panel gains a row `TIMER: ON` / `TIMER: OFF` (library icon `timer`) after NOTES AS, saved in `ch.store` like the other toggles and on by default (a store without the key reads as on); with it off, the header shows no time and no minute timer is armed. The header's left text (the level name, or a message or note) and the time never overlap: a left text too long to leave room hides the time while it shows. The MENU panel, HOW TO PLAY, and the Solved screen show no header time. Change nothing else: the Solved screen's Time and Best, the saved state and its version, and every existing round keep their outcomes."
+verify = "Host suites and the games check pass at both canvases. New companion checks pin: the header time at 0, 59,999, 60,000 and 5,999,000 ms of play time and past it; that a pause does not advance it (the PauseClock's clock); that the minute timer is armed for the next boundary and only while TIMER is on and the puzzle is being played; that TIMER toggles, persists in `ch.store`, and reads as on from a store without the key; that the nine menu rows each keep at least a 44 px target and every row's tap reaches its action; and that a long message hides the time. The fork script tests, `scripts/check_upstream_touches.py` and `./bin/clang-format-fix` (run twice) pass. `sim.sh build x4pro`: screenshot a puzzle with the time in its header, the MENU panel with TIMER ON, and a puzzle with TIMER off. Record the new sudoku package hash."
+covers = ["R12"]
+after = []
+hitl = false
+risk = "low"
+unknown = "None."
+references = ["games/sudoku/main.lua (move dt, MAX_T, fresh, read_store, menu_tap, TOGGLES)", "games/sudoku/view.lua (view.time, the header line, MENU_ICONS, the menu labels)", "games/sudoku/layout.lua (ROWS, row_h, menu_rect, menu_at)", "docs/crosshatch/game-canvas.md (timers while Paused, no timer after the round is over)", "docs/crosshatch/game-icons.md (timer)", "lib/GameCore/PauseClock.h (entry 13)", "_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md (the Decision of 2026-10-10 on the timer)"]
+touches = ["games/sudoku/**", "test/game_script/first_party/sudoku/**", "docs/crosshatch/** (only if a game doc names Sudoku's menu)"]
+stays_out = ["src/**", "lib/**", "games/ultimate-tic-tac-toe/**", "games/battleship/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9, 11, 13, 14, 15]
+after = [4, 9, 11, 13, 14, 15, 16]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
