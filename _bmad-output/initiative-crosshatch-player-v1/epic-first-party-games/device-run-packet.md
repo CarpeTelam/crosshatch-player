@@ -230,20 +230,21 @@ The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under
 
 ## Release dry run (R13): the orchestrator fills this in
 
-**Passed, 2026-10-05, on the head that carries the final packages.** The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
+**Passed, 2026-10-10, on the head that carries entry 13's firmware and the final packages.** The run is: trigger `crosshatch-release.yml` (the "Fork release" workflow) from GitHub with `dry_run` on, on the epic head. The workflow lists the packages and uploads them as a run artifact; it creates no tag and no release. A dry run may use any branch (the workflow's header says so), so the epic branch qualifies.
 
 History:
 - Run 37291529964 on `daedbeab` failed at "Pack the games" on a bug in the release script's packer path, which entry 8.12 fixed (`54c2a4ea`).
 - Run 37294652408 on `42b084bb` passed, and its packages matched the first `sudoku.chgame` (`3c657cfcb2e461dc`) byte for byte.
-- The cross-story fixes (`e8-xr`, merged as `14428a56`) then changed `games/sudoku/view.lua` (the end screen), so the dry run ran again on the head below.
+- The cross-story fixes (`e8-xr`, merged as `14428a56`) then changed `games/sudoku/view.lua` (the end screen), so the dry run ran again: run 37302020967 on `305fd677` passed with the packages below.
+- Entry 13 (`0c149819`) then changed firmware code but no game, so it ran once more on the head below.
 
-- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/37302020967 (artifact `fork-release`, kept 7 days)
-- Commit the run built: `305fd677`, the epic head after `e8-xr` and the repack. It is valid while `games/**`, `scripts/pack_game.py`, `src/**`, `lib/**` and the `freeink-sdk` pointer stay as they are there; the later merge of `develop` (`715e67c7`) changed only `_bmad-output/`.
-- Date and conclusion: 2026-10-05, 11:17 to 11:31 UTC, success.
-  - "Build and check the release envs" built and checked `crosspoint-1.6.5-ch.4-x4pro.bin` (5,893,584 B) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,782,704 B); both "passed".
+- Run link: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38008690375 (artifact `fork-release`, kept 7 days)
+- Commit the run built: `b5b379ff`, the epic head after entry 13. It is valid while `games/**` and `scripts/pack_game.py` stay as they are there; firmware changes after it need a new dry run only for the release firmware's build check.
+- Date and conclusion: 2026-10-10, 00:21 to 00:42 UTC, success.
+  - "Build and check the release envs" built and checked `crosspoint-1.6.5-ch.4-x4pro.bin` (5,894,032 B) and `crosspoint-1.6.5-ch.4-sticky.bin` (5,783,152 B); both "passed".
   - "Pack the games" packed the three games.
   - "Tag and publish" was skipped, as a dry run does.
-  - Those release `.bin` files are the `gh_release` envs, not the `x4pro` build this packet flashes. Their size and hash differ from the firmware above by design, and their hash differs between runs because the build embeds its run.
+  - Those release `.bin` files are the `gh_release` envs, not the `x4pro` build this packet flashes. Their size and hash differ from the firmware above by design.
 
 The release's package table (`| Package | Package hash | SHA-256 |`) against this packet's. The package hash must be equal; the SHA-256 of the file is equal only when the runner's zlib deflates the same bytes as this machine's.
 
