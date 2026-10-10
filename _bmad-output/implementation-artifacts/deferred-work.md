@@ -1250,3 +1250,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-make-sudoku-s-notes-as-default-to-digits-plan.md`
   summary: The device-run packet's steps assumed NOTES AS starts at DOTS (Part S's marks step and Part T's Expert heap step).
   evidence: Recorded by entry 17's review. Outcome: the orchestrator rewrote both steps and the end-of-run restore note in device-run-packet.md when it repacked Sudoku after entry 17. Location: device-run-packet.md, Part S step 2 and Part T step 5. Severity: medium. Resolved.
+
+## e5-run4
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
+  summary: The fourth device run's checks were not run before the owner's sign-off. They are the header time across a pause (entries 13 and 16; it also settles Sudoku's pause and resume on the device), the TIMER toggle, the NOTES AS default on a device with no saved choice (entry 17), and B6, a sleep from Battleship's Over.
+  evidence: The epic Notes' Decision of 2026-10-10 on entry 5's sign-off; the steps are in device-run-packet.md, "Fourth run (after entries 16 and 17)". Trigger: the next device run with these packages, or the fork release (entry 6). Severity: medium (unverified on the device).

@@ -159,3 +159,6 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - It is the same play time the Solved screen shows, so pause-menu time is not counted (entry 13).
   - Entry 5's next device run checks the header time across a pause, which also settles the open pause check.
 - Decision (owner, 2026-10-10, entry 17): Sudoku's NOTES AS defaults to DIGITS, not DOTS. A store with an explicit choice keeps it. Built after entry 16, since both change `fresh` in `main.lua`.
+- Decision (owner, 2026-10-10, entry 5 sign-off): the owner signed off on the device run and asked for the epic PR to merge before the fourth run.
+  - Three runs on an X4 Pro covered everything else: install, the heap, every resume, HINT and CHECK under 1.5 s, B7.6, the icons, and the edge taps.
+  - Not run on a device: the header time across a pause (entries 13 and 16), the TIMER toggle, the NOTES AS default (entry 17), and B6 (a sleep from Battleship's Over). They are carried in `deferred-work.md` `## e5-run4` for the next device run.

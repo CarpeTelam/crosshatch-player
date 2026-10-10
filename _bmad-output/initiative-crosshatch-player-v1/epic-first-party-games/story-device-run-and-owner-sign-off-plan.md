@@ -3,7 +3,7 @@ title: 'Device run and owner sign-off'
 type: 'chore'
 ticket: '5'
 created: '2026-10-05'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 baseline_revision: 'daedbeabf8a9cf7da90ed976401a0fbb73498c8d'

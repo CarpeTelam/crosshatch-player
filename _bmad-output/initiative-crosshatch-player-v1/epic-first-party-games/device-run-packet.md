@@ -348,3 +348,7 @@ One row per step: pass or fail, the log excerpt that shows it (with its `[millis
 | P4 | | | |
 | P5 | | | |
 | Z | | | |
+
+## Sign-off
+
+**Signed off by the owner, 2026-10-10,** after three runs on an X4 Pro (firmware `0c149819`, then `4a87ed90`). The owner asked for the epic PR to merge before the fourth run. That run's four checks are carried in `deferred-work.md` `## e5-run4`.
