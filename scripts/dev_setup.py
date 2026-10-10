@@ -24,8 +24,8 @@ is already done, so a second run only checks. The steps, in order:
                     tools (about 45 s) on every run until a `default` build has run.
   5. git            the `upstream` remote and `merge.ours.driver`, then `git fetch --unshallow` in a shallow clone and
                     a fetch of upstream's develop (the AGENTS.md policy for scripts/check_upstream_touches.py and merges).
-  6. system         `apt-get install libsdl2-dev libpcre3` (noninteractive) (the simulator and the packaged cppcheck of `pio check`,
-                    as CI installs them) when one is missing; skipped with a note when not root or without apt-get.
+  6. system         `apt-get install libsdl2-dev libpcre3 xdotool` (noninteractive) (the simulator and the packaged cppcheck
+                    of `pio check`, as CI installs them, and the simulator skill's taps and keys) when one is missing; skipped with a note when not root or without apt-get.
   7. --warm         starts two detached builds and returns at once: `pio run -e x4pro` under
                     /tmp/crosshatch-build.lock and the host-test build under /tmp/crosshatch-hosttest.lock, the locks
                     AGENTS.md gives every agent, so an agent's first build waits for the warm one. A build whose lock
@@ -77,7 +77,8 @@ UV_TOOLS = (
     ('clang-format', 'clang-format>=21,<22', 'v21.'),
 )
 PIO_ENVS = ('x4pro', 'default')
-SYSTEM_PACKAGES = ('libsdl2-dev', 'libpcre3')
+SYSTEM_PACKAGES = ('libsdl2-dev', 'libpcre3', 'xdotool')
+PACKAGE_NAMES = ', '.join(SYSTEM_PACKAGES[:-1]) + ' and ' + SYSTEM_PACKAGES[-1]
 APT_ENV = {'DEBIAN_FRONTEND': 'noninteractive'}  # no debconf prompt
 
 BUILD_LOCK = '/tmp/crosshatch-build.lock'
@@ -368,14 +369,14 @@ class Setup:
     # 6
     def system_packages(self, step):
         if not is_root():
-            say(step, f'skipped: not root, so {" and ".join(SYSTEM_PACKAGES)} are not installed')
+            say(step, f'skipped: not root, so {PACKAGE_NAMES} are not installed')
             return
         if shutil.which('apt-get') is None:
-            say(step, f'skipped: no apt-get, so {" and ".join(SYSTEM_PACKAGES)} are not installed')
+            say(step, f'skipped: no apt-get, so {PACKAGE_NAMES} are not installed')
             return
         missing = [package for package in SYSTEM_PACKAGES if not self.package_installed(package)]
         if not missing:
-            say(step, f'ok: {" and ".join(SYSTEM_PACKAGES)} are installed')
+            say(step, f'ok: {PACKAGE_NAMES} are installed')
             return
         install = ['apt-get', 'install', '-y', '--no-install-recommends', *missing]
         say(step, f'installing {" ".join(missing)}')

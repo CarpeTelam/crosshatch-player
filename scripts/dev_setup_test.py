@@ -310,7 +310,7 @@ class ColdAndWarmTest(SetupTestBase):
                                  dev_setup.UPSTREAM_REFSPEC))
         self.assertTrue(self.ran('git', '-C', str(self.repo), 'config', 'merge.ours.driver', 'true'))
         self.assertEqual(self.ran('apt-get', 'install'),
-                         [['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3']])
+                         [['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3', 'xdotool']])
         # The first install fails, the penv is pinned, and the retry passes.
         calls = self.calls()
         installs = [i for i, call in enumerate(calls) if call[:3] == ['pio', 'pkg', 'install']]
@@ -482,7 +482,7 @@ class StderrTest(SetupTestBase):
         self.assertEqual(self.penv_bundle().read_text().count(PROXY_BODY), 1)
 
     def test_dpkg_query_stderr_does_not_reinstall_an_installed_package(self):
-        self.set_state(pio='ok', packages=['libsdl2-dev', 'libpcre3'])
+        self.set_state(pio='ok', packages=['libsdl2-dev', 'libpcre3', 'xdotool'])
         self.stderr_of(dpkg_query='dpkg-query: a warning\n')
         self.assertEqual(self.run_setup(), 0, self.err)
         self.assertFalse(self.ran('apt-get'))
@@ -566,12 +566,12 @@ class SystemPackagesTest(SetupTestBase):
     def test_without_package_lists_apt_updates_and_installs_again(self):
         self.set_state(pio='ok', apt_lists=False)
         self.assertEqual(self.run_setup(), 0, self.err)
-        install = ['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3']
+        install = ['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3', 'xdotool']
         self.assertEqual(self.ran('apt-get'), [install, ['apt-get', 'update'], install])
-        self.assertEqual(self.read_state()['packages'], ['libsdl2-dev', 'libpcre3'])
+        self.assertEqual(self.read_state()['packages'], ['libsdl2-dev', 'libpcre3', 'xdotool'])
 
     def test_only_a_missing_package_is_installed(self):
-        self.set_state(pio='ok', packages=['libsdl2-dev'])
+        self.set_state(pio='ok', packages=['libsdl2-dev', 'xdotool'])
         self.assertEqual(self.run_setup(), 0, self.err)
         self.assertEqual(self.ran('apt-get', 'install'),
                          [['apt-get', 'install', '-y', '--no-install-recommends', 'libpcre3']])
