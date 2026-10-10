@@ -170,13 +170,28 @@ touches = ["lib/GameScript/**", "src/games/**", "src/activities/games/**", "test
 stays_out = ["games/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
 
 [[entry]]
+id = 14
+type = "story"
+title = "Log each game touch, and give Battleship and Sudoku their launcher icons"
+description = "Two items from entry 5's device run (epic Notes, the Finding and the icon Decision of 2026-10-10). (1) Several taps on Ultimate tic-tac-toe's right column did nothing and showed no message, and the log cannot tell why. While a game match runs, log each gesture at LOG_DBG: its kind (tap, long press, swipe and direction), its screen point and, when it reaches the game, its canvas point, plus how long the contact was held if the gesture carries that. Log a gesture that does not reach the game with the reason: off the canvas, or a system edge swipe. These logs show only in builds that enable LOG_DBG; there is no setting. Change no game's behaviour. (2) Battleship's manifest names the library icon `boat`, `icon_weight` fill. Sudoku ships its own 64 x 64 `icon.png`, option B of the owner-picked mock: a 9 x 9 grid with 3 px box lines and one filled cell per box. A committed generator script makes the icon, as `make_note_images.py` makes the note images, and it has a `--check` mode that runs under the games-check ctest label."
+verify = "Host suites pass, including tests that pin the new touch log lines for a tap, a long press, a swipe, an off-canvas touch and a system edge swipe, and that the launcher picks the library boat for Battleship and the package icon for Sudoku. Games check green at both canvases, including the icon generator's `--check`. Fork script tests, `scripts/check_upstream_touches.py`, `scripts/check_layers.py` and `./bin/clang-format-fix` twice pass. `pio run -e x4pro` and `-e default`, `pio check` for default and `-e x4pro`, and the flash budget against the epic base Measurement pass; the x4pro firmware.bin size and SHA-256 are recorded. `sim.sh build x4pro`: screenshot the Games list with both icons, and show the touch lines in the simulator log for a tap and a long press on Ultimate tic-tac-toe. Record the new package hashes of sudoku and battleship."
+covers = ["R12"]
+after = []
+hitl = false
+risk = "low"
+unknown = "Whether the gesture carries its hold time; if not, log what it does carry."
+references = ["src/games/GameTouch.h (toEvent)", "src/activities/games/GameMatchActivity.cpp", "freeink-sdk/libs/hardware/InputManager/include/InputManager.h (TOUCH_LONG_PRESS_MS, TOUCH_TAP_SLOP_PX)", "src/activities/games/GamesLauncherActivity.cpp (icons)", "src/games/GameRowIcon.h", "docs/crosshatch/formats.md (icon.png, icon, icon_weight)", "games/battleship/manifest.json", "test/game_script/first_party/sudoku/tools/make_note_images.py", "/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/icons/mock.py (opt_b) and sudoku-b.png"]
+touches = ["src/games/**", "src/activities/games/**", "games/battleship/manifest.json", "games/sudoku/icon.png", "test/**", "docs/crosshatch/**"]
+stays_out = ["lib/GameCore/**", "games/ultimate-tic-tac-toe/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9, 11, 13]
+after = [4, 9, 11, 13, 14]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
