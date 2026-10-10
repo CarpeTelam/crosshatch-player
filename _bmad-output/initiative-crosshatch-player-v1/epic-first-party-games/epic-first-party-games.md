@@ -158,3 +158,4 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - The header shows whole minutes ("12 min") on its right, redrawn once a minute. A ticking m:ss would push the e-ink panel every second, and a tap made during a push waits for it.
   - It is the same play time the Solved screen shows, so pause-menu time is not counted (entry 13).
   - Entry 5's next device run checks the header time across a pause, which also settles the open pause check.
+- Decision (owner, 2026-10-10, entry 17): Sudoku's NOTES AS defaults to DIGITS, not DOTS. A store with an explicit choice keeps it. Built after entry 16, since both change `fresh` in `main.lua`.

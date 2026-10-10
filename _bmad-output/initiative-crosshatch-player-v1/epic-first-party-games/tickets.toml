@@ -215,13 +215,28 @@ touches = ["games/sudoku/**", "test/game_script/first_party/sudoku/**", "docs/cr
 stays_out = ["src/**", "lib/**", "games/ultimate-tic-tac-toe/**", "games/battleship/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
 
 [[entry]]
+id = 17
+type = "story"
+title = "Make Sudoku's NOTES AS default to DIGITS"
+description = "Owner decision during entry 5 (epic Notes, the Decision of 2026-10-10 on NOTES AS). Sudoku's NOTES AS toggle reads as DIGITS when `ch.store` has no `dots` key, where it read as DOTS before: `main.lua`'s `fresh` takes `ui.dots` as `s.dots == true`. A store that holds an explicit choice keeps it, since the toggle always writes `true` or `false`. Change nothing else: the look of each mode, the toggle, the menu, and every existing round's outcome stay as they are; a companion check or round that relied on the old default sets the store or the toggle it needs, and still covers both modes."
+verify = "Host suites and the games check pass at both canvases. New or changed companion checks pin that a store without `dots` gives DIGITS, `dots = true` gives DOTS, and `dots = false` gives DIGITS, and that the existing dots checks and rounds still exercise DOTS. The fork script tests, `scripts/check_upstream_touches.py` and `./bin/clang-format-fix` (run twice) pass. `sim.sh build x4pro`: screenshot a fresh puzzle with notes from an empty store, showing digit notes, and the MENU panel reading NOTES AS: DIGITS. Record the new sudoku package hash."
+covers = ["R12"]
+after = [16]
+hitl = false
+risk = "low"
+unknown = "None."
+references = ["games/sudoku/main.lua (fresh, read_store, toggle, TOGGLES)", "test/game_script/first_party/sudoku (marks.lua, drawn.lua, interaction.lua, canvases.lua, rounds/notes-dots.lua)", "_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md (the Decision of 2026-10-10 on NOTES AS)"]
+touches = ["games/sudoku/**", "test/game_script/first_party/sudoku/**", "docs/crosshatch/** (only if a game doc names the default)"]
+stays_out = ["src/**", "lib/**", "games/ultimate-tic-tac-toe/**", "games/battleship/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9, 11, 13, 14, 15, 16]
+after = [4, 9, 11, 13, 14, 15, 16, 17]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."
