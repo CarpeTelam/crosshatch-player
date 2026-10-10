@@ -1193,3 +1193,18 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/cross-story-review.md`
   summary: The four draw recorders in the companion folders are near-copies (UTTT and Battleship trace.lua are byte-identical) and will drift (cross-story row 24).
   evidence: Adversarial L4 of the cross-story review; merging them is a refactor across the companion folders, beyond a fix story; e8-xr fixed the false counting claim. Location: test/game_script/first_party/*/trace.lua, sudoku/drawn.lua, sudoku/canvases.lua. Severity: low.
+
+## 8.13
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-stop-the-game-clock-while-the-match-is-paused-plan.md`
+  summary: A pause entered from Result or HandOff (a hidden pass match), and a Leave, ScriptError, or ForcedExit from Paused, have no match-level test with the clock game.
+  evidence: Recorded by entry 13's two review passes (the plan's Review Triage Log). Location: test/game_script/harness/GameMatchTest.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-stop-the-game-clock-while-the-match-is-paused-plan.md`
+  summary: A script that busy-waits on ch.time.ms() while the match is paused stays in its loop until Resume, and the raw 3 s watchdog can end it in the error view.
+  evidence: Recorded by entry 13's two review passes (the plan's Review Triage Log). Location: src/activities/games/GameMatchActivity.cpp:564 (vmHealthy), test/game_script/fixtures/slow-restart/main.lua. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-stop-the-game-clock-while-the-match-is-paused-plan.md`
+  summary: The PauseClock stress test does not show that the retry path of playMs ran, and the x86 host cannot show a reordering of the clock read.
+  evidence: Recorded by entry 13's two review passes (the plan's Review Triage Log). Location: test/game_core/PauseClockTest.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-stop-the-game-clock-while-the-match-is-paused-plan.md`
+  summary: The cost of the spinlocked 8-byte atomic loads in ch.time.ms() on the S3 (two per call, interrupts masked) is unmeasured.
+  evidence: Recorded by entry 13's two review passes (the plan's Review Triage Log). Location: lib/GameCore/PauseClock.h. Severity: low.

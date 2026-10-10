@@ -3,7 +3,7 @@ title: 'Stop the game clock while the match is paused'
 type: 'feature'
 ticket: '13'
 created: '2026-10-09'
-status: 'built'
+status: done
 baseline_revision: '9fa5e0c255449ebbafd6e6d49fbb1d445cf29a7d'
 route: 'full'
 route_source: 'auto'
