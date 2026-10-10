@@ -1,5 +1,6 @@
--- The MENU's three toggles, each shown in its row: SHOW REMAINING and SHADE PEERS off, NOTES AS digits, and back. The
--- marks those two toggles and the other drawing choices make on the board are pinned beside it (marks.draw_marks).
+-- The MENU's four toggles, each shown in its row: SHOW REMAINING and SHADE PEERS off, NOTES AS digits, TIMER off, and
+-- back. The marks those two toggles and the other drawing choices make on the board are pinned beside it
+-- (marks.draw_marks).
 local taps = require("taps")
 local interaction = require("interaction")
 local marks = require("marks")
@@ -18,7 +19,9 @@ return {
     taps.menu(steps, 6, { move = false, shows = "NOTES AS: DOTS" })
     taps.menu(steps, 5, { move = false, shows = "SHADE PEERS: ON" })
     taps.menu(steps, 4, { move = false, shows = "SHOW REMAINING: ON" })
-    taps.menu(steps, 8, { move = false, shows = "Sudoku - Easy" })
+    taps.menu(steps, 7, { move = false, shows = "TIMER: OFF" })
+    taps.menu(steps, 7, { move = false, shows = "TIMER: ON" })
+    taps.menu(steps, 9, { move = false, shows = "Sudoku - Easy" })
     return steps
   end,
   unfinished = true,

@@ -13,8 +13,9 @@ local record, watch, expect_marks = drawn.record, drawn.watch, drawn.expect_mark
 
 local marks = {}
 
--- The MENU's rows, top to bottom: HINT, FILL NOTES, CHECK, SHOW REMAINING, SHADE PEERS, NOTES AS, HOW TO PLAY, CLOSE.
-local MENU_ICONS = { "lightbulb", "plus", "check", "eye", "square", "pencil-simple", "question", "x" }
+-- The MENU's rows, top to bottom: HINT, FILL NOTES, CHECK, SHOW REMAINING, SHADE PEERS, NOTES AS, TIMER, HOW TO PLAY,
+-- CLOSE.
+local MENU_ICONS = { "lightbulb", "plus", "check", "eye", "square", "pencil-simple", "timer", "question", "x" }
 local NAMES = { "Easy", "Medium", "Hard", "Expert" }
 
 -- The marks `game.draw` of state `st` with `u` makes, as watch gathers them.
@@ -33,7 +34,7 @@ local function expect_page(seen, what)
   eq(#seen.white_text, 0, what .. ": a text not drawn black")
 end
 
--- The MENU: eight rows, each with its icon, in black.
+-- The MENU: nine rows, each with its icon, in black.
 local function expect_menu(seen)
   expect_page(seen, "the MENU")
   for i = 1, #MENU_ICONS do
@@ -191,7 +192,7 @@ function marks.draw_marks(state)
   on_menu(t, u, 4)
   ch.store.set({}) -- the toggle wrote SHOW REMAINING to ch.store; put the defaults back for what runs after
   eq(refreshes(t, u), 0, "a toggle inside the MENU")
-  on_menu(t, u, 7)
+  on_menu(t, u, 8)
   eq(u.panel, "help")
   eq(refreshes(t, u), 1, "HOW TO PLAY opens")
   expect_page(marks_of(t, u), "the HOW TO PLAY page")
@@ -200,7 +201,7 @@ function marks.draw_marks(state)
   eq(refreshes(t, u), 1, "the page closes onto the board")
   on_rail(t, u, 4)
   eq(refreshes(t, u), 1, "the MENU opens again")
-  on_menu(t, u, 8)
+  on_menu(t, u, 9)
   eq(u.panel, nil)
   eq(refreshes(t, u), 1, "CLOSE returns to the board")
   local solved = fresh(state)

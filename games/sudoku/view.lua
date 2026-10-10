@@ -12,8 +12,11 @@ local said = false
 
 local DIG = grid.DIG
 local NAMES = { "Easy", "Medium", "Hard", "Expert" }
-local MENU_ICONS = { "lightbulb", "plus", "check", "eye", "square", "pencil-simple", "question", "x" }
+local MENU_ICONS = { "lightbulb", "plus", "check", "eye", "square", "pencil-simple", "timer", "question", "x" }
 local RAIL = { { "pencil-simple", "NOTES" }, { "eraser", "ERASE" }, { "arrow-u-up-left", "UNDO" }, { "gear-six", "MENU" } }
+
+-- Whole minutes of a play time in milliseconds, as the header shows them: "0 min", "12 min".
+function view.minutes(ms) return (ms // 60000) .. " min" end
 
 -- m:ss of a time in milliseconds.
 function view.time(ms)
@@ -53,7 +56,7 @@ local function draw_menu(ui)
   local labels = {
     "HINT", "FILL NOTES", "CHECK", "SHOW REMAINING: " .. (ui.rem and "ON" or "OFF"),
     "SHADE PEERS: " .. (ui.shade and "ON" or "OFF"), "NOTES AS: " .. (ui.dots and "DOTS" or "DIGITS"),
-    "HOW TO PLAY", "CLOSE",
+    "TIMER: " .. (ui.timer and "ON" or "OFF"), "HOW TO PLAY", "CLOSE",
   }
   for i = 1, layout.ROWS do
     local x, y, w, h = layout.menu_rect(i)
@@ -99,13 +102,25 @@ local function draw_mark(ui, k, cx, cy, x, y, focused, ground)
   end
 end
 
-local function draw_board(state, ui)
+-- ms: the play time to show in the header's right end (nil: none). Returns whether the time was drawn.
+local function draw_board(state, ui, ms)
   local L, v = layout.get(), state.v
   local sel, foc = ui.sel, ui.foc
   local ds, clash, cand = { v:byte(1, 81) }, grid.clashes(v), grid.candidates(v)
   local notes = { string.unpack(grid.FMT, state.n) }
   local ground, marked = {}, {}
-  ch.gfx.text(L.x, L.oy + 13, ui.note or ui.msg or ("Sudoku - " .. NAMES[state.l]), "medium", "black")
+  local left = ui.note or ui.msg or ("Sudoku - " .. NAMES[state.l])
+  ch.gfx.text(L.x, L.oy + 13, left, "medium", "black")
+  -- The time ends at the grid's right edge; a left text that leaves it under 16 px of room hides the time while it
+  -- shows. ("medium" and "right": a "small" text with "right" is read as a count's pad.)
+  local timed = false
+  if ms then
+    local time = view.minutes(ms)
+    if ch.text_width(left, "medium") + 16 <= L.size - ch.text_width(time, "medium") then
+      ch.gfx.text(L.x + L.size, L.oy + 13, time, "medium", "black", "right")
+      timed = true
+    end
+  end
 
   -- Grounds: the focused digit's copies black, a clue light, and the rest of the selected cell's units dark. Priority
   -- in that order.
@@ -189,10 +204,13 @@ local function draw_board(state, ui)
     ch.gfx.icon(RAIL[i][1], x + 10, y + (h - 32) // 2, "small", color)
     ch.gfx.text(x + 54, y + h // 2 - layout.DY.small, RAIL[i][2], "small", color)
   end
+  return timed
 end
 
--- Draws the frame for state and ui; over is whether the grid is solved.
-function view.draw(state, ui, over)
+-- Draws the frame for state and ui; over is whether the grid is solved; ms is the play time to show on the board's
+-- header (nil: none). Returns whether that time was drawn (false on every other screen, and when the left text leaves
+-- no room).
+function view.draw(state, ui, over, ms)
   if not said and not board.fits(ch.screen.w, ch.screen.h) then
     said = true
     ch.log("Sudoku: the canvas is " .. ch.screen.w .. " x " .. ch.screen.h .. " and the game needs " .. board.W .. " x "
@@ -211,8 +229,9 @@ function view.draw(state, ui, over)
   elseif ui.panel == "menu" then
     draw_menu(ui)
   else
-    draw_board(state, ui)
+    return draw_board(state, ui, ms)
   end
+  return false
 end
 
 return view
