@@ -1224,7 +1224,7 @@
 ## e5-run2
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md`
-  summary: The installer reports a 0-byte inbox file as "not a readable zip", which sent the second device run looking for corruption when the upload had simply delivered empty files.
+  summary: Resolved by e6pre-19 (cbdfcfa3, merged at 6e920863): a 0-byte inbox file is `GamePackageInstaller::Error::Empty`, logged "the file is empty (0 bytes)" with the launcher note "The file is empty" (`STR_GAMES_INSTALL_EMPTY`), and still renamed `.bad`; a non-zip of 1 byte or more stays "not a readable zip" and its log line now ends " (<n> bytes)". Why the upload delivered empty files stays open: the next device run checks the sizes on the card. It read: The installer reports a 0-byte inbox file as "not a readable zip", which sent the second device run looking for corruption when the upload had simply delivered empty files.
   evidence: The owner's `sudoku.chgame.bad` and `battleship.chgame.bad` from the second run (2026-10-10) are 0 bytes each; the device logged "not installed: not a readable zip" for both. Saying "empty file" (and the size it got) for a file under the smallest valid zip would name the real fault. Location: src/games/GamePackageInstaller.cpp (the "not a readable zip" reason). Severity: low.
 
 ## 8.15
