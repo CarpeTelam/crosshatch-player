@@ -7,6 +7,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <ModeTable.h>
 
 #include <cstdio>
 #include <cstring>
@@ -28,24 +29,32 @@ using SaveState = GameSaveStore::SaveState;
 static_assert(GamePkg::HASH_BYTES == GameSaveStore::PACKAGE_HASH_BYTES,
               "the title screen peeks the save with the package hash the registry read");
 
+// The screen's own column of GameCore::MODE_TABLE: each mode's tr() string, in the table's order. The table gives the
+// bit, the order, and the log name (lib/GameCore may not include lib/I18n).
 struct ModeText {
-  uint8_t bit;
   GameCore::Mode mode;
   StrId name;
-  const char* log;  // the mode's name in the log
 };
 
-// The modes in the order every list of them follows: solo, pass, nearby.
 constexpr ModeText MODE_TEXTS[] = {
-    {Manifest::MODE_SOLO, GameCore::Mode::Solo, StrId::STR_GAMES_MODE_SOLO, "solo"},
-    {Manifest::MODE_PASS, GameCore::Mode::Pass, StrId::STR_GAMES_MODE_PASS, "pass"},
-    {Manifest::MODE_NEARBY, GameCore::Mode::Nearby, StrId::STR_GAMES_MODE_NEARBY, "nearby"},
+    {GameCore::Mode::Solo, StrId::STR_GAMES_MODE_SOLO},
+    {GameCore::Mode::Pass, StrId::STR_GAMES_MODE_PASS},
+    {GameCore::Mode::Nearby, StrId::STR_GAMES_MODE_NEARBY},
 };
 
-const ModeText* modeTextOf(const uint8_t bit) {
-  for (const ModeText& mode : MODE_TEXTS)
-    if (mode.bit == bit) return &mode;
-  return nullptr;
+constexpr bool textsCoverTable() {
+  if (sizeof(MODE_TEXTS) / sizeof(MODE_TEXTS[0]) != GameCore::MODE_COUNT) return false;
+  for (size_t i = 0; i < GameCore::MODE_COUNT; ++i)
+    if (MODE_TEXTS[i].mode != GameCore::MODE_TABLE[i].mode) return false;
+  return true;
+}
+static_assert(textsCoverTable(), "MODE_TEXTS has one string per GameCore::MODE_TABLE row, in its order");
+
+// The string of table row `row`; textsCoverTable() makes the first row's string a fallback that is never reached.
+StrId textOf(const GameCore::ModeRow& row) {
+  for (const ModeText& text : MODE_TEXTS)
+    if (text.mode == row.mode) return text.name;
+  return MODE_TEXTS[0].name;
 }
 
 // What peek() found, in the log.
@@ -79,28 +88,28 @@ struct ManifestRead {
 }  // namespace
 
 const char* GameModeActivity::modeName(const uint8_t modeBit) {
-  const ModeText* mode = modeTextOf(modeBit);
-  return mode ? I18N.get(mode->name) : "";
+  const GameCore::ModeRow* row = GameCore::modeRowForBit(modeBit);
+  return row ? I18N.get(textOf(*row)) : "";
 }
 
 void GameModeActivity::writeModesLine(const uint8_t modes, char* out, const size_t size) {
   if (size == 0) return;
   out[0] = '\0';
-  for (const ModeText& mode : MODE_TEXTS) {
-    if ((modes & mode.bit) == 0) continue;
+  for (const GameCore::ModeRow& row : GameCore::MODE_TABLE) {
+    if ((modes & row.bit) == 0) continue;
     if (out[0] != '\0') append(out, size, JOINER);
-    append(out, size, I18N.get(mode.name));
+    append(out, size, I18N.get(textOf(row)));
   }
 }
 
 uint8_t GameModeActivity::nextMode(const uint8_t current, const uint8_t modes) {
-  constexpr size_t COUNT = sizeof(MODE_TEXTS) / sizeof(MODE_TEXTS[0]);
+  constexpr size_t COUNT = GameCore::MODE_COUNT;
   size_t at = COUNT - 1;  // the search starts after this: after `current`, or (from nearby) at solo when it is none
   for (size_t i = 0; i < COUNT; ++i)
-    if (MODE_TEXTS[i].bit == current && (modes & current) != 0) at = i;
+    if (GameCore::MODE_TABLE[i].bit == current && (modes & current) != 0) at = i;
   for (size_t step = 1; step <= COUNT; ++step) {
-    const ModeText& mode = MODE_TEXTS[(at + step) % COUNT];
-    if ((modes & mode.bit) != 0) return mode.bit;
+    const GameCore::ModeRow& row = GameCore::MODE_TABLE[(at + step) % COUNT];
+    if ((modes & row.bit) != 0) return row.bit;
   }
   return 0;
 }
@@ -257,10 +266,10 @@ void GameModeActivity::activateIndex(const int index) {
 }
 
 bool GameModeActivity::rosterFor(const uint8_t modeBit, GameCore::Roster& roster) const {
-  const ModeText* mode = modeTextOf(modeBit);
-  if (!mode) return false;
+  const GameCore::ModeRow* row = GameCore::modeRowForBit(modeBit);
+  if (!row) return false;
   roster = GameCore::Roster::solo();
-  switch (mode->mode) {
+  switch (row->mode) {
     case GameCore::Mode::Solo:
       return true;
     case GameCore::Mode::Pass: {
@@ -279,19 +288,19 @@ bool GameModeActivity::rosterFor(const uint8_t modeBit, GameCore::Roster& roster
 
 void GameModeActivity::startNew() {
   GameCore::Roster roster;
-  const ModeText* mode = modeTextOf(choices.mode);
-  if (!mode) {
+  const GameCore::ModeRow* row = GameCore::modeRowForBit(choices.mode);
+  if (!row) {
     LOG_ERR("GAME", "Cannot start %s: no mode this host can start", manifest.id);
     requestUpdate();  // the tap moved the selection here (or the confirmation closed); show it
     return;
   }
   if (!rosterFor(choices.mode, roster)) {  // the mode has no seat count this host fits (only pass, today)
-    LOG_ERR("GAME", "Cannot start %s in %s: seats %d..%d leave no %s match on this host", manifest.id, mode->log,
-            static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax), mode->log);
+    LOG_ERR("GAME", "Cannot start %s in %s: seats %d..%d leave no %s match on this host", manifest.id, row->name,
+            static_cast<int>(manifest.seatsMin), static_cast<int>(manifest.seatsMax), row->name);
     requestUpdate();
     return;
   }
-  switch (mode->mode) {
+  switch (row->mode) {
     case GameCore::Mode::Solo:
       LOG_INF("GAME", "Mode solo picked for %s", manifest.id);
       break;
@@ -299,8 +308,8 @@ void GameModeActivity::startNew() {
       LOG_INF("GAME", "Mode pass picked for %s: %u seats", manifest.id, static_cast<unsigned>(roster.seats));
       break;
     case GameCore::Mode::Nearby:
-      LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", mode->log, manifest.id,
-              mode->log);
+      LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", row->name, manifest.id,
+              row->name);
       break;
   }
   startMatch(roster, false);
@@ -315,8 +324,8 @@ void GameModeActivity::startResume() {
   // seats) nothing.
   GameCore::Roster roster;
   bool found = false;
-  for (const ModeText& mode : MODE_TEXTS) {
-    if ((modes & mode.bit) != 0 && rosterFor(mode.bit, roster)) {
+  for (const GameCore::ModeRow& row : GameCore::MODE_TABLE) {
+    if ((modes & row.bit) != 0 && rosterFor(row.bit, roster)) {
       found = true;
       break;
     }

@@ -3,7 +3,8 @@
 #include <Memory.h>
 
 #include <cstring>
-#include <initializer_list>
+
+#include "ModeTable.h"
 
 namespace GameCore {
 
@@ -65,17 +66,11 @@ bool parseIconWeight(const std::string_view text, uint8_t& out) {
   return true;
 }
 
-// default_mode's three values, as Manifest::Mode bits (modes' own names).
+// default_mode's value as a Manifest::Mode bit: a mode's name (ModeTable.h).
 bool parseMode(const std::string_view text, uint8_t& out) {
-  if (text == "solo") {
-    out = Manifest::MODE_SOLO;
-  } else if (text == "pass") {
-    out = Manifest::MODE_PASS;
-  } else if (text == "nearby") {
-    out = Manifest::MODE_NEARBY;
-  } else {
-    return false;
-  }
+  const ModeRow* row = modeRowForName(text);
+  if (!row) return false;
+  out = row->bit;
   return true;
 }
 
@@ -246,8 +241,6 @@ const char* describe(const CheckReason reason) {
 
 namespace {
 
-constexpr uint8_t ALL_MODES = Manifest::MODE_SOLO | Manifest::MODE_PASS | Manifest::MODE_NEARBY;
-
 // A fixed field's text; all N bytes when it has no terminator, which no rule accepts.
 template <size_t N>
 std::string_view fieldText(const char (&field)[N]) {
@@ -256,7 +249,7 @@ std::string_view fieldText(const char (&field)[N]) {
 }
 
 // True for exactly one Mode bit.
-bool oneMode(const uint8_t bits) { return bits != 0 && (bits & (bits - 1)) == 0 && (bits & ~ALL_MODES) == 0; }
+bool oneMode(const uint8_t bits) { return modeRowForBit(bits) != nullptr; }
 
 // The rules Manifest::parse enforces, for a Manifest that did not come from it.
 bool fieldsValid(const Manifest& m) {
@@ -265,7 +258,7 @@ bool fieldsValid(const Manifest& m) {
   return validId(fieldText(m.id)) && !name.empty() && name.size() <= Manifest::MAX_NAME_BYTES &&
          fieldText(m.version).size() <= Manifest::MAX_VERSION_BYTES && (icon.empty() || validIcon(icon)) &&
          m.iconWeight <= Manifest::ICON_FILL && m.api >= 1 && m.seatsMin >= 1 && m.seatsMax >= m.seatsMin &&
-         m.modes != 0 && (m.modes & ~ALL_MODES) == 0 &&
+         m.modes != 0 && (m.modes & ~ALL_MODE_BITS) == 0 &&
          (m.defaultMode == 0 || (oneMode(m.defaultMode) && (m.defaultMode & m.modes) != 0)) &&
          m.settingsCount <= Manifest::MAX_SETTINGS;
 }
@@ -300,9 +293,9 @@ CheckResult Manifest::check(const HostCaps& host) const {
 uint8_t Manifest::startMode(const uint8_t remembered, const uint8_t hostModes) const {
   if (oneMode(remembered) && (remembered & hostModes) != 0) return remembered;
   if (oneMode(defaultMode) && (defaultMode & hostModes) != 0) return defaultMode;
-  // The bits carry no list order, so "the first listed" is read in solo, pass, nearby order.
-  for (const uint8_t mode : {MODE_SOLO, MODE_PASS, MODE_NEARBY}) {
-    if ((hostModes & mode) != 0) return mode;
+  // The bits carry no list order, so "the first listed" is read in the table's order: solo, pass, nearby.
+  for (const ModeRow& row : MODE_TABLE) {
+    if ((hostModes & row.bit) != 0) return row.bit;
   }
   return 0;
 }
@@ -564,12 +557,9 @@ void ManifestReader::onString(const std::string_view value) {
     return;
   }
   if (depth == 2 && key == Key::Modes) {
-    if (value == "solo") {
-      result.modes |= Manifest::MODE_SOLO;
-    } else if (value == "pass") {
-      result.modes |= Manifest::MODE_PASS;
-    } else if (value == "nearby") {
-      result.modes |= Manifest::MODE_NEARBY;
+    const ModeRow* row = modeRowForName(value);
+    if (row) {
+      result.modes |= row->bit;
     } else {
       fail(ManifestError::BadModes);
     }
