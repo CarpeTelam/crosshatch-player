@@ -935,7 +935,7 @@
   summary: `MatchPersistence` has unit tests only for the deadline, wrap, and unbound paths; the back-off, `onOver` failure, replacement-clears-pending, successful write, and writable=false guards are covered only through `ResumeMatchTest`, and `seedResume` and `GameMatchView` have no direct tests.
   evidence: `test/game_script/harness/MatchPersistenceTest.cpp`; a direct test needs a ready `MatchStore`/`GameSaveStore` over the Storage double (as `ResumeMatchTest` builds one). Trigger: any of the forced-exit-order or play-again-gap builds changing these units.
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
-  summary: Not extracted, left for a later split: the touch-tagging state (`readGesture`, `frameAt`, `lastPush`, `touchDown*`), the round/seat gate counters, and `loopPlaying`'s first-frame touch logic stay in `GameMatchActivity`.
+  summary: Resolved by e6pre-17 (87fe332b, merged at ffa33fd4): the touch latch is `src/games/TouchLatch.h`, the round and seat gate counters with the frame-on-panel record are `src/games/CanvasGate.h`, and `loopPlaying`'s aimed-gesture choice is the pure `GameTouchRoute::decide` (`src/games/GameTouchRoute.h`), with `TouchLatchTest`, `CanvasGateTest`, and `GameTouchRouteTest`; behaviour, log text, and memory order unchanged (the release and lock order pinned by review and comment). It read: Not extracted, left for a later split: the touch-tagging state (`readGesture`, `frameAt`, `lastPush`, `touchDown*`), the round/seat gate counters, and `loopPlaying`'s first-frame touch logic stay in `GameMatchActivity`.
   evidence: `GameMatchActivity.cpp` is 873 lines after this split; those members interlock with render-task atomics, so a clean seam needs its own design. Trigger: epic play-nearby's second local-seat path.
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-1-split-gamematchactivity.md`
   summary: `handle()` sets `persistence.setWritable` in each state case; a single state-to-writable mapping would keep the "Over and Error never write" rule in one place.
@@ -1271,3 +1271,9 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-16-dev-setup-stderr.md`
   summary: The first `apt-get install` failure's output is discarded when the retry after `apt-get update` fails differently.
   evidence: Recorded by e6pre-16's review (the plan's Review Triage Log); pre-existing. Location: scripts/dev_setup.py Setup.system_packages. Severity: low.
+
+## e6pre-17
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e6pre-17-match-touch-split.md`
+  summary: `CanvasGate::frameAt` treats `doneMs == 0` as "no push recorded", so a push completing at `millis() == 0` (the 2^32 ms wrap, about 49.7 days of uptime) reads as none and the tap is tagged with the frame on the panel instead of the one before the push.
+  evidence: Pre-existing from 17d02483, moved verbatim by e6pre-17 (the plan's Review Triage Log). A separate `bool` for "a push was recorded" would close it. Location: src/games/CanvasGate.h (frameAt). Severity: low.
