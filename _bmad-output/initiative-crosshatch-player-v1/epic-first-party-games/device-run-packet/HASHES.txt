@@ -1,5 +1,5 @@
-sudoku.chgame e1d2bd0eb8c1c750
+sudoku.chgame f31b5a02a67a712a
 ultimate-tic-tac-toe.chgame cd11a6224228acd9
 battleship.chgame d3fecc1e5fc245f6
 pass-store.chgame 5a6bbba63ef264ee
-sudoku-costly.chgame 815591c5695c16db
+sudoku-costly.chgame fe158c9980b01fd1

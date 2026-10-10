@@ -1244,3 +1244,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-show-sudoku-s-play-time-in-the-header-with-a-timer-toggle-in-plan.md`
   summary: Firing and re-arming of the real minute timer are not pinned on the host, because a first-party round delivers no timer event.
   evidence: Recorded by entry 16's review. The simulator showed "0 min" then "1 min" with no tap (story-timer-screenshots/puzzle-time-1min-after-timer.png); entry 5's next device run settles it. Location: test/game_script/first_party/sudoku/interaction.lua. Severity: medium (unverified on the device).
+
+## 8.17
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-make-sudoku-s-notes-as-default-to-digits-plan.md`
+  summary: The device-run packet's steps assumed NOTES AS starts at DOTS (Part S's marks step and Part T's Expert heap step).
+  evidence: Recorded by entry 17's review. Outcome: the orchestrator rewrote both steps and the end-of-run restore note in device-run-packet.md when it repacked Sudoku after entry 17. Location: device-run-packet.md, Part S step 2 and Part T step 5. Severity: medium. Resolved.

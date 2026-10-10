@@ -41,20 +41,32 @@ The first run answered every part except these three. Record each in "Step resul
 
 Also check the launcher icons: Battleship's filled boat and Sudoku's grid.
 
+## Fourth run (after entries 16 and 17)
+
+The third run settled the right column. Install the new `sudoku.chgame` only (42,695 B; check the size on the phone before uploading). The firmware stays `4a87ed90`, and Ultimate tic-tac-toe and Battleship are unchanged. Keep the serial log running throughout, and record each item in "Step results".
+
+1. **The header time across a pause (entries 13 and 16).**
+   - Start an Easy puzzle. The header's right end reads "0 min". Wait with no tap until it reads "1 min": the minute timer fired on its own.
+   - Note the minutes, press Back to pause, and wait about 2 minutes. Choose **Resume**.
+   - The header must show the same minutes as before the pause, not 2 more. Make a move and finish or leave as you like; if you solve it, note the Solved screen's Time.
+2. **The TIMER toggle (entry 16).** MENU: row 7 reads "TIMER: ON". Tap it to OFF, close the menu, and check the header shows no time. Turn it back on.
+3. **NOTES AS (entry 17).** MENU row 6 reads whatever you last chose; a device that never changed it reads "NOTES AS: DIGITS". Note what it reads.
+4. **B6, a sleep from Battleship's Over.** Finish a Battleship round. On Over, press power instead of Play again. Note any ghost, wake, and confirm the title screen offers no Continue.
+
 ## Packages
 
-All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed at the epic head after entry 15 (`00699a05`).
-- Entry 15 changed all three games: a tap in the margin beside an edge cell counts as that cell. `sudoku-costly.chgame` follows Sudoku.
+All are in `device-run-packet/`. The hashes are what `python3 scripts/pack_game.py games/<id> <dir>` printed at the epic head after entry 17 (`e4940989`).
+- Entry 15 changed all three games: a tap in the margin beside an edge cell counts as that cell. Entries 16 and 17 changed only Sudoku: the header's play time with a TIMER toggle, and NOTES AS defaulting to DIGITS. `sudoku-costly.chgame` follows Sudoku. Ultimate tic-tac-toe and Battleship are byte-identical to the entry-15 files already installed.
 - `pass-store.chgame` is unchanged since the first run.
 - Check each file's size on the phone before uploading. In the second run, the upload delivered two 0-byte files.
 
 | File | Packed from | Package hash | Bytes | SHA-256 of the file |
 | --- | --- | --- | --- | --- |
-| `sudoku.chgame` | `games/sudoku` (37 members) | `e1d2bd0eb8c1c750` | 41,779 | `3cf42355c65cf28d0c4635207bdc6535cc28c497b6fe34645c16086e6ce0bbc4` |
+| `sudoku.chgame` | `games/sudoku` (37 members) | `f31b5a02a67a712a` | 42,695 | `a54e37cf7bf4a0dd9cae9162c81b30eda2e57a2d4a17abd615adec3c6b077108` |
 | `ultimate-tic-tac-toe.chgame` | `games/ultimate-tic-tac-toe` | `cd11a6224228acd9` | 5,361 | `f7689860932dff3a7112efe07f61dc2a63d3b5fe8f87bb8a996b9a87add48b84` |
 | `battleship.chgame` | `games/battleship` | `d3fecc1e5fc245f6` | 10,167 | `8fe47f261cab5df7dddfcb4c619d7066b5f5afdfe85f591af3802ed1d7500d63` |
 | `pass-store.chgame` | `python3 scripts/pack_device_run.py <dir>` (B7.6) | `5a6bbba63ef264ee` | 1,218 | `ec4e1c656ca8bc62d5d9b3b631e51cfb72cfbcd55df388f44d026963192684e4` |
-| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `815591c5695c16db` | 41,782 | `035d84a97eadcc7345afbc1e4bce8919e8c0349b886dcdc117ef427688b4c0aa` |
+| `sudoku-costly.chgame` | `python3 device-run-packet/make_sudoku_costly.py <dir>` (Part T) | `fe158c9980b01fd1` | 42,698 | `63cc49543821e4fa8038b48aecdd9b9433fc369f34c43bb9bac5884c940ac46b` |
 
 - `pass-store` is the script's derived game: `pass-hidden` plus one `ch.store.set` per move, so a store flush can land in a sleep (its hash equals the one the epic-pass-and-play packet printed). The script's other twelve files are not needed here.
 - `sudoku-costly` is Sudoku with one change, so HINT and CHECK can be timed on the costliest Expert grid: its `setup` returns a fixed Expert grid instead of a random deal, and its id, name and Difficulty default (`Expert`) differ so it cannot be mistaken for the shipped game. The grid is bank puzzle `0034ee8363e5` (Expert, index 59, the costliest Expert call the bank tool recorded) under the one symmetry out of 3,000 random ones that cost most (below). `make_sudoku_costly.py` documents the edits; it is a packet file, not a repository script, and nothing under `games/` changes.
@@ -119,7 +131,7 @@ A hidden pass game: after each move that passes the turn, the mover's frame stay
 
 1. **3 taps:** Home, Games, Sudoku, New game ("Solo · Easy"; the title screen also offers Options, whose Difficulty cycles Easy, Medium, Hard, Expert). Count: Games, the row, New game. The page shows "Sudoku - Easy", the 9 × 9 grid, a 3 × 3 digit pad, and to its right NOTES, ERASE, UNDO and MENU.
 2. Play the round with the controls: tap a cell, then a digit. Along the way:
-   - NOTES on, then marks in a few cells (dots first, then MENU, "NOTES AS: DIGITS"), and a focused digit (tap a pad key with no cell selected);
+   - NOTES on, then marks in a few cells (digits first, as NOTES AS now defaults to DIGITS, then MENU, "NOTES AS: DOTS"), and a focused digit (tap a pad key with no cell selected);
    - MENU: SHOW REMAINING and SHADE PEERS are on by default; turn each off and on again (each choice is remembered on this device);
    - a digit that clashes with a peer is marked; ERASE and UNDO work;
    - MENU, HOW TO PLAY opens a page, and a tap closes it (this loads the `help` module in the middle of play: any error view naming "script recursion too deep to load a module" is a failure: deferral 8.4 #1);
@@ -156,7 +168,7 @@ On the host this grid's first HINT selects the cell at row 5, column 5 and reads
 2. **First CHECK on a fresh VM:** tap MENU, then CHECK. The message reads "All correct". Time it (host cost 258,030: it pays the answer).
 3. **HINT after the CHECK:** MENU, HINT. Row 5, column 5 is selected, with "Only cell (row)". Time it (host cost 45,186: the answer is cached).
 4. **First HINT on a fresh VM:** press the power button, wake, Games, Sudoku costly, Continue (a resume starts a new VM and drops the cached answer), then MENU, HINT. Time it (host cost 302,708: it pays the answer and the hint). This is the worst call found.
-5. Heap and a solve at Expert: tap MENU, make sure SHADE PEERS is on and set "NOTES AS: DIGITS", then FILL NOTES (every candidate in every empty cell, the heaviest frame; look at J2 to J4 here); tap a cell and a pad key to focus a digit; UNDO once (it restores the notes the fill replaced). Then enter the solution above, cell then digit, for the 55 empty cells. After about 20 digits, CHECK reads "All correct"; then enter one deliberate wrong digit: CHECK reads "1 wrong digit", and HINT reads "Wrong digit" and selects it; fix it and finish. The grid ends on "Solved". Any out-of-memory fault (an error view naming memory, a `Script error:` line) is a device failure (Assumption A2). Leave and record the `VM stopped` line that follows `sudoku-costly: ... -> Leaving`.
+5. Heap and a solve at Expert: tap MENU, make sure SHADE PEERS is on and NOTES AS reads DIGITS (the default since entry 17; tap it only if it reads DOTS), then FILL NOTES (every candidate in every empty cell, the heaviest frame; look at J2 to J4 here); tap a cell and a pad key to focus a digit; UNDO once (it restores the notes the fill replaced). Then enter the solution above, cell then digit, for the 55 empty cells. After about 20 digits, CHECK reads "All correct"; then enter one deliberate wrong digit: CHECK reads "1 wrong digit", and HINT reads "Wrong digit" and selects it; fix it and finish. The grid ends on "Solved". Any out-of-memory fault (an error view naming memory, a `Script error:` line) is a device failure (Assumption A2). Leave and record the `VM stopped` line that follows `sudoku-costly: ... -> Leaving`.
 6. **The shipped Sudoku at Expert:** Games, Sudoku, Options, Difficulty to Expert, Back, New game. Time the first CHECK, then the first HINT after a sleep and Continue, as in steps 2 to 4, and photograph the dealt grid (which puzzle it was cannot be read off a photograph: the orchestrator can match it against the bank under every symmetry offline, if the cross-check matters). Leave and record the `VM stopped` line. Then set Difficulty back to Easy, and Remove "Sudoku costly".
 
 ## Part P: B7.6, a sleep with a dirty store (`pass-store`; e6pre-13)
@@ -174,7 +186,7 @@ The forced exit now writes the resume file, retries the delete and flushes `ch.s
 
 ## Part Z: end of the run
 
-Put back what the run changed: Settings, Display, Sleep Screen and Controls, Short Power Button Click to the values you noted in "Order and card state"; the games' remembered toggles (SHOW REMAINING, SHADE PEERS, NOTES AS) and Difficulty to their defaults if you changed them; Remove any game still installed that you do not want (`pass-store` and `sudoku-costly` were removed in Parts P and T); and delete the `/.games-data/` folders of this run's games from a computer if the card goes back to normal use. Send the photos and videos with the results and name each by its step id; save the serial log as `entry5.log` whole.
+Put back what the run changed: Settings, Display, Sleep Screen and Controls, Short Power Button Click to the values you noted in "Order and card state"; the games' remembered toggles (SHOW REMAINING, SHADE PEERS, NOTES AS, TIMER) and Difficulty to their defaults if you changed them; Remove any game still installed that you do not want (`pass-store` and `sudoku-costly` were removed in Parts P and T); and delete the `/.games-data/` folders of this run's games from a computer if the card goes back to normal use. Send the photos and videos with the results and name each by its step id; save the serial log as `entry5.log` whole.
 
 ## Serial lines that carry each figure
 
