@@ -20,6 +20,7 @@
 #include "games/GameHostCaps.h"
 #include "games/GameRegistry.h"
 #include "games/GameTouchLog.h"
+#include "games/GameTouchRoute.h"
 #include "games/GameVM.h"
 #include "games/MatchResume.h"
 
@@ -66,8 +67,29 @@ bool isHiddenPass(const GameCore::Roster& roster, const GameCore::Manifest& mani
   return roster.mode == GameCore::Mode::Pass && manifest.hidden;
 }
 
+uint32_t millisNow() { return static_cast<uint32_t>(millis()); }
+
+// GameTouchRoute::decide's Source: each read happens on the call that asks for it, as loopPlaying read it inline.
+class TouchSource {
+ public:
+  TouchSource(const std::atomic<bool>& pushingFlag, const CanvasGate& gateRef, const GameVM& vmRef)
+      : pushing(pushingFlag), canvasGate(gateRef), gameVm(vmRef) {}
+  bool firstFramePushing() { return pushing.load(std::memory_order_acquire); }
+  uint32_t nowMs() { return millisNow(); }
+  uint32_t heldMs() { return static_cast<uint32_t>(gpio.lastTouchHeldMs()); }
+  uint32_t frameOnPanel() { return canvasGate.frameOnPanel(); }
+  uint32_t frameAt(const uint32_t atMs) { return canvasGate.frameAt(atMs); }
+  uint32_t currentFrame() { return gameVm.frameGen(); }
+
+ private:
+  const std::atomic<bool>& pushing;
+  const CanvasGate& canvasGate;
+  const GameVM& gameVm;
+};
+
 }  // namespace
 
+static_assert(GameTouchRoute::UNTAGGED == GameVM::UNTAGGED, "GameTouchRoute is std-only and keeps its own copy");
 static_assert(GameVM::STOP_POLL_MS == 5, "game-canvas.md's forced-exit bound (about 1,030 ms) assumes a 5 ms poll");
 static_assert(GameMatchActivity::FORCED_EXIT_DEADLINE_MS == 1500,
               "game-canvas.md states the forced exit's 1,500 ms bound; change the doc with this deadline");
@@ -252,12 +274,12 @@ void GameMatchActivity::handle(const MatchEvent event) {
   // Before shown: a render already queued must not see Playing with the old count. A hidden pass match's hand-off
   // likewise waits for the new round's first turn seat, read before playAgain() (startNextRound) can begin it.
   if (event == MatchEvent::PlayAgain) {
-    roundsStartedAwaited.store(vm->roundsStarted() + 1);
+    gate.awaitRounds(vm->roundsStarted() + 1);
     if (lifecycle.hiddenPass()) announcementAwaited.store(vm->turnAnnouncements() + 1);
   }
   // The hand-off's tap asks the VM for the next seat, and the canvas waits for that request's frame; stored before
   // shown for the same reason as the count above.
-  if (from == MatchState::HandOff && event == MatchEvent::Tap) seatAwaited.store(vm->showTurnSeat());
+  if (from == MatchState::HandOff && event == MatchEvent::Tap) gate.awaitSeat(vm->showTurnSeat());
   resumesTo.store(lifecycle.resumesTo());
   shown.store(to);
   switch (to) {
@@ -309,7 +331,7 @@ void GameMatchActivity::startNextRound() {
   // Frames the last round drew after it ended are never shown, one from a
   // step still running when Play again came included: the loop asks for no
   // render until the new round's first frame is published.
-  // roundsStartedAwaited was stored in handle(), before shown.
+  // gate.awaitRounds was stored in handle(), before shown.
   shownFrame = vm->frameGen();
   vm->playAgain();
 }
@@ -434,10 +456,10 @@ void GameMatchActivity::loop() {
   // reaches loopPlaying's own release): free it on the first pass elsewhere that sees no finger down, so the next
   // contact in Playing latches its own. A finger still down across the transition keeps its latch: it began before the
   // hand-off.
-  if (current != MatchState::Playing && touchDownLatched) {
+  if (current != MatchState::Playing && contact.latched()) {
     int heldX = 0;
     int heldY = 0;
-    if (!mappedInput.isScreenTouchHeld(heldX, heldY)) touchDownLatched = false;
+    if (!mappedInput.isScreenTouchHeld(heldX, heldY)) contact.free();
   }
   switch (current) {
     case MatchState::Playing:
@@ -484,7 +506,7 @@ void GameMatchActivity::loopPlaying() {
   }
 
   // Until a round's first frame is published, and after that until the render task has handed
-  // it to the panel (roundsDisplayed), the screen still shows what came before: the title screen
+  // it to the panel (CanvasGate::roundsDisplayed), the screen still shows what came before: the title screen
   // before the match's first round, the end-of-round menu or the last round's frame after Play
   // again. A tap there is not aimed at the round, so it is read (which consumes the contact)
   // and dropped. Only the first of the two also holds the frame back: once the count has moved,
@@ -492,11 +514,9 @@ void GameMatchActivity::loopPlaying() {
   // A hidden pass match's next seat is held back the same way: until the VM has served the hand-off's request, the
   // front frame may still be the last seat's, and until render has pushed the new one the hand-off screen is on the
   // panel.
-  const uint32_t awaited = roundsStartedAwaited.load();
-  const uint32_t seat = seatAwaited.load();
-  const bool awaitingRound = vm->roundsStarted() < awaited || vm->seatShownRequest() < seat;
-  const bool awaitingDisplay = awaitingRound || roundsDisplayed.load(std::memory_order_acquire) < awaited ||
-                               seatDisplayed.load(std::memory_order_acquire) < seat;
+  const CanvasGate::Wait wait = gate.wait(*vm);
+  const bool awaitingRound = wait.round;
+  const bool awaitingDisplay = wait.display;
   // Edge gestures never get here as game input: Back is Button::Back above,
   // ActivityManager takes Home (handleHomeGesture) and the light panel first, and
   // GameTouch drops every edge swipe that is left.
@@ -511,49 +531,33 @@ void GameMatchActivity::loopPlaying() {
   if (outcome != GameTouch::Outcome::NoGesture) {
     LOG_DBG("GAME", "%s: touch %s", manifest.id, GameTouchLog::line(gesture, outcome, event).text);
   }
-  // The first seat frame after "I'm ready" accepts a touch made during its push (the owner's decision of 2026-10-03:
-  // the hand-off needs one tap per step): once the VM has published the frame (!awaitingRound), a touch whose
-  // touch-down came at or after the hand-off passed (playingSinceMs) is that seat's move, whatever the push has
-  // reached. It skips touchDownFrame and frameAt and is posted with the frame the VM has now, so
-  // GameVM::madeUnderAnotherSeat still keeps it for that seat. A contact whose touch-down preceded the transition (the
-  // press that passed the hand-off, lifting late) is dropped. Open pass and solo never set the flag.
-  bool firstFrameTouch = false;  // handled here: posted, or dropped and logged
-  if (aimed && !awaitingRound && firstFramePushing.load(std::memory_order_acquire)) {
-    firstFrameTouch = true;
-    const auto nowMs = static_cast<uint32_t>(millis());
-    uint32_t began = touchDownLatched ? touchDownMs : nowMs;
-    if (gesture.kind == GameTouch::Kind::Tap) {
-      const auto backDated = static_cast<uint32_t>(nowMs - gpio.lastTouchHeldMs());
-      if (static_cast<int32_t>(backDated - began) < 0) began = backDated;
+  // What becomes of the aimed gesture is GameTouchRoute::decide's (the first-frame path, the drop before the frame is
+  // on the panel, and the frame tag); this performs it. The touch log line above runs before the decision.
+  if (aimed) {
+    TouchSource source(firstFramePushing, gate, *vm);
+    const GameTouchRoute::Aimed in{.tap = gesture.kind == GameTouch::Kind::Tap,
+                                   .awaitingRound = awaitingRound,
+                                   .awaitingDisplay = awaitingDisplay,
+                                   .latched = contact.latched(),
+                                   .latchedFrame = contact.frame(),
+                                   .latchedMs = contact.ms(),
+                                   .playingSinceMs = playingSinceMs};
+    const GameTouchRoute::Decision decision = GameTouchRoute::decide(in, source);
+    switch (decision.action) {
+      case GameTouchRoute::Action::Post:
+        vm->postInput(event, decision.shownFrame);
+        break;
+      case GameTouchRoute::Action::DropBeforeHandOff:
+        LOG_INF("GAME", "%s: dropped a touch that began %d ms before the hand-off passed", manifest.id,
+                decision.beforeHandOffMs);
+        break;
+      case GameTouchRoute::Action::DropBeforeDisplay:
+        LOG_INF("GAME", "%s: dropped a touch before the frame was on the panel", manifest.id);
+        break;
     }
-    if (static_cast<int32_t>(began - playingSinceMs) >= 0) {
-      const uint32_t gen = vm->frameGen();
-      // As the tag below: UNTAGGED is never dropped by the VM, one less can only drop.
-      vm->postInput(event, gen == GameVM::UNTAGGED ? gen - 1 : gen);
-    } else {
-      LOG_INF("GAME", "%s: dropped a touch that began %d ms before the hand-off passed", manifest.id,
-              -static_cast<int>(static_cast<int32_t>(began - playingSinceMs)));
-    }
-  }
-  if (aimed && awaitingDisplay && !firstFrameTouch) {
-    LOG_INF("GAME", "%s: dropped a touch before the frame was on the panel", manifest.id);
-  }
-  if (!awaitingDisplay && aimed && !firstFrameTouch) {
-    // With the frame on the panel when the loop first saw the finger down (or now, for a contact it never saw down), so
-    // the VM drops it if another seat has been drawn since (a pass match). A tap is also back-dated by its touch-only
-    // held time (HalGPIO::lastTouchHeldMs; MappedInputManager::getHeldTime answers a button's hold on a pass with a
-    // button edge) to its first touch sample against the last push (frameAt), and the older frame is posted. What this
-    // cannot reach is in game-canvas.md. A frame number equal to GameVM::UNTAGGED, which the VM never drops, is posted
-    // one less, which can only drop.
-    uint32_t shown = touchDownLatched ? touchDownFrame : frameDisplayed.load(std::memory_order_acquire);
-    if (gesture.kind == GameTouch::Kind::Tap) {
-      const uint32_t atTouchDown = frameAt(static_cast<uint32_t>(millis() - gpio.lastTouchHeldMs()));
-      if (static_cast<int32_t>(atTouchDown - shown) < 0) shown = atTouchDown;
-    }
-    vm->postInput(event, shown == GameVM::UNTAGGED ? shown - 1 : shown);
   }
   // No finger down: the contact is over, posted, dropped, or no gesture at all, and the next one latches its own.
-  if (!contactHeld) touchDownLatched = false;
+  contact.endIfNotHeld();
   vm->pollTimer();
   store.flushIfDue(millis());
   flushResume();
@@ -586,7 +590,7 @@ void GameMatchActivity::loopView() {
     return;
   }
   // The pause menu opened in the Play-again gap says the round is starting; once it has, it is drawn without the line.
-  if (state == MatchState::Paused && gapWhenPaused && vm && vm->roundsStarted() >= roundsStartedAwaited.load()) {
+  if (state == MatchState::Paused && gapWhenPaused && vm && vm->roundsStarted() >= gate.roundsAwaited()) {
     gapWhenPaused = false;
     requestUpdate();
   }
@@ -663,13 +667,6 @@ void GameMatchActivity::choose(const GameCore::MatchMenu& menu, const int index)
   handle(menu.events[index]);
 }
 
-uint32_t GameMatchActivity::frameAt(const uint32_t atMs) const {
-  std::lock_guard<std::mutex> lock(pushMutex);
-  // Wrap-safe, as millis() is: before the last push completed, the frame before it was on the panel.
-  if (lastPush.doneMs != 0 && static_cast<int32_t>(atMs - lastPush.doneMs) < 0) return lastPush.before;
-  return frameDisplayed.load(std::memory_order_acquire);
-}
-
 GameTouch::Gesture GameMatchActivity::readGesture() {
   GameTouch::Gesture gesture;
   // Canvas taps and long presses bypass the FreeInkUI interaction table (AD-20).
@@ -678,21 +675,14 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
   // The first pass that sees a finger down (isScreenTouchHeld, from the contact's first sample; MappedInputManager's
   // touch-down waits 90 ms and drops a contact that slid) latches the frame on the panel, which the touch is posted
   // with when it ends.
-  if ((snap.touchHeld || snap.touchPressed) && !touchDownLatched) {
-    touchDownFrame = frameDisplayed.load(std::memory_order_acquire);
-    touchDownMs = static_cast<uint32_t>(millis());
-    touchDownLatched = true;
-    touchFirstX = snap.touchX;
-    touchFirstY = snap.touchY;
+  if ((snap.touchHeld || snap.touchPressed) && !contact.latched()) {
+    contact.latch(gate.frameOnPanel(), static_cast<uint32_t>(millis()), snap.touchX, snap.touchY);
   }
-  if (snap.touchHeld || snap.touchPressed) {
-    touchLastX = snap.touchX;
-    touchLastY = snap.touchY;
-  }
+  if (snap.touchHeld || snap.touchPressed) contact.sample(snap.touchX, snap.touchY);
   // Whether a finger is still down on this pass; the latch is freed on any pass without one (loopPlaying reads this
   // pass's latch first): the lift, with a gesture or none, a long press that suppressed the rest of the contact, or a
   // contact that ended where this loop did not see it (the light panel's swipe, a state the loop left).
-  contactHeld = snap.touchHeld;
+  contact.setHeld(snap.touchHeld);
   if (snap.touchReleased && snap.touchX >= 0) {
     gesture.kind = snap.longPress ? GameTouch::Kind::LongPress : GameTouch::Kind::Tap;
     gesture.x = snap.touchX;
@@ -721,11 +711,11 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
   // stale, so there is no hold either.
   if (snap.touchReleased) {
     gesture.kind = GameTouch::Kind::Ended;
-    gesture.x = touchDownLatched ? touchFirstX : -1;
-    gesture.y = touchDownLatched ? touchFirstY : -1;
-    gesture.endX = touchDownLatched ? touchLastX : -1;
-    gesture.endY = touchDownLatched ? touchLastY : -1;
-    gesture.heldMs = touchDownLatched ? static_cast<int32_t>(gpio.lastTouchHeldMs()) : -1;
+    gesture.x = contact.latched() ? contact.firstX() : -1;
+    gesture.y = contact.latched() ? contact.firstY() : -1;
+    gesture.endX = contact.latched() ? contact.lastX() : -1;
+    gesture.endY = contact.latched() ? contact.lastY() : -1;
+    gesture.heldMs = contact.latched() ? static_cast<int32_t>(gpio.lastTouchHeldMs()) : -1;
   }
   return gesture;
 }
@@ -763,7 +753,7 @@ void GameMatchActivity::renderCanvas() {
   // one of that seat's.
   const uint32_t started = vm->roundsStarted();
   const uint32_t served = vm->seatShownRequest();
-  if (started < roundsStartedAwaited.load() || served < seatAwaited.load()) {
+  if (!gate.open(started, served)) {
     viewOnScreen = true;
     return;
   }
@@ -772,7 +762,7 @@ void GameMatchActivity::renderCanvas() {
   // as the light panel closed): the screen no longer shows the frame. The VM may publish a newer one before drawFront
   // takes the front, which is why the frame on the panel is the number drawFront reports, not this. Read before the
   // view's clearScreen below on purpose: that clear is the seam where PassMatchTest's frame-race test publishes, so
-  // moving this read below it would leave the test passing whatever frameDisplayed stored.
+  // moving this read below it would leave the test passing whatever CanvasGate::frameDisplayed stored.
   const uint32_t frame = vm->frameGen();
   if (viewOnScreen) {
     // A view covered the canvas; a game that never clears would keep its pixels.
@@ -792,17 +782,14 @@ void GameMatchActivity::renderCanvas() {
             static_cast<unsigned>(millis()) - pushBegan);
     panel = Panel::Seat;
     // displayBuffer returns once the panel's refresh has completed (the blocking push), so a touch down before now was
-    // made under the frame before this one (frameAt).
-    std::lock_guard<std::mutex> lock(pushMutex);
-    lastPush = LastPush{frameDisplayed.load(std::memory_order_relaxed), static_cast<uint32_t>(millis())};
+    // made under the frame before this one (CanvasGate::frameAt).
+    gate.recordPush(millisNow);
   }
-  // Every way out of here past the gate stores these, a frame replay skipped as identical to the one on screen included
-  // (which the first frame of a round never is, on a screen cleared for it): the loop drops gestures until it does, so
-  // a return above this line would drop them for good. Release: the frame's drawing is behind it for the loop task
-  // that acquires it. The frame's number first, so a loop that sees the counts posts its touches with it.
-  frameDisplayed.store(taken, std::memory_order_release);
-  roundsDisplayed.store(started, std::memory_order_release);
-  seatDisplayed.store(served, std::memory_order_release);
+  // Every way out of here past the gate stores these (CanvasGate::markDisplayed: the frame's number first, release), a
+  // frame replay skipped as identical to the one on screen included (which the first frame of a round never is, on a
+  // screen cleared for it): the loop drops gestures until it does, so a return above this line would drop them for
+  // good.
+  gate.markDisplayed(taken, started, served);
   // The first seat frame after "I'm ready" is on the panel: a touch is tagged by the frame it was made under again.
   firstFramePushing.store(false, std::memory_order_release);
 }
@@ -817,10 +804,10 @@ bool GameMatchActivity::canvasUnderView(const MatchState state) const {
   // the menu (gapWhenPaused) with the canvas back under it.
   // Only after a Play again (awaited passes 1, as in pauseInGap): a menu over the match's first round is redrawn by no
   // one.
-  const uint32_t awaited = roundsStartedAwaited.load();
+  const uint32_t awaited = gate.roundsAwaited();
   if (awaited > 1 && vm->roundsStarted() < awaited) return false;
   // Before the next seat's frame is published the front frame may be the last seat's.
-  return vm->seatShownRequest() >= seatAwaited.load();
+  return vm->seatShownRequest() >= gate.seatAwaited();
 }
 
 void GameMatchActivity::renderHandOff() {
@@ -904,8 +891,8 @@ void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
 }
 
 bool GameMatchActivity::pauseInGap() const {
-  // roundsStartedAwaited passes 1 only with a Play again: before a match's first frame no round is "next".
-  const uint32_t awaited = roundsStartedAwaited.load();
+  // gate.roundsAwaited() passes 1 only with a Play again: before a match's first frame no round is "next".
+  const uint32_t awaited = gate.roundsAwaited();
   return vm && awaited > 1 && resumesTo.load() == MatchState::Playing && vm->roundsStarted() < awaited;
 }
 

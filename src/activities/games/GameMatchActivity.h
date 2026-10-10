@@ -8,19 +8,20 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 
 #include "GameMatchView.h"
 #include "GamePicture.h"
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
+#include "games/CanvasGate.h"
 #include "games/FrameReplay.h"
 #include "games/GameTouch.h"
 #include "games/GameVM.h"
 #include "games/GameViewport.h"
 #include "games/MatchPersistence.h"
 #include "games/MatchStore.h"
+#include "games/TouchLatch.h"
 
 // One match, solo or pass, open or hidden (AD-20): owns the GameVM task and, through it, the game's assets,
 // arena, and frame buffers, and owns ch.store (MatchStore): its slot, which
@@ -183,12 +184,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // Play-again gap: after a Play again, never before a match's first frame), which loopView redraws (gapWhenPaused)
   // once it has.
   bool pauseInGap() const;
-  // This loop pass's touch gesture on the logical screen, if any; latches frameDisplayed at the first pass that sees a
-  // finger down, and notes whether a finger is still down.
+  // This loop pass's touch gesture on the logical screen, if any; latches the frame on the panel (CanvasGate::
+  // frameOnPanel) at the first pass that sees a finger down, and notes whether a finger is still down.
   GameTouch::Gesture readGesture();
-  // Loop task: the frame on the panel at millis() `atMs`, as far as the last push tells: the frame before it when
-  // `atMs` is before that push completed, else frameDisplayed.
-  uint32_t frameAt(uint32_t atMs) const;
 
   GameCore::Manifest manifest;
   GameCore::Roster roster;
@@ -220,25 +218,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // GameVM::roundsEnded() when the match last entered Over (loop task).
   uint32_t roundsSeen = 0;
   uint32_t shownFrame = 0;  // loop task: the frameGen it last asked to render
-  // The GameVM::roundsStarted() the match waits for: 1 at first (the match's own first round), and Play again's
-  // roundsStarted() plus one after it (loop task writes). Until the count reaches it, the loop asks for no render,
-  // since every frame published meanwhile is the last round's (or, at first, there is none), drops every gesture,
-  // since none was aimed at the new round, and renderCanvas draws nothing, so a Resume in the gap keeps the pause menu
-  // rather than a board whose taps are dropped. Atomic since render reads it.
-  std::atomic<uint32_t> roundsStartedAwaited{1};
-  // Written by render: the roundsStarted() it saw when it last got through the gate and had drawn (and handed to the
-  // panel with displayBuffer) the frame. The loop drops gestures until this reaches roundsStartedAwaited, so a tap
-  // made while the panel is still refreshing to the round's first frame is not aimed at that round either.
-  // displayBuffer returns once the driver has the frame: how much of the panel's own refresh is behind that is the
-  // driver's, and unmeasured here.
-  std::atomic<uint32_t> roundsDisplayed{0};
-  // A hidden pass match's seat gate, the same two counts for the hand-off: the GameVM::showTurnSeat() request the
-  // match waits for (stored by handle() before it shows Playing), and the GameVM::seatShownRequest() render saw when
-  // it last got through the gate and had pushed the frame. Until the VM has served the request the loop asks for no
-  // render and drops gestures, and renderCanvas draws nothing, so no frame of the last seat follows the hand-off; until
-  // render has displayed it, gestures are still dropped. Both 0 (the gate open) for any other match.
-  std::atomic<uint32_t> seatAwaited{0};
-  std::atomic<uint32_t> seatDisplayed{0};
+  // The round and seat gate (counts awaited and displayed) and the frame on the panel with the last canvas push: the
+  // loop reads them, render writes them (CanvasGate).
+  CanvasGate gate;
   // The seat the last turn-passing move passed to, for the Result banner (loop task writes, render reads).
   std::atomic<uint8_t> passTo{0};
   // A hidden pass match's hand-off names the round's first turn seat, which the VM knows only once the round has begun
@@ -283,36 +265,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // the hand-off screen is refreshed in full only when it replaces something else.
   enum class Panel : uint8_t { Other, Seat, Blank };
   Panel panel = Panel::Other;
-  // Written by render after renderCanvas's push: the number of the frame it drew (GameVM::drawFront's, read under the
-  // frame mutex, so a frame the VM published while render ran is named when it is the one drawn), which loopPlaying
-  // posts each touch with (GameVM::postInput), so the VM drops one made under another seat's frame. Stored before
-  // roundsDisplayed and seatDisplayed, so a loop that sees those sees this frame's number.
-  std::atomic<uint32_t> frameDisplayed{0};
-  // Loop task: frameDisplayed at the first Playing pass that saw the finger down (isScreenTouchHeld), kept until a pass
-  // with no finger down, so a contact held from under one seat's frame until after the next seat's was pushed carries
-  // the first. A contact the loop never saw down (it lifted while the loop was blocked) is tagged when its lift is
-  // read, and a tap is also back-dated (frameAt).
-  uint32_t touchDownFrame = 0;
-  uint32_t touchDownMs = 0;  // loop task: millis() at the same latch
-  bool touchDownLatched = false;
-  // Loop task: the first sample of the contact this loop saw down (at the latch above; isScreenTouchHeld returns the
-  // live point, so for a fast slide it can be past the true touch-down) and the last one it saw, in logical screen
-  // pixels, for the touch log line of a contact that ends with no gesture. Meaningful only while touchDownLatched.
-  int touchFirstX = 0;
-  int touchFirstY = 0;
-  int touchLastX = 0;
-  int touchLastY = 0;
-  // Loop task: readGesture saw a finger down on this pass (isScreenTouchHeld).
-  bool contactHeld = false;
-  // The last canvas push that changed the panel, written by render after displayBuffer returned (which it does once
-  // the panel's refresh has completed) and read by the loop task (frameAt), under pushMutex: the frame on the panel
-  // before it, and millis() when it completed. Lock order: RenderLock, then pushMutex; the loop takes pushMutex alone.
-  struct LastPush {
-    uint32_t before = 0;
-    uint32_t doneMs = 0;
-  };
-  mutable std::mutex pushMutex;
-  LastPush lastPush;
+  // Loop task: the touch latch of the contact in progress (TouchLatch): the frame on the panel at the first Playing
+  // pass that saw the finger down, kept until a pass with no finger down.
+  TouchLatch contact;
   // Render task only: the seat the hand-off screen names (GameVM::passedTo when renderHandOff drew it).
   uint8_t handOffSeat = 0;
   // Render task only: builds the runtime's own views (the dialog's props are members of it).
