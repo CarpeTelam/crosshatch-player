@@ -1220,3 +1220,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-log-each-game-touch-and-give-battleship-and-sudoku-their-lau-plan.md`
   summary: The simulator's HalGPIO::wasTouchReleased ignores suppressTouchContact, so after a long press its lift logs one extra "contact ended screen unknown" line there; the SDK's InputManager reports no release for a suppressed contact.
   evidence: Recorded by entry 14's two review passes (the plan's Review Triage Log). Location: the simulator library (crosspoint-simulator HalGPIO.cpp:680). Severity: low.
+
+## e5-run2
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md`
+  summary: The installer reports a 0-byte inbox file as "not a readable zip", which sent the second device run looking for corruption when the upload had simply delivered empty files.
+  evidence: The owner's `sudoku.chgame.bad` and `battleship.chgame.bad` from the second run (2026-10-10) are 0 bytes each; the device logged "not installed: not a readable zip" for both. Saying "empty file" (and the size it got) for a file under the smallest valid zip would name the real fault. Location: src/games/GamePackageInstaller.cpp (the "not a readable zip" reason). Severity: low.
