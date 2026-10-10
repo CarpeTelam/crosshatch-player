@@ -185,13 +185,28 @@ touches = ["src/games/**", "src/activities/games/**", "games/battleship/manifest
 stays_out = ["lib/GameCore/**", "games/ultimate-tic-tac-toe/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
 
 [[entry]]
+id = 15
+type = "story"
+title = "Count a tap in the margin beside a game's edge cells as that cell"
+description = "Entry 5's second device run (epic Notes, the Finding of 2026-10-10): a finger on Ultimate tic-tac-toe's right column reports canvas x 450 to 460 on the X4 Pro, but the grid ends at x 457, so a tap at x 458 to 460 hits no cell and is ignored. In each first-party game, a tap inside the 466 x 788 box that falls in the margin between an edge target and the box's edge, on the same row or column as that target, counts as the nearest target. Cover Ultimate tic-tac-toe's grid, Sudoku's grid, pad and rail, and Battleship's boards, and check each game's layout for any edge target that leaves such a gap. A margin is snapped only where no other target lies in it. The game's own visuals do not change. Pin each snap in the game's companion checks at both canvases, including x 458 to 465 on Ultimate tic-tac-toe's right column and the matching left, top and bottom margins wherever a grid edge meets the box's margin."
+verify = "Host suites and the games check pass at both canvases. New checks place a move from a tap at canvas x 460 (and every x from 458 to the box's right edge) on Ultimate tic-tac-toe's right column, and pin the equivalent snaps in Sudoku and Battleship. No existing round changes outcome. The fork script tests, `scripts/check_upstream_touches.py` and `./bin/clang-format-fix` (run twice) pass. Record the changed packages' new hashes, and screenshot nothing: the look is unchanged."
+covers = ["R12"]
+after = []
+hitl = false
+risk = "low"
+unknown = "None."
+references = ["games/ultimate-tic-tac-toe/board.lua (cell_at, layout)", "games/sudoku/board.lua, games/sudoku/layout.lua (cell_at, key_at, rail_at)", "games/battleship/layout.lua (cell_at)", "_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md (Finding of 2026-10-10, second device run)"]
+touches = ["games/**", "test/game_script/first_party/**"]
+stays_out = ["src/**", "lib/**", "every upstream file", "freeink-sdk", ".github/workflows/**"]
+
+[[entry]]
 id = 5
 type = "story"
 title = "Device run and owner sign-off"
 description = "On an X4 Pro, from the orchestrator's packet of the three packages packed from the epic head, the owner installs each through the inbox and plays Sudoku solo, Ultimate tic-tac-toe in pass, and Battleship in hidden pass a round each from Home in at most 3 taps, sleeps mid-round in each and continues (Battleship mid-placement too); during Battleship checks 5.13's tap targets and a sleep from Over after a seat's move, and counts the dropped-touch log lines after \"I'm ready\"; runs B7.6 with the `pass-store.chgame` that `scripts/pack_device_run.py` writes into the packet; records each game's \"VM stopped\" line and the launcher's free heap with the three games installed, and times HINT and CHECK on the bank's hardest Expert puzzle against the 3 s watchdog (R12); a dry run of the release workflow on the epic head lists the three packages (R13); a device failure becomes a new story in this epic's PR."
 verify = "The plan records each step's result with the firmware commit and the package hashes, the serial-log lines (\"VM stopped\" per game, the dropped-touch count, B7.6's blank and SD-step timings, the launcher's free heap), HINT's and CHECK's times on the hardest Expert puzzle, the release dry run's link and its package table matching the packet's hashes, and the owner's answers to each `Assumption for entry 5:` line and each deferral; `deferred-work.md` `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2`, and `## owner-e4-games-cap` each carry the outcome; after sign-off the epic PR merges with every check green."
 covers = ["R11", "R12", "R13", "R14"]
-after = [4, 9, 11, 13, 14]
+after = [4, 9, 11, 13, 14, 15]
 hitl = true
 risk = "medium"
 unknown = "Whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist), and whether B7.6 shows a card stall; either is recorded for its owner, not fixed here."

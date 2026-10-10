@@ -133,3 +133,14 @@ This epic owns CAP-10 except the nearby rounds (epic-play-nearby; epic-script-ru
   - The run used the entry-13 firmware (`firmware-x4pro-0c149819.bin`), flashed before Part I. Every part ran on it.
   - The 7 "Dropped a touch made under frame F" lines in Battleship were the owner's deliberate attempts at a false tap across the hand-off (B5). They are expected drops, not natural taps. The e5-r2 symptom ("dropped a touch before the frame was on the panel") appeared 0 times in 35 firing hand-offs.
   - Still to run on the entry-14 firmware: B6 (a sleep from Battleship's Over), Sudoku's pause check (pause about 30 s, resume, and confirm the time did not jump), and a re-test of Ultimate tic-tac-toe's right column with touch logging.
+- Finding (2026-10-10, entry 5's second device run, entry-14 firmware): the touch lines explain Ultimate tic-tac-toe's missed right-column taps.
+  - On the owner's X4 Pro, a finger on the right column reports canvas x 450 to 460. The grid ends at x 457 (cells 8 to 457).
+  - Of 50 taps, both ignored ones were plain taps (held 60 and 72 ms) at canvas x 460 (y 418) and x 458 (y 557). Each is just past the grid's right edge, inside the box's 8 px margin, so `board.cell_at` returned nil.
+  - Every other tap placed a move or showed a message.
+  - The first run had more misses only because more taps happened to land past x 457. The code was the same.
+  - Sudoku's grid and rail end at the same x 457, so it is exposed in the same way.
+  - Fixed as entry 15.
+- Finding (2026-10-10, the second device run): `sudoku.chgame` and `battleship.chgame` of entry 14 did not install on the device, logging "not installed: not a readable zip".
+  - The packet's files are valid zips, and `zipfile` reads every member. The release dry run packed byte-identical files. Battleship's only change from the installed package is two manifest keys.
+  - So the bytes the device received are not the packet's: the transfer to the card, through the session file and the device's Wi-Fi upload, changed them.
+  - The installer keeps each refused file as `/games/<name>.chgame.bad`. The owner can download those, and comparing them with the packet will show what changed.
