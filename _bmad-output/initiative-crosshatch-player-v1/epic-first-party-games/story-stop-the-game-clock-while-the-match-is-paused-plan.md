@@ -11,16 +11,37 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context: ['{project-root}/AGENTS.md', '{project-root}/.skills/heap-discipline/SKILL.md']
 warnings: []
 deferred:
   - summary: >-
-      A pause entered from Result or HandOff (a hidden pass match) is not tested at match level with the clock game.
+      A pause entered from Result or HandOff (a hidden pass match), and a Leave, ScriptError, or ForcedExit from Paused, have no match-level test with the clock game.
     evidence: |-
-      handle() takes the Paused edge from `from`/`to` for every state, and MatchLifecycle covers the Result/HandOff to Paused transitions, so the ledger toggles the same way; but no GameMatchTest drives a pass match through Paused while reading ch.time.ms. Review rated it low; a pass-hidden fixture test would settle it.
+      handle() takes the Paused edge from `from`/`to` for every state, and MatchLifecycle covers those transitions, so the ledger toggles the same way (a matchResumed() on a match that is leaving is a no-op); but no GameMatchTest drives a pass match through Paused or those exits while reading ch.time.ms. Review rated it low in both passes; a pass-hidden fixture test would settle it.
     location: >-
       test/game_script/harness/GameMatchTest.cpp
+    severity: low
+  - summary: >-
+      A script that busy-waits on ch.time.ms() while the match is paused stays in its loop until Resume, and the raw 3 s watchdog can end it in the error view.
+    evidence: |-
+      The watchdog counts raw millis (GameMatchActivity.h WATCHDOG_MS) and CallGuard counts instructions (CallGuard.h INSTRUCTION_BUDGET); neither is play time. Only the slow-restart fixture busy-waits on the clock (a 2 s spin in setup); Sudoku does not. Documented in api-level-1.txt and the fixture README (step 9); the owner Decision keeps the timer and watchdog on the raw clock. Excluding paused time from the watchdog would settle it.
+    location: >-
+      src/activities/games/GameMatchActivity.cpp:564 (vmHealthy), test/game_script/fixtures/slow-restart/main.lua
+    severity: low
+  - summary: >-
+      The PauseClock stress test does not show that the retry path of playMs ran, and the x86 host cannot show a reordering of the clock read.
+    evidence: |-
+      cleanReads is met by the one read before the writer starts and no counter records a retry; the acquire fence is by the seqlock pattern, not by a test. A ThreadSanitizer run or a retry counter in a test build would settle it.
+    location: >-
+      test/game_core/PauseClockTest.cpp
+    severity: low
+  - summary: >-
+      The cost of the spinlocked 8-byte atomic loads in ch.time.ms() on the S3 (two per call, interrupts masked) is unmeasured.
+    evidence: |-
+      ESP-IDF stdatomic.c takes one global portMUX for each 8-byte load or store; playMs does two loads and the writer one store per pause edge. No timing was taken on a device; a tight `while true do ch.time.ms() end` run on the device would settle it. Flash and IRAM are measured (+416 B flash, section totals equal to the base).
+    location: >-
+      lib/GameCore/PauseClock.h
     severity: low
 ---
 
@@ -53,7 +74,7 @@ deferred:
 
 ## Code Map
 
-- `lib/GameCore/PauseClock.h` (new) -- the ledger. One `std::atomic<uint64_t>` word: bit 63 = paused; running: low bits = paused total so far; paused: low bits = (pause start - paused total so far). `enter(now)` and `leave(now)` both store `now - low` (flipping the bit), so a reader needs no second variable. `pausedMs(word, now)`; `playMs(clock, startMs)` loads the word first, then reads the clock.
+- `lib/GameCore/PauseClock.h` (new) -- the ledger. One `std::atomic<uint64_t>` word: bit 63 = paused; running: low bits = paused total so far; paused: low bits = (pause start - paused total so far). `enter(now)` and `leave(now)` both store `now - low` (flipping the bit), so a reader needs no second variable. `pausedMs(word, now)` (pure); `playMs(clock, startMs)` is a seqlock reader: load the word (acquire), read the clock, acquire fence, reload the word (relaxed), retry while it changed.
 - `lib/GameScript/ChBindings.h/.cpp` -- `BindingContext::paused` (const PauseClock*), `timeMs` reports `paused ? paused->playMs(*clock, startMs) : now - startMs`; fix the comments. `timerAfter` untouched.
 - `lib/GameScript/LuaGame.h/.cpp` -- `HostPorts::paused = nullptr` (trailing, default), `bindings.paused = ports.paused` in `load()`.
 - `src/games/GameVM.h/.cpp` -- member `GameCore::PauseClock paused` declared before `game`, passed in `HostPorts`; `void matchPaused()` / `matchResumed()` call `enter/leave(clock.nowMs())`.
@@ -66,12 +87,12 @@ deferred:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `lib/GameCore/PauseClock.h` -- add the ledger as above, header-only, comments naming the single writer (loop task), any reader, and the clock-after-load ordering -- wait-free consistent read
+- [ ] `lib/GameCore/PauseClock.h` -- add the ledger as above, header-only, comments naming the single writer (loop task), any reader, and the clock-after-load ordering -- a consistent, lock-free read (seqlock reader)
 - [ ] `lib/GameScript/ChBindings.h`, `ChBindings.cpp`, `LuaGame.h`, `LuaGame.cpp` -- plumb `paused` and change `timeMs` -- the binding reports play time
 - [ ] `src/games/GameVM.h`, `GameVM.cpp`, `src/activities/games/GameMatchActivity.cpp` -- own the ledger and toggle it on the Paused edge
 - [ ] `test/game_script/harness/games_check/ScriptVm.cpp` -- pass the port through -- host double agrees
 - [ ] `docs/crosshatch/api-level-1.txt` -- describe play time above the entry -- doc
-- [ ] tests -- PauseClockTest (matrix rows, wrap-free mask, a two-thread stress that the reader never sees play time go backwards or past the raw elapsed); HostBindingsTest (paused interval left out of `ch.time.ms()`, a timer set before the pause fires on the raw clock after it, frozen read while paused, null port unchanged); GameMatchTest (Playing, Paused, Playing at the match level with the real GameVM: a game logging `ch.time.ms()` on tap shows the pause left out) -- pins the behaviour
+- [ ] tests -- PauseClockTest (matrix rows, wrap-free mask, a two-thread stress that no read goes past the raw elapsed time and none goes backwards among reads no write overlapped); HostBindingsTest (paused interval left out of `ch.time.ms()`, a timer set before the pause fires on the raw clock after it, frozen read while paused, null port unchanged); GameMatchTest (Playing, Paused, Playing at the match level with the real GameVM: a game logging `ch.time.ms()` on tap shows the pause left out) -- pins the behaviour
 
 **Acceptance Criteria:**
 - Given a game that loaded 5 s ago and sat in Paused for 30 s, when it reads `ch.time.ms()` after resuming and 2 s more, then it gets 7000.
@@ -107,16 +128,44 @@ Implemented by one subagent from this plan (report: scratchpad 8.13/implementati
   - `[low]` `[patch]` VG1 a call that busy-waits on `ch.time.ms()` while the match is Paused (loopView polls timers and the watchdog in Paused, `GameMatchActivity.cpp:549,564`) stays in its loop for the pause; the 3 s watchdog counts raw `millis()`, and CallGuard's budget is an instruction count (`CallGuard.h:40`), so only the watchdog ends it. Only the `slow-restart` fixture does this (a 2 s spin in `setup`, README step 9 pauses in that gap): a pause past about 1 s there trips the watchdog. Not a product game (Sudoku never waits on the clock); documented in the API note and the fixture README, the Lua unchanged.
   - `[low]` `[patch]` IA1 the games-check rig left `paused` null, so the check VM never ran the device's code path — the rig now owns a `PauseClock` and passes it.
   - `[false]` `[reject]` IA3 no test of a Sudoku move's `dt` across a pause — Sudoku's `move()` only subtracts two `ch.time.ms()` reads (`games/sudoku/main.lua:164`), covered by the binding tests; the simulator check in Verification shows it end to end.
+  - `[low]` `[patch]` EC1 (edge-case hunter's row for BH2) the public `pausedMs(now)` documents that `now` must be read after its own load — same root as BH2, same fix.
+  - `[low]` `[defer]` EC3 (edge-case hunter's row for BH7) a pause from Result or HandOff has no match-level test — same root as BH7; the first-pass deferred item, extended.
+  - `[low]` `[patch]` EC8 (edge-case hunter's row for BH4) README step 9 can now end in the error view — same root as BH4, same fix.
+  - `[low]` `[patch]` VG1 (verification-gap lens, other findings) `GamesCheckRig::pauses()` has no caller — same root as BH6, same fix.
+  - `[low]` `[patch]` VG2 (verification-gap lens, other findings) the README step 9 line is indented three spaces — same root as BH4, same fix.
   - `[false]` `[reject]` IA edge notes: `ForcedExit` from Paused leaves once, harmlessly (a repeat is a no-op); `if (vm)` skips a pause before load, which cannot occur (Paused follows Started).
   - `[low]` `[patch]` PC (verification, `pio check -e x4pro`) `PauseClock.h:79` local `paused` shadows the member function `paused()` (cppcheck shadowFunction, a low defect that fails the gate) — renamed the local `pausedTotal`; re-run `pio check -e x4pro` passes.
   - `[false]` `[reject]` VG/IA "no gaps" summaries and the readings table (A implemented, B plumbing, C every-host default): reading C's "default" is met by the rig change above; D readings are excluded by the Decision.
 
+### 2026-10-10 — Review pass 2 (follow-up pass over `9fa5e0c2..38b9104c`)
+- lenses: blind-hunter, edge-case-hunter, verification-gap, intent-alignment, four fresh context-free subagents over the 36.7 kB diff; reports in the scratchpad (8.13/lenses2/).
+- verdicts: 23 findings — high 0, medium 1, low 18, false 4, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` BH1 `playMs` is unsound under the C++ memory model: two acquire loads around a plain clock read do not stop the clock read moving after the second load — real (the orchestrator confirmed it). Fix: the standard seqlock reader (acquire load, clock read, `atomic_thread_fence(acquire)`, relaxed reload, retry); the header says which. The x86 host cannot show the bug, so the stress test cannot prove it; the fix is by the pattern.
+  - `[low]` `[patch]` BH2 / EC1 `paused()` and the instance `pausedMs(now)` are test-only and the latter's comment contradicts its signature — real. Both deleted; `PauseClockTest` reads the paused total through `playMs`; the pure static `pausedMs(word, now)` stays.
+  - `[low]` `[defer]` BH3 a game that busy-waits on `ch.time.ms()` while paused stays in its loop and the raw 3 s watchdog ends it — real, documented, owner-accepted by the Decision's scope (the timer and watchdog keep the raw clock); deferred, no watchdog change built.
+  - `[low]` `[patch]` BH4 / EC8 / VG2 `slow-restart` step 9 conflicts with the new behaviour, the sentence was in two places and mis-indented — real. Now one instruction in step 9 (resume within about 1 s, expect the error view otherwise), the table row restored.
+  - `[low]` `[patch]` BH5 stale wording ("counts from load()") and an `api-level-1.txt` note that says nothing of the CRC — real. `GamesCheckRig.h` and `LuaGameFixture.h` comments, the plan's Code Map, Design Notes and Execution text reworded, the seed row mentions the timer, `api-level-1.txt` says `API_SURFACE_CRC` and the level stay as they are. The epic Notes line 97 is the orchestrator's (fixed there). The contract paragraph's "wait-free" in the Approach is read-only and left.
+  - `[low]` `[patch]` BH6 / VG1 `GamesCheckRig::pauses()` has no caller and no step can drive a pause — real. Accessor deleted, member and wiring kept (the check VM runs the device's path); no step kind added (new scope).
+  - `[low]` `[defer]` BH7 / EC3 match-level lifecycle paths untested (Result and HandOff pauses, Leave, ScriptError or ForcedExit from Paused, a null `vm`) — all share `handle()`'s one edge, and `matchResumed()` on those exits is a no-op on a leaving match; added to the existing deferred item.
+  - `[low]` `[defer]` BH8 the stress test does not show the retry path ran (`cleanReads` is met by the first read) — real; no instrumentation was built; the x86 host would not show the reorder anyway.
+  - `[low]` `[defer]` BH9 the cost of the spinlocked 8-byte loads on the S3 (two loads per `ch.time.ms()`) is unmeasured — the section is a few instructions with interrupts masked; no timing was measured. The C3 side of the finding is false (EC6).
+  - `[low]` `[patch]` BH10 the header comment repeats itself — trimmed to the bit layout once, the single-writer rule next to `enter()`/`leave()`, the stdatomic note once. The suggested debug assert of the single writer is not built (no cheap way to name the loop task; the citation and the verified call graph stand).
+  - `[low]` `[reject]` EC2 a timer delivered while Paused is on the raw clock, so a handler comparing it with `ch.time.ms()` sees less play time — the Decision keeps `ch.timer.after` and `GameTimer` on the clock they have; not this change's to alter.
+  - `[low]` `[reject]` EC4 `BindingContext::paused` defaults to null, so a host builder that forgets it counts paused time — the device builds it in one place and three harness builders set it; making it mandatory would change every `HostPorts` site for nothing a test shows.
+  - `[false]` `[reject]` EC5 `enter()`/`leave()` have only a comment for a single writer — carried from pass 1 (BH4): the call graph is verified (`ActivityManager::loop`, main task).
+  - `[false]` `[reject]` EC6 the 64-bit atomic was never linked for the C3 — `FREEINK_CAP_GAMES` is off in `default`, so no game library is built there, and `pio run -e default` succeeds; on the S3 the link is confirmed (`nm`).
+  - `[low]` `[patch]` EC7 the plan's Code Map and Design Notes still say "wait-free, no retry loop" — reworded as BH5.
+  - `[false]` `[reject]` IA1 no test runs Sudoku's sources across a pause — the simulator run on a scratch copy does (Verification, Results, pass 1); the binding and match tests pin the clock Sudoku reads.
+  - `[low]` `[reject]` IA2 the seed doc and fixture README edits are outside the ticket's listed files — one row and two sentences that keep the documents true; they follow the Decision's "update where it describes ch.time.ms".
+  - `[false]` `[reject]` IA3 `LuaGameFixture`'s ports leave the ledger null, so tests built on it count raw time — readings A2/A3: the doubles that stand for the device (`GamesCheckRig`, `GameVM`) carry the ledger, and the fixture's comment now says so.
+
 ## Design Notes
 
 - Intent settled by epic Notes, owner Decision 2026-10-09 "cross-story row 20, settled" (build as entry 13; Paused only; Sudoku unchanged; `ch.timer`/GameTimer unchanged; comment in the binding and `api-level-1.txt`). The ticket's `unknown` (reaching the clock "without a new layer edge") is answered by the existing edges: Screens (`GameMatchActivity`) call the adapter (`GameVM`, an existing include), the adapter hands `lib/GameScript` a `lib/GameCore` type through `HostPorts` (GameScript already includes GameCore's `IClock.h`). No new include edge; `check_layers.py` runs in Verification.
-- One packed word, not two variables: a reader that loaded a paused total and a pause start separately could double count an interval a concurrent `leave` just closed. `closed' = closed + now - since = now - (since - closed)`, so entering stores `now - closed`, leaving stores `now - (since - closed)`: the same subtraction, and `pausedMs = running ? v : now - v`. Wait-free, no retry loop, no lock.
+- One packed word, not two variables: a reader that loaded a paused total and a pause start separately could double count an interval a concurrent `leave` just closed. `closed' = closed + now - since = now - (since - closed)`, so entering stores `now - closed`, leaving stores `now - (since - closed)`: the same subtraction, and `pausedMs = running ? v : now - v`. No lock of ours. The reader is a seqlock-style retry (below), lock-free: a retry follows only a completed write, and writes are one per pause edge.
 - 64-bit atomic: no `uint64_t` atomic is in the tree yet. ESP-IDF's `newlib/src/stdatomic.c` emulates it with a spinlock on Xtensa and RISC-V without 64-bit atomics, so the source has no lock and the firmware links. The build measures what it costs (`__atomic_*_8` in IRAM counts toward the flash gate's IRAM).
-- Order: the reader loads the word, then reads the clock, so its `now` is never before the `now` the writer stored (clock monotone), and `now - v` cannot go negative; the code still clamps at 0.
+- Order: the reader loads the word, reads the clock, fences (acquire) and reloads the word relaxed, so the clock read cannot move after the reload (two acquire loads around a plain clock read would not stop that, review pass 2). The `now` it keeps is then never before the `now` the writer stored (clock monotone), and `now - v` cannot go negative; the code still clamps at 0.
 - `timeMs` is a one-line change; its only guard-free body has no early return. `timerAfter` keeps `context.clock->nowMs()`: the timer is due on raw time.
 - Doubles: `FakeClock` and `RigClock` stand in for `GameClock`; they are unchanged and a null `HostPorts::paused` is the "nothing pauses" host, which equals today's device behaviour for a match never paused. The match-level test uses the real `GameVM` over `fakertos::nowMs`, which `GameClock` reads via `esp_timer`.
 - Single writer, checked (review BH4): `GameMatchActivity::handle()` is reached from `loop()` and `handleHomeGesture()` through `ActivityManager::loop()` (`src/activities/ActivityManager.cpp:94-113`, the Arduino main task), and from `onExit()` and `fail()` in that task's action processing and the activity's own loop (`docs/activity-manager.md`, FreeRTOS Task Model: the render task never calls it). So `enter()`/`leave()` need no CAS; `GameVM::matchPaused()`/`matchResumed()` are loop-task calls.
@@ -148,6 +197,11 @@ Implemented by one subagent from this plan (report: scratchpad 8.13/implementati
 - x4pro firmware for the device run: `/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/8.13/firmware-x4pro.bin` (a copy of `.pio/build/x4pro/firmware.bin` as built, which a later build overwrites), 5,936,048 bytes, SHA-256 `0b50111e0e616155d88a2a64d33cda114c9832f32d64e4f97570fa924b58b42b`. Two builds of the same source gave the same size and different bytes (the first 4d7227a8..., before the rename), so the SHA is of this file; the source differs from the first only by the local's name.
 - A fresh-tree gate run: not needed (no CI gate or workflow changed).
 
+**Results, follow-up pass (after the memory-order fix; tree = this commit's source, base `9fa5e0c2`):**
+- Host: full `ctest` 1820 of 1820; the implementation agent ran the covering tests (133 of 133), the games-check label and 50 repeats of the stress test; `check_layers.py` and `check_upstream_touches.py` pass, all `scripts/*_test.py` pass, `./bin/clang-format-fix` twice left no change.
+- Firmware, under the build lock: `check_flash_budget.py build on`, `compare` and `objects` exit 0; `pio run -e default` SUCCESS; `pio check` default and `-e x4pro` PASSED. x4pro `firmware.bin` 5,936,048 B on, 5,680,016 B off, +256,032 B (20,448 B to spare), +416 B against the epic base Measurement (+255,616 B); static internal RAM +784 B, equal to the base. `__atomic_load_8` and `__atomic_store_8` are still 35 B and 39 B in IRAM.
+- x4pro firmware for the device run (supersedes the first-pass file above, which was built before the seqlock fence): `/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/8.13/firmware-x4pro-pass2.bin` (a copy of `.pio/build/x4pro/firmware.bin`, which a later build overwrites), 5,936,048 bytes, SHA-256 `bdfd44e28b52e8f45ccd08a1c21467ee96bef015637e9af46a1ff47fb6bde800`. The simulator run of the first pass was not repeated: the pass-2 source differs from it only in the reader's memory ordering and in tests, comments, and docs, and the match-level tests re-ran.
+
 ## Auto Run Result
 
 **Summary.** `ch.time.ms()` now reports play time: milliseconds since the game loaded, less every interval the match spent in `MatchState::Paused` (Back's and Home's pause menus), for every game. A new header-only ledger, `GameCore::PauseClock` (one `std::atomic<uint64_t>`, no lock in the binding), is written by the loop task on the Paused edge in `GameMatchActivity::handle()` through `GameVM::matchPaused()/matchResumed()` and read by the binding through `HostPorts::paused`; `ch.timer` and `GameTimer` keep the raw clock, Sudoku's sources are unchanged. The simulator run shows a 35 s pause left out of the solve time.
@@ -162,12 +216,12 @@ Implemented by one subagent from this plan (report: scratchpad 8.13/implementati
 - `docs/crosshatch/api-level-1.txt` (comment only, CRC unchanged), `_bmad-output/planning-artifacts/architecture/architecture-crosshatch-player-2026-09-26/game-api-seed.md` (one row), `test/game_script/fixtures/README.md` (two sentences).
 - This plan and `story-pause-clock-screenshots/` (three images).
 
-**Review.** Four lenses (context-free subagents), 19 findings in the log: patches applied 13 (high 0, medium 4: BH1 stress-test starvation, BH4 single-writer citation, BH5 Home and two-pause match tests, EC1 the playMs re-validation loop; low 9, the `pio check` shadowFunction among them), rejected 6 (4 false: the 120-column line, the Sudoku `dt` test, the edge notes, the readings summary; 2 low not worth the change: the null-ledger branch's unchanged clamp, and duplicated coverage with the bit-63 note), deferred 1 (low, from BH5: a pause from Result/HandOff has no match-level test). `lenses_ran`: blind-hunter, edge-case-hunter, verification-gap, intent-alignment. Follow-up review recommended: true, because four mediums were patched and the re-validation loop in `playMs` and the new match tests were written after the independent review and have not been reviewed by a lens; the risk is a mistake in that loop (an ABA on an equal word, or a missed retry), which the stress test checks only statistically.
+**Review.** Pass 1 (commit 38b9104c): four context-free lenses, 19 findings: patches 13 (medium 4: stress-test starvation, single-writer citation, Home and two-pause match tests, the `playMs` re-validation loop; low 9, the `pio check` shadowFunction among them), rejected 6, deferred 1. Follow-up pass 2 (this commit, four fresh lenses over `9fa5e0c2..38b9104c`): 23 findings, high 0, medium 1, low 18, false 4; patched 11 (the medium: `playMs` becomes a standard seqlock reader with an acquire fence, since two acquire loads around a plain clock read do not hold the clock read before the reload; ten lows: the test-only public `paused()`/`pausedMs(now)` and the dead `GamesCheckRig::pauses()` removed, stale "since load" comments and the plan's "wait-free" wording fixed, slow-restart step 9 made one instruction, the API note and seed row say what stays raw, the header trimmed), deferred 4 (the busy-wait and watchdog interplay, the stress test not showing the retry ran, the unmeasured spinlock cost, and the lifecycle-path tests, extending the first-pass item), rejected 8 with reasons in the log. `lenses_ran`: blind-hunter, edge-case-hunter, verification-gap, intent-alignment (both passes). Follow-up review recommended: false (the pass patched no high).
 
 **Verification.** See Verification, Results: host tests 1820 of 1820, layer and ledger checks, formatting twice clean, `pio run` x4pro and default, `pio check` default and x4pro, flash budget +256,032 B (+416 B against the epic base) and RAM +784 B (equal to base), `sim.sh build x4pro` and the Sudoku pause run.
 
-**x4pro firmware for the device run.** Path `/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/8.13/firmware-x4pro.bin`, 5,936,048 bytes, SHA-256 `0b50111e0e616155d88a2a64d33cda114c9832f32d64e4f97570fa924b58b42b`.
+**x4pro firmware for the device run.** Path `/tmp/claude-0/-home-user-crosshatch-player/0bdf8073-ad95-5670-8b31-e69743e4a448/scratchpad/8.13/firmware-x4pro-pass2.bin`, 5,936,048 bytes, SHA-256 `bdfd44e28b52e8f45ccd08a1c21467ee96bef015637e9af46a1ff47fb6bde800` (built from this commit's source, after the seqlock fence; the first-pass file `firmware-x4pro.bin`, SHA 0b50111e..., is superseded). Flash +256,032 B on against off, +416 B against the epic base Measurement; static RAM +784 B, equal to the base.
 
 **Screenshots.** The three paths under Verification, Results.
 
-**Formatting-only changes outside my paths:** none. **Residual risks:** the 8-byte atomics take ESP-IDF's global spinlock briefly on every `ch.time.ms()` and every pause edge (never across blocking work); a game that busy-waits on `ch.time.ms()` stalls while paused (only the 3 s raw watchdog ends it; documented, only a fixture does it); the writer's clock-to-store gap can skew a read straddling an edge by a few instructions' worth of time; the on-device pause check (a real Sudoku run on the S3) is the owner's.
+**Formatting-only changes outside my paths:** none. **Residual risks:** the 8-byte atomics take ESP-IDF's global spinlock briefly on every `ch.time.ms()` and every pause edge (never across blocking work); a game that busy-waits on `ch.time.ms()` stalls while paused (only the 3 s raw watchdog ends it; documented, only a fixture does it); the writer's clock-to-store gap can skew a read straddling an edge by a few instructions' worth of time; the on-device pause check (a real Sudoku run on the S3) is the owner's; the first-pass simulator run was not repeated after the pass-2 memory-order fix (tests and the build were).

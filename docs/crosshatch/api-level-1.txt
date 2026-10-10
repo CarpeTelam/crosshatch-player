@@ -93,6 +93,8 @@ fn ch.store.set(t)
 # while the match is paused. A call that busy-waits on ch.time.ms while the
 # match is paused stays in its loop until resume, and the runtime's 3 s
 # watchdog counts raw time, so a game must not wait on it.
+# This changes no entry line, so API_SURFACE_CRC and the API level stay as they
+# are (level 1 is not frozen).
 fn ch.time.ms() -> integer
 fn ch.log(...)
 

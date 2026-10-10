@@ -20,14 +20,24 @@ class FakeClock : public IClock {
   std::atomic<uint64_t> now{1000000};
 };
 
+// Read through playMs only: the paused total at the clock's now, and whether the match is paused (play time stands
+// still while the clock moves 1 ms; this moves the clock by that 1 ms).
+uint64_t pausedTotal(const PauseClock& ledger, const IClock& clock) { return clock.nowMs() - ledger.playMs(clock, 0); }
+
+bool isPaused(const PauseClock& ledger, FakeClock& clock) {
+  const uint64_t before = ledger.playMs(clock, 0);
+  clock.advance(1);
+  return ledger.playMs(clock, 0) == before;
+}
+
 TEST(PauseClockTest, NothingPausedIsTheRawElapsedTime) {
   FakeClock clock;
   PauseClock ledger;
   const uint64_t start = clock.nowMs();
   clock.advance(5000);
   EXPECT_EQ(ledger.playMs(clock, start), 5000u);
-  EXPECT_FALSE(ledger.paused());
-  EXPECT_EQ(ledger.pausedMs(clock.nowMs()), 0u);
+  EXPECT_FALSE(isPaused(ledger, clock));
+  EXPECT_EQ(pausedTotal(ledger, clock), 0u);
 }
 
 TEST(PauseClockTest, APauseIsLeftOut) {
@@ -40,7 +50,7 @@ TEST(PauseClockTest, APauseIsLeftOut) {
   ledger.leave(clock.nowMs());
   clock.advance(2000);
   EXPECT_EQ(ledger.playMs(clock, start), 7000u);
-  EXPECT_EQ(ledger.pausedMs(clock.nowMs()), 30000u);
+  EXPECT_EQ(pausedTotal(ledger, clock), 30000u);
 }
 
 TEST(PauseClockTest, AReadWhilePausedIsFrozenAtTheValueWhenThePauseBegan) {
@@ -49,7 +59,7 @@ TEST(PauseClockTest, AReadWhilePausedIsFrozenAtTheValueWhenThePauseBegan) {
   const uint64_t start = clock.nowMs();
   clock.advance(5000);
   ledger.enter(clock.nowMs());
-  EXPECT_TRUE(ledger.paused());
+  EXPECT_TRUE(isPaused(ledger, clock));
   EXPECT_EQ(ledger.playMs(clock, start), 5000u);
   clock.advance(12345);
   EXPECT_EQ(ledger.playMs(clock, start), 5000u);
@@ -72,7 +82,7 @@ TEST(PauseClockTest, TwoPausesBothLeaveTheirIntervalOut) {
   ledger.leave(clock.nowMs());
   clock.advance(100);
   EXPECT_EQ(ledger.playMs(clock, start), 3100u);
-  EXPECT_EQ(ledger.pausedMs(clock.nowMs()), 10500u);
+  EXPECT_EQ(pausedTotal(ledger, clock), 10500u);
 }
 
 TEST(PauseClockTest, EnterTwiceAndLeaveUnpausedAreNoOps) {
@@ -116,7 +126,7 @@ TEST(PauseClockTest, TheStateBitNeverLeaksIntoTheTotalAndALongClockDoesNotWrap) 
   ledger.leave(clock.nowMs());
   clock.advance(10);
   EXPECT_EQ(ledger.playMs(clock, start), (uint64_t{1} << 33) + 10);
-  EXPECT_EQ(ledger.pausedMs(clock.nowMs()), uint64_t{1} << 35);
+  EXPECT_EQ(pausedTotal(ledger, clock), uint64_t{1} << 35);
   EXPECT_EQ(PauseClock::pausedMs(PauseClock::PAUSED_BIT | 5, 12), 7u);
   EXPECT_EQ(PauseClock::pausedMs(5, 1000), 5u);
   EXPECT_EQ(PauseClock::pausedMs(PauseClock::PAUSED_BIT | 50, 10), 0u);  // a clock behind the word clamps
