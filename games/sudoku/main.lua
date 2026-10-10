@@ -150,14 +150,15 @@ local function read_store()
 end
 
 -- A new puzzle is told from the last by its clues: ui starts over (selection, marks, panel, the toggles from the
--- store, and the clock, which counts from here: Play again keeps ui, and a resume starts a new VM).
+-- store, and the clock, which counts from here: Play again keeps ui, and a resume starts a new VM). A store with no
+-- `dots` reads as notes as DIGITS; only a stored `true` gives DOTS.
 local function fresh(ui, state)
   local sig = state.v:gsub("%l", "0")
   if ui.sig == sig then return end
   for k in pairs(ui) do ui[k] = nil end
   ui.sig, ui.last = sig, ch.time.ms()
   local s = read_store()
-  ui.rem, ui.shade, ui.dots, ui.timer = s.rem ~= false, s.shade ~= false, s.dots ~= false, s.timer ~= false
+  ui.rem, ui.shade, ui.dots, ui.timer = s.rem ~= false, s.shade ~= false, s.dots == true, s.timer ~= false
 end
 
 -- The move to return: its dt is the time since the last one, an edit ends HINT's and CHECK's marks.

@@ -53,24 +53,39 @@ function interaction.taps(state)
   eq(ui.panel, "menu")
 end
 
--- The toggles live in ch.store with defaults, and a best time is kept per band unless HINT was used.
+-- The toggles live in ch.store with defaults (NOTES AS reads DIGITS unless the store holds `dots = true`), and a best
+-- time is kept per band unless HINT was used.
 function interaction.store(state)
   ch.store.set({})
   local s, ui = fresh(state), {}
   tap(s, ui, 0, 0)
-  assert(ui.rem and ui.shade and ui.dots and ui.timer)
+  assert(ui.rem and ui.shade and ui.timer and ui.dots == false)
   on_menu(s, ui, 4)
   on_menu(s, ui, 6)
   eq(ui.panel, "menu")
+  eq(ui.dots, true)
   local stored = ch.store.get()
-  assert(stored.rem == false and stored.dots == false and stored.shade == nil and stored.timer == nil)
+  assert(stored.rem == false and stored.dots == true and stored.shade == nil and stored.timer == nil)
   local again = {}
   tap(s, again, 0, 0)
-  assert(not again.rem and again.shade and not again.dots)
+  assert(not again.rem and again.shade and again.dots == true)
+  on_menu(s, ui, 6) -- and back: the toggle writes `false`, which is DIGITS
+  eq(ch.store.get().dots, false)
+  -- The store's `dots`: none gives DIGITS, true gives DOTS, false gives DIGITS, and a value the toggle never writes
+  -- gives DIGITS too (only a stored `true` gives DOTS).
+  for _, case in ipairs({ { "no key", {}, false }, { "true", { dots = true }, true },
+                          { "false", { dots = false }, false }, { "yes", { dots = "yes" }, false },
+                          { "the string true", { dots = "true" }, false }, { "0", { dots = 0 }, false },
+                          { "1", { dots = 1 }, false }, { "another key", { rem = false }, false } }) do
+    ch.store.set(case[2])
+    local read = {}
+    tap(s, read, 0, 0)
+    eq(read.dots, case[3], "the store with dots " .. case[1])
+  end
   ch.store.set({ best = 5, rem = "yes", timer = "yes" })
   local odd = {}
   tap(s, odd, 0, 0)
-  assert(odd.rem and odd.shade and odd.dots and odd.timer)
+  assert(odd.rem and odd.shade and odd.timer and odd.dots == false)
   ch.store.set({})
   local v = answer(s)
   -- A solved state of band `level` and time t (hinted or not): what the end screen shows, and what the store keeps.
@@ -98,10 +113,10 @@ end
 function interaction.reset(state)
   with_clock(function()
     local s, ui = fresh(state), {}
-    ch.store.set({ rem = false })
+    ch.store.set({ rem = false, dots = true })
     time.now = 100
     game.input(s, 1, ui, { kind = "timer" })
-    assert(not ui.rem and ui.shade and ui.dots and ui.timer)
+    assert(not ui.rem and ui.shade and ui.dots == true and ui.timer)
     eq(ui.last, 100)
     ui.sel, ui.foc, ui.pencil, ui.panel, ui.check, ui.best, ui.last = 5, 2, true, "menu", { [3] = true }, 1234, 777
     ui.timer = false
@@ -117,7 +132,7 @@ function interaction.reset(state)
     game.input(other, 1, ui, { kind = "timer" })
     assert(ui.sel == nil and ui.foc == nil and ui.pencil == nil and ui.panel == nil and ui.check == nil and ui.best == nil)
     eq(ui.last, 4000)
-    assert(ui.rem and not ui.shade and ui.dots and ui.timer)
+    assert(ui.rem and not ui.shade and ui.dots == false and ui.timer)
     ch.store.set({})
   end)
 end
@@ -342,7 +357,7 @@ function interaction.timer(state)
       function(move, ui) eq(move, nil) assert(ui.check and ui.msg) end,
       function(move, ui) eq(move, nil) eq(ui.rem, false) end,
       function(move, ui) eq(move, nil) eq(ui.shade, false) end,
-      function(move, ui) eq(move, nil) eq(ui.dots, false) end,
+      function(move, ui) eq(move, nil) eq(ui.dots, true) end,
       function(move, ui) eq(move, nil) eq(ui.timer, false) end,
       function(move, ui) eq(move, nil) eq(ui.panel, "help") end,
       function(move, ui) eq(move, nil) eq(ui.panel, nil) end,
