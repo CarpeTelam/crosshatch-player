@@ -83,6 +83,7 @@ add_executable(GameScriptTest
   GameIconBlitTest.cpp
   GameImageBlitTest.cpp
   GameTimerTest.cpp
+  GameTouchLogTest.cpp
   GameTouchTest.cpp
   GameViewIconsTest.cpp
   GfxBindingsTest.cpp

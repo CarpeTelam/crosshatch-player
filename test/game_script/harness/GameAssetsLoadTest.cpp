@@ -253,7 +253,11 @@ TEST_F(GameAssetsLoadTest, AMisnamedFileBesideAModuleIsSkippedNotAFailure) {
 }
 
 TEST_F(GameAssetsLoadTest, TheModuleCapsAreInclusive) {
-  // 32 modules of 8,192 bytes: exactly MAX_SOURCES and exactly MAX_SOURCE_BYTES.
+  // A package of PACKAGE_MEMBERS members holds manifest.json and at most PACKAGE_MEMBERS - 1 .lua files, so a package
+  // the installer accepts also loads. This test's counts follow MAX_SOURCES, so this pins the link to the member cap.
+  static_assert(GameAssets::MAX_SOURCES + 1 >= GameCore::PACKAGE_MEMBERS, "an installed package must load");
+  // MAX_SOURCES modules of MAX_SOURCE_BYTES / MAX_SOURCES bytes each: exactly both caps. MAX_SOURCES is the package's
+  // member cap (PACKAGE_MEMBERS, 64), so a package of that many .lua members installs and loads.
   for (size_t i = 0; i < GameAssets::MAX_SOURCES; ++i) {
     fakesd::addFile(path("m" + std::to_string(i) + ".lua"),
                     Bytes(GameAssets::MAX_SOURCE_BYTES / GameAssets::MAX_SOURCES, 'x'));
@@ -261,10 +265,12 @@ TEST_F(GameAssetsLoadTest, TheModuleCapsAreInclusive) {
   ASSERT_EQ(load(), Result::Ok);
   EXPECT_EQ(assets.sources().count, GameAssets::MAX_SOURCES);
 
-  fakesd::addFile(path("one_more.lua"), "return 1");  // 33 modules
+  fakesd::addFile(path("one_more.lua"), "return 1");  // one past MAX_SOURCES modules
   fakelog::lines.clear();
   EXPECT_EQ(load(), Result::TooLarge);
-  EXPECT_TRUE(logHas("33 Lua files, 262152 bytes; limits 32 and 262144"));
+  EXPECT_TRUE(logHas(std::to_string(GameAssets::MAX_SOURCES + 1) + " Lua files, " +
+                     std::to_string(GameAssets::MAX_SOURCE_BYTES + 8) + " bytes; limits " +
+                     std::to_string(GameAssets::MAX_SOURCES) + " and " + std::to_string(GameAssets::MAX_SOURCE_BYTES)));
   EXPECT_EQ(fakepsram::liveBlocks, 0u);
 }
 

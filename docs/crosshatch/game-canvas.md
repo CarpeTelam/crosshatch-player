@@ -13,6 +13,40 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   `gpio.wasSwipe` (which keeps the swipe's start point). `GameTouch::toEvent` maps them through `GameViewport` into
   canvas coordinates and drops any that start off the canvas, so the game's `input` receives `tap`, `long_press`, and
   `swipe` events in canvas pixels.
+- Each gesture read in a round in play (state Playing) is logged at `LOG_DBG` with the host's classification of it, one
+  line after `<id>: touch ` (`GameTouchLog`, a pure formatter the host tests pin). Logging changes no gesture's outcome:
+  what reaches `input`, and in what order, is as before. The formatter runs inside the macro's arguments, so a build with
+  `LOG_DBG` compiled out pays nothing, and there is no setting. "Sent" means `classify` accepted the gesture. A later drop
+  keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch that began ... before the
+  hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in builds with `LOG_LEVEL` 2
+  (the development envs of `platformio.ini` and the simulator); the release envs use 1 and print none. A gesture the game
+  does not get says why after a colon (`: not sent, off the canvas`, `: not sent, system edge swipe`). `held` is the
+  SDK's `HalGPIO::lastTouchHeldMs()` as latched at release, so it can include the controller's release hold-over. What
+  each line means on the device:
+  - `tap screen (240,400) canvas (237,391) held 82 ms`: lifted with at most 59 px of excursion and held under 500 ms;
+    the point is the touch-down point. A drift of 29 to 59 px that lifts quickly is a tap too, not an ended contact.
+  - `long press screen (240,400) canvas (237,391)`: still down, within 28 px of the touch-down point, for 500 ms. The
+    line is written at the 500 ms mark, has no `held` (the latched value is stale then), and the lift that follows has no
+    line.
+  - `swipe left screen (400,400)->(150,420) canvas (397,391) held 120 ms`: a net move of 60 px or more, lifted within
+    700 ms. The canvas point is the swipe's start.
+  - `tap screen (477,400) held 64 ms: not sent, off the canvas` and `swipe down screen (240,5)->(240,300) held 90 ms: not
+    sent, system edge swipe`: the gesture above, refused by `classify` (a start on the bezel, or one of the system's
+    edge swipes).
+  - `contact ended screen (300,400)->(380,450) held 1200 ms: not sent, not a tap, long press or swipe`: a contact that
+    lifted with no gesture. On the device that is (a) a contact held over 700 ms that moved 60 px or more net (the slow
+    slide above), (b) one that went past 59 px and came back to under 60 px net, such as `contact ended screen
+    (300,400)->(310,405) held 700 ms: ...` after a 90 px excursion, or (c) a multi-finger contact. It sends nothing.
+    `screen unknown` (and no `held`, since the latched hold is stale then) when the loop never saw the contact down.
+  - The first point of an ended contact is the first position the loop saw (the live point, `isScreenTouchHeld`), which
+    for a fast slide can already be past the true touch-down. The last point is the latest position the loop saw. While the
+    contact is within 28 px and over 90 ms old, the loop's reading is the touch-down point (`touchSnapshotFrom`), so the
+    last point can lag the live finger by up to 28 px.
+  - A gesture released on a pass that `loopPlaying` returns from early (Back, a stopped VM, round over, turn passed) is
+    never read, so it is never logged.
+  - The simulator's HAL classifies taps and releases by its own rules: a slow 40 px slide logs as an ended contact there,
+    and a long press's lift logs an extra `contact ended screen unknown` line. What it shows for slides and long-press
+    lifts is not the device's.
 - The system's edge gestures never reach the game. The Back gesture (a right swipe from the left 25 %) arrives as
   `Button::Back`; the Home gesture (an up swipe from the bottom 14 %, or the Home key) reaches `handleHomeGesture()`,
   which the match overrides; `ActivityManager` takes the light panel's down swipe first; and `GameTouch` drops every
@@ -22,6 +56,15 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   in the match uses `rowTouch`, `colTouch`, or `wasTapInRect`.
 
 No other screen may use this exception; a new screen that is not a game canvas follows touch-and-ui.md.
+
+A game's canvas is the logical screen less the board's bezel insets (`GameViewport::forRenderer`), so its size differs by
+device: the X4 Pro gives 466 x 788 (insets {9, 7, 3, 7}) and the Sticky 474 x 788 (the default insets {9, 3, 3, 3}). The
+Paper Mono's profile carries the X4 Pro's insets too, but no Paper Mono env sets `FREEINK_CAP_GAMES`, so it runs no games
+today. A game designs for a 466 x 788 box and centres it in `ch.screen` (an offset of `(ch.screen.w - 466) // 2` on each
+side, so the Sticky shows the same pixel layout with 4 px of white at each side) rather than adapting its layout to the width
+it was given. A canvas smaller than 466 x 788 is unsupported: the game does not adapt, it logs one line saying so and lays out
+from the canvas's corner, so part of it is clipped. The games check plays every round and check of every game at both
+466 x 788 and 474 x 788 (spine AD-7, amended 2026-10-05).
 
 Drawing is in canvas pixels too, and its coordinates and sizes (`x`, `y`, `w`, `h`, `r`, and a line's ends) saturate to
 −32,768..32,767 when a `ch.gfx` command is recorded (`DisplayList`), before `FrameReplay` clips it to the canvas. A

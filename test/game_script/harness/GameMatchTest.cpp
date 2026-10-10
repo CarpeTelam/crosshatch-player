@@ -41,7 +41,8 @@ using match::markFills;
 using match::waitFor;
 using Button = MappedInputManager::Button;
 
-// Where a screen tap lands on canvas point (x, y): the canvas is 474 x 788 at (3, 6).
+// Where a screen tap lands on canvas point (x, y): the canvas is the double's own, 474 x 788 at (3, 6) of the screen:
+// an odd origin parity (3 + 6) that no device has (the Sticky's origin is (3, 9)).
 constexpr int CANVAS_X = 3;
 constexpr int CANVAS_Y = 6;
 
@@ -209,6 +210,98 @@ TEST_F(MatchTest, BackPausesTheRoundAndResumeReturnsToTheCanvasOnAClearedScreen)
   render();
   EXPECT_GT(renderer->count(GfxRenderer::Kind::ClearScreen), clears);
   EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);  // the menu sat over it: a full refresh
+}
+
+// A game that logs ch.time.ms on each tap.
+constexpr const char* CLOCK_GAME = R"(
+local game = {}
+function game.setup(ctx) return {} end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move) return state end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+function game.input(state, seat, ui, ev)
+  if ev.kind == "tap" then
+    ch.log("clock " .. ch.time.ms())
+    return { tap = true }
+  end
+end
+return game
+)";
+
+// ch.time.ms is play time (epic-first-party-games, the game clock): the VM's pause ledger takes the Paused interval
+// out.
+TEST_F(MatchTest, TheGameClockLeavesThePauseOut) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(5000);
+  tapCanvas(100, 200);
+  frame();
+  ASSERT_TRUE(pump([&] { return logHas("clock 5000"); })) << "the first tap did not reach the game";
+  showFrame();
+
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(30000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(2000);
+  showFrame();  // a resumed round is redrawn; a tap made before its frame is dropped
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 7000"); })) << "the pause was counted: no tap read 7000 ms of play time";
+  EXPECT_FALSE(logHas("clock 37000"));
+}
+
+// The Home gesture pauses the round too (a pause of Home counts as Paused).
+TEST_F(MatchTest, TheGameClockLeavesOutAPauseMadeByTheHomeGesture) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(5000);
+  ASSERT_TRUE(activity->handleHomeGesture());
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(30000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(2000);
+  showFrame();
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 7000"); })) << "the pause was counted: no tap read 7000 ms of play time";
+  EXPECT_FALSE(logHas("clock 37000"));
+}
+
+TEST_F(MatchTest, TheGameClockLeavesOutTwoPausesInOneMatch) {
+  installGame("clocked", CLOCK_GAME);
+  enter("clocked");
+  showFrame();
+  fakertos::advance(1000);
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(20000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(1000);
+  showFrame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  fakertos::advance(10000);
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  fakertos::advance(1000);
+  showFrame();
+  tapCanvas(100, 200);
+  frame();
+  EXPECT_TRUE(pump([&] { return logHas("clock 3000"); })) << "a pause was counted: no tap read 3000 ms of play time";
+  EXPECT_FALSE(logHas("clock 33000"));
 }
 
 TEST_F(MatchTest, TheKeysMoveAroundAMenuAndConfirmChoosesTheFocusedOption) {
@@ -997,6 +1090,168 @@ TEST_F(MatchTest, ASystemEdgeSwipeNeverReachesTheGame) {
   EXPECT_EQ(fakelog::countLines("event\tswipe"), 0u);
 }
 
+// ---- the touch log: every gesture of a running match, with its fate (GameTouchLog; LOG_DBG, no behaviour change) ----
+
+// The canvas is at (3, 6) of the screen here, so canvas = screen - (3, 6).
+class TouchLogTest : public MatchTest {
+ protected:
+  size_t touchLines(const std::string& text) const { return fakelog::countLines("DBG GAME: events: touch " + text); }
+  // A tap on the canvas after the gesture under test: events reach the VM in order, so once it is logged, whatever the
+  // gesture would have delivered has been (and nothing before it was).
+  void expectOnlyTheMarkerReachedTheGame() {
+    tapCanvas(50, 60);
+    frame();
+    ASSERT_TRUE(waitFor([&] { return logHas("event\ttap\t50\t60"); }));
+    EXPECT_EQ(fakelog::countLines("event\t"), 1u) << "the gesture under test reached the game";
+  }
+  void start() {
+    installGame("events", match::EVENTS_GAME);
+    enter("events");
+    showFrame();
+  }
+};
+
+TEST_F(TouchLogTest, ATapIsLoggedWithItsPointsAndItsHold) {
+  start();
+  fakertos::advance(200);  // the finger came down after the first frame was pushed: back-dated by its 82 ms hold
+  input->quickTap(240, 400, 82);
+  frame();
+  EXPECT_EQ(touchLines("tap screen (240,400) canvas (237,394) held 82 ms"), 1u);
+  ASSERT_TRUE(waitFor([&] { return logHas("event\ttap\t237\t394"); })) << "the log changed what the game gets";
+}
+
+TEST_F(TouchLogTest, ALongPressIsLoggedWithNoHold) {
+  start();
+  gpio.touchHeldMs = 1234;  // stale, from an earlier contact: a long press has no hold of its own
+  input->longPress(240, 400);
+  frame();
+  EXPECT_EQ(touchLines("long press screen (240,400) canvas (237,394)"), 1u);
+  EXPECT_EQ(fakelog::countLines("touch long press screen (240,400) canvas (237,394) held"), 0u);
+  ASSERT_TRUE(waitFor([&] { return logHas("event\tlong_press\t237\t394\t-"); }));
+  // The same through a held finger: the SDK fires the long press at 500 ms and the lift is suppressed.
+  fakelog::clearLines();
+  input->holdTouch(240, 400);
+  frame();
+  fakertos::advance(500);
+  frame();
+  input->liftTouch();
+  frame();
+  EXPECT_EQ(touchLines("long press screen (240,400) canvas (237,394)"), 1u);
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u) << "the suppressed lift is no second gesture";
+}
+
+TEST_F(TouchLogTest, ASwipeIsLoggedWithItsEndsItsDirectionAndItsHold) {
+  start();
+  gpio.touchHeldMs = 120;  // the device latches a swipe's hold at its release; the double's swipe() does not
+  input->swipe(400, 400, 150, 420);
+  frame();
+  EXPECT_EQ(touchLines("swipe left screen (400,400)->(150,420) canvas (397,394) held 120 ms"), 1u);
+  ASSERT_TRUE(waitFor([&] { return logHas("event\tswipe\t397\t394\tleft"); }));
+}
+
+TEST_F(TouchLogTest, ATapOffTheCanvasIsLoggedAndNotSent) {
+  start();
+  input->quickTap(477, 400, 64);  // the right bezel strip
+  frame();
+  EXPECT_EQ(touchLines("tap screen (477,400) held 64 ms: not sent, off the canvas"), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+TEST_F(TouchLogTest, ASystemEdgeSwipeIsLoggedAndNotSent) {
+  start();
+  gpio.touchHeldMs = 90;
+  input->swipe(240, 5, 240, 300);  // down from the top 14%: the light panel's
+  frame();
+  EXPECT_EQ(touchLines("swipe down screen (240,5)->(240,300) held 90 ms: not sent, system edge swipe"), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+// The shapes below are ones the device ends with no gesture (the input double's liftWithoutTap says which): held over
+// 700 ms and moved 60 px or more net (a slow slide), or past 59 px and back to under 60 px net (out and back). A drift
+// of 29 to 59 px that lifts quickly is a tap on the device, not this.
+TEST_F(TouchLogTest, ASlowSlideIsLoggedAsAnEndedContactWithItsFirstAndLastSample) {
+  start();
+  input->holdTouch(300, 400);
+  frame();  // the first sample
+  fakertos::advance(600);
+  input->moveTouch(380, 450);  // 94 px net, and gone past the tap slop: no long press at 500 ms either
+  frame();                     // the last sample
+  fakertos::advance(600);
+  input->liftWithoutTap();
+  frame();
+  EXPECT_EQ(
+      touchLines("contact ended screen (300,400)->(380,450) held 1200 ms: not sent, not a tap, long press or swipe"),
+      1u);
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+TEST_F(TouchLogTest, AnOutAndBackContactIsLoggedAsAnEndedContactNearItsStart) {
+  start();
+  input->holdTouch(300, 400);
+  frame();
+  fakertos::advance(300);
+  input->moveTouch(390, 400);  // a 90 px excursion
+  frame();
+  fakertos::advance(300);
+  input->moveTouch(310, 405);  // and back to 11 px net
+  frame();
+  fakertos::advance(100);
+  input->liftWithoutTap();
+  frame();
+  EXPECT_EQ(
+      touchLines("contact ended screen (300,400)->(310,405) held 700 ms: not sent, not a tap, long press or swipe"),
+      1u);
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+TEST_F(TouchLogTest, AContactTheLoopNeverSawDownHasUnknownPositions) {
+  start();
+  gpio.touchHeldMs = 250;   // stale, from an earlier contact: it says nothing of this one
+  input->liftWithoutTap();  // a raw release, with no held contact for the loop to have latched
+  frame();
+  EXPECT_EQ(touchLines("contact ended screen unknown: not sent, not a tap, long press or swipe"), 1u);
+  expectOnlyTheMarkerReachedTheGame();
+}
+
+// The loop frees a contact's latch outside Playing (loop()), so a slide made after a Back, a lift in the pause menu and
+// a Resume logs its own samples and not the first contact's.
+TEST_F(TouchLogTest, ASlideAfterAPauseLogsItsOwnSamplesNotTheLatchOfTheContactBeforeIt) {
+  start();
+  input->holdTouch(100, 100);
+  frame();  // latched in Playing
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  input->liftWithoutTap();  // lifts in the pause menu: a raw release, no tap on one of its options
+  frame();
+  renderView();
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  render();
+  fakelog::clearLines();
+  input->holdTouch(300, 400);
+  frame();
+  fakertos::advance(600);
+  input->moveTouch(380, 450);
+  frame();
+  fakertos::advance(600);
+  input->liftWithoutTap();
+  frame();
+  EXPECT_EQ(
+      touchLines("contact ended screen (300,400)->(380,450) held 1200 ms: not sent, not a tap, long press or swipe"),
+      1u);
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 1u);
+}
+
+TEST_F(TouchLogTest, AFrameWithNoGestureLogsNothing) {
+  start();
+  frame();
+  frame();
+  EXPECT_EQ(fakelog::countLines("DBG GAME: events: touch "), 0u);
+}
+
 // ---- the watchdog's stop that works (stopStuckVm's first branch) ----
 
 // A held call that the match's stop finds ended: the log line "stopping the VM" comes before its
@@ -1734,6 +1989,58 @@ TEST(InputDoubleTest, AHeldContactFollowsTheDevicesTouchPath) {
   input.release(MappedInputManager::Button::Left);
   EXPECT_EQ(input.getHeldTime(), 5000u);
   EXPECT_EQ(gpio.lastTouchHeldMs(), 40u);
+  input.clear();
+  // A slide: isScreenTouchHeld follows the finger, wasScreenTouchDown stays at the touch-down point while the finger is
+  // within the tap slop (28 px, both axes) and reports nothing once it has gone past it, even if it comes back.
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(128, 72);  // exactly 28 px in each axis: still a candidate
+  EXPECT_TRUE(input.wasScreenTouchDown(x, y));
+  EXPECT_EQ(x, 100) << "the touch-down point, not the live one";
+  EXPECT_EQ(y, 100);
+  EXPECT_TRUE(input.isScreenTouchHeld(x, y));
+  EXPECT_EQ(x, 128) << "the live point";
+  EXPECT_EQ(y, 72);
+  input.moveTouch(129, 100);  // 29 px: past the slop
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
+  EXPECT_TRUE(input.isScreenTouchHeld(x, y));
+  EXPECT_EQ(x, 129);
+  input.moveTouch(100, 100);  // back at the start: the device's flag stays set until the lift
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
+  EXPECT_TRUE(input.isScreenTouchHeld(x, y));
+  EXPECT_EQ(x, 100);
+  input.liftWithoutTap();
+  input.clear();
+  // A long press reports the touch-down point, not the live one, and only for a contact within the tap slop.
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(120, 90);  // a nudge within 28 px
+  fakertos::advance(400);
+  ASSERT_TRUE(input.wasScreenLongPress(x, y)) << "500 ms down and still within the slop";
+  EXPECT_EQ(x, 100) << "the touch-down point";
+  EXPECT_EQ(y, 100);
+  input.clear();
+  input.liftTouch();
+  input.clear();
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(129, 100);  // 29 px: past the slop
+  fakertos::advance(400);
+  EXPECT_FALSE(input.wasScreenLongPress(x, y)) << "a contact that left the slop has no long press";
+  input.clear();
+  EXPECT_FALSE(input.wasScreenLongPress(x, y));
+  input.liftWithoutTap();
+  input.clear();
+  // The same on the other axis.
+  input.holdTouch(100, 100);
+  input.update();
+  fakertos::advance(100);
+  input.moveTouch(100, 129);
+  EXPECT_FALSE(input.wasScreenTouchDown(x, y));
+  input.liftWithoutTap();
   input.clear();
   // A lift with no gesture: a raw release only.
   input.holdTouch(3, 4);

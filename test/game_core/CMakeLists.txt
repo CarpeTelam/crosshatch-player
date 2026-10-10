@@ -7,6 +7,7 @@ add_executable(GameCoreTest
   ManifestTest.cpp
   MatchLifecycleTest.cpp
   PackageLimitsTest.cpp
+  PauseClockTest.cpp
   SeatShownTest.cpp
   SessionTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp

@@ -39,6 +39,10 @@
 #   Fix a failure with python3 scripts/gen_game_icons.py --raw-out test/game_script/GameIconsRaw.h on Linux and commit
 #   both files (after a deliberate change of source, --write-sums first); the script's docstring has the exit codes
 #   and the rest.
+# - Games check: packs every game in games/ with scripts/pack_game.py, installs it with the real installer, and plays its
+#   checks.lua and rounds (test/game_script/first_party/<id>/) headlessly, and runs the check's own tests (GamesCheckTest,
+#   GamesCheckEngineTest, GamesCheckFlowTest, label games-check). With games/ missing or empty the production target has
+#   nothing to play and passes. test/game_script/first_party/README.md has the formats and how to run it locally.
 name: Crosshatch CI
 
 on:
@@ -365,6 +369,37 @@ jobs:
           fi
           echo "lib/GameIcons/GameIcons.generated.h and test/game_script/GameIconsRaw.h match a fresh run of scripts/gen_game_icons.py"
 
+  games-check:
+    name: Games check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # ci.yml's unit-tests job, narrowed to the three games-check targets and their label.
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      # Same key as ci.yml's unit-tests job, so both workflows share one googletest source cache.
+      - name: Cache googletest source
+        uses: actions/cache@v4
+        with:
+          path: build/test/_deps/googletest-src
+          key: ${{ runner.os }}-googletest-${{ hashFiles('test/CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/test --target GamesCheckTest GamesCheckEngineTest GamesCheckFlowTest
+
+      - name: Run the games check
+        run: ctest --test-dir build/test -L games-check --output-on-failure --no-tests=error
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -378,6 +413,7 @@ jobs:
       - api-freeze
       - layer-check
       - icons-up-to-date
+      - games-check
     if: always()
     runs-on: ubuntu-latest
     permissions:

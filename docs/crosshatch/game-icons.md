@@ -160,7 +160,7 @@ game pieces are Battleship's `boat` alone; a chess game draws its own pieces wit
 | | `gear-six` | Settings |
 | | `sign-out` | Leave the match (the views' Leave and Back rows) |
 | | `trash` | Delete, discard |
-| | `timer` | `ch.timer` countdowns |
+| | `timer` | `ch.timer` countdowns; Sudoku's TIMER toggle |
 | | `hourglass` | Waiting for the other player |
 | | `game-controller` | The Home Games tab; line style like the Home tabs' icons |
 | Status | `warning` | The error view |

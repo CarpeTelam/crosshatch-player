@@ -52,7 +52,11 @@ class GfxRenderer {
   // ---- What FrameReplay, GameIconDraw, and GameViewport call ----
   int getScreenWidth() const { return width; }
   int getScreenHeight() const { return height; }
-  // The bezel a game canvas leaves out: 474 x 788 of 480 x 800, as the real boards do.
+  // The bezel a game canvas leaves out: this double's own insets (6, 3, 6, 3) give a 474 x 788 canvas at (3, 6) of the
+  // 480 x 800 screen. That is the double's canvas, not a board's: its size is the Sticky's 474 x 788, but its origin
+  // (3, 6) has an odd x + y, which no device has (the Sticky's real origin is (3, 9), the X4 Pro's (7, 9), both even;
+  // GameTouchTest uses (3, 9)). The pixel expectations of the suites on this double are about this geometry, not
+  // about a board's.
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const {
     *outTop = insetTop;
     *outRight = insetRight;
@@ -235,6 +239,8 @@ class GfxRenderer {
 
   int width;
   int height;
+  // The double's own insets, (top, right, bottom, left) = (6, 3, 6, 3): a 474 x 788 canvas at (3, 6), whose odd x + y
+  // is no board's (the Sticky's insets are (9, 3, 3, 3), the X4 Pro's (9, 7, 3, 7): origins (3, 9) and (7, 9)).
   int insetTop = 6;
   int insetRight = 3;
   int insetBottom = 6;

@@ -952,8 +952,9 @@ TEST_F(GfxBindingsTest, TheTimingFixturesBandsSitAtTheLimitsOnEveryCanvas) {
     int16_t w;
     int16_t h;
   };
-  // The X4 Pro's and Sticky's 474 x 788, the test canvas, and one too small to hold the icons apart.
-  const Size sizes[] = {{474, 788}, {480, 800}, {300, 500}};
+  // The Sticky's 474 x 788 (the test canvas), the X4 Pro's 466 x 788 (the device the owner runs this fixture on), and
+  // one too small to hold the icons apart.
+  const Size sizes[] = {{474, 788}, {466, 788}, {480, 800}, {300, 500}};
   for (const Size size : sizes) {
     canvas = GameScript::Canvas{size.w, size.h, GameScript::TextMetrics::standIn()};
     const std::string where = std::to_string(size.w) + "x" + std::to_string(size.h);

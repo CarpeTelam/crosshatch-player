@@ -1247,6 +1247,30 @@ class PassResumeTest : public ResumeMatchTest {
     frame();
     ASSERT_TRUE(pump([&] { return state() == "Result"; }));
   }
+  // pass-keep: seat 1's frame is on the panel; a tap above y = 200 is a move that keeps the turn (the state stays
+  // Playing).
+  void keepMove() {
+    input->tap(CANVAS_X + 100, CANVAS_Y + 100);
+    frame();
+    ASSERT_TRUE(pump([&] { return logHas("apply seat 1 keep"); }));
+  }
+  // pass-keep: Continue as a solo caller on the save at ver 2 resumes on the hand-off screen naming seat 1 (the save's
+  // roster wins, and a kept turn resumes on the same seat, where pass-hidden's resumes on the next), with no seat drawn
+  // before the blank's tap, and the tap shows the kept move's change.
+  void resumeOnTheKeptTurn() {
+    fakelog::clearLines();
+    renderer->shown.clear();
+    enterPass("pass-keep", true, GameMatchActivity::Start::Resume, GameCore::Roster::solo());
+    EXPECT_TRUE(logHas("pass-keep: resuming the save's roster: pass, 2 seat(s)"));
+    EXPECT_EQ(state(), "HandOff");
+    ASSERT_TRUE(pump([&] { return logHas("Resuming at ver 2"); }));
+    for (int i = 0; i < 20; ++i) frame();
+    EXPECT_EQ(fakelog::countLines("draw for seat "), 0u) << "a seat was drawn before the blank's tap";
+    ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+    EXPECT_TRUE(holds(lastPush(), "Kept: 1")) << "the saved snapshot, not setup's";
+    EXPECT_EQ(fakelog::countLines("draw for seat 1"), 1u);
+    EXPECT_EQ(fakelog::countLines("draw for seat "), 1u) << "another seat was drawn, or seat 1 before the tap";
+  }
 };
 
 TEST_F(PassResumeTest, ANewOpenPassMatchWritesEachSnapshotAsAPassSaveAndOverDeletesIt) {
@@ -1439,6 +1463,52 @@ TEST_F(PassResumeTest, AHiddenMatchSleptInResultContinuesAtTheSnapshotTheSleepWr
   EXPECT_TRUE(holds(lastPush(), "Player 2's secret: river"));
   EXPECT_TRUE(holds(lastPush(), "Moves: 1"));
   EXPECT_TRUE(logHas("Resuming at ver 2"));
+}
+
+// The match is saved in Paused: seat 1's move keeps the turn and its write is refused, so the snapshot is still pending
+// when Back opens the pause menu (loopPlaying wrote it on its next pass otherwise). The card then takes it, and only
+// loopView's flushResume() in Paused can write it: the save is checked on the card while the state is still Paused,
+// before any sleep, because the forced exit writes the pending snapshot too and a sleep-then-resume case would pass
+// without this path.
+TEST_F(PassResumeTest, AHiddenMatchSavedInPausedAfterAMoveThatKeptTheTurnResumesOnTheBlankWithThatMove) {
+  enterPass("pass-keep", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  fakesd::sim().failOpenWrite.insert(resumeTmpPath("pass-keep"));
+  ASSERT_NO_FATAL_FAILURE(keepMove());
+  ASSERT_TRUE(pump([&] { return logHas("cannot write " + resumeTmpPath("pass-keep")); }));
+  EXPECT_EQ(state(), "Playing") << "a move that keeps the turn does not leave Playing";
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  EXPECT_TRUE(savedPassAt(1)) << "the card refused the kept move's snapshot";
+  fakesd::sim().failOpenWrite.clear();
+  fakertos::advance(GameSaveStore::FLUSH_INTERVAL_MS);  // the failed write is not retried before this
+  ASSERT_TRUE(pumpToPassSave(2)) << "Paused never wrote the snapshot";
+  EXPECT_EQ(state(), "Paused");
+  const Bytes saved = fakesd::bytesOf(resumePath("pass-keep"));
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("pass-keep")), saved) << "nothing was left for the forced exit to write";
+
+  ASSERT_NO_FATAL_FAILURE(resumeOnTheKeptTurn());
+}
+
+// The match is saved mid-turn in Playing: the kept move commits and loopPlaying's closing flushResume() writes the
+// snapshot on its next pass. The pump to ver 2 while the state is still Playing, before any sleep, is the check: the
+// forced exit would write the pending snapshot too.
+TEST_F(PassResumeTest,
+       AHiddenMatchSnapshotWrittenMidTurnInPlayingAfterAMoveThatKeptTheTurnResumesOnTheBlankWithThatMove) {
+  enterPass("pass-keep", true, GameMatchActivity::Start::New);
+  ASSERT_TRUE(pumpToPassSave(1));
+  ASSERT_NO_FATAL_FAILURE(passTheBlank(1));
+  ASSERT_NO_FATAL_FAILURE(keepMove());
+  ASSERT_TRUE(pumpToPassSave(2)) << "Playing never wrote the kept move's snapshot";
+  EXPECT_EQ(state(), "Playing");
+  const Bytes saved = fakesd::bytesOf(resumePath("pass-keep"));
+  sleep();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("pass-keep")), saved) << "nothing was left for the forced exit to write";
+
+  ASSERT_NO_FATAL_FAILURE(resumeOnTheKeptTurn());
 }
 
 TEST_F(PassResumeTest, AnOpenMatchSleptMidMoveContinuesAtTheSnapshotTheSleepWrote) {

@@ -45,7 +45,8 @@ class FakeClock : public GameCore::IClock {
   uint64_t nowMs() const override { return now; }
   void advance(uint64_t ms) { now += ms; }
 
-  uint64_t now = 1000000;  // any start; ch.time.ms counts from load()
+  uint64_t now =
+      1000000;  // any start; ch.time.ms reports play time from load() (these ports have no pause ledger, so all of it)
 };
 
 // Keeps every ch.log and print line, and whether `watched` (when set) was inside a
@@ -265,7 +266,7 @@ class LuaGameTest : public ::testing::Test {
   std::vector<uint8_t> storeBytes = std::vector<uint8_t>(GameScript::Codec::STORE_LIMIT);
   GameScript::StoreSlot store{storeBytes.data(), storeBytes.size()};
   GameScript::HostPorts ports{random, clock, log, store};
-  // The X4 Pro's portrait canvas size, with the stand-in text metrics.
+  // The 480 x 800 portrait panel (no device's canvas), with the stand-in text metrics.
   GameScript::Canvas canvas{480, 800, GameScript::TextMetrics::standIn()};
   std::string text;
   std::vector<GameScript::SourceSpan> spans;

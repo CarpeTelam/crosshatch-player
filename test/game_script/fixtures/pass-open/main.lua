@@ -7,7 +7,7 @@
 local game = {}
 
 local CELL = 140
-local LEFT = 27 -- (474 - 3 * 140) / 2: centred on the X4 Pro's 474 px canvas
+local LEFT = 27 -- (474 - 3 * 140) / 2: centred on the Sticky's 474 px canvas (the test canvas; the X4 Pro's is 466)
 local TOP = 200
 local DELAY_MS = 10000
 local MARKS = { "X", "O" }

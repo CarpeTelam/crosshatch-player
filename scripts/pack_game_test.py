@@ -442,9 +442,9 @@ class LimitTest(PackerTestCase):
         at, over = LIMITS['members']['at'], LIMITS['members']['over']
         self.assertEqual(self.project.run(self.project.game(self.member_files(at)))[0], 0)
         with zipfile.ZipFile(self.project.out / 'demo.chgame') as package:
-            self.assertEqual(len(package.namelist()), 32)
+            self.assertEqual(len(package.namelist()), at)
         shutil.rmtree(self.project.out)
-        self.assertRefused(self.project.game(self.member_files(over)), '33 members; at most 32')
+        self.assertRefused(self.project.game(self.member_files(over)), f'{over} members; at most {at}')
 
     def images_files(self, sizes):
         return {f'i{i}.png': png(width, height) for i, (width, height) in enumerate(sizes)}
