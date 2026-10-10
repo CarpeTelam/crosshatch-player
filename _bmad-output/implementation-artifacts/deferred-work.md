@@ -1235,3 +1235,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-count-a-tap-in-the-margin-beside-a-game-s-edge-cells-as-that-plan.md`
   summary: docs/crosshatch/game-canvas.md does not tell game authors that the first-party games snap a tap in the box's edge margin (a gap smaller than the target's size) to the edge target.
   evidence: Recorded by entry 15's review (the plan's Review Triage Log). Location: docs/crosshatch/game-canvas.md. Severity: low.
+
+## 8.16
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-show-sudoku-s-play-time-in-the-header-with-a-timer-toggle-in-plan.md`
+  summary: A minute timer that fires early after a pause redraws an identical frame, one extra e-ink push.
+  evidence: Recorded by entry 16's review (the plan's Review Triage Log). ch.time.ms leaves out pause time and ch.timer counts raw time, so a timer armed before a pause falls due on Resume with the minute unchanged, and the engine draws after every timer event. Location: games/sudoku/main.lua (game.draw), lib/GameScript/MatchRounds.cpp (step). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-show-sudoku-s-play-time-in-the-header-with-a-timer-toggle-in-plan.md`
+  summary: Firing and re-arming of the real minute timer are not pinned on the host, because a first-party round delivers no timer event.
+  evidence: Recorded by entry 16's review. The simulator showed "0 min" then "1 min" with no tap (story-timer-screenshots/puzzle-time-1min-after-timer.png); entry 5's next device run settles it. Location: test/game_script/first_party/sudoku/interaction.lua. Severity: medium (unverified on the device).

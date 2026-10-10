@@ -3,7 +3,7 @@ title: "Show Sudoku's play time in the header, with a TIMER toggle in the menu"
 type: 'feature'
 ticket: '16'
 created: '2026-10-10'
-status: 'built'
+status: done
 baseline_revision: '4171f69ce841c6d248444b908716fac2613469e5'
 route: 'full'
 route_source: 'auto'
