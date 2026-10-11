@@ -56,11 +56,13 @@ class ActivityManager {
     int immediateUpdates = 0;  // requestUpdate(true) and requestUpdateAndWait
     int replaced = 0;          // replaceActivity
     int goToFileTransfer = 0;
+    int goToJoinNetwork = 0;
     int goToUsbDrive = 0;
     int goToSettings = 0;
     int goToFileBrowser = 0;
     int goToLibrary = 0;
     int goToBrowser = 0;
+    int goToPlugins = 0;
     int goToReader = 0;
     int goToSleep = 0;
     int goToBoot = 0;
@@ -77,11 +79,13 @@ class ActivityManager {
   void loop() {}
   void replaceActivity(std::unique_ptr<Activity>&& newActivity);
   void goToFileTransfer();
+  void goToJoinNetwork();
   void goToUsbDrive();
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToLibrary();
   void goToBrowser();
+  void goToPlugins(bool showOpds);  // records `showOpds` in `lastShowOpds`
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
@@ -103,6 +107,7 @@ class ActivityManager {
   bool handleForcedRefresh() { return false; }
   bool skipLoopDelay() const { return false; }
   ScreenshotInfo getScreenshotInfo() const { return {}; }
+  void prepareForSleep() {}
 
   void requestUpdate(bool immediate = false);
   void requestUpdateAndWait();
@@ -133,6 +138,7 @@ class ActivityManager {
   std::string lastMessage;         // goToFullScreenMessage's
   HomeMenuItem lastHomeItem = HomeMenuItem::NONE;
   bool lastCleanInitialRefresh = false;
+  bool lastShowOpds = false;                                // goToPlugins'
   std::vector<std::unique_ptr<Activity>> replacements;      // what replaceActivity was given, in order
   std::vector<std::unique_ptr<Activity>> pushedActivities;  // what pushActivity was given
   // Called inside goToGames(), so a test can read what was true at the moment of the ask (a VM

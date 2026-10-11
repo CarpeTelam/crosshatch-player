@@ -4,4 +4,4 @@
 # GameMatchHarnessTest (match.cmake) still links.
 list(APPEND HARNESS_EXTRA_CORE_SOURCES
      ${REPO_ROOT}/lib/GameCore/Manifest.cpp
-     ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp)
+     ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp)

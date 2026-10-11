@@ -198,6 +198,10 @@ RADIO_CRYPTO_PATTERNS = (
 PLATFORM_PATTERNS = ('Arduino.h', 'esp_*.h', 'freertos/*', 'sys/*', 'strings.h', 'unistd.h')
 # SDK headers (the freeink-sdk submodule, which the check does not need checked out), each its own edge.
 SDK_HEADERS = {'FreeInkUICore.h', 'SecureHttpClient.h'}
+# SDK headers that stand in for a component the spine's table still names, each mapped to that component. The JSON
+# parser moved from lib/JsonParser into the SDK's JsonSax (upstream 2600a79e); the Domain row's `lib/JsonParser` edge is
+# the parser, wherever it lives.
+SDK_HEADERS_AS_COMPONENT = {'StreamingJsonParser.h': 'lib/JsonParser'}
 
 SOURCE_SUFFIXES = {'.h', '.hh', '.hpp', '.inl', '.ipp', '.c', '.cc', '.cpp', '.cxx'}
 HEADER_SUFFIXES = {'.h', '.hh', '.hpp', '.inl', '.ipp'}
@@ -266,6 +270,8 @@ def classify_external(name):
         return PLATFORM
     if name in SDK_HEADERS:
         return f'sdk:{name}'
+    if name in SDK_HEADERS_AS_COMPONENT:
+        return SDK_HEADERS_AS_COMPONENT[name]
     return None
 
 

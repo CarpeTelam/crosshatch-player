@@ -186,8 +186,8 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
 - On the combined tree, in AGENTS.md's verification order and under the locks: the host suites, the fork script
   tests, and `./bin/clang-format-fix` twice with nothing new in `git status`; then build `x4pro` and `default`, run
   `pio check` as AGENTS.md gives it (with `-e x4pro` too when games code changed), and `sim.sh build x4pro` when
-  `src/games` or a screen changed. CI builds all five envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`) on the
-  epic PR.
+  `src/games` or a screen changed. CI builds all seven envs (`default`, `x4pro`, `sticky`, `x4c`, `papermono`,
+  `metalio_eink4`, `eego_a4`) on the epic PR.
 - Open one PR for the epic into `develop` with a Conventional Commit title, and never merge it with a red check
   (AGENTS.md, Policy).
 

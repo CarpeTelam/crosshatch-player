@@ -11,7 +11,8 @@
 // UITheme's statics that read the settings or the cover cache (getCoverThumbPath, getFileIcon,
 // the cover-grid hooks) are recorded stand-ins: getCoverThumbPath returns the path with the
 // height spliced in, as the real one names a thumb; supportsCoverGrid is false and
-// `coverGridHome` turns hasCoverGridHome on. getScreenSafeArea models a portrait screen only.
+// `coverGridHome` turns hasCoverGridHome on. getScreenSafeArea models a portrait screen only, and getContentArea
+// is the whole screen (zero insets).
 // The real UITheme.cpp and BaseTheme.cpp are not built.
 
 #include <EpdFontFamily.h>
@@ -113,6 +114,11 @@ class UITheme {
 
   const ThemeMetrics& getMetrics() const { return metrics; }
   ThemeDouble& getTheme() { return theme; }
+  // The real one is the screen less the panel's viewable insets (bezel clearance on rounded panels, EEGO A4);
+  // it is zero-inset on rectangular panels, which is every panel modelled here, so this is the whole screen.
+  static Rect getContentArea(const GfxRenderer& renderer) {
+    return Rect{0, 0, renderer.getScreenWidth(), renderer.getScreenHeight()};
+  }
   Rect getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButtonHints = false, bool = false) {
     Rect area{0, 0, renderer.getScreenWidth(), renderer.getScreenHeight()};
     if (hasFrontButtonHints) area.height -= metrics.buttonHintsHeight;

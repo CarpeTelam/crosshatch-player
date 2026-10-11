@@ -16,7 +16,7 @@ add_executable(GameCoreTest
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
-  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
   ${REPO_ROOT}/src/games/GameHostCaps.cpp
 )
 
@@ -26,6 +26,7 @@ set_source_files_properties(${REPO_ROOT}/src/games/GameHostCaps.cpp PROPERTIES C
 target_include_directories(GameCoreTest PRIVATE
   ${REPO_ROOT}/lib/GameCore
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
   ${REPO_ROOT}/lib/Memory
   # GameHostCaps.h, the HostCaps provider.
   ${REPO_ROOT}/src/games

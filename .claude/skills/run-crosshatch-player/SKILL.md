@@ -153,7 +153,7 @@ cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build
 - **Wake resumes the last book.** `key sleep` shows the sleep screen, and any
   key wakes it. The simulator re-execs itself (same PID, log clock restarts
   at 0), and the firmware reopens the last-open book, not Home.
-- **The simulator library is pinned** in `simulator.ini` (`#8699595…`). After
+- **The simulator library is pinned** in `simulator.ini` (`#1915ee0…`). After
   merging upstream `develop`, a link error naming a `Hal*` method means the HAL
   moved ahead of the pin. Bump the commit to the newest upstream simulator
   commit, re-run `$S setup`, and rebuild. If the fork's own HAL diverges, fork
