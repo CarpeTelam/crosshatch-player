@@ -82,10 +82,11 @@ function layout.rail_at(x, y)
   return i
 end
 
--- The three snaps below move a tap in the margin between a block and the box's edge onto that block's edge
+-- The four snaps below move a tap in the margin between a block and the box's edge onto that block's edge
 -- (board.snap: the same rows or columns as the block, a gap smaller than the target's own size), so a tap a few pixels
--- off the grid, the pad or the rail's side counts as the edge cell, key or button. The exact functions above stay
--- exact; the MENU panel and the HOW TO PLAY page have no snap. Each takes x, y and returns x, y.
+-- off the grid, the pad, the rail's side or the MENU panel's rows counts as the edge cell, key, button or row. The
+-- exact functions above stay exact; the HOW TO PLAY page needs no snap (any tap closes it). Each takes x, y and
+-- returns x, y.
 
 -- Over the grid (cell-sized targets): the 8 px at its sides; its top (56 px) and the gap to the pad do not snap.
 function layout.snap_cell(x, y)
@@ -109,6 +110,16 @@ end
 function layout.menu_rect(i)
   local L = layout.get()
   return L.row_x, L.row_y + (i - 1) * L.row_h, L.row_w, L.row_h
+end
+
+-- Over the MENU panel's rows (row_w x row_h): the 24 px at each side and the 23 px under CLOSE (over the rows' columns,
+-- so the bottom corners stay dead, as the pad's and rail's do). Not the 72 px title
+-- band above HINT: that row forfeits the solve's best time, so a slip above it stays dead (owner, 2026-10-11). A tap
+-- in the band comes back unchanged, and board.snap alone would move it onto HINT (72 px is under a 77 px row).
+function layout.snap_menu(x, y)
+  local L = layout.get()
+  if y < L.row_y then return x, y end
+  return board.snap(L, x, y, L.row_x, L.row_y, L.row_w, layout.ROWS * L.row_h, L.row_w, L.row_h)
 end
 
 -- The MENU panel row (1..9) under x, y, or nil.
