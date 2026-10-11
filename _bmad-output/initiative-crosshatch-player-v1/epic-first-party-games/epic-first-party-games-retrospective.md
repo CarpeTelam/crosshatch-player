@@ -279,7 +279,12 @@ The epic file now carries `status: done` and a Closure line in its Notes.
 
 ## Open questions
 
-- **A-1, Sudoku's clock across a sleep.** Row 20's Decision says "a sleep is unchanged", so an auto-sleep mid-puzzle drops the idle time since the last move from both the header and the Solved time. Should Sudoku commit its time on each minute timer, a time-only move costing one `resume.bin` write a minute, so a sleep loses less than a minute? Or does the owner accept the drop? The next device run's sleep-and-Continue step (AI-7) will show how large it is.
-- **Who pays the epic's +1,376 B of flash** (S5)? This is still open from `epic-play-nearby.md`'s e6pre-14 Decision.
-- **The MENU snap (A-10).** The owner has not ruled on whether Sudoku's menu rows snap. AI-8 restated the deferral (`deferred-work.md` `## 8.15`) with entry 16's geometry, so the owner can decide on today's layout.
+The owner answered the three open questions on 2026-10-11, and each is recorded as a dated Decision in the epic file's Notes:
+
+- **A-1, Sudoku's clock across a sleep:** accepted as built. The idle time before an auto-sleep was not solving time.
+- **The +1,376 B of flash (S5):** taken from the spine's unallocated pool, which is now 10,160 B. The spine and `epic-play-nearby.md` record it.
+- **The MENU snap (A-10):** the side insets and the gap under CLOSE snap, and the title band above HINT does not. This is not built yet (`deferred-work.md` `## 8.15`).
+
+Still open:
+
 - **What this retro could not check:** session logs for the build dispatches, which hold no repo copy, so the process lessons rest on the plans and Notes only. Ultimate tic-tac-toe and Battleship were not exercised in the simulator in this session. Nothing was run on a device.
