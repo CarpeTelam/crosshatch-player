@@ -132,6 +132,46 @@ TEST(PauseClockTest, TheStateBitNeverLeaksIntoTheTotalAndALongClockDoesNotWrap) 
   EXPECT_EQ(PauseClock::pausedMs(PauseClock::PAUSED_BIT | 50, 10), 0u);  // a clock behind the word clamps
 }
 
+// A pause before the load is not play time's: the load reads its start and the paused total together (read()), and
+// playMs takes out only the paused time after it. Without that baseline, both cases read 0.
+TEST(PauseClockTest, APauseOpenAtTheLoadLeavesOutOnlyItsTimeAfterTheLoad) {
+  FakeClock clock;
+  PauseClock ledger;
+  ledger.enter(clock.nowMs());
+  clock.advance(4000);
+  const PauseClock::Reading start = ledger.read(clock);
+  EXPECT_EQ(start.pausedTotalMs, 4000u);
+  clock.advance(6000);
+  ledger.leave(clock.nowMs());
+  clock.advance(2000);
+  EXPECT_EQ(ledger.playMs(clock, start.nowMs, start.pausedTotalMs), 2000u);
+}
+
+TEST(PauseClockTest, APauseOpenAtTheLoadAndStillOpenReadsZero) {
+  FakeClock clock;
+  PauseClock ledger;
+  ledger.enter(clock.nowMs());
+  clock.advance(4000);
+  const PauseClock::Reading start = ledger.read(clock);
+  clock.advance(6000);
+  EXPECT_EQ(ledger.playMs(clock, start.nowMs, start.pausedTotalMs), 0u);
+  clock.advance(5000);
+  EXPECT_EQ(ledger.playMs(clock, start.nowMs, start.pausedTotalMs), 0u);
+}
+
+TEST(PauseClockTest, APauseClosedBeforeTheLoadIsNotLeftOut) {
+  FakeClock clock;
+  PauseClock ledger;
+  ledger.enter(clock.nowMs());
+  clock.advance(3000);
+  ledger.leave(clock.nowMs());
+  clock.advance(2000);
+  const PauseClock::Reading start = ledger.read(clock);
+  EXPECT_EQ(start.pausedTotalMs, 3000u);
+  clock.advance(2000);
+  EXPECT_EQ(ledger.playMs(clock, start.nowMs, start.pausedTotalMs), 2000u);
+}
+
 TEST(PauseClockTest, AClockBehindTheStartReadsZero) {
   FakeClock clock;
   PauseClock ledger;

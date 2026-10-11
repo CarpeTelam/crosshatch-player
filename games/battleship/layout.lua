@@ -1,8 +1,8 @@
 -- Battleship's geometry: where each board, button, and text block sits on a canvas of w x h pixels. Pure (no `ch`):
--- main.lua draws and reads taps through it, and the game's checks call it directly. Everything is laid out in one
--- fixed 466 x 788 box (the X4 Pro's canvas) centred in the canvas, so the Sticky's 474 x 788 gets the same cells and
--- targets 4 px to the right; a canvas smaller than the box is unsupported (the box then starts at 0, 0). The numbers
--- in the comments are the box's, before the box's offset.
+-- main.lua reads taps and view.lua draws through it, and the game's checks call it directly. Everything is laid out in
+-- one fixed 466 x 788 box (the X4 Pro's canvas) centred in the canvas, so the Sticky's 474 x 788 gets the same cells
+-- and targets 4 px to the right; a canvas smaller than the box is unsupported (the box then starts at 0, 0). The
+-- numbers in the comments are the box's, before the box's offset.
 local layout = {}
 
 layout.W, layout.H = 466, 788
@@ -38,7 +38,7 @@ end
 -- is the 466 x 788 one at L.ox, L.oy, so the Sticky's 4 px outside it never snap. cell_at and inside stay exact.
 function layout.snap(L, px, py, rect, tw, th)
   local left, top = L.ox, L.oy
-  local right, bottom = left + L.W, top + layout.H
+  local right, bottom = left + layout.W, top + layout.H
   local rx, ry = rect.x + rect.w, rect.y + rect.h
   if py >= rect.y and py < ry then
     if px >= left and px < rect.x and rect.x - left < tw then return rect.x, py end

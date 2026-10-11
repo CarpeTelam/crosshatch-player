@@ -3,8 +3,10 @@
 -- while the end-of-round menu is still on screen falls in the gap before the new
 -- round's first frame. That tap must not reach the new round: it starts at
 -- "Round 2, taps: 0 of 3" with no square drawn. Second check: Play again, then Back
--- and Resume within the gap: the pause menu stays on screen (inert) until round
--- 2's first frame, never the round-1 board.
+-- at once, and Resume within about 1 s: the pause menu stays on screen (inert)
+-- until round 2's first frame, never the round-1 board. The spin counts play time,
+-- which stands still while paused, so a longer pause runs it into the 3 s watchdog
+-- and the error view (README.md, "Title screen, Options, and hand-off run", step 9).
 -- Copy this folder to /.games/slow-restart/ on the SD card (fs_/.games/slow-restart/
 -- in the simulator).
 local game = {}

@@ -77,11 +77,13 @@ struct BindingContext {
   // Bindings inside a locked section right now (LuaGame's); see enterLockedSection.
   std::atomic<uint32_t>* lockedSections = nullptr;
   // ch.time.ms reports play time: clock milliseconds since startMs (the game's load), less the time
-  // the match spent in Paused when `paused` is set (null: none, as for a host that never pauses).
+  // the match spent in Paused after it when `paused` is set (null: none, as for a host that never
+  // pauses). pausedAtStartMs is the ledger's paused total at startMs, read with it.
   // ch.timer keeps the raw clock.
   const GameCore::IClock* clock = nullptr;
   const GameCore::PauseClock* paused = nullptr;
   uint64_t startMs = 0;
+  uint64_t pausedAtStartMs = 0;
   // ch.timer's one pending timer (LuaGame's).
   GameTimer* timer = nullptr;
   // ch.store's latest-wins slot (the match's), and the codec scratch ch.store.set

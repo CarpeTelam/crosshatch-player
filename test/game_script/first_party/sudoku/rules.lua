@@ -1,10 +1,11 @@
 -- rules.lua: the game's rules pinned one by one (a clue, a bad move, the undo ring, the clash rule, HINT and CHECK, the
 -- layout's targets, the clock), each on the grid a round dealt. A round's `steps(state)` calls them, so every rule is
 -- checked beside the round that plays it through taps. A failure is an error that names its line. They live here, in
--- the round's own VM, and not in checks.lua: that VM holds the solver, the counter, and the bank (most of the 256 KB
--- the sandbox allows, with a heap the allocator fragments), and had no room left for them. The pins on taps, the
--- toggles, and the reset are in interaction.lua, and the pins on what the draw marks on the board are in drawn.lua and
--- marks.lua: a round loads only the modules it calls.
+-- the round's own VM, and not in checks.lua, whose VM holds the solver, the counter, and the bank: they moved out when
+-- every check VM had the sandbox's 256 KB and that one had no room left for them. Since e8-xr the check VMs have their
+-- own larger limits (harness/games_check/HostBounds.h; the README's "The check VMs' limits"), so room no longer forces
+-- the split. The pins on taps, the toggles, and the reset are in interaction.lua, and the pins on what the draw marks
+-- on the board are in drawn.lua and marks.lua: a round loads only the modules it calls.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
