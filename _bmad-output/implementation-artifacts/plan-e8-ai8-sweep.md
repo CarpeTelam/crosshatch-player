@@ -99,7 +99,7 @@ context: ['{project-root}/.agents/skills/refactor-for-review/SKILL.md', '{projec
 - A-7 wording, after review: only what the host does: no timer is polled while the match is paused, so one that falls due then is delivered once the match is back in play. No ordering or callback claim: GameVM's run loop does not check the pause (a Play again's restart, a first start, and queued steps run while Paused), and `loopPlaying` posts a gesture before `pollTimer()`.
 - After review: `fleet.lua`'s header and `game.views`' comment name `view.lua` as the drawer; `fixtures/README.md`'s `slow-restart/` row matches step 9; `## 8.15`'s first entry is narrowed to Sudoku's MENU panel, since every HOW TO PLAY page closes on any tap.
 - Also touched: `deferred-work.md` `## e5-run4`'s device check for A-2 said pause time before the load "is subtracted"; it now says that was fixed here and what to check.
-- The retrospective's AI-8 row reads "commit pending": replace it with this plan's commit hash at commit time.
+- The retrospective's AI-8 row names this plan's commit, `97c57e39`.
 
 ### Verification after the review patches (orchestrator, 2026-10-11, on the patched tree)
 
