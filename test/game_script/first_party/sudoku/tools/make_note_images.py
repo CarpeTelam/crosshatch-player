@@ -24,7 +24,7 @@ The images are 1-bit grayscale PNGs holding only black and white, so the install
 
 --check also fails on a note_*.png in the folder that is not one of the 27 (it would count against the package's image
 limit), and when games/sudoku/layout.lua's NOTE_W and NOTE_H are not IMAGE_W and IMAGE_H. `--check` runs in CI: the
-games check registers it as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckNoteImages), so a swapped
+games check registers it as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckTool.sudoku.make_note_images), so a swapped
 or resized PNG fails the games-check job. Writing the images (no flag) is still by hand, whenever the glyphs, the phase
 rule, or layout.note_tile change.
 

@@ -1320,6 +1320,30 @@ TEST_F(MatchTest, ADueTimerIsPolledByTheLoopAndDeliveredToTheGame) {
   ASSERT_TRUE(waitFor([&] { return logHas("tick at"); })) << "the loop never polled the timer";
 }
 
+// A game may hold a timer armed across a pause (Sudoku arms one at every draw for its header's minute, epic 8 entry
+// 16). loopView polls none, so a paused match is not woken and pushes no frame; Resume delivers the overdue timer once.
+TEST_F(MatchTest, APausedMatchPollsNoTimerAndResumeDeliversTheDueOneOnce) {
+  installFixture("timer");
+  enter("timer");
+  showFrame();  // setup armed a 3000 ms timer at 1000 ms
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  const size_t shown = renderer->shown.size();
+  fakertos::advance(3000);              // due while the menu is up
+  for (int i = 0; i < 3; ++i) frame();  // loopView
+  EXPECT_FALSE(waitFor([&] { return logHas("tick at"); }, 300)) << "a paused match polled the game's timer";
+  EXPECT_FALSE(activityManager.updateRequested()) << "a paused match asked for a frame";
+  EXPECT_EQ(renderer->shown.size(), shown);
+  tapOption(tr(STR_GAMES_RESUME));
+  ASSERT_EQ(state(), "Playing");
+  frame();  // loopPlaying polls: the timer is overdue
+  ASSERT_TRUE(waitFor([&] { return logHas("tick at"); })) << "Resume did not deliver the overdue timer";
+  frame();
+  EXPECT_EQ(fakelog::countLines("tick at"), 1u);  // the tick re-armed 3000 ms ahead, and the clock has not moved
+}
+
 TEST_F(MatchTest, AVmThatHangsWhilePausedIsFoundByTheWatchdogInTheMenu) {
   installFixture("timer");
   enter("timer");

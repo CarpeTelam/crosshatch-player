@@ -15,7 +15,8 @@ first_party/<id>/
                       of rounds/ must be a regular file whose name ends exactly `.lua`
   checks.lua          required: the game's own checks (the interface below)
   <module>.lua        optional top-level modules, which rounds and checks.lua may require
-  tools/              anything else a game's maintainers keep beside it (generators, notes); the check never reads it
+  tools/              anything else a game's maintainers keep beside it (generators, notes); the check runs only each
+                      tools/*.py that declares an argparse `--check` flag (GamesCheckTool, below)
 ```
 
 A top-level module is named `[a-z0-9_]{1,32}.lua`, as the game's own are, and may not have the name of one of the game's own
@@ -150,14 +151,14 @@ ctest --test-dir build/test -L games-check --output-on-failure
   `BoardInsetsTest`, which compiles the SDK's `BoardConfig.h` (through `harness/games_check/board_stubs/`, which stand in for
   the Arduino core) and pins the two canvases' bezel insets, and that both canvas origins have an even x + y, to the SDK's own
   profiles.
-- `GamesCheckSudokuIcon` is a plain ctest, no executable: Sudoku's `tools/make_icon.py --check`, which compares the committed
-  `games/sudoku/icon.png` (the launcher icon, a 64 x 64 1-bit grid) with what the stdlib-only generator writes, and exits 1
-  when it differs or is missing. It runs in the same job, exists while the tool does, and is `make_note_images.py`'s sibling;
-  which icon the launcher then picks is `sudoku/checks.lua`'s, through `host.launcher_icon`.
 - `GamesCheckFlowTest` pins the hidden flow of the player to `GameVM`'s.
-- `GamesCheckNoteImages` is a plain ctest, no executable: Sudoku's `tools/make_note_images.py --check`, which compares the 27
-  committed note PNGs with what the tool generates (and `layout.lua`'s `NOTE_W` and `NOTE_H`). It runs in the same job, with no
-  workflow edit, and exists while the tool does; `sudoku/checks.lua` pins the installed images' sizes through `host.image_size`.
+- `GamesCheckTool.<id>.<tool>` is a plain ctest, no executable, one for each `tools/<tool>.py` of a companion folder that
+  declares an argparse `--check` flag (`add_argument('--check'`): it runs `<tool>.py --check`, which compares what the tool
+  generates with what is committed and exits non-zero on a difference. It runs in the same job, with no workflow edit; the
+  check finds the tools by that flag, so it names no game, and a tool without it (a bank or rounds generator) is not run.
+  Today these are Sudoku's `make_note_images.py` (the 27 note PNGs and `layout.lua`'s `NOTE_W` and `NOTE_H`; `checks.lua`
+  pins the installed images' sizes through `host.image_size`) and `make_icon.py` (`games/sudoku/icon.png`; which icon the
+  launcher picks is `checks.lua`'s, through `host.launcher_icon`).
 
 Both roots are cache variables, for a one-off run over scratch trees (made absolute against the repository root):
 

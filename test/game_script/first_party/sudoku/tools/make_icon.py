@@ -19,7 +19,7 @@ converter has nothing to dither. By rule, with pixel (x, y) 0-based from the top
               box line (a 3 px line) merges with it; that is the owner's mock (option B), pixel for pixel.
 
 --check compares the committed file with what this writes (and fails if it is missing), in CI: the games check registers it
-as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckSudokuIcon). Writing the icon (no flag) is by hand,
+as a ctest labelled `games-check` (harness/games_check.cmake, GamesCheckTool.sudoku.make_icon). Writing the icon (no flag) is by hand,
 whenever the rule above changes. --out names the folder written or checked (default games/sudoku).
 
 Exit codes: 0 done (or --check found no difference), 1 --check found a difference.
