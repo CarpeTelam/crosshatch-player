@@ -1170,6 +1170,7 @@ TEST_F(TouchLogTest, ASystemEdgeSwipeIsLoggedAndNotSent) {
 // The shapes below are ones the device ends with no gesture (the input double's liftWithoutTap says which): held over
 // 700 ms and moved 60 px or more net (a slow slide), or past 59 px and back to under 60 px net (out and back). A drift
 // of 29 to 59 px that lifts quickly is a tap on the device, not this.
+// (The 59, 60 and 700 are pinned to the SDK header by CopiedConstantsTest's "Pinned" cases.)
 TEST_F(TouchLogTest, ASlowSlideIsLoggedAsAnEndedContactWithItsFirstAndLastSample) {
   start();
   input->holdTouch(300, 400);
