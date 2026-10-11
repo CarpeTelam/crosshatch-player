@@ -135,16 +135,16 @@ Each finding also gets a disposition for this instance: fix now, defer, or accep
 
 | id | finding | source | status | disposition |
 |----|---------|--------|--------|-------------|
-| D1 | The four draw recorders that cross-story row 24 deferred have started to drift. The UTTT and Battleship `trace.lua` files are no longer byte-identical: their headers differ by 6/5 lines from separate `e8-xr` edits. Sudoku's folder has two recorders of its own, `drawn.lua`'s `record` and `canvases.lua`'s `record`. | `git diff --no-index` of the two `trace.lua` files at `5cfd4489`; `sudoku/canvases.lua:32` | verified (trace drift) | defer, as row 24 already did; start with the duplicate inside Sudoku's folder, which R2 does not protect |
+| D1 | The four draw recorders that cross-story row 24 deferred have started to drift. The UTTT and Battleship `trace.lua` files are no longer byte-identical: their headers differ by 6/5 lines from separate `e8-xr` edits. Sudoku's folder has two recorders of its own, `drawn.lua`'s `record` and `canvases.lua`'s `record`. | `git diff --no-index` of the two `trace.lua` files at `5cfd4489`; `sudoku/canvases.lua:32` | verified (trace drift) | **fixed** by AI-9 (`0eaca353`): one copy inside each companion folder; nothing shared across games |
 | D2 | Entry 8.15's margin snap exists twice: `board.snap` (both copies) and `battleship/layout.lua` `layout.snap`. The logic is the same; only the signature differs. Its tests are written three times, about 460 lines checking one rule. | `games/*/board.lua`, `battleship/layout.lua:39`; the three companion folders | agent | accept under R2; a candidate snippet for epic-api-freeze's starter repo |
-| D3 | Check helpers are copied within and across companion folders. `eq` is defined six times. Sudoku's `pins.lua` already exports one, yet `canvases.lua` and `checks.lua` each define their own. `withCanvas` is identical three times, twice inside Battleship's folder. HOW TO PLAY's `wrap` is identical in UTTT and Battleship `main.lua`. | agent md5 sums | agent | defer: tidy duplicates inside each folder |
+| D3 | Check helpers are copied within and across companion folders. `eq` is defined six times. Sudoku's `pins.lua` already exports one, yet `canvases.lua` and `checks.lua` each define their own. `withCanvas` is identical three times, twice inside Battleship's folder. HOW TO PLAY's `wrap` is identical in UTTT and Battleship `main.lua`. | agent md5 sums | agent | **fixed** by AI-9 (`0eaca353`): one copy inside each companion folder; nothing shared across games |
 
 ### Aggregate view: size growth
 
 | id | finding | source | status | disposition |
 |----|---------|--------|--------|-------------|
 | G1 | `games/battleship/main.lua` (439 lines) holds rules, views, input, HOW TO PLAY and about 210 lines of drawing. Sudoku split its drawing into `view.lua`. | `5cfd4489:games/battleship/main.lua` (`wc -l` 439) | verified (size) / agent (structure) | **fixed** by AI-8 (`plan-e8-ai8-sweep.md`) |
-| G2 | `GamesCheckEngineTest.cpp` grew to 1,610 lines (68 `TEST_F`). One 345-line section is grouped by ticket ("the cross-story review's fixes (e8-xr)"), not by behaviour. `battleship/checks.lua` (1,176 lines) and `ultimate-tic-tac-toe/checks.lua` (775) are single files, where Sudoku's folder splits the same concerns into six modules. | `wc -l` at `5cfd4489` | verified (sizes) / agent (structure) | defer: refactor in a later sweep |
+| G2 | `GamesCheckEngineTest.cpp` grew to 1,610 lines (68 `TEST_F`). One 345-line section is grouped by ticket ("the cross-story review's fixes (e8-xr)"), not by behaviour. `battleship/checks.lua` (1,176 lines) and `ultimate-tic-tac-toe/checks.lua` (775) are single files, where Sudoku's folder splits the same concerns into six modules. | `wc -l` at `5cfd4489` | verified (sizes) / agent (structure) | **fixed** by AI-9 (`0eaca353`): one copy inside each companion folder; nothing shared across games |
 | G3 | `games/sudoku/solver.lua` (687 lines, one function per rung of the technique ladder) and `games/sudoku/main.lua` (363) are large but cohesive. | agent | agent | accept |
 
 ### Aggregate view: pattern divergence
@@ -252,7 +252,7 @@ Owner decisions taken in this retro (2026-10-11):
 | AI-6 | Process: a cross-story review's own fix can break an epic rule. Row 8 prescribed naming Sudoku in the harness (S1), and entry 14 copied the pattern while its plan claimed "names no game". The cross-story triage should check each prescribed fix against the epic's Requirements before accepting it. | owner | process | **done**: `docs/crosshatch/orchestrated-epics.md` (Owner hand-offs, Decisions; Before the epic PR, Cross-story review) |
 | AI-7 | Add to `## e5-run4` for the next device run: a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header (A-1); right-edge `off the canvas` lines on the X4 Pro (A-6); a pause before the game's first frame (A-2). | orchestrator | verification | **done**: added to `deferred-work.md` `## e5-run4` |
 | AI-8 | Next sweep (before epic-play-nearby changes Battleship): split Battleship's drawing into `view.lua` (G1); fix `layout.snap`'s `L.W` (A-8) in the same package change; count only pause time after `startMs` (A-2); restate the MENU-snap deferral with entry 16's geometry (A-10). Doc and comment fixes: P3, A-3, A-7. | dev loop | remediation | done in this branch (`plan-e8-ai8-sweep.md`, `97c57e39`) |
-| AI-9 | Later refactor of the companion folders: merge the duplicated recorders inside Sudoku's folder first (D1, cross-story row 24), and the duplicated `eq` and `withCanvas` helpers (D3); split `GamesCheckEngineTest.cpp`'s e8-xr section by behaviour (G2). | dev loop | remediation | deferred |
+| AI-9 | Later refactor of the companion folders: merge the duplicated recorders inside Sudoku's folder first (D1, cross-story row 24), and the duplicated `eq` and `withCanvas` helpers (D3); split `GamesCheckEngineTest.cpp`'s e8-xr section by behaviour (G2). | dev loop | remediation | **done**: `plan-e8-ai9-companion-refactor.md`, commit `0eaca353` (merged into CarpeTelam/crosshatch-player#38) |
 | AI-10 | For epic-api-freeze: record that `ch.time.ms`'s meaning changed within level 1 without a CRC change, twice: play time (S5, entry 13), then pauses before the load no longer subtracted (A-2, AI-8), and give the starter repo the margin-snap and Lua style notes (D2, P2). | owner | spec reconciliation | proposed |
 
 ## Acceptance verdict
@@ -273,7 +273,7 @@ The open items keep this from plain *accepted*. None blocks:
 - S1 and V1 are fixed on `claude/intelligent-cannon-1ial41` but not yet merged.
 - The process lessons AI-5 and AI-6 are open. The Requirement text was reconciled after the verdict, at the owner's request (AI-4).
 - Device checks are still owed in `## e5-run4`, now including AI-7.
-- Deferred findings: A-4, A-5, D1, D3, V3. G1, A-2, A-8 and A-10, with P3, A-3 and A-7, were fixed after the verdict by AI-8.
+- Deferred findings: A-4, A-5, V3. G1, A-2, A-8 and A-10, with P3, A-3 and A-7, were fixed after the verdict by AI-8, and D1, D3 and G2 by AI-9.
 
 The epic file now carries `status: done` and a Closure line in its Notes.
 
