@@ -6,9 +6,8 @@
 -- TEST DOUBLE for the engine's `ch.gfx`. It takes its function names from the real table's own keys (a name the engine
 -- lacks raises on the recorder too, as an unknown function does on the device) and counts as the engine does
 -- (ChBindings.cpp): every call is one command (`clear` included) except `refresh`, which asks for a refresh of the frame
--- and appends no command, so it is neither counted nor in the text; `on_call` still sees it. draws.recorder (called from
--- rounds/draw-commands.lua) pins the count and the text of a known function, a frame with a clear and a refresh in it,
--- that an unknown name raises, and that ch.gfx is the real table again after an error. It is more permissive than the
+-- and appends no command, so it is neither counted nor in the text; `on_call` still sees it. The game's checks pin the
+-- count against a known one (first_party/README.md, "Observing draw commands"). It is more permissive than the
 -- device in what it does not look at: no argument is checked (a bad color or size passes), nothing is clipped, no frame
 -- limit (2,048 commands) or icon and image budget is applied, and an icon or image name is not looked up. The games
 -- check's rounds, which draw the real `ch.gfx`, are what find those.

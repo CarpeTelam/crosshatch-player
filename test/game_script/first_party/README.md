@@ -206,14 +206,14 @@ board's mark, which cells a frame fills, whether it asks for a full refresh) is 
 in while a function runs. The rounds format does not carry it (that would change the format); a check, or a round's
 `steps(state)`, calls `game.draw(state, seat, ui)` under the recorder and reads the commands.
 
-Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, Sudoku's `record` in `drawn.lua`,
-and the digest's own in `sudoku/canvases.lua`), and each takes its function names from the real `ch.gfx`'s keys, so a
-misspelled call raises on the recorder too. `trace.record(f, on_call)` runs `f`, returns the commands as text, one `name(args)`
-a line in drawing order, and their number, calls `on_call(name, ...)` for each call as it is made, and puts the real `ch.gfx`
-back, also when `f` raises (the error is raised again as it was); Sudoku's `record(f, on_image, on_call)` returns the count only
-and hands the calls to its hooks. A check turns the
-commands into whatever it pins: the boards a `light` fill covers, the icons and where they sit, the lines of a stroke, the
-refreshes.
+Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, and Sudoku's `record` in
+`sudoku/basics.lua`, which `drawn.lua` re-exports and `canvases.lua` calls for its digest), and each takes its function names
+from the real `ch.gfx`'s keys, so a misspelled call raises on the recorder too. `trace.record(f, on_call)` runs `f`, returns
+the commands as text, one `name(args)` a line in drawing order, and their number, calls `on_call(name, ...)` for each call as
+it is made, and puts the real `ch.gfx` back, also when `f` raises (the error is raised again as it was); Sudoku's `record(f,
+on_image, on_call)` returns the count only and hands the calls to its hooks. A check turns the commands into whatever it
+pins: the boards a `light` fill covers, the icons and where they sit, the lines of a stroke, the refreshes. Battleship's
+`battleship/basics.lua` holds `eq` and `withCanvas`, which its `checks.lua` and `draws.lua` both use.
 
 - *Secrecy for a hidden game.* Draw two states that differ only in what a seat must not see (the other seat's intact ships)
   and compare that seat's frames command by command; the failure names the first command that differs. Run it for every frame
@@ -267,10 +267,11 @@ unnecessary for the heap, not harmful, and the batches (`CHUNKS`) still keep eac
 the measure of what a game call may cost. What it was for, kept as the record:
 
 - Sudoku's checks VM holds the solver, the counter, and the bank. Its rules, and what its draw marks on the board, are pinned in
-  `rules.lua` and the modules beside it, called from the rounds' `steps(state)`: `pins.lua` (the shared helpers), `rules.lua`,
-  `interaction.lua` (taps, the toggles' store, the reset), `drawn.lua` (`frame`, `look`, and the recorder), and `marks.lua`
-  (`draw_marks`). The one-layout-on-every-canvas pins (`canvases.lua`, called from `rounds/canvases.lua`) load none of the pin
-  modules nor `taps.lua` and keep a digest of a frame, not its commands.
+  `rules.lua` and the modules beside it, called from the rounds' `steps(state)`: `basics.lua` (`eq` and the recorder, with no
+  side effect on load, so any module may load it), `pins.lua` (the shared helpers, `eq` among them), `rules.lua`,
+  `interaction.lua` (taps, the toggles' store, the reset), `drawn.lua` (`frame`, `look`), and `marks.lua` (`draw_marks`). The
+  one-layout-on-every-canvas pins (`canvases.lua`, called from `rounds/canvases.lua`) load none of the pin modules nor
+  `taps.lua`, only `basics.lua`, and keep a digest of a frame, not its commands.
 - At the device's 256 KB a round faulted "not enough memory" about once in 1,600 plays, varying from process to process because
   Lua's compiler keys a chunk's `nil` constant by the constants table's own address (`nilK` in `lcode.c`) and a table hashes a
   pointer by its low 32 bits, so where ASLR put the arena changed when a table rehashed and so the order of a load's first

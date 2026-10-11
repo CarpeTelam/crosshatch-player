@@ -56,6 +56,9 @@ constexpr const char* ONE_TAP = R"lua(
 return { mode = "solo", steps = { { seat = 1, x = 100, y = 300 } }, unfinished = true }
 )lua";
 
+// The two canvases a check runs on.
+constexpr games_check::CanvasSize CANVASES[] = {games_check::CANVAS_474, games_check::CANVAS_466};
+
 // A solo game of the tests' own whose state is one string of `pad` bytes, so its snapshot has a size the test sets.
 std::string padGame(const size_t pad) {
   return "local PAD = " + std::to_string(pad) + R"lua(
@@ -464,7 +467,7 @@ return { mode = "solo", unfinished = true,
   expectRed(games_check::playRounds(sticky(), "grows"), {"round 'three-taps', step 2", "the snapshot is "});
 }
 
-// ---- outcomes ----
+// ---- outcomes and the end frame ----
 
 TEST_F(GamesCheckEngineTest, AWrongOutcomeFailsNamingExpectedAndActualWinners) {
   copyGame("pass-open", "pass-open");
@@ -489,6 +492,60 @@ return { mode = "pass", steps = { { seat = 1, x = 97, y = 270 } }, winners = { 1
              "round 'd-ends-early', step 1: the round is not over (seat 2 to move)"});
   EXPECT_EQ(report.failures.size(), 4u) << report.text();
   EXPECT_TRUE(noted(report, "round 'e-right' (pass) played to its end"));
+}
+
+// Row 1: once the round is over the host draws its dialog (y 259 to 527) over the frame the device shows.
+std::string endGame(const std::string& drawBody) {
+  return std::string(R"lua(
+local game = {}
+function game.setup(ctx) return { n = 0, seats = ctx.seats } end
+function game.status(state)
+  if state.n >= 1 then return { over = true, winners = { 1 } } end
+  return { turn = 1 }
+end
+function game.apply(state, seat, move) state.n = state.n + 1 return state end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui)
+  ch.gfx.clear("white")
+)lua") + drawBody +
+         "\nend\nreturn game\n";
+}
+
+TEST_F(GamesCheckEngineTest, ATextFrameStartedInsideTheHostsEndOfRoundDialogFailsTheRoundNamingTheTextAndTheBand) {
+  writeGame("under", soloManifest("under"), endGame("ch.gfx.text(40, 260, 'Easy', 'small', 'black')"));
+  writeGame("above", soloManifest("above"),
+            endGame("ch.gfx.text(40, 258, 'Easy', 'small', 'black') ch.gfx.text(40, 528, 'Best', 'small', 'black')"));
+  writeGame("last-row", soloManifest("last-row"), endGame("ch.gfx.text(40, 527, 'Edge', 'small', 'black')"));
+  for (const char* id : {"under", "above", "last-row"})
+    round(id, "one-tap", "return { mode = 'solo', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }");
+  pack({"under", "above", "last-row"});
+  for (const games_check::CanvasSize canvas : CANVASES) {
+    expectRed(games_check::playRounds(roots(canvas), "under"),
+              {"round 'one-tap', step 1: the round is over", "starts the text 'Easy' at y 260",
+               "inside the host's end-of-round dialog (y 259 up to 528", "seat 1's frame"});
+    // 258 is above the band and 528 is the first row below it: both are clear. A text at 527 starts inside it.
+    expectGreen(games_check::playRounds(roots(canvas), "above"));
+    expectRed(games_check::playRounds(roots(canvas), "last-row"), {"starts the text 'Edge' at y 527"});
+  }
+  // The bounds were measured on 788-tall canvases: another height is not pinned.
+  const games_check::CanvasSize shorter{474, 700};
+  expectGreen(games_check::playRounds(roots(shorter), "under"));
+}
+
+TEST_F(GamesCheckEngineTest, OnlyTheFrameTheDeviceShowsOnceTheRoundIsOverCountsForTheDialogBand) {
+  // A pass round: seat 0's frame is the end screen the device shows; seats 1 and 2 are the check's own sweep, which the
+  // host never puts under the dialog.
+  writeGame("pass-end", soloManifest("pass-end", R"(["pass"])", R"({"min": 2, "max": 2})"),
+            endGame("if seat == 0 then ch.gfx.text(40, 100, 'Done', 'small', 'black') else ch.gfx.text(40, 300, "
+                    "'Hidden in the sweep only', 'small', 'black') end"));
+  writeGame("pass-end-under", soloManifest("pass-end-under", R"(["pass"])", R"({"min": 2, "max": 2})"),
+            endGame("if seat == 0 then ch.gfx.text(40, 300, 'Done', 'small', 'black') end"));
+  const std::string roundText = "return { mode = 'pass', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }";
+  round("pass-end", "one-tap", roundText);
+  round("pass-end-under", "one-tap", roundText);
+  pack({"pass-end", "pass-end-under"});
+  expectGreen(games_check::playRounds(sticky(), "pass-end"));
+  expectRed(games_check::playRounds(sticky(), "pass-end-under"), {"seat 0's frame starts the text 'Done' at y 300"});
 }
 
 // ---- rounds and modes ----
@@ -576,6 +633,22 @@ TEST_F(GamesCheckEngineTest, AMalformedRoundFileFailsNamingTheKeyAndTheOtherRoun
                      "g-setting.lua: settings.speed", "h-raises.lua: rounds/h-raises.lua:1: this file raises"});
   EXPECT_EQ(report.failures.size(), 8u) << report.text();
   EXPECT_TRUE(noted(report, "round 'i-right' (pass) played to its end"));
+}
+
+// Row 12: a mis-named round is no round the check can skip in silence.
+TEST_F(GamesCheckEngineTest, AnEntryOfRoundsThatIsNotARegularLuaFileFailsNamingItAndTheValidRoundsStillPlay) {
+  copyGame("pass-open", "pass-open");
+  round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "x.LUA", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "x.lua.txt", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "sub" / "x.lua", X_WINS_IN_PASS);
+  write(companion() / "pass-open" / "rounds" / "README.md", "notes");
+  pack({"pass-open"});
+  const Report report = games_check::playRounds(sticky(), "pass-open");
+  expectRed(report, {"rounds/x.LUA is not a round", "rounds/x.lua.txt is not a round", "rounds/sub/ is not a round",
+                     "rounds/README.md is not a round", "regular file whose name ends exactly `.lua`"});
+  EXPECT_EQ(report.failures.size(), 4u) << report.text();
+  EXPECT_TRUE(noted(report, "round 'x-wins-in-pass' (pass) played to its end")) << report.text();
 }
 
 // ---- the game's own checks (C2) ----
@@ -785,6 +858,37 @@ return { mode = "pass", winners = { 1 }, steps = {
        "round 'c-after-the-end', step 6: the round is already over (winners {1}); a step cannot follow its end"});
 }
 
+// Row 11: the device drops a tap that starts off the canvas (GameTouch::toEvent), and x 466 to 473 exists on the
+// Sticky's 474 canvas only.
+TEST_F(GamesCheckEngineTest, ATapOffTheCanvasUnderCheckFailsItsStepNamingTheTapAndTheCanvas) {
+  writeGame("taps", soloManifest("taps"), padGame(10));
+  const auto tap = [](const std::string& x, const std::string& y) {
+    return "return { mode = 'solo', unfinished = true, steps = { { seat = 1, x = " + x + ", y = " + y + " } } }";
+  };
+  round("taps", "a-x-470", tap("470", "300"));
+  round("taps", "b-x-negative", tap("-1", "300"));
+  round("taps", "c-y-at-the-height", tap("100", "788"));
+  round("taps", "d-x-466", tap("466", "300"));
+  round("taps", "e-y-negative", tap("100", "-5"));
+  round("taps", "f-x-474", tap("474", "300"));
+  round("taps", "g-last-pixel", tap("465", "787"));
+  pack({"taps"});
+  const Report sticky474 = games_check::playRounds(roots(games_check::CANVAS_474), "taps");
+  expectRed(sticky474, {"round 'b-x-negative', step 1: the tap (-1, 300) is off the 474 x 788 canvas under check",
+                        "round 'c-y-at-the-height', step 1: the tap (100, 788) is off the 474 x 788 canvas",
+                        "round 'e-y-negative', step 1: the tap (100, -5) is off the 474 x 788 canvas",
+                        "round 'f-x-474', step 1: the tap (474, 300) is off the 474 x 788 canvas",
+                        "the device drops a tap that starts there"});
+  EXPECT_EQ(sticky474.failures.size(), 4u) << sticky474.text();
+  EXPECT_TRUE(noted(sticky474, "round 'a-x-470' (solo) played to its end")) << sticky474.text();
+  EXPECT_TRUE(noted(sticky474, "round 'd-x-466' (solo) played to its end")) << sticky474.text();
+  const Report x4pro = games_check::playRounds(roots(games_check::CANVAS_466), "taps");
+  expectRed(x4pro, {"round 'a-x-470', step 1: the tap (470, 300) is off the 466 x 788 canvas under check",
+                    "round 'd-x-466', step 1: the tap (466, 300) is off the 466 x 788 canvas"});
+  EXPECT_EQ(x4pro.failures.size(), 6u) << x4pro.text();
+  EXPECT_TRUE(noted(x4pro, "round 'g-last-pixel' (solo) played to its end")) << x4pro.text();
+}
+
 // ---- the hidden flow (D2) ----
 
 constexpr const char* HIDDEN_FOUR_TAPS = R"lua(
@@ -890,6 +994,38 @@ TEST_F(GamesCheckEngineTest, AHiddenMoveThatKeepsTheTurnAndARejectedTapRedrawThe
   const games_check::RoundReport* played = detail(details, "keeps-and-rejects");
   ASSERT_NE(played, nullptr);
   EXPECT_EQ(played->log, games_check::test::HIDDEN_KEEPS_TURN_LOG);
+}
+
+// Row 13: a hidden step that ends the round shows seat 0's frame; `shows` for the mover is not met by the check's own
+// sweep of the mover's frame, which the device never shows then.
+TEST_F(GamesCheckEngineTest, AHiddenShowsIsMetOnlyByAFrameTheFlowDrewNotByTheEveryLocalSeatDraw) {
+  copyGame("pass-hidden", "pass-hidden");
+  const auto four = [](const std::string& shows) {
+    return R"lua(
+return { mode = "pass", winners = {}, steps = {
+  { seat = 1, x = 100, y = 200 }, { seat = 2, x = 100, y = 200 }, { seat = 1, x = 100, y = 200 },
+  { seat = 2, x = 100, y = 200, shows = ")lua" +
+           shows + R"lua(" } } }
+)lua";
+  };
+  // The fourth tap ends the round: the device shows seat 0's "Everyone: ...". Seat 2's own frame ("Player 2's secret:
+  // river") is drawn only by the sweep, so it must not meet `shows`.
+  round("pass-hidden", "a-sweep-only", four("Player 2's secret: river"));
+  round("pass-hidden", "b-the-flow", four("the secrets were apple and river"));
+  pack({"pass-hidden"});
+  const Report report = games_check::playRounds(sticky(), "pass-hidden");
+  expectRed(report, {"round 'a-sweep-only', step 4: seat 0's next frame does not show 'Player 2's secret: river'",
+                     "'Everyone: the secrets were apple and river'"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  EXPECT_TRUE(noted(report, "round 'b-the-flow' (pass) played to its end")) << report.text();
+  // Mid-round, the mover's own frame (seat 1's, under the Result banner) is the flow's: it still meets `shows`.
+  round("pass-hidden", "a-sweep-only", R"lua(
+return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Player 1's secret: apple" } } }
+)lua");
+  round("pass-hidden", "b-the-flow", R"lua(
+return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Moves: 1" } } }
+)lua");
+  expectGreen(games_check::playRounds(sticky(), "pass-hidden"));
 }
 
 TEST_F(GamesCheckEngineTest, AStepsWaitMovesTheClockByExactlyThatManyMilliseconds) {
@@ -1098,6 +1234,52 @@ TEST_F(GamesCheckEngineTest, AGameThatBreaksOnlyAtTheX4ProCanvasFailsTheCheckThe
             {"check 'fits' failed", "the grid is off the canvas"});
 }
 
+// Row 9: a round's `steps(state)` and a module's load see the canvas under check, not the Sticky's by default. The
+// round VM's log is not in a report, so each reads `ch.screen.w` into the x of a tap, and the failure names that tap.
+TEST_F(GamesCheckEngineTest, ARoundsStepsFunctionAndAModuleLoadSeeTheCanvasTheRootsNameAtBothSizes) {
+  writeGame("canvas", soloManifest("canvas"), CANVAS_LOG_GAME);
+  module("canvas", "seen", "return { w = ch.screen.w, h = ch.screen.h }");
+  round("canvas", "a-steps", R"lua(
+return { mode = "solo", unfinished = true, steps = function(state) return { { seat = 1, x = ch.screen.w, y = 5 } } end }
+)lua");
+  round("canvas", "b-module", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = require("seen").w, y = 5 } } }
+)lua");
+  round("canvas", "c-file", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = ch.screen.w, y = 5 } } }
+)lua");
+  round("canvas", "d-height", R"lua(
+return { mode = "solo", unfinished = true, steps = { { seat = 1, x = 5, y = require("seen").h } } }
+)lua");
+  pack({"canvas"});
+  for (const games_check::CanvasSize canvas : CANVASES) {
+    const std::string w = std::to_string(canvas.width);
+    const Report report = games_check::playRounds(roots(canvas), "canvas");
+    // The tap is at x = the width the round's VM saw, which the played game's canvas then says is off by one pixel.
+    expectRed(report, {("round 'a-steps', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'b-module', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'c-file', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
+                       ("round 'd-height', step 1: the tap (5, 788) is off the " + w + " x 788 canvas").c_str()});
+    EXPECT_EQ(report.failures.size(), 4u) << report.text();
+  }
+}
+
+// The same for the package-load probe and the game's checks: a main.lua that nests modules only on a 466-wide canvas.
+TEST_F(GamesCheckEngineTest, TheModuleLoadingProbeAndTheChecksSeeTheCanvasTheRootsNameAtBothSizes) {
+  writeGame("nests-at-466", soloManifest("nests-at-466"),
+            loadingGame("if ch.screen.w == 466 then require(\"a\") end\n"));
+  write(games() / "nests-at-466" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
+  write(games() / "nests-at-466" / "b.lua", "return { b = true }\n");
+  checks("nests-at-466", "return { { name = 'seen', run = function() assert(ch.screen.w == " +
+                             std::to_string(games_check::CANVAS_466.width) +
+                             ", 'checks.lua saw ' .. ch.screen.w) end } }");
+  pack({"nests-at-466"});
+  expectGreen(games_check::checkPackage(roots(games_check::CANVAS_474), "nests-at-466"));
+  expectRed(games_check::checkPackage(roots(games_check::CANVAS_466), "nests-at-466"), {"main > a > b"});
+  expectRed(games_check::runGameChecks(roots(games_check::CANVAS_474), "nests-at-466"), {"checks.lua saw 474"});
+  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_466), "nests-at-466"));
+}
+
 TEST_F(GamesCheckEngineTest, AStepsFunctionOfTheDecodedInitialStatePlaysTheRound) {
   copyGame("pass-open", "pass-open");
   round("pass-open", "from-the-state", R"lua(
@@ -1137,71 +1319,7 @@ TEST_F(GamesCheckEngineTest, AStepsFunctionThatRaisesExceedsItsBudgetOrReturnsNo
   EXPECT_TRUE(noted(report, "round 'e-fine' (pass) played to its end"));
 }
 
-// ---- the cross-story review's fixes (epic-first-party-games, e8-xr) ----
-
-constexpr games_check::CanvasSize CANVASES[] = {games_check::CANVAS_474, games_check::CANVAS_466};
-
-// A solo game of the tests' own whose `apply` fills the Lua heap with live strings until the heap holds `kb` KB (the
-// cap counts what Lua holds, garbage included, so this is the played game's own high-water mark, as Sudoku's HINT is).
-std::string heapGame(const int kb) {
-  return "local KB = " + std::to_string(kb) + R"lua(
-local keep = {}
-local game = {}
-function game.setup(ctx) return { n = 0 } end
-function game.status(state) return { turn = 1 } end
-function game.apply(state, seat, move)
-  while collectgarbage("count") < KB do keep[#keep + 1] = string.rep("x", 900) .. #keep end
-  return state
-end
-function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
-function game.draw(state, seat, ui) ch.gfx.clear("white") end
-return game
-)lua";
-}
-
-// Row 5: the played game keeps 16 KiB of room under the device's Lua heap cap. The cap counts garbage and a first-fit
-// region, so the exact statement is that the round still plays with the cap that much lower.
-TEST_F(GamesCheckEngineTest, APlayedGameThatNeedsMoreThanTheCapLessTheMarginFailsNamingTheMarginAndTheCapTried) {
-  writeGame("hungry", soloManifest("hungry"), heapGame(250));
-  writeGame("frugal", soloManifest("frugal"), heapGame(200));
-  round("hungry", "one-tap", ONE_TAP);
-  round("frugal", "one-tap", ONE_TAP);
-  pack({"hungry", "frugal"});
-  // 250 KB fits the device's 262,144 B cap with 6 KB to spare, and 200 KB leaves 56 KB.
-  expectGreen(games_check::playRounds(sticky(), "frugal"));
-  const Report report = games_check::playRounds(sticky(), "hungry");
-  expectRed(report,
-            {"round 'one-tap', step 1", "not enough memory", "heap margin", "245760 B", "16384 B lower", "262144 B"});
-  EXPECT_EQ(report.failures.size(), 1u) << report.text();
-  // The gate is the margin play only: the same round passes with it off, so the first play is the device's.
-  PlayOptions options;
-  options.heapMargin = false;
-  expectGreen(games_check::playRounds(sticky(), "hungry", nullptr, options));
-  // A game the device's cap itself refuses fails the first play, with no margin note.
-  writeGame("over-the-cap", soloManifest("over-the-cap"), heapGame(300));
-  round("over-the-cap", "one-tap", ONE_TAP);
-  pack({"over-the-cap"});
-  const Report over = games_check::playRounds(sticky(), "over-the-cap");
-  expectRed(over, {"round 'one-tap', step 1", "not enough memory"});
-  EXPECT_FALSE(mentions(over, "heap margin")) << over.text();
-}
-
-// A round whose `steps` is a function is resolved once: the margin play reuses its list (resolving twice would call a
-// function that reads the round's VM again and could not tell the plays apart).
-TEST_F(GamesCheckEngineTest, TheMarginPlayDoesNotResolveAStepsFunctionAgain) {
-  writeGame("once", soloManifest("once"), heapGame(150));
-  // `steps` counts its calls in a global of the round file's VM and fails the second time.
-  round("once", "counted", R"lua(
-calls = (calls or 0) + 1
-return { mode = "solo", unfinished = true, steps = function(state)
-  calls = calls + 1
-  assert(calls == 2, "steps(state) ran again")
-  return { { seat = 1, x = 100, y = 300 } }
-end }
-)lua");
-  pack({"once"});
-  expectGreen(games_check::playRounds(sticky(), "once"));
-}
+// ---- Continue: the restore probe (row 6) ----
 
 // A game that sets module state in `setup` and draws from it: the live VM has run `setup`, a VM restored from the
 // snapshot (Continue) has not. Every seat's `ui` starts empty there too.
@@ -1302,186 +1420,7 @@ TEST_F(GamesCheckEngineTest, TheRestoreProbeLeavesAGameThatRestoresCleanGreenInE
   }
 }
 
-// Row 11: the device drops a tap that starts off the canvas (GameTouch::toEvent), and x 466 to 473 exists on the
-// Sticky's 474 canvas only.
-TEST_F(GamesCheckEngineTest, ATapOffTheCanvasUnderCheckFailsItsStepNamingTheTapAndTheCanvas) {
-  writeGame("taps", soloManifest("taps"), padGame(10));
-  const auto tap = [](const std::string& x, const std::string& y) {
-    return "return { mode = 'solo', unfinished = true, steps = { { seat = 1, x = " + x + ", y = " + y + " } } }";
-  };
-  round("taps", "a-x-470", tap("470", "300"));
-  round("taps", "b-x-negative", tap("-1", "300"));
-  round("taps", "c-y-at-the-height", tap("100", "788"));
-  round("taps", "d-x-466", tap("466", "300"));
-  round("taps", "e-y-negative", tap("100", "-5"));
-  round("taps", "f-x-474", tap("474", "300"));
-  round("taps", "g-last-pixel", tap("465", "787"));
-  pack({"taps"});
-  const Report sticky474 = games_check::playRounds(roots(games_check::CANVAS_474), "taps");
-  expectRed(sticky474, {"round 'b-x-negative', step 1: the tap (-1, 300) is off the 474 x 788 canvas under check",
-                        "round 'c-y-at-the-height', step 1: the tap (100, 788) is off the 474 x 788 canvas",
-                        "round 'e-y-negative', step 1: the tap (100, -5) is off the 474 x 788 canvas",
-                        "round 'f-x-474', step 1: the tap (474, 300) is off the 474 x 788 canvas",
-                        "the device drops a tap that starts there"});
-  EXPECT_EQ(sticky474.failures.size(), 4u) << sticky474.text();
-  EXPECT_TRUE(noted(sticky474, "round 'a-x-470' (solo) played to its end")) << sticky474.text();
-  EXPECT_TRUE(noted(sticky474, "round 'd-x-466' (solo) played to its end")) << sticky474.text();
-  const Report x4pro = games_check::playRounds(roots(games_check::CANVAS_466), "taps");
-  expectRed(x4pro, {"round 'a-x-470', step 1: the tap (470, 300) is off the 466 x 788 canvas under check",
-                    "round 'd-x-466', step 1: the tap (466, 300) is off the 466 x 788 canvas"});
-  EXPECT_EQ(x4pro.failures.size(), 6u) << x4pro.text();
-  EXPECT_TRUE(noted(x4pro, "round 'g-last-pixel' (solo) played to its end")) << x4pro.text();
-}
-
-// Row 12: a mis-named round is no round the check can skip in silence.
-TEST_F(GamesCheckEngineTest, AnEntryOfRoundsThatIsNotARegularLuaFileFailsNamingItAndTheValidRoundsStillPlay) {
-  copyGame("pass-open", "pass-open");
-  round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
-  write(companion() / "pass-open" / "rounds" / "x.LUA", X_WINS_IN_PASS);
-  write(companion() / "pass-open" / "rounds" / "x.lua.txt", X_WINS_IN_PASS);
-  write(companion() / "pass-open" / "rounds" / "sub" / "x.lua", X_WINS_IN_PASS);
-  write(companion() / "pass-open" / "rounds" / "README.md", "notes");
-  pack({"pass-open"});
-  const Report report = games_check::playRounds(sticky(), "pass-open");
-  expectRed(report, {"rounds/x.LUA is not a round", "rounds/x.lua.txt is not a round", "rounds/sub/ is not a round",
-                     "rounds/README.md is not a round", "regular file whose name ends exactly `.lua`"});
-  EXPECT_EQ(report.failures.size(), 4u) << report.text();
-  EXPECT_TRUE(noted(report, "round 'x-wins-in-pass' (pass) played to its end")) << report.text();
-}
-
-// Row 13: a hidden step that ends the round shows seat 0's frame; `shows` for the mover is not met by the check's own
-// sweep of the mover's frame, which the device never shows then.
-TEST_F(GamesCheckEngineTest, AHiddenShowsIsMetOnlyByAFrameTheFlowDrewNotByTheEveryLocalSeatDraw) {
-  copyGame("pass-hidden", "pass-hidden");
-  const auto four = [](const std::string& shows) {
-    return R"lua(
-return { mode = "pass", winners = {}, steps = {
-  { seat = 1, x = 100, y = 200 }, { seat = 2, x = 100, y = 200 }, { seat = 1, x = 100, y = 200 },
-  { seat = 2, x = 100, y = 200, shows = ")lua" +
-           shows + R"lua(" } } }
-)lua";
-  };
-  // The fourth tap ends the round: the device shows seat 0's "Everyone: ...". Seat 2's own frame ("Player 2's secret:
-  // river") is drawn only by the sweep, so it must not meet `shows`.
-  round("pass-hidden", "a-sweep-only", four("Player 2's secret: river"));
-  round("pass-hidden", "b-the-flow", four("the secrets were apple and river"));
-  pack({"pass-hidden"});
-  const Report report = games_check::playRounds(sticky(), "pass-hidden");
-  expectRed(report, {"round 'a-sweep-only', step 4: seat 0's next frame does not show 'Player 2's secret: river'",
-                     "'Everyone: the secrets were apple and river'"});
-  EXPECT_EQ(report.failures.size(), 1u) << report.text();
-  EXPECT_TRUE(noted(report, "round 'b-the-flow' (pass) played to its end")) << report.text();
-  // Mid-round, the mover's own frame (seat 1's, under the Result banner) is the flow's: it still meets `shows`.
-  round("pass-hidden", "a-sweep-only", R"lua(
-return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Player 1's secret: apple" } } }
-)lua");
-  round("pass-hidden", "b-the-flow", R"lua(
-return { mode = "pass", unfinished = true, steps = { { seat = 1, x = 100, y = 200, shows = "Moves: 1" } } }
-)lua");
-  expectGreen(games_check::playRounds(sticky(), "pass-hidden"));
-}
-
-// Row 9: a round's `steps(state)` and a module's load see the canvas under check, not the Sticky's by default. The
-// round VM's log is not in a report, so each reads `ch.screen.w` into the x of a tap, and the failure names that tap.
-TEST_F(GamesCheckEngineTest, ARoundsStepsFunctionAndAModuleLoadSeeTheCanvasTheRootsNameAtBothSizes) {
-  writeGame("canvas", soloManifest("canvas"), CANVAS_LOG_GAME);
-  module("canvas", "seen", "return { w = ch.screen.w, h = ch.screen.h }");
-  round("canvas", "a-steps", R"lua(
-return { mode = "solo", unfinished = true, steps = function(state) return { { seat = 1, x = ch.screen.w, y = 5 } } end }
-)lua");
-  round("canvas", "b-module", R"lua(
-return { mode = "solo", unfinished = true, steps = { { seat = 1, x = require("seen").w, y = 5 } } }
-)lua");
-  round("canvas", "c-file", R"lua(
-return { mode = "solo", unfinished = true, steps = { { seat = 1, x = ch.screen.w, y = 5 } } }
-)lua");
-  round("canvas", "d-height", R"lua(
-return { mode = "solo", unfinished = true, steps = { { seat = 1, x = 5, y = require("seen").h } } }
-)lua");
-  pack({"canvas"});
-  for (const games_check::CanvasSize canvas : CANVASES) {
-    const std::string w = std::to_string(canvas.width);
-    const Report report = games_check::playRounds(roots(canvas), "canvas");
-    // The tap is at x = the width the round's VM saw, which the played game's canvas then says is off by one pixel.
-    expectRed(report, {("round 'a-steps', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
-                       ("round 'b-module', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
-                       ("round 'c-file', step 1: the tap (" + w + ", 5) is off the " + w + " x 788 canvas").c_str(),
-                       ("round 'd-height', step 1: the tap (5, 788) is off the " + w + " x 788 canvas").c_str()});
-    EXPECT_EQ(report.failures.size(), 4u) << report.text();
-  }
-}
-
-// The same for the package-load probe and the game's checks: a main.lua that nests modules only on a 466-wide canvas.
-TEST_F(GamesCheckEngineTest, TheModuleLoadingProbeAndTheChecksSeeTheCanvasTheRootsNameAtBothSizes) {
-  writeGame("nests-at-466", soloManifest("nests-at-466"),
-            loadingGame("if ch.screen.w == 466 then require(\"a\") end\n"));
-  write(games() / "nests-at-466" / "a.lua", "require(\"b\")\nreturn { a = true }\n");
-  write(games() / "nests-at-466" / "b.lua", "return { b = true }\n");
-  checks("nests-at-466", "return { { name = 'seen', run = function() assert(ch.screen.w == " +
-                             std::to_string(games_check::CANVAS_466.width) +
-                             ", 'checks.lua saw ' .. ch.screen.w) end } }");
-  pack({"nests-at-466"});
-  expectGreen(games_check::checkPackage(roots(games_check::CANVAS_474), "nests-at-466"));
-  expectRed(games_check::checkPackage(roots(games_check::CANVAS_466), "nests-at-466"), {"main > a > b"});
-  expectRed(games_check::runGameChecks(roots(games_check::CANVAS_474), "nests-at-466"), {"checks.lua saw 474"});
-  expectGreen(games_check::runGameChecks(roots(games_check::CANVAS_466), "nests-at-466"));
-}
-
-// Row 1: once the round is over the host draws its dialog (y 259 to 527) over the frame the device shows.
-std::string endGame(const std::string& drawBody) {
-  return std::string(R"lua(
-local game = {}
-function game.setup(ctx) return { n = 0, seats = ctx.seats } end
-function game.status(state)
-  if state.n >= 1 then return { over = true, winners = { 1 } } end
-  return { turn = 1 }
-end
-function game.apply(state, seat, move) state.n = state.n + 1 return state end
-function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
-function game.draw(state, seat, ui)
-  ch.gfx.clear("white")
-)lua") + drawBody +
-         "\nend\nreturn game\n";
-}
-
-TEST_F(GamesCheckEngineTest, ATextFrameStartedInsideTheHostsEndOfRoundDialogFailsTheRoundNamingTheTextAndTheBand) {
-  writeGame("under", soloManifest("under"), endGame("ch.gfx.text(40, 260, 'Easy', 'small', 'black')"));
-  writeGame("above", soloManifest("above"),
-            endGame("ch.gfx.text(40, 258, 'Easy', 'small', 'black') ch.gfx.text(40, 528, 'Best', 'small', 'black')"));
-  writeGame("last-row", soloManifest("last-row"), endGame("ch.gfx.text(40, 527, 'Edge', 'small', 'black')"));
-  for (const char* id : {"under", "above", "last-row"})
-    round(id, "one-tap", "return { mode = 'solo', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }");
-  pack({"under", "above", "last-row"});
-  for (const games_check::CanvasSize canvas : CANVASES) {
-    expectRed(games_check::playRounds(roots(canvas), "under"),
-              {"round 'one-tap', step 1: the round is over", "starts the text 'Easy' at y 260",
-               "inside the host's end-of-round dialog (y 259 up to 528", "seat 1's frame"});
-    // 258 is above the band and 528 is the first row below it: both are clear. A text at 527 starts inside it.
-    expectGreen(games_check::playRounds(roots(canvas), "above"));
-    expectRed(games_check::playRounds(roots(canvas), "last-row"), {"starts the text 'Edge' at y 527"});
-  }
-  // The bounds were measured on 788-tall canvases: another height is not pinned.
-  const games_check::CanvasSize shorter{474, 700};
-  expectGreen(games_check::playRounds(roots(shorter), "under"));
-}
-
-TEST_F(GamesCheckEngineTest, OnlyTheFrameTheDeviceShowsOnceTheRoundIsOverCountsForTheDialogBand) {
-  // A pass round: seat 0's frame is the end screen the device shows; seats 1 and 2 are the check's own sweep, which the
-  // host never puts under the dialog.
-  writeGame("pass-end", soloManifest("pass-end", R"(["pass"])", R"({"min": 2, "max": 2})"),
-            endGame("if seat == 0 then ch.gfx.text(40, 100, 'Done', 'small', 'black') else ch.gfx.text(40, 300, "
-                    "'Hidden in the sweep only', 'small', 'black') end"));
-  writeGame("pass-end-under", soloManifest("pass-end-under", R"(["pass"])", R"({"min": 2, "max": 2})"),
-            endGame("if seat == 0 then ch.gfx.text(40, 300, 'Done', 'small', 'black') end"));
-  const std::string roundText = "return { mode = 'pass', winners = { 1 }, steps = { { seat = 1, x = 100, y = 300 } } }";
-  round("pass-end", "one-tap", roundText);
-  round("pass-end-under", "one-tap", roundText);
-  pack({"pass-end", "pass-end-under"});
-  expectGreen(games_check::playRounds(sticky(), "pass-end"));
-  expectRed(games_check::playRounds(sticky(), "pass-end-under"), {"seat 0's frame starts the text 'Done' at y 300"});
-}
-
-// ---- the check VMs' limits (row 4) ----
+// ---- the heap margin and the check VMs' limits (rows 4 and 5) ----
 
 TEST_F(GamesCheckEngineTest, ACheckOrStepsFunctionMayExceedTheDevicesLimitsButThePlayedGameAndTheProbeMayNot) {
   // 3 M instructions and about 600 KB of Lua heap: past the device's 2 M and 256 KB, inside the check VM's 16 M and
@@ -1551,6 +1490,68 @@ return {
             {"check 'the budget is the device's' failed", "within_device_budget", "the device's budget is 2000000"});
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
   EXPECT_TRUE(noted(report, "4 of 5 checks passed")) << report.text();
+}
+
+// A solo game of the tests' own whose `apply` fills the Lua heap with live strings until the heap holds `kb` KB (the
+// cap counts what Lua holds, garbage included, so this is the played game's own high-water mark, as Sudoku's HINT is).
+std::string heapGame(const int kb) {
+  return "local KB = " + std::to_string(kb) + R"lua(
+local keep = {}
+local game = {}
+function game.setup(ctx) return { n = 0 } end
+function game.status(state) return { turn = 1 } end
+function game.apply(state, seat, move)
+  while collectgarbage("count") < KB do keep[#keep + 1] = string.rep("x", 900) .. #keep end
+  return state
+end
+function game.input(state, seat, ui, ev) if ev.kind == "tap" then return { tap = true } end end
+function game.draw(state, seat, ui) ch.gfx.clear("white") end
+return game
+)lua";
+}
+
+// Row 5: the played game keeps 16 KiB of room under the device's Lua heap cap. The cap counts garbage and a first-fit
+// region, so the exact statement is that the round still plays with the cap that much lower.
+TEST_F(GamesCheckEngineTest, APlayedGameThatNeedsMoreThanTheCapLessTheMarginFailsNamingTheMarginAndTheCapTried) {
+  writeGame("hungry", soloManifest("hungry"), heapGame(250));
+  writeGame("frugal", soloManifest("frugal"), heapGame(200));
+  round("hungry", "one-tap", ONE_TAP);
+  round("frugal", "one-tap", ONE_TAP);
+  pack({"hungry", "frugal"});
+  // 250 KB fits the device's 262,144 B cap with 6 KB to spare, and 200 KB leaves 56 KB.
+  expectGreen(games_check::playRounds(sticky(), "frugal"));
+  const Report report = games_check::playRounds(sticky(), "hungry");
+  expectRed(report,
+            {"round 'one-tap', step 1", "not enough memory", "heap margin", "245760 B", "16384 B lower", "262144 B"});
+  EXPECT_EQ(report.failures.size(), 1u) << report.text();
+  // The gate is the margin play only: the same round passes with it off, so the first play is the device's.
+  PlayOptions options;
+  options.heapMargin = false;
+  expectGreen(games_check::playRounds(sticky(), "hungry", nullptr, options));
+  // A game the device's cap itself refuses fails the first play, with no margin note.
+  writeGame("over-the-cap", soloManifest("over-the-cap"), heapGame(300));
+  round("over-the-cap", "one-tap", ONE_TAP);
+  pack({"over-the-cap"});
+  const Report over = games_check::playRounds(sticky(), "over-the-cap");
+  expectRed(over, {"round 'one-tap', step 1", "not enough memory"});
+  EXPECT_FALSE(mentions(over, "heap margin")) << over.text();
+}
+
+// A round whose `steps` is a function is resolved once: the margin play reuses its list (resolving twice would call a
+// function that reads the round's VM again and could not tell the plays apart).
+TEST_F(GamesCheckEngineTest, TheMarginPlayDoesNotResolveAStepsFunctionAgain) {
+  writeGame("once", soloManifest("once"), heapGame(150));
+  // `steps` counts its calls in a global of the round file's VM and fails the second time.
+  round("once", "counted", R"lua(
+calls = (calls or 0) + 1
+return { mode = "solo", unfinished = true, steps = function(state)
+  calls = calls + 1
+  assert(calls == 2, "steps(state) ran again")
+  return { { seat = 1, x = 100, y = 300 } }
+end }
+)lua");
+  pack({"once"});
+  expectGreen(games_check::playRounds(sticky(), "once"));
 }
 
 // ---- host.launcher_icon: the Games launcher's pick for the installed game (GameRowIcon::choose) ----
