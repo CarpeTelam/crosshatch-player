@@ -1,9 +1,11 @@
 -- marks.lua: the pins on the marks a draw adds to the board as each toggle and each change of screen set them
 -- (draw_marks): SHADE PEERS, SHOW REMAINING, the strokes, and the full refresh, and the pages with no board: the MENU's
 -- icons and the end screen's lines (every text box above the host's dialog, the level among them). A round's `steps(state)`
--- calls it; rules.lua says why it lives in a round's VM, and drawn.lua holds the recorder it reads through.
+-- calls it; rules.lua says why it lives in a round's VM, and the recorder it reads through is basics.lua's (drawn.lua
+-- re-exports it).
 local game = require("main")
 local layout = require("layout")
+require("basics") -- loaded before pins, so pins nests nothing
 local pins = require("pins")
 local eq, fresh, empties, answer, mv = pins.eq, pins.fresh, pins.empties, pins.answer, pins.mv
 local candidate, tap, on_cell, on_key, on_rail = pins.candidate, pins.tap, pins.on_cell, pins.on_key, pins.on_rail

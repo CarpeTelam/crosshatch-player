@@ -22,6 +22,7 @@ local layout = require("layout")
 local counter = require("counter")
 local solver = require("solver")
 local puzzles = require("puzzles")
+local eq = require("basics").eq
 
 -- The independent counter recurses deep, so its Lua stack grows: it is grown after the modules are loaded and their
 -- garbage collected, and each entry runs under a deep call (deep), where a collection finds the stack in use and leaves it
@@ -62,10 +63,6 @@ local function run() deep(DEPTH, entry) end
 local function add(name, item)
   plan[#plan + 1] = item
   list[#list + 1] = { name = name, run = run }
-end
-
-local function eq(got, want, what)
-  if got ~= want then error((what or "") .. " got " .. tostring(got) .. ", wanted " .. tostring(want), 2) end
 end
 
 local function new_state(band, i)

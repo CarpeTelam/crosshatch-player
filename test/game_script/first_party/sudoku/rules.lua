@@ -9,6 +9,7 @@
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
+require("basics") -- loaded before pins, so pins nests nothing
 local pins = require("pins")
 local eq, fresh, empties, answer, digit_at = pins.eq, pins.fresh, pins.empties, pins.answer, pins.digit_at
 local letter, mv, mask, candidate, rejects = pins.letter, pins.mv, pins.mask, pins.candidate, pins.rejects

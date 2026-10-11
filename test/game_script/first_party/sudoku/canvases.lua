@@ -7,15 +7,13 @@
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
+local basics = require("basics")
+local eq, record = basics.eq, basics.record
 
 local canvases = {}
 
 -- A solved grid (every cell a clue): what the end screen is drawn for.
 local SOLVED = "534678912672195348198342567859761423426853791713924856961537284287419635345286179"
-
-local function eq(got, want, what)
-  if got ~= want then error((what or "") .. " got " .. tostring(got) .. ", wanted " .. tostring(want), 2) end
-end
 
 -- Runs f() with ch.screen as w x h and puts it back, also when f raises.
 local function at_canvas(w, h, f)
@@ -23,21 +21,6 @@ local function at_canvas(w, h, f)
   ch.screen.w, ch.screen.h = w, h
   local ok, err = pcall(f)
   ch.screen.w, ch.screen.h = rw, rh
-  if not ok then error(err, 0) end
-end
-
--- Runs draw() with a recording `ch.gfx` that hands each command to on_call(name, ...): the names are the real table's
--- own keys, so a name the engine lacks raises here too (drawn.lua's `record` is the fuller one; this is the part a
--- digest needs).
-local function record(draw, on_call)
-  local gfx = {}
-  for name, value in pairs(ch.gfx) do
-    if type(value) == "function" then gfx[name] = function(...) on_call(name, ...) end end
-  end
-  local real = ch.gfx
-  ch.gfx = gfx
-  local ok, err = pcall(draw)
-  ch.gfx = real
   if not ok then error(err, 0) end
 end
 
@@ -82,7 +65,7 @@ local function digests(w, h, dx, draw)
     count = count + 1
     if count % 32 == 0 then marks[count // 32] = h0 end
   end
-  at_canvas(w, h, function() record(draw, on_call) end)
+  at_canvas(w, h, function() record(draw, nil, on_call) end)
   marks[count // 32 + 1] = h0
   return marks, count
 end
@@ -196,13 +179,13 @@ function canvases.frames(state, home)
       eq(small.x, home.x, "x on a small canvas")
       eq(small.y, home.y, "y on a small canvas")
       eq(small.cell, 50, "cell on a small canvas")
-      record(function() game.draw(s, 1, ui_for(s, {})) end, function() end)
+      record(function() game.draw(s, 1, ui_for(s, {})) end, nil, function() end)
       eq(#lines, 1, "log lines from the first draw on a 320 x 480 canvas")
       assert(
         lines[1]:find("320 x 480", 1, true) and lines[1]:find("466 x 788", 1, true),
         "the line names both: " .. lines[1]
       )
-      record(function() game.draw(s, 1, ui_for(s, { panel = "menu" })) end, function() end)
+      record(function() game.draw(s, 1, ui_for(s, { panel = "menu" })) end, nil, function() end)
       eq(#lines, 1, "log lines after a second draw")
     end)
   end)

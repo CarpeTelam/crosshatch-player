@@ -2,6 +2,7 @@
 -- (a round's `steps(state)` calls them; rules.lua says why they live in a round's VM). Apart from rules.lua so that a
 -- round that calls only these does not load that module's compiled code (first_party/README.md, "The check VMs' limits").
 local game = require("main")
+require("basics") -- loaded before pins, so pins nests nothing
 local pins = require("pins")
 local eq, fresh, empties, answer, mv = pins.eq, pins.fresh, pins.empties, pins.answer, pins.mv
 local candidate, rejects, tap, on_cell, on_key = pins.candidate, pins.rejects, pins.tap, pins.on_cell, pins.on_key
