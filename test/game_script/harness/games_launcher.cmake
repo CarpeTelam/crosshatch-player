@@ -21,7 +21,7 @@ target_include_directories(game_launcher_src PUBLIC ${HARNESS_DIR}/list_stubs)
 # so that it is linked whether or not the list screen itself refers to a symbol in it.
 add_library(game_launcher_manifest STATIC
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
-  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp)
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp)
 target_link_libraries(game_launcher_manifest PUBLIC game_harness_doubles)
 target_link_libraries(game_launcher_src PUBLIC game_match_src game_launcher_manifest)
 

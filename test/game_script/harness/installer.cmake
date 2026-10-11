@@ -17,7 +17,7 @@ add_library(game_installer_src STATIC
   ${REPO_ROOT}/lib/hal/HalMemory.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
-  ${REPO_ROOT}/lib/JsonParser/StreamingJsonParser.cpp)
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp)
 target_compile_definitions(game_installer_src PUBLIC FREEINK_CAP_GAMES=1 GAME_HASH_OPENSSL=1)
 target_include_directories(game_installer_src PUBLIC
   # The panel and FreeRTOS the converter includes, then the shared doubles (the fake card).
@@ -28,6 +28,7 @@ target_include_directories(game_installer_src PUBLIC
   ${REPO_ROOT}/lib/GameIcons
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/PngToBmpConverter
   ${REPO_ROOT}/lib/ZipFile

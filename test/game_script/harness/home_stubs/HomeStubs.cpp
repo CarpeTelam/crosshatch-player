@@ -24,7 +24,10 @@ bool endsWith(const std::string_view name, const std::string_view suffix) {
 }
 }  // namespace
 
-bool hasEpubExtension(const std::string_view fileName) { return endsWith(fileName, ".epub"); }
+// As the real test: .epub, .txt, or .md.
+bool hasReflowableBookExtension(const std::string_view fileName) {
+  return endsWith(fileName, ".epub") || endsWith(fileName, ".txt") || endsWith(fileName, ".md");
+}
 bool hasXtcExtension(const std::string_view fileName) {
   return endsWith(fileName, ".xtc") || endsWith(fileName, ".xtch");
 }
