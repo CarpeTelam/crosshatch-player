@@ -1298,3 +1298,6 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-sync-e54c0087.md`
   summary: In list-mode Home, upstream's Plugins row (with a plugin installed) and the fork's Games row both draw the Blocks icon, so they look alike; the cover grid is unaffected. Another icon for Games is a product choice (ledger row 7 says list mode reuses an existing icon).
   evidence: Recorded by the sync's review. Location: src/activities/home/HomeActivity.cpp render(); src/components/UiAppHelpers.h listIconFor. Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-sync-e54c0087.md`
+  summary: Resolved (2026-10-11): the fork release dry run the sync owed passed, run 38100498514 on `0bf1c2d5`; the three games repack to the packet's hashes (`f31b5a02a67a712a`, `cd11a6224228acd9`, `d3fecc1e5fc245f6`). It read: the fork release dry run is owed before the sync counts as done, since upstream changed `OtaUpdater.cpp`, `HttpDownloader.*`, `ReleaseJsonParser.h`, `FirmwareBoardTag.cpp`, the release workflows, `[base]` `build_flags`, and the `freeink-sdk` pointer (ledger row 10).
+  evidence: The plan's Verification. Location: .github/workflows/crosshatch-release.yml. Severity: medium (resolved).

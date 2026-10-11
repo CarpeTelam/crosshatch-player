@@ -177,6 +177,8 @@ Patches applied in the same merge commit (amend): items 4, 9, 16. Re-run: `pack_
 **Manual checks:**
 - Simulator screenshots in `_bmad-output/implementation-artifacts/sync-e54c0087-screenshots/`: Home in list mode and in the cover grid (Games above Settings), the Games list, one move of Ultimate tic-tac-toe.
 
+- Fork release dry run (orchestrator, 2026-10-11, after the merge): run 38100498514 (`crosshatch-release.yml`, `dry_run` true) on `claude/sync-upstream-e54c0087` at `0bf1c2d5`, success; it built the release envs, packed the games, uploaded the `fork-release` artifact, and published nothing. `games/`, `scripts/pack_game.py` and `scripts/fork_release.py` are unchanged from `273fa892`, and `pack_game.py` over a `git archive` of `0bf1c2d5` gives the packet's package hashes: `sudoku` `f31b5a02a67a712a`, `ultimate-tic-tac-toe` `cd11a6224228acd9`, `battleship` `d3fecc1e5fc245f6`. The deferred dry-run item is resolved.
+
 ## Auto Run Result
 
 **Summary.** Merged upstream `e54c0087` into `sync-upstream-e54c0087` as one merge commit (parents `39061f44`, `e54c0087`), titled `chore: merge upstream develop (e54c0087)`. Both sides kept in the four conflicts; Games sits before Settings with and without Plugins installed (list mode and cover grid, screenshots below). Fork-side fixes are items 1-10 in Implementation Notes. No blocking condition: x4pro fits its slot, the flash budget passes, and every env builds. One medium finding needs the owner (plugin writes to game folders) and one medium task is owed (the fork release dry run); both are in `deferred`.
