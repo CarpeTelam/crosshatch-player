@@ -15,7 +15,13 @@
 // px a contact may move and still be a tap candidate (the same header's private TOUCH_TAP_SLOP_PX). These tests read
 // each device source as text and fail when any value, or its definition, moves away from the double's, so a retune of
 // the device cannot leave the host tests passing against the old number (epic-install-and-launcher retro AI-4, R13).
-// The reader of constexpr definitions is below.
+// The reader of constexpr definitions is below. The same header's swipe and release thresholds (60 px, 700 ms and the
+// 59 px slop) are copied not as constants of the double but as numbers in comments and docs: src/games/GameTouch.h,
+// src/activities/games/GameMatchActivity.cpp, docs/crosshatch/game-canvas.md, and the double's and the match test's own
+// comments (screen_stubs/MappedInputManager.h, GameMatchTest.cpp). The cases whose names contain "Pinned" hold the
+// header to those numbers (epic 8 retrospective A-5): they compare it with literals written here, so a retune of the
+// header fails them, and the copies are then updated by hand, with the literals. Each copy's comment names the cases
+// (`--gtest_filter=CopiedConstantsTest.*Pinned*`).
 
 namespace {
 
@@ -69,6 +75,28 @@ long long constexprValue(const std::string& text, const std::string& name) {
   return value;
 }
 
+// How many times `expression` (a regular expression) matches in `text`.
+size_t matchCount(const std::string& text, const std::string& expression) {
+  const std::regex pattern(expression);
+  return static_cast<size_t>(
+      std::distance(std::sregex_iterator(text.begin(), text.end(), pattern), std::sregex_iterator()));
+}
+
+// The one definition of the release slop in the SDK header, as text: `constexpr ... TOUCH_TAP_RELEASE_SLOP_PX =
+// TOUCH_SWIPE_MIN_PX - 1;`. The slop is an expression, which constexprValue (plain numbers only) does not read.
+const char* const SLOP_DEFINITION =
+    "constexpr[^=;]*\\bTOUCH_TAP_RELEASE_SLOP_PX\\s*=\\s*TOUCH_SWIPE_MIN_PX\\s*-\\s*1\\s*;";
+
+// The message of a pin that failed: the header no longer says what the copies quote.
+std::string retuneMessage(const std::string& name, const std::string& quoted) {
+  return name + " in " + INPUT_MANAGER_HEADER_PATH +
+         " is not what the pin expects (the source's value: " + std::to_string(NOT_FOUND) +
+         " = no plain `constexpr ... = <digits>;` definition found, " + std::to_string(DEFINED_TWICE) +
+         " = defined more than once); update the " + quoted +
+         " in src/games/GameTouch.h, src/activities/games/GameMatchActivity.cpp, docs/crosshatch/game-canvas.md, "
+         "screen_stubs/MappedInputManager.h and GameMatchTest.cpp, then the literal in the pin";
+}
+
 // What a failed comparison means, for its message.
 std::string explain(const std::string& name, const char* path) {
   return name + " in " + path + " (the source's value: " + std::to_string(NOT_FOUND) +
@@ -103,6 +131,53 @@ TEST(CopiedConstantsTest, TheDoublesTapSlopIsTheDevicesTouchTapSlop) {
   EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_TAP_SLOP_PX"),
             static_cast<long long>(MappedInputManager::TOUCH_TAP_SLOP_PX))
       << explain("TOUCH_TAP_SLOP_PX", INPUT_MANAGER_HEADER_PATH);
+}
+
+// The swipe distance the touch log's docs and comments quote: a net move of 60 px or more is a swipe, and 59 px is the
+// most a tap may stray (the slop pin below).
+TEST(CopiedConstantsTest, TheSwipeMinimumPinnedInTheTouchDocsIsTheSdksTouchSwipeMinPx) {
+  EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_SWIPE_MIN_PX"), 60)
+      << retuneMessage("TOUCH_SWIPE_MIN_PX", "60 px and 59 px");
+}
+
+// The swipe time limit the touch log quotes: a swipe is lifted within 700 ms, and a longer contact that moved is an
+// ended one.
+TEST(CopiedConstantsTest, TheSwipeTimeLimitPinnedInTheTouchDocsIsTheSdksTouchSwipeMaxMs) {
+  EXPECT_EQ(constexprValue(readCode(INPUT_MANAGER_HEADER_PATH), "TOUCH_SWIPE_MAX_MS"), 700)
+      << retuneMessage("TOUCH_SWIPE_MAX_MS", "700 ms");
+}
+
+// The 59 px a tap may stray before lifting, which the docs quote, is the swipe minimum less one: the header defines the
+// slop as that expression, so with the swipe minimum pinned at 60 above the slop is 59. A text pin, since the value is
+// an expression: exactly one definition of that form, and no plain-number one beside it.
+TEST(CopiedConstantsTest, TheTapReleaseSlopPinnedInTheTouchDocsIsTheSwipeMinimumLessOne) {
+  const std::string code = readCode(INPUT_MANAGER_HEADER_PATH);
+  EXPECT_EQ(matchCount(code, SLOP_DEFINITION), 1u)
+      << "TOUCH_TAP_RELEASE_SLOP_PX in " << INPUT_MANAGER_HEADER_PATH
+      << " is no longer defined once as `TOUCH_SWIPE_MIN_PX - 1`: the 59 px in src/games/GameTouch.h, "
+         "src/activities/games/GameMatchActivity.cpp, docs/crosshatch/game-canvas.md, "
+         "screen_stubs/MappedInputManager.h "
+         "and GameMatchTest.cpp must follow it, then this pin (a reformat of the definition needs SLOP_DEFINITION to "
+         "follow)";
+  EXPECT_EQ(constexprValue(code, "TOUCH_TAP_RELEASE_SLOP_PX"), NOT_FOUND)
+      << "the slop is also defined as a plain number now: the pin reads the expression, so make the header define it "
+         "once";
+}
+
+// The slop's text pin itself: it takes the one expression, and not another form, name, or a commented-out copy.
+TEST(CopiedConstantsTest, TheSlopPinTakesOnlyTheMinimumLessOneDefinition) {
+  const auto count = [](const std::string& text) { return matchCount(withoutComments(text), SLOP_DEFINITION); };
+  EXPECT_EQ(count("static constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;"), 1u);
+  EXPECT_EQ(count("constexpr int TOUCH_TAP_RELEASE_SLOP_PX=TOUCH_SWIPE_MIN_PX-1 ;"), 1u);
+  EXPECT_EQ(count("constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 2;"), 0u);
+  EXPECT_EQ(count("constexpr int TOUCH_TAP_RELEASE_SLOP_PX = 59;"), 0u);
+  EXPECT_EQ(count("constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_TAP_SLOP_PX - 1;"), 0u);
+  EXPECT_EQ(count("constexpr int XTOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;"), 0u);
+  EXPECT_EQ(count("// constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;"), 0u);
+  // Two definitions count twice, so the pin's exactly-one fails on them.
+  EXPECT_EQ(count("constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;\n"
+                  "constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;"),
+            2u);
 }
 
 // The reader itself: it finds the one definition, and refuses none or two.

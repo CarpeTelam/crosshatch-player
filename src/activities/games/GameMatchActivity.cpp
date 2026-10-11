@@ -714,7 +714,8 @@ GameTouch::Gesture GameMatchActivity::readGesture() {
   // 59 px and came back to under 60 px net, or was multi-finger): logged, never sent. Its points run from the first
   // sample this loop saw down (isScreenTouchHeld returns the live point, so on a fast slide that can already be past
   // the true touch-down) to the last one it saw; a contact it never saw down has none, and then lastTouchHeldMs is
-  // stale, so there is no hold either.
+  // stale, so there is no hold either. The 700 ms, 60 px and 59 px are pinned to the SDK header by
+  // CopiedConstantsTest's "Pinned" cases.
   if (snap.touchReleased) {
     gesture.kind = GameTouch::Kind::Ended;
     gesture.x = contact.latched() ? contact.firstX() : -1;

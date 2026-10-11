@@ -332,6 +332,7 @@ class MappedInputManager {
   // with no gesture only when (a) it was held over 700 ms and moved 60 px or more net, (b) it went past 59 px and came
   // back to under 60 px net, or (c) it was a multi-finger contact. More permissive than the device: liftTouch() always
   // reports a tap, wherever the finger went, where the device stops at 59 px.
+  // The 59, 60 and 700 here are pinned to the SDK header by CopiedConstantsTest's "Pinned" cases.
   void liftWithoutTap() {
     if (contact.held && contact.sampled) gpio.touchHeldMs = millis() - contact.sinceMs;
     if (!contact.suppressed) {

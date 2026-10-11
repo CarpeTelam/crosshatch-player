@@ -42,6 +42,11 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
     slide above), (b) one that went past 59 px and came back to under 60 px net, such as `contact ended screen
     (300,400)->(310,405) held 700 ms: ...` after a 90 px excursion, or (c) a multi-finger contact. It sends nothing.
     `screen unknown` (and no `held`, since the latched hold is stale then) when the loop never saw the contact down.
+  - The thresholds above (700 ms, 60 px, 59 px) are the SDK's `TOUCH_SWIPE_MAX_MS`, `TOUCH_SWIPE_MIN_PX` and
+    `TOUCH_TAP_RELEASE_SLOP_PX` (`TOUCH_SWIPE_MIN_PX - 1`) in `InputManager.h`. The `CopiedConstantsTest` cases whose names
+    contain `Pinned` (`--gtest_filter=CopiedConstantsTest.*Pinned*`) compare that header with those numbers, so a retune
+    there fails them; this list, the comments in `GameTouch.h` and `GameMatchActivity.cpp`, and the test literals are
+    then updated by hand together.
   - The first point of an ended contact is the first position the loop saw (the live point, `isScreenTouchHeld`), which
     for a fast slide can already be past the true touch-down. The last point is the latest position the loop saw. While the
     contact is within 28 px and over 90 ms old, the loop's reading is the touch-down point (`touchSnapshotFrom`), so the

@@ -16,6 +16,9 @@ namespace GameTouch {
 // moved 60 px or more net, one that went past 59 px and came back to under 60 px net, or a multi-finger contact (a
 // drift of 29 to 59 px that lifts quickly is still a tap). It never reaches a game; it exists so the log can say what
 // became of the touch.
+// The 700 ms, 60 px and 59 px are the SDK's TOUCH_SWIPE_MAX_MS, TOUCH_SWIPE_MIN_PX and TOUCH_TAP_RELEASE_SLOP_PX
+// (InputManager.h), copied here, in GameMatchActivity.cpp and in docs/crosshatch/game-canvas.md; the
+// CopiedConstantsTest cases whose names contain "Pinned" (3 of them) fail when the header moves.
 enum class Kind : uint8_t { None, Tap, LongPress, Swipe, Ended };
 
 // One gesture on the logical screen. A tap or long press is at (x, y); a swipe runs from (x, y) to (endX, endY); an
