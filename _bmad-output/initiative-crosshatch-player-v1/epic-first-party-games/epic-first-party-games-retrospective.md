@@ -247,7 +247,7 @@ Owner decisions taken in this retro (2026-10-11):
 | AI-1 | Publish the fork release from `develop` (8.6, R13, Done when 4), check the three `.chgame` hashes against `pack_game.py` at the released commit, and record them in 8.6's plan. | owner (dispatch), orchestrator (check) | remediation | **done**: `1.6.5-ch.4`, run 38106383670 |
 | AI-2 | S1: `games_check.cmake` finds companion `--check` tools by their argparse flag (`GamesCheckTool.<id>.<tool>`), so the harness names no game. | dev loop | remediation | done in this branch (`0b0536fb`); PR pending |
 | AI-3 | V1: pin that a paused match polls no timer and that Resume delivers the overdue one once (`MatchTest.APausedMatchPollsNoTimerAndResumeDeliversTheDueOneOnce`; red with a `pollTimer()` in `loopView`). | dev loop | remediation | done in this branch (`0b0536fb`); PR pending |
-| AI-4 | Rewrite the superseded Requirement text in the epic file: the 15 places in S4, and the stale Notes L75 and L106. Do it as one reconciliation commit, since the epic is closed. | owner | spec reconciliation | proposed |
+| AI-4 | Rewrite the superseded Requirement text in the epic file: the 15 places in S4, and the stale Notes L75 and L106. Do it as one reconciliation commit, since the epic is closed. | owner | spec reconciliation | **done** at the owner's request: R2, R3, R4, R5, R7–R10, R12–R14, Done when 3 and the Boundaries rewritten; the superseded Notes marked (the epic file's Decision of 2026-10-11) |
 | AI-5 | Process: AI-9 from the previous retro did not land, and epic 8 repeated it. Put the rule ("a Decision that supersedes a Requirement edits that Requirement in the same commit") in `docs/crosshatch/orchestrated-epics.md` under the orchestrator's duties, and have the cross-story review check it. | owner | process | proposed |
 | AI-6 | Process: a cross-story review's own fix can break an epic rule. Row 8 prescribed naming Sudoku in the harness (S1), and entry 14 copied the pattern while its plan claimed "names no game". The cross-story triage should check each prescribed fix against the epic's Requirements before accepting it. | owner | process | proposed |
 | AI-7 | Add to `## e5-run4` for the next device run: a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header (A-1); right-edge `off the canvas` lines on the X4 Pro (A-6); a pause before the game's first frame (A-2). | orchestrator | verification | **done**: added to `deferred-work.md` `## e5-run4` |
@@ -271,7 +271,7 @@ How the verdict was reached: the machine verdict at the start of the run was **r
 The open items keep this from plain *accepted*. None blocks:
 
 - S1 and V1 are fixed on `claude/intelligent-cannon-1ial41` but not yet merged.
-- The Requirement text is not reconciled (S4, AI-4), and the process lessons AI-5 and AI-6 are open.
+- The process lessons AI-5 and AI-6 are open. The Requirement text was reconciled after the verdict, at the owner's request (AI-4).
 - Device checks are still owed in `## e5-run4`, now including AI-7.
 - Deferred findings: G1, A-2, A-4, A-5, A-8, A-10, D1, D3, V3.
 
