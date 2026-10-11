@@ -320,7 +320,7 @@ function game.input(state, seat, ui, ev)
     ui.panel = nil
     return nil
   end
-  if ui.panel == "menu" then return menu_tap(state, ui, layout.menu_at(ev.x, ev.y)) end
+  if ui.panel == "menu" then return menu_tap(state, ui, layout.menu_at(layout.snap_menu(ev.x, ev.y))) end
   local c = layout.cell_at(layout.snap_cell(ev.x, ev.y))
   if c then
     ui.sel = ui.sel ~= c and c or nil
