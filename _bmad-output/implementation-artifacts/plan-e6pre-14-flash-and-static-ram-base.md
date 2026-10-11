@@ -3,7 +3,7 @@ title: 'e6pre-14-flash-and-static-ram-base: measure the x4pro flash and static-R
 type: 'chore'
 ticket: ''
 created: '2026-10-10'
-status: 'built'
+status: 'done'
 route: 'oneshot'
 route_source: 'pinned'
 baseline_revision: 'ccb748bb5f4892ed1b27cb49077dab0709a905c4'
