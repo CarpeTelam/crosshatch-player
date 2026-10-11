@@ -1256,6 +1256,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
   summary: The fourth device run's checks were not run before the owner's sign-off. They are the header time across a pause (entries 13 and 16; it also settles Sudoku's pause and resume on the device), the TIMER toggle, the NOTES AS default on a device with no saved choice (entry 17), and B6, a sleep from Battleship's Over.
   evidence: The epic Notes' Decision of 2026-10-10 on entry 5's sign-off; the steps are in device-run-packet.md, "Fourth run (after entries 16 and 17)". Trigger: the next device run with these packages, or the fork release (entry 6). Severity: medium (unverified on the device).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games-retrospective.md` (AI-7)
+  summary: Three more checks for the same run, from the epic's retrospective. First, a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header before and after: the new VM drops the idle gap since the last move, so the minutes can go back (finding A-1, an owner question under row 20's Decision). Second, right-edge taps on the X4 Pro, counting `off the canvas` touch lines (A-6): the snap stops at the canvas edge, x 472. Third, a Back pressed before a game's first frame, then Resume (A-2): pause time before the load is subtracted from play time.
+  evidence: The retrospective's Findings (adversarial lens A-1, A-2, A-6). The images and packages to use are the fork release `1.6.5-ch.4`'s. Trigger: the next device run. Severity: low to medium (unverified on the device).
 
 ## e6pre-15
 

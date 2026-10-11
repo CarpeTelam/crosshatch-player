@@ -1,14 +1,14 @@
 ---
 epic: epic-first-party-games
 date: 2026-10-11
-verdict: rejected
+verdict: accepted-with-open-items
 criteria: declared
 headless: false
 ---
 
 # Retrospective: epic-first-party-games
 
-Status: in progress (Phase 1 done). Run interactively. The machine verdict is below, and a human decision overrides it.
+Status: complete. Run interactively. The owner's decisions are recorded under Action items, and the verdict is under Acceptance verdict.
 
 ## Epic summary
 
@@ -34,9 +34,11 @@ Tickets (from `tickets.py status`, build order):
 | 8.16 | Show Sudoku's play time in the header, with a TIMER toggle in the menu | done | done |
 | 8.17 | Make Sudoku's NOTES AS default to DIGITS | done | done |
 | 8.5 | Device run and owner sign-off | done | done |
-| 8.6 | Fork release with the three games | — | **planned** |
+| 8.6 | Fork release with the three games | done | done (2026-10-11, during this retro) |
 
-`pending_tickets`: **8.6** ("Fork release with the three games", `hitl`, after 8.5). On 2026-10-11 the owner accepted running the retro over it. Ticket 8.6 is the post-merge publishing release (R13, Done when 4), so it could not have run before the merge. It has no plan file yet. No tickets are still at `built`.
+`pending_tickets` at the start of the run: **8.6** ("Fork release with the three games", `hitl`, after 8.5). On 2026-10-11 the owner accepted running the retro over it. Ticket 8.6 is the post-merge publishing release (R13, Done when 4), so it could not have run before the merge.
+
+During Phase 4 the owner asked to finish the epic. The owner then confirmed the target, and 8.6 was done in this session: run 38106383670 published release `1.6.5-ch.4` from `develop` at `f84399ed`, the hashes were checked, and `story-fork-release-with-the-three-games-plan.md` was written. `pending_tickets` is now empty, and no tickets are still at `built`.
 
 Delivery: the epic landed on `develop` as merge `39061f44` (CarpeTelam/crosshatch-player#35, branch `claude/stoic-bardeen-0768gs`, head `5cfd4489`). The base was `0bf0b3d0`, which is the epic base `eca7e6c7` plus four `develop` doc commits merged in at `715e67c7`. The diff `0bf0b3d0..5cfd4489` is 269 files, +22,209 / -108.
 
@@ -87,7 +89,6 @@ Available:
 Missing:
 
 - Session logs for the build dispatches. The orchestrator's scratchpads (`xr/*.md`, `e8-xr/lenses/`) are not in the repo. So process-lesson analysis is limited to what the plans and Notes record.
-- A plan for 8.6.
 - A diff for 8.5 (docs only).
 
 ## Findings
@@ -115,8 +116,8 @@ Each finding also gets a disposition for this instance: fix now, defer, or accep
 | id | finding | source | status | disposition |
 |----|---------|--------|--------|-------------|
 | S1 | **R2 is broken, and no Decision covers it.** R2 and R10 say the repository's tooling "names no game". Yet the games check's CMake hard-codes Sudoku's companion tools and registers two Sudoku-only ctests, `GamesCheckNoteImages` and `GamesCheckSudokuIcon`. Both are guarded by `if(EXISTS)`, so they vanish silently when Sudoku leaves. The epic's own cross-story review prescribed the first (row 8: "Register `make_note_images.py --check` as a ctest … in `games_check.cmake`"). Entry 14 repeated the pattern while its plan claimed "The games check names no game". HEAD still has both. | `test/game_script/harness/games_check.cmake:20-21,122-137` at `5cfd4489` and at HEAD; `4fdc3176` (e8-xr); `8a0b72bf` (8.14); `cross-story-review.md` row 8 | verified | fix now: discover any `first_party/<id>/tools/*` that supports `--check` generically, or amend R2 by owner Decision |
-| S2 | **Done when 4 and R13's publishing half are not met.** Entry 8.6 is `planned` and no release has been published since 1.6.5-ch.3 (2026-09-27, no `.chgame`). The dry-run half is met: run 38025954968 on `273fa892` packed all three games, and the package hashes and SHA-256 equal the packet's. `games/` and `pack_game.py` are unchanged from `273fa892` to HEAD. | `tickets.py status`; `device-run-packet.md` "Release dry run"; GitHub releases | verified (status, packet); agent (releases list) | open: entry 8.6 |
-| S3 | **R12 and R14 are partly met.** The owner has not answered any row of the packet's deferral table ("their answers are still owed"). The sign-off was "Go ahead and merge", which the orchestrator recorded as the sign-off, and the Correction at Notes L168 says the explicit confirmation is owed at this retro. Several R12 items were never recorded: the "at most 3 taps from Home" counts, B6 (sleep from Over), video timings for HINT and CHECK (log bounds only: ≤699, ≤1,658 and ≤1,166 ms), and the per-try results of 5.13's B5. | `device-run-packet.md` "Owner answers: this epic's deferrals" (preamble), "What to record", Step results U1/B1/S1/B5/B6, "Sign-off"; epic Notes L168 | verified | owner: see Open questions |
+| S2 | **Done when 4 and R13's publishing half were not met at the start of the run** (since met: see Acceptance verdict). Entry 8.6 is `planned` and no release has been published since 1.6.5-ch.3 (2026-09-27, no `.chgame`). The dry-run half is met: run 38025954968 on `273fa892` packed all three games, and the package hashes and SHA-256 equal the packet's. `games/` and `pack_game.py` are unchanged from `273fa892` to HEAD. | `tickets.py status`; `device-run-packet.md` "Release dry run"; GitHub releases | verified (status, packet); agent (releases list) | fixed: 8.6 done in this session |
+| S3 | **R12 and R14 are partly met.** The owner has not answered any row of the packet's deferral table ("their answers are still owed"). The sign-off was "Go ahead and merge", which the orchestrator recorded as the sign-off, and the Correction at Notes L168 says the explicit confirmation is owed at this retro. Several R12 items were never recorded: the "at most 3 taps from Home" counts, B6 (sleep from Over), video timings for HINT and CHECK (log bounds only: ≤699, ≤1,658 and ≤1,166 ms), and the per-try results of 5.13's B5. | `device-run-packet.md` "Owner answers: this epic's deferrals" (preamble), "What to record", Step results U1/B1/S1/B5/B6, "Sign-off"; epic Notes L168 | verified | owner answered in this retro: sign-off and deferrals confirmed (Action items); the unrecorded items stay unrecorded |
 | S4 | **Superseded Requirement text was never edited.** Fifteen places in R2–R14, the C1/C3 Decisions and Boundaries no longer describe the build. Examples: R4 still says "18 package images of about 10 × 14 px" (now 27 at 12 × 16, L115); SHADE PEERS is still `"light"` (now `"dark"`, L116); "No clock is drawn while solving" (now header minutes and TIMER, L157); dot notes as the default (now DIGITS, L161). R2/R14 and Done when 3 say "adds nothing to the API" against entries 10 and 13. R3 says "computed from `ch.screen`" against the fixed 466 box (L123). C3's 51 px formula is stale too. No commit that superseded a line edited the Requirement it superseded. | epic file L25–38, L101, L103; `git show <c> -- epic-first-party-games.md` for `c93574d6`, `11825408`, `030db0e8`, `4171f69c`, `3b4c2a3f` | verified (R4 lines grep) / agent (rest) | spec reconciliation; this is the same lesson as the previous retro's AI-9 |
 | S5 | **The engine changed despite "no firmware change", under owner Decisions.** The package member cap went from 32 to 64 (L118, entry 10). `ch.time.ms` now reports play time (L128, entry 13), and its meaning changed with no `API_SURFACE_CRC` change, by design (`api-level-1.txt:87-97`). Six `src/`/`lib/` commits cost +1,376 B of flash and +0 B of static RAM, measured like for like at `0bf0b3d0` and `39061f44` (Notes L165-166). Notes L75 and L106 ("every delta … should be zero") were never annotated. | Notes L118, L128, L165-167; `lib/GameCore/ApiLevel.h:20` | verified (Notes) | accept the deviations. Who pays the 1,376 B is still the owner's call (`epic-play-nearby.md` e6pre-14). The freeze epic should note that firmware from before entry 13 gives games a different clock. |
 | S6 | **Built with no Requirement, each through an owner Decision or a device finding:** touch logging (`GameTouchLog.h`), launcher icons (Battleship's `boat`, Sudoku's `icon.png` and its tool), edge-margin snapping, the fixed 466 × 788 design box with `docs/crosshatch/game-canvas.md`, `PauseClock`, the release-script fix (outside the Boundaries, under Finding L125), and the games check's extensions from `e8-xr` (resume replay, 16 KiB heap margin, check-VM limits). | Notes L122-130, L147, L157; agent report C | agent | accept |
@@ -243,21 +244,42 @@ Owner decisions taken in this retro (2026-10-11):
 
 | id | item | owner | kind | status |
 |----|------|-------|------|--------|
-| AI-1 | Publish the fork release from `develop` (8.6, R13, Done when 4), check the three `.chgame` hashes against `pack_game.py` at the released commit, and record them in 8.6's plan. | owner (dispatch), orchestrator (check) | remediation | in progress, see Acceptance verdict |
+| AI-1 | Publish the fork release from `develop` (8.6, R13, Done when 4), check the three `.chgame` hashes against `pack_game.py` at the released commit, and record them in 8.6's plan. | owner (dispatch), orchestrator (check) | remediation | **done**: `1.6.5-ch.4`, run 38106383670 |
 | AI-2 | S1: `games_check.cmake` finds companion `--check` tools by their argparse flag (`GamesCheckTool.<id>.<tool>`), so the harness names no game. | dev loop | remediation | done in this branch (`0b0536fb`); PR pending |
 | AI-3 | V1: pin that a paused match polls no timer and that Resume delivers the overdue one once (`MatchTest.APausedMatchPollsNoTimerAndResumeDeliversTheDueOneOnce`; red with a `pollTimer()` in `loopView`). | dev loop | remediation | done in this branch (`0b0536fb`); PR pending |
 | AI-4 | Rewrite the superseded Requirement text in the epic file: the 15 places in S4, and the stale Notes L75 and L106. Do it as one reconciliation commit, since the epic is closed. | owner | spec reconciliation | proposed |
 | AI-5 | Process: AI-9 from the previous retro did not land, and epic 8 repeated it. Put the rule ("a Decision that supersedes a Requirement edits that Requirement in the same commit") in `docs/crosshatch/orchestrated-epics.md` under the orchestrator's duties, and have the cross-story review check it. | owner | process | proposed |
 | AI-6 | Process: a cross-story review's own fix can break an epic rule. Row 8 prescribed naming Sudoku in the harness (S1), and entry 14 copied the pattern while its plan claimed "names no game". The cross-story triage should check each prescribed fix against the epic's Requirements before accepting it. | owner | process | proposed |
-| AI-7 | Add to `## e5-run4` for the next device run: a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header (A-1); right-edge `off the canvas` lines on the X4 Pro (A-6); a pause before the game's first frame (A-2). | orchestrator | verification | proposed |
+| AI-7 | Add to `## e5-run4` for the next device run: a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header (A-1); right-edge `off the canvas` lines on the X4 Pro (A-6); a pause before the game's first frame (A-2). | orchestrator | verification | **done**: added to `deferred-work.md` `## e5-run4` |
 | AI-8 | Next sweep (before epic-play-nearby changes Battleship): split Battleship's drawing into `view.lua` (G1); fix `layout.snap`'s `L.W` (A-8) in the same package change; count only pause time after `startMs` (A-2); restate the MENU-snap deferral with entry 16's geometry (A-10). Doc and comment fixes: P3, A-3, A-7. | dev loop | remediation | proposed |
 | AI-9 | Later refactor of the companion folders: merge the duplicated recorders inside Sudoku's folder first (D1, cross-story row 24), and the duplicated `eq` and `withCanvas` helpers (D3); split `GamesCheckEngineTest.cpp`'s e8-xr section by behaviour (G2). | dev loop | remediation | deferred |
 | AI-10 | For epic-api-freeze: record that `ch.time.ms`'s meaning changed within level 1 without a CRC change (S5), and give the starter repo the margin-snap and Lua style notes (D2, P2). | owner | spec reconciliation | proposed |
 
 ## Acceptance verdict
 
-_Phase 4 pending._
+**accepted-with-open-items**, against declared criteria (Done when 1–6).
+
+- **Done when 1** (three packages, no game-specific C++, manifests only `solo` or `pass`): met (S7).
+- **Done when 2** (packs, installs through the inbox, plays a round on a device in every declared mode): met, from the owner's three X4 Pro runs (packet Step results I2, U1–U5, B1–B7, S1–S5). The owner confirmed the sign-off in this retro. Not recorded: tap counts.
+- **Done when 3** (level 1, the 1,400 B snapshot, `GameIcons`, `ch.gfx`): met. The games check asserts 700 B at every step. The owner's Decisions (entries 10 and 13) changed the engine within the unfrozen level 1 (S5).
+- **Done when 4** (a fork release with the three `.chgame` files, packed byte for byte from `games/<id>/`): **met on 2026-10-11**. Release `1.6.5-ch.4` (https://github.com/CarpeTelam/crosshatch-player/releases/tag/1.6.5-ch.4, run 38106383670, tag at `f84399ed`) attaches all three. Their package hashes and SHA-256 equal `pack_game.py`'s output at the tag, the device-run packet's, and the dry run's (`story-fork-release-with-the-three-games-plan.md`).
+- **Done when 5** (a PR that breaks a game fails a check): met. The `games-check` job is in `Crosshatch Test Status`'s `needs`, and its red cases are in `GamesCheckEngineTest`.
+- **Done when 6** (merged with every gate green): met. All 22 check runs on CarpeTelam/crosshatch-player#35's head passed or were skipped by label (S7).
+
+How the verdict was reached: the machine verdict at the start of the run was **rejected**, because 8.6 was unfinished. The owner chose to finish the epic rather than override, and with 8.6 done every Done when item is met.
+
+The open items keep this from plain *accepted*. None blocks:
+
+- S1 and V1 are fixed on `claude/intelligent-cannon-1ial41` but not yet merged.
+- The Requirement text is not reconciled (S4, AI-4), and the process lessons AI-5 and AI-6 are open.
+- Device checks are still owed in `## e5-run4`, now including AI-7.
+- Deferred findings: G1, A-2, A-4, A-5, A-8, A-10, D1, D3, V3.
+
+The epic file now carries `status: done` and a Closure line in its Notes.
 
 ## Open questions
 
-_Phase 4 pending._
+- **A-1, Sudoku's clock across a sleep.** Row 20's Decision says "a sleep is unchanged", so an auto-sleep mid-puzzle drops the idle time since the last move from both the header and the Solved time. Should Sudoku commit its time on each minute timer, a time-only move costing one `resume.bin` write a minute, so a sleep loses less than a minute? Or does the owner accept the drop? The next device run's sleep-and-Continue step (AI-7) will show how large it is.
+- **Who pays the epic's +1,376 B of flash** (S5)? This is still open from `epic-play-nearby.md`'s e6pre-14 Decision.
+- **The MENU snap (A-10).** The owner has not ruled on whether Sudoku's menu rows snap. The deferral should be restated with entry 16's geometry before the owner decides.
+- **What this retro could not check:** session logs for the build dispatches, which hold no repo copy, so the process lessons rest on the plans and Notes only. Ultimate tic-tac-toe and Battleship were not exercised in the simulator in this session. Nothing was run on a device.
