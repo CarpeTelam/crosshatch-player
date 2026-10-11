@@ -283,7 +283,7 @@ The owner answered the three open questions on 2026-10-11, and each is recorded 
 
 - **A-1, Sudoku's clock across a sleep:** accepted as built. The idle time before an auto-sleep was not solving time.
 - **The +1,376 B of flash (S5):** taken from the spine's unallocated pool, which is now 10,160 B. The spine and `epic-play-nearby.md` record it.
-- **The MENU snap (A-10):** the side insets and the gap under CLOSE snap, and the title band above HINT does not. This is not built yet (`deferred-work.md` `## 8.15`).
+- **The MENU snap (A-10):** the side insets and the gap under CLOSE snap, and the title band above HINT does not. Built and merged into #38 (`plan-e8-menu-snap.md`, `2f534ef9`).
 
 Still open:
 
