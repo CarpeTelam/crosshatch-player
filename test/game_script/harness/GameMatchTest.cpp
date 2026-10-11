@@ -305,6 +305,100 @@ TEST_F(MatchTest, TheGameClockLeavesOutTwoPausesInOneMatch) {
   EXPECT_FALSE(logHas("clock 33000"));
 }
 
+// A pause made before the game loads (retrospective A-2, plan-e8-ai8-sweep; e8-pause-path): ch.time.ms is the time
+// played since the load, so a pause made before LuaGame::load takes its baseline is no part of it. The fakertos gate
+// holds the VM task at its first clock read, which is the baseline read in LuaGame::load (plan-e8-pause-path, Design
+// Notes; a clock read or log line added to the VM task before it moves the hold, and the tests then say the task
+// loaded before the pause), so Back lands on the loop task before the game has loaded, and the loop task's
+// matchPaused() stamps GameVM's own PauseClock, the one it hands the game as HostPorts::paused.
+class PauseBeforeTheLoadTest : public MatchTest {
+ protected:
+  // Enters CLOCK_GAME with the VM task held before its load, and presses Back: Paused, nothing loaded.
+  void pauseBeforeTheLoad() {
+    installGame("clocked", CLOCK_GAME);
+    fakertos::arm();
+    enter("clocked");
+    ASSERT_TRUE(fakertos::waitParked()) << "the VM task did not stop at its first clock read";
+    ASSERT_FALSE(logHas("Round started")) << "the game loaded before the pause";
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+    ASSERT_FALSE(logHas("Round started"));
+  }
+  // Lets the VM task load the game and publish its first frame.
+  void loadTheGame() {
+    fakertos::release();
+    ASSERT_TRUE(waitFor(match::roundStarted)) << "the game did not load";
+  }
+  void resume() {
+    renderView();
+    tapOption(tr(STR_GAMES_RESUME));
+    ASSERT_EQ(state(), "Playing");
+  }
+  // Back from the running game, which the pause menu then shows.
+  void pause() {
+    input->click(Button::Back);
+    frame();
+    ASSERT_EQ(state(), "Paused");
+  }
+  // A tap at the game, which logs the play time it reads; returns what the game logged ("" when it logged none).
+  std::string playTimeAtATap() {
+    showFrame();  // a resumed round is redrawn; a tap made before its frame is dropped
+    tapCanvas(100, 200);
+    frame();
+    if (!pump([&] { return fakelog::countLines("clock ") == 1u; })) return "";
+    for (const std::string& line : fakelog::snapshot()) {
+      const size_t at = line.find("clock ");
+      if (at != std::string::npos) return line.substr(at + 6);
+    }
+    return "";
+  }
+};
+
+// The pause is still open when the game loads and goes on after it: of the 34000 ms from the pause to Resume, 30000
+// came before the load, and the play time after Resume is 2000 ms. Without the baseline the whole 34000 ms of pause
+// was taken out of the 6000 ms since the load, which reads 0; counting none of it reads 6000.
+TEST_F(PauseBeforeTheLoadTest, APauseOpenWhenTheGameLoadsLeavesOutOnlyItsTimeAfterTheLoad) {
+  ASSERT_NO_FATAL_FAILURE(pauseBeforeTheLoad());
+  fakertos::advance(30000);
+  ASSERT_NO_FATAL_FAILURE(loadTheGame());
+  fakertos::advance(4000);  // the game is loaded, still paused
+  ASSERT_NO_FATAL_FAILURE(resume());
+  fakertos::advance(2000);
+  EXPECT_EQ(playTimeAtATap(), "2000") << "play time is not the 2000 ms since Resume";
+}
+
+// The pause is over before the game loads: 30000 ms paused, 1500 ms played with nothing loaded, then the load, then
+// 2000 ms of play. The play time is the 2000 ms since the load; the earlier pause does not make it 0. (This alone
+// cannot tell a ledger that subtracts the earlier pause from one that never subtracts any; the next test and the
+// open-pause one above do.)
+TEST_F(PauseBeforeTheLoadTest, APauseClosedBeforeTheGameLoadsIsNotLeftOutOfWhatFollows) {
+  ASSERT_NO_FATAL_FAILURE(pauseBeforeTheLoad());
+  fakertos::advance(30000);
+  ASSERT_NO_FATAL_FAILURE(resume());
+  fakertos::advance(1500);
+  ASSERT_NO_FATAL_FAILURE(loadTheGame());
+  fakertos::advance(2000);
+  EXPECT_EQ(playTimeAtATap(), "2000") << "play time is not the 2000 ms since the load";
+}
+
+// A pause before the load and another after it: 30000 ms paused, the load, 1000 ms of play, 5000 ms paused, 2000 ms of
+// play. The play time is the 3000 ms played since the load; the second pause is left out as well, and a ledger that
+// never subtracts reads 8000.
+TEST_F(PauseBeforeTheLoadTest, APauseAfterTheLoadIsLeftOutBesideOneBeforeIt) {
+  ASSERT_NO_FATAL_FAILURE(pauseBeforeTheLoad());
+  fakertos::advance(30000);
+  ASSERT_NO_FATAL_FAILURE(resume());
+  ASSERT_NO_FATAL_FAILURE(loadTheGame());
+  fakertos::advance(1000);
+  showFrame();
+  ASSERT_NO_FATAL_FAILURE(pause());
+  fakertos::advance(5000);
+  ASSERT_NO_FATAL_FAILURE(resume());
+  fakertos::advance(2000);
+  EXPECT_EQ(playTimeAtATap(), "3000") << "play time is not the 3000 ms played since the load";
+}
+
 TEST_F(MatchTest, TheKeysMoveAroundAMenuAndConfirmChoosesTheFocusedOption) {
   installFixture("tracer");
   enter("tracer");
