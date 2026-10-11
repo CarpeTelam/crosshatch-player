@@ -1,13 +1,15 @@
 -- rules.lua: the game's rules pinned one by one (a clue, a bad move, the undo ring, the clash rule, HINT and CHECK, the
 -- layout's targets, the clock), each on the grid a round dealt. A round's `steps(state)` calls them, so every rule is
 -- checked beside the round that plays it through taps. A failure is an error that names its line. They live here, in
--- the round's own VM, and not in checks.lua: that VM holds the solver, the counter, and the bank (most of the 256 KB
--- the sandbox allows, with a heap the allocator fragments), and had no room left for them. The pins on taps, the
--- toggles, and the reset are in interaction.lua, and the pins on what the draw marks on the board are in drawn.lua and
--- marks.lua: a round loads only the modules it calls.
+-- the round's own VM, and not in checks.lua, whose VM holds the solver, the counter, and the bank: they moved out when
+-- every check VM had the sandbox's 256 KB and that one had no room left for them. Since e8-xr the check VMs have their
+-- own larger limits (harness/games_check/HostBounds.h; the README's "The check VMs' limits"), so room no longer forces
+-- the split. The pins on taps, the toggles, and the reset are in interaction.lua, and the pins on what the draw marks
+-- on the board are in drawn.lua and marks.lua: a round loads only the modules it calls.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
+require("basics") -- loaded before pins, so pins nests nothing
 local pins = require("pins")
 local eq, fresh, empties, answer, digit_at = pins.eq, pins.fresh, pins.empties, pins.answer, pins.digit_at
 local letter, mv, mask, candidate, rejects = pins.letter, pins.mv, pins.mask, pins.candidate, pins.rejects
@@ -369,6 +371,84 @@ function rules.clock(state)
     eq(game.apply(s, 1, move).t, 7000)
     eq(ui.msg, nil)
     eq(ui.check, nil)
+  end)
+end
+
+-- A tap in the MENU panel's margins, through layout.snap_menu and game.input (owner, 2026-10-11): the 24 px at each
+-- side acts as the row beside it (every x of the inset, at a row's first, middle and last pixel row: every pixel
+-- would exceed the check VM's instruction budget), and the 23 px under row 9 (CLOSE), over the rows' columns, as CLOSE
+-- (every pixel). The 72 px title band above row 1 (HINT) stays dead, since HINT forfeits the best time, and so do the
+-- bottom corners off the rows' columns, the Sticky's 4 px outside the box, and the exact lookup (rules.layout). A tap
+-- on a row is unchanged.
+function rules.menu_margins(state)
+  with_clock(function()
+    local L = layout.get()
+    local s = fresh(state)
+    local left, top = L.ox, L.oy
+    local right, bottom = L.ox + 465, L.oy + 787
+    local row_end, rows_end = L.row_x + L.row_w, L.row_y + layout.ROWS * L.row_h
+    local function row_at(x, y) return layout.menu_at(layout.snap_menu(x, y)) end
+
+    -- The strips: the row, or nothing.
+    for i = 1, layout.ROWS do
+      for _, dy in ipairs({ 0, L.row_h // 2, L.row_h - 1 }) do
+        local y = L.row_y + (i - 1) * L.row_h + dy
+        for x = left, L.row_x - 1 do eq(row_at(x, y), i, "the left inset, row " .. i .. " at " .. x .. "," .. y) end
+        for x = row_end, right do eq(row_at(x, y), i, "the right inset, row " .. i .. " at " .. x .. "," .. y) end
+        eq(row_at(L.row_x, y), i, "row " .. i .. " itself")
+        eq(row_at(row_end - 1, y), i, "row " .. i .. " itself")
+      end
+    end
+    for x = L.row_x, row_end - 1 do
+      for y = rows_end, bottom do
+        eq(row_at(x, y), layout.ROWS, "the bottom gap at " .. x .. "," .. y)
+      end
+    end
+    for y = top, L.row_y - 1 do
+      for _, x in ipairs({ left, L.row_x - 1, L.row_x, L.row_x + 200, row_end - 1, row_end, right }) do
+        eq(row_at(x, y), nil, "the title band at " .. x .. "," .. y)
+      end
+    end
+    for y = rows_end, bottom do
+      for _, x in ipairs({ left, L.row_x - 1, row_end, right }) do
+        eq(row_at(x, y), nil, "the bottom corner at " .. x .. "," .. y)
+      end
+    end
+    if L.ox > 0 then
+      for _, x in ipairs({ left - 1, right + 1 }) do
+        for _, y in ipairs({ L.row_y, L.row_y + 300, rows_end - 1, rows_end, bottom }) do
+          eq(row_at(x, y), nil, "outside the box at " .. x .. "," .. y)
+        end
+      end
+    end
+    eq(layout.menu_at(L.row_x - 1, L.row_y), nil, "menu_at stays exact at the left")
+    eq(layout.menu_at(row_end, L.row_y), nil, "menu_at stays exact at the right")
+    eq(layout.menu_at(L.row_x, rows_end), nil, "menu_at stays exact at the bottom")
+
+    -- What a tap does through game.input with the panel open (the toggles read from a clean store): the move and what
+    -- the ui keeps. A row's own tap does something, the title band's does nothing, and each inset or gap tap agrees with
+    -- its row's.
+    local function seen(x, y)
+      ch.store.set({})
+      local ui = {}
+      tap(s, ui, 0, 0)
+      ui.panel = "menu"
+      local m = tap(s, ui, x, y)
+      return table.concat({ tostring(m and m[1]), tostring(ui.panel), tostring(ui.sel), tostring(ui.msg),
+                            tostring(ui.rem), tostring(ui.shade), tostring(ui.dots), tostring(ui.timer) }, ",")
+    end
+    local nothing = seen(left, top)
+    for i = 1, layout.ROWS do
+      local cx, cy = layout.centre(layout.menu_rect(i))
+      local want = seen(cx, cy)
+      assert(want ~= nothing, "row " .. i .. ": its own tap does nothing")
+      eq(seen(left, cy), want, "the left inset, row " .. i)
+      eq(seen(right, cy), want, "the right inset, row " .. i)
+    end
+    eq(seen(L.row_x + 200, bottom), seen(layout.centre(layout.menu_rect(layout.ROWS))), "the bottom gap closes")
+    eq(seen(L.row_x + 200, L.row_y - 1), nothing, "the title band does not press HINT")
+    eq(seen(left, L.row_y - 1), nothing, "the title band's corner")
+    ch.store.set({})
   end)
 end
 

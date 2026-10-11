@@ -310,10 +310,10 @@ int timerCancel(lua_State* L) {
 }
 
 // ch.time.ms(): play time in milliseconds, since the game loaded less the time the match was
-// paused, for display only. ch.timer.after is on the raw clock and is not affected.
+// paused after that, for display only. ch.timer.after is on the raw clock and is not affected.
 int timeMs(lua_State* L) {
   const BindingContext& context = *bindingContext(L);
-  const uint64_t ms = context.paused ? context.paused->playMs(*context.clock, context.startMs)
+  const uint64_t ms = context.paused ? context.paused->playMs(*context.clock, context.startMs, context.pausedAtStartMs)
                                      : context.clock->nowMs() - context.startMs;
   lua_pushinteger(L, static_cast<lua_Integer>(ms));
   return 1;

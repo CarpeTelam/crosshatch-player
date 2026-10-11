@@ -17,8 +17,8 @@
 #   GamesCheckEngineTest  the check's own tests: scratch trees under the build folder, never games/ or first_party/; it also
 #                         holds BoardInsetsTest, which compiles the SDK's BoardConfig.h through board_stubs/ (that file alone)
 #   GamesCheckFlowTest    pins the hidden flow of RoundPlayer to GameVM's (it links the match's screen doubles)
-#   GamesCheckNoteImages  a plain ctest: Sudoku's make_note_images.py --check, when the tool exists
-#   GamesCheckSudokuIcon  a plain ctest: Sudoku's make_icon.py --check (games/sudoku/icon.png), when the tool exists
+#   GamesCheckTool.<id>.<tool>  a plain ctest per companion tool that takes --check (tools/<tool>.py, an argparse
+#                         '--check' flag): it compares what the tool generates with what is committed
 # All are labelled games-check: `ctest -L games-check`. Needs installer.cmake and match.cmake's libraries by name.
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -119,23 +119,25 @@ target_include_directories(GamesCheckEngineTest PRIVATE ${REPO_ROOT}/test/game_s
 target_link_libraries(GamesCheckEngineTest PRIVATE ${GAMES_CHECK_INSTALLER_LIBS})
 gtest_discover_tests(GamesCheckEngineTest PROPERTIES LABELS games-check)
 
-# Sudoku's note images: `make_note_images.py --check` compares the 27 committed PNGs with what the tool generates (a swapped
-# or resized image, a stray note_*.png, a NOTE_W or NOTE_H the images do not have), plain Python with the standard
-# library only. It is a ctest and not a target, so the games-check job (`ctest -L games-check`) runs it with no workflow
-# edit and no build step; it exists only while the tool does (a companion root without it, a scratch tree, has no test).
-set(GAMES_CHECK_NOTE_IMAGES_TOOL ${GAMES_CHECK_COMPANION_ROOT_ABS}/sudoku/tools/make_note_images.py)
-if(EXISTS ${GAMES_CHECK_NOTE_IMAGES_TOOL})
-  add_test(NAME GamesCheckNoteImages COMMAND ${Python3_EXECUTABLE} ${GAMES_CHECK_NOTE_IMAGES_TOOL} --check)
-  set_tests_properties(GamesCheckNoteImages PROPERTIES LABELS games-check)
-endif()
-
-# Sudoku's launcher icon: `make_icon.py --check` compares games/sudoku/icon.png with what the tool generates, as above. Which
-# icon the launcher then picks for an installed game is the games' own checks' (host.launcher_icon), not this.
-set(GAMES_CHECK_SUDOKU_ICON_TOOL ${GAMES_CHECK_COMPANION_ROOT_ABS}/sudoku/tools/make_icon.py)
-if(EXISTS ${GAMES_CHECK_SUDOKU_ICON_TOOL})
-  add_test(NAME GamesCheckSudokuIcon COMMAND ${Python3_EXECUTABLE} ${GAMES_CHECK_SUDOKU_ICON_TOOL} --check)
-  set_tests_properties(GamesCheckSudokuIcon PROPERTIES LABELS games-check)
-endif()
+# A companion's tools: every tools/*.py that declares an argparse `--check` flag is run as `<tool>.py --check`, which
+# compares what the tool generates (a game's images, its icon) with what is committed and exits non-zero on a difference.
+# It is a plain ctest and not a target, so the games-check job (`ctest -L games-check`) runs it with no workflow edit and
+# no build step. Found by the flag, not by name, so the check names no game: a tool without `--check` (a bank or rounds
+# generator, run by hand) is not run, and a game that leaves takes its tests with it.
+foreach(id IN LISTS GAMES_CHECK_COMPANION_IDS_LIST)
+  file(GLOB tools CONFIGURE_DEPENDS ${GAMES_CHECK_COMPANION_ROOT_ABS}/${id}/tools/*.py)
+  list(SORT tools)
+  foreach(tool IN LISTS tools)
+    # The flag is read from the file, so an edit to a tool configures again (a tool that gains or drops --check).
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${tool})
+    file(READ ${tool} source)
+    if(source MATCHES "add_argument\\(['\"]--check['\"]")
+      get_filename_component(name ${tool} NAME_WE)
+      add_test(NAME GamesCheckTool.${id}.${name} COMMAND ${Python3_EXECUTABLE} ${tool} --check)
+      set_tests_properties(GamesCheckTool.${id}.${name} PROPERTIES LABELS games-check)
+    endif()
+  endforeach()
+endforeach()
 
 add_executable(GamesCheckFlowTest ${GAMES_CHECK_DIR}/GamesCheckFlowTest.cpp)
 # MatchSupport.h, the rig GameVmTest and this suite share.

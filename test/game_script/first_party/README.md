@@ -15,7 +15,8 @@ first_party/<id>/
                       of rounds/ must be a regular file whose name ends exactly `.lua`
   checks.lua          required: the game's own checks (the interface below)
   <module>.lua        optional top-level modules, which rounds and checks.lua may require
-  tools/              anything else a game's maintainers keep beside it (generators, notes); the check never reads it
+  tools/              anything else a game's maintainers keep beside it (generators, notes); the check runs only each
+                      tools/*.py that declares an argparse `--check` flag (GamesCheckTool, below)
 ```
 
 A top-level module is named `[a-z0-9_]{1,32}.lua`, as the game's own are, and may not have the name of one of the game's own
@@ -150,14 +151,14 @@ ctest --test-dir build/test -L games-check --output-on-failure
   `BoardInsetsTest`, which compiles the SDK's `BoardConfig.h` (through `harness/games_check/board_stubs/`, which stand in for
   the Arduino core) and pins the two canvases' bezel insets, and that both canvas origins have an even x + y, to the SDK's own
   profiles.
-- `GamesCheckSudokuIcon` is a plain ctest, no executable: Sudoku's `tools/make_icon.py --check`, which compares the committed
-  `games/sudoku/icon.png` (the launcher icon, a 64 x 64 1-bit grid) with what the stdlib-only generator writes, and exits 1
-  when it differs or is missing. It runs in the same job, exists while the tool does, and is `make_note_images.py`'s sibling;
-  which icon the launcher then picks is `sudoku/checks.lua`'s, through `host.launcher_icon`.
 - `GamesCheckFlowTest` pins the hidden flow of the player to `GameVM`'s.
-- `GamesCheckNoteImages` is a plain ctest, no executable: Sudoku's `tools/make_note_images.py --check`, which compares the 27
-  committed note PNGs with what the tool generates (and `layout.lua`'s `NOTE_W` and `NOTE_H`). It runs in the same job, with no
-  workflow edit, and exists while the tool does; `sudoku/checks.lua` pins the installed images' sizes through `host.image_size`.
+- `GamesCheckTool.<id>.<tool>` is a plain ctest, no executable, one for each `tools/<tool>.py` of a companion folder that
+  declares an argparse `--check` flag (`add_argument('--check'`): it runs `<tool>.py --check`, which compares what the tool
+  generates with what is committed and exits non-zero on a difference. It runs in the same job, with no workflow edit; the
+  check finds the tools by that flag, so it names no game, and a tool without it (a bank or rounds generator) is not run.
+  Today these are Sudoku's `make_note_images.py` (the 27 note PNGs and `layout.lua`'s `NOTE_W` and `NOTE_H`; `checks.lua`
+  pins the installed images' sizes through `host.image_size`) and `make_icon.py` (`games/sudoku/icon.png`; which icon the
+  launcher picks is `checks.lua`'s, through `host.launcher_icon`).
 
 Both roots are cache variables, for a one-off run over scratch trees (made absolute against the repository root):
 
@@ -205,14 +206,14 @@ board's mark, which cells a frame fills, whether it asks for a full refresh) is 
 in while a function runs. The rounds format does not carry it (that would change the format); a check, or a round's
 `steps(state)`, calls `game.draw(state, seat, ui)` under the recorder and reads the commands.
 
-Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, Sudoku's `record` in `drawn.lua`,
-and the digest's own in `sudoku/canvases.lua`), and each takes its function names from the real `ch.gfx`'s keys, so a
-misspelled call raises on the recorder too. `trace.record(f, on_call)` runs `f`, returns the commands as text, one `name(args)`
-a line in drawing order, and their number, calls `on_call(name, ...)` for each call as it is made, and puts the real `ch.gfx`
-back, also when `f` raises (the error is raised again as it was); Sudoku's `record(f, on_image, on_call)` returns the count only
-and hands the calls to its hooks. A check turns the
-commands into whatever it pins: the boards a `light` fill covers, the icons and where they sit, the lines of a stroke, the
-refreshes.
+Each game keeps its own recorder (`ultimate-tic-tac-toe/trace.lua`, `battleship/trace.lua`, and Sudoku's `record` in
+`sudoku/basics.lua`, which `drawn.lua` re-exports and `canvases.lua` calls for its digest), and each takes its function names
+from the real `ch.gfx`'s keys, so a misspelled call raises on the recorder too. `trace.record(f, on_call)` runs `f`, returns
+the commands as text, one `name(args)` a line in drawing order, and their number, calls `on_call(name, ...)` for each call as
+it is made, and puts the real `ch.gfx` back, also when `f` raises (the error is raised again as it was); Sudoku's `record(f,
+on_image, on_call)` returns the count only and hands the calls to its hooks. A check turns the commands into whatever it
+pins: the boards a `light` fill covers, the icons and where they sit, the lines of a stroke, the refreshes. Battleship's
+`battleship/basics.lua` holds `eq` and `withCanvas`, which its `checks.lua` and `draws.lua` both use.
 
 - *Secrecy for a hidden game.* Draw two states that differ only in what a seat must not see (the other seat's intact ships)
   and compare that seat's frames command by command; the failure names the first command that differs. Run it for every frame
@@ -266,10 +267,11 @@ unnecessary for the heap, not harmful, and the batches (`CHUNKS`) still keep eac
 the measure of what a game call may cost. What it was for, kept as the record:
 
 - Sudoku's checks VM holds the solver, the counter, and the bank. Its rules, and what its draw marks on the board, are pinned in
-  `rules.lua` and the modules beside it, called from the rounds' `steps(state)`: `pins.lua` (the shared helpers), `rules.lua`,
-  `interaction.lua` (taps, the toggles' store, the reset), `drawn.lua` (`frame`, `look`, and the recorder), and `marks.lua`
-  (`draw_marks`). The one-layout-on-every-canvas pins (`canvases.lua`, called from `rounds/canvases.lua`) load none of the pin
-  modules nor `taps.lua` and keep a digest of a frame, not its commands.
+  `rules.lua` and the modules beside it, called from the rounds' `steps(state)`: `basics.lua` (`eq` and the recorder, with no
+  side effect on load, so any module may load it), `pins.lua` (the shared helpers, `eq` among them), `rules.lua`,
+  `interaction.lua` (taps, the toggles' store, the reset), `drawn.lua` (`frame`, `look`), and `marks.lua` (`draw_marks`). The
+  one-layout-on-every-canvas pins (`canvases.lua`, called from `rounds/canvases.lua`) load none of the pin modules nor
+  `taps.lua`, only `basics.lua`, and keep a digest of a frame, not its commands.
 - At the device's 256 KB a round faulted "not enough memory" about once in 1,600 plays, varying from process to process because
   Lua's compiler keys a chunk's `nil` constant by the constants table's own address (`nilK` in `lcode.c`) and a table hashes a
   pointer by its low 32 bits, so where ASLR put the arena changed when a table rehashed and so the order of a load's first

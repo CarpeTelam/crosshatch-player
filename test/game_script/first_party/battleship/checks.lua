@@ -8,6 +8,8 @@ local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")
 local taps = require("taps")
+local basics = require("basics")
+local eq, withCanvas = basics.eq, basics.withCanvas
 
 local OVER = "The game is over"
 local PLACE_FIRST = "Place your ships first"
@@ -26,10 +28,6 @@ local SMALL_LINE = 24 -- the height of a line of small text: the game's own step
 local KEYS = { "a", "b", "c", "d", "e" }
 local LENGTHS = { a = 5, b = 4, c = 3, d = 3, e = 2 }
 local NAMES = { "Carrier", "Battleship", "Cruiser", "Submarine", "Destroyer" }
-
-local function eq(got, want, what)
-  if got ~= want then error(what .. ": got " .. tostring(got) .. ", wanted " .. tostring(want), 2) end
-end
 
 -- Whether a fleet string is a legal fleet: five ships of the right lengths, each straight and contiguous, nothing
 -- else on the board. Returns true, or false and why. Written here, with no use of the game's own code.
@@ -790,15 +788,6 @@ local function inputFiring()
   local over = firing(build(ACROSS), string.rep("o", 83) .. "AAAAABBBBCCCDDDEE", 1)
   eq(game.status(over).over, true, "the round is over")
   eq(tapCell(over, 1, {}, 7, 8), nil, "a tap after the round is over")
-end
-
--- Runs f() with ch.screen as w x h and puts it back, also when f raises.
-local function withCanvas(w, h, f)
-  local rw, rh = ch.screen.w, ch.screen.h
-  ch.screen.w, ch.screen.h = w, h
-  local ok, err = pcall(f)
-  ch.screen.w, ch.screen.h = rw, rh
-  if not ok then error(err, 0) end
 end
 
 -- A tap in the margin between the big board (or the button row) and the box's edge, on the board's rows (the buttons'

@@ -166,7 +166,12 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
   arithmetic and was abandoned, not cancelled, at its first device run (retro proc-3, e4-z1).
 - **Decisions.** Give the owner the options, what each means, and a recommendation. Record the answer, dated, in the
   epic file's Notes, and in the architecture spine when it changes a decision there. The Notes are intent for every
-  later run, so a Decision recorded there settles the same question for the stories that follow.
+  later run, so a Decision recorded there settles the same question for the stories that follow. When a Decision
+  supersedes or amends a Requirement, a Done when item, or a Boundaries line, edit that line in the same commit to say
+  what was settled, citing the Decision, and keep the Decision itself as written; an earlier Note it overrides gets a
+  bold **Superseded** marker. A Requirement left saying the old thing misleads every later story that reads it: two
+  epics in a row ended with Requirement text the Decisions had overtaken (epic-pass-and-play retro AI-9, eight places;
+  epic-first-party-games retro AI-5, fifteen, reconciled after the merge).
 - **Measure before quoting (O8).** A memory, flash, or timing figure goes to the owner as a measurement with its method,
   or labelled "unmeasured". In epic-script-runtime about 320 KiB was quoted for Lua's region; the measurement was 448
   KiB. A delta is two measurements made the same way, one at each commit. The base is the one measured before the first
@@ -183,6 +188,15 @@ human gate; it builds for an orchestrator only in the two cases under "When a st
   (`/bmad-build-auto {epic-folder}/cross-story-review.md`, the brief's `{ref}` an id such as `e5-xr`), and that commit
   gets the same review before the push. A story that lands after the review gets its own combined-diff pass. In
   epic-icon-library this pass found a medium data race that every per-story review missed (retro O2).
+  - **Check each prescribed fix against the epic's rules before accepting it.** A row's "Reason / action" is a design
+    the fix build follows to the letter, so read it against the epic file's Requirements and Boundaries and against
+    AGENTS.md first; a fix that would break one is rewritten to keep the rule, or put to the owner as an `owner` row.
+    In epic-first-party-games, row 8 prescribed registering a Sudoku tool in `games_check.cmake`, against R2's "the
+    repository's tooling names no game"; entry 14 then copied the pattern while its plan claimed "the games check names
+    no game" (retro S1, AI-6). A plan that claims such a rule holds shows the grep or test that checks it.
+  - **Check the epic file is current.** A Requirement, Done when, or Boundaries line that a Decision in the Notes has
+    superseded and that still says the old thing is a finding, fixed in the same fix build (see Decisions under Owner
+    hand-offs).
 - On the combined tree, in AGENTS.md's verification order and under the locks: the host suites, the fork script
   tests, and `./bin/clang-format-fix` twice with nothing new in `git status`; then build `x4pro` and `default`, run
   `pio check` as AGENTS.md gives it (with `-e x4pro` too when games code changed), and `sim.sh build x4pro` when

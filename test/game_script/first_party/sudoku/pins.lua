@@ -2,11 +2,12 @@
 -- written, a move applied, taps on the game's input, the clock a pin sets, a grid's answer, and the notation's digit
 -- and unit arithmetic. A round loads only the modules whose pins its `steps` call (first_party/README.md, "The checks
 -- VM heap"), so each module is a heap cost only its rounds pay; this one is the small part all of them need. A module
--- requires the game's own modules before it requires this one, so that none of them loads nested inside it.
+-- requires the game's own modules and `basics` before it requires this one, so that none of them loads nested inside it.
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
 local solver = require("solver")
+local basics = require("basics")
 
 -- The rounds' VM was within a few KB of the device's 256 KB heap and a frame's draw leaves tens of KB of garbage, so a round
 -- could fault "not enough memory" (README, "The check VMs' limits"; a check VM has a 1 MB heap now, and this stays as built):
@@ -16,9 +17,7 @@ collectgarbage("generational")
 
 local CLUE, NOMARK, ZEROS = "Clues cannot be changed", "That mark is not possible", string.rep("\0", 162)
 
-local function eq(got, want, what)
-  if got ~= want then error((what or "") .. " got " .. tostring(got) .. ", wanted " .. tostring(want), 2) end
-end
+local eq = basics.eq
 
 -- The dealt grid with nothing written: a state of the round's level and puzzle.
 local function fresh(state) return { l = state.l, v = state.v, n = ZEROS, u = "", t = 0 } end

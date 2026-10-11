@@ -1230,8 +1230,8 @@
 ## 8.15
 
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-count-a-tap-in-the-margin-beside-a-game-s-edge-cells-as-that-plan.md`
-  summary: Sudoku's MENU panel rows and the HOW TO PLAY pages (and Ultimate tic-tac-toe's and Battleship's help pages) do not snap a tap in the box's side margins.
-  evidence: Recorded by entry 15's review (the plan's Review Triage Log). Location: games/sudoku/main.lua (game.input, menu_tap branch), games/sudoku/layout.lua (menu_at). Severity: low.
+  summary: Sudoku's MENU panel rows do not snap a tap in the box's margins. (Every game's HOW TO PLAY page, Sudoku's included, closes on any tap, so a snap cannot matter there.) Restated with entry 16's geometry (retrospective A-10, AI-8): the panel has nine rows of 77 px from y 72 to 765 of the box (`layout.ROWS` 9, `row_h` = min(80, 700 // 9)), 24 px inset at each side, a 72 px title band above row 1 (HINT), and a 23 px bottom gap below row 9 (CLOSE). Every one of those gaps is smaller than a row along its axis, so by entry 15's size rule a tap in the side insets would snap onto its row, a tap in the title band onto HINT, and one in the bottom gap onto CLOSE. Entry 15's Decision names only the grid, pad and rail and says header taps stay dead. **Decided (owner, 2026-10-11, epic Notes):** the side insets snap to their row and the bottom gap to CLOSE; the title band does not snap, since HINT forfeits the best time. Resolved: built as `e8-menu-snap` (`2f534ef9`, `plan-e8-menu-snap.md`): `layout.snap_menu`, pinned by `rules.menu_margins`.
+  evidence: Recorded by entry 15's review (the plan's Review Triage Log), whose "80 px rows" and "76 px bottom gap" predate entry 16's ninth row. Location: games/sudoku/main.lua (game.input, menu_tap branch), games/sudoku/layout.lua (`layout.get`'s `row_h`, `menu_at`). Severity: low.
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-count-a-tap-in-the-margin-beside-a-game-s-edge-cells-as-that-plan.md`
   summary: docs/crosshatch/game-canvas.md does not tell game authors that the first-party games snap a tap in the box's edge margin (a gap smaller than the target's size) to the edge target.
   evidence: Recorded by entry 15's review (the plan's Review Triage Log). Location: docs/crosshatch/game-canvas.md. Severity: low.
@@ -1256,6 +1256,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/story-device-run-and-owner-sign-off-plan.md`
   summary: The fourth device run's checks were not run before the owner's sign-off. They are the header time across a pause (entries 13 and 16; it also settles Sudoku's pause and resume on the device), the TIMER toggle, the NOTES AS default on a device with no saved choice (entry 17), and B6, a sleep from Battleship's Over.
   evidence: The epic Notes' Decision of 2026-10-10 on entry 5's sign-off; the steps are in device-run-packet.md, "Fourth run (after entries 16 and 17)". Trigger: the next device run with these packages, or the fork release (entry 6). Severity: medium (unverified on the device).
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games-retrospective.md` (AI-7)
+  summary: Three more checks for the same run, from the epic's retrospective. First, a sleep (auto-sleep included) and Continue mid-puzzle, reading Sudoku's header before and after: the new VM drops the idle gap since the last move, so the minutes can go back (finding A-1; the owner accepted it on 2026-10-11, so the step only confirms it behaves that way). Second, right-edge taps on the X4 Pro, counting `off the canvas` touch lines (A-6): the snap stops at the canvas edge, x 472. The touch lines compile in only with `CROSSHATCH_TOUCH_LOG` since A-4 (owner Decision 2026-10-11), so build this run's firmware with `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1` (`docs/crosshatch/game-canvas.md`). Third, a Back pressed before a game's first frame, then Resume (A-2): pause time before the load was subtracted from play time; since AI-8 (`plan-e8-ai8-sweep.md`) only the pause time after the load is, so check that the header's minutes do not lag the time played.
+  evidence: The retrospective's Findings (adversarial lens A-1, A-2, A-6). Use a firmware and packages built after CarpeTelam/crosshatch-player#38 merges (it carries the A-2 fix and a new Battleship package); the fork release `1.6.5-ch.4` has neither. Trigger: the next device run. Severity: low to medium (unverified on the device).
 
 ## e6pre-15
 
@@ -1301,3 +1304,25 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-sync-e54c0087.md`
   summary: Resolved (2026-10-11): the fork release dry run the sync owed passed, run 38100498514 on `0bf1c2d5`; the three games repack to the packet's hashes (`f31b5a02a67a712a`, `cd11a6224228acd9`, `d3fecc1e5fc245f6`). It read: the fork release dry run is owed before the sync counts as done, since upstream changed `OtaUpdater.cpp`, `HttpDownloader.*`, `ReleaseJsonParser.h`, `FirmwareBoardTag.cpp`, the release workflows, `[base]` `build_flags`, and the `freeink-sdk` pointer (ledger row 10).
   evidence: The plan's Verification. Location: .github/workflows/crosshatch-release.yml. Severity: medium (resolved).
+
+## e8-ai8
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-ai8-sweep.md`
+  summary: The A-2 fix (a pause before `LuaGame::load` is no longer subtracted from play time) is pinned at the ledger (`PauseClockTest`) and `LuaGame` (`PlayTimeTest`) levels, but no test drives the device path: Back before the first frame through `GameMatchActivity`, `GameVM::matchPaused` on the loop task while the VM task runs `load()`, then Resume.
+  evidence: Resolved (2026-10-11, `plan-e8-pause-path.md`, `67b23a84`): `PauseBeforeTheLoadTest` (three cases in `GameMatchTest.cpp`) holds the VM task at `LuaGame::load`'s baseline read with `fakertos::arm()`, presses Back so `GameMatchActivity` calls `vm->matchPaused()` before the baseline, then reads `ch.time.ms` after Resume. It fails with the baseline dropped (`pausedAtStartMs = 0`) or with `GameVM` handing no ledger to `HostPorts`. Residual: a pause between the load's baseline and the first frame takes the ordinary after-load path and is not driven separately. It read: Unverified at that level (maybe-false in the plan's Review Triage Log); `GameVM` hands its own ledger in as `HostPorts::paused` (`src/games/GameVM.cpp:83`), which nothing tests. What would settle it: a `MatchTest` that pauses before `showFrame()` with a clock-reading fixture and reads the clock after Resume. `## e5-run4` holds the device check. Severity: medium if the wiring broke (unverified).
+
+## e8-touch-log
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-touch-log.md`
+  summary: Nothing automated asserts the default build lacks the per-tap touch line; the host harness builds the match with `CROSSHATCH_TOUCH_LOG` on.
+  evidence: Only `match.cmake` builds `GameMatchActivity.cpp` for the host, with the define, so deleting the `#ifdef` keeps every host test and CI env green. The build (`3364dbde`) proved absence once by the x4pro ELF's strings. An ongoing check needs a second match-harness variant without the define, or an ELF-strings assertion in the flash-budget job. Location: test/game_script/harness/match.cmake:79. Severity: low.
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-touch-log.md`
+  summary: CI never builds a firmware env with `CROSSHATCH_TOUCH_LOG=1`, so the documented device-run recipe can rot.
+  evidence: The block is one `LOG_DBG` over a host-tested formatter, and the build built x4pro with the flag once. A CI build with the flag costs a full extra firmware build; the next device run that sets it is the practical check. Location: docs/crosshatch/game-canvas.md:21. Severity: low.
+
+## e8-pins
+
+- source_plan: `_bmad-output/implementation-artifacts/plan-e8-pins.md`
+  summary: V3 stays deferred (owner, 2026-10-11): `HostBounds.h`'s host dialog and banner rows (`DIALOG_TOP` 259, `DIALOG_BOTTOM` 528, `BANNER_TOP` 640) cannot be pinned by a host test, so they are re-measured from simulator screenshots whenever the host's end-of-round dialog, Result banner or UI theme changes (an upstream sync that touches them is the trigger).
+  evidence: The pins build measured the harness doubles drawing the Over dialog at canvas rows 266 to 521 and the Result banner's top at 676 (96 px tall), against the device's 259 to 527 and 640 (132 px). The causes: `RecordingTarget` measures every font as a 20 px line and 10 px glyphs, `resetUi()` skips `applySharedUiTheme` (row height 48, where the device implies 66), and the renderer double's origin (3, 6) matches no device. Options weighed: a simulator screenshot check in CI (a new gate) or device-faithful doubles (a story across every screen suite). Location: test/game_script/harness/games_check/HostBounds.h. Severity: medium (unverified drift), as `## e8-xr` deferred it.
+

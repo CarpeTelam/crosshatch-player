@@ -2,6 +2,7 @@
 
 #include <IClock.h>
 #include <IRandom.h>
+#include <PauseClock.h>
 #include <Session.h>
 
 #include <climits>
@@ -204,7 +205,15 @@ Outcome LuaGame::load() {
   bindings.lockedSections = &lockedSections;
   bindings.clock = &ports.clock;
   bindings.paused = ports.paused;
-  bindings.startMs = ports.clock.nowMs();
+  // One read for both, so a pause before the load (open or closed) is not taken out of play time.
+  if (ports.paused) {
+    const GameCore::PauseClock::Reading start = ports.paused->read(ports.clock);
+    bindings.startMs = start.nowMs;
+    bindings.pausedAtStartMs = start.pausedTotalMs;
+  } else {
+    bindings.startMs = ports.clock.nowMs();
+    bindings.pausedAtStartMs = 0;
+  }
   bindings.timer = &pendingTimer;
   bindings.store = &ports.store;
   bindings.scratch = scratch;

@@ -13,12 +13,13 @@
 // GameTouch::classify gave): the line GameMatchActivity logs at LOG_DBG after `<id>: touch `. "Sent" means classify
 // accepted it; a later drop keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch
 // that began ... before the hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in
-// builds with LOG_LEVEL 2 (the development envs of platformio.ini and the simulator); the release envs use 1 and print
-// none. Pure, so host tests pin the text. A tap, long press or swipe prints the screen point(s), the canvas point the
-// game got it at (when sent), the hold when the SDK latched one, and, when it was not sent, why. A contact with no
-// gesture prints `screen (a)->(b)`: the first sample the loop saw to the last one it saw, which for a fast slide can be
-// past the true touch-down. Unknown positions print `screen unknown`; an unknown hold prints no `held`; a long press
-// never prints a hold (the SDK fires it at 500 ms and suppresses the lift, so lastTouchHeldMs is stale).
+// builds with the fork-only define CROSSHATCH_TOUCH_LOG (the match compiles the line in only then) and LOG_LEVEL 2
+// (the development envs of platformio.ini and the simulator); the release envs use 1 and print none. Pure, so host
+// tests pin the text. A tap, long press or swipe prints the screen point(s), the canvas point the game got it at (when
+// sent), the hold when the SDK latched one, and, when it was not sent, why. A contact with no gesture prints `screen
+// (a)->(b)`: the first sample the loop saw to the last one it saw, which for a fast slide can be past the true
+// touch-down. Unknown positions print `screen unknown`; an unknown hold prints no `held`; a long press never prints a
+// hold (the SDK fires it at 500 ms and suppresses the lift, so lastTouchHeldMs is stale).
 namespace GameTouchLog {
 
 struct Line {

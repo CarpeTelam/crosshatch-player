@@ -1,47 +1,20 @@
--- drawn.lua: the pins on what one frame draws (record, watch, expect_marks, frame, look): the worst frame of a dealt
--- grid, its highlight fills, pad counts, strokes, selection frames, and note tiles, and the grounds and numerals of a
--- board, read through a recording `ch.gfx`. A round's `steps(state)` calls them; rules.lua says why they live in a
--- round's VM. marks.lua holds the pins on what each toggle and each change of screen draws, apart from this so that a
--- round that calls only these does not load that module's compiled code (first_party/README.md, "The check VMs' limits").
+-- drawn.lua: the pins on what one frame draws (watch, expect_marks, frame, look): the worst frame of a dealt grid, its
+-- highlight fills, pad counts, strokes, selection frames, and note tiles, and the grounds and numerals of a board, read
+-- through basics.lua's recording `ch.gfx` (`record`, which this module re-exports). A round's `steps(state)` calls
+-- them; rules.lua says why they live in a round's VM. marks.lua holds the pins on what each toggle and each change of
+-- screen draws, apart from this so that a round that calls only these does not load that module's compiled code
+-- (first_party/README.md, "The check VMs' limits").
 local game = require("main")
 local grid = require("grid")
 local layout = require("layout")
+local basics = require("basics")
 local pins = require("pins")
 local eq, fresh, empties, answer, digit_at = pins.eq, pins.fresh, pins.empties, pins.answer, pins.digit_at
 local digit_of, units_of = pins.digit_of, pins.units_of
 
 local drawn = {}
 
--- The commands of a frame, counted. TEST DOUBLE for the engine's ch.gfx (which faults outside a draw call, keeps a
--- frame to 2,048 commands, and checks an image's name against the package): it counts as the engine does (ChBindings.cpp):
--- every call is one command (`clear` included) except `refresh`, which asks for a refresh of the frame and appends no
--- command, so it is not counted (board.draw_grid says 28 commands, and the first check below pins that this double
--- counts it so; marks.lua pins a frame with a clear and a refresh in it), and hands each image call to `on_image` and
--- every call, image and refresh included, to `on_call(name, ...)` instead of keeping the calls (a round's VM has no
--- room for a frame's worth of tables). It takes its function names from the real ch.gfx's
--- own keys, so a name the engine lacks (a misspelled call in a draw) raises here too. It is more permissive than the
--- device: it clips nothing, takes any arguments, and does not look an image up, so a name that is not in the package
--- passes it (the games check's rounds, drawing the real ch.gfx, fault on one). A failed draw leaves no recorder
--- installed: ch.gfx is restored and the error raised again.
-local function record(f, on_image, on_call)
-  local count = 0
-  local gfx = {}
-  for name, value in pairs(ch.gfx) do
-    if type(value) == "function" then
-      gfx[name] = function(...)
-        if name ~= "refresh" then count = count + 1 end
-        if name == "image" and on_image then on_image(...) end
-        if on_call then on_call(name, ...) end
-      end
-    end
-  end
-  local real = ch.gfx
-  ch.gfx = gfx
-  local ok, err = pcall(f)
-  ch.gfx = real
-  if not ok then error(err, 0) end
-  return count
-end
+local record = basics.record
 
 -- What a frame draws beyond its text, gathered as record's `on_call` sees the commands: the cells filled `light` (the
 -- clues) and `dark` (SHADE PEERS), by cell, the pad's remaining counts (by digit), the diagonal strokes (by cell,

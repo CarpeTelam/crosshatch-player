@@ -194,6 +194,34 @@ TEST_F(PlayTimeTest, ATimerSetBeforeAPauseFiresOnTheRawClock) {
   EXPECT_EQ(frontText(), "ticks 1");
 }
 
+// A pause before the load is not play time's: LuaGame::load reads its start with the ledger's paused total then, and
+// ch.time.ms takes out only the paused time after it. Without that baseline, both cases read 0.
+TEST_F(PlayTimeTest, APauseOpenAtTheLoadLeavesOutOnlyItsTimeAfterTheLoad) {
+  useClockGame();
+  ports.paused = &pauses;
+  pauses.enter(clock.nowMs());
+  clock.advance(4000);
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(6000);
+  pauses.leave(clock.nowMs());
+  clock.advance(2000);
+  EXPECT_EQ(readClock(game), "2000");
+}
+
+TEST_F(PlayTimeTest, APauseClosedBeforeTheLoadIsNotLeftOut) {
+  useClockGame();
+  ports.paused = &pauses;
+  pauses.enter(clock.nowMs());
+  clock.advance(3000);
+  pauses.leave(clock.nowMs());
+  clock.advance(2000);
+  DirectGame game(arena, frames, sources, ports, canvas);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  clock.advance(2000);
+  EXPECT_EQ(readClock(game), "2000");
+}
+
 TEST_F(PlayTimeTest, WithNoLedgerTimeMsIsTheRawElapsedTime) {
   useClockGame();
   ASSERT_EQ(ports.paused, nullptr);

@@ -1,6 +1,6 @@
 -- Battleship's rules on one fleet: a 10 x 10 board kept as a 100-char string, row by row (cell (row, col) is char
--- (row - 1) * 10 + col). No `ch` here: the functions are pure, so main.lua draws from their results and the
--- game's own checks call them directly.
+-- (row - 1) * 10 + col). No `ch` here: the functions are pure, so main.lua and view.lua use their results (main
+-- reads taps, view.lua draws) and the game's own checks call them directly.
 --
 --   "."    water
 --   "o"    a miss the other seat fired here

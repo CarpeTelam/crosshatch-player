@@ -8,6 +8,8 @@ local fleet = require("fleet")
 local layout = require("layout")
 local game = require("main")
 local trace = require("trace")
+local basics = require("basics")
+local eq, withCanvas = basics.eq, basics.withCanvas
 
 local draws = {}
 
@@ -17,10 +19,6 @@ local MIN_FIRING, MIN_PLACING = 70, 30
 local SMALL_LINE = 24 -- the height of a line of small text: the game's own step for a wrapped message
 local ACROSS = { { 1, 1, "H" }, { 2, 1, "H" }, { 3, 1, "H" }, { 4, 1, "H" }, { 5, 1, "H" } }
 local DOWN = { { 1, 10, "V" }, { 1, 9, "V" }, { 1, 8, "V" }, { 1, 7, "V" }, { 1, 6, "V" } }
-
-local function eq(got, want, what)
-  if got ~= want then error(what .. ": got " .. tostring(got) .. ", wanted " .. tostring(want), 2) end
-end
 
 -- A fleet from { row, col, "H" | "V" } ships placed in the game's order, through fleet.place.
 local function build(ships, from)
@@ -314,15 +312,6 @@ function draws.over()
       assert(labels[2] + SMALL_LINE + 4 <= top, what .. ": the label must end at least 4 px above its board")
     end
   end
-end
-
--- Runs f() with ch.screen as w x h and puts it back, also when f raises.
-local function withCanvas(w, h, f)
-  local rw, rh = ch.screen.w, ch.screen.h
-  ch.screen.w, ch.screen.h = w, h
-  local ok, err = pcall(f)
-  ch.screen.w, ch.screen.h = rw, rh
-  if not ok then error(err, 0) end
 end
 
 -- The lines f() sends to ch.log.

@@ -8,7 +8,8 @@
 namespace GameCore {
 
 // The ledger of the time a match spent in MatchState::Paused, behind ch.time.ms (play time: the clock since the game
-// loaded, less every pause). Any task reads through playMs; enter() and leave() have one writer.
+// loaded, less every pause after the load). Any task reads through read() and playMs; enter() and leave() have one
+// writer.
 //
 // One packed word, so a reader never combines two variables a concurrent leave() could change between its loads
 // (which would count the interval just closed twice):
@@ -18,7 +19,7 @@ namespace GameCore {
 // (closed + now - since = now - (since - closed)), so both just flip the bit. The paused total at `now` is then
 // `running ? low : now - low`.
 //
-// playMs is a seqlock reader: it loads the word (acquire), reads the clock, issues an acquire fence, and reloads the
+// read() is a seqlock reader: it loads the word (acquire), reads the clock, issues an acquire fence, and reloads the
 // word (relaxed), starting over while the word changed. The fence is what orders the clock read before the reload; two
 // acquire loads alone would let the clock read move after the second one. A read is then exact for the state it
 // validated, with neither straddle left (an old word with a newer clock, or the reverse). A retry follows only a
@@ -60,9 +61,14 @@ class PauseClock {
     return now > low ? now - low : 0;
   }
 
-  // Any task: milliseconds since `startMs` less the time in Paused, frozen while paused (the class comment's seqlock
-  // read).
-  uint64_t playMs(const IClock& clock, const uint64_t startMs) const {
+  // A clock reading and the paused total at it, taken together.
+  struct Reading {
+    uint64_t nowMs;
+    uint64_t pausedTotalMs;
+  };
+
+  // Any task: the class comment's seqlock read, so the pair is consistent with a concurrent enter() or leave().
+  Reading read(const IClock& clock) const {
     uint64_t word;
     uint64_t now;
     do {
@@ -70,9 +76,17 @@ class PauseClock {
       now = clock.nowMs();
       std::atomic_thread_fence(std::memory_order_acquire);
     } while (state.load(std::memory_order_relaxed) != word);
-    const uint64_t elapsed = now > startMs ? now - startMs : 0;
-    const uint64_t pausedTotal = pausedMs(word, now);
-    return pausedTotal < elapsed ? elapsed - pausedTotal : 0;
+    return {now, pausedMs(word, now)};
+  }
+
+  // Any task: milliseconds since `startMs` less the time in Paused after it, frozen while paused. `pausedAtStartMs` is
+  // the paused total read() gave with `startMs`, so a pause entered or closed before then is not subtracted from play
+  // time that had not started.
+  uint64_t playMs(const IClock& clock, const uint64_t startMs, const uint64_t pausedAtStartMs = 0) const {
+    const Reading reading = read(clock);
+    const uint64_t elapsed = reading.nowMs > startMs ? reading.nowMs - startMs : 0;
+    const uint64_t pausedSince = reading.pausedTotalMs > pausedAtStartMs ? reading.pausedTotalMs - pausedAtStartMs : 0;
+    return pausedSince < elapsed ? elapsed - pausedSince : 0;
   }
 
  private:
