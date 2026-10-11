@@ -18,6 +18,7 @@
 #include "Logging.h"
 #include "Manifest.h"
 #include "Roster.h"
+#include "SaveSupport.h"
 #include "Session.h"
 #include "SnapshotMailbox.h"
 #include "StoreSlot.h"
@@ -79,22 +80,9 @@ Bytes bigTable(const size_t n) {
 
 constexpr const char* RESUME = "/.games-data/counter/resume.bin";
 constexpr const char* RESUME_TMP = "/.games-data/counter/resume.bin.tmp";
-using PkgHash = uint8_t[GameSaveStore::PACKAGE_HASH_BYTES];
-constexpr PkgHash PKG = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1};
-constexpr PkgHash OTHER_PKG = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf2};
-
-// resume.bin's bytes: the blob header, the package hash, mode, seat count, ver (u16 LE), the snapshot.
-Bytes resumeFile(const Bytes& snapshot, const uint16_t ver = 7, const PkgHash& hash = PKG, const uint8_t mode = 0,
-                 const uint8_t seats = 1, const char* magic = "CHRS", const uint8_t fileVersion = 1,
-                 const uint8_t codecVersion = 1) {
-  Bytes out = header(magic, fileVersion, codecVersion);
-  out.insert(out.end(), hash, hash + sizeof(PkgHash));
-  out.push_back(mode);
-  out.push_back(seats);
-  out.push_back(static_cast<uint8_t>(ver & 0xFF));
-  out.push_back(static_cast<uint8_t>(ver >> 8));
-  return cat(out, snapshot);
-}
+using savefile::HASH_A;
+using savefile::HASH_B;
+using savefile::resumeBytes;
 
 Bytes firstBytes(const Bytes& file, const size_t count) { return Bytes(file.begin(), file.begin() + count); }
 
@@ -170,10 +158,10 @@ class GameSaveStoreTest : public ::testing::Test {
     return out;
   }
 
-  // A fresh match of the package PKG, with a mailbox of its own.
+  // A fresh match of the package HASH_A, with a mailbox of its own.
   void openResume(const uint32_t startMs = 1000) {
     open(startMs);
-    saves->setPackageHash(PKG);
+    saves->setPackageHash(HASH_A);
     mailboxStorage.assign(GameCore::SNAPSHOT_BYTES, 0);
     mailbox = std::make_unique<SnapshotMailbox>(std::span<uint8_t>(mailboxStorage));
   }
@@ -539,9 +527,9 @@ TEST_F(GameSaveStoreTest, AResumeRoundTripWritesTheExactBytesAndPeekLoadAgree) {
                           0,    1,    7,    0,                             // mode, seats, ver (u16 LE)
                           0x06, 0x00, 0x01, 0x05, 0x04, 't',  'a',  'p',  's', 0x03, 0x06};
   EXPECT_EQ(fakesd::bytesOf(RESUME), expected);
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3));
   EXPECT_FALSE(fakesd::has(RESUME_TMP));
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
   uint16_t ver = 99;
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_EQ(ver, 7u);
@@ -549,7 +537,7 @@ TEST_F(GameSaveStoreTest, AResumeRoundTripWritesTheExactBytesAndPeekLoadAgree) {
 }
 
 TEST_F(GameSaveStoreTest, AResumeWriteGoesThroughTheTmpThenARename) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
   openResume();
   fakesd::sim().ops.clear();
   ASSERT_TRUE(saves->saveResume(TAPS4, 2));
@@ -559,19 +547,19 @@ TEST_F(GameSaveStoreTest, AResumeWriteGoesThroughTheTmpThenARename) {
       std::string("remove ") + RESUME,    std::string("rename ") + RESUME_TMP + " " + RESUME,
   };
   EXPECT_EQ(cardOps(), expected);
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 2));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 2));
 }
 
 TEST_F(GameSaveStoreTest, VerIsKeptToItsLow16Bits) {
   openResume();
   ASSERT_TRUE(saves->saveResume(TAPS3, 0x12345));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 0x2345));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 0x2345));
   uint16_t ver = 0;
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_EQ(ver, 0x2345u);
 
   ASSERT_TRUE(saves->saveResume(TAPS3, 65536));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 0));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 0));
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_EQ(ver, 0u);
 }
@@ -583,25 +571,25 @@ TEST_F(GameSaveStoreTest, ASnapshotAtTheLimitIsKeptAndOneOverIsRefused) {
   ASSERT_TRUE(saves->saveResume(atLimit, 3));
   uint16_t ver = 0;
   EXPECT_EQ(loaded(ver), atLimit);
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
 
   fakesd::sim().ops.clear();
   EXPECT_FALSE(saves->saveResume(bigTable(GameCore::SNAPSHOT_BYTES - 8), 4));
   EXPECT_FALSE(saves->saveResume({}, 4));
   EXPECT_TRUE(cardOps().empty());
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(atLimit, 3));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(atLimit, 3));
 }
 
 TEST_F(GameSaveStoreTest, NothingIsSavedOrLoadedBeforeThePackageHashIsKnown) {
   open();
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
   fakesd::sim().ops.clear();
   EXPECT_FALSE(saves->saveResume(TAPS4, 8));
   uint16_t ver = 5;
   EXPECT_TRUE(loaded(ver).empty());
   EXPECT_EQ(ver, 0u);
   EXPECT_TRUE(cardOps().empty());
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3));
 }
 
 TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAndKept) {
@@ -610,22 +598,22 @@ TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAnd
     const char* reason;
   } cases[] = {
       {Bytes{'C', 'H', 'R'}, "truncated"},
-      {firstBytes(resumeFile(TAPS3), 12), "truncated"},
-      {firstBytes(resumeFile(TAPS3), 17), "truncated"},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX"), "bad_magic"},
+      {firstBytes(resumeBytes(TAPS3), 12), "truncated"},
+      {firstBytes(resumeBytes(TAPS3), 17), "truncated"},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "XXXX"), "bad_magic"},
       // An older or garbage version is malformed; a newer one, or a snapshot over the limit, or an unknown mode byte,
       // is a later firmware's save this host cannot start (ALaterFirmwaresSaveIsUnstartableAndKept).
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version"},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version"},
-      {resumeFile(TAPS3, 7, PKG, 0, 2), "bad seat count"},
-      {resumeFile(TAPS3, 7, PKG, 0, 0), "bad seat count"},
-      {resumeFile(Bytes{}), "empty snapshot"},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 0), "unknown_file_version"},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 1, 0), "unknown_codec_version"},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 2), "bad seat count"},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 0), "bad seat count"},
+      {resumeBytes(Bytes{}), "empty snapshot"},
   };
   for (const auto& c : cases) {
     SetUp();
     fakesd::addFile(RESUME, c.file);
     openResume();
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None) << c.reason;
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None) << c.reason;
     EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": " + c.reason)) << c.reason;
     EXPECT_EQ(std::count_if(fakelog::lines.begin(), fakelog::lines.end(),
                             [](const std::string& line) { return line.find("discarded") != std::string::npos; }),
@@ -640,31 +628,31 @@ TEST_F(GameSaveStoreTest, AResumeThatDoesNotFitTheGameIsDiscardedWithALogLineAnd
 }
 
 TEST_F(GameSaveStoreTest, ASnapshotThatIsNotCanonicalCodecBytesIsDiscardedByPeekAndLoadAlike) {
-  fakesd::addFile(RESUME, resumeFile(cat(TAPS3, Bytes{0x00})));
+  fakesd::addFile(RESUME, resumeBytes(cat(TAPS3, Bytes{0x00})));
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None)
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None)
       << "Continue is offered only for a save that resumes";
   EXPECT_TRUE(fakelog::any(std::string("discarded ") + RESUME + ": trailing"));
   fakelog::lines.clear();
   uint16_t ver = 0;
   EXPECT_TRUE(loaded(ver).empty());
   EXPECT_TRUE(fakelog::any(std::string("discarded ") + RESUME + ": trailing"));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(cat(TAPS3, Bytes{0x00}))) << "and the file stays";
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(cat(TAPS3, Bytes{0x00}))) << "and the file stays";
 }
 
 TEST_F(GameSaveStoreTest, PeekIsUnreadableWithALogLineWhenItCannotAllocateItsBufferAndTheFileStays) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
   openResume();
-  ASSERT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid)
+  ASSERT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid)
       << "the same save is valid when memory is there";
   fakelog::lines.clear();
   failNextNothrowNew = true;
   // Not None: a file is there that could not be checked, and the title screen must not take it for no save.
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unreadable);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Unreadable);
   failNextNothrowNew = false;
   EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: OOM: 1400 bytes to check ") + RESUME));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3));
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid) << "and the next call is fine";
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3));
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid) << "and the next call is fine";
 }
 
 // Retro deferral 4.12 (ADV2): "no save" and "could not tell" are different answers. A save whose file would not
@@ -673,7 +661,7 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
   // The open fails (failOpen), or the first read does (failReadAt 0), as an SD error makes it.
   for (const bool failOpen : {true, false}) {
     SetUp();
-    fakesd::addFile(RESUME, resumeFile(TAPS3));
+    fakesd::addFile(RESUME, resumeBytes(TAPS3));
     openResume();
     const auto fail = [failOpen] {
       if (failOpen) {
@@ -683,11 +671,11 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
       }
     };
     fail();
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unreadable);
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Unreadable);
     EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: could not check ") + RESUME + ": cannot "));
     EXPECT_TRUE(fakelog::any("the file is kept"));
     clearFailures();
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid) << "and the next try reads it";
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid) << "and the next try reads it";
 
     fail();
     uint16_t ver = 5;
@@ -695,7 +683,7 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
     EXPECT_TRUE(saves->loadResume(ver, unreadable).empty());
     EXPECT_TRUE(unreadable);
     EXPECT_EQ(ver, 0u);
-    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3)) << "the file is untouched";
+    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3)) << "the file is untouched";
     clearFailures();
     const std::span<const uint8_t> again = saves->loadResume(ver, unreadable);
     EXPECT_EQ(Bytes(again.begin(), again.end()), TAPS3) << "and the next try reads it";
@@ -703,42 +691,42 @@ TEST_F(GameSaveStoreTest, ASaveThatCannotBeOpenedOrReadIsUnreadableNotAbsentAndS
   }
   // A file that was read and is not a save is None, and loadResume says it was no fault.
   SetUp();
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 7, OTHER_PKG));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 7, HASH_B));
   openResume();
   bool unreadable = true;
   uint16_t ver = 0;
   EXPECT_TRUE(saves->loadResume(ver, unreadable).empty());
   EXPECT_FALSE(unreadable);
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
 }
 
 // The title screen asks again each time it opens, and a save of another package stays, so peek does not log it as an
 // error; the match that would resume it still does (loadResume).
 TEST_F(GameSaveStoreTest, ASaveOfAnotherPackageIsLoggedQuietlyByPeekAndAtErrorByLoad) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 7, OTHER_PKG));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 7, HASH_B));
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
   EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME + " is another package's save"));
   EXPECT_FALSE(fakelog::any("ERR"));
   fakelog::lines.clear();
   uint16_t ver = 0;
   EXPECT_TRUE(loaded(ver).empty());
   EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: discarded ") + RESUME + ": other package"));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 7, OTHER_PKG)) << "and the file stays";
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 7, HASH_B)) << "and the file stays";
 }
 
 TEST_F(GameSaveStoreTest, NoResumeIsNotAnError) {
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
   uint16_t ver = 0;
   EXPECT_TRUE(loaded(ver).empty());
   EXPECT_TRUE(fakelog::lines.empty());
 }
 
 TEST_F(GameSaveStoreTest, AWholeResumeTmpIsReadWhenResumeBinIsMissing) {
-  fakesd::addFile(RESUME_TMP, resumeFile(TAPS3, 9));
+  fakesd::addFile(RESUME_TMP, resumeBytes(TAPS3, 9));
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
   uint16_t ver = 0;
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_EQ(ver, 9u);
@@ -746,18 +734,18 @@ TEST_F(GameSaveStoreTest, AWholeResumeTmpIsReadWhenResumeBinIsMissing) {
 }
 
 TEST_F(GameSaveStoreTest, ATornResumeTmpIsDiscardedAndIgnoredBesideResumeBin) {
-  const Bytes torn = firstBytes(resumeFile(TAPS4), 9);
+  const Bytes torn = firstBytes(resumeBytes(TAPS4), 9);
   fakesd::addFile(RESUME_TMP, torn);
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
   uint16_t ver = 0;
   EXPECT_TRUE(loaded(ver).empty());
 
   SetUp();
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
   fakesd::addFile(RESUME_TMP, torn);
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_FALSE(fakelog::any("discarded"));
 }
@@ -765,12 +753,12 @@ TEST_F(GameSaveStoreTest, ATornResumeTmpIsDiscardedAndIgnoredBesideResumeBin) {
 TEST_F(GameSaveStoreTest, AFailedResumeWriteKeepsThePreviousSaveAndLeavesNoTmp) {
   for (const WriteFault fault : WRITE_FAULTS) {
     SetUp();
-    fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
+    fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
     openResume();
     failWriteOf(RESUME_TMP, fault, RESUME_HEAD_BYTES);
     EXPECT_FALSE(saves->saveResume(TAPS4, 2));
     EXPECT_FALSE(fakesd::has(RESUME_TMP));
-    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 1)) << "the previous save stays";
+    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 1)) << "the previous save stays";
     EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: cannot write ") + RESUME_TMP));
   }
 }
@@ -778,7 +766,7 @@ TEST_F(GameSaveStoreTest, AFailedResumeWriteKeepsThePreviousSaveAndLeavesNoTmp) 
 // GameMatchActivity clears a pending Over delete when this moves: the finished round's file is gone (or replaced), so a
 // delete from then on could only take the new round's save.
 TEST_F(GameSaveStoreTest, TheReplacementCounterMovesWhenTheOldResumeFileIsGoneAndNotWhenItStays) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
   openResume();
   EXPECT_EQ(saves->resumeReplacements(), 0u);
   fakesd::sim().failOpenWrite.insert(RESUME_TMP);
@@ -795,12 +783,12 @@ TEST_F(GameSaveStoreTest, TheReplacementCounterMovesWhenTheOldResumeFileIsGoneAn
 }
 
 TEST_F(GameSaveStoreTest, AFailedResumeRenameKeepsTheWholeTmpAsTheOnlyCopy) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
   openResume();
   fakesd::sim().failRename.insert(RESUME_TMP);
   EXPECT_FALSE(saves->saveResume(TAPS4, 2));
   EXPECT_FALSE(fakesd::has(RESUME));
-  EXPECT_EQ(fakesd::bytesOf(RESUME_TMP), resumeFile(TAPS4, 2));
+  EXPECT_EQ(fakesd::bytesOf(RESUME_TMP), resumeBytes(TAPS4, 2));
 
   // A second failure does not truncate it: it is promoted before the write.
   for (const WriteFault fault : WRITE_FAULTS) {
@@ -809,7 +797,7 @@ TEST_F(GameSaveStoreTest, AFailedResumeRenameKeepsTheWholeTmpAsTheOnlyCopy) {
     failWriteOf(RESUME_TMP, fault, RESUME_HEAD_BYTES);
     EXPECT_FALSE(saves->saveResume(TAPS3, 3));
     EXPECT_EQ(cardOps().front(), std::string("rename ") + RESUME_TMP + " " + RESUME);
-    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 2));
+    EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 2));
     // Put it back as a lone tmp for the next failure.
     fakesd::addFile(RESUME_TMP, fakesd::bytesOf(RESUME));
     fakesd::removeEntry(RESUME);
@@ -821,15 +809,15 @@ TEST_F(GameSaveStoreTest, AFailedResumeRenameKeepsTheWholeTmpAsTheOnlyCopy) {
 }
 
 TEST_F(GameSaveStoreTest, DeleteResumeRemovesTheFileAndItsTmp) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
-  fakesd::addFile(RESUME_TMP, resumeFile(TAPS4));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
+  fakesd::addFile(RESUME_TMP, resumeBytes(TAPS4));
   fakesd::addFile("/.games-data/counter/store.bin", cat(header(), TAPS3));
   openResume();
   EXPECT_TRUE(saves->deleteResume());
   EXPECT_FALSE(fakesd::has(RESUME));
   EXPECT_FALSE(fakesd::has(RESUME_TMP));
   EXPECT_TRUE(fakesd::has("/.games-data/counter/store.bin")) << "store.bin is not resume.bin";
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
 
   fakesd::sim().ops.clear();
   EXPECT_TRUE(saves->deleteResume()) << "nothing to delete is done";
@@ -837,18 +825,18 @@ TEST_F(GameSaveStoreTest, DeleteResumeRemovesTheFileAndItsTmp) {
 }
 
 TEST_F(GameSaveStoreTest, DeleteResumeDoesNothingWithoutThePackageHash) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
-  fakesd::addFile(RESUME_TMP, resumeFile(TAPS4));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
+  fakesd::addFile(RESUME_TMP, resumeBytes(TAPS4));
   open();  // no setPackageHash: this match could not tell whose save it is
   fakesd::sim().ops.clear();
   EXPECT_TRUE(saves->deleteResume());
   EXPECT_TRUE(cardOps().empty());
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3));
-  EXPECT_EQ(fakesd::bytesOf(RESUME_TMP), resumeFile(TAPS4));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3));
+  EXPECT_EQ(fakesd::bytesOf(RESUME_TMP), resumeBytes(TAPS4));
 }
 
 TEST_F(GameSaveStoreTest, AFailedDeleteIsLoggedAndReported) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3));
   openResume();
   fakesd::sim().failRemove.insert(RESUME);
   EXPECT_FALSE(saves->deleteResume());
@@ -866,7 +854,7 @@ TEST_F(GameSaveStoreTest, FlushResumeWritesTheLatestPublishedSnapshotOnceAndAtOn
   ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));  // latest wins
   EXPECT_TRUE(saves->flushResume(*mailbox, 1001)) << "not held back by the store's 5 s interval";
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 6));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 6));
   EXPECT_FALSE(mailbox->pending());
 
   fakesd::sim().ops.clear();
@@ -876,7 +864,7 @@ TEST_F(GameSaveStoreTest, FlushResumeWritesTheLatestPublishedSnapshotOnceAndAtOn
   // Successive successes are never throttled.
   ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
   EXPECT_TRUE(saves->flushResume(*mailbox, 1003));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 7));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 7));
 }
 
 TEST_F(GameSaveStoreTest, FlushResumeWritesNothingWithoutAPackageHash) {
@@ -901,7 +889,7 @@ TEST_F(GameSaveStoreTest, ClearingTheBackoffLetsTheNextSnapshotThroughAtOnce) {
   fakesd::sim().ops.clear();
   EXPECT_TRUE(saves->flushResume(*mailbox, 2001));
   EXPECT_FALSE(mailbox->pending());
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 5));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 5));
 }
 
 TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedOnlyAfterTheInterval) {
@@ -921,18 +909,18 @@ TEST_F(GameSaveStoreTest, AFailedResumeWriteStaysPendingAndIsRetriedOnlyAfterThe
   // A newer snapshot meanwhile is what the retry writes.
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
   EXPECT_TRUE(saves->flushResume(*mailbox, 7000));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 6));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 6));
   EXPECT_FALSE(mailbox->pending());
 
   // The throttle is over once a write has succeeded.
   ASSERT_TRUE(mailbox->publish(TAPS3, 7, false));
   EXPECT_TRUE(saves->flushResume(*mailbox, 7001));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 7));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 7));
 }
 
 TEST_F(GameSaveStoreTest, ASnapshotWhoseStatusIsOverDeletesTheSaveInsteadOfBeingWritten) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
-  fakesd::addFile(RESUME_TMP, resumeFile(TAPS3, 1));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
+  fakesd::addFile(RESUME_TMP, resumeBytes(TAPS3, 1));
   openResume();
   ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
   fakesd::sim().ops.clear();
@@ -941,11 +929,11 @@ TEST_F(GameSaveStoreTest, ASnapshotWhoseStatusIsOverDeletesTheSaveInsteadOfBeing
   EXPECT_FALSE(fakesd::has(RESUME_TMP));
   EXPECT_EQ(fakesd::countOps("write "), 0u) << "an over snapshot is never written";
   EXPECT_FALSE(mailbox->pending());
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None);
 }
 
 TEST_F(GameSaveStoreTest, AFailedDeleteForAnOverSnapshotIsRetriedLikeAFailedWrite) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 1));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 1));
   openResume(0);
   ASSERT_TRUE(mailbox->publish(TAPS4, 2, true));
   fakesd::sim().failRemove.insert(RESUME);
@@ -966,7 +954,7 @@ TEST_F(GameSaveStoreTest, ANewRoundsSnapshotIsWrittenAgainAfterAnOverOne) {
   EXPECT_FALSE(fakesd::has(RESUME));
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, false));
   EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 6));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 6));
 }
 
 // ---- pass saves: the forms that take the game's manifest and the host's caps ----
@@ -1011,9 +999,9 @@ bool sameRoster(const Roster& a, const Roster& b) {
 TEST_F(GameSaveStoreTest, WithoutARosterASoloSaveIsTodaysBytesAndBothFormsTakeIt) {
   openResume();
   ASSERT_TRUE(saves->saveResume(TAPS3, 7));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 7, PKG, SOLO_BYTE, 1));
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
-  EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 7, HASH_A, SOLO_BYTE, 1));
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Valid);
   uint16_t ver = 0;
   bool unreadable = true;
   Roster saved = Roster::pass(3);
@@ -1034,7 +1022,7 @@ TEST_F(GameSaveStoreTest, APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeI
                           1,    2,    7,    0,                             // mode (pass), seats, ver (u16 LE)
                           0x06, 0x00, 0x01, 0x05, 0x04, 't',  'a',  'p',  's', 0x03, 0x06};
   EXPECT_EQ(fakesd::bytesOf(RESUME), expected);
-  EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Valid);
   uint16_t ver = 0;
   bool unreadable = true;
   Roster saved;
@@ -1050,10 +1038,10 @@ TEST_F(GameSaveStoreTest, APassRosterWritesModeOneAndItsSeatsAndTheNewFormsTakeI
 // ones): a pass save is not theirs to offer or resume, so it is Unstartable to peek, loadResume refuses it, and the
 // file stays.
 TEST_F(GameSaveStoreTest, APassSaveIsUnstartableToTheSoloOnlyFormsAndIsKept) {
-  const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
+  const Bytes passSave = resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unstartable);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Unstartable);
   EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
                            " is a save that cannot be resumed here: mode not startable; the file is kept"));
   EXPECT_FALSE(fakelog::any("ERR"));
@@ -1113,10 +1101,10 @@ TEST_F(GameSaveStoreTest, ASaveTheGameOrHostCannotStartIsUnstartableAndKept) {
     const std::string label = std::string("mode ") + std::to_string(c.mode) + ", n " + std::to_string(c.seats) +
                               ", host maxSeats " + std::to_string(c.host.maxSeats) + (c.host.pass ? " pass" : "");
     SetUp();
-    const Bytes file = resumeFile(TAPS3, 7, PKG, c.mode, c.seats);
+    const Bytes file = resumeBytes(TAPS3, 7, HASH_A, c.mode, c.seats);
     fakesd::addFile(RESUME, file);
     openResume();
-    const GameSaveStore::SaveState state = GameSaveStore::peek(c.game, PKG, c.host);
+    const GameSaveStore::SaveState state = GameSaveStore::peek(c.game, HASH_A, c.host);
     uint16_t ver = 5;
     bool unreadable = true;
     Roster saved = Roster::pass(3);
@@ -1155,11 +1143,12 @@ TEST_F(GameSaveStoreTest, ASaveTheGameOrHostCannotStartIsUnstartableAndKept) {
 TEST_F(GameSaveStoreTest, AnUnknownModeIsUnstartableAndKept) {
   for (const uint8_t mode : {2, 3, 255}) {
     SetUp();
-    const Bytes file = resumeFile(TAPS3, 7, PKG, mode, 2);
+    const Bytes file = resumeBytes(TAPS3, 7, HASH_A, mode, 2);
     fakesd::addFile(RESUME, file);
     openResume();
-    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Unstartable) << int(mode);
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unstartable) << int(mode);
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Unstartable)
+        << int(mode);
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Unstartable) << int(mode);
     EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME +
                              " is a save that cannot be resumed here: unknown mode; the file is kept"))
         << int(mode);
@@ -1194,32 +1183,32 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
     // refuses a pass save as `mode not startable`, which is checked before the size and the codec.
     int keptLines = 3;
   } cases[] = {
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), "newer file version", true},
-      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 255), "newer file version", true},
-      {firstBytes(resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 2), 6), "newer file version", true},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 2), "newer codec version", true},
-      {resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2, "CHRS", 1, 9), "newer codec version", true, 2},
-      {resumeFile(big), "too large", true},
-      {resumeFile(big, 7, PKG, PASS_BYTE, 2), "too large", true, 2},
-      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 2), "other package", false},
-      {resumeFile(TAPS3, 7, OTHER_PKG, 0, 1, "CHRS", 1, 0), "other package", false},  // an older codec, too
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "XXXX", 2), "bad_magic", false},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
-      {resumeFile(TAPS3, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 2), "newer file version", true},
+      {resumeBytes(TAPS3, 7, HASH_B, 0, 1, "CHRS", 255), "newer file version", true},
+      {firstBytes(resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 2), 6), "newer file version", true},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 1, 2), "newer codec version", true},
+      {resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 2, "CHRS", 1, 9), "newer codec version", true, 2},
+      {resumeBytes(big), "too large", true},
+      {resumeBytes(big, 7, HASH_A, PASS_BYTE, 2), "too large", true, 2},
+      {resumeBytes(TAPS3, 7, HASH_B, 0, 1, "CHRS", 1, 2), "other package", false},
+      {resumeBytes(TAPS3, 7, HASH_B, 0, 1, "CHRS", 1, 0), "other package", false},  // an older codec, too
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "XXXX", 2), "bad_magic", false},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 0), "unknown_file_version", false},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
       // Oversized but not this package's, or with a header this firmware refuses: the header or package reason, never
       // `too large`, which only a save of this package with a good header gets.
-      {resumeFile(big, 7, OTHER_PKG), "other package", false},
-      {resumeFile(big, 7, PKG, 0, 1, "XXXX"), "bad_magic", false},
-      {resumeFile(big, 7, PKG, 0, 1, "CHRS", 0), "unknown_file_version", false},
-      {resumeFile(big, 7, PKG, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
+      {resumeBytes(big, 7, HASH_B), "other package", false},
+      {resumeBytes(big, 7, HASH_A, 0, 1, "XXXX"), "bad_magic", false},
+      {resumeBytes(big, 7, HASH_A, 0, 1, "CHRS", 0), "unknown_file_version", false},
+      {resumeBytes(big, 7, HASH_A, 0, 1, "CHRS", 1, 0), "unknown_codec_version", false},
       // This package's oversized or newer-codec save with a malformed seat count: a refusal that is not kept, size or
       // codec aside.
-      {resumeFile(big, 7, PKG, 0, 2), "bad seat count", false},
-      {resumeFile(TAPS3, 7, PKG, 0, 2, "CHRS", 1, 2), "bad seat count", false},
+      {resumeBytes(big, 7, HASH_A, 0, 2), "bad seat count", false},
+      {resumeBytes(TAPS3, 7, HASH_A, 0, 2, "CHRS", 1, 2), "bad seat count", false},
       // A newer codec names the mode or seat refusal before itself, and itself before the size.
-      {resumeFile(TAPS3, 7, PKG, 5, 1, "CHRS", 1, 2), "unknown mode", true},
-      {resumeFile(TAPS3, 7, PKG, PASS_BYTE, 4, "CHRS", 1, 2), "seats not startable", true, 2},
-      {resumeFile(big, 7, PKG, 0, 1, "CHRS", 1, 2), "newer codec version", true},
+      {resumeBytes(TAPS3, 7, HASH_A, 5, 1, "CHRS", 1, 2), "unknown mode", true},
+      {resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 4, "CHRS", 1, 2), "seats not startable", true, 2},
+      {resumeBytes(big, 7, HASH_A, 0, 1, "CHRS", 1, 2), "newer codec version", true},
   };
   for (const auto& c : cases) {
     SetUp();
@@ -1228,8 +1217,8 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
     const std::string label = std::string(c.reason) + " (" + std::to_string(c.file.size()) + " bytes)";
     const GameSaveStore::SaveState want =
         c.kept ? GameSaveStore::SaveState::Unstartable : GameSaveStore::SaveState::None;
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), want) << label;
-    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), want) << label;
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), want) << label;
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), want) << label;
     uint16_t ver = 5;
     bool unreadable = true;
     Roster saved = Roster::pass(3);
@@ -1255,7 +1244,7 @@ TEST_F(GameSaveStoreTest, ALaterFirmwaresSaveIsUnstartableAndKept) {
 // no allocation, and the roster (what its next save writes) unchanged, where a loadResume that loads the save adopts
 // the save's roster.
 TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekThroughTheStoresBufferAndLeavesItsRoster) {
-  const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
+  const Bytes passSave = resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);
   open();
   EXPECT_EQ(saves->peekResume(counterGame(), PASS_HOST), GameSaveStore::SaveState::None)
@@ -1275,7 +1264,7 @@ TEST_F(GameSaveStoreTest, PeekResumeAnswersAsPeekThroughTheStoresBufferAndLeaves
   EXPECT_EQ(fakesd::bytesOf(RESUME), passSave);
   // The store's roster is still solo: its next save is mode 0, n 1, not the pass save's roster.
   ASSERT_TRUE(saves->saveResume(TAPS4, 8));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 8, PKG, SOLO_BYTE, 1));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 8, HASH_A, SOLO_BYTE, 1));
   // A nearby roster reads nothing, as loadResume does (AD-17).
   Roster nearby = Roster::pass(2);
   nearby.mode = Mode::Nearby;
@@ -1289,8 +1278,8 @@ TEST_F(GameSaveStoreTest, APreEpicSoloSaveIsValidInBothForms) {
                          0x01, 0x07, 0x00, 0x06, 0x00, 0x01, 0x05, 0x04, 0x74, 0x61, 0x70, 0x73, 0x03, 0x06};
   fakesd::addFile(RESUME, example);
   openResume();
-  EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Valid);
-  EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Valid);
+  EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Valid);
   uint16_t ver = 0;
   EXPECT_EQ(loaded(ver), TAPS3);
   EXPECT_EQ(ver, 7u);
@@ -1306,7 +1295,7 @@ TEST_F(GameSaveStoreTest, APreEpicSoloSaveIsValidInBothForms) {
 // Unreadable is a card or heap fault, whatever the save's mode: a pass save that would not open or read, or whose
 // check buffer could not be allocated, is not None, and it stays.
 TEST_F(GameSaveStoreTest, APassSaveThatCannotBeReadIsUnreadableAndKept) {
-  const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
+  const Bytes passSave = resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 2);
   for (const bool failOpen : {true, false}) {
     SetUp();
     fakesd::addFile(RESUME, passSave);
@@ -1316,8 +1305,8 @@ TEST_F(GameSaveStoreTest, APassSaveThatCannotBeReadIsUnreadableAndKept) {
     } else {
       fakesd::sim().failReadAt[RESUME] = 0;
     }
-    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Unreadable);
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::Unreadable) << "the old form alike";
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Unreadable);
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::Unreadable) << "the old form alike";
     uint16_t ver = 5;
     bool unreadable = false;
     Roster saved = Roster::pass(3);
@@ -1331,7 +1320,7 @@ TEST_F(GameSaveStoreTest, APassSaveThatCannotBeReadIsUnreadableAndKept) {
   fakesd::addFile(RESUME, passSave);
   openResume();
   failNextNothrowNew = true;
-  EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::Unreadable);
+  EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::Unreadable);
   failNextNothrowNew = false;
   EXPECT_TRUE(fakelog::any(std::string("ERR GAME: counter: OOM: 1400 bytes to check ") + RESUME));
   EXPECT_EQ(fakesd::bytesOf(RESUME), passSave);
@@ -1340,7 +1329,7 @@ TEST_F(GameSaveStoreTest, APassSaveThatCannotBeReadIsUnreadableAndKept) {
 // AD-17: a nearby match keeps no resume.bin. With its roster set, nothing is read, written, or deleted, as without
 // the package hash.
 TEST_F(GameSaveStoreTest, ANearbyRosterReadsWritesAndDeletesNothing) {
-  const Bytes passSave = resumeFile(TAPS3, 7, PKG, PASS_BYTE, 2);
+  const Bytes passSave = resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 2);
   fakesd::addFile(RESUME, passSave);
   fakesd::addFile(RESUME_TMP, passSave);
   openResume();
@@ -1374,11 +1363,11 @@ TEST_F(GameSaveStoreTest, ANearbyRosterReadsWritesAndDeletesNothing) {
 TEST_F(GameSaveStoreTest, AnotherPackagesSaveIsThatWhateverItsMode) {
   for (const uint8_t mode : {PASS_BYTE, uint8_t{7}}) {
     SetUp();
-    const Bytes file = resumeFile(TAPS3, 7, OTHER_PKG, mode, 2);
+    const Bytes file = resumeBytes(TAPS3, 7, HASH_B, mode, 2);
     fakesd::addFile(RESUME, file);
     openResume();
-    EXPECT_EQ(GameSaveStore::peek(counterGame(), PKG, PASS_HOST), GameSaveStore::SaveState::None) << int(mode);
-    EXPECT_EQ(GameSaveStore::peek("counter", PKG), GameSaveStore::SaveState::None) << int(mode);
+    EXPECT_EQ(GameSaveStore::peek(counterGame(), HASH_A, PASS_HOST), GameSaveStore::SaveState::None) << int(mode);
+    EXPECT_EQ(GameSaveStore::peek("counter", HASH_A), GameSaveStore::SaveState::None) << int(mode);
     EXPECT_TRUE(fakelog::any(std::string("INF GAME: counter: ") + RESUME + " is another package's save")) << int(mode);
     EXPECT_FALSE(fakelog::any("ERR")) << int(mode);
     EXPECT_EQ(fakesd::bytesOf(RESUME), file) << int(mode);
@@ -1387,7 +1376,7 @@ TEST_F(GameSaveStoreTest, AnotherPackagesSaveIsThatWhateverItsMode) {
 
 // A match that resumed a pass save goes on writing it as one, without a setRoster of its own.
 TEST_F(GameSaveStoreTest, AResumedPassSaveIsWrittenBackAsAPassSave) {
-  fakesd::addFile(RESUME, resumeFile(TAPS3, 7, PKG, PASS_BYTE, 3));
+  fakesd::addFile(RESUME, resumeBytes(TAPS3, 7, HASH_A, PASS_BYTE, 3));
   openResume();
   uint16_t ver = 0;
   bool unreadable = true;
@@ -1395,7 +1384,7 @@ TEST_F(GameSaveStoreTest, AResumedPassSaveIsWrittenBackAsAPassSave) {
   ASSERT_FALSE(saves->loadResume(ver, unreadable, counterGame(), PASS_HOST, saved).empty());
   ASSERT_TRUE(sameRoster(saved, Roster::pass(3)));
   ASSERT_TRUE(saves->saveResume(TAPS4, 8));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS4, 8, PKG, PASS_BYTE, 3));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS4, 8, HASH_A, PASS_BYTE, 3));
 }
 
 // The match's own path for a pass roster: the mailbox's snapshot is written as mode 1 with its seats, and an over
@@ -1405,7 +1394,7 @@ TEST_F(GameSaveStoreTest, FlushResumeWritesAPassRostersSnapshotAndDeletesItWhenO
   saves->setRoster(Roster::pass(2));
   ASSERT_TRUE(mailbox->publish(TAPS3, 5, false));
   EXPECT_TRUE(saves->flushResume(*mailbox, 1001));
-  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeFile(TAPS3, 5, PKG, PASS_BYTE, 2));
+  EXPECT_EQ(fakesd::bytesOf(RESUME), resumeBytes(TAPS3, 5, HASH_A, PASS_BYTE, 2));
   ASSERT_TRUE(mailbox->publish(TAPS4, 6, true));
   EXPECT_TRUE(saves->flushResume(*mailbox, 1002));
   EXPECT_FALSE(fakesd::has(RESUME));

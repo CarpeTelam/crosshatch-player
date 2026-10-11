@@ -50,6 +50,8 @@ std::vector<Case> loadCases() {
 const std::map<std::string, Error>& errorsByName() {
   static const std::map<std::string, Error> names = {
       {"NotAPackage", Error::NotAPackage},
+      {"Empty",
+       Error::Empty},  // no crafted case: an empty file is InstallerTest's (this suite asserts a non-empty file)
       {"BadManifest", Error::BadManifest},
       {"BadMember", Error::BadMember},
       {"NoMain", Error::NoMain},
@@ -193,10 +195,10 @@ TEST_F(HardeningTest, TheGeneratorMadeOnePackageForEachRejection) {
 TEST_F(HardeningTest, EveryErrorHasItsOwnDescription) {
   std::set<std::string> texts;
   for (const Error error :
-       {Error::SdCard, Error::OutOfMemory, Error::NotAPackage, Error::BadManifest, Error::BadMember, Error::NoMain,
-        Error::TooManyMembers, Error::BadImage, Error::PackageTooBig, Error::MemberTooBig, Error::ImagesTooBig,
-        Error::SourcesTooBig, Error::BadSize, Error::BadCrc, Error::BinaryLua, Error::Unsupported, Error::BadDirectory,
-        Error::UnknownIcon, Error::TooManyGames}) {
+       {Error::SdCard,       Error::OutOfMemory,  Error::NotAPackage,    Error::Empty,       Error::BadManifest,
+        Error::BadMember,    Error::NoMain,       Error::TooManyMembers, Error::BadImage,    Error::PackageTooBig,
+        Error::MemberTooBig, Error::ImagesTooBig, Error::SourcesTooBig,  Error::BadSize,     Error::BadCrc,
+        Error::BinaryLua,    Error::Unsupported,  Error::BadDirectory,   Error::UnknownIcon, Error::TooManyGames}) {
     const std::string text = GamePackageInstaller::describe(error);
     EXPECT_NE(text, "unknown error");
     EXPECT_TRUE(texts.insert(text).second) << "two errors describe themselves as: " << text;

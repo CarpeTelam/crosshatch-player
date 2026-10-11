@@ -17,8 +17,10 @@
 #include "GameRegistry.h"
 #include "HostCapsScript.h"
 #include "InstallerScript.h"
+#include "LauncherSupport.h"
 #include "MatchSupport.h"
 #include "RemoveScript.h"
+#include "SaveSupport.h"
 #include "activities/games/GameMatchActivity.h"
 #include "activities/games/GameModeActivity.h"
 #include "activities/games/GameOptionsActivity.h"
@@ -56,23 +58,17 @@ namespace {
 using Button = MappedInputManager::Button;
 using GameCore::Manifest;
 using harness::Bytes;
-
-const std::string PKG = "v1\n0530a15766e91bf1\n";
-// The package hash PKG holds.
-const uint8_t HASH[GamePkg::HASH_BYTES] = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1};
+using launcher::manifestJson;
+using launcher::PKG;
+using match::holds;
+using savefile::HASH_A;
+using savefile::resumeBytes;
+using savefile::snapshotOf;
 
 // Reads the protected name an Activity was constructed with.
 struct NameOf : Activity {
   static const std::string& of(const Activity& activity) { return activity.*(&NameOf::name); }
 };
-
-// `extra` is more of the manifest's members, each after a comma (",\"default_mode\":\"pass\"").
-std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int seatsMin,
-                         const int seatsMax, const std::string& extra = "") {
-  return "{\"id\":\"" + id + "\",\"name\":\"" + name +
-         "\",\"version\":\"1.0.0\",\"api\":1,\"seats\":{\"min\":" + std::to_string(seatsMin) +
-         ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" + modes + "]" + extra + "}";
-}
 
 Manifest parsed(const std::string& json) {
   Manifest manifest;
@@ -87,25 +83,6 @@ constexpr uint8_t NEARBY = Manifest::MODE_NEARBY;
 // resume.bin's mode byte (docs/crosshatch/formats.md): 0 solo, 1 pass.
 constexpr uint8_t SAVED_SOLO = 0;
 constexpr uint8_t SAVED_PASS = 1;
-
-// {taps = n}: the codec bytes the counting game's snapshot has.
-Bytes snapshotOf(const uint8_t taps) {
-  return Bytes{0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, static_cast<uint8_t>(taps << 1)};
-}
-
-// resume.bin as GameSaveStore lays it out for a match of PKG's package in `mode` with `seats` seats
-// (the helper of the Continue rows' suite that entry 8 retired, which fixed them at solo and one).
-Bytes resumeBytes(const uint8_t taps, const uint16_t ver, const uint8_t mode = SAVED_SOLO, const uint8_t seats = 1) {
-  Bytes out = {'C', 'H', 'R', 'S', 1, 1};
-  out.insert(out.end(), HASH, HASH + GamePkg::HASH_BYTES);
-  out.push_back(mode);
-  out.push_back(seats);
-  out.push_back(static_cast<uint8_t>(ver & 0xFF));
-  out.push_back(static_cast<uint8_t>(ver >> 8));
-  const Bytes snapshot = snapshotOf(taps);
-  out.insert(out.end(), snapshot.begin(), snapshot.end());
-  return out;
-}
 
 // A game of five taps that logs its setup and every draw, so a resumed match shows which snapshot it drew and whether
 // setup ran (from the Continue rows' suite that entry 8 retired).
@@ -227,7 +204,7 @@ class TitleScreenTest : public match::ScreenTest {
   // default, so a manifest that offers pass is valid (Manifest::check: pass needs seats.max 2).
   static void installCounter(const std::string& modes, const int seatsMax = 2) {
     match::installFixture("counter");
-    fakesd::addFile("/.games/counter/manifest.json", manifestJson("counter", "Counter", modes, 1, seatsMax));
+    fakesd::addFile("/.games/counter/manifest.json", manifestJson("counter", "Counter", modes, 1, 1, seatsMax));
     fakesd::addFile("/.games/counter/.pkg", PKG);
   }
   // An installed game of the counting Lua (or `lua`), its manifest given `extra` members (manifestJson).
@@ -235,13 +212,13 @@ class TitleScreenTest : public match::ScreenTest {
                               const int seatsMin = 1, const int seatsMax = 2, const std::string& extra = "",
                               const char* lua = COUNTING_GAME) {
     const std::string dir = "/.games/" + id;
-    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, seatsMin, seatsMax, extra));
+    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, 1, seatsMin, seatsMax, extra));
     fakesd::addFile(dir + "/main.lua", std::string(lua));
     fakesd::addFile(dir + "/.pkg", PKG);
   }
   // A save of game `id`'s match, {taps = 2} at ver 3, in `mode` with `seats` seats.
   static void save(const std::string& id, const uint8_t mode = SAVED_SOLO, const uint8_t seats = 1) {
-    fakesd::addFile(resumePath(id), resumeBytes(2, 3, mode, seats));
+    fakesd::addFile(resumePath(id), resumeBytes(snapshotOf(2), 3, HASH_A, mode, seats));
   }
 
   // ---- the screens ----
@@ -259,9 +236,9 @@ class TitleScreenTest : public match::ScreenTest {
   void openTitleFor(const uint8_t modes, const int seatsMax = 2, const std::string& id = "counter",
                     const std::string& name = "Counter") {
     GameRegistry::Entry game;
-    game.manifest = parsed(manifestJson(id, name, "\"solo\"", 1, seatsMax));
+    game.manifest = parsed(manifestJson(id, name, "\"solo\"", 1, 1, seatsMax));
     game.check = GameCore::CheckResult{GameCore::CheckStatus::Ok, GameCore::CheckReason::None, modes};
-    std::copy(HASH, HASH + GamePkg::HASH_BYTES, game.pkgHash);
+    std::copy(HASH_A, HASH_A + GamePkg::HASH_BYTES, game.pkgHash);
     auto made = std::make_unique<GameModeActivity>(*renderer, *input, game);
     title = made.get();
     activityManager.pushedActivities.push_back(std::move(made));
@@ -1003,10 +980,6 @@ TEST_F(TitleScreenTest, PassHiddenFromItsManifestPlaysThroughTheBlankToOverAndPl
   ASSERT_NE(enterReplacement(), nullptr);
   current = entered;  // frame(), render(), and tapRow() now drive the match
   EXPECT_TRUE(logHas("pass-hidden: Starting -> HandOff on Started")) << "the manifest's hidden: true reached the match";
-  const auto holds = [](const GfxRenderer::Shown& push, const std::string& part) {
-    return std::any_of(push.texts.begin(), push.texts.end(),
-                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
-  };
   // The hand-off screen naming `seat`, pushed in full: it waits for the VM to name a round's first turn seat, so a
   // render before that pushes nothing and the loop asks again.
   const auto expectHandOff = [&](const int seat) {
@@ -2152,7 +2125,7 @@ TEST_F(GamePictureTest, APageOverItsLimitOrWithNoMemoryIsNoPageAndLogged) {
 }
 
 TEST_F(GamePictureTest, TheIconIsTheLaunchersChoice) {
-  GameCore::Manifest manifest = parsed(manifestJson("demo", "Demo", "\"solo\"", 1, 1, ",\"icon\":\"dice-five\""));
+  GameCore::Manifest manifest = parsed(manifestJson("demo", "Demo", "\"solo\"", 1, 1, 1, ",\"icon\":\"dice-five\""));
   GamePicture picture;
   picture.loadIcon(manifest);
   EXPECT_EQ(picture.iconSource(), GameRowIcon::Source::Library);
@@ -2365,7 +2338,7 @@ TEST_F(OneRowPerGameTest, ConfirmOnTheGamesRowThenConfirmResumesItsSave) {
 TEST_F(OneRowPerGameTest, ASaveOfAChangedPackageOffersNoContinueAndIsLeftOnTheCard) {
   addGames(2);
   save("game-01");
-  Bytes stale = resumeBytes(2, 3);
+  Bytes stale = resumeBytes(snapshotOf(2), 3);
   stale[6 + GamePkg::HASH_BYTES - 1] ^= 0x03;  // the package hash follows the 6-byte header
   fakesd::addFile(resumePath("game-02"), stale);
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 02"));
@@ -2378,14 +2351,14 @@ TEST_F(OneRowPerGameTest, ASaveOfAChangedPackageOffersNoContinueAndIsLeftOnTheCa
   closeScreens(match::Saves::Discard);  // no match ran
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
   EXPECT_EQ(rowsDrawn(), newOnly);
-  EXPECT_EQ(fakesd::bytesOf(resumePath("game-01")), resumeBytes(2, 3));
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-01")), resumeBytes(snapshotOf(2), 3));
 }
 
 // #5: a file that is not a resume (text, or cut short) offers no Continue; a valid one beside it does.
 TEST_F(OneRowPerGameTest, ASaveThatIsNotAValidResumeOffersNoContinue) {
   addGames(3);
   fakesd::addFile(resumePath("game-01"), std::string("resume of game-01"));
-  Bytes truncated = resumeBytes(2, 3);
+  Bytes truncated = resumeBytes(snapshotOf(2), 3);
   truncated.resize(12);
   fakesd::addFile(resumePath("game-02"), truncated);
   save("game-03");
@@ -2404,7 +2377,7 @@ TEST_F(OneRowPerGameTest, ASaveThatIsNotAValidResumeOffersNoContinue) {
 // #7: resume.bin.tmp alone (the rename to resume.bin was cut off) is a save the title screen offers.
 TEST_F(OneRowPerGameTest, ASaveWhoseRenameWasInterruptedStillOffersContinue) {
   addGames(1);
-  fakesd::addFile(resumePath("game-01") + ".tmp", resumeBytes(2, 3));
+  fakesd::addFile(resumePath("game-01") + ".tmp", resumeBytes(snapshotOf(2), 3));
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Game 01"));
   const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   EXPECT_EQ(rowsDrawn(), expected);
@@ -2493,7 +2466,7 @@ TEST_F(OneRowPerGameTest, TwoConfirmsAfterLeavingAContinueMatchResumeAgainAndLea
     entered->loop();
     input->clear();
   }
-  EXPECT_EQ(fakesd::bytesOf(resumePath("game-03")), resumeBytes(2, 3)) << "the save is as it was";
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-03")), resumeBytes(snapshotOf(2), 3)) << "the save is as it was";
 }
 
 // #21, the everyday path: a New match, one move, Leave. The forced exit writes resume.bin, the next launcher selects
@@ -2521,7 +2494,8 @@ TEST_F(OneRowPerGameTest, ANewMatchLeftAfterAMoveIsResumedByConfirmOnItsRowAndCo
   ASSERT_TRUE(pumpMatchTo("draw\t1")) << "the tap was applied and drawn";
 
   reopenLauncher(match::Saves::Keep);  // Leave: the forced exit writes the round in progress, and it stays
-  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), resumeBytes(1, 2)) << "the round's last snapshot: one tap, ver 2";
+  EXPECT_EQ(fakesd::bytesOf(resumePath("game-02")), resumeBytes(snapshotOf(1), 2))
+      << "the round's last snapshot: one tap, ver 2";
   const std::vector<std::string> games{"Game 01", "Game 02", "Game 03"};
   EXPECT_EQ(shown(3), games) << "still one row a game";
   EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_CONTINUE)));

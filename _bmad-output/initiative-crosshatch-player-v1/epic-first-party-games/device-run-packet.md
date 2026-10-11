@@ -205,11 +205,11 @@ Look at each on the X4 Pro's panel, with Sudoku's SHADE PEERS on and digit notes
 
 | ID | Decision | What to look at | Owner's answer |
 | --- | --- | --- | --- |
-| J1 | Clue legibility (Assumption A1): a clue is a black numeral on the 25% grey ground, no longer white on 50% | Do all nine digits, 1 2 4 included, read at arm's length in normal light, in a normal cell and in a cell SHADE PEERS shades (a clue keeps its light ground there)? | |
-| J2 | Digit notes in three bold sets of 12 × 16 px: G grey on white (a normal cell), B black on white (the focused digit's note in a normal cell), H white on a 50% checker (a shaded cell), the focused digit's note there inverted | Does each set read, and does the focused digit stand out, in a normal cell and in a shaded one? | |
-| J3 | The selected cell with digit notes gets a 3 px black frame (the third pixel lies only in the notes' blank margin) | Is the frame visible, and is no glyph clipped by it (the bottom row 7, 8, 9 especially)? | |
-| J4 | The swapped greys: the player's own digits in a shaded cell are black on 50%; the focused digit's copies on the board are white on solid black | Do they read, and does the 50% ground hide the H note tiles' edges (no 1-pixel checker seam around a tile: deferral 8.9 #2, the dither phase assumes the origin's x plus y is even, (7, 9) on the X4 Pro)? | |
-| J5 | The fixed 466 × 788 layout on the X4 Pro's 466-pixel canvas, 50 px Sudoku cells | In all three games (Ultimate tic-tac-toe's board and HOW TO PLAY, Battleship's boards, buttons and Over page, Sudoku's grid, pad, rail, notes, menu and pages): is anything clipped at an edge, overlapped, or too small to tap? | |
+| J1 | Clue legibility (Assumption A1): a clue is a black numeral on the 25% grey ground, no longer white on 50% | Do all nine digits, 1 2 4 included, read at arm's length in normal light, in a normal cell and in a cell SHADE PEERS shades (a clue keeps its light ground there)? | Owner, after the first run: "digits read at arms length in normal light, shaded peers looks good too". |
+| J2 | Digit notes in three bold sets of 12 × 16 px: G grey on white (a normal cell), B black on white (the focused digit's note in a normal cell), H white on a 50% checker (a shaded cell), the focused digit's note there inverted | Does each set read, and does the focused digit stand out, in a normal cell and in a shaded one? | "digit notes are good, focussed digit stands out". Each set in a shaded cell separately: not said. |
+| J3 | The selected cell with digit notes gets a 3 px black frame (the third pixel lies only in the notes' blank margin) | Is the frame visible, and is no glyph clipped by it (the bottom row 7, 8, 9 especially)? | "frame is visible". Glyph clipping on rows 7, 8, 9: not said. |
+| J4 | The swapped greys: the player's own digits in a shaded cell are black on 50%; the focused digit's copies on the board are white on solid black | Do they read, and does the 50% ground hide the H note tiles' edges (no 1-pixel checker seam around a tile: deferral 8.9 #2, the dither phase assumes the origin's x plus y is even, (7, 9) on the X4 Pro)? | "contrast with swapped greys seems good for now". A checker seam around the H tiles: not said. |
+| J5 | The fixed 466 × 788 layout on the X4 Pro's 466-pixel canvas, 50 px Sudoku cells | In all three games (Ultimate tic-tac-toe's board and HOW TO PLAY, Battleship's boards, buttons and Over page, Sudoku's grid, pad, rail, notes, menu and pages): is anything clipped at an edge, overlapped, or too small to tap? | "text fit", "the cells seem like a fine size", "sudoku looked good"; the missed right-column taps in Ultimate tic-tac-toe became entries 14 and 15. Battleship: not mentioned. |
 | J6 | The Sticky, if the owner has one (the same layout centred in 474 px, 4 px of white each side; cells, tap targets and note tiles the same) | Same look, and no seam around an H tile (origin (3, 9))? **Not answerable this run:** it needs a `sticky` firmware, which this packet does not build (the orchestrator decided not to). The packages are the same; the owner-facing item is whether to run a later Sticky pass. | Not answerable this run |
 
 ## Owner answers: the `Assumption for entry 5:` lines
@@ -218,15 +218,17 @@ Every such line in `epic-first-party-games.md`, Notes; "line" is its line number
 
 | ID | Line | Summary | Checked by | Owner's answer |
 | --- | --- | --- | --- | --- |
-| A1 | 112 | The owner judges Sudoku's clue legibility on the X4 Pro's panel; if the clues read poorly, the fix is a new story in this epic's PR. The Decision of 2026-10-05 (line 116) moved it to the swapped greys: black on 25%, no longer white on 50%. | J1 to J4 | |
-| A2 | 113 | Each game's heap fits the device: Sudoku's live Lua heap about 117 KB against the 256 KB cap and a simulator arena peak of 318,944 B (at `e84e5fa3`); Sudoku's `solve-easy` round once ran out of memory for a reason never explained. The run records each game's `VM stopped` line and plays Sudoku through a HINT, a CHECK, a FILL NOTES and a solve at Expert; an out-of-memory fault there is a device failure. | L1; Part T step 5; Part S | |
-| A3 | 120 | The installer's 5,888 B `Job` allocates on the device's heap with the three games installed; a failed install of any of the three packages is a device failure. | Part I steps 2 to 4; L2, L6 | |
+| A1 | 112 | The owner judges Sudoku's clue legibility on the X4 Pro's panel; if the clues read poorly, the fix is a new story in this epic's PR. The Decision of 2026-10-05 (line 116) moved it to the swapped greys: black on 25%, no longer white on 50%. | J1 to J4 | No explicit answer; see J1 to J4. |
+| A2 | 113 | Each game's heap fits the device: Sudoku's live Lua heap about 117 KB against the 256 KB cap and a simulator arena peak of 318,944 B (at `e84e5fa3`); Sudoku's `solve-easy` round once ran out of memory for a reason never explained. The run records each game's `VM stopped` line and plays Sudoku through a HINT, a CHECK, a FILL NOTES and a solve at Expert; an out-of-memory fault there is a device failure. | L1; Part T step 5; Part S | No explicit answer. The log: no OOM or `Script error:`, the highest arena peak 303,024 B, the lowest stack 9,988 B free. |
+| A3 | 120 | The installer's 5,888 B `Job` allocates on the device's heap with the three games installed; a failed install of any of the three packages is a device failure. | Part I steps 2 to 4; L2, L6 | No explicit answer. The log: all five packages installed in the first run, no `OOM: installer`. |
 
 Also from the ticket, recorded for their owners, not fixed here: whether a stack high-water under 512 B free reopens the Lua C-stack decision (epic-api-freeze's checklist; L1), and whether B7.6 shows a card stall (Part P step 4).
 
 ## Owner answers: this epic's deferrals
 
 The open items in `_bmad-output/implementation-artifacts/deferred-work.md` under `## 8.1` to `## 8.4`, `## 8.8` to `## 8.11`, `## e5-close`, `## e6pre-13`, `## e5-r5`, `## e5-r2` and `## owner-e4-games-cap`. Items marked "Resolved" are left out: 8.1 #3, 8.2 #1, 8.3 #1 and #3's text (its residue is row 8.3 #3 below), and `## e5-close`'s V3 (resolved by entry 7: `PassResumeTest`, host). "Checked here" says what this run shows; "Confirm" asks the owner to keep the item deferred as written, or reassign it.
+
+No row below was answered during the three runs (the orchestrator's transcript, read 2026-10-10 after the merge); the owner's answers are still owed. Their "Checked here" evidence is in the Step results below.
 
 | Section, item | Summary | Status, trigger | Checked here | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -290,65 +292,67 @@ In this packet (the single home of the results). The owner's answers go in the J
 
 | Item | What to write | Value recorded |
 | --- | --- | --- |
-| Firmware | The commit and `firmware.bin` SHA-256 flashed (this packet's are under "Firmware"; the file arrives as a session file and its hash is checked), and the hashes `/.games/<id>/.pkg` shows for the three games, `pass-store` and `sudoku-costly` | |
-| Steps | Pass or fail for each step in the Step results table below | |
-| Taps from Home | The tap count for each game's first round (at most 3) | |
-| `VM stopped` | The line for each of Ultimate tic-tac-toe, Battleship, Sudoku, and `sudoku-costly` (arena peak, stack high-water, least at a hook), and whether any stack figure is under 512 B | |
-| Launcher free heap | The `[MEM]` lines at Home with no game, on the Games list with three games, and after each game (`Free`, `Min Free`, `MaxAlloc`, PSRAM) | |
-| Dropped touches | The count of `dropped a touch before the frame was on the panel` after "I'm ready", with the hand-off count over the same span, and the other two dropped-touch counts | |
-| 5.13's checks | The result of B5 a, b and c, three tries each | |
-| Sleep from Over | Whether a ghost of a seat's frame showed before or after the sleep (photos) | |
-| HINT and CHECK | The three times on `sudoku-costly` (first CHECK, HINT after it, first HINT after a resume), each as the raw video time, the MENU control and the difference, the same on the shipped Sudoku's random Expert deal with its first grid row, and whether any run hit the 3 s watchdog | |
-| B7.6 | The log lines of Part P step 3 with their `[millis]`, the three computed gaps, and any `skipped` or `forced exit past 1500 ms` line | |
-| Install | Whether all five packages installed with no note and no `OOM: installer` line | |
-| Faults | Any reset, watchdog banner, `abandoning it`, `script recursion too deep`, `OOM`, or `Script error:` line | |
-| Judgements | The owner's answers to J1 to J6, A1 to A3, and each deferral row | |
-| Dry run | The release dry run's link and its package table, matching this packet's hashes | |
-| Failures | Each device failure as a new story in this epic's PR | |
+| Firmware | The commit and `firmware.bin` SHA-256 flashed (this packet's are under "Firmware"; the file arrives as a session file and its hash is checked), and the hashes `/.games/<id>/.pkg` shows for the three games, `pass-store` and `sudoku-costly` | First run `firmware-x4pro-0c149819.bin` (5,936,048 B, SHA-256 `bdfd44e2…6bde800`), flashed by the owner before Part I; second and third runs `firmware-x4pro-4a87ed90.bin` (5,937,008 B, SHA-256 `0f10b8b4…f563b02d`), per the orchestrator. The owner reported no hash check, and no `.pkg` hash was read from the card (`/.games/` is hidden from the web file manager). |
+| Steps | Pass or fail for each step in the Step results table below | In the Step results table below. |
+| Taps from Home | The tap count for each game's first round (at most 3) | Not recorded; Battleship started from the Games list. |
+| `VM stopped` | The line for each of Ultimate tic-tac-toe, Battleship, Sudoku, and `sudoku-costly` (arena peak, stack high-water, least at a hook), and whether any stack figure is under 512 B | Ultimate tic-tac-toe: arena peak 95,704 to 109,616 B, stack high-water 12,196 to 12,280 B free, least at a hook 14,072 B. Battleship: 142,696 to 176,904 B, 11,652 to 11,832 B, 14,024 B. Sudoku: 256,952 to 302,792 B, 9,988 to 10,080 B, 13,864 B. `sudoku-costly`: 265,448 and 303,024 B, 10,008 and 10,080 B, 13,864 B. `pass-store`: 38,160 to 39,600 B, 12,760 to 12,792 B. No stack figure under 512 B: the lowest is 9,988 B free (Sudoku at Expert, L3457). Third run: Battleship 183,568 / 11,876; Ultimate tic-tac-toe 105,672 / 12,248; Sudoku 190,472 and 206,864 / 11,368 and 11,220. |
+| Launcher free heap | The `[MEM]` lines at Home with no game, on the Games list with three games, and after each game (`Free`, `Min Free`, `MaxAlloc`, PSRAM) | Home with no game: `Free` 196,756, `Min Free` 196,464, `MaxAlloc` 147,444; PSRAM `Free` 8,258,760. Empty Games list: 194,336 / 192,204 / 147,444. Three games: 193,248 / 188,880 / 147,444 (193,700 on a clean boot). After each game: 193,484, then 193,092 after `sudoku-costly` and `pass-store`; `MaxAlloc` 147,444 throughout. PSRAM `MaxAlloc` drops 786,432 B after the first Sudoku-family match of a boot and stays there until a sleep. |
+| Dropped touches | The count of `dropped a touch before the frame was on the panel` after "I'm ready", with the hand-off count over the same span, and the other two dropped-touch counts | `dropped a touch before the frame was on the panel`: 0 in the whole first-run log (41 Battleship hand-off pushes; 35 in the firing phase by the orchestrator's analysis). `dropped a touch that began N ms before the hand-off passed`: 0. `Dropped a touch made under frame N`: 8, seven in Battleship (the owner's deliberate false taps, B5) and one in Ultimate tic-tac-toe (L920). |
+| 5.13's checks | The result of B5 a, b and c, three tries each | Not recorded per try. The log shows no banner double tap passing a hand-off (shortest Result→Playing gap 932 ms) and seven held-contact drops; the owner: "the dropped battleship taps were me trying to register false taps". |
+| Sleep from Over | Whether a ghost of a seat's frame showed before or after the sleep (photos) | Not run (B6) in any run; carried to `## e5-run4`. |
+| HINT and CHECK | The three times on `sudoku-costly` (first CHECK, HINT after it, first HINT after a resume), each as the raw video time, the MENU control and the difference, the same on the shipped Sudoku's random Expert deal with its first grid row, and whether any run hit the 3 s watchdog | No video, so no video times. From the log, reaction included: first CHECK at most 699 ms, HINT after it at most 1,658 ms (a weak bound), first HINT after a resume at most 1,166 ms; MENU control 65 to 89 ms. No `a call ran over 3000 ms` line. The shipped Sudoku's random Expert deal: not recorded. |
+| B7.6 | The log lines of Part P step 3 with their `[millis]`, the three computed gaps, and any `skipped` or `forced exit past 1500 ms` line | Attempt 2: `[524647] Exiting activity: GameMatch`, `[524649] VM stopped`, `[524687] saved ch.store (12 bytes)`, `[526337] forced exit: blank screen pushed (half refresh)`. Exit to store 40 ms, store to blank 1,650 ms, exit to blank 1,690 ms. No `skipped` or `forced exit past 1500 ms` line; no card stall. |
+| Install | Whether all five packages installed with no note and no `OOM: installer` line | First run: all five installed, no note, no `OOM: installer`. Second run: `battleship.chgame not installed: not a readable zip`, and Sudoku the same; both `.bad` files were 0 bytes (the upload delivered empty files; `## e5-run2`). Third run: all three installed. |
+| Faults | Any reset, watchdog banner, `abandoning it`, `script recursion too deep`, `OOM`, or `Script error:` line | None in the first run: two `[GYR] SDK IMU not found` at boot and one `[PWR] Lock already held, ignore` (L4873, at attempt 5's sleep); two `Silent restart (target=home)` after file transfer. No watchdog, `abandoning it`, `script recursion too deep`, `OOM`, or `Script error:`. The second run has an unexplained boot at 23:06:55. The third run has no `[ERR]` line. |
+| Judgements | The owner's answers to J1 to J6, A1 to A3, and each deferral row | J1 to J5 in part (the J table); A1 to A3 and the deferral rows not answered during the runs. |
+| Dry run | The release dry run's link and its package table, matching this packet's hashes | Run 38025954968 on `273fa892`, success; its package table equals this packet's (Release dry run, above). |
+| Failures | Each device failure as a new story in this epic's PR | The missed right-column taps: entries 14 (touch logging) and 15 (the margin snap). The 0-byte uploads: `## e5-run2`, not a story. |
 
 ### Step results
 
 One row per step: pass or fail, the log excerpt that shows it (with its `[millis]` prefix), and notes. A step not run says why.
 
+Filled 2026-10-10 after the merge, from the epic orchestrator's transcript (`session_01TsnpXhDKuQo4VUopnPpCXh`): unless a row says otherwise, the first run (firmware `0c149819`) and its serial log `serial_20261009_210247.txt`, whose line numbers the `L` figures are; `[n]` is the log's millis. "Not recorded" means the transcript has no report or log line for it. The panel checks the owner did not describe, and every video time, were never recorded.
+
 | Step | Result | Log excerpt | Notes |
 | --- | --- | --- | --- |
-| I1 | | | |
-| I2 | | | |
-| I3 | | | |
-| I4 | | | |
-| I5 | | | |
-| U1 | | | |
-| U2 | | | |
-| U3 | | | |
-| U4 | | | |
-| U5 | | | |
-| B1 | | | |
-| B2 | | | |
-| B3 | | | |
-| B4 | | | |
-| B5a | | | |
-| B5b | | | |
-| B5c | | | |
-| B6 | | | |
-| B7 | | | |
-| S1 | | | |
-| S2 | | | |
-| S3 | | | |
-| S4 | | | |
-| S5 | | | |
-| T1 | | | |
-| T2 | | | |
-| T3 | | | |
-| T4 | | | |
-| T5 | | | |
-| T6 | | | |
-| P1 | | | |
-| P2 | | | |
-| P3 | | | |
-| P4 | | | |
-| P5 | | | |
-| Z | | | |
+| I1 | pass | `[12726] [MEM] Free: 196756 … Min Free: 196464 … MaxAlloc: 147444` (Home); `[32777] [MEM] Free: 194336 … Min Free: 192204 … MaxAlloc: 147444` (empty Games list) | Empty list costs 2,420 B of `Free` against Home. The panel text: not recorded. |
+| I2 | pass | L183 `Installed ultimate-tic-tac-toe`, L303 `Installed sudoku`, L310 `Installed battleship`, L311 `Found 3 games` | No `OOM: installer`, no `.bad`. Uploaded over Wi-Fi file transfer: 4,824, 40,638 and 9,494 B (`[WS] Starting upload` lines). The panel text: not recorded. |
+| I3 | pass | `[10040] [MEM] Free: 193248 … Min Free: 188880 … MaxAlloc: 147444`; PSRAM `Free: 8273868` | −1,088 B of `Free` against the empty list (−636 B on a clean boot with three games, L1814: 193,700). `MaxAlloc` unchanged. |
+| I4 | not run |  | No `.pkg` was read from the card: `/.games/` is hidden from the web file manager and no computer was at hand. |
+| I5 | pass | L984, L1893, L3353, L3467, L4556 (`act=GamesLauncher Free=193484`, then `193092`); `[500914] [MEM] Free: 193092 … MaxAlloc: 147444` | No internal-heap drift across games. After the first Sudoku-family match of a boot, PSRAM `Free` drops 11,684 B and its `MaxAlloc` exactly 786,432 B; it does not grow, and a sleep clears it. |
+| U1 | pass | L354 `Title screen of ultimate-tic-tac-toe: save none`, L357 `Mode pass picked …: 2 seats` | Tap count from Home: not recorded. |
+| U2 | fail, fixed as entry 15 | L464 `[179978] Frame identical to the one on screen; not refreshed` (and others) | Owner: "that right column on Ultimate tic-tac-toe seemed to miss some taps"; "text fit". The second run's touch lines put the misses at canvas x 460 and 458, past the grid's x 457 (entry 14 logging, entry 15 fix); the third run had 19 taps, none ignored, none in the new margin strip. |
+| U3 | pass | L782 `Playing -> Leaving on ForcedExit`, L783 `VM stopped; arena peak 95704 …, stack high-water 12196 …`, L824 `Resuming at ver 10` | Last save before the sleep: L772 `saved resume.bin (113 bytes, ver 10)`. |
+| U4 | pass | L492 `Round over at ver 21; winners mask 0x2`, L503 `Over -> Playing on PlayAgain`, L504 `Round started at ver 22` | Header winner text: not recorded. |
+| U5 | pass | L706 `Over -> Leaving on Leave`, L707 `VM stopped; arena peak 109616 …, stack high-water 12280 …` | No `[MEM]` line on the Games list right after. |
+| B1 | pass | L997 `Title screen of battleship: save none` | Started from the Games list, not Home; tap count not recorded. |
+| B2 | pass | L1692–L1696 `Playing -> Leaving on ForcedExit`, `VM stopped; arena peak 176904 …`, `forced exit: blank screen pushed (half refresh)`; L1733 `Resuming at ver 51`; L1787–L1791 the same; L1829 `Resuming at ver 57` | Seat 2 slept after two ships, not one. Hand-off names and kept ships on the panel: not recorded. |
+| B3 | pass (log only) | `[669509] battleship: Playing -> Result on TurnChanged`, `[669547] saved resume.bin (239 bytes, ver 15)` | "Miss", "Hit!", "You sank" and the repeat-shot text: not recorded. |
+| B4 | pass | No `dropped a touch before the frame was on the panel` line in the whole log; 41 `battleship: hand-off screen pushed` lines | e5-r2's symptom: 0 times. The orchestrator's analysis counted 35 firing hand-offs. |
+| B5a | partial | `[678104] battleship: Result -> HandOff on Tap`, `[679036] HandOff -> Playing on Tap` | Shortest Result→HandOff→Playing gap 932 ms, so no banner double tap passed the hand-off. Per-try results: not recorded. |
+| B5b | partial | 7 × `Dropped a touch made under frame N, before seat N's first frame N` (L1214–L1431) | Owner: "the dropped battleship taps were me trying to register false taps". Per-try results: not recorded. |
+| B5c | partial | the same 7 drops | Consistent with a contact held across the transition; which tries were B5c: not recorded. |
+| B6 | not run | L1661 `Over screen pushed in 675 ms`, then L1664 `Over -> HandOff on PlayAgain` | No sleep from Over in any run; carried to `deferred-work.md` `## e5-run4`. |
+| B7 | pass | L1877 `Paused -> Leaving on Leave`, L1878 `VM stopped; arena peak 155968 …, stack high-water 11748 …`, L1881 `leave: blank screen pushed (half refresh)` | Left via Pause, not from Over after Play again. HOW TO PLAY: not recorded. |
+| S1 | pass | L1912 `Title screen of sudoku: save none`, L1915 `Mode solo picked for sudoku` | Tap count and pages: not recorded. |
+| S2 | pass | no `script recursion too deep` in the log | Owner: "sudoku looked good / digits read at arms length in normal light, shaded peers looks good too / digit notes are good, focussed digit stands out / frame is visible". HINT, CHECK, ERASE, UNDO, clash and toggles on the panel: not recorded. |
+| S3 | pass | L3034 `Playing -> Leaving on ForcedExit`, L3035 `VM stopped; arena peak 301568 …, stack high-water 10068 …`, L3076 `Resuming at ver 89` | Restored grid and time: not recorded. |
+| S4 | pass (log only) | L3327 `Round over at ver 115; winners mask 0x1` | "Solved", the time, and "No best time" after a hint: not recorded. |
+| S5 | pass | L3341 `Over -> Leaving on Leave`, L3342 `VM stopped; arena peak 302792 …, stack high-water 10080 …` | Entry 13's pause check was not shown: the one Sudoku pause (L3452) ended in Leave. |
+| T1 | pass | L3630 `Installed pass-store`, L3750 `Installed sudoku-costly`, L3751 `Found 5 games` | No video; MENU control from the log, idle tap to render start: 77, 65, 89, 77 ms. |
+| T2 | pass (log bound) | L3820 `[91393] sudoku-costly: frame 8 pushed in 1662 ms`, L3821 `[92092] [GFX] Time = 20 ms …` | First CHECK at most 699 ms from the log, reaction included. No video. |
+| T3 | pass (log bound, weak) | L3829 `[108134] saved resume.bin (279 bytes, ver 2)`, L3831 `[108226] frame 10 pushed in 1661 ms` | HINT after CHECK at most 1,658 ms from the MENU tap. No video. |
+| T4 | pass (log bound) | L3847 `Playing -> Leaving on ForcedExit`, L3848 `VM stopped; arena peak 265448 …, stack high-water 10008 …`, L3890 `Resuming at ver 2`; L3901 `[24583] frame 2 pushed`, L3902 `[25749] saved resume.bin (… ver 3)` | First HINT after a resume at most 1,166 ms, reaction included. No video. No `a call ran over 3000 ms` line. |
+| T5 | pass | L4535 `Round over at ver 69; winners mask 0x1`, L4545 `VM stopped; arena peak 303024 …, stack high-water 10080 …` | No OOM, no `Script error:`. FILL NOTES and the CHECK messages: not recorded. |
+| T6 | partial | L3371–L3388 levels Medium, Hard, Expert, `Mode solo picked`; L3457 `VM stopped; arena peak 256952 …, stack high-water 9988 bytes free …` | Ran before Part T, with no sleep and no HINT after a Continue. The lowest stack figure of the run (9,988 B free). Difficulty was not set back to Easy. |
+| P1 | pass | `[462094] pass-store: hand-off screen pushed in 1668 ms`, `[494642] Paused -> Leaving on Leave` | Attempt 1: a New game with no move, then left. |
+| P2 | pass | `[520131] Started pass-store`, `[523257] [pass-store] tap for seat 1`, `[524630] Power button held 408ms, sleeping` | Hit on attempt 2: the power press 4,499 ms after `Started`, the store dirty. Attempts 3 and 4 were clean; attempt 5's store flushed before the press. |
+| P3 | pass | `[524647] Exiting activity: GameMatch`, `[524647] Result -> Leaving on ForcedExit`, `[524649] VM stopped …`, `[524687] saved ch.store (12 bytes)`, `[526337] forced exit: blank screen pushed (half refresh)` | The order e6pre-10 set: VM stop, the store flush, then the blank. No `skipped` or `forced exit past 1500 ms` line. |
+| P4 | pass | the P3 lines | Exit to `saved ch.store` 40 ms; store to blank 1,650 ms; exit to blank 1,690 ms. No card step over 1,000 ms: no stall. |
+| P5 | pass | `[17908] Resuming at ver 2`, `[18961] [pass-store] draw for seat 2` | Leave and Remove after it: not done. Attempt 5 then slept from the hand-off screen (`[23692] HandOff -> Leaving on ForcedExit`), which pushes no blank. |
+| Z | not run |  | Settings at the start and end: not recorded. |
 
 ## Sign-off
 
-**Signed off by the owner, 2026-10-10,** after three runs on an X4 Pro (firmware `0c149819`, then `4a87ed90`). The owner asked for the epic PR to merge before the fourth run. That run's four checks are carried in `deferred-work.md` `## e5-run4`.
+After three runs on an X4 Pro (firmware `0c149819`, then `4a87ed90`), the owner wrote "Go ahead and merge" (2026-10-10, 05:55 UTC), before the fourth run; the orchestrator recorded that as the sign-off. The owner's explicit confirmation of the sign-off is owed (recorded at the epic-first-party-games retrospective). That run's four checks are carried in `deferred-work.md` `## e5-run4`.

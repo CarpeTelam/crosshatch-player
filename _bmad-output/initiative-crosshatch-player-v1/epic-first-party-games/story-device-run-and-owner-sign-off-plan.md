@@ -155,9 +155,12 @@ Pass 2 (the follow-up pass, `followup_review_recommended` from pass 1), over `da
 
 The results are not recorded here. The packet is their single home: the owner's answers in its J, A and deferral tables, and the step results, figures and log excerpts in its "What to record" and "Step results" tables. After the run and sign-off, record here only the outcome:
 
-- Device run date and the owner:
-- Firmware flashed (commit and SHA-256) and the dry run's link:
-- Sign-off (the owner's words and date):
-- Device failures, each as a new story in this epic's PR:
+Recorded 2026-10-10, after the merge, from the epic orchestrator's transcript (`session_01TsnpXhDKuQo4VUopnPpCXh`); the packet's tables now hold the figures and say what was never recorded.
+
+- Device run date and the owner: three runs on 2026-10-09/10 (the owner's local time; the first serial log is `serial_20261009_210247.txt`), by the owner, on one X4 Pro. The fourth run was not done (`deferred-work.md` `## e5-run4`).
+- Firmware flashed (commit and SHA-256) and the dry run's link: first run `0c149819` (SHA-256 `bdfd44e28b52e8f45ccd08a1c21467ee96bef015637e9af46a1ff47fb6bde800`); second and third runs `4a87ed90` (SHA-256 `0f10b8b4bc54145b561835a554df46f90814fb40c1160b37b361852df563b02d`), per the orchestrator. The owner reported no hash check. Dry run: https://github.com/CarpeTelam/crosshatch-player/actions/runs/38025954968 on `273fa892`, success, packages equal to the packet's.
+- Sign-off (the owner's words and date): "Go ahead and merge", 2026-10-10 05:55 UTC, before the fourth run. The orchestrator recorded it as the sign-off; the owner's explicit confirmation is owed at the retrospective.
+- Device failures, each as a new story in this epic's PR: Ultimate tic-tac-toe's missed right-column taps, entries 14 (touch logging) and 15 (the margin snap). The second run's 0-byte uploads are `## e5-run2`, not a story.
+- Not recorded: the `.pkg` hashes on the card, taps from Home, 5.13's per-try results, any video time for HINT and CHECK (only log bounds, all under 1.5 s), B6, Sudoku's pause and resume, Part Z, and the owner's answers to A1 to A3 and the deferral rows.
 
 `deferred-work.md`'s `## e5-close` (5.13), `## e6pre-13`, `## e5-r5`, `## e5-r2` and `## owner-e4-games-cap` get their outcomes from the packet's rows; the orchestrator carries them there.

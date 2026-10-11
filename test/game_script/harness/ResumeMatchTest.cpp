@@ -18,6 +18,7 @@
 #include "GameViewport.h"
 #include "MatchStore.h"
 #include "MatchSupport.h"
+#include "SaveSupport.h"
 #include "Session.h"
 #include "activities/games/GameMatchActivity.h"
 
@@ -30,16 +31,18 @@
 
 namespace {
 
+using match::holds;
 using match::installGame;
 using match::waitFor;
 using Button = MappedInputManager::Button;
 using harness::Bytes;
+using savefile::HASH_A;
+using savefile::HASH_B;
+using savefile::resumeBytes;
+using savefile::snapshotOf;
 
 constexpr int CANVAS_X = 3;
 constexpr int CANVAS_Y = 6;
-
-const uint8_t HASH_A[GamePkg::HASH_BYTES] = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf1};
-const uint8_t HASH_B[GamePkg::HASH_BYTES] = {0x05, 0x30, 0xa1, 0x57, 0x66, 0xe9, 0x1b, 0xf2};
 
 // A game of `goal` taps that logs its setup and every draw, so a resumed match shows which snapshot
 // it drew and whether setup ran.
@@ -196,23 +199,6 @@ return game
 // {n = k}: the codec bytes ERROR_GAME's snapshot has.
 Bytes nSnapshotOf(const uint8_t n) {
   return Bytes{0x06, 0x00, 0x01, 0x05, 0x01, 'n', 0x03, static_cast<uint8_t>(n << 1)};
-}
-
-// {taps = n}: the codec bytes the counting game's snapshot has.
-Bytes snapshotOf(const uint8_t taps) {
-  return Bytes{0x06, 0x00, 0x01, 0x05, 0x04, 't', 'a', 'p', 's', 0x03, static_cast<uint8_t>(taps << 1)};
-}
-
-// resume.bin as GameSaveStore lays it out for the package `hash`.
-Bytes resumeBytes(const Bytes& snapshot, const uint16_t ver, const uint8_t (&hash)[GamePkg::HASH_BYTES] = HASH_A) {
-  Bytes out = {'C', 'H', 'R', 'S', 1, 1};
-  out.insert(out.end(), hash, hash + GamePkg::HASH_BYTES);
-  out.push_back(0);
-  out.push_back(1);
-  out.push_back(static_cast<uint8_t>(ver & 0xFF));
-  out.push_back(static_cast<uint8_t>(ver >> 8));
-  out.insert(out.end(), snapshot.begin(), snapshot.end());
-  return out;
 }
 
 std::string resumePath(const std::string& id) { return "/.games-data/" + id + "/resume.bin"; }
@@ -1220,10 +1206,6 @@ class PassResumeTest : public ResumeMatchTest {
     frame();
   }
   const GfxRenderer::Shown& lastPush() const { return renderer->shown.back(); }
-  static bool holds(const GfxRenderer::Shown& push, const std::string& part) {
-    return std::any_of(push.texts.begin(), push.texts.end(),
-                       [&](const std::string& text) { return text.find(part) != std::string::npos; });
-  }
   // pass-hidden from the start or a resume: the hand-off screen drawn, naming `seat` (0: unchecked), its button, and
   // the turn seat's frame drawn. The hand-off screen waits for the VM to name the round's first turn seat, so a render
   // before that pushes nothing and the loop asks again.

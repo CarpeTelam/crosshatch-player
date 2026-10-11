@@ -46,6 +46,8 @@ const char* reasonText(const GamePackageInstaller::Error error) {
       return tr(STR_GAMES_OUT_OF_MEMORY);
     case Error::NotAPackage:
       return tr(STR_GAMES_INSTALL_NOT_A_PACKAGE);
+    case Error::Empty:
+      return tr(STR_GAMES_INSTALL_EMPTY);
     case Error::BadManifest:
       return tr(STR_GAMES_INSTALL_BAD_MANIFEST);
     case Error::BadMember:

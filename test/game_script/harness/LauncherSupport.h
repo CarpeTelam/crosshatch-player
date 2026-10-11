@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "HalStorage.h"
 #include "MappedInputManager.h"
 #include "activities/UiListActivity.h"
 #include "activities/games/GameModeActivity.h"
@@ -24,6 +25,36 @@
 #include "components/UITheme.h"
 
 namespace launcher {
+
+// The .pkg text of an installed game (its commit marker): version 1 and the hash 0530a15766e91bf1.
+inline const std::string PKG = "v1\n0530a15766e91bf1\n";
+
+// `extra` is more members of the manifest object, each with its leading comma (`,"icon":"dice-six"`).
+inline std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int api,
+                                const int seatsMin, const int seatsMax, const std::string& extra = "") {
+  return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"version\":\"1.0.0\",\"api\":" + std::to_string(api) +
+         ",\"seats\":{\"min\":" + std::to_string(seatsMin) + ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" +
+         modes + "]" + extra + "}";
+}
+
+// A game folder as the installer leaves it: manifest.json, a main.lua, and the .pkg commit marker (none when `pkg` is
+// empty: a game that is not installed). `folder` names the folder when it is not the id.
+inline void addGame(const std::string& id, const std::string& name, const std::string& modes = "\"solo\"",
+                    const int api = 1, const int seatsMin = 1, const int seatsMax = 1, const std::string& folder = "",
+                    const std::string& pkg = PKG) {
+  const std::string dir = "/.games/" + (folder.empty() ? id : folder);
+  fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, api, seatsMin, seatsMax));
+  fakesd::addFile(dir + "/main.lua", std::string("return {}\n"));
+  if (!pkg.empty()) fakesd::addFile(dir + "/.pkg", pkg);
+}
+
+// A match left in the manager's record goes as the manager would let it go.
+inline void dropMatch() {
+  for (auto& replacement : activityManager.replacements) {
+    if (replacement) activityManager.destroyHolding(replacement);
+  }
+  activityManager.replacements.clear();
+}
 
 // The recording target a list screen draws into: its UiAppHost is a protected base, reached from a class derived from
 // UiListActivity (never constructed), as NameOf reaches Activity's protected name.

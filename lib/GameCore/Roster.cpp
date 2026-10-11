@@ -2,18 +2,14 @@
 
 #include <algorithm>
 
+#include "ModeTable.h"
+
 namespace GameCore {
 
 const char* modeName(const Mode mode) {
-  switch (mode) {
-    case Mode::Solo:
-      return "solo";
-    case Mode::Pass:
-      return "pass";
-    case Mode::Nearby:
-      return "nearby";
-  }
-  return "solo";
+  const ModeRow* row = modeRow(mode);
+  // A value that is no Mode (a stray cast) reads as solo, the first row, as the switch's fall-through did.
+  return (row ? row : &MODE_TABLE[0])->name;
 }
 
 Roster Roster::pass(const uint8_t seats) {

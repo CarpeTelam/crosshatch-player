@@ -78,12 +78,14 @@ add_executable(GameScriptTest
   CallGuardTest.cpp
   BlitClipTest.cpp
   CanvasClipTest.cpp
+  CanvasGateTest.cpp
   CodecTest.cpp
   DisplayListTest.cpp
   GameIconBlitTest.cpp
   GameImageBlitTest.cpp
   GameTimerTest.cpp
   GameTouchLogTest.cpp
+  GameTouchRouteTest.cpp
   GameTouchTest.cpp
   GameViewIconsTest.cpp
   GfxBindingsTest.cpp
@@ -95,6 +97,7 @@ add_executable(GameScriptTest
   MatchRoundsTest.cpp
   StoreSlotTest.cpp
   TextMetricsTest.cpp
+  TouchLatchTest.cpp
   VmFailureTest.cpp
   ${GAME_SCRIPT_SOURCES}
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
@@ -116,7 +119,8 @@ target_include_directories(GameScriptTest PRIVATE
   ${REPO_ROOT}/lib/JsonParser
   ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/include
   ${REPO_ROOT}/lib/Utf8
-  # GameTouch.h, GameIconBlit.h, GameImageBlit.h, and GameViewIcons.h (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
+  # GameTouch.h, GameTouchRoute.h, TouchLatch.h, CanvasGate.h, GameIconBlit.h, GameImageBlit.h, and GameViewIcons.h
+  # (header-only, pure) and the SDK's swipe classification GameTouch.h uses.
   ${REPO_ROOT}/src/games
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
   # ApiLevelList.h, the API list reader ApiLevelTest shares, and ConverterBmpLayout.h, the image tests' converter mirror.
@@ -157,6 +161,7 @@ add_executable(GameSaveStoreTest
 )
 
 target_include_directories(GameSaveStoreTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/harness
   ${CMAKE_CURRENT_SOURCE_DIR}/harness/stubs
   ${REPO_ROOT}/lib/GameScript
   ${REPO_ROOT}/lib/GameCore

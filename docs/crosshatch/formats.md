@@ -350,7 +350,8 @@ The installer counts converted images as the game loader does: each `.bmp` is 62
 bytes, header included, and `icon.bmp` is left out.
 
 The installer reads the zip's directory itself (`src/games/ZipDirectory.h`) before it extracts anything, and rejects,
-each with its own reason: a file over `PACKAGE_BYTES`; a member declaring more than `MEMBER_BYTES`; `.lua` members
+each with its own reason: an empty file (0 bytes, checked before the zip is read; an upload that delivered nothing leaves
+one); a file over `PACKAGE_BYTES`; a member declaring more than `MEMBER_BYTES`; `.lua` members
 over `LUA_SOURCES_BYTES` together; more members than `PACKAGE_MEMBERS`; ZIP64, encryption, or a compression method
 other than stored and deflate; a stored member whose two sizes differ; an EOCD entry count that differs from the
 directory's; two members that share bytes of the file. The EOCD must be the last 22 bytes (a zip comment is refused,
@@ -358,6 +359,8 @@ and `pack_game.py` writes none) and the central directory must end where it begi
 through `ZipFile` into a guard that never lets more than the declared size reach the card, refuses a `.lua` whose
 first byte is Lua's bytecode signature (ESC, 0x1B), and checks the CRC-32. `pack_game.py` refuses a package over the
 limits it knows, including the `.lua` total.
+A file of 1 byte or more that is not a readable zip is reported as not a package, and the log line
+(`<name> not installed: not a readable zip (<n> bytes)`) gives its size, so a truncated copy shows as one.
 
 ### Images
 

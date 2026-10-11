@@ -76,15 +76,10 @@ std::vector<uint8_t> libraryRows(const char* name, const bool fill) {
 using Button = MappedInputManager::Button;
 using GamePackageInstaller::Error;
 
-const std::string PKG = "v1\n0530a15766e91bf1\n";
-
-// `extra` is more members of the manifest object, each with its leading comma (`,"icon":"dice-six"`).
-std::string manifestJson(const std::string& id, const std::string& name, const std::string& modes, const int api,
-                         const int seatsMin, const int seatsMax, const std::string& extra = "") {
-  return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"version\":\"1.0.0\",\"api\":" + std::to_string(api) +
-         ",\"seats\":{\"min\":" + std::to_string(seatsMin) + ",\"max\":" + std::to_string(seatsMax) + "},\"modes\":[" +
-         modes + "]" + extra + "}";
-}
+using launcher::addGame;
+using launcher::dropMatch;
+using launcher::manifestJson;
+using launcher::PKG;
 
 // A 64 x 64 icon.bmp as the installer writes it, its pixels a pattern that differs by seed.
 harness::Bytes iconBmp(const int seed) {
@@ -113,6 +108,8 @@ const char* expectedText(const Error error) {
       return tr(STR_GAMES_OUT_OF_MEMORY);
     case Error::NotAPackage:
       return tr(STR_GAMES_INSTALL_NOT_A_PACKAGE);
+    case Error::Empty:
+      return tr(STR_GAMES_INSTALL_EMPTY);
     case Error::BadManifest:
       return tr(STR_GAMES_INSTALL_BAD_MANIFEST);
     case Error::BadMember:
@@ -172,26 +169,7 @@ class ListTest : public match::ScreenTest {
     ScreenTest::TearDown();
   }
 
-  // A match left in the manager's record goes as the manager would let it go. (Since entry 8 no case here starts one:
-  // a row opens the game's title screen, which openedTitle lets go.)
-  void dropMatch() {
-    for (auto& replacement : activityManager.replacements) {
-      if (replacement) activityManager.destroyHolding(replacement);
-    }
-    activityManager.replacements.clear();
-  }
-
   // ---- the card ----
-
-  // A game folder as the installer leaves it: manifest.json, a main.lua, and the .pkg commit marker.
-  static void addGame(const std::string& id, const std::string& name, const std::string& modes = "\"solo\"",
-                      const int api = 1, const int seatsMin = 1, const int seatsMax = 1, const std::string& folder = "",
-                      const std::string& pkg = PKG) {
-    const std::string dir = "/.games/" + (folder.empty() ? id : folder);
-    fakesd::addFile(dir + "/manifest.json", manifestJson(id, name, modes, api, seatsMin, seatsMax));
-    fakesd::addFile(dir + "/main.lua", std::string("return {}\n"));
-    if (!pkg.empty()) fakesd::addFile(dir + "/.pkg", pkg);
-  }
 
   // An installed game whose manifest names a library icon (and, when `weight` is not empty, its weight).
   static void addIconGame(const std::string& id, const std::string& name, const std::string& icon,
@@ -227,7 +205,7 @@ class ListTest : public match::ScreenTest {
   // A second visit: the list goes, the manager's record and the theme's start over, and the list opens again.
   // The script (InstallerScript.h) and the log are the test's to change before it calls this.
   void reopen() {
-    match::letStartedMatchesGo([this] { dropMatch(); }, match::Saves::Discard);
+    match::letStartedMatchesGo([] { dropMatch(); }, match::Saves::Discard);
     activityManager.exitHolding(*list);
     activityManager.destroyHolding(list);
     activityManager.reset();
@@ -1388,7 +1366,7 @@ TEST_F(ListTest, EveryInstallErrorMapsToItsOwnReason) {
   std::vector<int> withText;
   for (int value = 0; value < 256; ++value)
     if (expectedText(static_cast<Error>(value))) withText.push_back(value);
-  ASSERT_GE(withText.size(), 19u) << "the nineteen reasons that exist today";
+  ASSERT_GE(withText.size(), 20u) << "the twenty reasons that exist today";
 
   // Two reasons that read alike would let a swap through.
   for (size_t i = 0; i < withText.size(); ++i)

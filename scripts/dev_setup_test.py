@@ -8,7 +8,8 @@ Each case puts fake `git`, `uv`, `dpkg-query`, `apt-get`, and `flock` (and, once
 PATH, with a temp HOME and a temp proxy CA, runs main(), and asserts the exit code, the commands run (each fake logs
 its arguments), and the CA bundles. The fakes keep their state in one JSON file. The fake pio fails like the real one
 behind the proxy: without the proxy CA in the uv tool's bundle it fails before building the penv, and without the CA
-and the pioarduino pin in the penv it fails after building it.
+and the pioarduino pin in the penv it fails after building it. A fake prints the text FAKE_STDERR (a JSON map of tool
+name to text) gives it on stderr, as uv does with its UV_NATIVE_TLS deprecation warning.
 """
 
 import contextlib
@@ -90,6 +91,7 @@ def main(tool):
         flock(args)
     with open(os.environ['FAKE_LOG'], 'a') as log:
         log.write(json.dumps([tool.split(':')[0], *args]) + '\n')
+    sys.stderr.write(json.loads(os.environ.get('FAKE_STDERR', '{}')).get(tool.split(':')[0], ''))
     s = json.loads(STATE.read_text())
     code = 0
     if tool.startswith('python:'):
@@ -201,8 +203,10 @@ class SetupTestBase(unittest.TestCase):
         self.log = self.dir / 'calls.log'
         self.log.touch()
         (self.bin / 'fake.py').write_text(FAKE_MODULE % {'public': PUBLIC_CERT, 'proxy_body': PROXY_BODY})
-        saved = {name: os.environ.get(name) for name in ('PATH', 'HOME', 'FAKE_STATE', 'FAKE_LOG', 'DEBIAN_FRONTEND')}
+        saved = {name: os.environ.get(name)
+                 for name in ('PATH', 'HOME', 'FAKE_STATE', 'FAKE_LOG', 'FAKE_STDERR', 'DEBIAN_FRONTEND')}
         self.addCleanup(self.restore_environment, saved)
+        os.environ.pop('FAKE_STDERR', None)
         os.environ.pop('DEBIAN_FRONTEND', None)  # the script must set it for apt-get itself
         os.environ.update(PATH=str(self.bin), HOME=str(self.home), FAKE_STATE=str(self.state),
                           FAKE_LOG=str(self.log))
@@ -240,6 +244,11 @@ class SetupTestBase(unittest.TestCase):
 
     def remove(self, tool):
         (self.bin / tool).unlink()
+
+    @staticmethod
+    def stderr_of(**texts):
+        """Make each fake tool named in texts print its text on stderr (JSON-safe names: dpkg_query for dpkg-query)."""
+        os.environ['FAKE_STDERR'] = json.dumps({name.replace('_', '-'): text for name, text in texts.items()})
 
     def run_setup(self, *args, proxy_ca=None):
         """main()'s exit code, with stdout and stderr captured; the calls log starts empty for each run."""
@@ -301,7 +310,7 @@ class ColdAndWarmTest(SetupTestBase):
                                  dev_setup.UPSTREAM_REFSPEC))
         self.assertTrue(self.ran('git', '-C', str(self.repo), 'config', 'merge.ours.driver', 'true'))
         self.assertEqual(self.ran('apt-get', 'install'),
-                         [['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3']])
+                         [['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3', 'xdotool']])
         # The first install fails, the penv is pinned, and the retry passes.
         calls = self.calls()
         installs = [i for i, call in enumerate(calls) if call[:3] == ['pio', 'pkg', 'install']]
@@ -430,6 +439,80 @@ class FailureTest(SetupTestBase):
         self.assertIn('error: git: cannot run git', self.err)
 
 
+UV_WARNING = 'warning: The `UV_NATIVE_TLS` environment variable is deprecated, use `UV_SYSTEM_CERTS` instead\n'
+
+
+class StderrTest(SetupTestBase):
+    """A command's stderr is no part of a value parsed from its stdout."""
+
+    def assert_tool_ca_passed(self):
+        self.assertEqual(self.err.count('error:'), 0, self.err)
+        self.assertRegex(self.out, r'tool CA: (ok|appended)')
+
+    def test_a_uv_warning_does_not_break_the_tool_ca_step_cold_or_warm(self):
+        self.stderr_of(uv=UV_WARNING)
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assert_tool_ca_passed()
+        self.assertEqual(self.tool_bundle().read_text().count(PROXY_BODY), 1)
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assert_tool_ca_passed()
+        self.assertEqual(self.tool_bundle().read_text().count(PROXY_BODY), 1)
+
+    def test_find_pio_returns_the_uv_tools_pio_over_one_on_path_when_uv_warns(self):
+        self.stderr_of(uv=UV_WARNING)
+        uv_pio = self.home / '.local' / 'bin' / 'pio'
+        uv_pio.parent.mkdir(parents=True)
+        uv_pio.write_text('')
+        self.fakes('pio')  # another pio, on PATH
+        self.assertEqual(dev_setup.find_pio(), str(uv_pio))
+
+    def test_a_tool_name_on_the_stderr_of_uv_tool_list_is_not_an_installed_tool(self):
+        self.stderr_of(uv='pioarduino v6.1.19\nclang-format v21.1.8\n')
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assertEqual([call[3] for call in self.ran('uv', 'tool', 'install')],
+                         ['pioarduino==6.1.19', 'clang-format>=21,<22'])
+
+    def test_python_stderr_changes_neither_the_certifi_path_nor_the_penv_version(self):
+        self.set_state(penv_pioarduino='6.1.19')
+        self.stderr_of(python='warning: a note from the interpreter\n')
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assertEqual(self.err.count('error:'), 0, self.err)
+        self.assertEqual(self.ran('uv', 'pip', 'install'), [])
+        self.assertIn('ok: the penv has pioarduino 6.1.19', self.out)
+        self.assertEqual(self.penv_bundle().read_text().count(PROXY_BODY), 1)
+
+    def test_dpkg_query_stderr_does_not_reinstall_an_installed_package(self):
+        self.set_state(pio='ok', packages=['libsdl2-dev', 'libpcre3', 'xdotool'])
+        self.stderr_of(dpkg_query='dpkg-query: a warning\n')
+        self.assertEqual(self.run_setup(), 0, self.err)
+        self.assertFalse(self.ran('apt-get'))
+
+    def test_a_failed_retry_shows_the_stderr_of_pio(self):
+        self.set_state(pio='fail')
+        self.stderr_of(pio='PIO-STDERR-MARKER\n')
+        self.assertEqual(self.run_setup(), 2)
+        self.assertRegex(self.err, r'pio pkg install failed again \(1\):\n(.*\n)*.*PIO-STDERR-MARKER')
+
+    def test_a_failed_install_that_left_no_penv_shows_the_stderr_of_pio(self):
+        self.stderr_of(pio='PIO-STDERR-MARKER\n')
+        self.assertEqual(self.run_setup(proxy_ca=self.dir / 'missing.crt'), 2)
+        self.assertRegex(self.err, r'and left no penv:\n(.*\n)*.*PIO-STDERR-MARKER')
+
+    def test_run_returns_stdout_and_stderr_apart(self):
+        script = 'import sys; print("out"); print("err", file=sys.stderr)'
+        self.assertEqual(dev_setup.run([sys.executable, '-c', script]), (0, 'out\n', 'err\n'))
+        self.assertEqual(dev_setup.run_checked([sys.executable, '-c', script]), 'out\n')
+
+    def test_a_failed_command_shows_its_stdout_then_its_stderr(self):
+        # The command writes stderr first: only separate pipes put stdout first in the message.
+        script = 'import sys; print("to-stderr", file=sys.stderr, flush=True); print("to-stdout"); sys.exit(3)'
+        with self.assertRaises(dev_setup.SetupError) as raised:
+            dev_setup.run_checked([sys.executable, '-c', script])
+        message = str(raised.exception)
+        self.assertIn('failed (3)', message)
+        self.assertIn('    to-stdout\n    to-stderr', message)
+
+
 class ProxyCaTest(SetupTestBase):
     def test_a_hardlinked_bundle_is_replaced_and_its_other_link_is_unchanged(self):
         bundle = self.dir / 'bundle.pem'
@@ -483,12 +566,12 @@ class SystemPackagesTest(SetupTestBase):
     def test_without_package_lists_apt_updates_and_installs_again(self):
         self.set_state(pio='ok', apt_lists=False)
         self.assertEqual(self.run_setup(), 0, self.err)
-        install = ['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3']
+        install = ['apt-get', 'install', '-y', '--no-install-recommends', 'libsdl2-dev', 'libpcre3', 'xdotool']
         self.assertEqual(self.ran('apt-get'), [install, ['apt-get', 'update'], install])
-        self.assertEqual(self.read_state()['packages'], ['libsdl2-dev', 'libpcre3'])
+        self.assertEqual(self.read_state()['packages'], ['libsdl2-dev', 'libpcre3', 'xdotool'])
 
     def test_only_a_missing_package_is_installed(self):
-        self.set_state(pio='ok', packages=['libsdl2-dev'])
+        self.set_state(pio='ok', packages=['libsdl2-dev', 'xdotool'])
         self.assertEqual(self.run_setup(), 0, self.err)
         self.assertEqual(self.ran('apt-get', 'install'),
                          [['apt-get', 'install', '-y', '--no-install-recommends', 'libpcre3']])

@@ -3,7 +3,7 @@ title: 'Sync upstream develop at e54c0087'
 type: 'chore'
 ticket: ''
 created: '2026-10-10'
-status: 'built'
+status: 'done'
 route: 'full'
 route_source: 'auto'
 baseline_revision: '39061f4416dc01a8e1df393752252f2ed76144a3'
@@ -176,6 +176,8 @@ Patches applied in the same merge commit (amend): items 4, 9, 16. Re-run: `pack_
 
 **Manual checks:**
 - Simulator screenshots in `_bmad-output/implementation-artifacts/sync-e54c0087-screenshots/`: Home in list mode and in the cover grid (Games above Settings), the Games list, one move of Ultimate tic-tac-toe.
+
+- Fork release dry run (orchestrator, 2026-10-11, after the merge): run 38100498514 (`crosshatch-release.yml`, `dry_run` true) on `claude/sync-upstream-e54c0087` at `0bf1c2d5`, success; it built the release envs, packed the games, uploaded the `fork-release` artifact, and published nothing. `games/`, `scripts/pack_game.py` and `scripts/fork_release.py` are unchanged from `273fa892`, and `pack_game.py` over a `git archive` of `0bf1c2d5` gives the packet's package hashes: `sudoku` `f31b5a02a67a712a`, `ultimate-tic-tac-toe` `cd11a6224228acd9`, `battleship` `d3fecc1e5fc245f6`. The deferred dry-run item is resolved.
 
 ## Auto Run Result
 

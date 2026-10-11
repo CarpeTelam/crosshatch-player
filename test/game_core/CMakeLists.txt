@@ -6,6 +6,7 @@ add_executable(GameCoreTest
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
+  ModeTableTest.cpp
   PackageLimitsTest.cpp
   PauseClockTest.cpp
   SeatShownTest.cpp
