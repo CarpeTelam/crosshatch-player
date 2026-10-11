@@ -15,11 +15,15 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   `swipe` events in canvas pixels.
 - Each gesture read in a round in play (state Playing) is logged at `LOG_DBG` with the host's classification of it, one
   line after `<id>: touch ` (`GameTouchLog`, a pure formatter the host tests pin). Logging changes no gesture's outcome:
-  what reaches `input`, and in what order, is as before. The formatter runs inside the macro's arguments, so a build with
-  `LOG_DBG` compiled out pays nothing, and there is no setting. "Sent" means `classify` accepted the gesture. A later drop
-  keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch that began ... before the
-  hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in builds with `LOG_LEVEL` 2
-  (the development envs of `platformio.ini` and the simulator); the release envs use 1 and print none. A gesture the game
+  what reaches `input`, and in what order, is as before. The line is opt in: it, its include and its buffer compile in
+  only when the fork-only define `CROSSHATCH_TOUCH_LOG` is set, in any env, so a dev build's 16-line crash buffer is not
+  filled with taps and hidden Battleship taps are not logged. For a device run, build with
+  `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro -t upload` (under AGENTS.md's build lock; `sim.sh
+  build` runs `pio run`, so the variable reaches the simulator build too). "Sent" means `classify` accepted the gesture.
+  A later drop keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch that began ...
+  before the hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in builds with the
+  define and `LOG_LEVEL` 2 (the development envs of `platformio.ini` and the simulator); the release envs use 1 and
+  print none. A gesture the game
   does not get says why after a colon (`: not sent, off the canvas`, `: not sent, system edge swipe`). `held` is the
   SDK's `HalGPIO::lastTouchHeldMs()` as latched at release, so it can include the controller's release hold-over. What
   each line means on the device:

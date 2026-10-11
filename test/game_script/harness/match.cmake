@@ -72,6 +72,9 @@ add_library(game_match_src STATIC
   # The real FreeInkApp and dialogs the match's views are built with.
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/src/FreeInkUI.cpp)
 target_compile_definitions(game_match_src PUBLIC FREEINK_CAP_GAMES=1 ${HARNESS_EXTRA_DEFINES})
+# The match's per-tap touch log line is opt in on the device (CROSSHATCH_TOUCH_LOG); TouchLogTest reads it, so the
+# harness builds the match with it on. The flag is off in every firmware env unless a build sets it.
+target_compile_definitions(game_match_src PRIVATE CROSSHATCH_TOUCH_LOG=1)
 # Ahead of every other folder, the shared doubles' included: the screen doubles shadow
 # lib/hal, src/activities, and src/components headers by their names.
 target_include_directories(game_match_src BEFORE PUBLIC ${REAL_ACTIVITY_DIR} ${SCREEN_STUBS_DIR})

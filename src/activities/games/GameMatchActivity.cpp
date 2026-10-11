@@ -19,7 +19,9 @@
 #include "games/GameAssets.h"
 #include "games/GameHostCaps.h"
 #include "games/GameRegistry.h"
+#ifdef CROSSHATCH_TOUCH_LOG
 #include "games/GameTouchLog.h"
+#endif
 #include "games/GameTouchRoute.h"
 #include "games/GameVM.h"
 #include "games/MatchResume.h"
@@ -526,13 +528,17 @@ void GameMatchActivity::loopPlaying() {
       GameTouch::classify(gesture, renderer.getScreenWidth(), renderer.getScreenHeight(), viewport, event);
   const bool aimed = outcome == GameTouch::Outcome::Sent;
   // The host's classification of each gesture read in Playing, and whether classify accepted it (GameTouchLog). A later
-  // drop has its own lines below, and the VM or the game declining a tap logs nothing. The formatter runs inside the
-  // macro's arguments, so a build that compiles LOG_DBG out pays nothing. Changes nothing below.
+  // drop has its own lines below, and the VM or the game declining a tap logs nothing. Opt in: only a build with the
+  // fork-only define CROSSHATCH_TOUCH_LOG compiles the line (and still needs LOG_LEVEL 2 to print it), so a dev build's
+  // crash ring buffer is not filled with taps. Changes nothing below.
+#ifdef CROSSHATCH_TOUCH_LOG
   if (outcome != GameTouch::Outcome::NoGesture) {
     LOG_DBG("GAME", "%s: touch %s", manifest.id, GameTouchLog::line(gesture, outcome, event).text);
   }
+#endif
   // What becomes of the aimed gesture is GameTouchRoute::decide's (the first-frame path, the drop before the frame is
-  // on the panel, and the frame tag); this performs it. The touch log line above runs before the decision.
+  // on the panel, and the frame tag); this performs it. The touch log line above (when compiled in) runs before the
+  // decision.
   if (aimed) {
     TouchSource source(firstFramePushing, gate, *vm);
     const GameTouchRoute::Aimed in{.tap = gesture.kind == GameTouch::Kind::Tap,
