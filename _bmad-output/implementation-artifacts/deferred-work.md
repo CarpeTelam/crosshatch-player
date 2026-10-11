@@ -1315,10 +1315,10 @@
 
 - source_plan: `_bmad-output/implementation-artifacts/plan-e8-touch-log.md`
   summary: Nothing automated asserts the default build lacks the per-tap touch line; the host harness builds the match with `CROSSHATCH_TOUCH_LOG` on.
-  evidence: Only `match.cmake` builds `GameMatchActivity.cpp` for the host, with the define, so deleting the `#ifdef` keeps every host test and CI env green. The build (`3364dbde`) proved absence once by the x4pro ELF's strings. An ongoing check needs a second match-harness variant without the define, or an ELF-strings assertion in the flash-budget job. Location: test/game_script/harness/match.cmake:79. Severity: low.
+  evidence: Only `match.cmake` builds `GameMatchActivity.cpp` for the host, with the define, so deleting the `#ifdef` keeps every host test and CI env green. The build (`3364dbde`) proved absence once by the x4pro ELF's strings. An ongoing check needs a second match-harness variant without the define, or an ELF-strings assertion in the flash-budget job. Location: test/game_script/harness/match.cmake:79. Severity: low. Trigger: epic-play-nearby, which takes this item (owner, 2026-10-11; `epic-play-nearby.md` Notes, "Handoff from epic-first-party-games").
 - source_plan: `_bmad-output/implementation-artifacts/plan-e8-touch-log.md`
   summary: CI never builds a firmware env with `CROSSHATCH_TOUCH_LOG=1`, so the documented device-run recipe can rot.
-  evidence: The block is one `LOG_DBG` over a host-tested formatter, and the build built x4pro with the flag once. A CI build with the flag costs a full extra firmware build; the next device run that sets it is the practical check. Location: docs/crosshatch/game-canvas.md:21. Severity: low.
+  evidence: The block is one `LOG_DBG` over a host-tested formatter, and the build built x4pro with the flag once. A CI build with the flag costs a full extra firmware build; the next device run that sets it is the practical check. Location: docs/crosshatch/game-canvas.md:21. Severity: low. Trigger: epic-play-nearby, which takes this item (owner, 2026-10-11; `epic-play-nearby.md` Notes, "Handoff from epic-first-party-games").
 
 ## e8-pins
 
