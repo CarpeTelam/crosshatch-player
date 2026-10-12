@@ -488,9 +488,9 @@ TEST(ManifestTest, StartModeFallsBackRememberedThenDefaultThenTheFirstStartable)
 // Every fixture game's manifest.json passes what GameRegistry requires to list a game,
 // and what GamesLauncherActivity requires to start it: it parses, its id is the folder's
 // name, it passes Manifest::check against this host, and it offers solo (pass-hidden, the hidden hand-off, and
-// pass-keep, its kept-turn twin, have no solo form, offer pass instead, and say hidden). Exactly the folders that
-// are not games of their own (changed, which holds only game folders one level down, and faults, modules, surface) have
-// none, so a game fixture that loses its manifest fails here.
+// pass-keep, its kept-turn twin, have no solo form, offer pass instead, and say hidden; nearby has no solo form
+// either). Exactly the folders that are not games of their own (changed, which holds only game folders one level down,
+// and faults, modules, surface) have none, so a game fixture that loses its manifest fails here.
 TEST(ManifestTest, EveryFixtureManifestIsListed) {
   std::set<std::string> listed;
   std::set<std::string> withoutManifest;
@@ -518,6 +518,10 @@ TEST(ManifestTest, EveryFixtureManifestIsListed) {
     if (folder == "pass-hidden" || folder == "pass-keep") {
       EXPECT_EQ(check.modes, Manifest::MODE_PASS) << folder << " offers more than pass, or not pass, on this host";
       EXPECT_TRUE(m.hidden) << folder << " does not say hidden";
+    } else if (folder == "nearby") {
+      // No solo form; pass is startable on this host (the nearby mode is not).
+      EXPECT_EQ(check.modes & Manifest::MODE_SOLO, 0) << folder << " offers solo";
+      EXPECT_NE(check.modes & Manifest::MODE_PASS, 0) << folder << " offers no pass mode on this host";
     } else {
       EXPECT_NE(check.modes & Manifest::MODE_SOLO, 0) << folder << " offers no solo mode on this host";
     }

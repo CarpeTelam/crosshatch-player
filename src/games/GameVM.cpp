@@ -14,6 +14,7 @@
 
 #include "FrameReplay.h"
 #include "GameViewport.h"
+#include "NearbySession.h"
 
 namespace {
 
@@ -47,7 +48,8 @@ void logRound(const GameCore::Session& session, const GameScript::MatchRounds& r
 
 std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                        const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster,
-                                       const bool handOff, const GameCore::SettingValues& settings) {
+                                       const bool handOff, const GameCore::SettingValues& settings,
+                                       NearbySession* const nearby) {
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
   // The two frames, then the mailbox's one snapshot: one block, since the mailbox lives
@@ -62,7 +64,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
   std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas, gameId,
-                                                       store, roster, handOff, settings));
+                                                       store, roster, handOff, settings, nearby));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -73,7 +75,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
 
 GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas,
                const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster, const bool handOff,
-               const GameCore::SettingValues& settings)
+               const GameCore::SettingValues& settings, NearbySession* const nearby)
     : assets(std::move(loaded)),
       roster(roster),
       frameStorage(std::move(storage)),
@@ -82,7 +84,8 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       log(gameId),
       game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store, &paused},
            canvas, assets.images()),
-      handOff(handOff) {
+      handOff(handOff),
+      nearby(nearby) {
   game.setSettings(settings);
 }
 
@@ -156,13 +159,17 @@ void GameVM::run() {
       handOffView = GameCore::MatchState::HandOff;
       outcome = rounds.begin(*session);
       announceTurnSeat(outcome);
+    } else if (followsHost()) {
+      // The device that does not hold seat 1 runs no setup: its first state is the host's first STATE (adopted at the
+      // top of a pass), and until then it draws nothing and counts no round.
+      rounds.attach(*session);
     } else {
       outcome = rounds.start(*session);
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
     }
     publishCommitted(mailbox, *session, published, outcome);
-    // A hidden round has drawn nothing yet: it logs its start at its first seat's frame.
-    if (outcome == Outcome::Ok) logRound(*session, rounds, 0, !handOff);
+    // A hidden round has drawn nothing yet: it logs its start at its first seat's frame; a follower has no round yet.
+    if (outcome == Outcome::Ok) logRound(*session, rounds, 0, !handOff && session->hasState());
   }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
     const uint32_t endedBefore = rounds.roundsEnded();
@@ -176,7 +183,10 @@ void GameVM::run() {
         seatPending = true;
       }
     }
-    if (rounds.takePlayAgain()) {
+    if (nearby && nearbyStep(*session, published, outcome)) continue;
+    // A nearby host leaves Play again alone while its over STATE has not gone: the next round's would replace it
+    // (NearbySession::ship refuses a different version over a staged `over`). The request stays set until it has.
+    if ((!nearby || !session->shipmentPending()) && rounds.takePlayAgain()) {
       if (handOff) {
         // The new round begins on the hand-off screen, as the first did; a held timer was the
         // last round's (beginAgain cancels the pending one).
@@ -249,6 +259,37 @@ void GameVM::run() {
     taskAlive = false;
   }
   done.store(true, std::memory_order_release);
+}
+
+bool GameVM::nearbyStep(GameCore::Session& session, uint32_t& published, GameScript::Outcome& outcome) {
+  GameCore::Shipment shipment;
+  // The first ship() of a version stages it and answers false; the call after the link took it answers true once, and
+  // shipped() is called then and only then (a refused send loses nothing: the shipment stays pending and is offered
+  // again).
+  if (session.pendingShipment(shipment) && nearby->ship(shipment)) session.shipped();
+  shipOutstanding.store(session.shipmentPending(), std::memory_order_release);
+
+  const uint32_t endedBefore = rounds.roundsEnded();
+  const uint32_t startedBefore = rounds.roundsStarted();
+  const NearbySession::AdoptStep step = nearby->adoptNext(session);
+  if (!step.taken) return false;
+  // A refusal by adopt changed nothing and is logged by adoptNext; the over event's ScriptError or Cancelled ends the
+  // VM as any step's does.
+  outcome = step.outcome;
+  if (outcome == GameScript::Outcome::Ok) {
+    outcome = rounds.adopted(step.result);
+    const bool adopted = step.result == GameCore::Adoption::Adopted || step.result == GameCore::Adoption::RoundStarted;
+    if (outcome == GameScript::Outcome::Ok && adopted) noteSeatDrawn(rounds.shownSeat());
+  }
+  publishCommitted(mailbox, session, published, outcome);
+  if (outcome == GameScript::Outcome::Ok)
+    logRound(session, rounds, endedBefore, rounds.roundsStarted() != startedBefore);
+  return true;
+}
+
+void GameVM::pollNearby() {
+  if (!nearby) return;
+  if (shipOutstanding.load(std::memory_order_acquire) || nearby->counters().queueSize > 0) notifyTask();
 }
 
 void GameVM::playAgain() {

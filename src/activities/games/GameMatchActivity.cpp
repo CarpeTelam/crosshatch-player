@@ -100,12 +100,14 @@ static_assert(GameSaveStore::PACKAGE_HASH_BYTES == GamePkg::HASH_BYTES,
 
 GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                      const GameCore::Manifest& manifest, const GameCore::Roster& roster,
-                                     const Start start, const GameCore::SettingValues& settings)
+                                     const Start start, const GameCore::SettingValues& settings,
+                                     std::unique_ptr<NearbySession> nearbySession)
     : Activity("GameMatch", renderer, mappedInput),
       UiAppHost(renderer),
       manifest(manifest),
       roster(roster),
       settings(settings),
+      nearby(std::move(nearbySession)),
       start(start),
       lifecycle(isHiddenPass(roster, manifest)) {
   persistence.bind(store, this->manifest.id, [] { return static_cast<uint32_t>(millis()); });
@@ -114,8 +116,10 @@ GameMatchActivity::GameMatchActivity(GfxRenderer& renderer, MappedInputManager& 
 // Out of line so unique_ptr<GameVM> sees the complete type.
 GameMatchActivity::~GameMatchActivity() {
   if (!slotLeaked) return;
-  // A leaked VM task may still call ch.store.set; its slot must outlive it.
+  // A leaked VM task may still call ch.store.set; its slot must outlive it. It may call the nearby session too
+  // (adoptNext, ship), which NearbySession's destructor would free under it: leave that unfreed as well, with its task.
   store.leak();
+  (void)nearby.release();
 }
 
 void GameMatchActivity::onEnter() {
@@ -123,6 +127,20 @@ void GameMatchActivity::onEnter() {
   resetUi();
   app.setScreen(&GameMatchActivity::viewScreen, this);
   viewport = GameViewport::forRenderer(renderer);
+
+  if (nearby) {
+    // Idempotent: the lobby has begun the match already. The session's roster is the match's whatever the caller
+    // passed, and a nearby match saves nothing, so there is nothing to resume.
+    if (!nearby->beginMatch()) {
+      LOG_ERR("GAME", "%s: the nearby session has no match to play", manifest.id);
+      fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_NOT_LOADED));
+      return;
+    }
+    roster = nearby->roster();
+    start = Start::New;
+    // Still Starting and before the VM exists, so the machine is fixed from here on (as a resume's roster does).
+    lifecycle = MatchLifecycle(isHiddenPass(roster, manifest));
+  }
 
   if (!store.allocate(manifest.id, millis())) {
     LOG_ERR("GAME", "OOM: ch.store slot");
@@ -196,7 +214,7 @@ void GameMatchActivity::onEnter() {
     }
   }
   auto created = GameVM::create(std::move(assets), viewport, replay, manifest.id, store.slot(), roster,
-                                lifecycle.hiddenPass(), settings);
+                                lifecycle.hiddenPass(), settings, nearby.get());
   if (created && !snapshot.empty() && !created->setResume(snapshot, ver)) {
     // GameVM::setResume refuses only an empty or oversized snapshot, which GameSaveStore's checks already exclude, so
     // this is not reachable today; if it ever is, the first snapshot of a new match would replace the save.
@@ -250,7 +268,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
   // The title screen lets a Continue through with settings it could not read: a resume runs no setup, but a Play again
   // does, so it ends in the error view rather than start a round with a missing ctx.settings
   // (GameModeActivity::startMatch).
-  if (event == MatchEvent::PlayAgain && from == MatchState::Over && settings.count != manifest.settingsCount) {
+  // A follower runs no setup (the host's Play again does), so it needs no settings.
+  if (event == MatchEvent::PlayAgain && from == MatchState::Over && !followsHost() &&
+      settings.count != manifest.settingsCount) {
     LOG_ERR("GAME", "%s: no Play again, the settings its manifest declares were not read", manifest.id);
     fail(StrId::STR_GAMES_START_FAILED, tr(STR_GAMES_SETTINGS_NOT_READ));
     return;
@@ -276,7 +296,8 @@ void GameMatchActivity::handle(const MatchEvent event) {
   // Before shown: a render already queued must not see Playing with the old count. A hidden pass match's hand-off
   // likewise waits for the new round's first turn seat, read before playAgain() (startNextRound) can begin it.
   if (event == MatchEvent::PlayAgain) {
-    gate.awaitRounds(vm->roundsStarted() + 1);
+    // A follower leaves Over because the host's next round has started: it awaits that round, not the one after.
+    gate.awaitRounds(followsHost() ? vm->roundsStarted() : vm->roundsStarted() + 1);
     if (lifecycle.hiddenPass()) announcementAwaited.store(vm->turnAnnouncements() + 1);
   }
   // The hand-off's tap asks the VM for the next seat, and the canvas waits for that request's frame; stored before
@@ -290,8 +311,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
       if (event == MatchEvent::PlayAgain) startNextRound();
       // A new round's first frame asks for its own render, as does the next seat's after the hand-off; a resumed one
       // is redrawn, unless it resumes into the Play-again gap, where renderCanvas keeps the view on screen until the
-      // new round's first frame.
-      if (event != MatchEvent::Resume && event != MatchEvent::Back) return;
+      // new round's first frame. A follower asks for its own: the waiting screen before the host's first STATE has no
+      // frame to ask for, and a round the host has started is on the panel behind the end-of-round menu.
+      if (!needsRenderAskOnEnteringPlay(event)) return;
       break;
     case MatchState::Result:
       persistence.setWritable(true);
@@ -325,7 +347,15 @@ void GameMatchActivity::handle(const MatchEvent event) {
   requestUpdate();
 }
 
+bool GameMatchActivity::needsRenderAskOnEnteringPlay(const MatchEvent event) const {
+  if (event == MatchEvent::Resume || event == MatchEvent::Back) return true;
+  if (!followsHost()) return false;
+  return (event == MatchEvent::Started && vm->roundsStarted() == 0) || event == MatchEvent::PlayAgain;
+}
+
 void GameMatchActivity::startNextRound() {
+  // The host's round has started already (the loop saw it); this device asks the VM for nothing.
+  if (followsHost()) return;
   // A save Over could not delete stays pending: it is the finished round's, which must not survive a Leave, and
   // flushResumeOf clears the pending delete once the new round's first snapshot has replaced the file.
   // A delete or write that failed for the finished round must not hold back the new round's first snapshot.
@@ -565,6 +595,7 @@ void GameMatchActivity::loopPlaying() {
   // No finger down: the contact is over, posted, dropped, or no gesture at all, and the next one latches its own.
   contact.endIfNotHeld();
   vm->pollTimer();
+  vm->pollNearby();
   store.flushIfDue(millis());
   flushResume();
   retryResumeDelete(false);  // pending only after a Play again over an Over delete that failed
@@ -585,9 +616,16 @@ void GameMatchActivity::loopView() {
   // call that was running when the view opened; neither posts input or timers.
   if (state != MatchState::Error) {
     if (!vmHealthy()) return;
+    vm->pollNearby();
     store.flushIfDue(millis());
     flushResume();
     retryResumeDelete(false);
+    // The host's next round has started (a round started that the one this Over ended did not count): a follower leaves
+    // Over by itself. Not `started > ended`: a round the host also finished before this pass would hide it.
+    if (state == MatchState::Over && followsHost() && vm->roundsStarted() > roundsSeen) {
+      handle(MatchEvent::PlayAgain);
+      return;
+    }
   }
   // Back resumes from the pause menu, leaves from the error view, and does
   // nothing in the end-of-round menu (MatchLifecycle).
@@ -600,15 +638,16 @@ void GameMatchActivity::loopView() {
     gapWhenPaused = false;
     requestUpdate();
   }
-  const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
+  const GameCore::MatchMenu menu = GameMatchView::menuFor(state, followsHost());
   const auto route = routeTouch(mappedInput);
   if (route && route.event.action == GameMatchView::ACTION_OPTION) {
     choose(menu, route.event.value);
     return;
   }
   if (route.routed && app.invalidated()) requestUpdate();
-  // The error view's one control is Back, above.
-  if (menu.count < 2) return;
+  // The error view's one control is Back, above. A follower's end-of-round menu has one control too, Leave, which
+  // Confirm chooses.
+  if (state == MatchState::Error || menu.count == 0) return;
   const uint8_t current = selected.load();
   if (mappedInput.wasPressed(MappedInputManager::Button::NavPrevious)) {
     selected.store(static_cast<uint8_t>((current + menu.count - 1) % menu.count));
@@ -762,8 +801,11 @@ void GameMatchActivity::renderCanvas() {
   const uint32_t served = vm->seatShownRequest();
   if (!gate.open(started, served)) {
     viewOnScreen = true;
+    // A follower before the host's first STATE has nothing to show but that it waits.
+    if (followsHost() && started == 0) renderWaiting();
     return;
   }
+  waitingOnPanel = false;
   // The match asks for a render only for a frame no render has taken yet, so a
   // render without one is a repaint after something else drew (an overlay such
   // as the light panel closed): the screen no longer shows the frame. The VM may publish a newer one before drawFront
@@ -799,6 +841,24 @@ void GameMatchActivity::renderCanvas() {
   gate.markDisplayed(taken, started, served);
   // The first seat frame after "I'm ready" is on the panel: a touch is tagged by the frame it was made under again.
   firstFramePushing.store(false, std::memory_order_release);
+}
+
+void GameMatchActivity::renderWaiting() {
+  // The gate is closed for want of the host's first STATE, so no frame exists to cover; nothing here changes replay.
+  renderer.clearScreen();
+  viewState = MatchState::Playing;
+  waitingView = true;
+  renderUi();
+  waitingView = false;
+  // handle() may have closed routing after this render read its state.
+  if (shown.load() != MatchState::Playing) closeRouting();
+  // In full when it replaces anything else; a repeat of the screen already on the panel (the light panel closed) is
+  // fast.
+  const auto pushBegan = static_cast<uint32_t>(millis());
+  renderer.displayBuffer(waitingOnPanel ? HalDisplay::FAST_REFRESH : HalDisplay::FULL_REFRESH);
+  waitingOnPanel = true;
+  panel = Panel::Other;
+  LOG_INF("GAME", "%s: waiting screen pushed in %u ms", manifest.id, static_cast<unsigned>(millis()) - pushBegan);
 }
 
 bool GameMatchActivity::canvasUnderView(const MatchState state) const {
@@ -859,6 +919,7 @@ void GameMatchActivity::renderView(const MatchState state) {
   }
   // buildView draws this state's dialog, even if the loop moves on meanwhile.
   viewState = state;
+  waitingOnPanel = false;
   renderUi();
   // handle() may have closed routing after this render read its state; the
   // table just published is the old view's and must not route taps.
@@ -894,6 +955,8 @@ void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
   input.pauseInGap = input.state == MatchState::Paused && self->pauseInGap();
   input.passTo = self->passTo.load();
   input.handOffSeat = self->handOffSeat;
+  input.followsHost = self->followsHost();
+  input.waiting = self->waitingView;
   self->views.build(screen, self->renderer, input);
 }
 

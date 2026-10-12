@@ -13,6 +13,7 @@ list(APPEND HARNESS_EXTRA_CORE_SOURCES
      ${REPO_ROOT}/lib/GameCore/StateQueue.cpp
      ${REPO_ROOT}/lib/GameCore/MatchSink.cpp)
 # GameLink.cpp and NearbySession.cpp include freertos/task.h, which only the screen doubles provide, so they leave the
-# shared library; nearby_session.cmake builds them against the screen doubles. (GameLinkStore.cpp needs only HalMemory
+# shared library; match.cmake builds them against the screen doubles, in game_match_src (since entry 9, GameVM.cpp
+# calls NearbySession). (GameLinkStore.cpp needs only HalMemory
 # and stays in the shared library.)
 list(APPEND HARNESS_EXCLUDE_GAMES GameLink.cpp NearbySession.cpp)
