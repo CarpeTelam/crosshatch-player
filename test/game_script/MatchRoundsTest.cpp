@@ -587,31 +587,152 @@ TEST_F(PassRoundsTest, BeginPublishesNoFrameAndARoundStartsAtItsFirstDraw) {
   EXPECT_EQ(game.rounds.roundsStarted(), 2u);
 }
 
-// A roster with two of three seats local (cross-story fix review F4; epic-play-nearby's shape, which no match has yet):
-// with the turn on the third seat, seatShown names NO_SEAT, and start, restart, and step neither read input nor draw.
-TEST_F(PassRoundsTest, ATurnSeatThisDeviceDoesNotPlayGetsNoInputAndNoDraw) {
-  useSource("main", R"(
-return {
-  setup = function(ctx) return { moves = 2 } end,
-  status = function(s) return { turn = s.moves % 3 + 1 } end,
-  apply = function(s, seat) ch.log('apply ' .. seat) s.moves = s.moves + 1 return s end,
-  draw = function(s, seat, ui) ch.log('draw ' .. seat) ch.gfx.text(0, 0, 'seat ' .. seat, 'small', 'black') end,
-  input = function(s, seat, ui, ev) ch.log('input ' .. seat) return {} end }
-)");
+// A roster with two of three seats local (epic-play-nearby R10, partly-remote rosters): seats 1 and 2 are this
+// device's, seat 3 another's. The game keeps the turn in its state: the first round starts on seat `first`, every later
+// round on seat `later` (the module's setup count survives Play again), and a move by seat 1 or 2 passes the turn to
+// seat 3, one by seat 3 to seat 1. Every call is logged with its seat; a timer is armed by setup and by each tap, so
+// one is pending whoever has the turn.
+std::string partlyRemote(const int first, const int later = 3) {
+  return "local NEXT = { 3, 3, 1 }\n"
+         "local setups = 0\n"
+         "return {\n"
+         "  setup = function(ctx)\n"
+         "    setups = setups + 1\n"
+         "    ch.timer.after(5000)\n"
+         "    return { turn = setups == 1 and " +
+         std::to_string(first) + " or " + std::to_string(later) +
+         ", moves = 0 }\n"
+         "  end,\n"
+         "  status = function(s) return { turn = s.turn } end,\n"
+         "  apply = function(s, seat) ch.log('apply ' .. seat) s.turn = NEXT[seat] s.moves = s.moves + 1 return s "
+         "end,\n"
+         "  draw = function(s, seat, ui) ch.log('draw ' .. seat)\n"
+         "    ch.gfx.text(0, 0, 'seat ' .. seat .. ' turn ' .. s.turn .. ' moves ' .. s.moves, 'small', 'black') end,\n"
+         "  input = function(s, seat, ui, ev)\n"
+         "    ch.log(ev.kind .. ' ' .. seat)\n"
+         "    if ev.kind == 'tap' then ch.timer.after(5000) return { go = true } end\n"
+         "    if ev.kind == 'timer' then ch.timer.after(5000) end\n"
+         "    return nil\n"
+         "  end }\n";
+}
+
+GameCore::Roster firstTwoOfThreeLocal() {
   GameCore::Roster roster = GameCore::Roster::pass(3);
+  roster.mode = GameCore::Mode::Nearby;
   roster.localSeats = 0b011;
-  SessionGame game(*this, roster);
+  return roster;
+}
+
+// Path 1: a local move that passes the turn to a remote seat is drawn, as the seat that last showed (the mover), so the
+// screen shows the result of the move instead of the frame from before it.
+TEST_F(PassRoundsTest, ALocalMoveThatPassesTheTurnToARemoteSeatIsDrawnAsTheMover) {
+  useSource("main", partlyRemote(1));
+  SessionGame game(*this, firstTwoOfThreeLocal());
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->status().turn, 1);
+  ASSERT_EQ(frames.frameGen(), 1u);
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("apply 1"), 1u);
+  ASSERT_EQ(game.session->status().turn, 3);
+  EXPECT_EQ(frames.frameGen(), 2u) << "the move is drawn although the turn is another device's";
+  EXPECT_EQ(frontText(), "seat 1 turn 3 moves 1");
+  EXPECT_EQ(game.rounds.shownSeat(), 1);
+  EXPECT_EQ(logged("draw 3"), 0u) << "never another device's seat";
+}
+
+// Path 3: a timer due while the turn is remote reaches the local seat that last showed (seat 2 here), once, with one
+// draw; so does a tap, whose move is discarded off turn.
+TEST_F(PassRoundsTest, ATimerDueWhileTheTurnIsRemoteReachesTheSeatThatLastShowed) {
+  useSource("main", partlyRemote(2));
+  SessionGame game(*this, firstTwoOfThreeLocal());
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();  // seat 2 moves; the turn is seat 3's
+  ASSERT_EQ(game.session->status().turn, 3);
+  ASSERT_EQ(game.rounds.shownSeat(), 2);
+  const uint32_t frame = frames.frameGen();
+  ASSERT_TRUE(tick(game.rounds, game.game, 5000));
+  EXPECT_EQ(logged("timer 2"), 1u);
+  EXPECT_EQ(logged("timer 1"), 0u);
+  EXPECT_EQ(frames.frameGen(), frame + 1) << "one draw";
+  EXPECT_EQ(frontText(), "seat 2 turn 3 moves 1");
+  // A tap is read by the shown seat, its move discarded off turn.
+  const uint32_t discarded = game.session->discardedMoves();
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("tap 2"), 2u);
+  EXPECT_EQ(logged("apply"), 1u) << "only the first move was applied";
+  EXPECT_EQ(game.session->discardedMoves(), discarded + 1);
+}
+
+// Path 4: a round whose first turn is remote publishes the first local seat's frame at start and counts as started,
+// and its taps are that seat's, discarded off turn.
+TEST_F(PassRoundsTest, ARoundWhoseFirstTurnIsRemoteDrawsTheFirstLocalSeatAndCountsAsStarted) {
+  useSource("main", partlyRemote(3));
+  SessionGame game(*this, firstTwoOfThreeLocal());
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_EQ(game.session->status().turn, 3);
-  EXPECT_EQ(game.rounds.shownSeat(), GameCore::NO_SEAT);
-  EXPECT_EQ(frames.frameGen(), 0u) << "start drew another device's seat";
+  EXPECT_EQ(game.rounds.shownSeat(), 1) << "no seat has shown: the first local seat";
+  EXPECT_EQ(frames.frameGen(), 1u);
+  EXPECT_EQ(game.rounds.roundsStarted(), 1u);
+  EXPECT_EQ(frontText(), "seat 1 turn 3 moves 0");
+  EXPECT_EQ(logged("draw 3"), 0u);
   ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("tap 1"), 1u);
+  EXPECT_EQ(logged("apply"), 0u);
+  EXPECT_EQ(game.session->discardedMoves(), 1u);
+}
+
+// Path 4, Play again: the next round's first turn is seat 3's, and seat 2, which showed last, is drawn: not the first
+// local seat, and not nothing.
+TEST_F(PassRoundsTest, APlayAgainWhoseFirstTurnIsRemoteDrawsTheSeatThatLastShowed) {
+  useSource("main", partlyRemote(2, 3));
+  SessionGame game(*this, firstTwoOfThreeLocal());
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_EQ(game.session->status().turn, 2);
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();  // seat 2 moves
+  ASSERT_EQ(game.rounds.roundsStarted(), 1u);
+  const uint32_t frame = frames.frameGen();
   ASSERT_EQ(game.playAgain(), Outcome::Ok) << game.errorMessage();
-  EXPECT_EQ(frames.frameGen(), 0u) << "step or restart drew another device's seat";
-  EXPECT_EQ(logged("input "), 0u);
-  EXPECT_EQ(logged("draw "), 0u);
-  EXPECT_EQ(logged("apply "), 0u);
-  EXPECT_EQ(game.rounds.roundsStarted(), 0u) << "no frame, so no round counts as started";
+  ASSERT_EQ(game.session->status().turn, 3);
+  EXPECT_EQ(game.rounds.roundsStarted(), 2u) << "the new round's first frame was published";
+  EXPECT_EQ(frames.frameGen(), frame + 1);
+  EXPECT_EQ(frontText(), "seat 2 turn 3 moves 0");
+}
+
+// A roster with no local seat shows seat 0 (as before); a timer of a round still playing is dropped, never delivered as
+// seat 0, in step and in play, and a tap is read as before.
+TEST_F(PassRoundsTest, ARosterWithNoLocalSeatDropsATimerOfARoundStillPlaying) {
+  useSource("main", partlyRemote(1));
+  GameCore::Roster roster = firstTwoOfThreeLocal();
+  roster.localSeats = 0;
+  SessionGame game(*this, roster);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_FALSE(game.session->status().over);
+  ASSERT_EQ(game.rounds.shownSeat(), 0) << "no local seat: seat 0, as before";
+  const uint32_t frame = frames.frameGen();
+  ASSERT_TRUE(tick(game.rounds, game.game, 5000));
+  EXPECT_EQ(logged("timer"), 0u) << "not delivered, as seat 0 or any seat";
+  EXPECT_EQ(frames.frameGen(), frame) << "a dropped timer draws nothing";
+  // A tap is not a timer: seat 0 reads it, and it re-arms the timer.
+  ASSERT_EQ(game.step(cellTap(1)), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("tap 0"), 1u);
+  // play drops the timer as well, for a caller that already named the seat.
+  clock.advance(5000);
+  InputEvent due;
+  ASSERT_TRUE(game.game.timer().takeDueEvent(clock.nowMs(), due));
+  ASSERT_EQ(game.rounds.play(due, 0), Outcome::Ok) << game.errorMessage();
+  EXPECT_EQ(logged("timer"), 0u);
+}
+
+// One local seat and an all-local pass roster still deliver a timer of a round still playing (the drop is for a roster
+// with no local seat alone).
+TEST_F(PassRoundsTest, ARosterWithALocalSeatStillDeliversATimerOfARoundStillPlaying) {
+  useSource("main", partlyRemote(1));
+  GameCore::Roster oneLocal = firstTwoOfThreeLocal();
+  oneLocal.localSeats = 0b010;
+  SessionGame game(*this, oneLocal);
+  ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
+  ASSERT_TRUE(tick(game.rounds, game.game, 5000));
+  EXPECT_EQ(logged("timer 2"), 1u) << "the one local seat";
 }
 
 }  // namespace

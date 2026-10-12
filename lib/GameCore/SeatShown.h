@@ -13,17 +13,21 @@ namespace GameCore {
 inline constexpr uint8_t NO_SEAT = 0xFF;
 
 // The seat whose frame this device shows (and whose input it reads) in match state `state`.
-// For the two roster shapes a match has: one local seat (solo, a nearby device), shown in every
-// state but HandOff; or several local seats (pass: every seat), which shows the turn seat while the
+// For the three roster shapes a match has: one local seat (solo, a nearby device), shown in every
+// state but HandOff; several local seats, all of them (pass), which shows the turn seat while the
 // round is on and seat 0, the frame for everyone, once it is over: in Over, or when the status
-// already is (the step that ended it). A hidden pass match's Result shows `mover`, the seat that
+// already is (the step that ended it); or several local seats but not all, which does the same
+// except for a turn seat that is another device's (below). A hidden pass match's Result shows `mover`, the seat that
 // just moved, and its HandOff shows NO_SEAT, whatever the roster. Paused shows what Playing shows
 // (the turn seat, or the one local seat): a hidden pass match's render answers its Paused from the
 // state it was paused from itself (GameMatchActivity::canvasUnderView), and its VM keeps its own
-// view (GameVM). Fails closed: a turn seat or mover this device does not play shows NO_SEAT, never
+// view (GameVM). A roster with several local seats but not all, whose turn seat is another device's,
+// shows the local seat that last showed (`lastShown`, when it is a local seat), else the first local
+// seat, so the device keeps drawing and reading input while the turn is remote (R10). Fails closed:
+// a turn that is no seat of the roster, or a mover this device does not play, shows NO_SEAT, never
 // another device's seat. Pure.
 inline uint8_t seatShown(const MatchState state, const Roster& roster, const Status& status,
-                         const uint8_t mover = NO_SEAT) {
+                         const uint8_t mover = NO_SEAT, const uint8_t lastShown = NO_SEAT) {
   if (state == MatchState::HandOff) return NO_SEAT;
   // No roster has no local seat; one would show seat 0, the frame for everyone.
   if (roster.localSeatCount() <= 1) return roster.firstLocalSeat();
@@ -31,9 +35,12 @@ inline uint8_t seatShown(const MatchState state, const Roster& roster, const Sta
   // Fails closed: a Result asked without a mover, or with one this device does not play,
   // draws nothing rather than another seat's private view.
   if (state == MatchState::Result) return roster.isLocal(mover) ? mover : NO_SEAT;
-  // The same for a turn seat that is not local (a roster with several local seats but not all): LuaGame already
-  // refuses a turn outside 1..n, but not one of another device's seats.
-  return roster.isLocal(status.turn) ? status.turn : NO_SEAT;
+  if (roster.isLocal(status.turn)) return status.turn;
+  // A turn that is no seat (LuaGame already refuses one outside 1..n, and seat 0 is the frame for everyone) fails
+  // closed, as a mover does. A turn seat that is another device's shows a local seat: the one that last showed, else
+  // the first (at least two seats are local here, so the first is a seat).
+  if (!roster.isSeat(status.turn)) return NO_SEAT;
+  return roster.isLocal(lastShown) ? lastShown : roster.firstLocalSeat();
 }
 
 }  // namespace GameCore

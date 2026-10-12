@@ -30,14 +30,22 @@ Outcome MatchRounds::play(const GameCore::GameEvent& event, const uint8_t seat) 
   if (!timer.accepts(event)) return Outcome::Ok;
   // A timer that fell due after the round is over is never delivered, whichever seat is shown.
   if (lateTimer(event, session->status().over)) return Outcome::Ok;
+  // A roster with no local seat reads no timer, whichever seat the caller names.
+  if (noSeatTimer(event)) return Outcome::Ok;
   const Outcome outcome = session->handle(event, seat);
   if (outcome != Outcome::Ok) return outcome;
   return session->applyPending();
 }
 
+bool MatchRounds::noSeatTimer(const GameCore::GameEvent& event) const {
+  return event.kind == GameCore::EventKind::Timer && session->roster().localSeatCount() == 0;
+}
+
 Outcome MatchRounds::draw(const uint8_t seat) {
   const Outcome outcome = session->draw(seat);
   if (outcome != Outcome::Ok) return outcome;
+  // The seat that last showed: only a local seat counts (not seat 0, the frame for everyone).
+  if (session->roster().isLocal(seat)) lastLocal = seat;
   if (firstFramePending) {
     // After the round's first frame is published and before any end, so the match
     // never sees a round end without its start.
@@ -68,7 +76,9 @@ Outcome MatchRounds::step(const GameCore::GameEvent& event) {
   // Dropped with no draw, as a stale one (GameVM logs it); asked before the seat, so a roster with no local seat drops
   // it for the same reason.
   if (lateTimer(event, session->status().over)) return Outcome::Ok;
-  // No seat this device plays has the turn: nothing reads the event.
+  // A timer on a roster with no local seat is dropped likewise (GameVM logs it), not read as seat 0.
+  if (noSeatTimer(event)) return Outcome::Ok;
+  // A turn that is no seat: nothing reads the event.
   const uint8_t seat = shownSeat();
   if (seat == GameCore::NO_SEAT) return Outcome::Ok;
   const Outcome outcome = play(event, seat);
@@ -77,8 +87,7 @@ Outcome MatchRounds::step(const GameCore::GameEvent& event) {
 }
 
 Outcome MatchRounds::drawShown() {
-  // A turn seat this device does not play (a roster with some seats local, not all) is never drawn: the frame on
-  // screen stays, and no other device's seat is drawn here.
+  // A turn that is no seat is never drawn: the frame on screen stays, and no other device's seat is drawn here.
   const uint8_t seat = shownSeat();
   if (seat == GameCore::NO_SEAT) return Outcome::Ok;
   return draw(seat);
@@ -99,7 +108,7 @@ void MatchRounds::countRoundEnd() {
 uint8_t MatchRounds::shownSeat() const {
   const GameCore::Status& status = session->status();
   const GameCore::MatchState state = status.over ? GameCore::MatchState::Over : GameCore::MatchState::Playing;
-  return GameCore::seatShown(state, session->roster(), status);
+  return GameCore::seatShown(state, session->roster(), status, GameCore::NO_SEAT, lastLocal);
 }
 
 }  // namespace GameScript
