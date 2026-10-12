@@ -1335,3 +1335,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-partly-remote-rosters-show-a-local-seat-plan.md`
   summary: `docs/crosshatch/game-canvas.md` does not say what a device with several local seats shows while the turn is a remote seat's.
   evidence: The Hidden pass states section says the VM draws "the turn seat after showTurnSeat"; with this change a remote turn shows the local seat that last showed (else the first), reads taps as that seat, and discards their moves. The file is outside entry 1's touches; a later entry that touches the doc (7 or 15) can state it. Location: docs/crosshatch/game-canvas.md (Hidden pass states). Severity: low.
+
+## 6.3
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-two-device-serial-capture-and-the-default-build-touch-line-c-plan.md`
+  summary: `device_log.py` opens a port without an exclusive lock (no `TIOCEXCL`), so ModemManager, `pio device monitor`, or a second capture can take bytes from the same port and leave holes in a raw log.
+  evidence: Real on Linux, not observable on a pty, and the fix (`TIOCEXCL`, which makes another non-root open fail with EBUSY) changes what a user sees on a real X4 Pro CDC port, which no run has measured. The docs now name ModemManager and the dialout group. Settle it in entry 11's smoke run: capture with and without `pio device monitor` open. Location: scripts/device_log.py:open_port. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-two-device-serial-capture-and-the-default-build-touch-line-c-plan.md`
+  summary: The DTR/RTS clearing and the reconnect after a real sleep are unobserved on hardware.
+  evidence: A pty refuses `TIOCMBIC` (the error is suppressed) and closes with end-of-file at once, with no sleep timing or USB renumbering; a mock of the ioctl would verify nothing. Entry 11's smoke run checks that connecting does not reset the board and that each sleep produces a lost and a connected line. Location: scripts/device_log.py:open_port, Capture.run. Severity: low.
