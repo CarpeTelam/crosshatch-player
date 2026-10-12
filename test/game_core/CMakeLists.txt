@@ -11,12 +11,14 @@ add_executable(GameCoreTest
   PackageLimitsTest.cpp
   PauseClockTest.cpp
   ProtocolTest.cpp
+  ReliableLinkTest.cpp
   SeatShownTest.cpp
   SessionTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Protocol.cpp
+  ${REPO_ROOT}/lib/GameCore/ReliableLink.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
   ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
