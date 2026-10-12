@@ -33,7 +33,18 @@ class GameMatchView {
     bool pauseInGap = false;
     uint8_t passTo = 0;       // the seat the last turn-passing move passed to, for the Result banner
     uint8_t handOffSeat = 0;  // the seat the hand-off screen names
+    // A nearby match's device that does not hold seat 1 (the activity's followsHost()): its end-of-round menu offers
+    // only Leave, under "Waiting for the host" (the host's Play again starts the next round).
+    bool followsHost = false;
+    // The follower's screen before the host's first STATE: "Waiting for the host" centred, no controls. Replaces the
+    // view of `state`.
+    bool waiting = false;
   };
+
+  // The choices `state`'s menu offers, in order, as the events they raise: MatchLifecycle::menuFor, except that a
+  // nearby follower's end-of-round menu is Leave alone. The one definition the loop (which routes the choice) and the
+  // build (which draws it) share.
+  static GameCore::MatchMenu menuFor(GameCore::MatchState state, bool followsHost);
 
   // Builds the view for `input.state` into `screen`: nothing for a state with no view.
   void build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const Input& input);
@@ -43,6 +54,8 @@ class GameMatchView {
   // screen's first row's place) and its "I'm ready" button (filling the second row's): each the screen's one tap target
   // (ACTION_PASS).
   void buildHandOffView(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const Input& input);
+  // The follower's waiting screen: one line of plain text in the middle of the safe area (no frame, no action).
+  static void buildWaitingView(UiAppHost::UiScreen& screen);
   // Draws the view's library icon centred in the dialog's content band `band`, and
   // each of the `count` rows' icons at the row's left when its label leaves room
   // (GameViewIcons), in the ink of the row's label. Nothing for an empty band.

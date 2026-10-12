@@ -57,6 +57,32 @@ Outcome MatchRounds::draw(const uint8_t seat) {
   return outcome;
 }
 
+void MatchRounds::attach(GameCore::Session& played) {
+  session = &played;
+  roundOver = false;
+  firstFramePending = true;
+}
+
+Outcome MatchRounds::adopted(const GameCore::Adoption adoption) {
+  switch (adoption) {
+    case GameCore::Adoption::Adopted:
+      return drawShown();
+    case GameCore::Adoption::RoundStarted:
+      // The host's next round: what beginAgain does for the round this device starts itself, minus setup (the host ran
+      // it).
+      timer.cancel();
+      return beginAdopted();
+    case GameCore::Adoption::NotPeer:
+    case GameCore::Adoption::Busy:
+    case GameCore::Adoption::BadSnapshot:
+    case GameCore::Adoption::Stale:
+    case GameCore::Adoption::OutOfTurn:
+    case GameCore::Adoption::BadStatus:
+      break;  // the Session changed nothing
+  }
+  return Outcome::Ok;
+}
+
 Outcome MatchRounds::start(GameCore::Session& played) {
   const Outcome outcome = begin(played);
   if (outcome != Outcome::Ok) return outcome;
@@ -70,6 +96,9 @@ Outcome MatchRounds::restart() {
 }
 
 Outcome MatchRounds::step(const GameCore::GameEvent& event) {
+  // A nearby device before the host's first STATE holds no state: nothing to read, and a draw would publish an empty
+  // first frame and count a started round. Before every guard below, and the same Ok they return.
+  if (!session->hasState()) return Outcome::Ok;
   // A stale timer is dropped before anything, with no draw (play would drop it too,
   // but the draw after it would publish a frame nothing changed).
   if (!timer.accepts(event)) return Outcome::Ok;
@@ -97,6 +126,12 @@ Outcome MatchRounds::beginRound() {
   roundOver = false;
   firstFramePending = true;
   return session->start();
+}
+
+Outcome MatchRounds::beginAdopted() {
+  roundOver = false;
+  firstFramePending = true;
+  return drawShown();
 }
 
 void MatchRounds::countRoundEnd() {

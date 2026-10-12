@@ -632,6 +632,7 @@ STR_GAMES_MODE: "Mode"
 STR_GAMES_PLAYER_TURN: "Player %u's turn"
 STR_GAMES_READY: "I'm ready"
 STR_GAMES_PRODUCT_NAME: "Crosshatch"
+STR_GAMES_WAITING_FOR_HOST: "Waiting for the host"
 
 STR_CLIP: "Clip"
 

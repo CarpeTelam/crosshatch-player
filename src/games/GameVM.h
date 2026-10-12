@@ -32,6 +32,7 @@ class StoreSlot;
 class FrameReplay;
 class GameViewport;
 class GfxRenderer;
+class NearbySession;
 
 // The GameVM task and everything it touches (AD-5): the loaded sources, the arena,
 // the frame buffers, the input queue, the LuaGame with its clock and log, and, in
@@ -42,6 +43,14 @@ class GfxRenderer;
 // (or before start()); otherwise it hands it to abandon(). Each snapshot the Session
 // commits goes to the loop task through committed() (latest wins), which writes
 // resume.bin; setResume() starts the Session from a saved one instead of setup.
+//
+// A nearby match's VM (create's `nearby`) runs the same round loop for its one local seat and takes two more steps at
+// the top of each pass, between two MatchRounds calls (epic-play-nearby entry 9, the three handoffs of NearbySession):
+// a shipment the Session holds is handed to the session (NearbySession::ship, then Session::shipped() once it answers
+// true), and one queued STATE of the peer is adopted (NearbySession::adoptNext) and drawn for the device's own seat.
+// The VM task alone calls them. The device that does not hold seat 1 starts no round: it attach()es the Session and
+// shows nothing until the host's first STATE. Play again is left alone while a shipment is pending (the over STATE goes
+// first). The loop task wakes the VM for both through pollNearby().
 //
 // A hidden pass match's VM (create's `handOff`) draws only the seat the match asks for, so no
 // frame of one seat is ever published while the device is on its way to another: nothing after
@@ -74,12 +83,13 @@ class GameVM {
   // FrameReplay::loadFonts); `gameId` tags its log lines, `store` (which must outlive
   // the task, see MatchStore) backs ch.store, and the Session plays `roster` (solo, or a
   // pass match). `handOff` is a hidden pass match's (the class comment). `settings` (copied) is
-  // ctx.settings for every setup, Play again's included; none by default. Null (logged) when
-  // memory runs out.
+  // ctx.settings for every setup, Play again's included; none by default. `nearby` is a nearby match's session, which
+  // the match owns and keeps alive until this object's task is gone (not owned here); `roster` is then its roster. Null
+  // (logged) when memory runs out.
   static std::unique_ptr<GameVM> create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                         const char* gameId, GameScript::StoreSlot& store,
                                         const GameCore::Roster& roster, bool handOff = false,
-                                        const GameCore::SettingValues& settings = {});
+                                        const GameCore::SettingValues& settings = {}, NearbySession* nearby = nullptr);
 
   GameVM(const GameVM&) = delete;
   GameVM& operator=(const GameVM&) = delete;
@@ -111,6 +121,11 @@ class GameVM {
   // Loop task: queues a Timer event once ch.timer's pending timer is due (AD-23).
   // The VM drops it if the game re-armed or cancelled the timer meanwhile.
   void pollTimer();
+  // Loop task, a nearby match only (nothing otherwise): wakes the VM while it has a shipment to hand to the session or
+  // a STATE queued to adopt. The VM blocks on its notification when its input queue is empty and the simulator's
+  // FreeRTOS shim ignores a timeout, so the loop is what wakes it; while an overlay stops the loop, adoption waits (R5)
+  // and the link keeps acking.
+  void pollNearby();
   // Rounds that have ended so far: the VM counts one when the status turns over,
   // after the Session has delivered `over` and the round's last frame is
   // published. The match enters Over when the count moves (AD-21). Any task.
@@ -159,6 +174,10 @@ class GameVM {
   // or not replay drew it, and left as it was when there is none.
   bool drawFront(const GfxRenderer& renderer, const GameViewport& viewport, FrameReplay& replay,
                  uint32_t* takenFrame = nullptr);
+
+  // True for a nearby match's VM whose device does not hold seat 1: it runs no setup, starts no round, and shows
+  // nothing until the host's first STATE, and Play again is the host's. Any task.
+  bool followsHost() const { return nearby && !roster.isLocal(1); }
 
   // The task has ended (after stop(), or on its own after a ScriptError).
   bool finished() const { return done.load(std::memory_order_acquire); }
@@ -223,9 +242,16 @@ class GameVM {
  private:
   GameVM(GameAssets&& assets, HalMemory::PsramBuffer frameStorage, const GameScript::Canvas& canvas, const char* gameId,
          GameScript::StoreSlot& store, const GameCore::Roster& roster, bool handOff,
-         const GameCore::SettingValues& settings);
+         const GameCore::SettingValues& settings, NearbySession* nearby);
   static void taskEntry(void* param);
   void run();
+  // ---- a nearby match's steps (VM task) ----
+  // The top of a pass: hands the Session's pending shipment to the session (shipped() only once ship answered true),
+  // then adopts one queued STATE and draws it. True when a STATE was taken, so the pass starts again (one STATE a
+  // pass); `outcome` is then the adoption's or the draw's, and a snapshot the Session committed is published as any
+  // step's.
+  bool nearbyStep(GameCore::Session& session, uint32_t& published, GameScript::Outcome& outcome);
+
   // ---- a hidden pass match's steps (VM task) ----
   // Draws the seat GameCore::seatShown names for handOffView, the status, and mover; nothing
   // (Ok) for NO_SEAT, the hand-off.
@@ -277,6 +303,12 @@ class GameVM {
   GameScript::MatchRounds rounds{game.timer(), queue};
   // A hidden pass match's VM (create's `handOff`); fixed for its life.
   const bool handOff;
+  // A nearby match's session (create's `nearby`), not owned: the match declares it before this object, so it outlives
+  // the task that calls adoptNext and ship. Null for solo and pass; fixed for the VM's life.
+  NearbySession* const nearby;
+  // VM task to loop task: the Session holds a shipment the link has not taken (pollNearby wakes the VM to offer it
+  // again).
+  std::atomic<bool> shipOutstanding{false};
   // VM task, a hidden pass match only: the Session run() plays; the state whose seat the VM
   // draws (HandOff: none, Playing: the turn seat, Result: the mover); the seat that last
   // passed the turn; a timer event held until the next seat is shown; and the request being

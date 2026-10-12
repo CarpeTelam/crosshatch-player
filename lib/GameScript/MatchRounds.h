@@ -9,7 +9,8 @@
 
 namespace GameCore {
 class Session;
-}
+enum class Adoption : uint8_t;
+}  // namespace GameCore
 
 namespace GameScript {
 
@@ -32,6 +33,10 @@ class InputQueue;
 // so the round starts, and a move, a timer, and a tap are served, while the turn is
 // remote. A turn that is no seat gets no input and no draw, so its round counts as
 // started only at a local seat's first frame.
+//
+// A nearby device that is not seat 1 never starts a round (Session::hasState): it attach()es to the Session and the
+// owner calls adopted() after each Session::adopt, so the loop is still the one round driver (epic-play-nearby entry
+// 9). Until that device holds a state, step reads nothing and draws nothing.
 class MatchRounds {
  public:
   MatchRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
@@ -83,6 +88,18 @@ class MatchRounds {
   // one that last showed (lastLocalSeat).
   GameCore::Outcome draw(uint8_t seat);
 
+  // ---- a nearby device that has no state yet (VM task) ----
+
+  // Takes `session` as the one this loop plays without starting a round on it: a device that is not seat 1 waits for
+  // the host's first STATE (Session::adopt). Arms the round to come to count as started at its first draw. Runs no
+  // game code and draws nothing, so roundsStarted() stays 0 and no frame is published.
+  void attach(GameCore::Session& session);
+  // After Session::adopt answered `adoption` (and Ok): Adopted draws the seat shown (an over status counts the round's
+  // end there, once); RoundStarted is a new round begun by the host: the pending timer is cancelled (as beginAgain
+  // does), the round is armed to count as started at this draw, then the seat is drawn. Every refusal returns Ok and
+  // changes nothing, drawing nothing.
+  GameCore::Outcome adopted(GameCore::Adoption adoption);
+
   // ---- the open match (VM task): the steps with the seat seatShown names ----
 
   // When seatShown names NO_SEAT (a turn that is no seat of the roster), each of these
@@ -91,7 +108,8 @@ class MatchRounds {
   GameCore::Outcome start(GameCore::Session& session);
   // beginAgain, then draw.
   GameCore::Outcome restart();
-  // One event as the game sees it: a stale or late timer event is dropped with no draw; else
+  // One event as the game sees it: a Session with no state yet (a nearby device before the host's first STATE) reads
+  // nothing and draws nothing; a stale or late timer event is dropped with no draw; else
   // play, then draw (the seat shown after the move).
   GameCore::Outcome step(const GameCore::GameEvent& event);
   // The seat GameCore::seatShown names for the session's status now: after start, restart, or a step that drew, the
@@ -104,6 +122,9 @@ class MatchRounds {
 
  private:
   GameCore::Outcome beginRound();
+  // The round the host began is on this device (Session::adopt): arms it to count as started, then draws the seat
+  // shown.
+  GameCore::Outcome beginAdopted();
   // draw(shownSeat()), or nothing (Ok) for NO_SEAT.
   GameCore::Outcome drawShown();
   void countRoundEnd();

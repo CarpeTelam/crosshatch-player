@@ -6,6 +6,7 @@
 #include <I18n.h>
 
 #include <cstdio>
+#include <iterator>
 
 #include "GameSplashLayout.h"
 #include "components/UITheme.h"
@@ -25,6 +26,9 @@ bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
   return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
                                      GameViewIcons::textInkIsWhite(text.color == fui::Color::White, text.inverted));
 }
+
+// A nearby follower's end-of-round menu: only the host plays again.
+constexpr MatchEvent FOLLOWER_OVER_MENU[] = {MatchEvent::Leave};
 
 // A menu choice's label.
 StrId optionLabel(const MatchEvent event) {
@@ -69,13 +73,33 @@ const char* GameMatchView::viewHeadline(const Input& input) {
   return nullptr;
 }
 
+GameCore::MatchMenu GameMatchView::menuFor(const MatchState state, const bool followsHost) {
+  if (followsHost && state == MatchState::Over) {
+    return GameCore::MatchMenu{FOLLOWER_OVER_MENU, static_cast<uint8_t>(std::size(FOLLOWER_OVER_MENU))};
+  }
+  return MatchLifecycle::menuFor(state);
+}
+
+void GameMatchView::buildWaitingView(UiAppHost::UiScreen& screen) {
+  const fui::Rect safe = screen.frame().safeRect();
+  fui::TextStyle text = screen.theme().bodyText;
+  text.align = fui::TextAlign::Center;
+  const int16_t lineHeight = screen.target().lineHeight(text.font);
+  const fui::Rect line{safe.x, static_cast<int16_t>(safe.y + (safe.height - lineHeight) / 2), safe.width, lineHeight};
+  screen.target().text(line, tr(STR_GAMES_WAITING_FOR_HOST), text);
+}
+
 void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const Input& input) {
   const MatchState state = input.state;
+  if (input.waiting) {
+    buildWaitingView(screen);
+    return;
+  }
   if (state == MatchState::Result || state == MatchState::HandOff) {
     buildHandOffView(screen, renderer, input);
     return;
   }
-  const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
+  const GameCore::MatchMenu menu = menuFor(state, input.followsHost);
   const char* headline = viewHeadline(input);
   if (menu.count == 0 || !headline) return;
   const uint8_t count = menu.count < MAX_OPTIONS ? menu.count : MAX_OPTIONS;
@@ -106,6 +130,11 @@ void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& render
   if (state == MatchState::Paused && input.pauseInGap) {
     // Centred under the headline, like the caption and the headline above it.
     props.message = tr(STR_GAMES_NEXT_ROUND_STARTING);
+    props.messageText.align = fui::TextAlign::Center;
+  }
+  if (state == MatchState::Over && input.followsHost) {
+    // Only the host plays again; this device leaves Over by itself when the next round starts.
+    props.message = tr(STR_GAMES_WAITING_FOR_HOST);
     props.messageText.align = fui::TextAlign::Center;
   }
   props.buttonText = theme.bodyText;

@@ -7,7 +7,7 @@
 # screen_stubs/GfxRenderer.h (the shared renderer double plus displayBuffer and tapToLogical),
 # and a source built against the shared double has another GfxRenderer layout. So every source
 # this suite links is built here, against the screen doubles, from the same globs less the
-# shared exclusions, keeping only GameVM, GameClock, GameRandom, and the match back in.
+# shared exclusions, keeping only GameVM, GameClock, GameRandom, GameLink, NearbySession, and the match back in.
 #
 # Activity is the real one too, relocated: src/activities/Activity.h includes ActivityManager.h by a
 # quoted path from its own folder, which finds the firmware's manager, so the suite builds copies of
@@ -45,6 +45,10 @@ target_link_libraries(game_match_i18n PUBLIC crosspoint_test_common)
 
 set(MATCH_EXCLUDE_GAMES ${HARNESS_EXCLUDE_GAMES})
 list(REMOVE_ITEM MATCH_EXCLUDE_GAMES GameVM.cpp GameClock.cpp GameRandom.cpp)
+# GameVM.cpp now calls NearbySession (entry 9 of epic-play-nearby), and GameLink.cpp is NearbySession's task: both are
+# built here, against the screen doubles (nearby_session.sources.cmake keeps them out of the shared library for want of
+# freertos/task.h). The link suites (nearby_session.cmake, nearby_match.cmake) link this library for them.
+list(REMOVE_ITEM MATCH_EXCLUDE_GAMES GameLink.cpp NearbySession.cpp)
 # GameArena.cpp is built from screen_stubs/GameArenaDouble.cpp: the same, with a reserve a test can shrink.
 list(APPEND MATCH_EXCLUDE_GAMES GameArena.cpp)
 set(MATCH_EXCLUDE_ACTIVITIES ${HARNESS_EXCLUDE_ACTIVITIES})

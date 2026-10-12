@@ -21,6 +21,7 @@
 #include "games/GameViewport.h"
 #include "games/MatchPersistence.h"
 #include "games/MatchStore.h"
+#include "games/NearbySession.h"
 #include "games/TouchLatch.h"
 
 // One match, solo or pass, open or hidden (AD-20): owns the GameVM task and, through it, the game's assets,
@@ -63,6 +64,14 @@
 // roster the caller passed: a hidden pass save resumes on the hand-off screen (HandOff), whose button shows the saved
 // turn seat; any other at Playing, on that seat's frame.
 //
+// A nearby match (the constructor's `nearbySession`, which the match owns, AD-20) plays the same machine for the one
+// seat this device holds, and saves nothing (no resume.bin, AD-17; ch.store is the mover's). The device that holds seat
+// 1 (the host) runs setup and offers Play again; the other follows the host (followsHost()): until seat 1's first STATE
+// it shows "Waiting for the host" and takes no tap, its end-of-round menu offers only Leave under the same line, and it
+// leaves Over by itself when the host's next round has started. Only the VM task adopts a peer's STATE or ships its own
+// (GameVM); the loop only wakes it (GameVM::pollNearby), so an overlay, which stops the loop, delays adoption and not
+// the link's acks. preventAutoSleep() is set for the whole match.
+//
 // The match follows AD-21's solo states, or the hidden pass ones (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing (or a hidden match's first HandOff) until Leaving, or until a stuck VM is
 // stopped on the way to Error, so Playing, Paused, Over, Result, and HandOff always have one.
@@ -82,9 +91,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // `settings` (copied) is the chosen value of each setting the manifest declares, which the VM gives the game as
   // ctx.settings at every setup (a resumed match runs none until Play again, which ends in the error view when these
   // are fewer than the manifest declares).
+  // `nearbySession` (moved in) makes this a nearby match: its roster (NearbySession::beginMatch, then roster()) is the
+  // match's whatever `roster` and `start` say, and nothing is saved or resumed. A session whose match cannot begin ends
+  // in the error view.
   GameMatchActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const GameCore::Manifest& manifest,
                     const GameCore::Roster& roster, Start start = Start::New,
-                    const GameCore::SettingValues& settings = {});
+                    const GameCore::SettingValues& settings = {},
+                    std::unique_ptr<NearbySession> nearbySession = nullptr);
   ~GameMatchActivity() override;
 
   void onEnter() override;
@@ -97,6 +110,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void render(RenderLock&&) override;
   // True while a callback runs, so the CPU stays at full clock for the budget (AD-5).
   bool skipLoopDelay() override { return vm && vm->busy(); }
+  // The radio is up for the whole of a nearby match (spine AD-18): the device must not sleep under it.
+  bool preventAutoSleep() override { return nearby != nullptr; }
   // Home never leaves a match directly (AD-21): it pauses a round in play and is
   // ignored otherwise, until the match is Leaving.
   bool handleHomeGesture() override;
@@ -119,6 +134,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // requires: Over flushes ch.store, a user's Leaving stops the VM, flushes, and
   // goes to Games. An event that is no transition from this state is ignored.
   void handle(MatchEvent event);
+  // Entering Playing on `event`: whether the match asks for a render itself (a resume, or a nearby follower's waiting
+  // screen or host-started round, which have no first frame of their own to ask for) rather than leaving it to the
+  // frame test.
+  bool needsRenderAskOnEnteringPlay(MatchEvent event) const;
   // Shows the error view (a ScriptError, AD-14) with a translated headline and a
   // detail: Lua's message or a translated reason. The first error view stays.
   void fail(StrId headline, const char* detail);
@@ -128,7 +147,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void loopView();
   // A hidden pass match's Result and HandOff: a tap on the banner or the button (or Confirm) passes the device on.
   void loopHandOff();
-  // Play again's steps on the way into the new round (Playing, or a hidden match's HandOff).
+  // Play again's steps on the way into the new round (Playing, or a hidden match's HandOff). A nearby follower's are
+  // none: the host's round has started already.
   void startNextRound();
   // Playing, Paused, Over, Result, HandOff: false (now in Error) when the VM failed or is stuck.
   bool vmHealthy();
@@ -168,6 +188,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void abandonVm();
 
   void renderCanvas();
+  // The follower's screen before seat 1's first STATE: "Waiting for the host" on a cleared screen, pushed in full the
+  // first time and as a repaint (the light panel closed) in fast. Render task.
+  void renderWaiting();
   void renderView(MatchState state);
   // The hand-off screen (the splash band with the game's page or its icon, "Player N's turn", and the "I'm ready"
   // button, where the title screen has its band and its first two rows: GameSplashLayout), pushed with a full refresh
@@ -188,6 +211,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // frameOnPanel) at the first pass that sees a finger down, and notes whether a finger is still down.
   GameTouch::Gesture readGesture();
 
+  // A nearby device that does not hold seat 1 (the roster is the session's once onEnter has taken it; false for solo
+  // and pass, and for the host).
+  bool followsHost() const { return nearby && !roster.isLocal(1); }
+
   GameCore::Manifest manifest;
   GameCore::Roster roster;
   GameCore::SettingValues settings;  // ctx.settings, handed to GameVM::create
@@ -201,6 +228,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // onExit(). Declared before vm, so it is destroyed after the VM that posts to
   // the slot.
   MatchStore store;
+  // A nearby match's session (AD-20): declared before vm, so it is destroyed after the VM task is gone (the task calls
+  // adoptNext and ship). The destructor releases it unfreed beside the store when an abandoned VM task may still call
+  // it.
+  std::unique_ptr<NearbySession> nearby;
   std::unique_ptr<GameVM> vm;
   // An abandon left the VM task alive: the slot is still flushed on Leave and in
   // onExit, and the destructor leaks it (and saves' buffer) with the task.
@@ -255,6 +286,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // it, or a render skipped it while awaiting a round), so the next frame is drawn
   // on a cleared screen with a full refresh.
   bool viewOnScreen = false;
+  // Render task only: renderWaiting is drawing (viewScreen reads it), and the waiting screen is what the last push left
+  // on the panel (a repeat of it is a fast refresh).
+  bool waitingView = false;
+  bool waitingOnPanel = false;
   // Render task only: the state whose view renderView is drawing.
   MatchState viewState = MatchState::Starting;
   // What the last push left on the panel: a seat's frame (Seat: the canvas, or a view over a seat's frame), no seat's

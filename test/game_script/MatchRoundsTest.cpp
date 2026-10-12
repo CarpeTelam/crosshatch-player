@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 
 #include "GameInput.h"
@@ -733,6 +734,247 @@ TEST_F(PassRoundsTest, ARosterWithALocalSeatStillDeliversATimerOfARoundStillPlay
   ASSERT_EQ(game.start(), Outcome::Ok) << game.errorMessage();
   ASSERT_TRUE(tick(game.rounds, game.game, 5000));
   EXPECT_EQ(logged("timer 2"), 1u) << "the one local seat";
+}
+
+// ---- a nearby round: a device with no state yet, and the STATE it adopts (epic-play-nearby entry 9) ----
+
+// Two devices over one nearby game. One LuaGame and arena serve both (the real devices each have their own; the game
+// keeps no state between calls but each seat's ui, and the two devices play different seats), and the host's
+// SessionGame owns the host's loop; the follower is a Session and a MatchRounds of its own over the same game. A
+// shipment is handed across by hand, as NearbySession does between the Session's pendingShipment and adopt.
+class NearbyRoundsTest : public MatchRoundsTest {
+ protected:
+  static InputEvent cellTap(const int cell) {
+    return InputEvent{InputKind::Tap, static_cast<int16_t>(27 + (cell - 1) % 3 * 140 + 70),
+                      static_cast<int16_t>(200 + (cell - 1) / 3 * 140 + 70)};
+  }
+  // The nearby roster of two seats, the one local seat `seat`.
+  static GameCore::Roster roster(const uint8_t seat) { return GameCore::Roster::nearby(2, seat, API_LEVEL); }
+  size_t logged(const std::string& part) const {
+    size_t n = 0;
+    for (const std::string& line : log.lines) n += line.find(part) != std::string::npos;
+    return n;
+  }
+
+  // The follower's side: seat 2's Session and loop over the host's LuaGame, destroyed before it.
+  struct Follower {
+    // The Session is on the heap here, not in the arena: the arena's reserve holds one (GameVM's), and this test's
+    // host has taken it.
+    explicit Follower(SessionGame& host)
+        : owned(std::make_unique<GameCore::Session>(roster(2), host.game)),
+          session(owned.get()),
+          rounds(host.game.timer(), queue) {}
+    std::unique_ptr<GameCore::Session> owned;
+    GameCore::Session* session;
+    GameScript::InputQueue queue;
+    MatchRounds rounds;
+  };
+
+  // Seat 1 (the host) plays 1, 2, 3 and seat 2 plays 4, 5, each move applied on its mover's device and handed to the
+  // other; seat 1's third move ends the round.
+  static void playToOver(SessionGame& host, Follower& follower) {
+    const int cells[] = {1, 4, 2, 5, 3};
+    for (int move = 0; move < 5; ++move) {
+      if (move % 2 == 0) {
+        ASSERT_EQ(host.step(cellTap(cells[move])), Outcome::Ok) << host.errorMessage();
+        ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::Adopted) << move;
+      } else {
+        ASSERT_EQ(follower.rounds.step(cellTap(cells[move])), Outcome::Ok) << host.errorMessage();
+        ASSERT_TRUE(follower.session->shipmentPending()) << move;
+        ASSERT_EQ(hand(*follower.session, 2, *host.session, host.rounds), GameCore::Adoption::Adopted) << move;
+      }
+    }
+  }
+
+  // The shipment `from` has pending, handed to `to` as a STATE from seat `fromSeat`, and what adopt said. The shipment
+  // is shipped (the link took it) whether or not `to` adopts it.
+  static GameCore::Adoption hand(GameCore::Session& from, const uint8_t fromSeat, GameCore::Session& to,
+                                 MatchRounds& toRounds, Outcome* outcome = nullptr) {
+    GameCore::Shipment shipment;
+    EXPECT_TRUE(from.pendingShipment(shipment));
+    return handShipment(shipment, fromSeat, to, toRounds, outcome, &from);
+  }
+  static GameCore::Adoption handShipment(const GameCore::Shipment& shipment, const uint8_t fromSeat,
+                                         GameCore::Session& to, MatchRounds& toRounds, Outcome* outcome = nullptr,
+                                         GameCore::Session* from = nullptr) {
+    GameCore::PeerState peer;
+    peer.fromSeat = fromSeat;
+    peer.ver = shipment.ver;
+    peer.status = shipment.status;
+    peer.snapshot = shipment.snapshot;
+    GameCore::Adoption adoption = GameCore::Adoption::NotPeer;
+    const Outcome adopted = to.adopt(peer, adoption);
+    EXPECT_EQ(adopted, Outcome::Ok);
+    const Outcome drawn = adopted == Outcome::Ok ? toRounds.adopted(adoption) : adopted;
+    EXPECT_EQ(drawn, Outcome::Ok);
+    if (outcome) *outcome = drawn;
+    if (from) from->shipped();
+    return adoption;
+  }
+};
+
+TEST_F(NearbyRoundsTest, AFollowerBeforeTheFirstStateReadsNothingAndCountsNoRound) {
+  useSource("main", readFixture("nearby/main.lua"));
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.game.load(), Outcome::Ok) << host.errorMessage();
+  follower.rounds.attach(*follower.session);
+  EXPECT_FALSE(follower.session->hasState());
+  EXPECT_EQ(follower.rounds.roundsStarted(), 0u);
+  EXPECT_EQ(frames.frameGen(), 0u);
+  ASSERT_EQ(follower.rounds.step(cellTap(1)), Outcome::Ok) << host.errorMessage();
+  ASSERT_EQ(follower.rounds.step(InputEvent{InputKind::Timer, 0, 0}), Outcome::Ok);
+  EXPECT_EQ(frames.frameGen(), 0u) << "a draw would publish an empty first frame";
+  EXPECT_EQ(follower.rounds.roundsStarted(), 0u);
+  EXPECT_EQ(follower.rounds.roundsEnded(), 0u);
+  EXPECT_EQ(logged("tap for seat"), 0u) << "no input reached the game";
+}
+
+TEST_F(NearbyRoundsTest, AttachThenTheHostsFirstStateDrawsTheOwnSeatAndCountsTheRoundStarted) {
+  useSource("main", readFixture("nearby/main.lua"));
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.start(), Outcome::Ok) << host.errorMessage();
+  EXPECT_TRUE(contains(frontText().c_str(), "Player 1 (X) to move")) << frontText();
+  ASSERT_TRUE(host.session->shipmentPending());
+  follower.rounds.attach(*follower.session);
+  const uint32_t before = frames.frameGen();
+  EXPECT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  EXPECT_EQ(frames.frameGen(), before + 1);
+  EXPECT_TRUE(contains(frontText().c_str(), "Player 2 (O): Player 1 to move")) << frontText();
+  EXPECT_EQ(follower.rounds.shownSeat(), 2);
+  EXPECT_EQ(follower.rounds.roundsStarted(), 1u) << "counted once the first frame is published";
+  EXPECT_EQ(follower.rounds.lastLocalSeat(), 2);
+  EXPECT_FALSE(host.session->shipmentPending());
+  // It reads input from now on.
+  ASSERT_EQ(follower.rounds.step(cellTap(1)), Outcome::Ok) << host.errorMessage();
+  EXPECT_EQ(logged("tap for seat 2"), 1u);
+  EXPECT_EQ(follower.session->discardedMoves(), 1u) << "off turn: the move is discarded, nothing to ship";
+  EXPECT_FALSE(follower.session->shipmentPending());
+}
+
+TEST_F(NearbyRoundsTest, AMoveTheHostMadeIsAdoptedAndDrawnAndARefusedStateDrawsNothing) {
+  useSource("main", readFixture("nearby/main.lua"));
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.start(), Outcome::Ok) << host.errorMessage();
+  follower.rounds.attach(*follower.session);
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  ASSERT_EQ(host.step(cellTap(5)), Outcome::Ok) << host.errorMessage();
+  ASSERT_TRUE(host.session->shipmentPending());
+  GameCore::Shipment move;
+  ASSERT_TRUE(host.session->pendingShipment(move));
+  const uint32_t before = frames.frameGen();
+  EXPECT_EQ(handShipment(move, 1, *follower.session, follower.rounds), GameCore::Adoption::Adopted);
+  EXPECT_EQ(frames.frameGen(), before + 1);
+  EXPECT_TRUE(contains(frontText().c_str(), "Player 2 (O) to move")) << frontText();
+  EXPECT_EQ(follower.rounds.roundsStarted(), 1u) << "a move starts no round";
+  // The same STATE again is stale: the Session changes nothing and the loop draws nothing.
+  EXPECT_EQ(handShipment(move, 1, *follower.session, follower.rounds), GameCore::Adoption::Stale);
+  EXPECT_EQ(frames.frameGen(), before + 1);
+  // A STATE from the seat this device plays is no peer's.
+  EXPECT_EQ(handShipment(move, 2, *follower.session, follower.rounds), GameCore::Adoption::NotPeer);
+  EXPECT_EQ(frames.frameGen(), before + 1);
+}
+
+// X plays 1, 2, 3 and O 4, 5: the round's fifth move, seat 1's third, wins.
+TEST_F(NearbyRoundsTest, AnAdoptedOverCountsTheRoundsEndOnceAndTheNextRoundStartsAfterIt) {
+  useSource("main", readFixture("nearby/main.lua"));
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.start(), Outcome::Ok) << host.errorMessage();
+  follower.rounds.attach(*follower.session);
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  ASSERT_NO_FATAL_FAILURE(playToOver(host, follower));
+  EXPECT_TRUE(host.session->status().over);
+  EXPECT_TRUE(follower.session->status().over);
+  EXPECT_EQ(follower.session->ver(), host.session->ver());
+  EXPECT_EQ(follower.rounds.roundsEnded(), 1u);
+  EXPECT_EQ(host.rounds.roundsEnded(), 1u) << "the mover counted the end at its own step";
+  EXPECT_EQ(logged("over for seat 1 board 111220000"), 1u);
+  EXPECT_EQ(logged("over for seat 2 board 111220000"), 1u) << "one over event on each device";
+  EXPECT_FALSE(follower.session->shipmentPending());
+
+  // The host's Play again: the next round's STATE counts the follower's start after the end it already counted.
+  host.rounds.requestPlayAgain();
+  ASSERT_TRUE(host.rounds.takePlayAgain());
+  ASSERT_EQ(host.rounds.restart(), Outcome::Ok) << host.errorMessage();
+  ASSERT_TRUE(host.session->shipmentPending());
+  EXPECT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  EXPECT_EQ(follower.rounds.roundsEnded(), 1u);
+  EXPECT_EQ(follower.rounds.roundsStarted(), 2u);
+  EXPECT_FALSE(follower.session->status().over);
+  EXPECT_TRUE(contains(frontText().c_str(), "Player 2 (O): Player 1 to move")) << frontText();
+  // The new round ends and is counted too: the adopted start cleared the last round's count.
+  ASSERT_NO_FATAL_FAILURE(playToOver(host, follower));
+  EXPECT_EQ(follower.rounds.roundsEnded(), 2u);
+  EXPECT_EQ(host.rounds.roundsEnded(), 2u);
+}
+
+// The VM leaves Play again until the over shipment has gone (entry 7, C6); the request waits in MatchRounds, and the
+// restart that follows still counts the new round.
+TEST_F(NearbyRoundsTest, APlayAgainRequestKeptUntilTheShipmentWentStillStartsAndCountsTheNextRound) {
+  useSource("main", readFixture("nearby/main.lua"));
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.start(), Outcome::Ok) << host.errorMessage();
+  follower.rounds.attach(*follower.session);
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  const int cells[] = {1, 4, 2, 5, 3};
+  for (int move = 0; move < 4; ++move) {
+    if (move % 2 == 0) {
+      ASSERT_EQ(host.step(cellTap(cells[move])), Outcome::Ok) << host.errorMessage();
+      ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::Adopted);
+    } else {
+      ASSERT_EQ(follower.rounds.step(cellTap(cells[move])), Outcome::Ok) << host.errorMessage();
+      ASSERT_EQ(hand(*follower.session, 2, *host.session, host.rounds), GameCore::Adoption::Adopted);
+    }
+  }
+  ASSERT_EQ(host.step(cellTap(3)), Outcome::Ok) << host.errorMessage();  // the winning move; its shipment is pending
+  ASSERT_TRUE(host.session->shipmentPending());
+  ASSERT_EQ(host.rounds.roundsEnded(), 1u);
+  host.rounds.requestPlayAgain();  // the owner leaves it: the over shipment has not gone
+  EXPECT_TRUE(host.session->shipmentPending());
+  EXPECT_EQ(host.rounds.roundsStarted(), 1u);
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::Adopted);  // it went
+  ASSERT_FALSE(host.session->shipmentPending());
+  ASSERT_TRUE(host.rounds.takePlayAgain()) << "the request was kept";
+  ASSERT_EQ(host.rounds.restart(), Outcome::Ok) << host.errorMessage();
+  EXPECT_EQ(host.rounds.roundsStarted(), 2u);
+  EXPECT_EQ(host.rounds.roundsEnded(), 1u);
+}
+
+// The follower's timer is the old round's when the host starts the next: adopting RoundStarted cancels it, as
+// beginAgain does for the host's own restart, so it neither stays pending nor falls due into the new round. The shared
+// LuaGame (see NearbyRoundsTest) has one timer, so the host restarts first, and the follower arms its own afterwards.
+TEST_F(NearbyRoundsTest, AdoptingTheHostsNextRoundCancelsTheTimerTheFollowerArmedInTheLastOne) {
+  std::string source = readFixture("nearby/main.lua");
+  const std::string tap = "    ui.message = nil\n";
+  ASSERT_NE(source.find(tap), std::string::npos);
+  source.replace(source.find(tap), tap.size(), tap + "    ch.timer.after(5000)\n");
+  const std::string rejected = "  elseif ev.kind == \"rejected\" then\n";
+  ASSERT_NE(source.find(rejected), std::string::npos);
+  source.replace(source.find(rejected), rejected.size(),
+                 "  elseif ev.kind == \"timer\" then\n    ch.log(\"timer for seat \" .. seat)\n" + rejected);
+  useSource("main", source);
+  SessionGame host(*this, roster(1));
+  Follower follower(host);
+  ASSERT_EQ(host.start(), Outcome::Ok) << host.errorMessage();
+  follower.rounds.attach(*follower.session);
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  ASSERT_NO_FATAL_FAILURE(playToOver(host, follower));
+  host.rounds.requestPlayAgain();
+  ASSERT_TRUE(host.rounds.takePlayAgain());
+  ASSERT_EQ(host.rounds.restart(), Outcome::Ok) << host.errorMessage();
+  // Still in the finished round, the follower taps: input arms a timer for the round that is over.
+  ASSERT_EQ(follower.rounds.step(cellTap(7)), Outcome::Ok) << host.errorMessage();
+  ASSERT_TRUE(host.game.timer().pending());
+  ASSERT_EQ(hand(*host.session, 1, *follower.session, follower.rounds), GameCore::Adoption::RoundStarted);
+  EXPECT_FALSE(host.game.timer().pending());
+  clock.advance(5000);
+  InputEvent due;
+  EXPECT_FALSE(host.game.timer().takeDueEvent(clock.nowMs(), due)) << "nothing falls due into the new round";
+  EXPECT_EQ(logged("timer for seat"), 0u);
 }
 
 }  // namespace
