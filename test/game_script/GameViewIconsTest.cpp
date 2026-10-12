@@ -16,11 +16,11 @@ namespace {
 
 constexpr MatchState ALL_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Paused,
                                      MatchState::Over,     MatchState::Error,   MatchState::Leaving,
-                                     MatchState::Result,   MatchState::HandOff};
+                                     MatchState::Result,   MatchState::HandOff, MatchState::PeerGone};
 constexpr MatchEvent ALL_EVENTS[] = {MatchEvent::Started,     MatchEvent::Back,        MatchEvent::Home,
                                      MatchEvent::Resume,      MatchEvent::Leave,       MatchEvent::RoundOver,
                                      MatchEvent::PlayAgain,   MatchEvent::ScriptError, MatchEvent::ForcedExit,
-                                     MatchEvent::TurnChanged, MatchEvent::Tap};
+                                     MatchEvent::TurnChanged, MatchEvent::Tap,         MatchEvent::PeerGone};
 
 bool inLibrary(const char* name) { return name && GameIcons::find(name, std::strlen(name)) >= 0; }
 
@@ -78,13 +78,14 @@ TEST(GameViewIconsTest, EveryViewAndMenuRowNamesALibraryIcon) {
           << MatchLifecycle::name(menu.events[i]);
     }
   }
-  EXPECT_EQ(views, 3);
+  EXPECT_EQ(views, 4);
 }
 
 TEST(GameViewIconsTest, TheNamesAreTheAgreedOnes) {
   EXPECT_STREQ(GameViewIcons::forView(MatchState::Paused), "pause");
   EXPECT_STREQ(GameViewIcons::forView(MatchState::Over), "flag-checkered");
   EXPECT_STREQ(GameViewIcons::forView(MatchState::Error), "warning");
+  EXPECT_STREQ(GameViewIcons::forView(MatchState::PeerGone), "users");
   EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Resume), "play");
   EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::Leave), "sign-out");
   EXPECT_STREQ(GameViewIcons::forOption(MatchEvent::PlayAgain), "arrows-clockwise");
@@ -105,7 +106,7 @@ TEST(GameViewIconsTest, StatesWithNoViewAndNonMenuEventsHaveNoIcon) {
     ++nonMenu;
     EXPECT_EQ(GameViewIcons::forOption(event), nullptr) << MatchLifecycle::name(event);
   }
-  EXPECT_EQ(nonMenu, 7);
+  EXPECT_EQ(nonMenu, 8);
 }
 
 TEST(GameViewIconsTest, RowIconInsetIsTheRowsVerticalMargin) {

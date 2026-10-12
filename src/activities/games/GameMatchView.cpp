@@ -48,12 +48,29 @@ StrId optionLabel(const MatchEvent event) {
     case MatchEvent::ForcedExit:
     case MatchEvent::TurnChanged:
     case MatchEvent::Tap:
+    case MatchEvent::PeerGone:
       break;  // never a menu choice (MatchLifecycle::menuFor)
   }
   return StrId::STR_BACK;
 }
 
 }  // namespace
+
+StrId GameMatchView::peerGoneLine(const GameCore::Protocol::AbortReason reason) {
+  using GameCore::Protocol::AbortReason;
+  switch (reason) {
+    case AbortReason::ScriptError:
+      return StrId::STR_GAMES_PEER_ERROR;
+    case AbortReason::Timeout:
+      return StrId::STR_GAMES_PEER_SILENT;
+    case AbortReason::VersionMismatch:
+      return StrId::STR_GAMES_PEER_VERSION;
+    case AbortReason::Left:
+    case AbortReason::Full:  // cannot reach a match (MatchSink refuses strangers); a left line is true if one did
+      break;
+  }
+  return StrId::STR_GAMES_PEER_LEFT;
+}
 
 const char* GameMatchView::viewHeadline(const Input& input) {
   switch (input.state) {
@@ -63,6 +80,8 @@ const char* GameMatchView::viewHeadline(const Input& input) {
       return tr(STR_GAMES_OVER);
     case MatchState::Error:
       return I18N.get(input.errorHeadline);
+    case MatchState::PeerGone:
+      return I18N.get(peerGoneLine(input.endReason));
     case MatchState::Starting:
     case MatchState::Playing:
     case MatchState::Leaving:

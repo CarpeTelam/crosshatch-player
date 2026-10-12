@@ -633,6 +633,10 @@ STR_GAMES_PLAYER_TURN: "Player %u's turn"
 STR_GAMES_READY: "I'm ready"
 STR_GAMES_PRODUCT_NAME: "Crosshatch"
 STR_GAMES_WAITING_FOR_HOST: "Waiting for the host"
+STR_GAMES_PEER_LEFT: "The other player left"
+STR_GAMES_PEER_SILENT: "The other player went silent"
+STR_GAMES_PEER_ERROR: "The other game stopped with an error"
+STR_GAMES_PEER_VERSION: "The other player has a different version"
 
 STR_CLIP: "Clip"
 

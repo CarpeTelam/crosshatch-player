@@ -83,6 +83,19 @@ TEST_F(MatchPersistenceTest, WritableIsWhatTheMatchSets) {
   EXPECT_FALSE(persistence.writable());
 }
 
+TEST_F(MatchPersistenceTest, WritableInIsTrueOnlyWhereTheMatchIsLive) {
+  using GameCore::MatchState;
+  EXPECT_TRUE(MatchPersistence::writableIn(MatchState::Playing));
+  EXPECT_TRUE(MatchPersistence::writableIn(MatchState::Paused));
+  EXPECT_TRUE(MatchPersistence::writableIn(MatchState::Result));
+  EXPECT_TRUE(MatchPersistence::writableIn(MatchState::HandOff));
+  EXPECT_FALSE(MatchPersistence::writableIn(MatchState::Over)) << "a finished round must not write resume.bin";
+  EXPECT_FALSE(MatchPersistence::writableIn(MatchState::Error));
+  EXPECT_FALSE(MatchPersistence::writableIn(MatchState::PeerGone));
+  EXPECT_FALSE(MatchPersistence::writableIn(MatchState::Starting));
+  EXPECT_FALSE(MatchPersistence::writableIn(MatchState::Leaving));
+}
+
 TEST_F(MatchPersistenceTest, NothingIsDoneBeforeBind) {
   std::array<uint8_t, 16> bytes{};
   SnapshotMailbox mailbox{std::span<uint8_t>(bytes)};

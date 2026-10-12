@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -75,6 +76,7 @@ class NearbyMatchTest : public match::ScreenTest {
     host.reset();
     guest.reset();
     duo.reset();
+    rig.reset();
     ScreenTest::TearDown();
   }
 
@@ -187,6 +189,20 @@ class NearbyMatchTest : public match::ScreenTest {
   static bool shows(const Device& d, const std::string& part) {
     return !d.renderer->shown.empty() && match::holds(d.renderer->shown.back(), part);
   }
+  // Every text of `d`'s last push, one per line (for a failure message).
+  static std::string screenText(const Device& d) {
+    std::string text;
+    if (d.renderer->shown.empty()) return text;
+    for (const std::string& line : d.renderer->shown.back().texts) text += line + "\n";
+    return text;
+  }
+  // A line the view wraps over its two lines still reads as one: the last push's texts joined by spaces hold `line`.
+  static bool showsLine(const Device& d, const std::string& line) {
+    if (d.renderer->shown.empty()) return false;
+    std::string joined;
+    for (const std::string& text : d.renderer->shown.back().texts) joined += text + " ";
+    return joined.find(line) != std::string::npos;
+  }
   static bool showsTurn(const Device& d) {
     return shows(d, "Player " + std::to_string(d.seat) + " (" + (d.seat == 1 ? "X" : "O") + ") to move");
   }
@@ -202,6 +218,15 @@ class NearbyMatchTest : public match::ScreenTest {
       found = line.substr(arrow + 4, on - arrow - 4);
     }
     return found;
+  }
+  // How many times the match on `d` entered `state` (its transition lines, "<id>: A -> <state> on E").
+  static size_t entered(const Device& d, const std::string& state) {
+    size_t count = 0;
+    const std::string prefix = "INF GAME: " + d.id + ": ";
+    for (const std::string& line : fakelog::snapshot()) {
+      if (line.rfind(prefix, 0) == 0 && line.find(" -> " + state + " on ") != std::string::npos) ++count;
+    }
+    return count;
   }
   // How many lines the game on `d` logged holding `part` (the id is the origin of a ch.log line).
   static size_t logged(const Device& d, const std::string& part) {
@@ -252,9 +277,82 @@ class NearbyMatchTest : public match::ScreenTest {
   static std::vector<int> hostWins() { return {1, 4, 2, 5, 3}; }
   static constexpr const char* HOST_WINS_BOARD = "111220000";
 
+  // ---- the endings (entry 15) ----
+
+  // The index of the first log line holding `part` at or after `from`; npos when none.
+  static size_t lineAt(const std::string& part, const size_t from = 0) {
+    const std::vector<std::string> lines = fakelog::snapshot();
+    for (size_t i = from; i < lines.size(); ++i) {
+      if (lines[i].find(part) != std::string::npos) return i;
+    }
+    return std::string::npos;
+  }
+  // Every LINK and GAME log line, one per line (for a failure message).
+  static std::string linkDump() {
+    std::string text;
+    for (const std::string& line : fakelog::snapshot()) {
+      if (line.find("LINK:") != std::string::npos || line.find("GAME:") != std::string::npos) text += line + "\n";
+    }
+    return text;
+  }
+  // The `waited=` of the last `leave reason=` line the sessions logged, in (fake) milliseconds; -1 when none.
+  static long lastLeaveWaitedMs() {
+    long waited = -1;
+    for (const std::string& line : fakelog::snapshot()) {
+      const size_t at = line.find("leave reason=");
+      const size_t w = line.find("waited=", at);
+      if (at != std::string::npos && w != std::string::npos) waited = std::stol(line.substr(w + 7));
+    }
+    return waited;
+  }
+  // The match's pause menu is up on `d` (Back opens it).
+  bool openPauseMenu(Device& d) {
+    d.input->click(Button::Back);
+    return run([&] { return state(d) == "Paused" && shows(d, tr(STR_GAMES_PAUSED)); });
+  }
+  // Chooses Leave in the pause menu (the second row) on `d`.
+  void leaveFromPauseMenu(Device& d) {
+    ASSERT_TRUE(openPauseMenu(d));
+    d.input->click(Button::NavNext);
+    step();
+    d.input->click(Button::Confirm);
+    ASSERT_TRUE(run([&] { return state(d) == "Leaving"; }));
+  }
+  // What each link's end() count was at every goToGames() ask, in order: {host, guest}.
+  std::vector<std::pair<int, int>> endsAtGames;
+  void recordEndsAtGames() {
+    activityManager.onGoToGames = [this] {
+      endsAtGames.emplace_back(duo->hostProbe.endCalls, duo->guestProbe.endCalls);
+    };
+  }
+  // A guest device on a raw host that the test speaks for (nearby::RawHostRig): installs the fixtures, brings the guest
+  // session up with `silenceMs` as its silence limit, and enters the match on it. Only the guest exists.
+  void startRawGuest(const uint32_t silenceMs = 10000) {
+    installBoth();
+    rig = std::make_unique<nearby::RawHostRig>(silenceMs);
+    ASSERT_TRUE(rig->open());
+    ASSERT_TRUE(rig->joinAndStart());
+    rawHeardAt = fakertos::millis();  // the raw host sends nothing after its ACCEPT, so it was last heard by now
+    guest = enter(GUEST_ID, 2, std::move(rig->guest));
+    ASSERT_TRUE(run([&] { return shows(*guest, "Waiting for the host"); }));
+  }
+  // Moves the fake clock to `rawHeardAt + sinceHeardMs` in steps of at most one second, so a call the VM happens to be
+  // inside never spans the 3 s watchdog (the fake clock is the match's millis()), letting the tasks run between steps.
+  void advanceToSinceHeard(const uint64_t sinceHeardMs) {
+    while (fakertos::millis() < rawHeardAt + sinceHeardMs) {
+      fakertos::advance(std::min<uint64_t>(1000, rawHeardAt + sinceHeardMs - fakertos::millis()));
+      idle(5);
+    }
+  }
+  // The reason line the player-left view shows, and the match's own log line for the reason.
+  static std::string leftLine() { return tr(STR_GAMES_PEER_LEFT); }
+  static std::string goneLogged(const char* reason) { return std::string("the other player is gone: ") + reason; }
+
   // The settings the manifest of both devices declares (the host is given values for them, the guest none).
   uint8_t declaredSettings = 0;
-  std::unique_ptr<Duo> duo;  // declared first: destroyed after the devices, whose sessions use its links
+  uint64_t rawHeardAt = 0;                  // startRawGuest: the fake time the raw host was last heard
+  std::unique_ptr<nearby::RawHostRig> rig;  // declared before the devices: destroyed after them, their link's net
+  std::unique_ptr<Duo> duo;                 // destroyed after the devices, whose sessions use its links
   std::unique_ptr<Device> host;
   std::unique_ptr<Device> guest;
 };
@@ -404,8 +502,10 @@ TEST_F(NearbyMatchTest, AScriptErrorInApplyShowsTheErrorViewOnTheMoverAndShipsNo
   ASSERT_TRUE(run([&] { return shows(*host, tr(STR_GAMES_ERROR)); }));
   idle(40);
   EXPECT_EQ(statesReceived(*guest), guestReceived) << "no STATE is shipped for a move whose apply failed";
-  EXPECT_EQ(state(*guest), "Playing");
-  EXPECT_TRUE(shows(*guest, "Player 2 (O): Player 1 to move")) << "the other device is told by entry 15, not here";
+  // The other device is told at once (entry 15): three ABORT(script_error), and it shows the game-error line.
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, tr(STR_GAMES_PEER_ERROR)); }));
 }
 
 // ---- Play again ----
@@ -549,8 +649,11 @@ TEST_F(NearbyMatchTest, AScriptErrorInTheAdoptedOverEventShowsTheErrorViewOnThat
   tapCell(*host, 3);
   ASSERT_TRUE(run([&] { return state(*host) == "Over" && state(*guest) == "Error"; }));
   ASSERT_TRUE(run([&] { return shows(*guest, tr(STR_GAMES_ERROR)); }));
-  EXPECT_TRUE(shows(*host, tr(STR_GAMES_LEAVE))) << "the host's end-of-round menu";
   EXPECT_EQ(logged(*host, "over for seat 1"), 1u);
+  // The guest told its peer at once (entry 15), so the host leaves its end-of-round menu for the player-left view, with
+  // the game-error line; it is in Over until the ABORT reaches it, which no assertion here depends on.
+  EXPECT_EQ(entered(*host, "Over"), 1u);
+  ASSERT_TRUE(run([&] { return state(*host) == "PeerGone" && showsLine(*host, tr(STR_GAMES_PEER_ERROR)); }));
 }
 
 // ---- an overlay ----
@@ -689,6 +792,349 @@ TEST_F(NearbyMatchTest, TheTwoDevicesShareNoGameFiles) {
             fakesd::bytesOf("/.games/nearby/manifest.json"));
   fakesd::addFile(cardPath(HOST_ID, "store.bin"), std::string("x"));
   EXPECT_TRUE(fakesd::bytesOf(cardPath(GUEST_ID, "store.bin")).empty());
+}
+
+// ---- the endings (entry 15): Leave, the forced exit, a script error, and the player-left view ----
+
+// Test doubles of this section are the suite's own (FakeLink, ObservedLink, RawHostRig: NearbySessionSupport.h's
+// header lists the device behaviour each stands in for). ObservedLink::end() counts the radio going down; the
+// ActivityManager double's onGoToGames hook reads it at the moment Games is asked for, which is the order AD-20 gives
+// (flush and ABORT, VM stop, radio down, then Games). Host timing bounds are fake milliseconds, estimates until a
+// device run.
+
+TEST_F(NearbyMatchTest, LeaveOnTheHostFlushesSendsThreeAbortsEndsTheLinkAndAsksForGamesWhileTheGuestShowsPlayerLeft) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  recordEndsAtGames();
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*host));
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
+  EXPECT_GE(lastLeaveWaitedMs(), 0);
+  EXPECT_LT(lastLeaveWaitedMs(), 800) << "a reachable peer acks: no full wait";
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+  ASSERT_EQ(endsAtGames.size(), 1u);
+  EXPECT_EQ(endsAtGames[0].first, 1) << "the host's link was ended before Games was asked for";
+  // The goodbye went before the VM stopped (AD-20).
+  const size_t said = lineAt("leave reason=left");
+  ASSERT_NE(said, std::string::npos);
+  const size_t stopped = lineAt("VM stopped");
+  ASSERT_NE(stopped, std::string::npos);
+  EXPECT_LT(said, stopped);
+
+  // The guest shows the player-left view with the left line, and Back leaves in turn.
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, leftLine()) && shows(*guest, tr(STR_BACK)); }));
+  EXPECT_EQ(matchLogged(*guest, goneLogged("left")), 1u);
+  EXPECT_EQ(activityManager.asks.goToGames, 1) << "PeerGone waits for the player's Back";
+  guest->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  EXPECT_EQ(activityManager.asks.goToGames, 2);
+  ASSERT_EQ(endsAtGames.size(), 2u);
+  EXPECT_EQ(endsAtGames[1].second, 1) << "the guest's link was ended before Games was asked for";
+  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 3) << "Back from the player-left view says goodbye too";
+}
+
+TEST_F(NearbyMatchTest, LeaveOnTheGuestEndsTheHostsMatchInTheSameWay) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  recordEndsAtGames();
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*guest));
+  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 3);
+  ASSERT_EQ(endsAtGames.size(), 1u);
+  EXPECT_EQ(endsAtGames[0].second, 1);
+  ASSERT_TRUE(run([&] { return state(*host) == "PeerGone" && showsLine(*host, leftLine()); }));
+  EXPECT_EQ(matchLogged(*host, goneLogged("left")), 1u);
+  host->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*host) == "Leaving"; }));
+  EXPECT_EQ(activityManager.asks.goToGames, 2);
+}
+
+TEST_F(NearbyMatchTest, LeaveFromTheEndOfRoundMenuAlsoSaysGoodbyeAndThePeerLeavesOverForPeerGone) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(playRound(hostWins()));
+  ASSERT_TRUE(run([&] { return shows(*guest, tr(STR_GAMES_LEAVE)); }));
+  guest->input->click(Button::Confirm);  // the follower's one row: Leave
+  ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 3);
+  // The host was in Over, and the end moves it from there.
+  ASSERT_TRUE(run([&] { return state(*host) == "PeerGone" && showsLine(*host, leftLine()); }));
+  EXPECT_EQ(matchLogged(*host, "Over -> PeerGone on PeerGone"), 1u);
+}
+
+// With a STATE unacked (the host's link loses everything it sends) the flush ends at 800 ms, not before, and the three
+// ABORTs go all the same; the peer learns by silence.
+TEST_F(NearbyMatchTest, LeaveWithAStateUnackedFlushesForTheLimitAndSendsTheAbortsAnyway) {
+  installBoth();
+  duo = std::make_unique<Duo>();
+  duo->openBoth(nearby::fastSettings(60000));
+  ASSERT_TRUE(duo->joinAndStart());
+  enterHost();
+  enterGuest();
+  ASSERT_TRUE(run([&] { return showsTurn(*host) && shows(*guest, "Player 2 (O): Player 1 to move"); }));
+  duo->net.blackhole(duo->hostEnd.index());
+  const size_t sentBefore = nearby::linkLines("state sent");
+  tapCell(*host, 5);
+  // The move's STATE is with the link (the VM shipped it and the task carried it: "state sent") and, lost, stays
+  // unacked. `unacked >= 1` alone would not do: an ack still in flight for the round's first STATE satisfies it, and
+  // when it lands, with the move not yet shipped, the flush finds nothing to wait for (waited=0).
+  ASSERT_TRUE(
+      run([&] { return nearby::linkLines("state sent") > sentBefore && host->session->counters().unacked >= 1; }));
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*host));
+  EXPECT_GE(lastLeaveWaitedMs(), 800) << "never before the limit\n" << linkDump();
+  EXPECT_LT(lastLeaveWaitedMs(), 1100) << "and at it, not long after";
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3) << "the goodbye goes all the same";
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+}
+
+TEST_F(NearbyMatchTest, TheForcedExitPutsThreeAbortsOnTheLinkAtOnceBeforeTheVmStopsAndThePeerShowsPlayerLeft) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3) << "sent before onExit returned";
+  EXPECT_EQ(lastLeaveWaitedMs(), 0) << "no wait";
+  const size_t said = lineAt("leave reason=left waited=0ms");
+  ASSERT_NE(said, std::string::npos);
+  const size_t stopped = lineAt("VM stopped");
+  ASSERT_NE(stopped, std::string::npos);
+  EXPECT_LT(said, stopped) << "before the VM stops";
+  EXPECT_EQ(activityManager.asks.goToGames, 0) << "a forced exit does not ask for Games";
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, leftLine()); }));
+}
+
+// A Leave that ran, whose Games screen could not be built (goToGames() recorded and replaced nothing), leaves the match
+// current: its forced exit later says nothing more.
+TEST_F(NearbyMatchTest, AForcedExitAfterALeaveSendsNoSecondGoodbye) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*host));
+  const int aborts = duo->hostProbe.abortFrames.load();
+  EXPECT_EQ(aborts, 3);
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), aborts);
+}
+
+TEST_F(NearbyMatchTest, AScriptErrorOnTheMoverSendsThreeAbortsAtOnceAndThePeersViewHasTheGameErrorLine) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  recordEndsAtGames();
+  host->input->tap(CANVAS_X + 40, CANVAS_Y + 710);  // the boom square
+  step();
+  ASSERT_TRUE(run([&] { return state(*host) == "Error"; }));
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
+  EXPECT_NE(lineAt("leave reason=script_error waited=0ms"), std::string::npos);
+  EXPECT_EQ(activityManager.asks.goToGames, 0) << "the erroring device stays on its error view";
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, tr(STR_GAMES_PEER_ERROR)); }));
+  EXPECT_EQ(matchLogged(*guest, goneLogged("script_error")), 1u);
+
+  // The peer leaves from its player-left view: the error view stays, and the host never reads that end.
+  guest->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  ASSERT_TRUE(run([&] { return host->session->endLatched(); }));
+  idle(60);
+  EXPECT_EQ(state(*host), "Error");
+  EXPECT_TRUE(shows(*host, tr(STR_GAMES_ERROR)));
+  EXPECT_EQ(entered(*host, "PeerGone"), 0u);
+  GameCore::Protocol::AbortReason unread = GameCore::Protocol::AbortReason::Timeout;
+  EXPECT_TRUE(host->session->takeEnd(unread)) << "the slot was not read while the match was in Error";
+  EXPECT_EQ(unread, GameCore::Protocol::AbortReason::Left);
+
+  // Back from the error view leaves without waiting: three more ABORT(left), the link ended before Games is asked for.
+  host->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*host) == "Leaving"; }));
+  EXPECT_EQ(lastLeaveWaitedMs(), 0);
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 6);
+  EXPECT_EQ(activityManager.asks.goToGames, 2) << "the guest's Back asked first";
+  ASSERT_EQ(endsAtGames.size(), 2u);
+  EXPECT_EQ(endsAtGames[1].first, 1) << "the host's link was ended before Games was asked for";
+}
+
+TEST_F(NearbyMatchTest, ASilentPeerEndsTheMatchAtTheSilenceLimitAndNotBefore) {
+  ASSERT_NO_FATAL_FAILURE(startRawGuest(10000));
+  // 9.5 s since the raw host was last heard is not the limit (10 s); 10.2 s is. Millisecond bounds in fake time.
+  advanceToSinceHeard(9500);
+  EXPECT_EQ(state(*guest), "Playing") << "9.5 s of silence is not the limit";
+  EXPECT_FALSE(guest->session->endLatched());
+  advanceToSinceHeard(10200);
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, tr(STR_GAMES_PEER_SILENT)); }));
+  EXPECT_EQ(matchLogged(*guest, goneLogged("timeout")), 1u);
+}
+
+TEST_F(NearbyMatchTest, AVersionMismatchAbortShowsTheVersionLine) {
+  ASSERT_NO_FATAL_FAILURE(startRawGuest());
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::VersionMismatch));
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, tr(STR_GAMES_PEER_VERSION)); })) << screenText(*guest);
+  EXPECT_EQ(matchLogged(*guest, goneLogged("version_mismatch")), 1u);
+}
+
+TEST_F(NearbyMatchTest, AFullAbortShowsTheLeftLine) {
+  ASSERT_NO_FATAL_FAILURE(startRawGuest());
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::Full));
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, leftLine()); }));
+  EXPECT_EQ(matchLogged(*guest, goneLogged("full")), 1u);
+}
+
+TEST_F(NearbyMatchTest, ThePlayerLeftViewsLinesAreEachReasonsAndTheStringsAreTheAgreedOnes) {
+  using GameCore::Protocol::AbortReason;
+  EXPECT_EQ(GameMatchView::peerGoneLine(AbortReason::Left), StrId::STR_GAMES_PEER_LEFT);
+  EXPECT_EQ(GameMatchView::peerGoneLine(AbortReason::Full), StrId::STR_GAMES_PEER_LEFT);
+  EXPECT_EQ(GameMatchView::peerGoneLine(AbortReason::Timeout), StrId::STR_GAMES_PEER_SILENT);
+  EXPECT_EQ(GameMatchView::peerGoneLine(AbortReason::ScriptError), StrId::STR_GAMES_PEER_ERROR);
+  EXPECT_EQ(GameMatchView::peerGoneLine(AbortReason::VersionMismatch), StrId::STR_GAMES_PEER_VERSION);
+  EXPECT_STREQ(tr(STR_GAMES_PEER_LEFT), "The other player left");
+  EXPECT_STREQ(tr(STR_GAMES_PEER_SILENT), "The other player went silent");
+  EXPECT_STREQ(tr(STR_GAMES_PEER_ERROR), "The other game stopped with an error");
+  EXPECT_STREQ(tr(STR_GAMES_PEER_VERSION), "The other player has a different version");
+  for (const StrId id : {StrId::STR_GAMES_PEER_LEFT, StrId::STR_GAMES_PEER_SILENT, StrId::STR_GAMES_PEER_ERROR,
+                         StrId::STR_GAMES_PEER_VERSION}) {
+    EXPECT_LT(std::strlen(I18N.get(id)), 42u) << "two lines of the title font in the dialog's 4/5 width";
+  }
+}
+
+// R5: the end waits for the match's own loop(), so it waits behind an open overlay, which stops the loop.
+TEST_F(NearbyMatchTest, ALatchedEndWaitsBehindAnOverlayAndTheNextLoopPassEntersPeerGone) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  guest->loops = false;  // an overlay: the guest's loop does not run
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  ASSERT_TRUE(nearby::waitFor([&] {
+    step();
+    return guest->session->endLatched();
+  }));
+  idle(60);
+  EXPECT_EQ(state(*guest), "Playing") << "nothing changes while the loop is held";
+  EXPECT_EQ(entered(*guest, "PeerGone"), 0u);
+  guest->loops = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, leftLine()); }));
+}
+
+TEST_F(NearbyMatchTest, TwoReasonsGiveOnePeerGoneAndOneLogLineNamingTheFirst) {
+  ASSERT_NO_FATAL_FAILURE(startRawGuest());
+  guest->loops = false;
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::Left));
+  ASSERT_TRUE(nearby::waitFor([&] { return guest->session->endLatched(); }));
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::VersionMismatch));
+  ASSERT_TRUE(nearby::waitFor([&] { return guest->session->counters().endIgnored >= 1; }))
+      << "the second reason reached the slot and was ignored";
+  guest->loops = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  ASSERT_TRUE(run([&] { return showsLine(*guest, leftLine()); }));
+  idle(40);
+  EXPECT_EQ(matchLogged(*guest, "the other player is gone"), 1u);
+  EXPECT_EQ(matchLogged(*guest, goneLogged("left")), 1u);
+  EXPECT_FALSE(showsLine(*guest, tr(STR_GAMES_PEER_VERSION)));
+  EXPECT_EQ(entered(*guest, "PeerGone"), 1u);
+}
+
+TEST_F(NearbyMatchTest, PeerGoneIsEnteredFromPausedAsFromPlaying) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_TRUE(openPauseMenu(*guest));
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, leftLine()); }));
+  EXPECT_EQ(matchLogged(*guest, "Paused -> PeerGone on PeerGone"), 1u);
+  EXPECT_FALSE(shows(*guest, tr(STR_GAMES_RESUME))) << "the pause menu is gone";
+}
+
+TEST_F(NearbyMatchTest, ThePlayerLeftViewHasBackAloneAndNothingElseLeavesIt) {
+  ASSERT_NO_FATAL_FAILURE(startRawGuest());
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::Left));
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, leftLine()); }));
+  EXPECT_TRUE(shows(*guest, tr(STR_BACK)));
+  EXPECT_FALSE(shows(*guest, tr(STR_GAMES_LEAVE)));
+  // Confirm does nothing; Home is taken and ignored.
+  guest->input->click(Button::Confirm);
+  idle(20);
+  EXPECT_EQ(state(*guest), "PeerGone");
+  EXPECT_TRUE(guest->activity->handleHomeGesture());
+  idle(20);
+  EXPECT_EQ(state(*guest), "PeerGone");
+  EXPECT_EQ(activityManager.asks.goToGames, 0);
+  // A tap on the Back row leaves, as the Back button does.
+  render(*guest);
+  const screen::RecordingTarget& target = *screen::RecordingTarget::newest();
+  bool tapped = false;
+  for (const screen::DrawnText& drawn : target.drawn) {
+    if (drawn.text != tr(STR_BACK)) continue;
+    guest->input->tap(drawn.rect.x + drawn.rect.width / 2, drawn.rect.y + drawn.rect.height / 2);
+    tapped = true;
+    break;
+  }
+  ASSERT_TRUE(tapped) << target.joined();
+  ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  EXPECT_EQ(activityManager.asks.goToGames, 1);
+}
+
+TEST_F(NearbyMatchTest, AMatchThatEndsInPeerGoneTouchesNoResumeFile) {
+  installBoth(/*withPkg=*/true);
+  rig = std::make_unique<nearby::RawHostRig>();
+  ASSERT_TRUE(rig->open());
+  ASSERT_TRUE(rig->joinAndStart());
+  guest = enter(GUEST_ID, 2, std::move(rig->guest));
+  ASSERT_TRUE(run([&] { return shows(*guest, "Waiting for the host"); }));
+  ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::Left));
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  guest->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  EXPECT_TRUE(match::resumeFilesOnCard().empty());
+}
+
+// Back from the player-left view says the three ABORT(left) without waiting for acks from a peer already known gone,
+// even with a STATE of its own still unacked.
+TEST_F(NearbyMatchTest, BackFromThePlayerLeftViewSendsTheGoodbyeWithoutWaitingForAcks) {
+  installBoth();
+  duo = std::make_unique<Duo>();
+  duo->openBoth(nearby::fastSettings(60000));
+  ASSERT_TRUE(duo->joinAndStart());
+  enterHost();
+  enterGuest();
+  ASSERT_TRUE(run([&] { return showsTurn(*host) && shows(*guest, "Player 2 (O): Player 1 to move"); }));
+  recordEndsAtGames();
+  duo->net.blackhole(duo->hostEnd.index());  // the host's sends are lost (its STATE stays unacked), the guest's arrive
+  const size_t stateSent = nearby::linkLines("state sent");
+  tapCell(*host, 5);
+  ASSERT_TRUE(
+      run([&] { return host->session->counters().unacked >= 1 && nearby::linkLines("state sent") > stateSent; }));
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*guest));  // its ABORT reaches the host
+  ASSERT_TRUE(run([&] { return state(*host) == "PeerGone" && showsLine(*host, leftLine()); }));
+  const int abortsBefore = duo->hostProbe.abortFrames.load();
+  host->input->click(Button::Back);
+  ASSERT_TRUE(run([&] { return state(*host) == "Leaving"; }));
+  EXPECT_EQ(lastLeaveWaitedMs(), 0) << "no wait for acks from a peer that is gone";
+  EXPECT_EQ(duo->hostProbe.abortFrames.load() - abortsBefore, 3);
+  ASSERT_EQ(endsAtGames.size(), 2u);
+  EXPECT_EQ(endsAtGames[1].first, 1) << "the host's link was ended before Games was asked for";
+}
+
+// A round end the VM has already counted is entered (Over: the over event delivered, the store flushed) before the
+// loop reads the end; the end is read on the next pass.
+TEST_F(NearbyMatchTest, ARoundEndTheVmHasCountedIsEnteredBeforeTheEndIsRead) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 1));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 4));
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 2));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 5));
+  ASSERT_TRUE(run([&] { return showsTurn(*host); }));
+  guest->loops = false;  // an overlay: the guest's loop does not run
+  tapCell(*host, 3);     // the winning move: the over STATE is queued on the guest
+  ASSERT_TRUE(nearby::waitFor([&] {
+    step();
+    return guest->session->counters().queueSize >= 1;
+  }));
+  // One guest pass wakes its VM (pollNearby), which adopts the over STATE and delivers the over event.
+  frame(*guest);
+  ASSERT_TRUE(nearby::waitFor([&] { return logged(*guest, "over for seat 2") == 1u; }));
+  // The host leaves while the guest's loop is still held: the end is latched, and not yet read.
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  ASSERT_TRUE(nearby::waitFor([&] { return guest->session->endLatched(); }));
+  guest->loops = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  EXPECT_EQ(matchLogged(*guest, "Playing -> Over on RoundOver"), 1u);
+  EXPECT_EQ(matchLogged(*guest, "Over -> PeerGone on PeerGone"), 1u);
+  const size_t over = lineAt(std::string("INF GAME: ") + GUEST_ID + ": Playing -> Over on RoundOver");
+  const size_t gone = lineAt(std::string("INF GAME: ") + GUEST_ID + ": Over -> PeerGone on PeerGone");
+  ASSERT_NE(over, std::string::npos);
+  ASSERT_NE(gone, std::string::npos);
+  EXPECT_LT(over, gone);
 }
 
 }  // namespace

@@ -72,6 +72,13 @@
 // (GameVM); the loop only wakes it (GameVM::pollNearby), so an overlay, which stops the loop, delays adoption and not
 // the link's acks. preventAutoSleep() is set for the whole match.
 //
+// A nearby match ends one of two ways. This device's own: Leave (flush 800 ms, three ABORT(left)), the forced exit
+// (three ABORT(left) at once, before the VM stops), or a script error (three ABORT(script_error) at once, then the
+// error view), each through NearbySession::leave; a user Leave then stops the VM and ends the link before asking for
+// Games. The peer's: loop() takes the latched end (NearbySession::takeEnd) once, behind any open overlay, and the match
+// enters PeerGone, whose view has one reason line and Back (which leaves as Leave does). Error keeps its view when the
+// peer then leaves.
+//
 // The match follows AD-21's solo states, or the hidden pass ones (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing (or a hidden match's first HandOff) until Leaving, or until a stuck VM is
 // stopped on the way to Error, so Playing, Paused, Over, Result, and HandOff always have one.
@@ -129,9 +136,12 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   static constexpr uint32_t STOP_TIMEOUT_MS = 500;
   // A call into Lua still running after this long is a stuck script (AD-5).
   static constexpr uint32_t WATCHDOG_MS = 3000;
+  // A nearby Leave waits this long for the peer to ack what it has sent before it says goodbye (AD-20, R6); the forced
+  // exit and a script error say it at once.
+  static constexpr uint32_t LEAVE_FLUSH_MS = 800;
 
   // Takes the transition `event` names and does what entering the new state
-  // requires: Over flushes ch.store, a user's Leaving stops the VM, flushes, and
+  // requires: Over flushes ch.store, PeerGone logs why, a user's Leaving stops the VM, flushes, and
   // goes to Games. An event that is no transition from this state is ignored.
   void handle(MatchEvent event);
   // Entering Playing on `event`: whether the match asks for a render itself (a resume, or a nearby follower's waiting
@@ -143,7 +153,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void fail(StrId headline, const char* detail);
 
   void loopPlaying();
-  // The pause menu, the end-of-round menu, and the error view.
+  // The pause menu, the end-of-round menu, and the error and player-left views.
   void loopView();
   // A hidden pass match's Result and HandOff: a tap on the banner or the button (or Confirm) passes the device on.
   void loopHandOff();
@@ -153,8 +163,11 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // Playing, Paused, Over, Result, HandOff: false (now in Error) when the VM failed or is stuck.
   bool vmHealthy();
   void choose(const GameCore::MatchMenu& menu, int index);
-  // A user exit (Leave, or Back from the error view), from loop().
-  void leave();
+  // A user exit (Leave, or Back from the error or player-left view), from loop(). A nearby match says goodbye first
+  // (NearbySession::leave: three ABORT(left) after waiting up to `flushMs` for what the link task has staged or sent to
+  // be acked; a shipment the VM has not yet staged is not waited for), then stops the VM and ends the link before
+  // asking for Games. `flushMs` is LEAVE_FLUSH_MS, or 0 from PeerGone and Error, whose peer is gone or told already.
+  void leave(uint32_t flushMs);
   // Cancels the VM, joins it or abandons it (AD-5), and writes its last pending
   // snapshot before it is freed. The blank of a hidden pass match's forced exit comes after the SD steps, not here
   // (pushForcedExitBlank). The caller holds RenderLock, since render reads vm and the frames an abandon frees. Nothing
@@ -198,9 +211,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // (panel). Nothing, the screen before it staying, until the VM has named the round's first turn seat
   // (announcementAwaited).
   void renderHandOff();
-  // Render task: whether a view in `state` sits over the canvas. Not the error view, nor a pause menu entered from
-  // HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match), nor anything
-  // in the Play-again gap (the round the match awaits has not published its first frame), in every mode.
+  // Render task: whether a view in `state` sits over the canvas. Not the error or player-left view, nor a pause menu
+  // entered from HandOff, nor anything while the seat the match awaits has not published its frame (a hidden match),
+  // nor anything in the Play-again gap (the round the match awaits has not published its first frame), in every mode.
   bool canvasUnderView(MatchState state) const;
   static void viewScreen(UiScreen& screen, void* user);
   // Render task: a pause menu that returns to play while the new round has not published its first frame (the
@@ -310,4 +323,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // The error view's text, written once before the match enters Error.
   StrId errorHeadline = StrId::STR_GAMES_ERROR;
   char errorDetail[GameVM::ERROR_CAPACITY] = {};
+  // Why a nearby match ended, written once by loop() before the match enters PeerGone and read by the render task after
+  // it saw `shown` == PeerGone (as errorDetail is).
+  GameCore::Protocol::AbortReason endReason = GameCore::Protocol::AbortReason::Left;
 };

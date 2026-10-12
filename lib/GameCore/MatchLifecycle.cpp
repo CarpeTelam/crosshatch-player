@@ -27,6 +27,10 @@ MatchState MatchLifecycle::next(const MatchState from, const MatchEvent event, c
                                 const MatchState resumesTo) {
   if (from == MatchState::Leaving) return from;
   if (event == MatchEvent::ForcedExit) return MatchState::Leaving;
+  // The link's end moves any state but the two that already show an ending; Error keeps its
+  // view, because a second end replaces nothing.
+  if (event == MatchEvent::PeerGone)
+    return from == MatchState::Error || from == MatchState::PeerGone ? from : MatchState::PeerGone;
   // Where a hidden pass match's round starts: the device is handed to the first mover.
   const MatchState roundStart = hiddenPass ? MatchState::HandOff : MatchState::Playing;
   switch (from) {
@@ -59,6 +63,9 @@ MatchState MatchLifecycle::next(const MatchState from, const MatchEvent event, c
       return from;
     case MatchState::Leaving:
       return from;
+    case MatchState::PeerGone:
+      if (event == MatchEvent::Back) return MatchState::Leaving;
+      return from;
     case MatchState::Result:
       // The solo machine has no Result row: only ForcedExit, above, leaves it.
       if (!hiddenPass) return from;
@@ -84,6 +91,7 @@ MatchMenu MatchLifecycle::menuFor(const MatchState state) {
     case MatchState::Over:
       return menuOf(ROUND_OVER_MENU);
     case MatchState::Error:
+    case MatchState::PeerGone:
       return menuOf(ERROR_MENU);
     case MatchState::Starting:
     case MatchState::Playing:
@@ -113,6 +121,8 @@ const char* MatchLifecycle::name(const MatchState state) {
       return "Result";
     case MatchState::HandOff:
       return "HandOff";
+    case MatchState::PeerGone:
+      return "PeerGone";
   }
   return "?";
 }
@@ -141,6 +151,8 @@ const char* MatchLifecycle::name(const MatchEvent event) {
       return "TurnChanged";
     case MatchEvent::Tap:
       return "Tap";
+    case MatchEvent::PeerGone:
+      return "PeerGone";
   }
   return "?";
 }
