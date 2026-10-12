@@ -1356,3 +1356,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-in-ultimate-tic-tac-toe-and-battleship-plan.md`
   summary: No automated check pins that either first-party manifest declares `nearby`.
   evidence: The verification-gap lens removed `nearby` from both manifests, repacked, and ran the games check (129 tests) and the manifest, mode, roster, session, catalog, and launcher tests (216): all passed. The games check only logs a skipped `nearby`; the harness and the first-party README are outside entry 12's touches, and a nearby round is barred there (epic-first-party-games R10). A harness- or manifest-level test (entry 13's sweep may take it) or entry 14's device run settles it. Location: games/battleship/manifest.json:7; games/ultimate-tic-tac-toe/manifest.json:7. Severity: low.
+
+## 6.2
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-link-interface-frame-codec-and-fakelink-plan.md`
+  summary: Nothing ties `Protocol::PROTO` to `GameScript::Codec::VERSION`, so a codec bump can ship without a `PROTO` bump.
+  evidence: `PROTO` is enforced only in `Protocol.cpp`'s decode; the codec bytes ride in `STATE` snapshots. `lib/GameCore` cannot include `lib/GameScript` (`check_layers.py`), so only a suite that sees both can pin the pair. Owner Decision 2026-10-12 (entry 2's checkpoint, C7): entry 13 adds the tie test. Location: lib/GameCore/Protocol.h (PROTO), lib/GameScript/Codec.h:15. Severity: medium.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-link-interface-frame-codec-and-fakelink-plan.md`
+  summary: `expectLinkContract` takes two links, so it cannot check that two peers never share a handle, that a handle is never reused after the link forgets a peer, or that receive never returns `NO_PEER` across many peers.
+  evidence: Only `FakeLinkTest` checks these for `FakeLink`. `UdpLink` (entry 16) and `EspNowLink` (entry 11, on the device) are held to them only if the contract gains a three-link variant; entry 16 is the first to need it. Location: test/game_core/LinkContract.h. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-link-interface-frame-codec-and-fakelink-plan.md`
+  summary: `FakeLink` cannot make `send()` return false for a full send queue, the one failure the device produces that the double cannot.
+  evidence: `ILink` documents false for a full queue and `ReliableLink` must treat it as an ordinary loss; `FakeLink`'s header lists "no send queue that fills". Entry 4 is the first consumer and adds a refuse-N knob with its test. Location: test/game_core/FakeLink.h. Severity: low.
