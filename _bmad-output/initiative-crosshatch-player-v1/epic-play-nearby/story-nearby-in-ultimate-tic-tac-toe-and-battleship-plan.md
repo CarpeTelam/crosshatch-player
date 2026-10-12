@@ -3,7 +3,7 @@ title: '6.12 Nearby in Ultimate tic-tac-toe and Battleship'
 type: 'feature'
 ticket: '12'
 created: '2026-10-12'
-status: 'built'
+status: done
 baseline_revision: '32362b3d8c108117c94c123e2cd6a8bacf8c9910'
 route: 'full'
 route_source: 'auto'

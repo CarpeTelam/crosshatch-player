@@ -1344,3 +1344,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-two-device-serial-capture-and-the-default-build-touch-line-c-plan.md`
   summary: The DTR/RTS clearing and the reconnect after a real sleep are unobserved on hardware.
   evidence: A pty refuses `TIOCMBIC` (the error is suppressed) and closes with end-of-file at once, with no sleep timing or USB renumbering; a mock of the ioctl would verify nothing. Entry 11's smoke run checks that connecting does not reset the board and that each sleep produces a lost and a connected line. Location: scripts/device_log.py:open_port, Capture.run. Severity: low.
+
+## 6.12
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-in-ultimate-tic-tac-toe-and-battleship-plan.md`
+  summary: Ultimate tic-tac-toe draws its help page over the end dialog when a nearby round ends while that device has the page open.
+  evidence: `draw` tests `ui.help` before the board and the end frame, so the page covers the winner header beneath the host's dialog; Battleship's Over frame wins over its page, so it has no such edge. R11 names no fix for it; the owner deferred it as low (epic Notes, Decision 2026-10-12, entry 12's plan checkpoint). Location: games/ultimate-tic-tac-toe/main.lua:196-204. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-in-ultimate-tic-tac-toe-and-battleship-plan.md`
+  summary: A nearby seat that is waiting sees the playable small boards highlighted, and help paragraph 6 says "the highlighted small boards are the ones you may play in".
+  evidence: `game.playable(state)` highlights the boards the turn seat may play in whoever views, and help paragraph 6 speaks to the viewer; in pass the viewer is always the turn seat, so it reads right there, while a waiting nearby seat sees the opponent's boards under its "waiting" header. R11 names three fixes and not this one; hiding the highlight for the waiting seat or rewording the paragraph is the owner's call (put to the owner 2026-10-12; entry 14's device round shows it). Location: games/ultimate-tic-tac-toe/main.lua:39-45 and the highlight loop in game.draw. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-in-ultimate-tic-tac-toe-and-battleship-plan.md`
+  summary: No automated check pins that either first-party manifest declares `nearby`.
+  evidence: The verification-gap lens removed `nearby` from both manifests, repacked, and ran the games check (129 tests) and the manifest, mode, roster, session, catalog, and launcher tests (216): all passed. The games check only logs a skipped `nearby`; the harness and the first-party README are outside entry 12's touches, and a nearby round is barred there (epic-first-party-games R10). A harness- or manifest-level test (entry 13's sweep may take it) or entry 14's device run settles it. Location: games/battleship/manifest.json:7; games/ultimate-tic-tac-toe/manifest.json:7. Severity: low.
