@@ -727,33 +727,144 @@ TEST_F(GameVmTest, OpenPassATimerDueBeforeTheRoundEndsIsStillDelivered) {
   EXPECT_FALSE(vm->failed());
 }
 
-// A hidden pass VM whose turn seat is not this device's (a roster with some seats local, not all; no match has one yet:
-// cross-story fix review F5): the hand-off's request is left unserved and no seat is drawn, so the match keeps the
-// blank on the panel, and a tap reads nothing.
-TEST_F(GameVmTest, AHiddenVmLeavesTheHandOffUnservedWhenTheTurnSeatIsNotThisDevices) {
-  installGame("hidden-third", R"(
-local game = {}
-function game.setup(ctx) return { moves = 2 } end
-function game.status(s) return { turn = s.moves % 3 + 1 } end
-function game.apply(s, seat, move) s.moves = s.moves + 1 return s end
-function game.input(s, seat, ui, ev) ch.log("tap for seat " .. seat) return { tap = true } end
-function game.draw(s, seat, ui) ch.log("draw for seat " .. seat) ch.gfx.clear("white") end
-return game
-)");
+// A game for a roster of three seats this device plays 1 and 2 of (epic-play-nearby R10, partly-remote rosters): the
+// first round starts on seat `first`, a move by seat 1 or 2 passes the turn to seat 3. A timer is armed by setup. Every
+// call is logged with its seat.
+std::string partlyRemoteGame(const int first) {
+  return "local game = {}\n"
+         "function game.setup(ctx) ch.timer.after(1000) return { turn = " +
+         std::to_string(first) +
+         " } end\n"
+         "function game.status(s) return { turn = s.turn } end\n"
+         "function game.apply(s, seat, move) ch.log('apply for seat ' .. seat) s.turn = 3 return s end\n"
+         "function game.input(s, seat, ui, ev)\n"
+         "  ch.log(ev.kind .. ' for seat ' .. seat)\n"
+         "  if ev.kind == 'tap' then return { tap = true } end\n"
+         "  return nil\n"
+         "end\n"
+         "function game.draw(s, seat, ui) ch.log('draw for seat ' .. seat) ch.gfx.clear('white') end\n"
+         "return game\n";
+}
+
+GameCore::Roster firstTwoOfThreeLocal() {
   GameCore::Roster roster = GameCore::Roster::pass(3);
   roster.localSeats = 0b011;
-  ASSERT_TRUE(prepareFor("hidden-third", roster, true));
+  return roster;
+}
+
+// A hidden VM whose turn seat is not this device's (a roster with some seats local, not all; no mode builds a hidden
+// one, AD-12): the hand-off's request is served with the first local seat, when none has shown, and published, so the
+// match's blank is replaced. A timer held on the way and a tap reach that seat; the tap's move is discarded off turn
+// and is no turn change.
+TEST_F(GameVmTest, AHiddenVmServesTheHandOffWithTheFirstLocalSeatWhenTheTurnSeatIsNotThisDevices) {
+  installGame("hidden-third", partlyRemoteGame(3));
+  ASSERT_TRUE(prepareFor("hidden-third", firstTwoOfThreeLocal(), true));
   ASSERT_TRUE(vm->start());
   ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
-  vm->showTurnSeat();
-  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("Turn seat 3 is not this device's"); }));
-  vm->postInput(tapAt(100, 200), GameVM::UNTAGGED);
-  vm->showTurnSeat();  // its line comes after the tap was taken
-  ASSERT_TRUE(waitFor([] { return fakelog::countLines("Turn seat 3 is not this device's") == 2u; }));
-  EXPECT_EQ(vm->seatShownRequest(), 0u) << "the request was served with no seat drawn";
-  EXPECT_EQ(vm->frameGen(), 0u);
-  EXPECT_FALSE(logHas("draw for seat"));
-  EXPECT_FALSE(logHas("tap for seat"));
+  EXPECT_EQ(vm->passedTo(), 3u);
+  fakertos::advance(1000);
+  vm->pollTimer();  // due on the hand-off screen: held for the seat shown next
+  const uint32_t request = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
+  EXPECT_EQ(vm->roundsStarted(), 1u);
+  EXPECT_TRUE(logHas("draw for seat 1")) << "a frame is published, no blank";
+  EXPECT_FALSE(logHas("draw for seat 3")) << "never another device's seat";
+  EXPECT_FALSE(logHas("Turn 3 is no seat"));
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat 1"); })) << "the held timer reaches the seat shown";
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() == 2u; })) << "and is drawn once";
+  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 2u);
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 200), before);
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > before; }));
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u);
+  EXPECT_FALSE(logHas("apply for seat")) << "off turn: the move is discarded";
+  EXPECT_EQ(vm->turnsPassed(), 0u) << "a tap read by a seat that is not the turn seat is no turn change";
+  EXPECT_EQ(vm->passedTo(), 3u);
+  EXPECT_FALSE(logHas("draw for seat 3"));
+  EXPECT_FALSE(vm->failed());
+}
+
+// The local seat that last showed is the one served: seat 2 moves, which passes the turn to the remote seat 3, and the
+// next request shows seat 2 (not the first local seat), with its tap read by seat 2.
+TEST_F(GameVmTest, AHiddenVmServesTheLocalSeatThatLastShowedWhenTheTurnPassesToARemoteSeat) {
+  installGame("hidden-third", partlyRemoteGame(2));
+  ASSERT_TRUE(prepareFor("hidden-third", firstTwoOfThreeLocal(), true));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  const uint32_t first = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == first; }));
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 1u);
+  vm->postInput(tapAt(100, 200), vm->frameGen());  // seat 2 moves: the turn is seat 3's
+  ASSERT_TRUE(waitFor([&] { return vm->turnsPassed() == 1u; }));
+  EXPECT_EQ(vm->passedTo(), 3u);
+  EXPECT_EQ(fakelog::countLines("apply for seat 2"), 1u);
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 2u) << "the Result: the mover's frame";
+  const uint32_t second = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == second; }));
+  EXPECT_EQ(fakelog::countLines("draw for seat 2"), 3u) << "the seat that last showed, not the first local seat";
+  EXPECT_FALSE(logHas("draw for seat 1"));
+  EXPECT_FALSE(logHas("draw for seat 3"));
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 200), before);
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > before; }));
+  EXPECT_EQ(fakelog::countLines("tap for seat 2"), 2u);
+  EXPECT_EQ(vm->turnsPassed(), 1u) << "the tap off turn is no turn change";
+  EXPECT_EQ(fakelog::countLines("apply for seat 2"), 1u);
+  EXPECT_FALSE(vm->failed());
+}
+
+// An open match of the same roster: the first turn is seat 3's, so the first local seat is drawn and the round starts;
+// a timer and a tap are read by that seat, and the tap's move is discarded.
+TEST_F(GameVmTest, AnOpenVmOfAPartlyRemoteRosterShowsAndReadsAsALocalSeatWhileTheTurnIsRemote) {
+  installGame("open-third", partlyRemoteGame(3));
+  ASSERT_TRUE(prepareFor("open-third", firstTwoOfThreeLocal(), false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  ASSERT_TRUE(waitFor([&] { return vm->roundsStarted() == 1u; }));
+  EXPECT_EQ(fakelog::countLines("draw for seat 1"), 1u);
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("timer for seat 1"); }));
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() == 2u; }));
+  const uint32_t before = vm->frameGen();
+  vm->postInput(tapAt(100, 200), before);
+  ASSERT_TRUE(waitFor([&] { return vm->frameGen() > before; }));
+  EXPECT_EQ(fakelog::countLines("tap for seat 1"), 1u);
+  EXPECT_FALSE(logHas("apply for seat"));
+  EXPECT_FALSE(logHas("draw for seat 3"));
+  EXPECT_FALSE(vm->failed());
+}
+
+// A roster with no local seat that is still playing: a timer is dropped and logged, not delivered as seat 0, in an open
+// match and in a hidden one (where the seat shown is seat 0, as before).
+TEST_F(GameVmTest, ARosterWithNoLocalSeatDropsAndLogsATimerOfARoundStillPlaying) {
+  installGame("timer-nolocal-playing", partlyRemoteGame(1));
+  GameCore::Roster roster = firstTwoOfThreeLocal();
+  roster.localSeats = 0;
+  ASSERT_TRUE(prepareFor("timer-nolocal-playing", roster, false));
+  ASSERT_TRUE(startAndWaitFirstFrame());
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("this device plays no seat"); }));
+  EXPECT_EQ(fakelog::countLines("this device plays no seat"), 1u);
+  EXPECT_FALSE(logHas("timer for seat"));
+  EXPECT_FALSE(logHas("Dropped a timer due after the round was over"));
+  EXPECT_FALSE(vm->failed());
+}
+
+TEST_F(GameVmTest, AHiddenRosterWithNoLocalSeatDropsAndLogsATimerOfARoundStillPlaying) {
+  installGame("hidden-nolocal-playing", partlyRemoteGame(1));
+  GameCore::Roster roster = firstTwoOfThreeLocal();
+  roster.localSeats = 0;
+  ASSERT_TRUE(prepareFor("hidden-nolocal-playing", roster, true));
+  ASSERT_TRUE(vm->start());
+  ASSERT_TRUE(waitFor([&] { return vm->committed().pending(); }));
+  const uint32_t request = vm->showTurnSeat();
+  ASSERT_TRUE(waitFor([&] { return vm->seatShownRequest() == request; }));
+  fakertos::advance(1000);
+  vm->pollTimer();
+  ASSERT_TRUE(waitFor([] { return fakelog::anyLine("this device plays no seat"); }));
+  EXPECT_EQ(fakelog::countLines("this device plays no seat"), 1u);
+  EXPECT_FALSE(logHas("timer for seat"));
   EXPECT_FALSE(vm->failed());
 }
 

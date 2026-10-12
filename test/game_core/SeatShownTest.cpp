@@ -143,17 +143,56 @@ Roster firstTwoOfThree() {
   return roster;
 }
 
-// Cross-story review row 8: Playing fails closed as Result does, so a turn seat this device does not play draws
-// nothing and reads no input, rather than relying on LuaGame to refuse it.
-TEST(SeatShownTest, ATurnSeatThisDeviceDoesNotPlayShowsNoSeat) {
+// A turn seat this device does not play (epic-play-nearby R10): the device shows the local seat that last showed, else
+// the first local seat, and a turn that is no seat of the roster still fails closed.
+TEST(SeatShownTest, ATurnSeatThisDeviceDoesNotPlayShowsTheLocalSeatThatLastShowedElseTheFirst) {
   const Roster roster = firstTwoOfThree();
   EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(1)), 1);
   EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2)), 2);
-  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3)), NO_SEAT) << "seat 3 is another device's";
-  EXPECT_EQ(seatShown(MatchState::Paused, roster, playing(3)), NO_SEAT) << "paused shows what playing shows";
-  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(0)), NO_SEAT) << "seat 0 is never a turn seat";
-  EXPECT_EQ(seatShown(MatchState::Over, roster, over(0b100)), 0) << "over: the frame for everyone";
-  EXPECT_EQ(seatShown(MatchState::Playing, Roster::pass(2), playing(3)), NO_SEAT) << "a turn past n";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3)), 1)
+      << "seat 3 is another device's: the first local seat";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3), NO_SEAT, 2), 2) << "the one that last showed";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3), NO_SEAT, 1), 1);
+  EXPECT_EQ(seatShown(MatchState::Paused, roster, playing(3), NO_SEAT, 2), 2) << "paused shows what playing shows";
+  EXPECT_EQ(seatShown(MatchState::Paused, roster, playing(3)), 1);
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(1), NO_SEAT, 2), 1) << "a local turn seat is shown";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2), NO_SEAT, 1), 2) << "whatever last showed";
+  // Only a local seat counts as having shown: anything else falls back to the first local seat.
+  for (const uint8_t notLocal : {uint8_t{0}, uint8_t{3}, uint8_t{4}, NO_SEAT}) {
+    EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3), NO_SEAT, notLocal), 1) << int(notLocal);
+  }
+  // A turn that is no seat of the roster fails closed, whoever last showed.
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(0), NO_SEAT, 2), NO_SEAT) << "seat 0 is never a turn seat";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(4), NO_SEAT, 2), NO_SEAT) << "a turn past n";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(0)), NO_SEAT);
+  EXPECT_EQ(seatShown(MatchState::Playing, Roster::pass(2), playing(3), NO_SEAT, 1), NO_SEAT) << "a turn past n";
+  // The other states do not read it.
+  EXPECT_EQ(seatShown(MatchState::Over, roster, over(0b100), NO_SEAT, 2), 0) << "over: the frame for everyone";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, over(0b100), NO_SEAT, 2), 0) << "the status over";
+  EXPECT_EQ(seatShown(MatchState::HandOff, roster, playing(3), NO_SEAT, 2), NO_SEAT);
+  EXPECT_EQ(seatShown(MatchState::Result, roster, playing(3), 1, 2), 1) << "a Result shows the mover";
+  EXPECT_EQ(seatShown(MatchState::Result, roster, playing(3), 3, 2), NO_SEAT) << "a mover this device does not play";
+}
+
+// Seats 1 and 3 local, seat 2 another device's: the rule reads the local set, not a prefix of it.
+TEST(SeatShownTest, TheLocalSeatsNeedNotBeTheFirstOnes) {
+  Roster roster;
+  roster.mode = Mode::Nearby;
+  roster.seats = 3;
+  roster.localSeats = 0b101;
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2)), 1);
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2), NO_SEAT, 3), 3);
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(2), NO_SEAT, 2), 1) << "seat 2 is not local";
+  EXPECT_EQ(seatShown(MatchState::Playing, roster, playing(3), NO_SEAT, 1), 3);
+}
+
+// One local seat (every v1 nearby device): that seat is shown whoever has the turn, and the last shown is not read.
+TEST(SeatShownTest, OneLocalSeatIgnoresTheLastShown) {
+  EXPECT_EQ(seatShown(MatchState::Playing, secondSeatOnly(), playing(1), NO_SEAT, 1), 2);
+  EXPECT_EQ(seatShown(MatchState::Playing, secondSeatOnly(), playing(2), NO_SEAT, 1), 2);
+  EXPECT_EQ(seatShown(MatchState::Over, secondSeatOnly(), over(0b01), NO_SEAT, 1), 2);
+  EXPECT_EQ(seatShown(MatchState::Playing, Roster::solo(), playing(1), NO_SEAT, 2), 1);
+  EXPECT_EQ(seatShown(MatchState::Playing, Roster::solo(), playing(3), NO_SEAT, 2), 1) << "as before: one local seat";
 }
 
 TEST(SeatShownTest, NoSeatIsNoRosterSeat) {

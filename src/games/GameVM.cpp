@@ -215,6 +215,11 @@ void GameVM::run() {
         LOG_DBG("GAME", "Dropped a timer due after the round was over");
         continue;
       }
+      // A roster with no local seat reads no timer (step drops it too); a stale one drops silently.
+      if (rounds.noSeatTimer(event) && game.timer().accepts(event)) {
+        LOG_INF("GAME", "Dropped a timer: this device plays no seat");
+        continue;
+      }
       outcome = rounds.step(event);
       // The seat step drew, when it drew (a stale timer draws nothing and leaves the seat as it was).
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
@@ -258,7 +263,7 @@ uint32_t GameVM::showTurnSeat() {
 }
 
 GameScript::Outcome GameVM::drawShown() {
-  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
+  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover, rounds.lastLocalSeat());
   // The hand-off (or a Result without a mover this device plays): no seat's frame.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
   const GameScript::Outcome outcome = rounds.draw(seat);
@@ -275,10 +280,12 @@ GameScript::Outcome GameVM::showSeatNow() {
     const GameScript::Outcome drained = stepHandOff(queued);
     if (drained != GameScript::Outcome::Ok) return drained;
   }
-  // A turn seat this device does not play (a roster with some seats local, not all): no seat takes the device, so the
-  // view stays HandOff and the request stays unserved, and the match keeps the blank on the panel.
-  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover) == GameCore::NO_SEAT) {
-    LOG_INF("GAME", "Turn seat %u is not this device's; no seat shown", static_cast<unsigned>(playing->status().turn));
+  // A turn seat another device plays (a roster with some seats local, not all) is served with the local seat that last
+  // showed, else the first (seatShown). A turn that is no seat takes no seat: the view stays HandOff and the request
+  // stays unserved, and the match keeps the blank on the panel.
+  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover, rounds.lastLocalSeat()) ==
+      GameCore::NO_SEAT) {
+    LOG_INF("GAME", "Turn %u is no seat of the roster; no seat shown", static_cast<unsigned>(playing->status().turn));
     return GameScript::Outcome::Ok;
   }
   handOffView = GameCore::MatchState::Playing;
@@ -305,27 +312,35 @@ GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
     // No seat holds the device: nothing reads its input.
     if (handOffView == GameCore::MatchState::HandOff) return GameScript::Outcome::Ok;
   }
-  // Playing: the turn seat (seat 0 once over); Result: the mover, whose move the Session
-  // discards (it is not the turn seat), so a tap queued behind a turn-passing move changes
-  // only that seat's own view.
-  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
+  // Playing: the turn seat (the local seat that last showed while the turn is another device's; seat 0 once over);
+  // Result: the mover, whose move the Session discards (it is not the turn seat), so a tap queued behind a
+  // turn-passing move changes only that seat's own view.
+  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover, rounds.lastLocalSeat());
   // A timer due after the round is over is dropped, never delivered, whichever seat is shown (status.over, not seat 0:
   // a roster with no local seat shows none and is dropped the same way, and logged).
   if (GameScript::MatchRounds::lateTimer(event, playing->status().over)) {
     LOG_DBG("GAME", "Dropped a timer due after the round was over");
     return GameScript::Outcome::Ok;
   }
-  // Fails closed, as seatShown does: no seat this device plays, so no input is read.
+  // A roster with no local seat reads no timer (rounds.play drops it too, silently).
+  if (rounds.noSeatTimer(event)) {
+    LOG_INF("GAME", "Dropped a timer: this device plays no seat");
+    return GameScript::Outcome::Ok;
+  }
+  // Fails closed, as seatShown does: a turn that is no seat, so no input is read.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
   // A touch made under another seat's frame never reaches this one: seat 0's after the move that ended the round, or
   // the next seat's (postInput). The mover's own late tap in Result was made under the mover's frame and goes on.
   if (madeUnderAnotherSeat(event)) return GameScript::Outcome::Ok;
   const bool wasPlaying = handOffView == GameCore::MatchState::Playing;
+  // Read before the move: the shown seat can differ from the turn seat (a remote turn), and only a move by the turn
+  // seat itself can pass the turn.
+  const bool wasTurnSeat = playing->status().turn == seat;
   GameScript::Outcome outcome = rounds.play(event, seat);
   if (outcome != GameScript::Outcome::Ok) return outcome;
   const GameCore::Status& status = playing->status();
   // A move that ends the round is RoundOver's (seat 0 is drawn), never a turn change.
-  const bool passed = wasPlaying && !status.over && status.turn != seat;
+  const bool passed = wasPlaying && wasTurnSeat && !status.over && status.turn != seat;
   if (passed) {
     handOffView = GameCore::MatchState::Result;
     mover = seat;
