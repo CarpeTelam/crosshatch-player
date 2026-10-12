@@ -123,6 +123,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_upstream_touches_test.py`
 - `scripts/check_flash_budget.py`
 - `scripts/check_flash_budget_test.py`
+- `scripts/device_log.py` -- captures two devices' serial logs into one merged log (epic-play-nearby R13).
+- `scripts/device_log_test.py`
 - `scripts/fork_release.py`
 - `scripts/fork_release_test.py`
 - `scripts/fork_common.py` -- shared by the fork scripts; `docs/crosshatch/fork-scripts.md` has the conventions.
