@@ -1449,3 +1449,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-a-nearby-round-in-gamematchactivity-plan.md`
   summary: No test abandons a stuck VM in a nearby match, so the destructor's unfreed release of the NearbySession (beside store.leak()) is unpinned.
   evidence: GameMatchTest's abandon tests are solo matches; deleting the release line leaves every host test green while a leaked VM task would call adoptNext and ship on a freed session. Closing it means extending the stuck-VM rig (SPIN_GAME) to take a NearbySession. Location: src/activities/games/GameMatchActivity.cpp (~GameMatchActivity). Severity: low.
+
+## 6.15
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-endings-peergone-and-the-player-left-view-plan.md`
+  summary: A nearby Leave, script error, or watchdog stop with an abandoned (stuck) VM is untested, so the `!slotLeaked` guard before `nearby.reset()` and the unfreed release in the destructor can regress silently.
+  evidence: Closing it means extending the stuck-VM rig (SPIN_GAME in GameMatchTest) to take a NearbySession and asserting the link's end() is not called while a leaked task may still call adoptNext and ship; the same gap entry 9 deferred for the destructor. The guard mirrors the destructor's and reads right; a regression would be a use-after-free on the device. Location: src/activities/games/GameMatchActivity.cpp (leave, ~GameMatchActivity). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-endings-peergone-and-the-player-left-view-plan.md`
+  summary: A nearby match that ended in PeerGone or Error keeps the radio up and preventAutoSleep() on until the player presses Back, so a device left on the view stays awake.
+  evidence: R6 says the match sets preventAutoSleep and the error view has kept the session alive since entry 9; releasing the lock in those two states is one expression, but whether the battery cost matters is a device question (entry 11/14's runs). Location: src/activities/games/GameMatchActivity.h (preventAutoSleep). Severity: low.
