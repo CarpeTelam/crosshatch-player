@@ -73,7 +73,7 @@ struct ReliableLink::Peer {
 
   // Back to a free slot; the snapshot buffers go too.
   void reset() {
-    for (Entry& e : queue) e = Entry{};  // field by field below: a whole Peer temporary would be a large local
+    for (Entry& e : queue) e = Entry{};  // entry by entry, frees each snapshot; a whole Peer{} would be a large local
     inUse = false;
     handle = PeerHandle{};
     epoch = 0;

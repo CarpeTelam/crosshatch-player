@@ -15,8 +15,8 @@
 // GameCore::ReliableLink over the seeded hostile FakeLink: delivery, the resend clock, silence, seq wrap,
 // replacement, the sink's verdicts, and the keepalive bound. Every bound is in fake milliseconds from the settings
 // (a ManualClock the tests advance), never host speed. RawPeer stands in for a remote device speaking Protocol by
-// hand, an oracle independent of ReliableLink; RecSink stands in for entries 6 and 7's session code and is more
-// permissive than entry 7's queue (unbounded recording, a scripted verdict instead of a 4-entry queue).
+// hand, an oracle independent of ReliableLink; RecSink stands in for the lobby's and the match session's code and is
+// more permissive than the match session's queue (unbounded recording, a scripted verdict instead of a 4-entry queue).
 
 using namespace GameCore;
 using namespace GameCore::LinkTest;
@@ -866,21 +866,21 @@ TEST(ReliableLinkTest, AStaleOrEarlyAckNeverAcksTheInFlightFrame) {
     Solo x;
     ASSERT_TRUE(x.rl.send(x.toRaw, stateFrame(s1, 1)));
     ASSERT_TRUE(x.rl.send(x.toRaw, stateFrame(s2, 2)));
-    x.raw.putAck(0);  // the abandoned frame, acked late
+    ASSERT_TRUE(x.raw.putAck(0));  // the abandoned frame, acked late
     x.rl.tick();
     EXPECT_EQ(x.rl.unacked(), 1u);
-    x.raw.putAck(NO_ACK);
+    ASSERT_TRUE(x.raw.putAck(NO_ACK));
     x.rl.tick();
     EXPECT_EQ(x.rl.unacked(), 1u);
     for (const uint16_t early : {2, 3, 100, 0x7FFF, 0x8000, 0xFFFE}) {
-      x.raw.putAck(early);  // never issued
+      ASSERT_TRUE(x.raw.putAck(early)) << early;  // never issued
       x.rl.tick();
       EXPECT_EQ(x.rl.unacked(), 1u) << early;
     }
-    x.raw.putType(Type::Ping, 0, 0);
+    ASSERT_TRUE(x.raw.putType(Type::Ping, 0, 0));
     x.rl.tick();
     EXPECT_EQ(x.rl.unacked(), 1u);
-    x.raw.putAck(1);
+    ASSERT_TRUE(x.raw.putAck(1));
     x.rl.tick();
     EXPECT_EQ(x.rl.unacked(), 0u) << "the right ack pops it";
   }
@@ -890,7 +890,7 @@ TEST(ReliableLinkTest, AStaleOrEarlyAckNeverAcksTheInFlightFrame) {
     ASSERT_TRUE(x.rl.send(x.toRaw, stateFrame(s1, 1)));
     x.deliver(joinFrame(1), 0, NO_ACK);
     EXPECT_EQ(x.rl.unacked(), 1u);
-    x.raw.putAck(0);
+    ASSERT_TRUE(x.raw.putAck(0));
     x.rl.tick();
     EXPECT_EQ(x.rl.unacked(), 0u);
   }
@@ -1199,6 +1199,12 @@ TEST(ReliableLinkTest, TwoGuestsHaveIndependentSeqAndSilence) {
   tick(1);
   EXPECT_EQ(sink.frames.size(), 2u) << "a full table drops the next new peer";
   EXPECT_EQ(rl.stats().peerTableFull, 1u);
+  const PeerHandle h3 = host.handleOf(g3.link);
+  EXPECT_FALSE(rl.send(h3, acceptFrame(1, 2))) << "a full table has no slot for a send to a new peer either";
+  EXPECT_EQ(rl.stats().peerTableFull, 2u);
+  EXPECT_EQ(rl.unacked(h3), 0u);
+  tick(1);
+  EXPECT_TRUE(g3.of(Type::Accept).empty()) << "and nothing went out to it";
 
   ASSERT_TRUE(rl.send(h1, acceptFrame(1, 2)));
   ASSERT_TRUE(rl.send(h2, acceptFrame(2, 2)));
@@ -1491,6 +1497,45 @@ TEST(ReliableLinkTest, AReplacedStateThatAlreadyArrivedIsStillDelivered) {
   EXPECT_EQ(d.sb.keys(), (std::vector<uint32_t>{keyOf(stateFrame(s1, 1)), keyOf(stateFrame(s2, 2))}))
       << "v1 then v2, once each, in order";
   EXPECT_EQ(d.a.unacked(), 0u);
+}
+
+TEST(ReliableLinkTest, AnAbortFromAnUnknownPeerIsDeliveredAndRegistersNoPeer) {
+  Solo x;
+  ASSERT_TRUE(x.raw.put(abortFrame(), 0, NO_ACK));
+  x.rl.tick();
+  ASSERT_EQ(x.sink.frames.size(), 1u);
+  EXPECT_EQ(x.sink.frames[0].type, Type::Abort);
+  EXPECT_EQ(x.sink.frames[0].from, x.toRaw);
+  x.step(11000);
+  EXPECT_TRUE(x.sink.silent.empty()) << "no peer was registered to go silent";
+  EXPECT_TRUE(x.raw.of(Type::Ping).empty());
+  EXPECT_TRUE(x.raw.of(Type::Ack).empty()) << "and no keepalive goes to it";
+}
+
+TEST(ReliableLinkTest, APingOrAckFromAnUnknownPeerIsStrayAndRegistersNoPeer) {
+  Solo x;
+  ASSERT_TRUE(x.raw.putType(Type::Ping, 0, NO_ACK));
+  ASSERT_TRUE(x.raw.putAck(NO_ACK));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.stats().strayFrames, 2u);
+  EXPECT_EQ(x.rl.stats().framesReceived, 0u);
+  EXPECT_TRUE(x.sink.frames.empty()) << "neither is ever handed to the sink";
+  x.step(11000);
+  EXPECT_TRUE(x.sink.silent.empty()) << "no peer was registered to go silent";
+  EXPECT_TRUE(x.raw.of(Type::Ping).empty());
+  EXPECT_TRUE(x.raw.of(Type::Ack).empty()) << "and no keepalive goes to it";
+}
+
+TEST(ReliableLinkTest, AtMostMaxFramesPerTickAreTakenAndTheRestWaitForTheNextTick) {
+  Solo x;
+  const size_t flood = 2 * ReliableLink::MAX_FRAMES_PER_TICK + 5;
+  for (size_t i = 0; i < flood; i++) ASSERT_TRUE(x.raw.putType(Type::Ping, 0, NO_ACK));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.stats().strayFrames, ReliableLink::MAX_FRAMES_PER_TICK);
+  x.rl.tick();
+  EXPECT_EQ(x.rl.stats().strayFrames, 2 * ReliableLink::MAX_FRAMES_PER_TICK);
+  x.rl.tick();
+  EXPECT_EQ(x.rl.stats().strayFrames, flood);
 }
 
 }  // namespace

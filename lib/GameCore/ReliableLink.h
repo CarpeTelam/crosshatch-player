@@ -23,16 +23,17 @@ namespace GameCore {
 //   the round (`over`). The replacing STATE is transmitted at once with a fresh seq. Replacement stops the old
 //   STATE's resends; it does not recall it, so one that had already reached the peer is still delivered, then the
 //   newer one. An `over` STATE, every JOIN, and every ACCEPT are never skipped.
-// - ABORT and ADVERT are unsequenced and go out at once; PING and ACK are the link's own keepalive and are never
-//   handed to the sink.
+// - ABORT and ADVERT are unsequenced and go out at once, once: neither is acked or resent, so a lost ABORT is noticed
+//   by the peer as silence. PING and ACK are the link's own keepalive and are never handed to the sink.
 // - A peer that sends nothing valid for `silenceMs` is reported once through Sink::onPeerSilent.
 //
 // Adapted from crossplay 0a1d17f src/apps_local/link/LinkSession.cpp (MIT, notice in ReliableLink.cpp): the retry
 // clock kept apart from the heartbeat clock, the bound on frames taken per tick, and acking every copy of a frame.
 //
-// Memory (all from makeUniqueNoThrow, nothing static): two 1,470 B buffers (receive and transmit), plus per peer up to
-// QUEUE_DEPTH snapshot buffers of 1,400 B, each allocated the first time its queue entry holds a STATE and kept until
-// the peer is forgotten: about 8.5 KB per peer, about 25 KB at the default 4 peers.
+// Memory (all from makeUniqueNoThrow, nothing static): two 1,470 B buffers (receive and transmit, about 3 KB), plus per
+// peer up to QUEUE_DEPTH snapshot buffers of 1,400 B (5.6 KB and a few hundred bytes of bookkeeping), each allocated
+// the first time its queue entry holds a STATE and kept until the peer is forgotten: about 8.5 KB with one peer,
+// about 25 KB at the default 4 peers.
 class ReliableLink {
  public:
   static constexpr uint32_t DEFAULT_RESEND_MS = 400;      // AD-13
@@ -56,10 +57,11 @@ class ReliableLink {
     // A frame for the session: Join, Accept, State (reliable: in order, once each, replaced States may be skipped), or
     // Advert, Abort (unsequenced: at once, any number of times; the return value is ignored). `frame` and every
     // span in it alias the link's receive buffer: copy what you keep before returning. May call send() and
-    // forget(); must not call tick().
+    // forget(); must not call tick(). A peer registered by a frame offered here keeps its slot until forget(),
+    // whatever the verdict: a sink that turns a stranger away calls forget() for it.
     virtual Verdict onFrame(PeerHandle from, const Protocol::Frame& frame) = 0;
     // A peer sent nothing valid for silenceMs. Once per peer until forget(). May call send() (it returns false
-    // for that peer) and forget().
+    // for that peer) and forget(); the slot stays taken until the sink calls forget().
     virtual void onPeerSilent(PeerHandle peer) = 0;
   };
 
