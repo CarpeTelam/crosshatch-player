@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": 1,
   "seats": { "min": 2, "max": 2 },
-  "modes": ["pass"],
+  "modes": ["pass", "nearby"],
   "hidden": true,
   "icon": "boat",
   "icon_weight": "fill"

@@ -254,12 +254,12 @@ end
 
 -- ---- what the draw puts on the canvas (trace.lua) ----
 
--- The commands game.draw makes for state `s` and `ui`, seat 1: a list of { name = "rect", <arguments in order> }.
--- The commands of a frame of state s, in order. Each rect, line, text, and image starts on the canvas the frame is drawn for
+-- The commands of a frame of state s and `ui`, drawn for `seat` (1 when left out), in order, as a list of
+-- { name = "rect", <arguments in order> }. Each rect, line, text, and image starts on the canvas the frame is drawn for
 -- (ch.screen), and a rect or a line ends on it too: a text's width is the device's metrics, which this check does not have.
-local function frame(s, ui)
+local function frame(s, ui, seat)
   local events = {}
-  trace.record(function() game.draw(s, 1, ui or {}) end, function(name, ...)
+  trace.record(function() game.draw(s, seat or 1, ui or {}) end, function(name, ...)
     local e = { name = name, ... }
     local k = name == "image" and 2 or 1
     if ch.screen.w >= 466 and ch.screen.h >= 788 and (name == "rect" or name == "line" or name == "text" or name == "image") then
@@ -592,6 +592,148 @@ local function endFrameClearsTheDialog()
   end
 end
 
+-- The text of the header the viewing seat reads: the medium text at the box's top line, left of the question mark.
+local function headerOf(s, seat)
+  local L = layout()
+  local found
+  for _, e in ipairs(frame(s, {}, seat)) do
+    if e.name == "text" and e[2] == L.oy + 40 and e[4] == "medium" then
+      assert(found == nil, "two headers in one frame")
+      found = e[3]
+    end
+  end
+  assert(found, "no header in the frame of seat " .. seat)
+  return found
+end
+
+-- In play the header names the viewing seat's mark and whether it is its move; seat 0, which no device shows in play,
+-- keeps the turn seat's "to move". It fits between the grid's left edge and the question mark under the stand-in
+-- metrics (8, 10 and 14 px a char; the device's real fonts are measured by the device run).
+local function headerNamesTheViewingSeat()
+  local mid = stateWith({})
+  local states = { stateWith({}) }
+  for _, move in ipairs({ { 5, 5 }, { 5, 1 }, { 1, 9 }, { 9, 4 } }) do
+    mid = assert(game.apply(mid, mid.m % 2 + 1, move))
+    states[#states + 1] = stateWith({ c = mid.c, w = mid.w, n = mid.n, m = mid.m })
+  end
+  local L = layout()
+  local marks = { "X", "O" }
+  for i, s in ipairs(states) do
+    local turn = game.status(s).turn
+    for seat = 0, 2 do
+      local want
+      if seat == 0 then
+        want = "Player " .. turn .. " (" .. marks[turn] .. ") to move"
+      else
+        want = "Player " .. seat .. " (" .. marks[seat] .. "): " .. (seat == turn and "your move" or "waiting")
+      end
+      local got = headerOf(s, seat)
+      eq(got, want, "state " .. i .. " (" .. s.m .. " moves), seat " .. seat .. "'s header")
+      assert(L.x + ch.text_width(got, "medium") <= L.ox + board.W - 72,
+        "the header '" .. got .. "' reaches the question mark")
+    end
+  end
+  eq(headerOf(states[1], 1), "Player 1 (X): your move", "seat 1 on a new round")
+  eq(headerOf(states[1], 2), "Player 2 (O): waiting", "seat 2 on a new round")
+  eq(headerOf(states[2], 1), "Player 1 (X): waiting", "seat 1 after its move")
+  eq(headerOf(states[2], 2), "Player 2 (O): your move", "seat 2 after seat 1's move")
+end
+
+-- Every seat's frame once the round is over is the same (seat 0's, which the host draws the dialog over): the winner
+-- header, the boards, and no text under the dialog. Positive control: the headers differ across the three outcomes.
+local function ownOverScreen()
+  local drawn = stateWith({ w = "121122211", n = 0 })
+  local won1, won2 = stateWith({ w = "111000000", n = 0 }), stateWith({ w = "222000000", n = 0 })
+  local want = { [won1] = "Player 1 (X) wins", [won2] = "Player 2 (O) wins", [drawn] = "Draw" }
+  local function text(events)
+    local out = {}
+    for k, e in ipairs(events) do
+      local parts = { e.name }
+      for i = 1, #e do parts[#parts + 1] = tostring(e[i]) end
+      out[k] = table.concat(parts, ",")
+    end
+    return table.concat(out, "\n")
+  end
+  local seen = {}
+  for _, s in ipairs({ won1, won2, drawn }) do
+    local base = text(frame(s, {}, 0))
+    assert(select(2, base:gsub("\n", "\n")) >= 30, "an Over frame of under 30 commands")
+    for seat = 1, 2 do
+      eq(text(frame(s, {}, seat)), base, "the Over frame of seat " .. seat .. " is seat 0's (" .. want[s] .. ")")
+    end
+    for seat = 0, 2 do eq(headerOf(s, seat), want[s], "the Over header of seat " .. seat) end
+    for _, e in ipairs(frame(s, {}, 2)) do
+      if e.name == "text" then
+        assert(e[2] + TEXT_BOX[e[4]] <= host.dialog_top or e[2] >= host.dialog_bottom,
+          "the text '" .. tostring(e[3]) .. "' of seat 2's Over frame is under the dialog")
+      end
+    end
+    seen[base] = true
+  end
+  local distinct = 0
+  for _ in pairs(seen) do distinct = distinct + 1 end
+  eq(distinct, 3, "the three outcomes draw three different frames")
+end
+
+-- Out of turn (nearby: each device draws one seat): a tap by the seat that is not on turn changes nothing and says
+-- nothing. `input` stays seat-agnostic, and a move it returns is the Session's to discard, so what is pinned is that
+-- the state and `ui.message` are as they were and the question mark still opens the page and any tap closes it.
+local function outOfTurn()
+  local after = assert(game.apply(stateWith({}), 1, { 5, 5 }))
+  local cases = { { stateWith({}), 2 }, { after, 1 } }
+  for k, case in ipairs(cases) do
+    local s, seat = case[1], case[2]
+    local what = "state " .. k .. ", seat " .. seat
+    local before = s.c .. s.w .. s.n .. s.m
+    local opened = 0
+    for y = 0, ch.screen.h - 1, 13 do
+      for x = 0, ch.screen.w - 1, 13 do
+        local ui = {}
+        game.input(s, seat, ui, { kind = "tap", x = x, y = y })
+        eq(s.c .. s.w .. s.n .. s.m, before, what .. ": the state after a tap at " .. x .. "," .. y)
+        eq(ui.message, nil, what .. ": a message after a tap at " .. x .. "," .. y)
+        if ui.help then opened = opened + 1 end
+      end
+    end
+    assert(opened > 0, what .. ": no tap opened the page")
+    local taps = require("taps")
+    local ui = {}
+    local hx, hy = taps.help()
+    eq(game.input(s, seat, ui, { kind = "tap", x = hx, y = hy }), nil, what .. ": the question mark is no move")
+    eq(ui.help, true, what .. ": the question mark opens the page")
+    local cx, cy = taps.tap(5, 5)
+    eq(game.input(s, seat, ui, { kind = "tap", x = cx, y = cy }), nil, what .. ": a tap on the page is no move")
+    eq(ui.help, nil, what .. ": a tap closes the page")
+    eq(s.c .. s.w .. s.n .. s.m, before, what .. ": the state after the page")
+  end
+end
+
+-- The help page says nothing of handing the device on, and no longer calls the players seats: it speaks of Player 1
+-- and Player 2 as the header does.
+local function helpAvoidsHandOver()
+  local text = ""
+  for _, line in ipairs((game.help_lines())) do text = text .. " " .. line.text:lower() end
+  for _, word in ipairs({ "hand", "pass", "device", "seat" }) do
+    assert(not text:find(word, 1, true), "the page says '" .. word .. "'")
+  end
+  eq(text:find(" player 1 plays x and player 2 plays o. take turns: tap an empty cell to put your mark in it.", 1, true),
+    1, "the first paragraph starts the page")
+end
+
+-- setup reads nothing of its ctx: a ctx that raises on any read gives the state a pass ctx and a nearby ctx give.
+local function noCtx()
+  local raising = setmetatable({}, {
+    __index = function(_, key) error("setup read ctx." .. tostring(key), 0) end,
+    __newindex = function(_, key) error("setup wrote ctx." .. tostring(key), 0) end,
+  })
+  local function key(s) return s.c .. s.w .. s.n .. s.m end
+  local want = key(game.setup({ seats = 2, mode = "pass", api = 1, settings = {} }))
+  eq(key(game.setup(raising)), want, "setup with a ctx that raises on a read")
+  eq(key(game.setup({ seats = 2, mode = "nearby", api = 1, settings = {} })), want, "setup in nearby")
+  eq(key(game.setup({ mode = "pass" })), want, "setup with a pass ctx and nothing else")
+  eq(key(game.setup({ mode = "nearby" })), want, "setup with a nearby ctx and nothing else")
+end
+
 -- The move of the cell at row, col of the 9 x 9 grid, as game.input gives it.
 local function moveAt(row, col)
   return ((row - 1) // 3) * 3 + (col - 1) // 3 + 1, ((row - 1) % 3) * 3 + (col - 1) % 3 + 1
@@ -767,6 +909,11 @@ return {
   { name = "the help page draws text only", run = helpPageHasNoBoard },
   { name = "a frame is cleared white, its grid and text and icons are black", run = frameInkIsBlackOnWhite },
   { name = "the end frame's text is clear of the host's end-of-round dialog", run = endFrameClearsTheDialog },
+  { name = "the header names the viewing seat's mark and whether it is its move", run = headerNamesTheViewingSeat },
+  { name = "every seat's Over frame is the same, with the winner header, clear of the dialog", run = ownOverScreen },
+  { name = "a tap by the seat that is not on turn changes nothing and says nothing", run = outOfTurn },
+  { name = "the HOW TO PLAY page does not hand the device on or call the players seats", run = helpAvoidsHandOver },
+  { name = "setup reads nothing of its ctx", run = noCtx },
   { name = "a tap in the margin beside the grid's first or last column is that cell, no other margin is",
     run = marginTaps },
   { name = "board.snap moves a point in a margin smaller than the target onto the block's edge, no other",

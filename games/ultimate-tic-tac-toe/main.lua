@@ -1,6 +1,6 @@
 -- Ultimate Tic-Tac-Toe: nine small boards in a 3 x 3 grid. Where you play in a small board decides which small board
--- the other player must play in next; win three small boards in a line to win the game. Two seats pass the device
--- (seat 1 plays X, seat 2 plays O) and both see the same board.
+-- the other player must play in next; win three small boards in a line to win the game. Seat 1 plays X and seat 2
+-- plays O, and both see the same board.
 --
 -- state = {
 --   c = 81 chars, "0" empty, "1" X, "2" O; cell c of small board b is char (b - 1) * 9 + c,
@@ -36,7 +36,7 @@ local function sayUnsupported()
 end
 
 local HELP_PARAGRAPHS = {
-  "Seat 1 plays X and seat 2 plays O. Take turns: tap an empty cell to put your mark in it.",
+  "Player 1 plays X and Player 2 plays O. Take turns: tap an empty cell to put your mark in it.",
   "Where you play in a small board decides where the other player must play next: the cell's place in its small "
     .. "board is the small board they play in.",
   "When that small board is already won or full, they may play in any open small board.",
@@ -181,13 +181,16 @@ local function drawHelp()
   for _, line in ipairs(lines) do ch.gfx.text(ox + 24, line.y, line.text, "small", "black") end
 end
 
-local function header(state)
+-- The header: how the round ended, or in play the viewing seat's mark and whether it is its move. Seat 0 shows no
+-- play frame on a device, so it keeps the turn seat's "to move".
+local function header(state, seat)
   local st = game.status(state)
   if st.over then
     if #st.winners > 0 then return "Player " .. st.winners[1] .. " (" .. MARKS[st.winners[1]] .. ") wins" end
     return "Draw"
   end
-  return "Player " .. st.turn .. " (" .. MARKS[st.turn] .. ") to move"
+  if seat ~= 1 and seat ~= 2 then return "Player " .. st.turn .. " (" .. MARKS[st.turn] .. ") to move" end
+  return "Player " .. seat .. " (" .. MARKS[seat] .. "): " .. (seat == st.turn and "your move" or "waiting")
 end
 
 function game.draw(state, seat, ui)
@@ -198,7 +201,7 @@ function game.draw(state, seat, ui)
   end
   local L = board.layout(ch.screen.w, ch.screen.h)
   ch.gfx.clear("white")
-  ch.gfx.text(L.x, L.oy + 40, header(state), "medium", "black")
+  ch.gfx.text(L.x, L.oy + 40, header(state, seat), "medium", "black")
   ch.gfx.icon("question", L.ox + board.W - 72, L.oy + 12, "medium", "black")
 
   -- Under the grid: the playable boards and the full ones in light gray.
