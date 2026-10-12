@@ -78,3 +78,53 @@ for t in scripts/*_test.py; do
   printf '%s\n' "$out" | grep -Eq '^Ran [1-9][0-9]* tests? in ' || echo "RAN NO TESTS: $t"
 done
 ```
+
+## Capturing a device run
+
+`scripts/device_log.py` reads the serial logs of two or more devices at once, so a two-device run (epic-play-nearby)
+has one log on one clock instead of two files kept by hand. It uses `termios` and `select` only, so it needs no
+pyserial and runs on Linux and macOS. It needs a computer with one USB port per device, two for a two-device run.
+
+```sh
+python3 scripts/device_log.py capture \
+  --port A=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_AA:BB:CC:DD:EE:01-if00 \
+  --port B=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_AA:BB:CC:DD:EE:02-if00 \
+  --out run-logs
+```
+
+- **Port paths.** Use `/dev/serial/by-id/...` on Linux: the name follows the board's serial number, while
+  `/dev/ttyACM0` and `/dev/ttyACM1` swap or renumber when a device sleeps and wakes. On macOS the ports are
+  `/dev/cu.usbmodem*` (use `cu`, not `tty`). List the directory with each device plugged in alone to learn which is
+  which, then name them (`A`, `B`; letters, digits, `_`, `-`).
+- **Output.** `--out` is required and is made if missing; point it outside the repository. `A.raw.log` and
+  `B.raw.log` hold every byte each port gave, unchanged, across reconnects. `merged.log` holds one line per device
+  line, `<UTC stamp> <NAME> <line>`, in host-time order, for example
+  `2026-10-12T09:15:02.481Z A [41230] [INF] [GAME] sudoku: Playing -> Leaving on ForcedExit`. The stamp is taken when
+  the line's newline arrives on the host, so a slow line is stamped up to its transfer time late. Files already in the
+  directory are appended to.
+- **Reconnect.** A port that disappears (a sleep renumbers the USB device) or is not there yet is tried again every
+  0.5 s. The merged log gets `<stamp> <NAME> [device_log] lost <path>: <reason>; waiting for it to come back` and
+  later `... connected <path>`; a half line at the loss is written to the merged log; the other device keeps flowing.
+  Stop with Ctrl-C, SIGTERM, or `--duration SECONDS`; a second Ctrl-C acts as it always does. If the host clock steps
+  backwards, the stamps hold at the latest value until it catches up, so the merged log stays in order.
+- **Exit codes.** 0: done. 2: it could not run (a bad argument, a log that cannot be written, an unreadable log).
+- **Permissions.** The port needs read permission (on Linux, membership of the `dialout` group). ModemManager can
+  grab a CDC port and swallow bytes; stop it for the run (`sudo systemctl stop ModemManager`) if bytes go missing.
+- **DTR and RTS** are cleared on every connect (best effort), so connecting does not reset a board that wires them to
+  reset. Opening the port can still pulse them once before they are cleared. `--baud` defaults to 115200.
+- **Not yet measured.** The tests use pseudo-terminals, which close with an immediate error and have no sleep timing.
+  Whether the reconnect holds on a real X4 Pro's CDC port across a sleep is unmeasured until a device run.
+
+`summary` lists the device-run packet's figures from a raw log or from `merged.log`, per device: the connects and
+losses (merged log only), each `VM stopped` line with its game (the last lifecycle line before it) and time, the
+dropped touches and hand-off screens per game, and the `[MEM]` lines (count, first and last, the smallest `Min Free`
+and `MaxAlloc`; `--mem-all` lists every line). It takes one log per device, the raw log or `merged.log` and not both,
+since a device found in two files would count every figure twice (exit 2):
+
+```sh
+python3 scripts/device_log.py summary run-logs/merged.log
+python3 scripts/device_log.py summary --mem-all run-logs/A.raw.log
+```
+
+It reads only what the firmware prints today; the `LINK`, `PeerGone`, and `ABORT` lines of the two-device play are
+not in it.
