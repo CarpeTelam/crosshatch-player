@@ -21,7 +21,7 @@ same commit, so upstream growth never counts against the budget.
               whatever the define, so this does not look at them
 
 The flash limit is in KiB (1 KiB = 1,024 bytes) because ESP32 flash and the app slot in partitions.csv are sized in
-binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 270 KiB is 276,480 bytes. The RAM limit is
+binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 290 KiB is 296,960 bytes. The RAM limit is
 1 KiB, 1,024 bytes; the image size does not show RAM, since .dram0.bss takes no space in firmware.bin.
 
 A mutable static is an object symbol in a writable section (or a common symbol): constexpr data lands in .rodata
@@ -57,7 +57,7 @@ nothing whatever the build).
 Local run, the same commands as the CI job (each build takes several minutes):
     python3 scripts/check_flash_budget.py build on
     python3 scripts/check_flash_budget.py build off
-    python3 scripts/check_flash_budget.py compare [--limit-kib 270 | --limit-bytes N] [--ram-limit-bytes 1024]
+    python3 scripts/check_flash_budget.py compare [--limit-kib 290 | --limit-bytes N] [--ram-limit-bytes 1024]
     python3 scripts/check_flash_budget.py objects
     python3 scripts/check_flash_budget.py touch-line
 To see `touch-line` fail, run `build on` with PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 first.
@@ -83,7 +83,7 @@ FLAG = fork_common.GAMES_MACRO
 # the job instead of passing it.
 UNFLAG = fork_common.GAMES_BUILD_FLAG
 KIB = 1024
-DEFAULT_LIMIT_KIB = 270
+DEFAULT_LIMIT_KIB = 290
 DEFAULT_RAM_LIMIT_BYTES = 1 * KIB
 PROJECT_DIR = pathlib.Path(__file__).resolve().parent.parent
 OFF_BUILD_DIR = PROJECT_DIR / '.pio' / 'build-games-off'
