@@ -178,7 +178,7 @@ A table that survives restarts, one per game on each device. Use it for things l
 | `ch.store.get()` | Returns the saved table, or an empty table. |
 | `ch.store.set(t)` | Saves `t`. The section 4 limits apply and are checked when you call it. The device writes the data to the SD card shortly after. |
 
-Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`.
+Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`. (Amended 2026-10-12, owner: in Play Nearby they run on the device of the player who moved; recording results at `over` stays the way to give each device its own.)
 
 **What is saved.** `ch.store` data survives reinstalling or updating the game. Unfinished rounds are separate: in `solo` and `pass` modes the runtime saves after every move and offers **Continue** on the game's title screen, so you don't need to save them yourself. An unfinished round is not offered once any file in the package changes, and a new round replaces it.
 
