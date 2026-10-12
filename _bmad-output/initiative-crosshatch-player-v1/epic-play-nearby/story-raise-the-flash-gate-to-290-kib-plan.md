@@ -4,7 +4,7 @@ type: 'chore'
 ticket: '17'
 created: '2026-10-12'
 baseline_revision: 'd3cef13dd5614bacb123867f8fdd868188d967eb'
-status: 'built'
+status: done
 route: 'oneshot'
 route_source: 'auto'
 review: 'thorough'
