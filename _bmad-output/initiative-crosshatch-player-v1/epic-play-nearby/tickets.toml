@@ -2,7 +2,7 @@
 # `touches` and `stays_out` are this epic's own keys: the files an entry may change, and those it must not; a builder that needs a file outside `touches` stops and reports.
 # Every entry may also write its plan and its `story-<name>-screenshots/`, append under `## <ref>` in `deferred-work.md`, and keep formatting-only changes from `./bin/clang-format-fix`; none of these counts as a file outside `touches`.
 # Verify order (AGENTS.md): host tests and fast checks (`scripts/*_test.py`, `python3 scripts/check_upstream_touches.py`, `python3 scripts/check_layers.py`, `./bin/clang-format-fix` twice), then the review, then firmware builds and `pio check`. "Host suites" means AGENTS.md's host-test command under `/tmp/crosshatch-hosttest.lock`; firmware builds, `pio check`, and `sim.sh` run under `/tmp/crosshatch-build.lock`. "Firmware checks" means `pio run -e x4pro` and `-e default`, `pio check` (default and `-e x4pro`), and `scripts/check_flash_budget.py` `build on`, `build off`, `compare`, and `objects`, with the growth over the base Measurement (2026-10-11, `7bfd8991`: +258,048 B flash, +784 B static RAM) within this epic's 9,504 B / 160 B (R15); CI builds all seven envs on the epic PR.
-# "The link interface" is `GameCore::ILink` (R1): opaque frames, opaque peer handles, no radio fact. "The `nearby` fixture" is entry 9's `test/game_script/fixtures/nearby/`. Lanes (owner, 2026-10-12): entry 1 first, then the runtime lane 2 → 4 → 6 → 7 → 8 → 9 → 15 → 10, with the radio adapter 5 after 2; tools 3 and games 12 run beside entry 1; all join at 11, then 13 and 14.
+# "The link interface" is `GameCore::ILink` (R1): opaque frames, opaque peer handles, no radio fact. "The `nearby` fixture" is entry 9's `test/game_script/fixtures/nearby/`. Lanes (owner, 2026-10-12): entry 1 first, then the runtime lane 2 → 4 → 6 → 7 → 8 → 9 → 15 → 10 → 16 (two simulators play), with the radio adapter 5 after 2; tools 3 and games 12 run beside entry 1 (their tables follow entry 3); all join at 11 (two X4 Pros), then 13 and 14. "Crossplay" is `ma-r-s/crossplay` at `0a1d17f` (MIT), whose `src/apps_local/link/` the owner reviewed on 2026-10-12.
 
 [[entry]]
 id = 1
@@ -22,14 +22,14 @@ stays_out = ["every upstream file", "games/**", "freeink-sdk", ".github/workflow
 id = 2
 type = "story"
 title = "Link interface, frame codec, and FakeLink"
-description = "The contract the GameCore and radio lanes share (R1): `GameCore::ILink` (send to a peer handle, broadcast, receive with the sender's handle; no radio fact), `GameCore::Protocol` encoding and decoding AD-13's frame and every payload within its limits, and a seeded, header-only `FakeLink` in `test/game_core/` that drops, delays, duplicates, and reorders frames between two or more endpoints (header-only so the harness suites reach it through their existing include path). Entry 4 builds `ReliableLink` on it, entry 5 `EspNowLink`, and entry 8 `NearbySession` and the `GameLink` task."
+description = "The contract the GameCore and radio lanes share (R1): `GameCore::ILink` (send to a peer handle, broadcast, receive with the sender's handle; no radio fact), `GameCore::Protocol` encoding and decoding AD-13's frame and every payload within its limits, (no `MOVE` or `REJECT`, R4), and a seeded, header-only `FakeLink` in `test/game_core/` that drops, delays, duplicates, and reorders frames between two or more endpoints, expands a broadcast per receiver, and counts every frame it carries so a packet storm fails a test, as crossplay's `FakeLink.h` does (header-only so the harness suites reach it through their existing include path). Entry 4 builds `ReliableLink` on it, entry 5 `EspNowLink`, and entry 8 `NearbySession` and the `GameLink` task."
 verify = "Host suites pass: every payload type round-trips; a frame that is short, over the largest payload, or carries a wrong magic, `proto`, or `session` is refused, as is each over-long field (`gameId` 33 B, `hostLabel` 17 B, `reason` 65 B, a snapshot over 1,400 B), each with its limit accepted; a full `STATE` fits `Protocol`'s maximum frame (1,470 B, the payload AD-13 sizes frames to, as a `Protocol` constant with no radio header; entry 5 checks it against the radio); `FakeLink` with one seed repeats its drops, delays, duplicates, and order exactly and another seed differs; `scripts/check_layers.py` passes with no new edge; fast checks and the firmware checks pass."
 covers = ["R1"]
 after = [1]
 hitl = false
 risk = "low"
 unknown = "None beyond AD-13's table; the plan writes the byte layout of each payload, the frame header included, against the 1,470 B ESP-NOW v2 payload."
-references = ["ARCHITECTURE-SPINE.md, AD-1 (ports), AD-13 (frame and payload table)", "lib/GameCore/Session.h (SNAPSHOT_BYTES, MOVE_BYTES, REJECT_REASON_BYTES)", "lib/GameCore/ApiLevel.h"]
+references = ["ARCHITECTURE-SPINE.md, AD-1 (ports), AD-13 (frame and payload table)", "lib/GameCore/Session.h (SNAPSHOT_BYTES, MOVE_BYTES, REJECT_REASON_BYTES)", "lib/GameCore/ApiLevel.h", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/host-tests/link/FakeLink.h", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/src/apps_local/link/LinkProtocol.h"]
 touches = ["lib/GameCore/** (new files)", "test/game_core/**"]
 stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**", "freeink-sdk"]
 
@@ -49,138 +49,6 @@ touches = ["scripts/device_log.py", "scripts/device_log_test.py", "scripts/check
 stays_out = ["src/**", "lib/**", "test/**", "games/**", "every upstream file"]
 
 [[entry]]
-id = 4
-type = "story"
-title = "ReliableLink over FakeLink"
-description = "`GameCore::ReliableLink` over the link interface (R2): per-direction `seq`, cumulative `ack`, resends at the resend setting (default 400 ms), one lost-peer report at the silence setting (default 10 s), `PING` keepalives, unreliable `ADVERT`, `PING`, and `ACK`, a newer `STATE` replacing an unacked one, and a received reliable frame the session refuses left unacked so the peer's resend delivers it (the backpressure entry 7's queue policy relies on). Time comes from `IClock`."
-verify = "Host suites pass over `FakeLink` with fake time: reliable frames arrive once each and in order for many seeds at 30 % drop with duplicates, reorders, and delays; resends follow the configured interval and silence is reported once at the configured limit, both at their defaults and at other values; `seq` wraps at 65,535; unreliable frames consume no `seq`; a `STATE` replaced while unacked is never delivered; a refused frame is delivered on a later resend; fast checks and the firmware checks pass."
-covers = ["R2"]
-after = [2]
-hitl = false
-risk = "medium"
-unknown = "None beyond AD-13; the keepalive interval under the 10 s limit is the plan's, recorded as a setting."
-references = ["ARCHITECTURE-SPINE.md, AD-13 (`seq`/`ack`, latest-wins `STATE`)", "lib/GameCore/IClock.h"]
-touches = ["lib/GameCore/** (new files)", "test/game_core/**"]
-stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**", "freeink-sdk"]
-
-[[entry]]
-id = 5
-type = "story"
-title = "ESP-NOW link adapter and the Nearby precondition probe"
-description = "The radio adapter (R7): `src/games` `EspNowLink` implements the link interface over ESP-NOW v2, channel 1, no encryption, in AD-18's bring-up order on the STA interface (`esp_now_init` is its `ESP_NOW.begin` step), its receive callback only copying frames into a ring buffer (a radio-free `src/games/FrameRing.h`, so the harness can test it), and its peer table, both allocated in PSRAM at bring-up (internal heap needs the owner: SPEC Constraints); teardown leaves the radio off; it maps MAC addresses to opaque peer handles and exposes the host label built from the last two MAC bytes (R8). A precondition probe is a pure, header-only decision over given readings (Wi-Fi mode, free internal heap) plus a device reader kept out of the harness, so entry 10's lobby takes the decision and its tests pass a fake reading. Entry 11 hands `EspNowLink` to `NearbySession` and the label to the lobby. Both are compiled out under `SIMULATOR` and kept out of the host harness. It measures the ESP-NOW driver's flash and IRAM cost first, this epic's largest unknown."
-verify = "Host suites pass, with tests of the ring buffer (copy only, overflow counted, never blocking) and of the probe's decision (Wi-Fi off and on, heap at 102,399 B and 102,400 B); `pio run -e x4pro`, `-e default`, and `-e sticky` build; `sim.sh build x4pro` builds with both compiled out; a `static_assert` in `EspNowLink` holds `Protocol`'s maximum frame within `ESP_NOW_MAX_DATA_LEN_V2`; fast checks and `pio check -e x4pro` pass; the driver's flash and static-RAM cost is measured with `scripts/check_flash_budget.py` in a scratch build that references `EspNowLink` (nothing calls it until entry 11) and recorded in the plan, and a cost over half the share (4,752 B flash or 80 B static RAM) stops for the owner."
-covers = ["R7"]
-after = [2]
-hitl = false
-risk = "high"
-unknown = "What linking ESP-NOW costs in flash and in `.iram0` static RAM against 9,504 B / 160 B (6,928 B and 32 B spare after the reserve); whether a Wi-Fi-task callback may write PSRAM safely on the S3 (if not, the owner decides on internal heap)."
-references = ["ARCHITECTURE-SPINE.md, AD-2, AD-18, Stack (ESP-NOW v2)", "_bmad-output/specs/spec-crosshatch-player/SPEC.md, Constraints (internal-RAM costs)", "scripts/check_layers.py (RADIO_CRYPTO)", "freeink-sdk/libs/network/NearbyTransfer/src/NearbyTransfer.cpp (EspNowTransport::begin, a reading reference; not linked)", "lib/hal/HalMemory.h (getInternalHeap)", "src/activities/network/CrossPointWebServerActivity.cpp (the `WiFi.getMode() != WIFI_MODE_NULL` idiom)"]
-touches = ["src/games/EspNowLink.*", "src/games/NearbyProbe.*", "src/games/FrameRing.h", "new files under test/game_script/harness/ only (its own suite `<name>.cmake` and a `*.sources.cmake` keeping `EspNowLink` out of the harness; no shared CMake file is edited)"]
-stays_out = ["lib/GameCore/**", "src/activities/**", "every upstream file", "platformio.ini", "freeink-sdk", "games/**"]
-
-[[entry]]
-id = 6
-type = "story"
-title = "Lobby handshake in GameCore"
-description = "The lobby protocol over `ReliableLink` (R3): the host's lobby (a `session` id from `IRandom`, `ADVERT` with the host label it is given, seats by `JOIN` arrival, `ABORT(version_mismatch)` and `ABORT(full)`, a joined guest's cancel or silence freeing its seat, Start with at least 2 seats sending `ACCEPT {seat, n}` and stopping `ADVERT`), the guest's (the hosts heard for its game, each joinable or a different version, join, wait, the host's cancel or silence reported, cancel), `ABORT(left)` on a cancel, and the roster and `ctx.api` a started lobby hands to the match. Entry 10's screens drive it; entry 8's `NearbySession` carries it."
-verify = "Host suites pass over lossy `FakeLink`: a host and a guest reach a started roster (seat 1 host, seat 2 guest, `n = 2`) for many seeds; with `maxSeats` 3 two guests reach `n = 3` in `JOIN` order; at `maxSeats` 2 a second guest gets `ABORT(full)`; a different package hash, `proto`, or preview surface is listed as a different version and its `JOIN` refused; Start with no guest is refused; a joined guest that cancels or goes silent frees its seat and Start is refused again; the host's cancel or silence reaches the waiting guest; `ADVERT` stops at Start; `ctx.api` is the lowest level; frames of another `session` are ignored; fast checks and the firmware checks pass."
-covers = ["R3"]
-after = [4]
-hitl = false
-risk = "medium"
-unknown = "None; seat choice by the player is out (v1 n is 2), and nothing may assume n = 2."
-references = ["ARCHITECTURE-SPINE.md, AD-11, AD-13 (ADVERT, JOIN, ACCEPT, ABORT), AD-15 (HostCaps), AD-19 (mixed levels)", "lib/GameCore/Roster.h", "lib/GameCore/HostCaps.h"]
-touches = ["lib/GameCore/** (new files, Roster)", "test/game_core/**", "test/game_script/CMakeLists.txt, test/game_script/harness/match.cmake, test/game_script/harness/pass_and_play.sources.cmake, test/game_script/harness/games_check.cmake (their hand-listed GameCore source lines only)"]
-stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**"]
-
-[[entry]]
-id = 7
-type = "story"
-title = "Match messages and the queue policy in GameCore"
-description = "The match half of the protocol (R4, R5's GameCore part, and R6's end-slot reasons: an `ABORT` reason or silence): the host applies a guest's `MOVE` for the seat its peer handle holds when the shipped turn is that seat and answers `STATE` or `REJECT`; the guest applies only a newer `STATE` (`ver` u16 on the wire, compared across its wrap), gates on the shipped status, holds further moves, and turns `REJECT` into the `rejected` event; `ver` runs on through rematches. The queue policy is GameCore code over injected storage, with no allocator or log (`lib/GameCore` reaches only std, `lib/Memory`, and `lib/JsonParser`): 4 entries, a newer `STATE` replacing a queued one, a `MOVE` or `REJECT` left unacked when full, an overflow counter, and the latched end slot (first reason wins). Entry 8 gives it PSRAM storage, the cross-task handoff, and the `LINK` log lines; entry 9 consumes the match messages and entry 15 the end slot. It states the policy in `docs/crosshatch/game-canvas.md`'s Overlays."
-verify = "Host suites pass (Done when 1): over lossy `FakeLink` with a fake `IGameRules`, a host and a guest session play full rounds to over for many seeds with identical snapshots on both sides, a rejected guest move reaches the guest's input, a move out of turn or from a seat the peer does not hold is never applied, a rematch keeps `ver` rising and a `STATE` across the u16 wrap counts as newer, a full queue loses no move (delivered on a resend) and keeps only the newest `STATE`, silence and each `ABORT` reason set the end slot once and are never dropped while the consumer is stopped; `SessionTest`'s existing tests unchanged; fast checks and the firmware checks pass."
-covers = ["R4", "R5", "R6"]
-after = [6]
-hitl = false
-risk = "high"
-unknown = "Whether the guest side extends `Session` or is its own `GameCore` class; either way it holds no radio fact. If the plan outgrows one session, the orchestrator splits the queue policy and end slot off as their own entry first."
-references = ["ARCHITECTURE-SPINE.md, AD-8, AD-9, AD-13 (MOVE, STATE, REJECT, ABORT, `ver`), AD-18 (queues), the Play Nearby turn sequence", "lib/GameCore/Session.{h,cpp}", "scripts/check_layers.py (TABLE, lib/GameCore)", "docs/crosshatch/game-canvas.md, Overlays"]
-touches = ["lib/GameCore/**", "test/game_core/**", "test/game_script/CMakeLists.txt, test/game_script/harness/match.cmake, test/game_script/harness/pass_and_play.sources.cmake, test/game_script/harness/games_check.cmake (their hand-listed GameCore source lines only)", "docs/crosshatch/game-canvas.md (Overlays)"]
-stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**"]
-
-[[entry]]
-id = 8
-type = "story"
-title = "GameLink task and NearbySession over the link interface"
-description = "`src/games` `NearbySession` owns a link (`EspNowLink` on the device from entry 11, `FakeLink` in the harness), `ReliableLink`, entry 6's lobby and entry 7's match sessions, the session queue's PSRAM entries and the cross-task handoff to the VM task, the end slot the match reads, and the `GameLink` task (priority 1, core 1, 4 KB stack) that drains the link and runs the resends and the silence check (R5, R7); it never takes `RenderLock` or touches activity state, and its teardown brings the link down. It gives the match one call to send an `ABORT` with a reason and then either flush until a deadline or send once without flushing, which entry 15 uses for Leave (at most 800 ms), the forced exit, and a script error. It writes the `LINK` lines R13 names (each naming the `session` id; `STATE` lines its `ver`; resends, queue overflows with their count, silence, and `ABORT`s sent and received). It owns the harness `*.sources.cmake` that compiles the new GameCore sources for the harness suites entries 9, 15, and 10 reuse, adding only what entries 6 and 7 did not already list, so no source is listed twice. Entry 9 moves it into the match; entry 10's lobby creates it."
-verify = "Harness suites pass over `FakeLink`: two `NearbySession`s on their own tasks reach a started lobby and exchange a round; with the consumer stopped (as under an overlay) the task keeps acking, resending, and detecting silence, the queue's fourth entry is the last kept and a fifth `MOVE` is delivered on a resend, and the end slot holds the lost peer until read; the `RenderLock` double records no lock from the task; teardown leaves no task and no link; each `LINK` line's text is pinned by a test; the `ABORT` call's flush ends by its deadline with the frame acked or not, and its send-once form returns at once; the task's stack high-water is logged (the harness value is a constant, so entry 11 asserts the device figure); fast checks and the firmware checks pass."
-covers = ["R5", "R7", "R13"]
-after = [7]
-hitl = false
-risk = "high"
-unknown = "The 4 KB stack's real headroom on the device, measured at entry 11's smoke run."
-references = ["ARCHITECTURE-SPINE.md, AD-18 (GameLink task, amended 2026-10-04 and 2026-10-11), AD-20", "src/games/GameVM.cpp (task creation and notify)", "test/game_script/harness/screen_stubs/ (FreeRTOS on threads, RenderLock double)", "test/game_script/harness/CMakeLists.txt (extend by adding files)"]
-touches = ["src/games/NearbySession.*", "src/games/GameLink*", "test/game_script/** (new harness files; the RenderLock double's lock record)"]
-stays_out = ["lib/GameCore/** (a GameCore change returns to entry 7's scope; stop)", "src/activities/**", "src/games/EspNowLink.*", "every upstream file", "games/**"]
-
-[[entry]]
-id = 9
-type = "story"
-title = "A nearby round in GameMatchActivity"
-description = "The match plays a nearby round (R4, R6's end-of-round part): it takes the `NearbySession` by move in its constructor, the VM task consumes the session queue through `MatchRounds` (a guest's moves on the host; `STATE` and `REJECT` on the guest, which never calls `setup`, `apply`, or `status` for control flow), a rejected guest move reaches the guest's `input`, the guest's end-of-round menu shows \"waiting for host\" and Leave, only the host offers Play again, `preventAutoSleep` is set, and nothing is saved (no `resume.bin`; the guest writes no `ch.store`). It adds the `nearby` fixture in `test/game_script/fixtures/nearby/` (two seats, `pass` and `nearby`, a move `apply` rejects, a move that raises a script error), which entries 15, 10, 11, and 14 use. Endings are entry 15's."
-verify = "Harness suites pass: two `GameMatchActivity` instances over `FakeLink` play the `nearby` fixture to over with identical final snapshots, a rejected guest move reaching the guest's `input`, the host's Play again starting the next round on both and the guest's menu offering only Leave; nearby writes no `resume.bin` and the guest no `store.bin`; every solo and pass test unchanged; new strings in `english.yaml` under `STR_GAMES_*`; fast checks, `sim.sh build x4pro` (solo and pass unchanged), and the firmware checks pass."
-covers = ["R4", "R6"]
-after = [8]
-hitl = false
-risk = "high"
-unknown = "How the guest's `MatchRounds` path skips `setup` and `apply` without a second round driver; `## e5-xr`'s `renderedFrame` item rides this entry only if it changes `renderCanvas`."
-references = ["ARCHITECTURE-SPINE.md, AD-8, AD-9, AD-17, AD-20, AD-21", "lib/GameScript/MatchRounds.{h,cpp}", "src/games/GameVM.cpp (run, rounds)", "src/activities/games/GameMatchActivity.cpp (constructor, handle, loopView)", "_bmad-output/implementation-artifacts/deferred-work.md, `## e5-xr` (renderedFrame)", "test/game_script/fixtures/pass-open/"]
-touches = ["lib/GameScript/**", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/games/MatchStore.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)"]
-stays_out = ["lib/GameCore/** (a GameCore change returns to entry 7's scope; stop)", "src/games/EspNowLink.*", "src/activities/games/GameModeActivity.*", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
-[[entry]]
-id = 15
-type = "story"
-title = "Nearby endings: PeerGone and the player-left view"
-description = "Ends a nearby match cleanly on both devices (R5's match part, R6): `MatchLifecycle` gains `PeerGone`, entered from every non-terminal state when the match's next `loop()` reads entry 7's end slot, so it waits behind an open overlay; the \"player left\" view has one reason line (left, silent, a game error on the other device, a different version) and Back leaves; Leave sends `ABORT(left)` and flushes the link for at most 800 ms; the forced exit sends it once without flushing; a script error sends `ABORT(script_error)` and shows the error view; all three use entry 8's `ABORT` call. Entering `PeerGone` writes one `GAME` log line naming its reason, which entry 11's capture summary reads. `GameViewIcons.h`'s state switches gain the case, and `handle()`'s `setWritable` calls become one state-to-writable mapping (`## e6pre-1`, trigger: a new `MatchState`)."
-verify = "Harness suites pass with fake time over `FakeLink` and the `nearby` fixture: Leave on either side brings up \"player left\" on the other and the leaver's flush ends by 800 ms; a forced exit sends one `ABORT(left)`; 10 s of silence brings up \"player left\" with the silent reason; a script error ends both, the error view on one and \"player left\" with the game-error reason on the other; with an overlay open `PeerGone` waits until it closes; `MatchLifecycleTest` covers every transition into and out of `PeerGone`; the `PeerGone` log line's text is pinned per reason; every solo and pass test unchanged; new strings under `STR_GAMES_*`; fast checks and the firmware checks pass."
-covers = ["R5", "R6"]
-after = [9]
-hitl = false
-risk = "medium"
-unknown = "None beyond AD-20's Leaving order; the forced exit's existing deadline (`FORCED_EXIT_DEADLINE_MS`) bounds the `ABORT` send."
-references = ["ARCHITECTURE-SPINE.md, AD-14, AD-20 (Leaving, forced exit), AD-21", "lib/GameCore/MatchLifecycle.{h,cpp}", "src/games/GameViewIcons.h (state and event switches)", "src/activities/games/GameMatchActivity.cpp (handle, onExit)", "src/activities/games/GameMatchView.cpp", "_bmad-output/implementation-artifacts/deferred-work.md, `## e6pre-1` (setWritable)", "docs/crosshatch/game-canvas.md, Overlays, Leaving, The forced exit"]
-touches = ["lib/GameCore/MatchLifecycle.*", "src/games/GameViewIcons.h", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_core/MatchLifecycleTest.cpp", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)", "docs/crosshatch/game-canvas.md"]
-stays_out = ["src/games/EspNowLink.*", "src/activities/games/GameModeActivity.*", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
-[[entry]]
-id = 10
-type = "story"
-title = "Lobby screens and the Nearby start"
-description = "`GameLobbyActivity` on `UiListActivity` (R8): Host a game and Join a game; the host's label, waiting, joined, and Start screen, which shows \"Player 2 left\" and waits again when the guest leaves; the guest's host list with greyed different versions, waiting, \"The host left\" with Back to the list, and \"That game is full\"; Cancel and Back tearing the session down; `preventAutoSleep` while open; Start replacing the lobby with the match and the session moved in. Nearby's New game runs entry 5's probe decision and refuses with the title-screen dialog for Wi-Fi up or low heap. `GameModeActivity` loses its solo fallbacks, takes the mode into the match through the lobby, leaves `resume.bin` alone for Nearby, and shows F14's note (R9). `ActivityManager::goHome`'s games names move into a pure fork header that `ActivityManager.cpp` calls (the remedy `## 4.13` and `## 5.10` defer to the next row-5 touch), adding `GameLobby` and `GameOptions` (`## 5.12`), with ledger row 5's Change text updated. It follows entry 15 because both add `STR_GAMES_*` strings and harness tests, and Start lands in a match that ends cleanly. `NEARBY_BUILT` stays false; the harness turns nearby on through its host-caps double, and entry 11 wires the real link and label."
-verify = "Harness suites pass over `FakeLink`, a fake probe reading, and the host-caps double with nearby on: each lobby screen's rows and transitions, a host and a guest lobby starting a match of the `nearby` fixture, a guest leaving and a host leaving before Start, both refusals leaving the lobby unopened, Cancel tearing down, a Nearby start leaving a pass `resume.bin` untouched, Nearby remembered in `prefs.bin`, and F14's note; a host test of the pure name mapping (Games for `GamesLauncher`, `GameMode`, `GameOptions`, `GameLobby`, and `GameMatch`); `ModePickerTest`'s nearby tests updated from the solo fallback; new strings under `STR_GAMES_*`; `python3 scripts/check_upstream_touches.py` passes with row 5's new text; fast checks, `sim.sh build x4pro` (the title screen with nearby off unchanged), and the firmware checks pass."
-covers = ["R8", "R9"]
-after = [5, 15, "epic-install-and-launcher"]
-hitl = false
-risk = "medium"
-unknown = "The host-list rows' refresh while `ADVERT`s arrive (how often the list redraws on e-ink) is the plan's, within `UiListActivity`'s rules."
-references = ["docs/contributing/touch-and-ui.md, Picking the right host, New list screen skeleton", "src/activities/UiListActivity.h", "src/activities/games/GameModeActivity.cpp (rosterFor, startNew, startResume)", "src/activities/ActivityManager.cpp (goHome)", "docs/crosshatch/upstream-touches.md, row 5", "_bmad-output/implementation-artifacts/deferred-work.md, `## 4.9`, `## 4.13`, `## 5.10`, `## 5.12`, `## sync-e54c0087` (goHome)", "_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play-retrospective.md, F12, F14"]
-touches = ["src/activities/games/GameLobbyActivity.*", "src/activities/games/GameModeActivity.*", "a new pure goHome-names header under src/activities/games/", "src/activities/ActivityManager.cpp (the goHome mapping call and include, inside `#if FREEINK_CAP_GAMES`)", "docs/crosshatch/upstream-touches.md (row 5's Change text)", "lib/I18n/translations/english.yaml (STR_GAMES_* only)", "test/game_script/**"]
-stays_out = ["lib/GameCore/**", "src/games/EspNowLink.*", "src/games/GameHostCaps.*", "scripts/check_layers.py", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
-[[entry]]
-id = 11
-type = "story"
-title = "Nearby on two X4 Pros: wiring and the smoke run"
-description = "The first end-to-end run: the lobby hands `NearbySession` an `EspNowLink` and shows its label, `NEARBY_BUILT` turns on (still off under `SIMULATOR`), the radio is off after the lobby and the match, and `scripts/pack_device_run.py` packs the `nearby` fixture for the device. The flip's host fallout is this entry's: the games check keeps skipping a declared `nearby` because it plays only `solo` and `pass` (epic-first-party-games R10), not because the host lacks it, and the installer and mode-picker tests that expect every declared mode to start follow the new caps. `scripts/device_log.py`'s summary gains the `LINK`, `PeerGone`, and `ABORT` lines of entries 8 and 15. Then a smoke run on two X4 Pros with one firmware built with `-DCROSSHATCH_TOUCH_LOG=1` and captured with `scripts/device_log.py`: a lobby, a join, a round of the `nearby` fixture with a rejected move, Leave, and, on one device, internal heap before and after ten radio bring-ups and teardowns with no peer (spec Open Question 2). A device failure becomes a new entry."
-verify = "Host suites pass, `GamesCheckEngineTest.ADeclaredNearbyIsSkippedAndLoggedNeverAFailure` included with nearby on in the host caps; `scripts/device_log_test.py` covers the new summary lines from a recorded sample; fast checks, `sim.sh build x4pro` (nearby not offered), and the firmware checks pass; the plan records the firmware commit and SHA-256, the merged log's lines for the lobby, the round, the reject, and \"player left\", the `GameLink` task's stack high-water on the device with the margin entry 8 stated, the ten-cycle heap figures, and whether `silentRestart()` is needed; `docs/crosshatch/fork-scripts.md`'s run steps worked as written or are corrected."
-covers = ["R7", "R9", "R12", "R13", "R14"]
-after = [3, 10, 12]
-hitl = true
-risk = "high"
-unknown = "ESP-NOW's behaviour between two X4 Pros and internal heap after teardown, both unmeasured until this run."
-references = ["src/games/GameHostCaps.{h,cpp} (NEARBY_BUILT, SIMULATOR)", "test/game_script/harness/games_check/GameCheck.cpp (the skip note)", "test/game_script/harness/games_check/GamesCheckEngineTest.cpp", "scripts/pack_device_run.py", "docs/crosshatch/game-canvas.md, The canvas exception (the `CROSSHATCH_TOUCH_LOG` recipe)", "ARCHITECTURE-SPINE.md, AD-18 (silentRestart)"]
-touches = ["src/games/GameHostCaps.*", "src/games/NearbySession.* (the link wiring only)", "src/activities/games/GameLobbyActivity.* (the link and label wiring only)", "scripts/device_log.py", "scripts/device_log_test.py", "scripts/pack_device_run.py", "scripts/pack_device_run_test.py", "test/game_core/GameHostCapsTest.cpp", "test/game_script/**", "docs/crosshatch/fork-scripts.md", "the plan and its packet files beside it"]
-stays_out = ["lib/GameCore/**", "games/**", "every upstream file"]
-
-[[entry]]
 id = 12
 type = "story"
 title = "Nearby in Ultimate tic-tac-toe and Battleship"
@@ -194,6 +62,153 @@ unknown = "None; both games already draw one seat per call and place one seat at
 references = ["_bmad-output/specs/spec-crosshatch-player/first-party-games.md", "_bmad-output/initiative-crosshatch-player-v1/epic-first-party-games/epic-first-party-games.md, R1, R6, R7, R10", "games/battleship/main.lua (mode, HELP_PARAGRAPHS), view.lua, layout.lua", "games/ultimate-tic-tac-toe/main.lua (header, help)", "test/game_script/first_party/README.md (end-frame rule)"]
 touches = ["games/ultimate-tic-tac-toe/**", "games/battleship/**", "test/game_script/first_party/ultimate-tic-tac-toe/**", "test/game_script/first_party/battleship/**"]
 stays_out = ["src/**", "lib/**", "test/game_script/harness/**", "test/game_script/fixtures/**", "every upstream file"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "ReliableLink over FakeLink"
+description = "`GameCore::ReliableLink` over the link interface (R2): per-direction `seq`, cumulative `ack`, resends at the resend setting (default 400 ms), one lost-peer report at the silence setting (default 10 s), `PING` keepalives, with an `ACK` of the last frame doubling as the keepalive when one is due, resends on their own clock so outgoing acks never starve them (a bug crossplay's `LinkSession` records), unreliable `ADVERT`, `PING`, and `ACK`, a newer `STATE` replacing an unacked one, and a received reliable frame the session refuses left unacked so the peer's resend delivers it (the backpressure entry 7's queue policy relies on). Time comes from `IClock`."
+verify = "Host suites pass over `FakeLink` with fake time: reliable frames arrive once each and in order for many seeds at 30 % drop with duplicates, reorders, and delays; resends follow the configured interval and silence is reported once at the configured limit, both at their defaults and at other values; `seq` wraps at 65,535; unreliable frames consume no `seq`; a `STATE` replaced while unacked is never delivered; a refused frame is delivered on a later resend; a side that acks every tick still resends on schedule; the frames a quiet match carries stay under a bound the plan states; fast checks and the firmware checks pass."
+covers = ["R2"]
+after = [2]
+hitl = false
+risk = "medium"
+unknown = "None beyond AD-13; the keepalive interval under the 10 s limit is the plan's, recorded as a setting."
+references = ["ARCHITECTURE-SPINE.md, AD-13 (`seq`/`ack`, latest-wins `STATE`)", "lib/GameCore/IClock.h", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/src/apps_local/link/LinkSession.cpp (tick, the retry and heartbeat clocks)"]
+touches = ["lib/GameCore/** (new files)", "test/game_core/**"]
+stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**", "freeink-sdk"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "ESP-NOW link adapter and the Nearby precondition probe"
+description = "The radio adapter (R7): `src/games` `EspNowLink` implements the link interface over ESP-NOW v2, channel 1, no encryption, in AD-18's bring-up order on the STA interface (`esp_now_init` is its `ESP_NOW.begin` step), hardened as crossplay's `LinkRadio::begin` is (R7: auto-reconnect off before the disconnect, the disconnect waited out before the channel is set, the broadcast peer registered, teardown flagged once `esp_now_init` succeeds, `end()` idempotent, modem power save with a 50 ms wake window), its receive callback only copying frames into a ring buffer (a radio-free `src/games/FrameRing.h`, so the harness can test it), and its peer table, both allocated in PSRAM at bring-up (internal heap needs the owner: SPEC Constraints); teardown leaves the radio off; it maps MAC addresses to opaque peer handles and exposes the host label built from the last two MAC bytes (R8). A precondition probe is a pure, header-only decision over given readings (Wi-Fi mode, free internal heap) plus a device reader kept out of the harness, so entry 10's lobby takes the decision and its tests pass a fake reading. Entry 11 hands `EspNowLink` to `NearbySession` and the label to the lobby. Both are compiled out under `SIMULATOR` and kept out of the host harness. It measures the ESP-NOW driver's flash and IRAM cost first, this epic's largest unknown."
+verify = "Host suites pass, with tests of the ring buffer (copy only, overflow counted, never blocking) and of the probe's decision (Wi-Fi off and on, heap at 102,399 B and 102,400 B); a failure injected at each bring-up step leaves ESP-NOW down and the next bring-up succeeds (a seam the plan names); `pio run -e x4pro`, `-e default`, and `-e sticky` build; `sim.sh build x4pro` builds with both compiled out; a `static_assert` in `EspNowLink` holds `Protocol`'s maximum frame within `ESP_NOW_MAX_DATA_LEN_V2`; fast checks and `pio check -e x4pro` pass; the driver's flash and static-RAM cost is measured with `scripts/check_flash_budget.py` in a scratch build that references `EspNowLink` (nothing calls it until entry 11) and recorded in the plan, and a cost over half the share (4,752 B flash or 80 B static RAM) stops for the owner."
+covers = ["R7"]
+after = [2]
+hitl = false
+risk = "high"
+unknown = "What linking ESP-NOW costs in flash and in `.iram0` static RAM against 9,504 B / 160 B (6,928 B and 32 B spare after the reserve); whether a Wi-Fi-task callback may write PSRAM safely on the S3 (if not, the owner decides on internal heap); whether the 50 ms wake window works without `CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE`, which this fork does not set and which would widen ledger row 1 (if it needs it, stop for the owner)."
+references = ["ARCHITECTURE-SPINE.md, AD-2, AD-18, Stack (ESP-NOW v2)", "_bmad-output/specs/spec-crosshatch-player/SPEC.md, Constraints (internal-RAM costs)", "scripts/check_layers.py (RADIO_CRYPTO)", "freeink-sdk/libs/network/NearbyTransfer/src/NearbyTransfer.cpp (EspNowTransport::begin, a reading reference; not linked)", "lib/hal/HalMemory.h (getInternalHeap)", "src/activities/network/CrossPointWebServerActivity.cpp (the `WiFi.getMode() != WIFI_MODE_NULL` idiom)", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/src/apps_local/link/LinkRadio.cpp (begin, end, send)"]
+touches = ["src/games/EspNowLink.*", "src/games/NearbyProbe.*", "src/games/FrameRing.h", "new files under test/game_script/harness/ only (its own suite `<name>.cmake` and a `*.sources.cmake` keeping `EspNowLink` out of the harness; no shared CMake file is edited)"]
+stays_out = ["lib/GameCore/**", "src/activities/**", "every upstream file", "platformio.ini", "freeink-sdk", "games/**"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Lobby handshake in GameCore"
+description = "The lobby protocol over `ReliableLink` (R3): the host's lobby (a `session` id from `IRandom`, `ADVERT` with the host label it is given, seats by `JOIN` arrival, `ABORT(version_mismatch)` and `ABORT(full)`, a joined guest's cancel or silence freeing its seat, Start with at least 2 seats sending `ACCEPT {seat, n}` and stopping `ADVERT`), the guest's (the hosts heard for its game, each joinable or a different version, join, wait, the host's cancel or silence reported, cancel), `ABORT(left)` on a cancel, and the roster and `ctx.api` a started lobby hands to the match. Entry 10's screens drive it; entry 8's `NearbySession` carries it."
+verify = "Host suites pass over lossy `FakeLink`: a host and a guest reach a started roster (seat 1 host, seat 2 guest, `n = 2`) for many seeds; with `maxSeats` 3 two guests reach `n = 3` in `JOIN` order; at `maxSeats` 2 a second guest gets `ABORT(full)`; a different package hash, `proto`, or preview surface is listed as a different version and its `JOIN` refused; Start with no guest is refused; a joined guest that cancels or goes silent frees its seat and Start is refused again; the host's cancel or silence reaches the waiting guest; `ADVERT` stops at Start; `ctx.api` is the lowest level; frames of another `session` are ignored; crossplay's discovery regressions pass in this protocol's terms (a lost `JOIN`, one-way range, a peer heard broadcasting again after Start ends the match, `JOIN`s from matched devices never echo, each counted by `FakeLink`); fast checks and the firmware checks pass."
+covers = ["R3"]
+after = [4]
+hitl = false
+risk = "medium"
+unknown = "None; seat choice by the player is out (v1 n is 2), and nothing may assume n = 2."
+references = ["ARCHITECTURE-SPINE.md, AD-11, AD-13 (ADVERT, JOIN, ACCEPT, ABORT), AD-15 (HostCaps), AD-19 (mixed levels)", "lib/GameCore/Roster.h", "lib/GameCore/HostCaps.h", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/host-tests/link/test_link.cpp (testMatchSurvivesALostJoin, testOneWayRangeStillConverges, testMatchedPeersDoNotEchoJoins, testPeerRestartingEndsTheMatch, testJoinAnswersAreRateLimited)"]
+touches = ["lib/GameCore/** (new files, Roster)", "test/game_core/**", "test/game_script/CMakeLists.txt, test/game_script/harness/match.cmake, test/game_script/harness/pass_and_play.sources.cmake, test/game_script/harness/games_check.cmake (their hand-listed GameCore source lines only)"]
+stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Shipping and adopting STATE in GameCore"
+description = "The match half of the protocol in the mover-applies model (R4, R5's GameCore part, and R6's end-slot reasons: an `ABORT` reason or silence): each device's `Session` stays the authority for its own local seat, as in pass, and after an accepted local move hands the link the whole `STATE {ver, turn, over, winners, snapshot}`; a `STATE` from the peer is adopted, as a mid-match restore through a `Session` call beside `restore`, only when its `ver` is newer (u16 on the wire, compared across its wrap) and the shipped turn was the peer's seat (or seat 1 starts a round), and the shipped status then gates input and the end of the round; only the turn holder advances `ver`, which runs on through rematches; seat 1 runs `setup` and Play again. The queue policy is GameCore code over injected storage, with no allocator or log (`lib/GameCore` reaches only std, `lib/Memory`, and `lib/JsonParser`): 4 entries, a newer `STATE` replacing a queued one, any other reliable frame left unacked when full, an overflow counter, and the latched end slot (first reason wins). Entry 8 gives it PSRAM storage, the cross-task handoff, and the `LINK` log lines; entry 9 consumes adopted states and entry 15 the end slot. It states the policy in `docs/crosshatch/game-canvas.md`'s Overlays."
+verify = "Host suites pass (Done when 1): over lossy `FakeLink` with a fake `IGameRules`, two sessions, one local seat each, play full rounds to over for many seeds with identical snapshots on both sides, each move applied on its mover's side only; a rejected move stays on its device as the `rejected` event and puts nothing on the link; a `STATE` from a non-peer, with an older `ver`, or while the turn was ours is never adopted; a rematch keeps `ver` rising and a `STATE` across the u16 wrap counts as newer; a 200-match soak over randomly hostile links (loss to 35 %, duplicates to 30 %, jitter) reaches agreement with moves made in every match and frame counts under the plan's bound; a full queue keeps only the newest `STATE` and loses no other reliable frame; silence and each `ABORT` reason set the end slot once and are never dropped while the consumer is stopped; `SessionTest`'s existing tests unchanged; fast checks and the firmware checks pass."
+covers = ["R4", "R5", "R6"]
+after = [6]
+hitl = false
+risk = "high"
+unknown = "The shape of `Session`'s mid-match adopt beside `restore` (which today runs only before `start`); it holds no radio fact. If the plan outgrows one session, the orchestrator splits the queue policy and end slot off as their own entry first."
+references = ["ARCHITECTURE-SPINE.md, AD-8, AD-9, AD-13 (MOVE, STATE, REJECT, ABORT, `ver`), AD-18 (queues), the Play Nearby turn sequence", "lib/GameCore/Session.{h,cpp}", "scripts/check_layers.py (TABLE, lib/GameCore)", "docs/crosshatch/game-canvas.md, Overlays", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/src/apps_local/link/LinkSession.h (the three design decisions; submit, takeIncoming)", "https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/host-tests/link/test_link.cpp (testSoak, testStaleStateIsIgnored, testSubmittingBeforeTakingDeliveryIsRefused)"]
+touches = ["lib/GameCore/**", "test/game_core/**", "test/game_script/CMakeLists.txt, test/game_script/harness/match.cmake, test/game_script/harness/pass_and_play.sources.cmake, test/game_script/harness/games_check.cmake (their hand-listed GameCore source lines only)", "docs/crosshatch/game-canvas.md (Overlays)"]
+stays_out = ["src/**", "lib/GameScript/**", "every upstream file", "games/**"]
+
+[[entry]]
+id = 8
+type = "story"
+title = "GameLink task and NearbySession over the link interface"
+description = "`src/games` `NearbySession` owns a link (`EspNowLink` on the device from entry 11, `FakeLink` in the harness), `ReliableLink`, entry 6's lobby and entry 7's match sessions, the session queue's PSRAM entries and the cross-task handoff to the VM task, the end slot the match reads, and the `GameLink` task (priority 1, core 1, 4 KB stack) that drains the link and runs the resends and the silence check (R5, R7); it never takes `RenderLock` or touches activity state, and its teardown brings the link down. It gives the match one call to send an `ABORT` with a reason and then either flush until a deadline or send it three times without flushing (crossplay's `Bye`), which entry 15 uses for Leave (at most 800 ms), the forced exit, and a script error. It writes the `LINK` lines R13 names (each naming the `session` id; `STATE` lines its `ver`; resends, queue overflows with their count, silence, and `ABORT`s sent and received). It owns the harness `*.sources.cmake` that compiles the new GameCore sources for the harness suites entries 9, 15, and 10 reuse, adding only what entries 6 and 7 did not already list, so no source is listed twice. Entry 9 moves it into the match; entry 10's lobby creates it."
+verify = "Harness suites pass over `FakeLink`: two `NearbySession`s on their own tasks reach a started lobby and exchange a round; with the consumer stopped (as under an overlay) the task keeps acking, resending, and detecting silence, the queue's fourth entry is the last kept and a fifth `MOVE` is delivered on a resend, and the end slot holds the lost peer until read; the `RenderLock` double records no lock from the task; teardown leaves no task and no link; each `LINK` line's text is pinned by a test; the `ABORT` call's flush ends by its deadline with the frame acked or not, and its no-flush form puts three copies on the link and returns at once; the task's stack high-water is logged (the harness value is a constant, so entry 11 asserts the device figure); fast checks and the firmware checks pass."
+covers = ["R5", "R7", "R13"]
+after = [7]
+hitl = false
+risk = "high"
+unknown = "The 4 KB stack's real headroom on the device, measured at entry 11's smoke run."
+references = ["ARCHITECTURE-SPINE.md, AD-18 (GameLink task, amended 2026-10-04 and 2026-10-11), AD-20", "src/games/GameVM.cpp (task creation and notify)", "test/game_script/harness/screen_stubs/ (FreeRTOS on threads, RenderLock double)", "test/game_script/harness/CMakeLists.txt (extend by adding files)"]
+touches = ["src/games/NearbySession.*", "src/games/GameLink*", "test/game_script/** (new harness files; the RenderLock double's lock record)"]
+stays_out = ["lib/GameCore/** (a GameCore change returns to entry 7's scope; stop)", "src/activities/**", "src/games/EspNowLink.*", "every upstream file", "games/**"]
+
+[[entry]]
+id = 9
+type = "story"
+title = "A nearby round in GameMatchActivity"
+description = "The match plays a nearby round in the mover-applies model (R4, R6's end-of-round part): it takes the `NearbySession` by move in its constructor; on each device the VM runs the match as pass-and-play does for its one local seat (`input`, `apply`, and the local `rejected` event through `MatchRounds` and `Session`), hands each accepted move's `STATE` to the session, and adopts the peer's `STATE` from the session queue between calls, drawing its own seat; seat 1 runs `setup` and Play again, the other device's end-of-round menu shows \"waiting for host\" and Leave; `preventAutoSleep` is set; nothing is saved (no `resume.bin`), and `ch.store` writes in `apply` land on the mover's device. It adds the `nearby` fixture in `test/game_script/fixtures/nearby/` (two seats, `pass` and `nearby`, a move `apply` rejects, a move that raises a script error, and a `ch.store` write in `apply`), which entries 15, 10, 16, 11, and 14 use. Endings are entry 15's."
+verify = "Harness suites pass: two `GameMatchActivity` instances over `FakeLink` play the `nearby` fixture to over with identical final snapshots, each move applied on its mover's device, a rejected move on either device reaching that device's `input` and sending nothing, the host's Play again starting the next round on both and the other device's menu offering only Leave; nearby writes no `resume.bin`, and the fixture's `ch.store` write lands on the mover's device only; every solo and pass test unchanged; new strings in `english.yaml` under `STR_GAMES_*`; fast checks, `sim.sh build x4pro` (solo and pass unchanged), and the firmware checks pass."
+covers = ["R4", "R6"]
+after = [8]
+hitl = false
+risk = "high"
+unknown = "Where the VM adopts a peer `STATE` between `MatchRounds` calls without a second round driver; `## e5-xr`'s `renderedFrame` item rides this entry only if it changes `renderCanvas`."
+references = ["ARCHITECTURE-SPINE.md, AD-8, AD-9, AD-17, AD-20, AD-21", "lib/GameScript/MatchRounds.{h,cpp}", "src/games/GameVM.cpp (run, rounds)", "src/activities/games/GameMatchActivity.cpp (constructor, handle, loopView)", "_bmad-output/implementation-artifacts/deferred-work.md, `## e5-xr` (renderedFrame)", "test/game_script/fixtures/pass-open/"]
+touches = ["lib/GameScript/**", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/games/MatchStore.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)"]
+stays_out = ["lib/GameCore/** (a GameCore change returns to entry 7's scope; stop)", "src/games/EspNowLink.*", "src/activities/games/GameModeActivity.*", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
+[[entry]]
+id = 15
+type = "story"
+title = "Nearby endings: PeerGone and the player-left view"
+description = "Ends a nearby match cleanly on both devices (R5's match part, R6): `MatchLifecycle` gains `PeerGone`, entered from every non-terminal state when the match's next `loop()` reads entry 7's end slot, so it waits behind an open overlay; the \"player left\" view has one reason line (left, silent, a game error on the other device, a different version) and Back leaves; Leave sends `ABORT(left)` and flushes the link for at most 800 ms; the forced exit sends it three times without flushing; a script error sends `ABORT(script_error)` and shows the error view; all three use entry 8's `ABORT` call. Entering `PeerGone` writes one `GAME` log line naming its reason, which entry 11's capture summary reads. `GameViewIcons.h`'s state switches gain the case, and `handle()`'s `setWritable` calls become one state-to-writable mapping (`## e6pre-1`, trigger: a new `MatchState`)."
+verify = "Harness suites pass with fake time over `FakeLink` and the `nearby` fixture: Leave on either side brings up \"player left\" on the other and the leaver's flush ends by 800 ms; a forced exit puts three `ABORT(left)` copies on the link and does not wait; 10 s of silence brings up \"player left\" with the silent reason; a script error ends both, the error view on one and \"player left\" with the game-error reason on the other; with an overlay open `PeerGone` waits until it closes; `MatchLifecycleTest` covers every transition into and out of `PeerGone`; the `PeerGone` log line's text is pinned per reason; every solo and pass test unchanged; new strings under `STR_GAMES_*`; fast checks and the firmware checks pass."
+covers = ["R5", "R6"]
+after = [9]
+hitl = false
+risk = "medium"
+unknown = "None beyond AD-20's Leaving order; the forced exit's existing deadline (`FORCED_EXIT_DEADLINE_MS`) bounds the `ABORT` send."
+references = ["ARCHITECTURE-SPINE.md, AD-14, AD-20 (Leaving, forced exit), AD-21", "lib/GameCore/MatchLifecycle.{h,cpp}", "src/games/GameViewIcons.h (state and event switches)", "src/activities/games/GameMatchActivity.cpp (handle, onExit)", "src/activities/games/GameMatchView.cpp", "_bmad-output/implementation-artifacts/deferred-work.md, `## e6pre-1` (setWritable)", "docs/crosshatch/game-canvas.md, Overlays, Leaving, The forced exit"]
+touches = ["lib/GameCore/MatchLifecycle.*", "src/games/GameViewIcons.h", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_core/MatchLifecycleTest.cpp", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)", "docs/crosshatch/game-canvas.md"]
+stays_out = ["src/games/EspNowLink.*", "src/activities/games/GameModeActivity.*", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
+[[entry]]
+id = 10
+type = "story"
+title = "Lobby screens and the Nearby start"
+description = "`GameLobbyActivity` on `UiListActivity` (R8): Host a game and Join a game; the host's label, waiting, joined, and Start screen, which shows \"Player 2 left\" and waits again when the guest leaves; the guest's host list with greyed different versions, waiting, \"The host left\" with Back to the list, and \"That game is full\"; Cancel and Back tearing the session down; `preventAutoSleep` while open; Start replacing the lobby with the match and the session moved in. Nearby's New game runs entry 5's probe decision and refuses with the title-screen dialog for Wi-Fi up or low heap. `GameModeActivity` loses its solo fallbacks, takes the mode into the match through the lobby, leaves `resume.bin` alone for Nearby, and shows F14's note (R9). `ActivityManager::goHome`'s games names move into a pure fork header that `ActivityManager.cpp` calls (the remedy `## 4.13` and `## 5.10` defer to the next row-5 touch), adding `GameLobby` and `GameOptions` (`## 5.12`), with ledger row 5's Change text updated. It follows entry 15 because both add `STR_GAMES_*` strings and harness tests, and Start lands in a match that ends cleanly. `NEARBY_BUILT` stays false; the harness turns nearby on through its host-caps double, and entries 16 (UDP, simulator) and 11 (ESP-NOW, device) wire the real links and labels."
+verify = "Harness suites pass over `FakeLink`, a fake probe reading, and the host-caps double with nearby on: each lobby screen's rows and transitions, a host and a guest lobby starting a match of the `nearby` fixture, a guest leaving and a host leaving before Start, both refusals leaving the lobby unopened, Cancel tearing down, a Nearby start leaving a pass `resume.bin` untouched, Nearby remembered in `prefs.bin`, and F14's note; a host test of the pure name mapping (Games for `GamesLauncher`, `GameMode`, `GameOptions`, `GameLobby`, and `GameMatch`); `ModePickerTest`'s nearby tests updated from the solo fallback; new strings under `STR_GAMES_*`; `python3 scripts/check_upstream_touches.py` passes with row 5's new text; fast checks, `sim.sh build x4pro` (the title screen with nearby off unchanged), and the firmware checks pass."
+covers = ["R8", "R9"]
+after = [5, 15, "epic-install-and-launcher"]
+hitl = false
+risk = "medium"
+unknown = "The host-list rows' refresh while `ADVERT`s arrive (how often the list redraws on e-ink) is the plan's, within `UiListActivity`'s rules."
+references = ["docs/contributing/touch-and-ui.md, Picking the right host, New list screen skeleton", "src/activities/UiListActivity.h", "src/activities/games/GameModeActivity.cpp (rosterFor, startNew, startResume)", "src/activities/ActivityManager.cpp (goHome)", "docs/crosshatch/upstream-touches.md, row 5", "_bmad-output/implementation-artifacts/deferred-work.md, `## 4.9`, `## 4.13`, `## 5.10`, `## 5.12`, `## sync-e54c0087` (goHome)", "_bmad-output/initiative-crosshatch-player-v1/epic-pass-and-play/epic-pass-and-play-retrospective.md, F12, F14"]
+touches = ["src/activities/games/GameLobbyActivity.*", "src/activities/games/GameModeActivity.*", "a new pure goHome-names header under src/activities/games/", "src/activities/ActivityManager.cpp (the goHome mapping call and include, inside `#if FREEINK_CAP_GAMES`)", "docs/crosshatch/upstream-touches.md (row 5's Change text)", "lib/I18n/translations/english.yaml (STR_GAMES_* only)", "test/game_script/**"]
+stays_out = ["lib/GameCore/**", "src/games/EspNowLink.*", "src/games/GameHostCaps.*", "scripts/check_layers.py", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
+[[entry]]
+id = 16
+type = "story"
+title = "UDP link and nearby in the simulator"
+description = "A third implementation of the link interface (R16), compiled only under `SIMULATOR`: `src/games` `UdpLink` binds the first free port of an 8-port range on localhost (its base moved by an environment variable, one range per worktree, as crossplay found concurrent runs need), sends a broadcast to every other port, uses the port as the peer handle and the host label, and never truncates a datagram. Under `SIMULATOR` the host caps report nearby on and the lobby hands `NearbySession` a `UdpLink`; the device and the host suites are unchanged. `sim.sh` gains a second instance (its own display, state directory, and SD root), so two simulators play a nearby round end to end: the first end-to-end nearby run, before entry 11's X4 Pros. It costs no firmware flash."
+verify = "Harness suites pass, including `UdpLink` over real loopback with a per-run port base (two links find each other; a third is refused a slot only when all eight are taken; a datagram larger than the buffer is dropped, never truncated); `scripts/check_layers.py` passes (any socket header it needs is admitted for `src/games` under `SIMULATOR` only); `sim.sh build x4pro` and `build sticky`; two instances of the x4pro simulator, each with the `nearby` fixture in its inbox, run a lobby (host, join, \"Player 2 left\" and back), a round with a rejected move, Play again, and Leave bringing up \"player left\" on the other, with a screenshot of every lobby screen and the player-left view in the story's screenshots folder; the x4pro and default firmware's flash budget and size are unchanged (the link compiles only under `SIMULATOR`); fast checks and the firmware checks pass."
+covers = ["R16", "R8"]
+after = [10]
+hitl = false
+risk = "medium"
+unknown = "How `sim.sh` gives a second instance its own SD root and inbox without disturbing the single-instance commands every other story uses; which socket headers `scripts/check_layers.py` must admit."
+references = ["https://github.com/ma-r-s/crossplay/blob/0a1d17f41e1605d3b033d4327c81b3bcfb2ca2ab/src/apps_local/link/LinkRadio.cpp (the simulator branch: basePort, addressForPort, send, receive)", ".claude/skills/run-crosshatch-player/sim.sh", ".claude/skills/run-crosshatch-player/simulator.ini", "src/games/GameHostCaps.cpp (SIMULATOR)", "scripts/check_layers.py (PLATFORM_PATTERNS)", "ARCHITECTURE-SPINE.md, AD-2 (amended 2026-10-12), Deferred (Simulator fake link)"]
+touches = ["src/games/UdpLink.*", "src/games/GameHostCaps.cpp (the `SIMULATOR` branch only)", "src/activities/games/GameLobbyActivity.* (choosing the link under `SIMULATOR` only)", "scripts/check_layers.py", "scripts/check_layers_test.py", ".claude/skills/run-crosshatch-player/**", "new files under test/game_script/harness/ only"]
+stays_out = ["lib/GameCore/**", "src/games/EspNowLink.*", "every upstream file", "platformio.ini", "games/**", "test/game_script/first_party/** (entry 12's)"]
+
+[[entry]]
+id = 11
+type = "story"
+title = "Nearby on two X4 Pros: wiring and the smoke run"
+description = "The first end-to-end run: the lobby hands `NearbySession` an `EspNowLink` and shows its label, `NEARBY_BUILT` turns on for the device (the simulator's nearby is entry 16's), the radio is off after the lobby and the match, and `scripts/pack_device_run.py` packs the `nearby` fixture for the device. The flip's host fallout is this entry's: the games check keeps skipping a declared `nearby` because it plays only `solo` and `pass` (epic-first-party-games R10), not because the host lacks it, and the installer and mode-picker tests that expect every declared mode to start follow the new caps. `scripts/device_log.py`'s summary gains the `LINK`, `PeerGone`, and `ABORT` lines of entries 8 and 15. Then a smoke run on two X4 Pros with one firmware built with `-DCROSSHATCH_TOUCH_LOG=1` and captured with `scripts/device_log.py`: a lobby, a join, a round of the `nearby` fixture with a rejected move, Leave, and, on one device, internal heap before and after ten radio bring-ups and teardowns with no peer (spec Open Question 2). A device failure becomes a new entry."
+verify = "Host suites pass, `GamesCheckEngineTest.ADeclaredNearbyIsSkippedAndLoggedNeverAFailure` included with nearby on in the host caps; `scripts/device_log_test.py` covers the new summary lines from a recorded sample; fast checks, `sim.sh build x4pro` (entry 16's simulator nearby unchanged), and the firmware checks pass; the plan records the firmware commit and SHA-256, the merged log's lines for the lobby, the round, the reject, and \"player left\", the `GameLink` task's stack high-water on the device with the margin entry 8 stated, the ten-cycle heap figures, and whether `silentRestart()` is needed; `docs/crosshatch/fork-scripts.md`'s run steps worked as written or are corrected."
+covers = ["R7", "R9", "R12", "R13", "R14"]
+after = [3, 12, 16]
+hitl = true
+risk = "high"
+unknown = "ESP-NOW's behaviour between two X4 Pros and internal heap after teardown, both unmeasured until this run."
+references = ["src/games/GameHostCaps.{h,cpp} (NEARBY_BUILT, SIMULATOR)", "test/game_script/harness/games_check/GameCheck.cpp (the skip note)", "test/game_script/harness/games_check/GamesCheckEngineTest.cpp", "scripts/pack_device_run.py", "docs/crosshatch/game-canvas.md, The canvas exception (the `CROSSHATCH_TOUCH_LOG` recipe)", "ARCHITECTURE-SPINE.md, AD-18 (silentRestart)"]
+touches = ["src/games/GameHostCaps.* (the device branch; entry 16 owns the `SIMULATOR` branch)", "src/games/NearbySession.* (the link wiring only)", "src/activities/games/GameLobbyActivity.* (the link and label wiring only)", "scripts/device_log.py", "scripts/device_log_test.py", "scripts/pack_device_run.py", "scripts/pack_device_run_test.py", "test/game_core/GameHostCapsTest.cpp", "test/game_script/**", "docs/crosshatch/fork-scripts.md", "the plan and its packet files beside it"]
+stays_out = ["lib/GameCore/**", "games/**", "every upstream file"]
 
 [[entry]]
 id = 13

@@ -80,7 +80,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - A computer opponent provided by the runtime. A script may implement its own inside `apply`.
 - Real-time, action, physics, or drag-heavy games.
 - Playing against CrossPlay devices, and porting CrossPlay's C++ games.
-- A gallery, sharing between players, a browser playground, and a simulated radio link for Play Nearby. (Amended 2026-10-04, owner: the game starter repo moved into v1 as CAP-12.)
+- A gallery, sharing between players, a browser playground, and a simulated radio link for Play Nearby. (Amended 2026-10-04, owner: the game starter repo moved into v1 as CAP-12. Amended 2026-10-12, owner: a UDP link that lets two simulator instances play nearby moved into v1, epic-play-nearby; a browser playground stays out.)
 - Migrating saves across package versions; a changed package hash discards the save.
 - Aligning with upstream "web plugins" before upstream has code for them.
 - Encryption, anti-cheat, and telemetry.
