@@ -27,11 +27,12 @@
 // pins that this double and the contract agree; EspNowLink sits outside the host harness, so its agreement is
 // checked on the device (entry 11).
 //
-// More permissive than the device: no send queue that fills (send never fails for capacity), no peer-table
-// limit, no 250 B v1 truncation, no radio time (delay is virtual, set by the test's ManualClock), no channel or
-// range (every endpoint of the net hears every other), and a unicast works to any endpoint of the net once the
-// sender has a handle for it (FakeLink::handleOf). Stricter than the device: handles are tagged with their
-// owning endpoint, so a handle used on a link other than the one that gave it is caught and counted.
+// More permissive than the device: a send queue that fills only when a test says so (FakeLink::refuseSends refuses
+// the next n calls by count; the device's queue fills and drains over time), no peer-table limit, no 250 B v1
+// truncation, no radio time (delay is virtual, set by the test's ManualClock), no channel or range (every endpoint of
+// the net hears every other), and a unicast works to any endpoint of the net once the sender has a handle for it
+// (FakeLink::handleOf). Stricter than the device: handles are tagged with their owning endpoint, so a handle used on a
+// link other than the one that gave it is caught and counted.
 //
 // What it adds over a kind link: a seeded xorshift32 that drops, duplicates, delays, and reorders per copy, a
 // broadcast expanded to one copy per other endpoint (each with its own rolls, in endpoint order), a counter of
@@ -313,16 +314,26 @@ class FakeLink final : public ILink {
     return handleForPeer(peer.self);
   }
 
+  // Test-only: stands in for the device's full send queue (ILink.h: send and broadcast return false, nothing sent,
+  // "its send queue is full"; esp_now_send failing, or the adapter's queue full). Refuses the next `count` calls
+  // that would otherwise succeed, send and broadcast alike; a call the checks below already refuse does not use
+  // one up. More permissive than the device: the refusal is by count, not by a queue that fills and drains over
+  // time. A refused call counts in the net's refusedSends(), queues nothing, and draws no roll. FakeLinkTest pins
+  // that the two agree.
+  void refuseSends(const size_t count) { refusalsLeft = count; }
+
   bool send(const PeerHandle to, const std::span<const uint8_t> frame) override {
     if (done || !to.valid() || !sizeOk(frame)) return refuse(false);
     const Entry* const entry = entryFor(to);
     if (entry == nullptr) return refuse(true);  // not a handle this link gave: another link's, or made up
+    if (queueFull()) return refuse(false);
     net.submit(self, entry->peer, frame);
     return true;
   }
 
   bool broadcast(const std::span<const uint8_t> frame) override {
     if (done || !sizeOk(frame)) return refuse(false);
+    if (queueFull()) return refuse(false);
     net.submitBroadcast(self, frame);
     return true;
   }
@@ -355,6 +366,12 @@ class FakeLink final : public ILink {
   static bool sizeOk(const std::span<const uint8_t> frame) {
     return !frame.empty() && frame.size() <= Protocol::MAX_FRAME_BYTES;
   }
+  // True while refuseSends has calls left; uses one up.
+  bool queueFull() {
+    if (refusalsLeft == 0) return false;
+    refusalsLeft--;
+    return true;
+  }
   bool refuse(const bool foreign) {
     net.countRefused(foreign);
     return false;
@@ -381,6 +398,7 @@ class FakeLink final : public ILink {
   const size_t self;
   bool done = false;
   uint32_t counter = 0;
+  size_t refusalsLeft = 0;
   std::vector<Entry> entries;
 };
 

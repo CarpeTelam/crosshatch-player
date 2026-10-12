@@ -591,6 +591,69 @@ TEST(FakeLinkTest, AFrameInFlightIsNotRecalledByItsSendersEnd) {
   EXPECT_EQ(takeFrom(p.b).frame, frameOf(1));
 }
 
+TEST(FakeLinkTest, RefuseSendsRefusesTheNextNCallsAndThenSendsAgain) {
+  Pair p;
+  const PeerHandle toB = p.a.handleOf(p.b);
+  p.a.refuseSends(2);
+  EXPECT_FALSE(p.a.send(toB, frameOf(1)));
+  EXPECT_FALSE(p.a.broadcast(frameOf(2))) << "broadcast shares the knob";
+  EXPECT_EQ(p.net.refusedSends(), 2u);
+  EXPECT_EQ(p.net.foreignHandleSends(), 0u) << "a full queue is not a foreign handle";
+  EXPECT_EQ(p.net.carried(), 0u);
+  EXPECT_EQ(p.net.waiting(), 0u) << "a refused call queues nothing";
+  EXPECT_TRUE(p.a.send(toB, frameOf(3))) << "the (n+1)th call succeeds";
+  EXPECT_TRUE(p.a.broadcast(frameOf(4)));
+  EXPECT_EQ(p.net.refusedSends(), 2u);
+  std::vector<Bytes> frames;
+  EXPECT_EQ(drain(p.b, &frames), 2u);
+  EXPECT_EQ(frames, (std::vector<Bytes>{frameOf(3), frameOf(4)}));
+}
+
+TEST(FakeLinkTest, RefuseSendsIsOnlyUsedUpByCallsThatWouldHaveSucceeded) {
+  Pair p;
+  const PeerHandle toB = p.a.handleOf(p.b);
+  p.a.refuseSends(1);
+  EXPECT_FALSE(p.a.send(NO_PEER, frameOf(1)));
+  EXPECT_FALSE(p.a.send(PeerHandle::fromValue(0xFFFFFFu), frameOf(1)));
+  EXPECT_FALSE(p.a.send(toB, Bytes{}));
+  EXPECT_FALSE(p.a.send(toB, Bytes(Protocol::MAX_FRAME_BYTES + 1, 1)));
+  EXPECT_FALSE(p.a.broadcast(Bytes{}));
+  EXPECT_EQ(p.net.refusedSends(), 5u);
+  EXPECT_EQ(p.net.foreignHandleSends(), 1u) << "only the made-up handle is foreign";
+  EXPECT_FALSE(p.a.send(toB, frameOf(2))) << "the one refusal is still waiting";
+  EXPECT_EQ(p.net.refusedSends(), 6u);
+  EXPECT_EQ(p.net.foreignHandleSends(), 1u);
+  EXPECT_TRUE(p.a.send(toB, frameOf(3)));
+  EXPECT_EQ(p.net.carried(), 1u);
+}
+
+TEST(FakeLinkTest, RefuseSendsAgreesWithTheDeviceContractAndDrawsNoRolls) {
+  // ILink.h: a false is "nothing sent" and leaves no trace but the caller's loss. Two nets with one seed: one sees a
+  // refused call first, the other does not; every later frame meets the same fate, so a refusal drew no roll.
+  Faults f;
+  f.lossPercent = 50;
+  f.duplicatePercent = 30;
+  f.reorderPercent = 30;
+  f.delayMs = 5;
+  f.jitterMs = 20;
+  f.reorderExtraMs = 40;
+  std::vector<Bytes> got[2];
+  for (int run = 0; run < 2; run++) {
+    Pair p;
+    p.net.setFaults(f);
+    const PeerHandle toB = p.a.handleOf(p.b);
+    if (run == 1) {
+      p.a.refuseSends(3);
+      for (int i = 0; i < 3; i++) EXPECT_FALSE(p.a.send(toB, frameOf(99)));
+    }
+    for (uint8_t i = 0; i < 60; i++) ASSERT_TRUE(p.a.send(toB, frameOf(i)));
+    p.clock.advance(1000);
+    drain(p.b, &got[run]);
+  }
+  EXPECT_FALSE(got[0].empty());
+  EXPECT_EQ(got[0], got[1]);
+}
+
 TEST(FakeLinkTest, FakeLinkAgreesWithTheLinkContract) {
   Pair p;
   expectLinkContract(p.a, p.b, [] {});
