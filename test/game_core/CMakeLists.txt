@@ -4,6 +4,8 @@ add_executable(GameCoreTest
   ForkReleaseTest.cpp
   GameImagesTest.cpp
   GameHostCapsTest.cpp
+  LobbyHandshakeTest.cpp
+  LobbyTest.cpp
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
@@ -15,6 +17,9 @@ add_executable(GameCoreTest
   SeatShownTest.cpp
   SessionTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
+  ${REPO_ROOT}/lib/GameCore/GuestLobby.cpp
+  ${REPO_ROOT}/lib/GameCore/HostLobby.cpp
+  ${REPO_ROOT}/lib/GameCore/Lobby.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
   ${REPO_ROOT}/lib/GameCore/Protocol.cpp

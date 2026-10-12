@@ -194,6 +194,11 @@ class FakeLinkNet {
       }
     }
   }
+  // The endpoint listens again (restart()); end() has already purged what was addressed to it.
+  void reopenEndpoint(const size_t endpoint) {
+    std::lock_guard<std::mutex> lock(mutex);
+    endedFlags[endpoint] = false;
+  }
   void countRefused(const bool foreign) {
     std::lock_guard<std::mutex> lock(mutex);
     refusedCount++;
@@ -353,6 +358,18 @@ class FakeLink final : public ILink {
     done = true;
     entries.clear();
     net.endEndpoint(self);
+  }
+
+  // Test-only. Stands in for a device that brings its radio up again on the same address (ESP-NOW: the same MAC, so
+  // its peers keep their handle for it; UdpLink: the same port when it can rebind). Ends the link as end() does, then
+  // reopens the same endpoint with an empty handle table: the handles this link gave are dead, the ones it gives
+  // from now on differ from them, copies in flight to it are discarded (the device was down), and the handles its
+  // peers hold for it stay equal. More permissive than a device: no boot time, and a peer's handle for it never
+  // changes (a rebind to another port would change it; a test of that makes a new FakeLink). FakeLinkTest pins this.
+  void restart() {
+    end();
+    done = false;
+    net.reopenEndpoint(self);
   }
 
   bool ended() const { return done; }
