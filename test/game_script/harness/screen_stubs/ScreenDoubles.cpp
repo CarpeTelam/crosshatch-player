@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ActivityManager.h"
+#include "FakeRtos.h"
 #include "HalGPIO.h"
 #include "RenderLockProbe.h"
 #include "activities/Activity.h"
@@ -24,6 +25,8 @@ std::atomic<std::thread::id> lockOwner{};
 // Takes the lock for the calling thread. False when it did not: a second lock by its own
 // holder (counted, never waited on), or a Try that found it taken.
 bool acquire(const bool tryOnly) {
+  const bool onTask = fakertos::current != nullptr;
+  if (onTask) ++fakelock::taskAttempts;
   if (lockHeld.load() && lockOwner.load() == std::this_thread::get_id()) {
     // A Try by the holder just fails, as on the device; only a blocking lock would hang.
     if (!tryOnly) ++fakelock::selfDeadlocks;
@@ -37,6 +40,7 @@ bool acquire(const bool tryOnly) {
   lockOwner = std::this_thread::get_id();
   lockHeld = true;
   ++fakelock::acquisitions;
+  if (onTask) ++fakelock::taskAcquisitions;
   return true;
 }
 
