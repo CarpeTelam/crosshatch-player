@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/AGENTS.md'
   - '{project-root}/docs/crosshatch/orchestrated-epics.md'
@@ -38,6 +38,34 @@ deferred:
     location: >-
       lib/GameCore/GuestLobby.cpp join, lib/GameCore/HostLobby.cpp start
     severity: low
+  - summary: >-
+      The host's hand-off latches one end before attach (first wins), so with three or more seats a second guest's abort or silence in that window is never replayed.
+    evidence: |-
+      Edge-case lens (follow-up), confirmed by reading LobbyHandOff::latch. Only n >= 3 and only between Start and attach; what one guest's end does to a match is entry 8's rule. Unverified until entry 8 attaches.
+    location: >-
+      lib/GameCore/Lobby.cpp LobbyHandOff::latch
+    severity: medium (unverified)
+  - summary: >-
+      A delayed duplicate ABORT(left) of a guest that has already rejoined removes its fresh seat and forgets the link, until the guest's silence limit.
+    evidence: |-
+      Edge-case lens (follow-up). Same root as the ghost-seat item (no epoch on the wire), the other direction; bounded by the 10 s silence limit; the rejoin tests wait 500 ms between a cancel and the new guest, longer than any hostile delay. The fix is a Protocol epoch, outside this entry.
+    location: >-
+      lib/GameCore/HostLobby.cpp onAbort; Design Notes 7
+    severity: medium
+  - summary: >-
+      The guest's rule that a same-session ADVERT after Start ends the match is unreachable from a real HostLobby (a new lobby draws a new session, which the guest's link drops), so a host that left the match is found at the silence limit unless it cancelled.
+    evidence: |-
+      Edge-case lens (follow-up), confirmed: HostLobby stops advertising at Start and ReliableLink drops an ADVERT of another session once a session is set. The rule is implemented as the ticket's verify names it. A faster end would need the link to pass another session's ADVERT (a ReliableLink change) or an owner decision.
+    location: >-
+      lib/GameCore/GuestLobby.cpp onFrame (Advert, Started)
+    severity: low
+  - summary: >-
+      In a match of three or more seats with different API levels a guest's ctx.api is the lower of its own and the host's, so two guests can differ from each other and from the host.
+    evidence: |-
+      Intent-alignment lens (follow-up); pinned as the expected result by ARosterApiIsTheLowestLevel because the wire's ACCEPT is {seat, n}. The spine says ctx.api is the lowest host level in the roster and apply runs on every device. Unreachable in v1 (n = 2, one level). The fix is a level in ACCEPT (a Protocol change) or an owner decision on the rule.
+    location: >-
+      lib/GameCore/GuestLobby.cpp onAccept; lib/GameCore/Protocol.h Accept
+    severity: medium (unverified)
 ---
 
 <intent-contract>
@@ -115,6 +143,8 @@ deferred:
 - After the review (2026-10-12): patches to `HostLobby::ok()` (also `startSeats() <= seatLimit()`), `GuestLobby::onAccept` (an ACCEPT outside the guest's own seat range is a host fault: HostGone(Left), host forgotten), `HostLobby::onJoin` (Closed is refused first with `ABORT(left)`), one shared `elapsed()` in `Lobby.h`, comments, and 11 new or extended tests (State before ACCEPT answered `NoRoom`, clock stepped back, event ring wrap, cancel from Joining and Started, host cancel from Started, non-default `LobbySettings`, a three-level roster, carried budgets on three regressions, the refused-first-transmission pin, `ok()`, the Closed host). Host suite 2,231 of 2,231 (baseline 2,164; this story adds 67); ASan/UBSan (outside CMake) over `LobbyTest`, `LobbyHandshakeTest`, `FakeLinkTest`, `ReliableLinkTest`, `ProtocolTest` with the lobby, `ReliableLink`, `Protocol`, `Roster`, `Manifest` sources: 161 of 161. Mutants for the three logic patches (the `ok()` clause, the ACCEPT range check, the Closed check) each red in `ALobbyWithoutSeatsForTheGameIsNotOk`, `AnAcceptOutsideTheRangeEndsTheWait`, `HostCancelSendsAbortLeftThriceAndStopsAdvertising` and `ACancelledHostAnswersAResentJoinAbortLeftAndHoldsNoSlot`, reverted.
 - The guest's `ctx.api` in a three-seat match with different levels is the lowest of its own and the host's (the wire's `ACCEPT` is `{seat, n}`); the host's roster and the lowest guest's carry the true minimum (`ARosterApiIsTheLowestLevel`).
 
+- Follow-up review pass (2026-10-12, fresh four-lens pass over the `built` commit `8abb9271`): patches to `GuestLobby::onAccept` (an ACCEPT the guest ends the wait on now also sends `CANCEL_ABORT_COPIES` copies of `ABORT(left)` to the host, so a started host hears the guest is gone at once), a stale `ok()` comment in `HostLobby.h`, missing includes in `LobbyHandshakeTest.cpp`, and 5 new tests (`AnAbortFromAnotherDeviceDoesNotEndAWaitingGuest`, `AMidListExpiryKeepsTheSurvivorsInOrder`, `ALateAdvertBeforeAttachEndsTheMatchOnAttach`, `RefusalAnswersAreRateLimitedPerStrangerWhenTheyInterleave`, `AGuestThatCannotSeatTheStartedMatchTellsTheHost`) plus an assertion in `expectHostFaultEndsTheWait`. Host suite 2,236 of 2,236 (this story adds 72 over the 2,164 baseline); `Lobby*` and `FakeLink*` (108 tests) under `--gtest_repeat=20`: 20 of 20 pass; ASan/UBSan (outside CMake) over `LobbyTest`, `LobbyHandshakeTest`, `FakeLinkTest`, `ReliableLinkTest`, `ProtocolTest` with the lobby, `ReliableLink`, `Protocol`, `Roster`, `Manifest` sources: 166 of 166. Mutants, each applied alone, run, reverted, each red: the guest's `from != joined_.handle` ABORT rule removed (`AnAbortFromAnotherDeviceDoesNotEndAWaitingGuest`, `HandOffForwardsAfterStartAndLatchesBefore`); `expireHosts` compaction removed (`AMidListExpiryKeepsTheSurvivorsInOrder`); `LobbyHandOff::forwardAbort` not latching (`ALateAdvertBeforeAttachEndsTheMatchOnAttach`); the refusal ring index fixed at 0 (`RefusalAnswersAreRateLimitedPerStrangerWhenTheyInterleave`); the new ABORT send removed (`AGuestThatCannotSeatTheStartedMatchTellsTheHost`, `AnAcceptOutsideTheRangeEndsTheWait`). The test double `RawPeer` stands where it did (Design Notes 10); the new tests add no double and no timing bound beyond the default `LobbySettings`.
+
 ## Plan Change Log
 
 ## Review Triage Log
@@ -149,6 +179,42 @@ Four context-free lenses ran as subagents (BH blind hunter, floor N = min(floor(
   - `[false]` `reject` [IA4] Rejoin uses a new `GuestLobby` — the radio is torn down on Cancel (R8), so a new lobby is the real flow; the host side is the same lobby throughout.
   - `[false]` `reject` [IA5] Seat compaction after a leave — the plan settles it (AD-11: `n` seats filled at Start, contiguous).
   - `[false]` `reject` [IA6] Firmware checks not visible in the diff — they are verification, run on the tree.
+
+### 2026-10-12 — Review pass (follow-up pass on the `built` plan at `8abb9271`)
+Four context-free lenses ran again as subagents (BH floor N = min(floor(sqrt(133.8)+1),10) = 10; EC; VG; IA) over `git diff 3a36b97a..8abb9271` of `lib` and `test` (137 kB; the plan went only to the edge-case lens). Rows that repeat a first-pass row at the same location with the same claim are `carried`. The step-3 implementation subagent was gone, so the patches were applied directly. (BH 14, VG 5 plus 1 other, EC 7, IA 6.)
+- verdicts: 33 findings — high 0, medium 7, low 20, false 6, maybe-false 0
+- findings:
+  - `[low]` `reject` [BH1, EC6] `Join::hostApi` / `ADVERT hostApi` is not checked against `caps.minApi`, so a peer at level 0 drags the roster's `api` down — an honest peer cannot reach it: both devices passed `Manifest::check` (`api >= minApi`, `Manifest.cpp:278`) for the same package, and a device's level is at least the manifest's; only a lying device (the wire is unauthenticated, as for the hash) reaches it; a guard adds a branch for no reachable caller.
+  - `[low]` `reject` [BH2] `elapsed()` also exists in `ReliableLink.cpp` — that copy is in an anonymous namespace of a file this entry must not change; the first pass already merged the two lobby copies.
+  - `[low]` `reject` [BH3] The three ABORT copies leave in one tick, so one fade kills all — crossplay's `kByeRepeats` loop (`LinkSession.cpp:103`) sends them back to back too; spacing needs a send queue for unsequenced frames (outside the entry); R12 measures it.
+  - `[low]` `reject` [BH4] Test bounds are literals (`2900`, `9900`, `3100`) — fake milliseconds derived from the default settings, with `EveryLobbySettingChangesTheBehaviourItNames` deriving its own from non-default ones; a default change is a deliberate test change.
+  - `[low]` `reject` [BH5] The 3,520 ms and budget figures in comments go stale — `carried` (first pass BH9: fixed seeds, labelled an estimate until R12).
+  - `[low]` `reject` [BH6] Comments cite "Design Notes 7", R3, AD-13 — the lobby headers cite the spine's AD numbers as the rest of `lib/GameCore` does; the plan is in the repo beside the entry.
+  - `[low]` `defer` [BH7, VG5] `JoinResult::LinkRefused` and `StartResult::LinkFailed` have no test — `carried` (first pass deferred item 3; needs an allocation seam).
+  - `[low]` `reject` [BH8] Coverage stops at 3 seats — the lobby has no per-count branch; the compaction loop is pinned by `ThreeSeatsGiveContiguousSeatsInArrivalOrder` (a leaver ahead of two guests).
+  - `[low]` `reject` [BH9] `GuestLobby::ok()` is weaker than the host's — a game whose `seatsMin` exceeds the device's `maxSeats` is `Unavailable(TooManySeats)` in `Manifest::check` (`Manifest.cpp:280`) and never opens a lobby.
+  - `[low]` `patch` [BH10] `host(index)` returns entry 0 for a bad index — `carried` (first pass BH10: documented, check `hostCount()`).
+  - `[false]` `reject` [BH11] A game id over 32 bytes is silently truncated — `Manifest::MAX_ID_BYTES` is 32, equal to `Protocol::MAX_GAME_ID_BYTES`, so no valid id is cut.
+  - `[low]` `reject` [BH12] `HostEntry` drops `manifestApi` — `carried` (first pass BH13).
+  - `[low]` `defer` [BH13] A frozen-vs-frozen mixed-level handshake is untested — the rule's limit is first-pass deferred item 1 (`carried`); the unit table pins both clauses.
+  - `[low]` `patch` [BH14] `LobbyHandshakeTest.cpp` uses `std::min`, `std::pair`, `std::deque` without their headers (patched: `<algorithm>`, `<deque>`, `<utility>`); `FakeLink::restart()` clears `done` outside the lock — rejected: `end()` sets it the same way, single-threaded test double.
+  - `[medium]` `patch` [VG1] The guest's "ABORT only from the joined host" rule has no test while waiting — confirmed (the only stranger-ABORT test runs in Started); `AnAbortFromAnotherDeviceDoesNotEndAWaitingGuest` added; mutant (rule removed) red there.
+  - `[medium]` `patch` [VG2] `expireHosts` compaction is only tested with all or one entry expiring — confirmed; `AMidListExpiryKeepsTheSurvivorsInOrder` added; mutant (compaction removed) red.
+  - `[medium]` `patch` [VG3] The lobby's own "host advertising again" end, before the match attaches, is untested — confirmed; `ALateAdvertBeforeAttachEndsTheMatchOnAttach` added; mutant (latch removed in `forwardAbort`) red.
+  - `[low]` `patch` [VG4] The refusal ring's "four rotating strangers" bound is untested — confirmed; `RefusalAnswersAreRateLimitedPerStrangerWhenTheyInterleave` added; mutant (ring index fixed at 0) red. (VG filed `defer`; the test is one small addition to a comment-stated bound.)
+  - `[low]` `patch` [VG other] `HostLobby.h` documents `ok()` without the `startSeats() <= seatLimit()` clause — comment corrected.
+  - `[medium]` `patch` [EC1] A guest that ends the wait on an ACCEPT its own device cannot seat (its `caps.maxSeats` below the host's) sends nothing, so a started host keeps it as a seat until the silence limit — confirmed at `onAccept`; the branch now sends `CANCEL_ABORT_COPIES` copies of `ABORT(left)` before `forget`; `AGuestThatCannotSeatTheStartedMatchTellsTheHost` (a real host, 3 seats, one guest at 2) and an assertion in `expectHostFaultEndsTheWait` added; mutant (send removed) red in both.
+  - `[medium]` `defer` [EC2] The host's hand-off latches one end (first wins), so with 3+ seats a second guest's abort or silence before attach is dropped — real, but only for n >= 3 in the window between Start and attach (entry 8 attaches at once) and only entry 8 knows what one guest's end does to a match; deferred, medium unverified.
+  - `[low]` `reject` [EC3] A delayed older-session ADVERT from a host replaces its newer entry — the host's next ADVERT (500 ms) replaces it again; a JOIN in that window is resent until the silence limit and the guest returns to the list; the fix adds ordering state for a delay longer than the host's re-open time.
+  - `[medium]` `defer` [EC4] A late duplicate `ABORT(left)` of a guest that has already rejoined removes its fresh seat and forgets the link — the same root as first-pass deferred item 2 (no epoch; a delayed copy outlives its sender's intent), the other direction; bounded by the silence limit; the rejoin tests wait 500 ms, longer than any hostile delay; deferred, a wire epoch is a `Protocol` change.
+  - `[low]` `defer` [EC5] After Start a same-session `ADVERT` never comes from a real `HostLobby` (a new lobby draws a new session, which the guest's link drops, and `HostLobby` stops advertising at Start), so the rule only catches a same-session copy and a host that left the match is found by the 10 s silence — real; the verify names the rule and it is implemented as named; a faster end needs the link to pass another session's `ADVERT` (a `ReliableLink` change, outside the entry); a host's cancel sends `ABORT(left)` and ends it at once.
+  - `[low]` `reject` [EC7] `join()` can join an entry that expired but was not yet pruned — `tick()` prunes every step in Browsing, so the entry is stale by one tick at most; the JOIN is resent and the silence limit applies as for any lost host.
+  - `[false]` `reject` [IA-A] `ctx.api` is checked at `Roster.api`, not at `Session` — `Session` consuming the lobby's roster is entry 8; `Roster::nearby` stores the level and `ARosterApiIsTheLowestLevel` pins what each lobby hands over.
+  - `[medium]` `defer` [IA-B] In a match of three or more seats with different levels a guest's `ctx.api` is the lower of its own and the host's (the wire's `ACCEPT` is `{seat, n}`), so two guests can differ from each other and from the host, and `apply` runs on every device — real against the spine's "lowest host level in the roster"; unreachable in v1 (n = 2, one level); the fix is a level in `ACCEPT` (a `Protocol` change) or an owner decision; deferred, medium unverified.
+  - `[false]` `reject` [IA-C] "Hands to the match" is shown against a recording sink — `NearbySession` is entry 8; the sink double names the hand-off contract.
+  - `[false]` `reject` [IA-D] Behaviour is shown at the protocol level, not through screens — entry 10 owns the screens; no `src/**` is touched.
+  - `[false]` `reject` [IA-E] Behaviour beyond the intent's list (rate limits, rejoin, queue) — all named by R3, the epic Notes, or entry 4's follow-up.
+  - `[false]` `reject` [IA-F] The script-harness CMake files are not changed — no new source reaches those targets (Design Notes 1); `Roster.cpp` is already compiled there.
 
 ## Design Notes
 
@@ -318,6 +384,8 @@ Mutants (each applied alone, host suite run, reverted, red tests recorded): no `
 
 **Results** (final tree, after the review patches; commit below): host suite 2,231 of 2,231 (`ctest -j`; baseline 2,164); `Lobby*` and `FakeLink*` 103 tests, three runs in a row; ASan/UBSan (outside CMake) 161 of 161; `check_layers.py` (654 edges), `check_layers_test.py`, `check_upstream_touches.py` pass; `./bin/clang-format-fix` twice, the second changed nothing, no formatting change outside this entry's paths; mutants (Implementation Notes) each red and reverted. Firmware, under the build lock with the shared cache (log `6.6/fw.log` in the scratchpad): `check_flash_budget.py` `build on` (`pio run -e x4pro`, the lobby sources compiled), `build off`, `compare`, `objects` exit 0, `objects` "No problems"; `pio run -e default` SUCCESS; `pio check` default and `-e x4pro` "No defects found" with all three `--fail-on-defect` gates. Size, measured the same way at the baseline `3a36b97a826946c41b4365fe5ed309ec850ed15b` (before any change) and on this tree (incremental, shared cache, build lock, this worktree): baseline games on 6,213,808 B, off 5,955,312 B, +258,496 B; static internal RAM 190,248 B on, 189,464 B off, +784 B. This tree: 6,213,808 B on, 5,955,312 B off, +258,496 B; 190,248 B and 189,464 B, +784 B. This story's own cost: +0 B flash, +0 B static RAM (the new code is unreferenced from firmware). Over the epic base (+258,048 B, +784 B): +448 B flash, +0 B static RAM, all entry 6.1's, so 9,056 B flash and 160 B static RAM of the epic share remain. Size is taken before the commit that carries these edits; the commit changes no `lib` or `test` file after that build.
 
+**Follow-up pass results** (2026-10-12, after the follow-up patches; the commit follows this edit and changes no `lib` or `test` file after these runs): host suite 2,236 of 2,236 (`ctest -j`; baseline 2,164, this story adds 72); `Lobby*` and `FakeLink*` 108 tests, `--gtest_repeat=20`, 20 of 20; ASan/UBSan (outside CMake) 166 of 166; `check_layers.py`, `check_layers_test.py`, `check_upstream_touches.py` pass; `./bin/clang-format-fix` run again, nothing new in `git status`, no formatting change outside this entry's paths; the five mutants of Implementation Notes each red and reverted. Firmware, under the build lock with the shared cache (log `6.6/fw2.log` in the scratchpad): `check_flash_budget.py` `build on`, `build off`, `compare`, `objects` exit 0, `objects` "No problems"; `pio run -e default` SUCCESS; `pio check` default and `-e x4pro` "No defects found" with all three `--fail-on-defect` gates. Size, measured the same way (incremental, shared cache, build lock, this worktree) on this tree and at the baseline `3a36b97a` (6,213,808 B on, 5,955,312 B off, +258,496 B; static internal RAM 190,248 B on, 189,464 B off, +784 B, Implementation Notes): this tree games on 6,213,808 B, off 5,955,312 B, +258,496 B; 190,248 B and 189,464 B, +784 B. This story's own cost: +0 B flash, +0 B static RAM (the lobby is unreferenced from firmware). Over the epic base (+258,048 B, +784 B): +448 B flash, +0 B static RAM, all entry 6.1's.
+
 ## Auto Run Result
 
 **Status `built`** (full route; review `thorough`, four context-free lenses, first pass 2026-10-12). Baseline `3a36b97a826946c41b4365fe5ed309ec850ed15b`, branch `epic-play-nearby-lane-a`; the commit is the branch tip with the subject `feat: add the nearby-play lobby handshake in GameCore`.
@@ -341,3 +409,9 @@ Mutants (each applied alone, host suite run, reverted, red tests recorded): no `
 **Verification.** See the plan's Verification, Results. No simulator screenshots (no screen) and no fresh-clone gate run (no CI gate or workflow change). No formatting-only change outside this entry's paths.
 
 **Residual risks.** Lobby timings (500 ms, 3,000 ms, 1,000 ms, 200 ms) are fake-millisecond values, unmeasured on a radio (R12). A departed guest can hold a seat for up to the silence limit (deferred item 2). A restart on a new address needs the screen to offer the list again. `ReliableLink` heap (about 3 KB plus 260 B per peer slot) is allocated when a lobby opens, from internal heap on the device.
+
+**Follow-up review pass (2026-10-12), final status `built`.** Four context-free lenses (`blind-hunter`, `edge-case-hunter`, `verification-gap`, `intent-alignment`) ran again as subagents over `git diff 3a36b97a..8abb9271` of `lib` and `test`; the findings are triaged in the second Review Triage Log entry. 33 findings: high 0, medium 7, low 20, false 6. Patched (one commit on top of `8abb9271`): the guest that ends the wait on an ACCEPT its own device cannot seat now tells the host with `ABORT(left)` (medium); four missing tests (a stranger's ABORT to a waiting guest, a mid-list host expiry, the lobby's own late-ADVERT end before attach, the refusal ring with interleaved strangers) and one end-to-end test of the ABORT above (each guarded by a mutant that goes red); a stale `ok()` comment; missing test includes. Deferred 4 more (frontmatter `deferred`, seven in all): the host's single latched end with three or more seats, a delayed `ABORT(left)` removing a rejoined guest's seat, the post-Start same-session `ADVERT` rule that a real `HostLobby` never triggers, and a guest's `ctx.api` differing from the host's at three or more seats with mixed levels. Rejected with reasons in the log: the unchecked `minApi` (honest peers cannot reach it), the duplicate `elapsed()` in `ReliableLink.cpp` (outside the entry), the burst of ABORT copies (crossplay does the same), literal test bounds, comments citing the plan, 3-seat coverage, the weaker guest `ok()`, an older-session ADVERT, a stale entry at join, and the descriptive intent-alignment rows. A game id over 32 bytes is cut (BH11) was false.
+
+**Follow-up review recommended: false.** This pass patched no `high`; the one state-logic patch (the ABORT on an out-of-range ACCEPT) is pinned by two tests and a mutant. Patched counts by verdict: medium 4 (VG1, VG2, VG3, EC1), low 3 (VG4, VG other, BH14), plus the carried BH10.
+
+**For the orchestrator.** (1) Two items for the spine's AD-13 "As built" besides the first pass's: a guest whose ACCEPT is out of its range sends `ABORT(left)` before it forgets the host, and the host's `ctx.api` rule at three or more seats with mixed levels needs a level in `ACCEPT` (deferred item, owner decision). (2) Entry 10's screens should not offer Start on a guest they cannot show as live (first-pass item 2, unchanged). (3) This entry's size cost is still +0 B flash and +0 B static RAM like for like; the epic growth over the base is +448 B flash, +0 B static RAM.

@@ -137,10 +137,16 @@ ReliableLink::Verdict GuestLobby::onAccept(const PeerHandle from, const Protocol
     if (!live) link_.forget(from);
     return Verdict::Refused;
   }
-  // An ACCEPT outside what a host of this game can send (decode passes seat 1 and n 1) is the host's fault: the wait is
-  // over, or the guest would sit Joined for a Start that never comes.
+  // An ACCEPT outside what a host of this game can send (decode passes seat 1 and n 1) or outside what this device can
+  // seat (its own caps.maxSeats may be below the host's) ends the wait, or the guest would sit Joined for a Start that
+  // never comes. The host has already started, so it is told this guest is gone (as a cancel does) rather than left to
+  // find out at the silence limit.
   if (accept.n < 2 || accept.n > Roster::MAX_SEATS || accept.seat < 2 || accept.seat > accept.n ||
       accept.n > game_.seatLimit() || accept.n < game_.startSeats()) {
+    Protocol::Frame abort;
+    abort.header.type = Type::Abort;
+    abort.abortReason = AbortReason::Left;
+    for (uint8_t copy = 0; copy < CANCEL_ABORT_COPIES; copy++) link_.send(joined_.handle, abort);
     gone_ = GoneReason::Left;
     state_ = GuestState::HostGone;
     hostEnded();

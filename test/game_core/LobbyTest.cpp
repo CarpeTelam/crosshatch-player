@@ -755,6 +755,7 @@ void expectHostFaultEndsTheWait(GuestRig& g, RawPeer& host) {
   g.run(STEP_MS);
   EXPECT_EQ(g.guest.state(), GuestState::HostGone);
   EXPECT_EQ(g.guest.gone(), GoneReason::Left);
+  EXPECT_EQ(host.countAborts(AbortReason::Left), 3u) << "the host, already started, is told as a cancel tells it";
   const size_t seen = host.seen.size();
   g.run(3000);
   EXPECT_EQ(host.seen.size(), seen) << "the host is forgotten: not acked, no keepalive";
@@ -1314,6 +1315,91 @@ TEST(LobbyTest, EveryLobbySettingChangesTheBehaviourItNames) {
     g.run(STEP_MS);
     EXPECT_EQ(sink.count(Type::Abort), 1u);
   }
+}
+
+// Follow-up review: a waiting guest only hears an ABORT from the host it joined.
+TEST(LobbyTest, AnAbortFromAnotherDeviceDoesNotEndAWaitingGuest) {
+  GuestRig g;
+  RawPeer& host = g.addHost();
+  RawPeer& other = g.addHost();
+  g.joinAndAck(host, HOST_SESSION);
+  // The ReliableLink delivers an ABORT of the lobby's session from any device; the guest ignores all but its host's.
+  ASSERT_TRUE(other.put(abortFrame(AbortReason::Full), HOST_SESSION));
+  ASSERT_TRUE(other.put(abortFrame(AbortReason::Left), HOST_SESSION));
+  ASSERT_TRUE(other.put(abortFrame(AbortReason::VersionMismatch), HOST_SESSION));
+  g.run(STEP_MS);
+  EXPECT_EQ(g.guest.state(), GuestState::Joined);
+  EXPECT_EQ(g.guest.refusal(), Refusal::None);
+  EXPECT_EQ(g.guest.gone(), GoneReason::None);
+  ASSERT_TRUE(host.put(acceptFrame(2, 2), HOST_SESSION, 0, 0));
+  g.run(STEP_MS);
+  EXPECT_EQ(g.guest.state(), GuestState::Started) << "the real host still starts it";
+}
+
+// Follow-up review: an expiry in the middle of the list keeps the survivors in order and hides the expired host.
+TEST(LobbyTest, AMidListExpiryKeepsTheSurvivorsInOrder) {
+  GuestRig g;
+  RawPeer& a = g.addHost();
+  RawPeer& b = g.addHost();
+  RawPeer& c = g.addHost();
+  g.advertise(a, 0xA1);
+  g.run(1000);
+  g.advertise(b, 0xB2);
+  g.advertise(c, 0xC3);
+  ASSERT_EQ(g.guest.hostCount(), 3u);
+  const PeerHandle aHandle = g.guest.host(0).handle;
+  g.run(2100);  // A is 3,100 ms old; B and C are 2,100 ms old
+  ASSERT_EQ(g.guest.hostCount(), 2u);
+  EXPECT_EQ(g.guest.host(0).session, 0xB2u);
+  EXPECT_EQ(g.guest.host(1).session, 0xC3u);
+  EXPECT_EQ(g.guest.join(aHandle, 0xA1), JoinResult::UnknownHost) << "the expired host is not joinable";
+  EXPECT_EQ(g.guest.join(g.guest.host(1).handle, 0xC3), JoinResult::Sent);
+}
+
+// Follow-up review: the lobby's own end of the match (the host advertising again) is latched before the match attaches
+// and replayed on attach, as an ABORT of the lobby's session.
+TEST(LobbyTest, ALateAdvertBeforeAttachEndsTheMatchOnAttach) {
+  GuestRig g;
+  RawPeer& host = g.addHost();
+  g.joinAndAck(host, HOST_SESSION);
+  ASSERT_TRUE(host.put(acceptFrame(2, 2), HOST_SESSION, 0, 0));
+  g.run(STEP_MS);
+  ASSERT_EQ(g.guest.state(), GuestState::Started);
+  g.run(1100);  // past advertGraceMs
+  ASSERT_TRUE(host.broadcast(advertFrameFor(g.game, 1, 2), HOST_SESSION));
+  g.run(STEP_MS);
+  const LobbyEnd end = g.guest.ended();
+  EXPECT_EQ(end.kind, LobbyEnd::Kind::Abort);
+  EXPECT_EQ(end.reason, AbortReason::Left);
+  EXPECT_EQ(end.peer, g.link.handleOf(host.link));
+  RecSink sink(g.rig.clock);
+  g.guest.handOff(sink);
+  ASSERT_EQ(sink.frames.size(), 1u);
+  EXPECT_EQ(sink.frames[0].type, Type::Abort);
+  EXPECT_EQ(sink.frames[0].reason, AbortReason::Left);
+  EXPECT_EQ(sink.frames[0].session, HOST_SESSION);
+  EXPECT_EQ(sink.frames[0].from, g.link.handleOf(host.link));
+}
+
+// Follow-up review: the refusal limiter holds one answer per interval for each of several strangers whose JOIN resends
+// interleave (the ring remembers the four most recent refused peers).
+TEST(LobbyTest, RefusalAnswersAreRateLimitedPerStrangerWhenTheyInterleave) {
+  HostRig h(2);
+  RawPeer& seated = h.addPeer();
+  ASSERT_TRUE(h.join(seated));
+  h.run(STEP_MS);
+  std::deque<RawPeer*> strangers;
+  for (int i = 0; i < 4; i++) strangers.push_back(&h.addPeer());
+  // Four rounds of interleaved JOINs, 40 ms apart, all inside one refusalAnswerMs of the first.
+  for (int round = 0; round < 4; round++) {
+    for (RawPeer* s : strangers) ASSERT_TRUE(h.join(*s));
+    h.run(4 * STEP_MS);
+  }
+  for (RawPeer* s : strangers) EXPECT_EQ(s->countAborts(), 1u) << "one answer each inside the interval";
+  h.run(200);
+  for (RawPeer* s : strangers) ASSERT_TRUE(h.join(*s));
+  h.run(STEP_MS);
+  for (RawPeer* s : strangers) EXPECT_EQ(s->countAborts(), 2u) << "one more each after it";
 }
 
 }  // namespace

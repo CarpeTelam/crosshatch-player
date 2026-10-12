@@ -42,7 +42,7 @@ class HostLobby final : private ReliableLink::Sink {
   HostLobby(const HostLobby&) = delete;
   HostLobby& operator=(const HostLobby&) = delete;
 
-  bool ok() const;  // the link allocated and game.seatLimit() >= 2
+  bool ok() const;  // the link allocated, game.seatLimit() >= 2, and game.startSeats() <= game.seatLimit()
   // link.tick(), then an ADVERT when Waiting and one is due (the first tick, the interval, or a seat change).
   void tick();
   HostState state() const { return state_; }

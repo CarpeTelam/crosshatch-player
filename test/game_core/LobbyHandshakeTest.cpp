@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "LobbySupport.h"
@@ -231,6 +234,41 @@ TEST(LobbyHandshakeTest, ARosterApiIsTheLowestLevel) {
   rig.untrack(&host);
   rig.untrack(&high);
   rig.untrack(&low);
+}
+
+// Follow-up review: a guest whose device seats fewer than the host's Start (its caps.maxSeats is below the host's)
+// leaves with ABORT(left), so the started host's match hears it at once and not at the silence limit.
+TEST(LobbyHandshakeTest, AGuestThatCannotSeatTheStartedMatchTellsTheHost) {
+  Duo d(1, Faults{}, 3);
+  FakeLink gl2(d.rig.net);
+  LobbyGame small = d.guestGame;
+  small.caps.maxSeats = 2;  // seatLimit() 2: it cannot take part in a 3-seat match
+  GuestLobby second(gl2, d.rig.clock, small);
+  d.rig.track(second);
+  const bool ok = d.rig.until(
+      [&] {
+        GuestLobby& g = *d.guest;
+        if (g.state() == GuestState::Browsing && g.hostCount() > 0) g.join(g.host(0).handle, g.host(0).session);
+        if (d.host.seatsTaken() >= 2 && second.state() == GuestState::Browsing && second.hostCount() > 0) {
+          second.join(second.host(0).handle, second.host(0).session);
+        }
+        if (d.host.state() == HostState::Waiting && d.host.seatsTaken() == 3) d.host.start();
+        return d.host.state() == HostState::Started && second.state() == GuestState::HostGone;
+      },
+      15000);
+  ASSERT_TRUE(ok);
+  RecSink sink(d.rig.clock);
+  d.host.handOff(sink);  // an end before attach is latched and replayed
+  d.rig.advance(100);
+  ASSERT_GE(sink.count(Type::Abort), 1u) << "the unsequenced copies each reach the match";
+  for (const RecSink::Rec& r : sink.frames) {
+    EXPECT_EQ(r.type, Type::Abort);
+    EXPECT_EQ(r.reason, AbortReason::Left);
+    EXPECT_EQ(r.from, d.hl.handleOf(gl2));
+  }
+  EXPECT_TRUE(sink.silent.empty()) << "no wait for the silence limit";
+  EXPECT_EQ(d.guest->state(), GuestState::Started) << "the other guest is unaffected";
+  d.rig.untrack(&second);
 }
 
 TEST(LobbyHandshakeTest, TheHostsCancelReachesTheWaitingGuest) {
