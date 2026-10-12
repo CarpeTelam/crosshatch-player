@@ -21,6 +21,16 @@ Roster Roster::pass(const uint8_t seats) {
   return roster;
 }
 
+Roster Roster::nearby(const uint8_t seats, const uint8_t localSeat, const int32_t api) {
+  Roster roster;
+  roster.mode = Mode::Nearby;
+  roster.seats = seats;
+  roster.api = api;
+  const uint8_t counted = seats < MAX_SEATS ? seats : MAX_SEATS;
+  roster.localSeats = localSeat >= 1 && localSeat <= counted ? static_cast<uint16_t>(1u << (localSeat - 1)) : 0;
+  return roster;
+}
+
 uint8_t Roster::firstLocalSeat() const {
   for (uint8_t seat = 1; seat <= seats; ++seat) {
     if (isLocal(seat)) return seat;

@@ -26,6 +26,9 @@ struct Roster {
   static constexpr Roster solo() { return Roster{}; }
   // One device passed between the players: `seats` seats, every one of them local.
   static Roster pass(uint8_t seats);
+  // One seat of `seats` played on this device, the rest over a link (AD-11, Nearby): `localSeat` in 1..seats is the
+  // only local seat; one outside it leaves no seat local. `api` is the lowest level in the roster (AD-13).
+  static Roster nearby(uint8_t seats, uint8_t localSeat, int32_t api);
 
   bool isSeat(const int64_t seat) const { return seat >= 1 && seat <= seats && seat <= MAX_SEATS; }
   bool isLocal(const int64_t seat) const { return isSeat(seat) && (localSeats >> (seat - 1) & 1u) != 0; }

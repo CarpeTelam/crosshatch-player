@@ -667,6 +667,70 @@ TEST(FakeLinkTest, FakeLinkWithDelayAgreesWithTheLinkContractOnceFramesAreDue) {
   expectLinkContract(p.a, p.b, [&p] { p.clock.advance(25); });
 }
 
+TEST(FakeLinkTest, RestartKeepsThePeersHandleForItAndKillsItsOwnOldHandles) {
+  Pair p;
+  const PeerHandle aNamesB = p.a.handleOf(p.b);
+  const PeerHandle bNamesA = p.b.handleOf(p.a);
+  ASSERT_TRUE(p.b.broadcast(frameOf(1)));
+  const Got heard = takeFrom(p.a);
+  ASSERT_TRUE(heard.any);
+  ASSERT_EQ(heard.from, aNamesB);
+  p.a.restart();
+  EXPECT_FALSE(p.a.ended());
+  // The handles a gave before are dead; the ones it gives now differ from them.
+  EXPECT_FALSE(p.a.send(aNamesB, frameOf(2)));
+  EXPECT_EQ(p.net.foreignHandleSends(), 1u);
+  const PeerHandle again = p.a.handleOf(p.b);
+  EXPECT_TRUE(again.valid());
+  EXPECT_NE(again, aNamesB);
+  // The handle b holds for a is the same, and traffic flows both ways.
+  EXPECT_EQ(p.b.handleOf(p.a), bNamesA);
+  ASSERT_TRUE(p.b.send(bNamesA, frameOf(3)));
+  const Got toA = takeFrom(p.a);
+  ASSERT_TRUE(toA.any);
+  EXPECT_EQ(toA.frame, frameOf(3));
+  EXPECT_EQ(toA.from, again);
+  ASSERT_TRUE(p.a.send(again, frameOf(4)));
+  const Got toB = takeFrom(p.b);
+  ASSERT_TRUE(toB.any);
+  EXPECT_EQ(toB.from, bNamesA);
+  EXPECT_EQ(toB.frame, frameOf(4));
+}
+
+TEST(FakeLinkTest, RestartDiscardsWhatWasInFlightToTheLink) {
+  Pair p;
+  Faults f;
+  f.delayMs = 10;
+  p.net.setFaults(f);
+  ASSERT_TRUE(p.b.send(p.b.handleOf(p.a), frameOf(1)));
+  ASSERT_TRUE(p.a.broadcast(frameOf(2)));
+  p.a.restart();
+  p.clock.advance(10);
+  EXPECT_FALSE(takeFrom(p.a).any) << "the device was down while it was in flight";
+  EXPECT_EQ(takeFrom(p.b).frame, frameOf(2)) << "what the link itself sent before is still on its way";
+  // Copies sent after the restart arrive.
+  ASSERT_TRUE(p.b.send(p.b.handleOf(p.a), frameOf(3)));
+  p.clock.advance(10);
+  EXPECT_EQ(takeFrom(p.a).frame, frameOf(3));
+}
+
+TEST(FakeLinkTest, RestartAfterEndAndTwiceIsSafe) {
+  Pair p;
+  p.a.end();
+  p.a.restart();
+  EXPECT_FALSE(p.a.ended());
+  p.a.restart();
+  ASSERT_TRUE(p.a.broadcast(frameOf(1)));
+  EXPECT_EQ(takeFrom(p.b).frame, frameOf(1));
+}
+
+TEST(FakeLinkTest, ARestartedLinkAgreesWithTheLinkContract) {
+  Pair p;
+  p.a.restart();
+  p.b.restart();
+  expectLinkContract(p.a, p.b, [] {});
+}
+
 TEST(FakeLinkTest, ManualClockAdvancesAndSets) {
   ManualClock clock;
   EXPECT_EQ(clock.nowMs(), 0u);
