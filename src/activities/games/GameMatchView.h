@@ -2,6 +2,7 @@
 
 #include <I18n.h>
 #include <MatchLifecycle.h>
+#include <Protocol.h>
 
 #include <cstdint>
 
@@ -10,9 +11,10 @@
 class GfxRenderer;
 
 // The match's own views, built on the render task: the pause menu, the end-of-round menu, and the error view (one
-// option dialog), Result's framed "Tap to pass" banner, and HandOff's "Player N's turn" line with its "I'm ready"
-// button (docs/crosshatch/game-canvas.md). GameMatchActivity owns one, fills an Input at the time FreeInkUI calls it
-// back, and keeps the lifecycle, the loops, and what is on the panel; nothing here reads the VM or changes a state.
+// option dialog) and the player-left view (the same dialog, Back alone), Result's framed "Tap to pass" banner, and
+// HandOff's "Player N's turn" line with its "I'm ready" button (docs/crosshatch/game-canvas.md). GameMatchActivity owns
+// one, fills an Input at the time FreeInkUI calls it back, and keeps the lifecycle, the loops, and what is on the
+// panel; nothing here reads the VM or changes a state.
 class GameMatchView {
  public:
   static constexpr freeink::ui::ActionId ACTION_OPTION = 1;
@@ -29,6 +31,9 @@ class GameMatchView {
     uint8_t focused = 0;     // the focused option (the activity's selected)
     StrId errorHeadline = StrId::STR_GAMES_ERROR;
     const char* errorDetail = "";  // the error view's text, written once before the match enters Error
+    // Why a nearby match ended, for the player-left view (PeerGone): its one reason line is the headline. Written once
+    // before the match enters PeerGone.
+    GameCore::Protocol::AbortReason endReason = GameCore::Protocol::AbortReason::Left;
     // Paused in the Play-again gap: the pause menu says the round is starting (the activity's pauseInGap()).
     bool pauseInGap = false;
     uint8_t passTo = 0;       // the seat the last turn-passing move passed to, for the Result banner
@@ -40,6 +45,10 @@ class GameMatchView {
     // view of `state`.
     bool waiting = false;
   };
+
+  // The player-left view's reason line for `reason`: left (and full), the game's error, silence, or a different
+  // version.
+  static StrId peerGoneLine(GameCore::Protocol::AbortReason reason);
 
   // The choices `state`'s menu offers, in order, as the events they raise: MatchLifecycle::menuFor, except that a
   // nearby follower's end-of-round menu is Leave alone. The one definition the loop (which routes the choice) and the

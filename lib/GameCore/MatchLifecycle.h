@@ -7,15 +7,18 @@ namespace GameCore {
 // AD-21's match states. Starting lasts until the VM has started or the game failed to
 // load; Leaving is terminal. Result and HandOff are a hidden pass match's only: Result
 // shows the seat that just moved its own view until it taps, and HandOff, which shows no
-// seat, waits for the next player to take the device and tap.
-enum class MatchState : uint8_t { Starting, Playing, Paused, Over, Error, Leaving, Result, HandOff };
+// seat, waits for the next player to take the device and tap. PeerGone is a nearby match's
+// only: the other device left, went silent, or stopped with an error, and the view says
+// so with one control, Back.
+enum class MatchState : uint8_t { Starting, Playing, Paused, Over, Error, Leaving, Result, HandOff, PeerGone };
 
 // What can happen to a match. Back and Home are the Back button or gesture and the
 // Home key or gesture; Resume, Leave, and PlayAgain are menu choices; RoundOver
 // means the status the game shipped is over; ScriptError covers a load or start
 // failure, a ScriptError, and a stuck script (AD-14); ForcedExit is onExit() without
 // a user exit (sleep, or any Replace); TurnChanged means an accepted move changed the
-// turn seat; Tap is a tap on the Result banner or the hand-off screen.
+// turn seat; Tap is a tap on the Result banner or the hand-off screen; PeerGone means a
+// nearby match's link ended (the match's loop read the reason).
 enum class MatchEvent : uint8_t {
   Started,
   Back,
@@ -27,7 +30,8 @@ enum class MatchEvent : uint8_t {
   ScriptError,
   ForcedExit,
   TurnChanged,
-  Tap
+  Tap,
+  PeerGone
 };
 
 // The choices a state's menu offers, in order, as the events they raise.
@@ -43,7 +47,9 @@ struct MatchMenu {
 //   Playing --Back or Home--> Paused     Paused --Leave--> Leaving
 //   Playing --RoundOver--> Over          Over --PlayAgain--> Playing
 //   Over --Leave--> Leaving              Error --Back--> Leaving
-//   every state but Error and Leaving --ScriptError--> Error
+//   every state but Error, PeerGone, and Leaving --ScriptError--> Error
+//   every state but Error, PeerGone, and Leaving --PeerGone--> PeerGone
+//   PeerGone --Back--> Leaving
 //   every state but Leaving --ForcedExit--> Leaving
 //
 // A hidden pass match's machine is the solo one with these changes and additions:
@@ -56,6 +62,10 @@ struct MatchMenu {
 // A move that ends the round raises RoundOver from Playing, never TurnChanged: RoundOver
 // is not a transition from Result or HandOff (AD-21 has no Result to Over), so a winning
 // move reported as a turn change would lose the round's end.
+//
+// PeerGone is both machines' (a nearby match runs the solo one): Error keeps its own view,
+// since the device that stopped with an error has told its peer already, and PeerGone is
+// entered once, so the first end wins.
 //
 // Every other event is not a transition and leaves the state as it is: Back and
 // Home never leave a match directly, Back in the pause menu closes it, and the solo
@@ -86,7 +96,7 @@ class MatchLifecycle {
   static MatchState next(MatchState from, MatchEvent event, bool hiddenPass = false,
                          MatchState resumesTo = MatchState::Playing);
   // The pause menu (Resume, Leave), the end-of-round menu (PlayAgain, Leave), and
-  // the error view's one control (Back); empty for the other states.
+  // the error view's and the player-left view's one control (Back); empty for the other states.
   static MatchMenu menuFor(MatchState state);
   static const char* name(MatchState state);
   static const char* name(MatchEvent event);

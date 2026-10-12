@@ -11,14 +11,14 @@ namespace {
 
 constexpr MatchState ALL_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Paused,
                                      MatchState::Over,     MatchState::Error,   MatchState::Leaving,
-                                     MatchState::Result,   MatchState::HandOff};
+                                     MatchState::Result,   MatchState::HandOff, MatchState::PeerGone};
 constexpr MatchEvent ALL_EVENTS[] = {MatchEvent::Started,     MatchEvent::Back,        MatchEvent::Home,
                                      MatchEvent::Resume,      MatchEvent::Leave,       MatchEvent::RoundOver,
                                      MatchEvent::PlayAgain,   MatchEvent::ScriptError, MatchEvent::ForcedExit,
-                                     MatchEvent::TurnChanged, MatchEvent::Tap};
+                                     MatchEvent::TurnChanged, MatchEvent::Tap,         MatchEvent::PeerGone};
 // The states the solo machine has; Result and HandOff are the hidden pass machine's only.
-constexpr MatchState SOLO_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Paused,
-                                      MatchState::Over,     MatchState::Error,   MatchState::Leaving};
+constexpr MatchState SOLO_STATES[] = {MatchState::Starting, MatchState::Playing, MatchState::Paused,  MatchState::Over,
+                                      MatchState::Error,    MatchState::Leaving, MatchState::PeerGone};
 
 struct Transition {
   MatchState from;
@@ -50,6 +50,15 @@ const std::vector<Transition>& transitions() {
       {MatchState::Error, MatchEvent::ForcedExit, MatchState::Leaving},
       {MatchState::Result, MatchEvent::ForcedExit, MatchState::Leaving},
       {MatchState::HandOff, MatchEvent::ForcedExit, MatchState::Leaving},
+      // PeerGone: from every state but Error, PeerGone, and Leaving; out by Back or ForcedExit.
+      {MatchState::Starting, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Playing, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Paused, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Over, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Result, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::HandOff, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::PeerGone, MatchEvent::Back, MatchState::Leaving},
+      {MatchState::PeerGone, MatchEvent::ForcedExit, MatchState::Leaving},
   };
   return table;
 }
@@ -89,6 +98,14 @@ const std::vector<Transition>& hiddenTransitions() {
       {MatchState::HandOff, MatchEvent::Tap, MatchState::Playing},
       {MatchState::HandOff, MatchEvent::ScriptError, MatchState::Error},
       {MatchState::HandOff, MatchEvent::ForcedExit, MatchState::Leaving},
+      {MatchState::Starting, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Playing, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Paused, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Over, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::Result, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::HandOff, MatchEvent::PeerGone, MatchState::PeerGone},
+      {MatchState::PeerGone, MatchEvent::Back, MatchState::Leaving},
+      {MatchState::PeerGone, MatchEvent::ForcedExit, MatchState::Leaving},
   };
   return table;
 }
@@ -135,6 +152,9 @@ MatchLifecycle reachHidden(const MatchState state) {
     case MatchState::HandOff:
       lifecycle.apply(MatchEvent::Started);
       break;
+    case MatchState::PeerGone:
+      lifecycle.apply(MatchEvent::PeerGone);
+      break;
   }
   EXPECT_EQ(lifecycle.state(), state);
   return lifecycle;
@@ -162,6 +182,9 @@ MatchLifecycle reach(const MatchState state) {
       break;
     case MatchState::Leaving:
       lifecycle.apply(MatchEvent::ForcedExit);
+      break;
+    case MatchState::PeerGone:
+      lifecycle.apply(MatchEvent::PeerGone);
       break;
     case MatchState::Result:
     case MatchState::HandOff:
@@ -199,7 +222,7 @@ TEST(MatchLifecycleTest, EveryStateAndEventFollowsTheTable) {
 
 TEST(MatchLifecycleTest, BackAndHomeNeverLeaveDirectly) {
   for (const MatchState from : ALL_STATES) {
-    if (from == MatchState::Error || from == MatchState::Leaving) continue;
+    if (from == MatchState::Error || from == MatchState::PeerGone || from == MatchState::Leaving) continue;
     EXPECT_NE(MatchLifecycle::next(from, MatchEvent::Back), MatchState::Leaving) << MatchLifecycle::name(from);
     EXPECT_NE(MatchLifecycle::next(from, MatchEvent::Home), MatchState::Leaving) << MatchLifecycle::name(from);
   }
@@ -240,6 +263,7 @@ TEST(MatchLifecycleTest, MenusOfferTheirTransitions) {
   expectMenu(MatchState::Paused, {MatchEvent::Resume, MatchEvent::Leave});
   expectMenu(MatchState::Over, {MatchEvent::PlayAgain, MatchEvent::Leave});
   expectMenu(MatchState::Error, {MatchEvent::Back});
+  expectMenu(MatchState::PeerGone, {MatchEvent::Back});
   expectMenu(MatchState::Starting, {});
   expectMenu(MatchState::Playing, {});
   expectMenu(MatchState::Leaving, {});
@@ -447,4 +471,57 @@ TEST(MatchLifecycleTest, NamesTheNewStatesAndEvents) {
   EXPECT_STREQ(MatchLifecycle::name(MatchState::HandOff), "HandOff");
   EXPECT_STREQ(MatchLifecycle::name(MatchEvent::TurnChanged), "TurnChanged");
   EXPECT_STREQ(MatchLifecycle::name(MatchEvent::Tap), "Tap");
+}
+
+// ---- PeerGone (a nearby match's ending) ----
+
+TEST(MatchLifecycleTest, PeerGoneComesFromEveryStateButErrorPeerGoneAndLeaving) {
+  for (const bool hidden : {false, true}) {
+    for (const MatchState from : ALL_STATES) {
+      const bool ends = from == MatchState::Error || from == MatchState::PeerGone || from == MatchState::Leaving;
+      EXPECT_EQ(MatchLifecycle::next(from, MatchEvent::PeerGone, hidden), ends ? from : MatchState::PeerGone)
+          << MatchLifecycle::name(from) << (hidden ? " hidden" : " solo");
+    }
+  }
+  for (const MatchState from : {MatchState::Starting, MatchState::Playing, MatchState::Paused, MatchState::Over}) {
+    MatchLifecycle lifecycle = reach(from);
+    EXPECT_TRUE(lifecycle.allows(MatchEvent::PeerGone)) << MatchLifecycle::name(from);
+    EXPECT_TRUE(lifecycle.apply(MatchEvent::PeerGone)) << MatchLifecycle::name(from);
+    EXPECT_EQ(lifecycle.state(), MatchState::PeerGone);
+  }
+  for (const MatchState from : {MatchState::Result, MatchState::HandOff}) {
+    MatchLifecycle lifecycle = reachHidden(from);
+    EXPECT_TRUE(lifecycle.apply(MatchEvent::PeerGone)) << MatchLifecycle::name(from);
+    EXPECT_EQ(lifecycle.state(), MatchState::PeerGone);
+  }
+}
+
+TEST(MatchLifecycleTest, PeerGoneIsNotTakenFromErrorPeerGoneOrLeaving) {
+  for (const MatchState from : {MatchState::Error, MatchState::PeerGone, MatchState::Leaving}) {
+    MatchLifecycle lifecycle = reach(from);
+    EXPECT_FALSE(lifecycle.allows(MatchEvent::PeerGone)) << MatchLifecycle::name(from);
+    EXPECT_FALSE(lifecycle.apply(MatchEvent::PeerGone)) << MatchLifecycle::name(from);
+    EXPECT_EQ(lifecycle.state(), from);
+  }
+}
+
+TEST(MatchLifecycleTest, PeerGoneLeavesOnlyByBackOrForcedExit) {
+  for (const MatchEvent event : ALL_EVENTS) {
+    const bool leaves = event == MatchEvent::Back || event == MatchEvent::ForcedExit;
+    MatchLifecycle lifecycle = reach(MatchState::PeerGone);
+    EXPECT_EQ(lifecycle.apply(event), leaves) << MatchLifecycle::name(event);
+    EXPECT_EQ(lifecycle.state(), leaves ? MatchState::Leaving : MatchState::PeerGone) << MatchLifecycle::name(event);
+  }
+}
+
+TEST(MatchLifecycleTest, ASecondPeerGoneKeepsTheFirst) {
+  MatchLifecycle lifecycle = reach(MatchState::Playing);
+  ASSERT_TRUE(lifecycle.apply(MatchEvent::PeerGone));
+  EXPECT_FALSE(lifecycle.apply(MatchEvent::PeerGone));
+  EXPECT_EQ(lifecycle.state(), MatchState::PeerGone);
+}
+
+TEST(MatchLifecycleTest, PeerGoneIsNamed) {
+  EXPECT_STREQ(MatchLifecycle::name(MatchState::PeerGone), "PeerGone");
+  EXPECT_STREQ(MatchLifecycle::name(MatchEvent::PeerGone), "PeerGone");
 }

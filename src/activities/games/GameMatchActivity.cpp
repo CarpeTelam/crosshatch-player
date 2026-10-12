@@ -18,6 +18,7 @@
 #include "components/UiAppHelpers.h"
 #include "games/GameAssets.h"
 #include "games/GameHostCaps.h"
+#include "games/GameLinkLog.h"
 #include "games/GameRegistry.h"
 #ifdef CROSSHATCH_TOUCH_LOG
 #include "games/GameTouchLog.h"
@@ -239,6 +240,11 @@ void GameMatchActivity::onEnter() {
 
 void GameMatchActivity::onExit() {
   persistence.beginForcedExit();
+  // A nearby match's forced exit tells the peer at once (AD-20): three ABORT(left), no wait, before anything that could
+  // delay it (the VM's stop, the SD steps). Not an SD step, no RenderLock, three sends under the session's short lock.
+  // A match that left on its own (Leaving: a user Leave said goodbye, even when goToGames() failed to take the screen)
+  // has said it already.
+  if (nearby && lifecycle.state() != MatchState::Leaving) nearby->leave(GameCore::Protocol::AbortReason::Left, 0);
   Activity::onExit();
   // ActivityManager holds RenderLock here: never take it again (12cc816). The VM
   // never takes it, so waiting for it cannot deadlock, and render cannot be reading
@@ -305,9 +311,11 @@ void GameMatchActivity::handle(const MatchEvent event) {
   if (from == MatchState::HandOff && event == MatchEvent::Tap) gate.awaitSeat(vm->showTurnSeat());
   resumesTo.store(lifecycle.resumesTo());
   shown.store(to);
+  // Leaving makes no call: the forced exit's last write still sees the writability of the state it left, and a user
+  // Leave writes nothing more.
+  if (to != MatchState::Leaving) persistence.setWritable(MatchPersistence::writableIn(to));
   switch (to) {
     case MatchState::Playing:
-      persistence.setWritable(true);
       if (event == MatchEvent::PlayAgain) startNextRound();
       // A new round's first frame asks for its own render, as does the next seat's after the hand-off; a resumed one
       // is redrawn, unless it resumes into the Play-again gap, where renderCanvas keeps the view on screen until the
@@ -316,30 +324,31 @@ void GameMatchActivity::handle(const MatchEvent event) {
       if (!needsRenderAskOnEnteringPlay(event)) return;
       break;
     case MatchState::Result:
-      persistence.setWritable(true);
       break;
     case MatchState::HandOff:
-      persistence.setWritable(true);
       if (event == MatchEvent::PlayAgain) startNextRound();
       break;
     case MatchState::Over:
-      persistence.setWritable(false);
       flushStore();
       // A finished round never resumes (MatchPersistence::onOver).
       persistence.onOver();
       break;
     case MatchState::Leaving:
       // onExit() stops and flushes itself after a forced exit.
-      if (event != MatchEvent::ForcedExit) leave();
+      // From PeerGone or Error the peer is already gone or told: three ABORT(left) at once, no wait for its acks.
+      if (event != MatchEvent::ForcedExit) {
+        leave(from == MatchState::PeerGone || from == MatchState::Error ? 0 : LEAVE_FLUSH_MS);
+      }
       return;
     case MatchState::Paused:
-      persistence.setWritable(true);
       // A pause menu opened in the Play-again gap says so (pauseInGap; resumesTo was stored above). loopView redraws
       // it once the round starts.
       gapWhenPaused = pauseInGap();
       break;
     case MatchState::Error:
-      persistence.setWritable(false);
+      break;
+    case MatchState::PeerGone:
+      LOG_INF("GAME", "%s: the other player is gone: %s", manifest.id, GameLinkLog::abortReasonName(endReason));
       break;
     case MatchState::Starting:
       break;
@@ -373,13 +382,24 @@ void GameMatchActivity::fail(const StrId headline, const char* detail) {
   errorHeadline = headline;
   snprintf(errorDetail, sizeof(errorDetail), "%s", detail);
   LOG_ERR("GAME", "%s stopped: %s", manifest.id, errorDetail);
+  // AD-14: a peer is told the session is over, at once (three ABORT(script_error), no flush). Only the first failure
+  // gets here (the guard above), and before beginMatch() this sends nothing.
+  if (nearby) nearby->leave(GameCore::Protocol::AbortReason::ScriptError, 0);
   handle(MatchEvent::ScriptError);
 }
 
-void GameMatchActivity::leave() {
+void GameMatchActivity::leave(const uint32_t flushMs) {
+  // The goodbye first (AD-20): wait up to `flushMs` for what the link task has staged or sent to be acked, then three
+  // ABORT(left). Before the lock, because the wait is up to 800 ms and the render task must not be held for it. This
+  // task wakes nobody meanwhile, so a shipment the VM has not yet staged is not waited for.
+  if (nearby) nearby->leave(GameCore::Protocol::AbortReason::Left, flushMs);
   {
     RenderLock lock(*this);
     stopVm();
+    // The radio goes down before Games is built, so its activity gets the heap back (goToGames() constructs it at
+    // once). The lock keeps the render task out, which followsHost() reads `nearby` in. An abandoned VM keeps the
+    // session, which the destructor releases unfreed.
+    if (!slotLeaked) nearby.reset();
     // A hidden pass match's Leave from a pause menu over a seat's frame blanks the panel before Games draws: if
     // goToGames() runs out of memory, this match stays current with no VM, and the frame would stay on the panel.
     if (lifecycle.hiddenPass() && panel == Panel::Seat) pushBlank("leave");
@@ -493,6 +513,21 @@ void GameMatchActivity::loop() {
     int heldY = 0;
     if (!mappedInput.isScreenTouchHeld(heldX, heldY)) contact.free();
   }
+  // A nearby match's end (the peer left, went silent, or stopped with an error) is read here and only here, so it waits
+  // behind an open overlay, which stops the loop (R5, AD-20). Read once, the first reason wins; `allows` comes first so
+  // the reason stays latched, unread, in Error, PeerGone, and Leaving.
+  // A round end the VM has already counted but the loop has not entered is entered first (Playing only): loopPlaying
+  // enters Over, which delivers the over event and flushes the store (R4), and the next pass reads the end. In Paused a
+  // pending round end must not hold the end back.
+  const bool roundEndPending = current == MatchState::Playing && vm && vm->roundsEnded() != roundsSeen;
+  if (nearby && !roundEndPending && lifecycle.allows(MatchEvent::PeerGone)) {
+    GameCore::Protocol::AbortReason reason;
+    if (nearby->takeEnd(reason)) {
+      endReason = reason;
+      handle(MatchEvent::PeerGone);
+      return;
+    }
+  }
   switch (current) {
     case MatchState::Playing:
       loopPlaying();
@@ -500,6 +535,7 @@ void GameMatchActivity::loop() {
     case MatchState::Paused:
     case MatchState::Over:
     case MatchState::Error:
+    case MatchState::PeerGone:
       loopView();
       return;
     case MatchState::Result:
@@ -613,8 +649,9 @@ void GameMatchActivity::loopPlaying() {
 void GameMatchActivity::loopView() {
   const MatchState state = lifecycle.state();
   // Paused and Over keep the VM, which may still fail, hang, or set ch.store in a
-  // call that was running when the view opened; neither posts input or timers.
-  if (state != MatchState::Error) {
+  // call that was running when the view opened; neither posts input or timers. The error and player-left views poll
+  // nothing: Back stops the VM.
+  if (state != MatchState::Error && state != MatchState::PeerGone) {
     if (!vmHealthy()) return;
     vm->pollNearby();
     store.flushIfDue(millis());
@@ -627,7 +664,7 @@ void GameMatchActivity::loopView() {
       return;
     }
   }
-  // Back resumes from the pause menu, leaves from the error view, and does
+  // Back resumes from the pause menu, leaves from the error and player-left views, and does
   // nothing in the end-of-round menu (MatchLifecycle).
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     handle(MatchEvent::Back);
@@ -645,9 +682,9 @@ void GameMatchActivity::loopView() {
     return;
   }
   if (route.routed && app.invalidated()) requestUpdate();
-  // The error view's one control is Back, above. A follower's end-of-round menu has one control too, Leave, which
-  // Confirm chooses.
-  if (state == MatchState::Error || menu.count == 0) return;
+  // The error and player-left views' one control is Back, above. A follower's end-of-round menu has one control too,
+  // Leave, which Confirm chooses.
+  if (state == MatchState::Error || state == MatchState::PeerGone || menu.count == 0) return;
   const uint8_t current = selected.load();
   if (mappedInput.wasPressed(MappedInputManager::Button::NavPrevious)) {
     selected.store(static_cast<uint8_t>((current + menu.count - 1) % menu.count));
@@ -775,6 +812,7 @@ void GameMatchActivity::render(RenderLock&&) {
     case MatchState::Paused:
     case MatchState::Over:
     case MatchState::Error:
+    case MatchState::PeerGone:
     case MatchState::Result:
       renderView(state);
       return;
@@ -862,8 +900,8 @@ void GameMatchActivity::renderWaiting() {
 }
 
 bool GameMatchActivity::canvasUnderView(const MatchState state) const {
-  // The error view stands alone.
-  if (state == MatchState::Error || !vm) return false;
+  // The error and player-left views stand alone.
+  if (state == MatchState::Error || state == MatchState::PeerGone || !vm) return false;
   // Paused from the hand-off: the device is between players, and no seat's frame may show.
   if (state == MatchState::Paused && resumesTo.load() == MatchState::HandOff) return false;
   // In the Play-again gap (every mode) every frame is the last round's: a pause menu opened there sits on a cleared
@@ -925,18 +963,19 @@ void GameMatchActivity::renderView(const MatchState state) {
   // table just published is the old view's and must not route taps.
   if (shown.load() != state) closeRouting();
   viewOnScreen = true;
-  const bool menu = state != MatchState::Error && state != MatchState::Result;
+  const bool standsAlone = state == MatchState::Error || state == MatchState::PeerGone;
+  const bool menu = !standsAlone && state != MatchState::Result;
   // The Result banner has no button hints: its whole screen is the tap, and Confirm does the same.
   if (state != MatchState::Result) {
     const char* back = "";  // Back does nothing in the end-of-round menu
     if (state == MatchState::Paused) back = tr(STR_GAMES_RESUME);
-    if (state == MatchState::Error) back = tr(STR_BACK);
+    if (standsAlone) back = tr(STR_BACK);
     const auto labels = mappedInput.mapLabels(back, menu ? tr(STR_SELECT) : "", menu ? tr(STR_DIR_UP) : "",
                                               menu ? tr(STR_DIR_DOWN) : "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
   const auto pushBegan = static_cast<uint32_t>(millis());
-  renderer.displayBuffer(state == MatchState::Error ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
+  renderer.displayBuffer(standsAlone ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);
   LOG_INF("GAME", "%s: %s screen pushed in %u ms", manifest.id, MatchLifecycle::name(state),
           static_cast<unsigned>(millis()) - pushBegan);
   // Seat 0's frame under the Over menu is everyone's, so only a view over another seat's frame counts as one.
@@ -952,6 +991,8 @@ void GameMatchActivity::viewScreen(UiScreen& screen, void* user) {
   input.focused = self->selected.load();
   input.errorHeadline = self->errorHeadline;
   input.errorDetail = self->errorDetail;
+  // Written by loop() before handle(PeerGone); the render task sees shown == PeerGone first.
+  if (input.state == MatchState::PeerGone) input.endReason = self->endReason;
   input.pauseInGap = input.state == MatchState::Paused && self->pauseInGap();
   input.passTo = self->passTo.load();
   input.handOffSeat = self->handOffSeat;
