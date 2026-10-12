@@ -165,7 +165,7 @@ hitl = false
 risk = "high"
 unknown = "Where the VM adopts a peer `STATE` between `MatchRounds` calls without a second round driver; `## e5-xr`'s `renderedFrame` item rides this entry only if it changes `renderCanvas`."
 references = ["ARCHITECTURE-SPINE.md, AD-8, AD-9, AD-17, AD-20, AD-21", "lib/GameScript/MatchRounds.{h,cpp}", "src/games/GameVM.cpp (run, rounds)", "src/activities/games/GameMatchActivity.cpp (constructor, handle, loopView)", "_bmad-output/implementation-artifacts/deferred-work.md, `## e5-xr` (renderedFrame)", "test/game_script/fixtures/pass-open/"]
-touches = ["lib/GameScript/**", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/games/MatchStore.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)"]
+touches = ["lib/GameScript/**", "src/games/GameVM.*", "src/games/MatchPersistence.*", "src/games/MatchStore.*", "src/activities/games/GameMatchActivity.*", "src/activities/games/GameMatchView.*", "test/game_script/**", "lib/I18n/translations/english.yaml (STR_GAMES_* only)", "test/game_core/ManifestTest.cpp (EveryFixtureManifestIsListed's mode check only, for the `nearby` fixture; orchestrator, 2026-10-12)"]
 stays_out = ["lib/GameCore/** (a GameCore change returns to entry 7's scope; stop)", "src/games/EspNowLink.*", "src/activities/games/GameModeActivity.*", "games/**", "every other upstream file", "test/game_script/first_party/** (entry 12's)"]
 [[entry]]
 id = 15
