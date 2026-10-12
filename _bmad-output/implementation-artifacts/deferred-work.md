@@ -1425,3 +1425,21 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-esp-now-link-adapter-and-the-nearby-precondition-probe-plan.md`
   summary: The FrameRing's acquire/release ordering is not pinned by any host test, because the two-thread stress test passes on a strongly ordered host even with the orders weakened.
   evidence: Changing the tail and head stores to relaxed would pass FrameRingTest on x86; the ESP32-S3 is dual-core and weakly ordered, so a consumer could read a slot before its payload copy is visible. A ThreadSanitizer run of FrameRingTest (a repo-wide host-test choice) would catch it; until then the orderings are documented in the code and entry 11's device run is the check. Location: src/games/FrameRing.h push and pop; test/game_script/harness/FrameRingTest.cpp TwoThreadStressNeverTearsOrReordersAFrame. Severity: low.
+
+## 6.8
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
+  summary: With three or more seats one permanently refusing peer would hold the staged shipment (shipStep waits for every peer).
+  evidence: v1 has two seats, where a lost peer ends the match through the end slot; relaying STATE between guests is deferred in the spine, so the case is unreachable now. Location: src/games/NearbySession.cpp shipStep. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
+  summary: The IClock and IRandom handed to a NearbySession must outlive a leaked task, not only the session.
+  evidence: The destructor leaks Core when the task will not stop; the task keeps reading the clock. The header says the caller keeps them alive for the session's life; entry 9, which owns the session, should keep them process-long (GameClock is stateless). Location: src/games/NearbySession.h (Lifetime). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
+  summary: Entry 10's lobby must call HostLobby/GuestLobby::cancel() before it destroys a NearbySession with players seated; the destructor sends no goodbye.
+  evidence: Teardown ends the link only; seated peers would learn by silence (10 s). leave() sends nothing before beginMatch by design. Location: src/games/NearbySession.h (Lifetime). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
+  summary: GameLink's priority and core are asserted as constants, but the FakeRtos double drops both, so no host test observes them on the created task.
+  evidence: FakeRtos.h xTaskCreatePinnedToCore ignores priority and core; entry 11's smoke run on two devices is what can show them (and the 4 KB stack headroom). Location: test/game_script/harness/GameLinkTest.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
+  summary: game_nearby_src (GameLink.cpp, NearbySession.cpp) links game_match_src, so entry 9 moving NearbySession into the match must move the two sources into the match library and drop them from nearby_session.sources.cmake's exclusion.
+  evidence: The match library is built from the same glob less HARNESS_EXCLUDE_GAMES, which now lists the two files; a dependency running both ways between the libraries would not link. Location: test/game_script/harness/nearby_session.sources.cmake. Severity: low.
