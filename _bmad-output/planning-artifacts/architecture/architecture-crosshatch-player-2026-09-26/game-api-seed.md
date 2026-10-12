@@ -89,7 +89,7 @@ return game
 - **`status` must depend only on `state`.** No clocks, no random numbers. It decides whose turn it is and when the round is over.
 - **`ui` is for this player's screen only.** A selected cell, a cursor, an open menu: put these in `ui`. You can change it anywhere, and it is never sent or saved. In pass-and-play each player gets their own `ui`, so one player's selection never shows on the other's turn. Each `ui` table lasts for the match: Play again keeps it, and a resumed match starts with empty ones.
 - **A move is a small table** describing what a player did, such as `{cell = 5}`. `input` turns a tap into a move; `apply` checks it and applies it. Return `nil, "reason"` from `apply` to reject an illegal move.
-- **`setup` and `apply` run on one device only** (the host in Play Nearby). Other devices receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you.
+- **`setup` and `apply` run on one device only** (the host in Play Nearby). Other devices receive the new `state` automatically, so `math.random` is safe in `setup` and `apply`. The runtime seeds it for you. (Amended 2026-10-12, owner: in Play Nearby, `setup` runs on the host and each `apply` on the device of the player who moved, as in pass-and-play; the other device receives the new `state`, so `math.random` stays safe. Spine AD-13.)
 - **Seats are numbers from 1.** Seat 1 is the host in Play Nearby. The one exception is seat `0` ("everyone"), which `draw` and `input` receive in pass-and-play once the round is over. The runtime passes moves to `apply` only from the seat that `status` names.
 - **A computer opponent**, if your game has one, plays inside `apply`: apply the human's move, then compute and apply the computer's move before returning.
 
@@ -178,7 +178,7 @@ A table that survives restarts, one per game on each device. Use it for things l
 | `ch.store.get()` | Returns the saved table, or an empty table. |
 | `ch.store.set(t)` | Saves `t`. The section 4 limits apply and are checked when you call it. The device writes the data to the SD card shortly after. |
 
-Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`.
+Each device has its own `ch.store`. `ch.store` calls made in `apply` run only on the host, so record per-device results when `input` receives `{kind = "over"}`. (Amended 2026-10-12, owner: in Play Nearby they run on the device of the player who moved; recording results at `over` stays the way to give each device its own.)
 
 **What is saved.** `ch.store` data survives reinstalling or updating the game. Unfinished rounds are separate: in `solo` and `pass` modes the runtime saves after every move and offers **Continue** on the game's title screen, so you don't need to save them yourself. An unfinished round is not offered once any file in the package changes, and a new round replaces it.
 
