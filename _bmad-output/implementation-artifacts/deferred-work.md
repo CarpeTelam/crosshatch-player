@@ -1443,3 +1443,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-gamelink-task-and-nearbysession-over-the-link-interface-plan.md`
   summary: game_nearby_src (GameLink.cpp, NearbySession.cpp) links game_match_src, so entry 9 moving NearbySession into the match must move the two sources into the match library and drop them from nearby_session.sources.cmake's exclusion.
   evidence: The match library is built from the same glob less HARNESS_EXCLUDE_GAMES, which now lists the two files; a dependency running both ways between the libraries would not link. Location: test/game_script/harness/nearby_session.sources.cmake. Severity: low.
+
+## 6.9
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-a-nearby-round-in-gamematchactivity-plan.md`
+  summary: No test abandons a stuck VM in a nearby match, so the destructor's unfreed release of the NearbySession (beside store.leak()) is unpinned.
+  evidence: GameMatchTest's abandon tests are solo matches; deleting the release line leaves every host test green while a leaked VM task would call adoptNext and ship on a freed session. Closing it means extending the stuck-VM rig (SPIN_GAME) to take a NearbySession. Location: src/activities/games/GameMatchActivity.cpp (~GameMatchActivity). Severity: low.
