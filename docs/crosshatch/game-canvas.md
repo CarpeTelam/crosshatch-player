@@ -138,13 +138,18 @@ Fixing it needs files outside the ledger (`FrontlightPanelActivity`, or `Activit
 is deferred (`deferred-work.md`, 3.7).
 
 Owner decision (R10, e6pre-3, 2026-10-04), option (b): the supervision above stays paused under an overlay in solo and
-pass matches, and the nearby link does not depend on it for pumping or detection (the match's reaction to a lost peer still waits for `loop()`, below). What pauses under an overlay: the watchdog, the timer poll, and the
-store flush. What must not pause: the ESP-NOW link pump (draining the receive ring, `ReliableLink` resends and acks) and
-the peer-silence detection (a peer silent for 10 s). Both run on the `GameLink` task (spine AD-18; detection on that task is new to the spine), not in
-`GameMatchActivity::loop()`, so an open overlay cannot stall them; no `ActivityManager` change and no ledger row. The
-constraint on that task: it never takes `RenderLock` and never touches activity state (no `ActivityManager` call, no
-view or match-state write); it reports a lost peer to the match through the session's queue, and the match acts on it
-in its next `loop()`, that is when the overlay closes, so the move to `PeerGone` waits for the overlay while the link and the detection do not. The queue is depth-bounded, so epic-play-nearby states its overflow policy for a long overlay (a lost-peer event is never dropped). The link is not built yet (epic-play-nearby).
+pass matches, and the nearby link does not depend on it for pumping or detection. What pauses under an overlay: the
+watchdog, the timer poll, and the store flush. What must not pause: the link pump (draining the link, `ReliableLink`
+resends and acks) and the peer-silence detection (a peer silent for 10 s), both on the `GameLink` task (spine AD-18;
+detection on that task is new to the spine), not in `GameMatchActivity::loop()`, so an open overlay cannot stall them;
+no `ActivityManager` change and no ledger row. The constraint on that task: it never takes `RenderLock`, never touches
+activity state (no `ActivityManager` call, no view or match-state write), and calls nothing in the match. It hands the
+match two things. The peer's `STATE`s go into the four-entry `StateQueue`: a newer `STATE` replaces the newest queued
+one unless that one ends a round, and a `STATE` that finds the queue full is left unacked, so the peer resends it after
+the resend interval and nothing is lost, each overflow counted. A lost peer or a received `ABORT` sets the `EndSlot`,
+which keeps the first reason until the match's `loop()` reads it once. The move to `PeerGone` and the adoption of queued
+`STATE`s wait for `loop()` and the VM, that is until the overlay closes, while the link and the detection do not.
+`GameCore` builds the policy (entry 7); the `GameLink` task and the PSRAM storage are entry 8's.
 
 ### Leaving
 
