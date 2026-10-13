@@ -8,8 +8,8 @@ Needed: two X4 Pros, one computer with two USB ports, and about an hour. Sticky 
 
 - **One build on both devices.** The orchestrator builds it from the merged epic head with the touch log on, under the build lock:
   `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro` (the recipe is `docs/crosshatch/game-canvas.md`, "The canvas exception").
-  - Firmware commit: `<the orchestrator fills this in>`
-  - File: `<name>.bin`, `<size>` B, SHA-256 `<the orchestrator fills this in>`.
+  - Firmware commit: `b9f5aceefbe93a1caff2e84e61694f581bc03f5e` (the epic branch after entry 11's wiring merged), built 2026-10-13 in the main checkout under the build lock with `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro`; `scripts/check_flash_budget.py touch-line` on its ELF reports the per-tap line present, so the define took.
+  - File: `crosshatch-x4pro-b9f5acee-touchlog.bin`, 6,256,480 B, SHA-256 `a3c0083064e9b557c860d155599b215a613711bdd2fddb44a188a313e3acba00`.
   - **Check the SHA-256 on the computer before flashing (`sha256sum <name>.bin`), and flash only a file that matches, the same file on both devices.** A level-1 surface mismatch ends a match (AD-13), and a different build of the lobby would not join.
 - Flash with CrossPoint Reader Flash Tools, or upload the `.bin` with the device's Wi-Fi file transfer and use Settings' firmware update from the SD card. Close the file transfer afterwards: the lobby refuses to open while Wi-Fi is up ("Wi-Fi is in use. Close it and try again."). If the refusal shows after you closed it, record it as a finding (what you closed, and how) and restart the reader to carry on.
 - The x4pro build logs at `LOG_LEVEL=2`. A `[MEM]` line comes every 10 s while a port is open.
@@ -20,7 +20,7 @@ Needed: two X4 Pros, one computer with two USB ports, and about an hour. Sticky 
 
 `python3 scripts/pack_device_run.py <out-dir>` packs it (with the other device-run games) and lists the hashes in `HASHES.txt`. For this run only `nearby.chgame` matters.
 
-- `nearby.chgame`: hash `<from HASHES.txt, the orchestrator fills this in>`.
+- `nearby.chgame`: 1,999 B, hash `2bef3752d7af24a2` (packed 2026-10-13 from the same commit by `scripts/pack_device_run.py`).
 - Put the same file on both cards' game inbox (upload with the device's file manager into the games folder; check the file's size on the computer with `ls -l` first and on the card afterwards, since an upload once delivered 0-byte files). Open Games on each device so it installs, and check the list shows "Nearby" with the same hash line in the log on both.
 - Nearby is a noughts-and-crosses fixture for two seats. A tap on a free square is a move; a tap on a taken square is rejected ("That square is taken", on the device that tapped, and nothing is sent). The square at the bottom left under the board (60 px) raises a script error, for the optional step.
 
