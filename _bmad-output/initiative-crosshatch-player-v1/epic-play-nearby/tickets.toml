@@ -301,6 +301,21 @@ touches = ["lib/DiagLog/**", "src/diagnostics/DiagLogStorage.cpp", "test/diag_lo
 stays_out = ["every upstream file", "scripts/device_log.py (merge keeps refusing a file without the header)", "platformio.ini", "games/**", "src/games/** and src/activities/**"]
 
 [[entry]]
+id = 23
+type = "story"
+title = "Merge keeps an aligned boot's times when the device has earlier boots"
+description = "A tool failure from entry 11's smoke run (2026-10-13). `scripts/device_log.py merge` on both cards gave device B (`6E68`, four boots) the right alignment for its match boot (`B boot 4: clock: offset -1229 ms from A boot 4, 22 STATE pair(s), link latency about 3 ms`). It still stamped every line of that boot, about 120 s of play, within 16 ms of each other at the end of the run. The cause: `align_clocks` places B's unaligned boots 1 to 3 one after another from the first device's start, since they share no STATE with A. Their summed lengths (about 265 s) end after the aligned boot 4's start (about 64 s), and `place`'s per-device monotone clamp then holds every boot-4 line at the end of boot 3. Every cardless run hits this: closing the Wi-Fi file transfer restarts the device, so the folder always holds earlier boots. Fix: an aligned boot keeps its offset. A device's unaligned boots are placed so they end no later than its next aligned boot starts, chained backwards from it when one follows (and after the previous one, as now, when none does). The `[device_log] clock:` notes say which way each boot was placed. Any overlap that remains is resolved in favour of the aligned boot's times. The `summary` figures do not change; only `merged.log`'s stamps and order, and the clock notes, do. `docs/crosshatch/fork-scripts.md`'s Alignment paragraph says how unaligned boots are placed."
+verify = "`scripts/device_log_test.py` passes, with a new case built like the smoke run: device A with two boots and device B with four, only the last of each sharing `STATE`s. The case is red against today's `merge`, which stamps B's last boot as one burst. After the fix, B's aligned boot keeps its offset and its lines' spacing, every send precedes its receive, B's earlier boots end before its aligned boot starts, and the clock notes say so. Every existing merge and capture case passes unchanged, or with a stated reason. The smoke run's own files are not committed (they hold the owner's network details), so the test lays out its card files as the existing cases do. `python3 scripts/check_upstream_touches.py` and the fast checks pass. No firmware changes."
+covers = ["R13", "R14"]
+after = [22]
+hitl = false
+risk = "low"
+unknown = "How to place an unaligned boot that sits between two aligned boots of the same device whose gap is shorter than it (keep the aligned times, and say in its note that it overlaps); read entry 19's plan's Alignment design first."
+references = ["story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md, the owner's smoke run (the fields table's last row)", "scripts/device_log.py (align_clocks, place, merge_cards)", "scripts/device_log_test.py (the merge cases)", "docs/crosshatch/fork-scripts.md, The run without a computer (Alignment)", "entry 19's plan (the merge mode's design)"]
+touches = ["scripts/device_log.py", "scripts/device_log_test.py", "docs/crosshatch/fork-scripts.md (the cardless run's Alignment paragraph)"]
+stays_out = ["every upstream file", "lib/**", "src/**", "test/** (no C++ change)", "platformio.ini", "games/**"]
+
+[[entry]]
 id = 13
 type = "story"
 title = "Refactor sweep"
