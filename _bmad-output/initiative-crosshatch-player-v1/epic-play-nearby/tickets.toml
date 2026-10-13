@@ -286,6 +286,21 @@ touches = ["src/main.cpp (the `[MEM]` block's condition only, inside or beside `
 stays_out = ["every other upstream file", "lib/Logging/**", "lib/DiagLog/** and src/diagnostics/** (unless the plan shows the change cannot be made in `src/main.cpp`; then stop and report)", "platformio.ini", "games/**", "src/games/** and src/activities/**"]
 
 [[entry]]
+id = 22
+type = "story"
+title = "The card log restarts its file with a header when the file is deleted mid-boot"
+description = "A device failure from entry 11's smoke run (2026-10-13, device 2C8C). The owner deleted the old card logs with the device's own Wi-Fi file manager while the device was running (boot 2). The writer's next batch reopened the boot's segment by name with `O_CREAT | O_APPEND` (`src/diagnostics/DiagLogStorage.cpp`, `StorageFileStore::append`) and recreated `b0002-s00-2C8C.log` with no header, its first line `[148701] [DBG] [WEB] Served jszip.min.js`. `scripts/device_log.py merge` then refuses the whole card (exit 2, \"is not a diagnostics log: its first line is not '# crosshatch-diag-log 1'\") until the file is removed by hand. Fix: a batch never creates a file. A batch append opens only an existing file. When the file is gone, the batch counts as a failed write: its lines are lost, the next segment starts with a header, and the next file says `[ERR] [DIAG] lost N bytes (card write failed)`. That is the existing failure path, so a deletion mid-run costs one batch and leaves every file on the card mergeable. Only the header write creates a file. `docs/crosshatch/fork-scripts.md`'s cardless run says that deleting the logs from the device's file manager mid-run is safe, and what it costs."
+verify = "Host suites pass. A writer test with the fake store deletes the boot's file between batches. The next batch does not recreate it headerless; the next file starts with the header and carries the lost-bytes notice; a fake-store double that refuses a create-less append on a missing file is pinned to the device store's open flags. Every existing `DiagLogWriter` test passes unchanged, or with a stated reason. `pio run -e x4pro` with `-DCROSSHATCH_SD_LOG=1` builds. With the define off, the loaded images of `x4pro`, `default`, and `sticky` are unchanged (row 13's rule, compared as entries 19 and 21 did). Fast checks and the firmware checks pass. The device check waits for entry 14's run."
+covers = ["R14"]
+after = [21]
+hitl = false
+risk = "low"
+unknown = "Whether `FileStore` needs a second operation (create with the header, append to an existing file) or a flag on `append`; keep the interface small and say which in the plan. Whether `Storage.open` without `O_CREAT` on a missing file fails cleanly on SdFat (read it)."
+references = ["epic-play-nearby.md, Notes, Decision (owner, 2026-10-13, the on-device diagnostics log, the hook version)", "story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md, the owner's smoke run (device 2C8C's headerless `b0002-s00-2C8C.log`)", "lib/DiagLog/DiagLogWriter.h (pump, startFile, the failure path)", "src/diagnostics/DiagLogStorage.cpp (StorageFileStore::append)", "test/diag_log/DiagLogWriterTest.cpp (FakeStore)", "docs/crosshatch/fork-scripts.md, The run without a computer", "entry 19's plan (the define-off image comparison)"]
+touches = ["lib/DiagLog/**", "src/diagnostics/DiagLogStorage.cpp", "test/diag_log/**", "docs/crosshatch/fork-scripts.md (the cardless run's section)"]
+stays_out = ["every upstream file", "scripts/device_log.py (merge keeps refusing a file without the header)", "platformio.ini", "games/**", "src/games/** and src/activities/**"]
+
+[[entry]]
 id = 13
 type = "story"
 title = "Refactor sweep"
