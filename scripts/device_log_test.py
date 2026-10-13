@@ -21,6 +21,7 @@ and in the lines the log itself adds when it drops or loses some, and the card f
 permissive than a real card in that no write is ever cut short or lost to an unmount.
 """
 
+import calendar
 import contextlib
 import errno
 import io
@@ -969,6 +970,18 @@ def exchange(session, start_a, start_b, offset_b, latencies, sender_first='a'):
     return a, b
 
 
+def boot_body(label, stop, step, link=()):
+    """A boot's log lines: a [MAIN] line every step ms from 0 to stop, with the LINK lines (millis, text) among them."""
+    lines = [(m, f'[{m}] [INF] [MAIN] {label} up {m} ms\n') for m in range(0, stop + 1, step)]
+    lines += [(m, link_line(m, text)) for m, text in link]
+    return ''.join(text for _, text in sorted(lines, key=lambda item: item[0]))
+
+
+def stamp_ms(stamp):
+    """A merged.log stamp as milliseconds since the epoch."""
+    return calendar.timegm(time.strptime(stamp[:19], '%Y-%m-%dT%H:%M:%S')) * 1000 + int(stamp[20:23])
+
+
 class MergeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -992,6 +1005,13 @@ class MergeTest(unittest.TestCase):
 
     def merged_lines(self):
         return (self.out / 'merged.log').read_text().splitlines()
+
+    def stamps(self, name, body):
+        """(millis, merged ms) of each line of body in device name's part of merged.log, in order."""
+        wanted = {line: int(device_log.MILLIS_PREFIX.match(line).group(1)) for line in body.splitlines()}
+        return [(wanted[m.group(3)], stamp_ms(m.group(1)))
+                for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
+                if m.group(2) == name and m.group(3) in wanted]
 
     def recorded_cards(self):
         a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, RECORDED_HOST)})
@@ -1124,6 +1144,164 @@ class MergeTest(unittest.TestCase):
         order = [m.group(2) + ' ' + m.group(3) for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
                  if '[MAIN]' in m.group(3)]
         self.assertEqual(order, ['3F2A [100] [INF] [MAIN] a', '91C4 [200] [INF] [MAIN] b', '3F2A [300] [INF] [MAIN] a2'])
+
+    def smoke_run_cards(self):
+        """The smoke run's shape: A's boot 1 unaligned and its boot 2 aligned with B's boot 4 (B's clock 1229 ms ahead);
+        B's boots 1-3 unaligned and longer together than A's boot 1, so chained forward they end after B's boot 4
+        starts. Returns the two card roots and each boot's body."""
+        a2_link, b4_link = exchange('5a0e0004', 0, 1229, 1229, [4, 6, 5, 4])
+        bodies = {('A', 1): boot_body('a1', 60000, 10000), ('A', 2): boot_body('a2', 130000, 10000, a2_link),
+                  ('B', 1): boot_body('b1', 50000, 10000), ('B', 2): boot_body('b2', 80000, 10000),
+                  ('B', 3): boot_body('b3', 70000, 10000), ('B', 4): boot_body('b4', 120000, 10000, b4_link)}
+        cards = {}
+        for (name, boot), body in bodies.items():
+            device = '3F2A' if name == 'A' else '91C4'
+            cards.setdefault(name, {})[f'b{boot:04d}-s00-{device}.log'] = card_text(device, boot, 0, body)
+        return self.card('cardA', cards['A']), self.card('cardB', cards['B']), bodies
+
+    def test_an_aligned_boot_keeps_its_times_and_the_earlier_unaligned_boots_end_before_it(self):
+        a, b, bodies = self.smoke_run_cards()
+        text = self.merge(f'A={a}', f'B={b}')
+        self.assertIn('B boot 4: clock: offset -1229 ms from A boot 2, 4 STATE pair(s)', text)
+        b4 = self.stamps('B', bodies[('B', 4)])
+        self.assertEqual(len(b4), len(bodies[('B', 4)].splitlines()))
+        # B's aligned boot keeps its lines' millis spacing (within the receive-after-send moves of 1 ms)
+        shifts = [stamp - millis for millis, stamp in b4]
+        self.assertLessEqual(max(shifts) - min(shifts), 1, b4)
+        self.assertEqual(b4[0][1] - self.stamps('A', bodies[('A', 2)])[0][1], -1229)
+        # each earlier boot ends when the next one starts, and says so
+        for boot in (1, 2, 3):
+            self.assertIn(f'B boot {boot}: clock: not aligned by STATEs; placed to end when boot {boot + 1} of the '
+                          'same device starts\n', text)
+            own, following = self.stamps('B', bodies[('B', boot)]), self.stamps('B', bodies[('B', boot + 1)])
+            self.assertEqual(own[-1][1], following[0][1], boot)
+            self.assertEqual(own[-1][1] - own[0][1], own[-1][0], boot)
+        self.assertNotIn('overlaps', text)
+        seen = {}
+        for index, m in enumerate(map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())):
+            anchor = device_log.state_anchor(m.group(3))
+            if anchor:
+                seen.setdefault((anchor[1], anchor[2]), {})[anchor[0]] = index
+        self.assertEqual(len(seen), 4)
+        for key, pair in seen.items():
+            self.assertLess(pair['sent'], pair['recv'], key)
+
+    def test_the_smoke_run_summary_figures_equal_a_serial_capture_of_the_same_lines(self):
+        a, b, bodies = self.smoke_run_cards()
+        card_summary = self.merge(f'A={a}', f'B={b}')
+        serial = []
+        for name in ('A', 'B'):
+            path = self.root / f'{name}.raw.log'
+            path.write_text(''.join(body for (device, _), body in bodies.items() if device == name))
+            serial.append(str(path))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            device_log.summary(serial)
+
+        def figures(text, name):
+            body = section(text, name).splitlines()[1:]
+            # B's earlier boots now start before A's, so B's section comes first in one summary and last in the other
+            kept = [line for line in body if line and not line.startswith(('  card:', '  diagnostics log:'))]
+            return [re.sub(r'1970-01-01T\d\d:\d\d:\d\d\.\d{3}Z|\[\d+\]', 'T', line) for line in kept]
+
+        for name in ('A', 'B'):
+            self.assertEqual(figures(card_summary, name), figures(out.getvalue(), name), name)
+
+    def test_an_unaligned_boot_between_two_aligned_ones_that_is_longer_than_the_gap_says_it_overlaps(self):
+        # A's boot 1 aligns B's boot 1 (B's clock 10 s behind) and B's boot 3 (40 s behind); B's boot 2 lasts 30 s, so
+        # ending when boot 3 starts it begins 5 s before boot 1's last line.
+        a_first, b1_link = exchange('0b0b0001', 10000, 0, -10000, [3, 3])
+        a_second, b3_link = exchange('0b0b0003', 40000, 0, -40000, [3, 3])
+        a_body = boot_body('a1', 60000, 10000, a_first + a_second)
+        b1, b2 = boot_body('b1', 5000, 1000, b1_link), boot_body('b2', 30000, 2000)
+        b3 = boot_body('b3', 3000, 1000, b3_link)
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, a_body)})
+        b = self.card('cardB', {f'b000{boot}-s00-91C4.log': card_text('91C4', boot, 0, body)
+                                for boot, body in ((1, b1), (2, b2), (3, b3))})
+        text = self.merge(f'A={a}', f'B={b}')
+        self.assertIn('B boot 2: clock: not aligned by STATEs; placed to end when boot 3 of the same device starts; '
+                      'it overlaps boot 1 by 5000 ms, whose times are kept\n', text)
+        self.assertIn('B boot 1: clock: offset +10000 ms from A boot 1', text)
+        self.assertIn('B boot 3: clock: offset +40000 ms from A boot 1', text)
+        # both aligned boots keep their times (the merge's run clock starts at A's millis 0)
+        first, third = self.stamps('B', b1), self.stamps('B', b3)
+        self.assertEqual({stamp - millis for millis, stamp in first}, {10000})
+        self.assertEqual({stamp - millis for millis, stamp in third}, {40000})
+        # the unaligned boot's lines before boot 1's end are held at its last stamp; none comes after boot 3 starts
+        second = self.stamps('B', b2)
+        self.assertEqual(second, [(millis, max(millis + 10000, first[-1][1])) for millis in range(0, 30001, 2000)])
+        self.assertLessEqual(second[-1][1], third[0][1])
+
+    def test_each_boot_of_an_unaligned_run_that_reaches_back_past_an_aligned_boot_says_by_how_much(self):
+        # A's boot 1 aligns B's boots 1 (5 s behind), 2 (20 s behind), and 5 (50 s behind). B's boot 2 ends at 25 s; its
+        # boots 3 (10 s) and 4 (28 s) end when boot 5 starts, so they start at 12 s and 22 s, both before boot 2's end.
+        a_links, b_links = [], {}
+        for boot, start in ((1, 5000), (2, 20000), (5, 50000)):
+            a_link, b_links[boot] = exchange(f'0e0e000{boot}', start, 0, -start, [3, 3])
+            a_links += a_link
+        bodies = {1: boot_body('b1', 5000, 1000, b_links[1]), 2: boot_body('b2', 5000, 1000, b_links[2]),
+                  3: boot_body('b3', 10000, 2000), 4: boot_body('b4', 28000, 2000),
+                  5: boot_body('b5', 3000, 1000, b_links[5])}
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, boot_body('a1', 60000, 10000, a_links))})
+        b = self.card('cardB', {f'b000{boot}-s00-91C4.log': card_text('91C4', boot, 0, body)
+                                for boot, body in bodies.items()})
+        text = self.merge(f'A={a}', f'B={b}')
+        self.assertIn('B boot 3: clock: not aligned by STATEs; placed to end when boot 4 of the same device starts; '
+                      'it overlaps boot 2 by 13000 ms, whose times are kept\n', text)
+        self.assertIn('B boot 4: clock: not aligned by STATEs; placed to end when boot 5 of the same device starts; '
+                      'it overlaps boot 2 by 3000 ms, whose times are kept\n', text)
+        for boot, offset in ((1, 5000), (2, 20000), (5, 50000)):
+            self.assertEqual({stamp - millis for millis, stamp in self.stamps('B', bodies[boot])}, {offset}, boot)
+
+    def test_a_root_not_reached_from_the_reference_starts_after_its_devices_unaligned_boots(self):
+        # A's boots 2 and 3 share no STATE; its boot 4 aligns B's boot 2 (B's clock 3 s ahead), which no STATE links to
+        # A's boot 1, so boot 4 starts after boots 1-3 laid end to end and boots 2 and 3 fill the gap.
+        a_link, b_link = exchange('0f0f0004', 0, 3000, 3000, [3, 3])
+        bodies = {('A', 1): boot_body('a1', 20000, 5000), ('A', 2): boot_body('a2', 30000, 5000),
+                  ('A', 3): boot_body('a3', 15000, 5000), ('A', 4): boot_body('a4', 40000, 10000, a_link),
+                  ('B', 1): boot_body('b1', 25000, 5000), ('B', 2): boot_body('b2', 50000, 10000, b_link)}
+        cards = {}
+        for (name, boot), body in bodies.items():
+            device = '3F2A' if name == 'A' else '91C4'
+            cards.setdefault(name, {})[f'b{boot:04d}-s00-{device}.log'] = card_text(device, boot, 0, body)
+        text = self.merge(f'A={self.card("cardA", cards["A"])}', f'B={self.card("cardB", cards["B"])}')
+        stamps = {node: self.stamps(node[0], body) for node, body in bodies.items()}
+        self.assertEqual(stamps[('A', 4)][0][1] - stamps[('A', 1)][0][1], 20000 + 30000 + 15000)
+        for boot in (1, 2, 3):
+            self.assertEqual(stamps[('A', boot)][-1][1], stamps[('A', boot + 1)][0][1], boot)
+        self.assertEqual(stamps[('B', 2)][0][1] - stamps[('A', 4)][0][1], -3000)
+        self.assertIn('A boot 4: clock: not aligned by STATEs; placed after boot 3 of the same device\n', text)
+        self.assertIn('B boot 2: clock: offset -3000 ms from A boot 4', text)
+        self.assertNotIn('overlaps', text)
+
+    def test_an_unaligned_boot_after_the_last_aligned_one_is_placed_after_it(self):
+        a_link, b_link = exchange('0c0c0001', 0, 7000, 7000, [3, 3])
+        b1, b2 = boot_body('b1', 9000, 1000, b_link), boot_body('b2', 4000, 1000)
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, boot_body('a1', 9000, 1000, a_link))})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, b1),
+                                'b0002-s00-91C4.log': card_text('91C4', 2, 0, b2)})
+        text = self.merge(f'A={a}', f'B={b}')
+        self.assertIn('B boot 1: clock: offset -7000 ms from A boot 1', text)
+        self.assertIn('B boot 2: clock: not aligned by STATEs; placed after boot 1 of the same device\n', text)
+        first, second = self.stamps('B', b1), self.stamps('B', b2)
+        self.assertEqual(second[0][1], first[-1][1])
+        self.assertEqual(second[-1][1] - second[0][1], 4000)
+
+    def test_an_empty_unaligned_boot_before_an_aligned_one_is_chained_backwards_with_no_length(self):
+        a_link, b_link = exchange('0d0d0002', 5000, 0, -5000, [3, 3])
+        b2 = boot_body('b2', 4000, 1000, b_link)
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, boot_body('a1', 9000, 1000, a_link))})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, ''),
+                                'b0002-s00-91C4.log': card_text('91C4', 2, 0, b2)})
+        text = self.merge(f'A={a}', f'B={b}')
+        self.assertIn('B boot 1: clock: not aligned by STATEs; placed to end when boot 2 of the same device starts\n',
+                      text)
+        self.assertIn('B boot 2: clock: offset +5000 ms from A boot 1', text)
+        marks = {m.group(3).split()[3].rstrip(':'): stamp_ms(m.group(1))
+                 for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
+                 if m.group(3).startswith(f'{device_log.EVENT_TAG} card file')}
+        self.assertEqual(marks['b0001-s00-91C4.log'], marks['b0002-s00-91C4.log'])
+        self.assertEqual(marks['b0002-s00-91C4.log'], 5000)
 
     def test_one_direction_only_takes_the_fastest_pair_as_the_offset_and_says_the_latency_is_unknown(self):
         sent = ''.join(link_line(1000 + 500 * i, f'session=0a0a0a0a state sent ver={i}') for i in range(1, 4))

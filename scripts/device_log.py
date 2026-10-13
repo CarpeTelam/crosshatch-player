@@ -895,9 +895,17 @@ def align_clocks(nodes, events):
     (millis, text) lines. The devices share no clock, so the offset comes from the STATEs: the one a device sent at
     `ver` in a `session` is the one the other received. With d_uv the fastest (receive minus send) over the STATEs u sent
     and v received, and d_vu the same the other way, the offset of v over u is (d_vu - d_uv) / 2 and the link latency
-    (d_uv + d_vu) / 2; with one direction only the latency is taken as 0. A boot with no such pair keeps its device's
-    previous boot's end (or, for a device's first boot, starts when the first device's did) and says so. A (session, ver)
-    that two devices both logged a send for is ambiguous and anchors nothing.
+    (d_uv + d_vu) / 2; with one direction only the latency is taken as 0. A (session, ver) that two devices both
+    logged a send for is ambiguous and anchors nothing.
+
+    A boot is aligned when it shares a STATE pair with another device's boot. The aligned boots are placed first and
+    keep their offsets: the reference's component, then each component not reached from it, rooted at its first node,
+    which goes after its device's earlier boots (their lengths chained forward from the last one placed, or from 0).
+    Then each device's unaligned boots, each saying so: a run of them followed by an aligned boot is chained backwards,
+    each to end when the next starts, and a note says by how much one overlaps the aligned boot before the run, whose
+    times are kept (the merge's clamp holds the overlapping lines at that boot's last stamp); a run with no aligned boot
+    after it is chained forward from the device's previous boot's end, or, for a device's first boot, starts when the
+    first device's did. A boot starts at its millis 0 and ends at its last line.
     """
     sent, _ = state_sends(nodes, events)
     received = collections.defaultdict(dict)
@@ -943,21 +951,65 @@ def align_clocks(nodes, events):
                                 f'{count} STATE pair(s), {how}')
                 queue.append(other)
 
+    def end(node):
+        return max((m for m, _ in events[node]), default=0)
+
+    def boots(node):
+        """The device's boots before node and those after it, in boot order."""
+        own = [n for n in nodes if n[0] == node[0]]
+        return [n for n in own if n[1] < node[1]], [n for n in own if n[1] > node[1]]
+
+    # The aligned components, each walked from its root; every boot in one keeps the offset it gives.
     for node in nodes:
         if node in offsets:
             continue
-        previous = [n for n in nodes if n[0] == node[0] and n[1] < node[1] and n in offsets]
+        earlier = boots(node)[0]
         if node == nodes[0]:
             offsets[node], notes[node] = 0.0, 'clock: reference (the first device\'s first boot)'
-        elif previous:
-            before = previous[-1]
-            end = max((m for m, _ in events[before]), default=0)
-            offsets[node] = offsets[before] + end
-            notes[node] = f'clock: not aligned by STATEs; placed after boot {before[1]} of the same device'
+        elif not neighbours[node]:
+            continue  # unaligned: placed below, once every aligned boot has its offset
+        elif earlier:
+            # A root the reference does not reach goes after its device's earlier boots: from the end of the last one
+            # placed (an earlier aligned boot comes first in node order), through the lengths of the unaligned ones
+            # after it, which the backward chain below then puts exactly between.
+            start = 0.0
+            for before in earlier:
+                start = offsets[before] + end(before) if before in offsets else start + end(before)
+            offsets[node] = start
+            notes[node] = f'clock: not aligned by STATEs; placed after boot {earlier[-1][1]} of the same device'
         else:
             offsets[node] = 0.0
             notes[node] = 'clock: not aligned (no STATE pair with another device); its boot is taken to start with the first'
         walk(node)
+    aligned = set(offsets)
+    # An unaligned boot followed by a placed one ends when that one starts, chained backwards. When the run is longer
+    # than the gap it overlaps the aligned boot before it, and the note says so; that boot's times are kept.
+    for node in reversed(nodes):
+        if node in offsets:
+            continue
+        earlier, later = boots(node)
+        if not later or later[0] not in offsets:
+            continue
+        after = later[0]
+        offsets[node] = offsets[after] - end(node)
+        notes[node] = f'clock: not aligned by STATEs; placed to end when boot {after[1]} of the same device starts'
+        kept = [n for n in earlier if n in aligned]
+        if kept:
+            overlap = offsets[kept[-1]] + end(kept[-1]) - offsets[node]
+            if overlap > 0:
+                notes[node] += f'; it overlaps boot {kept[-1][1]} by {overlap:.10g} ms, whose times are kept'
+    # The unaligned boots with no aligned boot after them: after the device's previous boot, as before.
+    for node in nodes:
+        if node in offsets:
+            continue
+        previous = [n for n in boots(node)[0] if n in offsets]
+        if previous:
+            before = previous[-1]
+            offsets[node] = offsets[before] + end(before)
+            notes[node] = f'clock: not aligned by STATEs; placed after boot {before[1]} of the same device'
+        else:
+            offsets[node] = 0.0
+            notes[node] = 'clock: not aligned (no STATE pair with another device); its boot is taken to start with the first'
     return offsets, notes
 
 
