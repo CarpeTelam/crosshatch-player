@@ -10,14 +10,15 @@
 namespace HostCapsValues {
 // The most seats in one match (api-level-1.txt's seats_max).
 inline constexpr int32_t MAX_SEATS = 2;
-// epic-play-nearby sets this; the simulator never has the radio.
+// epic-play-nearby sets this for a device build (entry 11); the simulator reports nearby on regardless, over UdpLink
+// (entry 16).
 inline constexpr bool NEARBY_BUILT = false;
 // Pass and Play: an open pass match with the fewest seats it can have (epic-pass-and-play).
 inline constexpr bool PASS = true;
 }  // namespace HostCapsValues
 
 // The one HostCaps provider (spine AD-15): the API levels from ApiLevel.h and
-// HostCapsValues: two seats, Pass and Play on, and Play Nearby off until
-// epic-play-nearby turns it on for device builds. The simulator has no radio, so
-// nearby stays false there (AD-2).
+// HostCapsValues: two seats, Pass and Play on, and Play Nearby off on a device until
+// epic-play-nearby turns it on. The simulator plays nearby over UdpLink, so it reports
+// nearby on (AD-2).
 GameCore::HostCaps gameHostCaps();

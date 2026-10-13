@@ -23,9 +23,9 @@
 
 // What the lobby takes from the radio layer (epic R8, entries 10, 11, and 16): the link, its label, the clock and
 // random source, the probe reading, and the timing. The class itself is the device's radio: its members are the one
-// place the device wiring lives, so entry 11 (EspNowLink and its label) and entry 16 (UdpLink under SIMULATOR) edit
-// their bodies in GameLobbyActivity.cpp and nothing else of the lobby. The host harness subclasses it with a FakeLink
-// (test/game_script/harness/NearbyLobbySupport.h) and installs it with GameLobbyActivity::setRadio.
+// place the device wiring lives, so entry 11 (EspNowLink and its label) edits their bodies in GameLobbyActivity.cpp and
+// nothing else of the lobby; under SIMULATOR open() already hands out a UdpLink (entry 16). The host harness subclasses
+// it with a FakeLink (test/game_script/harness/NearbyLobbySupport.h) and installs it with GameLobbyActivity::setRadio.
 class NearbyRadio {
  public:
   // A started link and the host's label (the radio layer builds it: EspNow::makeLabel), at most

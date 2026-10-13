@@ -28,7 +28,8 @@ constexpr Verdict decide(const Readings& readings) {
   return Verdict{readings.wifiInUse, readings.freeInternalHeapBytes < MIN_INTERNAL_HEAP_BYTES};
 }
 
-// The device's readings: Wi-Fi mode and free internal heap. Defined in NearbyProbe.cpp (device only).
+// The readings: Wi-Fi mode and free internal heap. Defined in NearbyProbe.cpp: the device's, and in the simulator Wi-Fi
+// off and the simulator's heap (its link is UdpLink, which never touches Wi-Fi).
 Readings read();
 
 }  // namespace NearbyProbe

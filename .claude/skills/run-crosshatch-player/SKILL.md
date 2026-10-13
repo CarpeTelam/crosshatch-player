@@ -75,7 +75,7 @@ Commands: `tap X Y`, `hold X Y [MS]`, `swipe X1 Y1 X2 Y2`,
 `key back|enter|left|right|up|down|power|home|sleep [HOLD_MS]` (`next`/`prev`
 alias `down`/`up`), `ss [NAME]`, `geom`, `log [N]`. Each input waits
 `SIM_SETTLE` seconds afterwards (default 1); use `SIM_SETTLE=3` for slow screens.
-`SIM_DISPLAY` overrides `:77`.
+`SIM_DISPLAY` overrides `:77`. `SIM_INSTANCE=N` runs a numbered instance (see Two instances).
 
 Coordinates are window pixels, which equal the firmware's logical pixels
 (480x800 in portrait). Portrait X4 Pro and Sticky landmarks, Lyra theme:
@@ -114,6 +114,61 @@ $S script x4pro '1500:TAP:240,560;3000:HOME;4500:QUIT' '2500:settings;4000:home-
 
 This prints `build/sim/shots/settings.png` and `home-key.png`. End every script
 with `QUIT`, or the run hits `SIM_TIMEOUT` (60 s) and fails.
+
+## Two instances: Play Nearby
+
+Under the simulator Play Nearby is on: the lobby's radio is `UdpLink` (`src/games/UdpLink.cpp`), UDP on loopback, so
+two simulator windows of one worktree can play one round. `SIM_INSTANCE=N` (`1`..`9`; unset or empty is the single
+instance above, unchanged) gives each window its own Xvfb display (`:77+N`), state directory (`build/sim/inst-N/`: pids,
+log, `shots/`), SD root (`build/sim/inst-N/fs_`, passed to the binary as an absolute `CROSSPOINT_SIM_SD`), web server
+port (`8080+10N`), and inbox (`build/sim/inst-N/fs_/games`). Any other value exits 1 naming `SIM_INSTANCE`.
+
+```bash
+$S where                                  # the single instance's display, state, SD root, inbox, ports, UDP base
+SIM_INSTANCE=1 $S where                   # instance 1's, without creating anything
+SIM_INSTANCE=1 $S inbox test/game_script/fixtures/nearby   # packs the game into instance 1's inbox
+SIM_INSTANCE=2 $S inbox test/game_script/fixtures/nearby
+SIM_INSTANCE=1 $S start x4pro             # a window on :78
+SIM_INSTANCE=2 $S start x4pro             # a window on :79
+SIM_INSTANCE=1 $S ss host-choose          # -> build/sim/inst-1/shots/host-choose.png
+SIM_INSTANCE=2 $S tap 240 300             # drives instance 2 only
+SIM_INSTANCE=1 $S stop; SIM_INSTANCE=2 $S stop
+```
+
+Every command takes the variable (`start`, `tap`, `hold`, `swipe`, `key`, `ss`, `geom`, `log`, `stop`, `where`,
+`inbox`). `setup`, `check`, and `build` do nothing different with it, but an invalid value (not `1`..`9`) makes every
+command exit 1, those included. `script` with a valid instance uses the instance's state directory and `shots/`, but
+the shared `./fs_` and no instance environment (no `CROSSPOINT_SIM_SD`, web server port, or UDP base). The simulators of
+one worktree must agree on the UDP port base, the default instance included: every `start` exports
+`CROSSHATCH_UDP_PORT_BASE` to the binary, the caller's value when it is set, else `21000 + (cksum of the repo root % 1000) * 8`,
+so simulators of two worktrees running at once do not hear each other. Without the variable `UdpLink` binds the first
+free port of `45700..45707`. A link takes the first free port of its range of eight, and the port is the host's label,
+`Simulator <port>`; a ninth window finds no port and the lobby shows "Nearby could not start".
+
+The recipe, with the `nearby` fixture (two seats, `pass` and `nearby` modes) in both inboxes, as run for
+`_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-screenshots/`. Each instance has its own
+`prefs.bin`, so each sets the mode once. Coordinates are window pixels, X4 Pro, Lyra theme:
+
+1. Pack the fixture into each inbox, start both instances, and on each tap Games (`240,562`; that installs the
+   package), the game (`240,148`), Options (`80,687`), the Mode row (`240,150`, which cycles to "Play nearby"), the
+   header back arrow (`25,63`).
+2. New game (`240,615`) opens the lobby's Choose screen: Host a game (`240,148`), Join a game (`240,210`).
+3. Instance 1 hosts: label `Simulator <port>`, "Waiting for a player", "1 of 2 players", then Start (`240,241`) and
+   Cancel (`240,303`) ("Player 2 joined" once the guest has joined). Instance 2 joins: the list shows the host row
+   (`240,148`; a host holding the fixture at another version is greyed with "Different version"), and a tap shows
+   "Waiting for the host to start" with Cancel (`240,208`). A guest who cancels shows the host "Player 2 left"; a host
+   who cancels shows the guest "The host left" with "Back to the list" (`240,180`).
+4. Instance 1 taps Start. The board cells' centres are `105/245/385, 280/420/560` (the host is X and moves first); a tap
+   on a taken square shows "That square is taken" on the guest only. A won round shows the Game over dialog: on the host
+   Play again (`240,452`) and Leave (`240,503`), on the guest "Waiting for the host" and Leave. Back (`key back`) opens
+   the pause menu (Resume, Leave `240,503`); Leave on the host leaves the guest on "The other player left" with Back
+   (`240,477`), which returns to the Games list.
+
+Look at each screenshot before using it. The lobby polls every 100 ms and a changed list of hosts redraws within a
+second; `SIM_SETTLE=3` or `4` between taps gives the other instance time to hear a frame.
+
+`.claude/skills/run-crosshatch-player/sim_instance_test.py` tests `where`, `inbox`, and the invalid values on scratch
+repositories; run it by hand (`python3 .claude/skills/run-crosshatch-player/sim_instance_test.py`).
 
 ## File-transfer web server
 
