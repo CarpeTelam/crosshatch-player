@@ -358,6 +358,11 @@ size_t ReliableLink::unacked(const PeerHandle peer) const {
   return p != nullptr && !p->lost ? p->queued : 0;
 }
 
+uint64_t ReliableLink::heardMs(const PeerHandle peer) const {
+  const Peer* const p = findPeer(peer);
+  return p != nullptr ? p->lastHeardMs : 0;
+}
+
 void ReliableLink::tick() {
   if (!ok_) return;
   for (size_t i = 0; i < MAX_FRAMES_PER_TICK; i++) {

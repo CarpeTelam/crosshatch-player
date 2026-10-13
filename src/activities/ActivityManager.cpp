@@ -31,7 +31,7 @@
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
 #if FREEINK_CAP_GAMES
-#include "games/GameModeActivity.h"
+#include "games/GamesHomeRow.h"
 #include "games/GamesLauncherActivity.h"
 #endif
 
@@ -352,10 +352,7 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
 #if FREEINK_CAP_GAMES
-    if (activityName == GamesLauncherActivity::NAME || activityName == GameModeActivity::NAME ||
-        activityName == "GameMatch") {
-      initialMenuItem = HomeMenuItem::GAMES;
-    }
+    if (GamesHomeRow::isGamesActivity(activityName)) initialMenuItem = HomeMenuItem::GAMES;
 #endif
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));

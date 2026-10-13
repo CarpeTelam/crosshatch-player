@@ -54,6 +54,11 @@ PeerHandle HostLobby::peerForSeat(const uint8_t seat) const {
   return guests_[seat - 2].handle;
 }
 
+uint64_t HostLobby::guestHeardMs(const uint8_t seat) const {
+  if (seat < 2 || seat - 2 >= static_cast<int>(guestCount_)) return 0;
+  return link_.heardMs(guests_[seat - 2].handle);
+}
+
 void HostLobby::pushEvent(const HostEventKind kind, const uint8_t seat) {
   if (eventCount_ == EVENT_CAPACITY) {  // keep the newest
     eventHead_ = (eventHead_ + 1) % EVENT_CAPACITY;

@@ -111,6 +111,12 @@ class ReliableLink {
   void forget(PeerHandle peer);
   size_t unacked() const;  // reliable frames held (in flight or waiting) for peers not lost
   size_t unacked(PeerHandle peer) const;
+  // The IClock reading at which the peer last sent anything valid (any frame of this session: Join, Accept, State,
+  // Abort, Ping, Ack), starting at its registration; 0 for a peer that is not registered (never heard, or forgotten). A
+  // peer reported lost is still registered and keeps its last reading: frames from it are ignored, so the reading stops
+  // moving. Read only: it changes no behaviour. A lobby's screen reads it to tell a live guest from a ghost
+  // (HostLobby::guestHeardMs).
+  uint64_t heardMs(PeerHandle peer) const;
   const Stats& stats() const;
 
  private:

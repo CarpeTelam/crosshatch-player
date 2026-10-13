@@ -58,6 +58,11 @@ class HostLobby final : private ReliableLink::Sink {
   // Valid once Started.
   const Roster& roster() const { return roster_; }
   PeerHandle peerForSeat(uint8_t seat) const;  // NO_PEER before Start, for seat 1, and for an unknown seat
+  // The IClock reading at which the guest in `seat` (2 = the first guest, in arrival order) last sent anything valid
+  // (a JOIN, a STATE, a PING or ACK keepalive: ReliableLink::heardMs), so it starts at its JOIN; 0 for a seat nobody
+  // holds (seat 1, an unknown seat, a guest that left). The lobby screen's liveness reading: a ghost seat is
+  // still seated until the silence limit, but is not heard.
+  uint64_t guestHeardMs(uint8_t seat) const;
   ReliableLink& link() { return link_; }
   void handOff(ReliableLink::Sink& next) { handOff_.attach(next, session_); }
   LobbyEnd ended() const { return handOff_.end(); }
