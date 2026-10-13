@@ -3,7 +3,7 @@ title: 'Nearby on the X4 Pro only until a Sticky run'
 type: 'feature'
 ticket: '20'
 created: '2026-10-13'
-status: 'built'
+status: done
 route: 'oneshot'
 route_source: 'auto'
 review: 'thorough'
