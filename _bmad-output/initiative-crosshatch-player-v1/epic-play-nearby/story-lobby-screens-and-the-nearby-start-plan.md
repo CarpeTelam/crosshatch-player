@@ -4,7 +4,7 @@ type: 'feature'
 ticket: '10'
 created: '2026-10-12'
 baseline_revision: '5c617c04449ba76c23bdea45efebf20a9f878609'
-status: blocked
+status: built
 route: 'full'
 route_source: 'auto'
 review: 'thorough'
@@ -39,8 +39,6 @@ deferred:
     location: >-
       src/activities/games/GameLobbyActivity.cpp readHost, pollGuest
     severity: medium (unverified)
-blocked_at: "2026-10-13"
-blocked_reason: "flash budget: entry 10 measured +28,800 B over the base (+286,848 B on-minus-off; +12,784 B over entry 15); with entry 5's driver the projection is 40,256 B before entry 11's wiring, over the 36,912 B share by 3,344 B and over the 290 KiB gate by 1,344 B. Options in the plan: raise gate and share, or cuts (about 2 KB, not enough alone)"
 ---
 
 <intent-contract>
