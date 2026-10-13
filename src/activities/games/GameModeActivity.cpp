@@ -12,12 +12,14 @@
 #include <cstdio>
 #include <cstring>
 
+#include "GameLobbyActivity.h"
 #include "GameMatchActivity.h"
 #include "GameOptionsActivity.h"
 #include "GameSplashLayout.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GameHostCaps.h"
+#include "games/NearbyProbe.h"
 
 namespace fui = freeink::ui;
 
@@ -123,7 +125,9 @@ GameModeActivity::GameModeActivity(GfxRenderer& renderer, MappedInputManager& ma
 void GameModeActivity::onEnter() {
   UiListActivity::onEnter();
   app.on(ACTION_CONFIRM_CHOICE, &GameModeActivity::onConfirmChoice, this);
+  app.on(ACTION_REFUSAL_OK, &GameModeActivity::onRefusalTap, this);
   confirmRow = -1;
+  refusal = Refusal::None;
   // The screen's reads: the rows say whether there is a save and what New game starts, and no row is drawn from the
   // card.
   const SaveState found = GameSaveStore::peek(manifest, pkgHash, gameHostCaps());
@@ -178,6 +182,16 @@ void GameModeActivity::showSettingsNotice() {
   requestUpdate();
 }
 
+void GameModeActivity::showResumeNotice() {
+  // The Continue row's line says why nothing started, until the screen closes; the render task reads the rows. The save
+  // is untouched.
+  app.clearTapFlash();  // the row did not leave this screen
+  RenderLock lock(*this);
+  resumeNotice = true;
+  buildRows();
+  requestUpdate();
+}
+
 void GameModeActivity::buildRows() {
   // Static text and fixed arrays: built once a visit (and when Options closes) rather than on every buildScreen().
   rowCount = 0;
@@ -191,7 +205,10 @@ void GameModeActivity::buildRows() {
     ++rowCount;
   };
   // An Unreadable save gets its row too: hiding it would offer only New game, over what may be a good save.
-  if (canContinue) add(RowKind::Continue, tr(STR_GAMES_CONTINUE), tr(STR_GAMES_CONTINUE_DESC));
+  if (canContinue) {
+    add(RowKind::Continue, tr(STR_GAMES_CONTINUE),
+        resumeNotice ? tr(STR_GAMES_RESUME_NOT_HERE) : tr(STR_GAMES_CONTINUE_DESC));
+  }
   writeNewGameLine();
   add(RowKind::NewGame, tr(STR_GAMES_NEW_GAME), settingsNotice ? tr(STR_GAMES_SETTINGS_NOT_READ) : newGameLine);
   // Options only when it has a choice to offer: a second mode this host can start, or a setting.
@@ -214,8 +231,9 @@ void GameModeActivity::drawChrome() {
   // The loop task opens and closes the question while this render runs: its row is read once, here, before the app
   // builds the screen from it (buildScreen), so the band and the dialog never disagree within one render.
   renderedConfirmRow = confirmRow.load(std::memory_order_acquire);
-  // The confirmation is drawn as it is on a plain list screen, with no band behind it.
-  if (renderedConfirmRow >= 0) return;
+  renderedRefusal = refusal.load(std::memory_order_acquire);
+  // The confirmation and the refusal are drawn as on a plain list screen, with no band behind them.
+  if (renderedConfirmRow >= 0 || renderedRefusal != Refusal::None) return;
   // The splash band: title.bmp centred and clipped, else the icon centred.
   GameSplashLayout::drawBand(renderer, picture);
 }
@@ -230,6 +248,13 @@ void GameModeActivity::buildScreen(UiScreen& screen) {
     buildConfirmDialog(screen);  // the list is not built under it, so none of its rows takes a touch
     return;
   }
+  if (renderedRefusal != Refusal::None) {
+    margin.top = static_cast<int16_t>(GameSplashLayout::bandTop(renderer));
+    screen.setContentMarginFromScreen(margin);
+    screen.spacer(static_cast<int16_t>(UITheme::getInstance().getMetrics().verticalSpacing));
+    buildRefusalDialog(screen);
+    return;
+  }
   // Content: the safe area under the splash band; the rows follow directly under it (GameSplashLayout::rowRect).
   screen.setContentMarginFromScreen(margin);
   fui::ListProps props;
@@ -238,6 +263,8 @@ void GameModeActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   GameSplashLayout::styleMenu(screen, props);
+  // The note under Continue is a sentence, not a mode line: it wraps, so the player can read why Continue did nothing.
+  if (resumeNotice) props.subtitleText.maxLines = 3;
   syncListViewport(screen, props);
   screen.list(props);
 }
@@ -253,8 +280,9 @@ void GameModeActivity::activateIndex(const int index) {
         // Before the question about replacing a save: nothing would start (startMatch).
         LOG_ERR("GAME", "Cannot start %s: its settings were not read", manifest.id);
         showSettingsNotice();
-      } else if (hasSave) {
-        openConfirm(index);  // a New match replaces the save: ask first
+      } else if (hasSave && choices.mode != Manifest::MODE_NEARBY) {
+        // A New solo or pass match replaces the save: ask first. A nearby match saves nothing and replaces nothing.
+        openConfirm(index);
       } else {
         startNew();
       }
@@ -280,8 +308,8 @@ bool GameModeActivity::rosterFor(const uint8_t modeBit, GameCore::Roster& roster
       return true;
     }
     case GameCore::Mode::Nearby:
-      // GameMatchActivity cannot run nearby until epic-play-nearby, so this mode starts a solo match.
-      return true;
+      // A nearby match's roster comes from the lobby's session (NearbySession::roster), so there is none here.
+      return false;
   }
   return false;
 }
@@ -292,6 +320,11 @@ void GameModeActivity::startNew() {
   if (!row) {
     LOG_ERR("GAME", "Cannot start %s: no mode this host can start", manifest.id);
     requestUpdate();  // the tap moved the selection here (or the confirmation closed); show it
+    return;
+  }
+  // Nearby has no roster until a lobby seats the players: the precondition, then the lobby.
+  if (row->mode == GameCore::Mode::Nearby) {
+    startNearby();
     return;
   }
   if (!rosterFor(choices.mode, roster)) {  // the mode has no seat count this host fits (only pass, today)
@@ -308,11 +341,41 @@ void GameModeActivity::startNew() {
       LOG_INF("GAME", "Mode pass picked for %s: %u seats", manifest.id, static_cast<unsigned>(roster.seats));
       break;
     case GameCore::Mode::Nearby:
-      LOG_INF("GAME", "Mode %s picked for %s: the match plays solo until it can run %s", row->name, manifest.id,
-              row->name);
-      break;
+      break;  // handled above
   }
   startMatch(roster, false);
+}
+
+void GameModeActivity::startNearby() {
+  app.clearTapFlash();  // the row leaves this screen, or a dialog covers it
+  // The lobby would host a match without the ctx.settings its manifest declares (startMatch's rule, kept here: it must
+  // hold before any radio opens).
+  if (settings.count != manifest.settingsCount) {
+    LOG_ERR("GAME", "Cannot start %s: its settings were not read", manifest.id);
+    showSettingsNotice();
+    return;
+  }
+  LOG_INF("GAME", "Mode nearby picked for %s", manifest.id);
+  // Wi-Fi first: closing it is the cheaper step, and a running Wi-Fi radio and web server are the usual cause of a
+  // short heap. The memory message is for Wi-Fi off and the heap still short.
+  const NearbyProbe::Verdict verdict = NearbyProbe::decide(GameLobbyActivity::probe());
+  if (!verdict.canOpen()) {
+    LOG_INF("GAME", "Nearby for %s refused: %s", manifest.id, verdict.wifiInUse ? "Wi-Fi in use" : "low memory");
+    openRefusal(verdict.wifiInUse ? Refusal::WifiInUse : Refusal::LowMemory);
+    return;
+  }
+  auto lobby = makeUniqueNoThrow<GameLobbyActivity>(renderer, mappedInput, manifest, pkgHash,
+                                                    settings.valuesAt(choices.valueIndex));
+  if (!lobby) {
+    LOG_ERR("GAME", "OOM: %u byte nearby lobby", static_cast<unsigned>(sizeof(GameLobbyActivity)));
+    requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
+    return;
+  }
+  // The same point and rule as a started match: Nearby is the last mode started. Never resume.bin: this touches
+  // prefs.bin alone.
+  rememberModeIfChanged();
+  // A push: Back from the lobby lands on this screen as it was. The lobby's Start replaces the stack with the match.
+  startActivityForResult(std::move(lobby), [](const ActivityResult&) {});
 }
 
 void GameModeActivity::startResume() {
@@ -332,7 +395,7 @@ void GameModeActivity::startResume() {
   }
   if (!found) {
     LOG_ERR("GAME", "Cannot continue %s: no mode this host can start", manifest.id);
-    requestUpdate();  // the tap moved the selection here; show it
+    showResumeNotice();  // says so on the Continue row; the save is untouched
     return;
   }
   LOG_INF("GAME", "Continue %s: a %s roster of %u seat(s) unless the save says otherwise", manifest.id,
@@ -360,15 +423,18 @@ void GameModeActivity::startMatch(const GameCore::Roster& roster, const bool res
     requestUpdate();  // the tap flash was cleared; repaint this screen rather than leave a stale frame
     return;
   }
-  // A New match in a mode other than the one prefs.bin holds makes it the remembered one (a missing file holds none),
-  // unless the file's mode is one this host does not offer (a remembered pass here with no pass seats): it is kept for
-  // a host that can. A file that would not read (a card fault) may be a good one: New game leaves it for an Options
-  // change to replace.
-  if (!resume && prefsState != GameSaveStore::PrefsState::Unreadable && choices.mode != saved.mode &&
-      (saved.mode & ~modes) == 0) {
+  if (!resume) rememberModeIfChanged();
+  activityManager.replaceActivity(std::move(match));
+}
+
+void GameModeActivity::rememberModeIfChanged() {
+  // A New match (or a nearby lobby) in a mode other than the one prefs.bin holds makes it the remembered one (a missing
+  // file holds none), unless the file's mode is one this host does not offer (a remembered pass here with no pass
+  // seats): it is kept for a host that can. A file that would not read (a card fault) may be a good one: New game
+  // leaves it for an Options change to replace.
+  if (prefsState != GameSaveStore::PrefsState::Unreadable && choices.mode != saved.mode && (saved.mode & ~modes) == 0) {
     rememberChoices();
   }
-  activityManager.replaceActivity(std::move(match));
 }
 
 void GameModeActivity::rememberChoices() {
@@ -447,12 +513,15 @@ void GameModeActivity::onBackButton() {
   finish();
 }
 
-bool GameModeActivity::handleCustomInput() { return confirmRow >= 0 && handleConfirmInput(); }
+bool GameModeActivity::handleCustomInput() {
+  if (refusal.load() != Refusal::None) return handleRefusalInput();
+  return confirmRow >= 0 && handleConfirmInput();
+}
 
 // The hit rects are the last render's: after the confirmation opens they are still the list's rows until the next
 // render, and a tap on one must not start a match or move the selection.
 void GameModeActivity::onRowAction(const fui::ActionEvent& event) {
-  if (confirmRow >= 0) return;
+  if (confirmRow >= 0 || refusal.load() != Refusal::None) return;
   UiListActivity::onRowAction(event);
 }
 
@@ -518,6 +587,71 @@ void GameModeActivity::buildConfirmDialog(UiScreen& screen) {
   // The second line is the mode the new game is in.
   confirm.build(screen, renderer, ACTION_CONFIRM_CHOICE, tr(STR_GAMES_NEW_OVER_SAVE_TITLE), modeName(choices.mode),
                 tr(STR_GAMES_NEW_OVER_SAVE), tr(STR_GAMES_NEW_GAME));
+}
+
+void GameModeActivity::openRefusal(const Refusal reason) {
+  app.clearTapFlash();
+  refusal.store(reason, std::memory_order_release);
+  requestUpdate();
+}
+
+void GameModeActivity::closeRefusal() {
+  app.clearTapFlash();
+  refusal = Refusal::None;
+  requestUpdate();
+}
+
+bool GameModeActivity::handleRefusalInput() {
+  // Touch: render() registered the OK button; onRefusalTap runs for a tap on it.
+  const auto route = UiAppHost::routeTouch(mappedInput);
+  if (route.routed && app.invalidated()) requestUpdate();
+  if (route) return true;
+  using Button = MappedInputManager::Button;
+  if (mappedInput.wasReleased(Button::Back) || mappedInput.wasReleased(Button::Confirm)) closeRefusal();
+  return true;  // the notice owns every pass while it is open
+}
+
+void GameModeActivity::onRefusalTap(const fui::ActionEvent&, void* user) {
+  auto* self = static_cast<GameModeActivity*>(user);
+  if (self->refusal.load() == Refusal::None) return;  // closed: a tap routed by the table built while it was open
+  self->closeRefusal();
+}
+
+void GameModeActivity::buildRefusalDialog(UiScreen& screen) {
+  // One OK button: a notice, not a question. Focused, so Confirm closes it.
+  fui::DialogOption ok;
+  ok.label = tr(STR_OK_BUTTON);
+  ok.action = ACTION_REFUSAL_OK;
+  ok.value = 0;
+  ok.state = fui::StateFocused;
+  refusalProps.title = modeName(Manifest::MODE_NEARBY);
+  refusalProps.message =
+      renderedRefusal == Refusal::WifiInUse ? tr(STR_GAMES_NEARBY_WIFI_IN_USE) : tr(STR_GAMES_NEARBY_LOW_MEMORY);
+  refusalProps.options = &ok;
+  refusalProps.optionCount = 1;
+  refusalProps.verticalOptions = true;
+  refusalProps.titleText = screen.theme().smallText;
+  refusalProps.titleText.bold = true;
+  refusalProps.messageText = screen.theme().smallText;
+  refusalProps.messageText.maxLines = 3;
+  refusalProps.buttonText = screen.theme().smallText;
+  refusalProps.inputMask = fui::InputTouch;  // physical buttons stay in handleRefusalInput()
+  // A framed panel, as GameConfirmDialog and OptionPopup draw it.
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  refusalProps.styles = fui::defaultPopupStyles();
+  refusalProps.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+  refusalProps.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
+  refusalProps.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
+  refusalProps.styles.selected = refusalProps.styles.normal;
+  refusalProps.styles.focused = refusalProps.styles.normal;
+  refusalProps.styles.active = refusalProps.styles.normal;
+  refusalProps.styles.disabled = refusalProps.styles.normal;
+
+  const fui::Rect body = screen.body();
+  int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);
+  if (width > body.width) width = body.width;
+  const int16_t height = fui::optionDialogHeight(screen.target(), refusalProps, width);
+  fui::optionDialog(screen.frame(), fui::centeredRect(body, fui::Size{width, height}), refusalProps);
 }
 
 #endif  // FREEINK_CAP_GAMES

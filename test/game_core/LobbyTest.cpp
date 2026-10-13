@@ -274,6 +274,67 @@ TEST(LobbyTest, RefusalAnswersAreRateLimited) {
   EXPECT_EQ(stranger.countAborts(), 2u) << "one more after the interval";
 }
 
+TEST(LobbyTest, GuestHeardMsIsZeroBeforeAGuestAndAtItsJoin) {
+  HostRig h;
+  EXPECT_EQ(h.host.guestHeardMs(1), 0u) << "the host's own seat";
+  EXPECT_EQ(h.host.guestHeardMs(2), 0u) << "no guest yet";
+  RawPeer& guest = h.addPeer();
+  h.run(100);
+  ASSERT_TRUE(h.join(guest));
+  h.run(STEP_MS);
+  ASSERT_EQ(h.host.seatsTaken(), 2);
+  const uint64_t heard = h.host.guestHeardMs(2);
+  EXPECT_GT(heard, 100u) << "it starts at the JOIN";
+  EXPECT_LE(heard, h.rig.now());
+  EXPECT_EQ(h.host.guestHeardMs(3), 0u) << "an unknown seat";
+  EXPECT_EQ(h.host.guestHeardMs(0), 0u);
+}
+
+TEST(LobbyTest, GuestHeardMsAdvancesWithKeepalivesAndOnlyThose) {
+  HostRig h;
+  RawPeer& guest = h.addPeer();
+  ASSERT_TRUE(h.join(guest));
+  h.run(STEP_MS);
+  const uint64_t atJoin = h.host.guestHeardMs(2);
+  h.run(2000);
+  EXPECT_EQ(h.host.guestHeardMs(2), atJoin) << "the host's own keepalives do not count";
+  ASSERT_TRUE(guest.putAck(h.session(), 0));
+  h.run(STEP_MS);
+  const uint64_t atAck = h.host.guestHeardMs(2);
+  EXPECT_GT(atAck, atJoin + 1900) << "a guest's ACK";
+  Frame ping;
+  ping.header.type = Type::Ping;
+  h.run(500);
+  ASSERT_TRUE(guest.put(ping, h.session(), 0, 0));
+  h.run(STEP_MS);
+  EXPECT_GT(h.host.guestHeardMs(2), atAck + 400) << "a guest's PING";
+  const uint64_t atPing = h.host.guestHeardMs(2);
+  h.run(500);
+  ASSERT_TRUE(guest.put(ping, h.session() + 1, 0, 0));  // another session
+  h.run(STEP_MS);
+  EXPECT_EQ(h.host.guestHeardMs(2), atPing) << "a frame of another session is not heard";
+}
+
+TEST(LobbyTest, GuestHeardMsOfASeatThatLeftIsZeroAndItIsPerSeat) {
+  HostRig h(3);
+  RawPeer& a = h.addPeer();
+  RawPeer& b = h.addPeer();
+  ASSERT_TRUE(h.join(a));
+  h.run(200);
+  ASSERT_TRUE(h.join(b));
+  h.run(STEP_MS);
+  ASSERT_EQ(h.host.seatsTaken(), 3);
+  const uint64_t heardA = h.host.guestHeardMs(2);
+  const uint64_t heardB = h.host.guestHeardMs(3);
+  EXPECT_GT(heardA, 0u);
+  EXPECT_GE(heardB, heardA + 200) << "per seat: B joined 200 ms after A";
+  ASSERT_TRUE(a.put(abortFrame(AbortReason::Left), h.session()));
+  h.run(STEP_MS);
+  ASSERT_EQ(h.host.seatsTaken(), 2);
+  EXPECT_EQ(h.host.guestHeardMs(3), 0u) << "the seat closed: B is now seat 2 and seat 3 is empty";
+  EXPECT_GE(h.host.guestHeardMs(2), heardB) << "B keeps its own heard time in its new seat";
+}
+
 TEST(LobbyTest, StartNeedsASeatedGuest) {
   HostRig h;
   h.run(STEP_MS);

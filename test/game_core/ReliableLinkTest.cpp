@@ -1526,6 +1526,56 @@ TEST(ReliableLinkTest, APingOrAckFromAnUnknownPeerIsStrayAndRegistersNoPeer) {
   EXPECT_TRUE(x.raw.of(Type::Ack).empty()) << "and no keepalive goes to it";
 }
 
+TEST(ReliableLinkTest, HeardMsIsWhenThePeerLastSentAnythingValid) {
+  Solo x;
+  x.step(50);
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 0u) << "a peer never registered";
+  EXPECT_EQ(x.rl.heardMs(PeerHandle{}), 0u) << "and the invalid handle";
+  x.deliver(joinFrame(1), 0, NO_ACK);
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 50u) << "registered at its JOIN";
+  x.step(300);
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 50u) << "nothing heard since: the link's own keepalives do not count";
+  ASSERT_TRUE(x.raw.putType(Type::Ping, 0, NO_ACK));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), x.clock.nowMs()) << "a PING";
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 350u);
+  x.step(100);
+  ASSERT_TRUE(x.raw.putAck(0));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), x.clock.nowMs()) << "an ACK";
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 450u);
+  x.step(100);
+  x.deliver(stateFrame(snapshotFor(1), 1), 1, 0);
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), x.clock.nowMs()) << "a STATE";
+  x.step(100);
+  ASSERT_TRUE(x.raw.put(abortFrame(), 0, NO_ACK));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), x.clock.nowMs()) << "an ABORT";
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 650u);
+}
+
+TEST(ReliableLinkTest, HeardMsIgnoresAnotherSessionAndALostOrForgottenPeer) {
+  Solo x;
+  x.step(50);
+  x.deliver(joinFrame(1), 0, NO_ACK);
+  ASSERT_EQ(x.rl.heardMs(x.toRaw), 50u);
+  x.step(200);
+  constexpr uint32_t OTHER = SESSION + 1;
+  ASSERT_TRUE(x.raw.put(plainFrame(Type::Ping), 0, NO_ACK, OTHER));
+  ASSERT_TRUE(x.raw.put(stateFrame(snapshotFor(1), 1), 1, 0, OTHER));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 50u) << "a frame of another session is not heard";
+  x.step(10000);
+  ASSERT_EQ(x.sink.silent.size(), 1u);
+  const uint64_t lostAt = x.rl.heardMs(x.toRaw);
+  x.step(100);
+  ASSERT_TRUE(x.raw.putType(Type::Ping, 0, NO_ACK));
+  x.rl.tick();
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), lostAt) << "a lost peer's frames are ignored";
+  x.rl.forget(x.toRaw);
+  EXPECT_EQ(x.rl.heardMs(x.toRaw), 0u) << "a forgotten peer is not registered";
+}
+
 TEST(ReliableLinkTest, AtMostMaxFramesPerTickAreTakenAndTheRestWaitForTheNextTick) {
   Solo x;
   const size_t flood = 2 * ReliableLink::MAX_FRAMES_PER_TICK + 5;
