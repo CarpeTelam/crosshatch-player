@@ -3,7 +3,7 @@ title: 'Heap lines reach the diagnostics log without a USB host'
 type: 'feature'
 ticket: '21'
 created: '2026-10-13'
-status: 'built'
+status: done
 route: 'oneshot'
 route_source: 'auto'
 review: 'thorough'

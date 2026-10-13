@@ -1506,3 +1506,9 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
   summary: An unmount (the USB drive, or sleep when a line lands after the flush or the card is slow) landing between the writer's Storage.open and its write may leave a HalFile on an ended volume, and whether SdFat then returns an error or faults is unread.
   evidence: HalStorage.h says open HalFiles become invalid after prepareForDeepSleep(); the plan's Design Notes assume a straddling batch fails and is counted. Reading SdFat's FatFile::write after FsVolume::end(), or one device run that sleeps with a line logged just before the unmount (with the define on), settles it. The sleep flush (row 14) closes the window for sleep unless the card is slow or a task logs after the flush; the USB drive has no barrier. Location: src/diagnostics/DiagLogStorage.cpp:StorageFileStore::append. Severity: medium (unverified).
+
+## 6.21
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-heap-lines-reach-the-diagnostics-log-without-a-usb-host-plan.md`
+  summary: No automated check compiles src/main.cpp with CROSSHATCH_SD_LOG=1, so an edit that keeps the pinned text but stops a define-on loop() from reaching or compiling the [MEM] block would pass CI.
+  evidence: Every CI firmware env builds with the define off, and DiagLogMain.TheHeapLinesNeedNoUsbHostOnlyWhenTheDefineIsOn reads src/main.cpp as text only; this extends `## 6.19`'s item that no CI job compiles the hook with the define on. Entry 11's rebuilt packet closes it out by hand: a define-on `pio run -e x4pro` and `-e default`, and the device check that a cardless card log holds the [MEM] lines every 10 s. Location: src/main.cpp:loop (the #if CROSSHATCH_SD_LOG branch of the [MEM] if). Severity: low.
