@@ -633,9 +633,10 @@ def nearby_report(device):
                          f'ABORT copies {copies}')
         if not session.leaves:
             lines.append('      leave: none')
-        stops = ', '.join(f'{free} B free at {when}' for when, free in session.high_water) or 'not stopped'
         # A guest's task starts before it knows the host's session id (00000000) and stops under the real one, so a
-        # session with no `task started` line of its own shows the device's.
+        # session with no `task started` line of its own shows the device's, and the 00000000 one has no stop line: the
+        # task did stop, under the other id.
+        stops = ', '.join(f'{free} B free at {when}' for when, free in session.high_water) or 'no stop under this id'
         stack = session.stack_bytes or device_stack
         lines.append(f'      GameLink task: stack {fmt(stack, " B")}, high-water {stops}')
         for when, text in session.other:

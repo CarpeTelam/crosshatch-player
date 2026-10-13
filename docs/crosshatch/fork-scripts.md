@@ -121,9 +121,11 @@ dropped touches and hand-off screens per game, and the `[MEM]` lines (count, fir
 and `MaxAlloc`; `--mem-all` lists every line). For a nearby match (epic-play-nearby) it adds a `nearby:` block: each
 `radio up` line (one per bring-up), then per `LINK` session id the `STATE`s sent and received with the last `ver`, the
 adopt verdicts, queue-full count, the resend, silence, `ABORT` sent, and link-refused running totals, each `ABORT`
-received (reason and seat; the firmware logs one line per copy it hears, and a leaver sends three), each leave (reason, wait, unacked, `ABORT` copies), and the `GameLink` task's stack and its
-high-water at each stop, with the least over all stops; then each entry into `PeerGone` and the reason line "the other
-player is gone: ...", every `[ERR] [LINK]` line and the lobby's `[ERR] [GAME] Nearby: ...` lines, and any `LINK` line it has no pattern for (listed verbatim, so a
+received (reason and seat; the firmware logs one line per copy it hears, and a leaver sends three), each leave (reason,
+wait, unacked, `ABORT` copies), and the `GameLink` task's stack and its high-water at each stop, with the least over all
+stops (a guest's task starts under session `00000000` and stops under the host's id, so the first shows "no stop under
+this id"); then each entry into `PeerGone` and the reason line "the other player is gone: ...", every `[ERR] [LINK]`
+line and the lobby's `[ERR] [GAME] Nearby: ...` lines, and any `LINK` line it has no pattern for (listed verbatim, so a
 reworded firmware line shows up rather than vanishes). It takes one log per device, the raw log or `merged.log` and not
 both, since a device found in two files would count every figure twice (exit 2):
 

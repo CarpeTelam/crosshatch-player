@@ -72,6 +72,8 @@ FORMATS = {
     'radio_failed': ('src/games/EspNowLink.h', 'bring-up failed at %s'),
     'udp_up': ('src/games/UdpLink.cpp', 'udp link up on %u'),
     'peer_gone_reason': ('src/activities/games/GameMatchActivity.cpp', '%s: the other player is gone: %s'),
+    # The lobby's own failures, logged at LOG_ERR under GAME (there are six, all `Nearby: ...`; the radio's is pinned).
+    'lobby_radio_failed': ('src/activities/games/GameLobbyActivity.cpp', 'Nearby: the radio did not start for %s'),
 }
 # The LINK formats that are logged at LOG_INF (the other two, bring-up failures, at LOG_ERR).
 LINK_INF_KINDS = ('link_state_sent', 'link_state_recv', 'link_state_adopt', 'link_queue_full', 'link_abort_recv',
@@ -836,7 +838,7 @@ class SummaryTest(unittest.TestCase):
         self.assertIn('ABORT received (one line per copy the device heard): left from seat 1 x3', b)
         self.assertIn('leave at [97797]: reason left, waited 0 ms, unacked 0, ABORT copies 3', b)
         self.assertIn('GameLink task: stack 4096 B, high-water 2048 B free at [97809]', b)  # the stop's session has no start
-        self.assertIn('GameLink task: stack 4096 B, high-water not stopped', b)  # session 00000000's own
+        self.assertIn('GameLink task: stack 4096 B, high-water no stop under this id', b)  # session 00000000's own
         self.assertIn('PeerGone at [80497]: nearby on PeerGone', b)
         self.assertIn('the other player is gone: left x1', b)
 
@@ -867,7 +869,7 @@ class SummaryTest(unittest.TestCase):
             device_line(190, 'INF', 'LINK', 'radio_up', 1, 0x24, 0x0A, 0xC4, 0x3F, 0x2A, 0x91),
             device_line(200, 'ERR', 'LINK', 'radio_failed', 'initEspNow'),
             device_line(210, 'ERR', 'LINK', 'link_bring_up_failed', 0, 'no memory for the session'),
-            '[215] [ERR] [GAME] Nearby: the radio did not start for nearby',
+            device_line(215, 'ERR', 'GAME', 'lobby_radio_failed', 'nearby'),
             '[220] [INF] [LINK] some line a later firmware adds',
             '[230] [INF] [LINK] session=ab12cd34 a session line a later firmware adds',
         ]
@@ -949,6 +951,8 @@ class FirmwareFormatsTest(unittest.TestCase):
                 self.assertIn(f'{level}("LINK", "{text}"', (ROOT / path).read_text())
         self.assertIn('LOG_INF("GAME", "%s: the other player is gone: %s"',
                       (ROOT / FORMATS['peer_gone_reason'][0]).read_text())
+        path, text = FORMATS['lobby_radio_failed']
+        self.assertIn(f'LOG_ERR("GAME", "{text}"', (ROOT / path).read_text())
 
     def test_the_parsers_read_what_the_formats_print(self):
         cases = [
@@ -963,6 +967,7 @@ class FirmwareFormatsTest(unittest.TestCase):
             (device_log.PEER_GONE_REASON, device_line(1, 'INF', 'GAME', 'peer_gone_reason', 'g-1', 'left')),
             (device_log.LINK_LINE, device_line(1, 'INF', 'LINK', 'udp_up', 23872)),
             (device_log.LINK_ERROR_LINE, device_line(1, 'ERR', 'LINK', 'radio_failed', 'setChannel')),
+            (device_log.NEARBY_ERROR, device_line(1, 'ERR', 'GAME', 'lobby_radio_failed', 'nearby')),
             (device_log.RADIO_UP, device_line(1, 'INF', 'LINK', 'radio_up', 1, 1, 2, 3, 4, 5, 6)),
             (device_log.LINK_SESSION, device_line(1, 'INF', 'LINK', 'link_resend', 7, 1, 1)),
         ]

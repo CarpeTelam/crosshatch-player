@@ -475,8 +475,8 @@ TEST_F(TitleScreenTest, APassOnlyGameRowPushesItsTitleScreenWhoseNewGameIsPass) 
 }
 
 TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
-  hostcaps::script().nearby =
-      false;  // a host with no radio: the device starts nearby (NEARBY_BUILT), this host does not
+  // A host with no radio: the device starts nearby (NEARBY_BUILT), this host does not.
+  hostcaps::script().nearby = false;
   installCounter("\"solo\",\"pass\",\"nearby\"");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
   const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
