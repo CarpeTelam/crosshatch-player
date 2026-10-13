@@ -210,7 +210,7 @@ All at the tree that became the commit (its `src/` is byte-identical to what the
 
 ### Owner's smoke run: fields to fill
 
-See the packet beside this plan (`story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-packet.md`) for the steps; each field below is the owner's, left blank on purpose.
+See the packet beside this plan (`story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-packet.md`) for the steps; each field below is the owner's, left blank on purpose. The run is the cardless one (owner Decisions of 2026-10-13); `## 6.3`'s three serial-capture checks wait for a run over USB and are not in this table.
 
 | Field | Value |
 |-------|-------|
@@ -221,14 +221,13 @@ See the packet beside this plan (`story-nearby-on-two-x4-pros-wiring-and-the-smo
 | Merged log: a round of the `nearby` fixture, with a rejected move | |
 | Merged log: Leave and "player left" on the other device | |
 | `GameLink` task stack high-water (bytes free, each device, each stop) against the margin entry 8 stated (4,096 B stack; no number was stated, the nearest rule is the VM's 2,048 B headroom, `deferred-work.md` `## owner-e4-entry14`) | |
-| Internal heap, one device: before ten bring-ups and after (`[MEM] Free` and `Min Free`), no peer | |
+| Internal heap, one device: before ten bring-ups and after (`[MEM] Free`, `Min Free`, and `MaxAlloc`), no peer | |
 | `silentRestart()` needed after teardown (yes / no, and why) | |
-| `## 6.3`: capture with and without `pio device monitor` open | |
-| `## 6.3`: connecting does not reset the board | |
-| `## 6.3`: each sleep gives a lost and a connected line | |
+| The card log (step 1): two boots on B across the sleep, the first ending at the power-button line (the flush before sleep) | |
+| `[DIAG]` dropped or lost lines (count and where in the run), each device | |
 | `## 6.5`: PSRAM written from the Wi-Fi task's receive callback, the ring's ordering (a clean round with no torn or reordered frame) | |
 | Entry 10's D2: the host list's 1,000 ms refresh on the panel | |
-| `docs/crosshatch/fork-scripts.md`'s run steps worked as written (or the corrections) | |
+| `docs/crosshatch/fork-scripts.md`'s "The run without a computer" worked as written (or the corrections) | |
 
 ## Auto Run Result
 
@@ -254,4 +253,4 @@ See the packet beside this plan (`story-nearby-on-two-x4-pros-wiring-and-the-smo
 
 **Residual risks:** the owner's question whether `NEARBY_BUILT` should be on for the X4 Pro only until a Sticky run was open when this commit was made, so it is unchanged (a guard in `src/games/GameHostCaps.*` and a test would do it); the device `open()` success path runs only through the double (the real radio, the MAC-derived label, and teardown are the owner's run); `NEARBY_BUILT` is on for every games board, Sticky included, which no run covers; `open()` blocks up to half a second on the loop task (the packet has the owner watch it); the `|| IS_SIMULATOR` term of `NEARBY` is no longer pinned by a test; the recording in `device_log_test.py` is the simulator's (stack figure 2048 B constant, no `radio up` line); the epic share has about 1.7 KB of flash left, against entry 13's estimated 1.2 KB; the stale comment at `EspNowLink.h:396` is deferred. A timing figure in this plan: none claimed (the 1,000 ms list refresh, the 4 KB stack, and the ten-cycle heap are the owner's fields).
 
-**Owner's steps:** the packet beside this plan. The orchestrator builds the firmware packet from the merged epic head (`PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro`), fills the packet's firmware commit, SHA-256, and `nearby.chgame` hash, and brings the owner's results back into the "Owner's smoke run: fields to fill" table.
+**Owner's steps:** the packet beside this plan. The orchestrator builds the firmware packet from the merged epic head (`PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_TOUCH_LOG=1 -DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=<commit>" pio run -e x4pro`, the cardless run after entries 19 and 21), fills the packet's firmware commit, SHA-256, and `nearby.chgame` hash, and brings the owner's results back into the "Owner's smoke run: fields to fill" table.
