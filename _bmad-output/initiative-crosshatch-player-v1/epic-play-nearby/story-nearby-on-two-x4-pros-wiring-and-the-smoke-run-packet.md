@@ -10,8 +10,8 @@ Needed: two X4 Pros, each with its SD card, about an hour, and afterwards a comp
 
 - **One build on both devices.** The orchestrator built it from the epic head with both diagnostics defines (the touch log and the SD-card log), under the build lock:
   `PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_TOUCH_LOG=1 -DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=<commit>" pio run -e x4pro`. The recipe is in `docs/crosshatch/game-canvas.md` ("The canvas exception") and `docs/crosshatch/fork-scripts.md` ("The run without a computer").
-  - Firmware commit: FILL
-  - File: FILL
+  - Firmware commit: `7d5b59d35140fb93f3668f4dc2478ec55f5039e1`, the epic branch after entry 21 merged. It was built on 2026-10-13 in the main checkout, under the build lock, with `CROSSHATCH_BUILD_ID=7d5b59d3`, so each card file's `firmware` header line reads `7d5b59d3`. Its ELF has the card log's hook and flush (`DiagLog::append`, `DiagLog::flushBeforeSleep`), and `scripts/check_flash_budget.py touch-line` reports the per-tap line present, so both defines took. A define-on `pio run -e default` also built (entry 21's deferred close-out).
+  - File: `crosshatch-x4pro-7d5b59d3-diag.bin`, 6,269,456 B, SHA-256 `bfdfc8f527ca7f24a310384e65815c48194708686be2b49f7f3fc44b7159cf58`.
 - **Check the SHA-256 before flashing (`sha256sum <name>.bin`), and flash only a file that matches.** Put the same file on both devices. A level-1 surface mismatch ends a match (AD-13), and a lobby from a different build would not join.
 - Flash it either way:
   - Use CrossPoint Reader Flash Tools.
@@ -28,7 +28,7 @@ Needed: two X4 Pros, each with its SD card, about an hour, and afterwards a comp
 
 `python3 scripts/pack_device_run.py <out-dir>` packs it with the other device-run games, and lists the hashes in `HASHES.txt`. For this run only `nearby.chgame` matters.
 
-- `nearby.chgame`: FILL
+- `nearby.chgame`: 1,999 B, hash `2bef3752d7af24a2`, packed on 2026-10-13 from the same commit by `scripts/pack_device_run.py`. It is unchanged from the earlier packet.
 - Put the same file in both cards' game inbox:
   - Use a card reader, or upload it into the games folder with the device's file manager.
   - Check the file's size before copying (`ls -l`) and on the card afterwards, since an upload once delivered 0-byte files.
