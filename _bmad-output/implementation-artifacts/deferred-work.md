@@ -1512,3 +1512,27 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-heap-lines-reach-the-diagnostics-log-without-a-usb-host-plan.md`
   summary: No automated check compiles src/main.cpp with CROSSHATCH_SD_LOG=1, so an edit that keeps the pinned text but stops a define-on loop() from reaching or compiling the [MEM] block would pass CI.
   evidence: Every CI firmware env builds with the define off, and DiagLogMain.TheHeapLinesNeedNoUsbHostOnlyWhenTheDefineIsOn reads src/main.cpp as text only; this extends `## 6.19`'s item that no CI job compiles the hook with the define on. Entry 11's rebuilt packet closes it out by hand: a define-on `pio run -e x4pro` and `-e default`, and the device check that a cardless card log holds the [MEM] lines every 10 s. Location: src/main.cpp:loop (the #if CROSSHATCH_SD_LOG branch of the [MEM] if). Severity: low.
+
+## 6.11
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: `EspNowLink.h`'s comment on `makeEspNowLink()` still says "Nothing calls it yet: the lobby and the GameLink task are later entries".
+  evidence: `NearbyRadio::open()` calls it since entry 11; `src/games/EspNowLink.*` was outside entry 11's `touches`. For entry 13's sweep. Location: src/games/EspNowLink.h:396. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: Back on the "player left" view sends three more `ABORT` copies to a peer that has already left.
+  evidence: Smoke run 2026-10-13: `A [85086] leave reason=left ... copies=3`, `abort sent n=3` after `Over -> PeerGone` on three `abort recv`. Harmless (the peer's session is gone) but three wasted frames and a misleading `leave` line; `NearbySession::leave` sends regardless of the end already latched. For entry 13's sweep. Location: src/games/NearbySession.cpp:NearbySession::leave. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: A host's Cancel sends no frame, so a guest's list keeps the cancelled host for up to `hostExpireMs` (3 s) plus a redraw: the owner saw 3 to 4 s.
+  evidence: Owner's D2 check, smoke run follow-up 2026-10-13. As designed (`lib/GameCore/Lobby.h:50`, crossplay kCandidateForgetMs); a withdrawal frame (an `ABORT` from the lobby) would clear the row at once. A protocol addition, not in this epic's scope. Location: lib/GameCore/HostLobby.cpp, lib/GameCore/GuestLobby.cpp:expireHosts. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: A tap from a seat that is not the turn seat is dropped with no message (`tap for seat 2`, then `Frame identical to the one on screen; not refreshed`).
+  evidence: Smoke run 2026-10-13, `B [51811]`, B tapped a free square during A's turn. The player sees nothing happen; a "Not your turn" line, as pass and play's hand-off shows, is a UX choice for the owner. Location: src/games/GameVM.cpp (input for a seat that is not the turn seat). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: The first nearby bring-up of a boot keeps 18,400 B of internal heap and 49,152 B of the largest free block until the next restart; later bring-ups cost nothing.
+  evidence: Smoke run follow-up, A boot 6: 14 bring-ups, every idle `[MEM]` line after the first the same (`Free 156016, MaxAlloc 81908`, from `174416` / `131060`). Most likely the Wi-Fi driver's first-init allocations. No `silentRestart()` is needed for a leak; whether the 49 KB should be won back with a restart on leaving nearby is the owner's call (Notes). Location: src/games/EspNowLink.cpp (bring-up, teardown). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: Both devices received the package as `nearby.chgame.zip` and the owner renamed it in the file manager; the inbox ignores a `.chgame.zip`.
+  evidence: `[WEB] Renamed file: /games/nearby.chgame.zip -> /games/nearby.chgame` on both cards. The download (the session's file card) saved a zip-typed file with a `.zip` suffix. Entry 14's packet says to rename it; accepting `.chgame.zip` in the inbox is a later option. Location: entry 14's packet; src/games/GamePackageInstaller.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
+  summary: `## 6.3`'s serial-capture checks (a second reader, no reset on connect, lost and connected lines across a sleep) are still unrun.
+  evidence: The smoke run was cardless (owner Decisions 2026-10-13), so no serial capture ran. They wait for a run over USB. Location: scripts/device_log.py:capture. Severity: low.
