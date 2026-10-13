@@ -18,12 +18,14 @@ namespace {
 
 // A card as the writer sees it (DiagLog::FileStore), standing in for Storage / HalFile
 // (src/diagnostics/DiagLogStorage.cpp's StorageFileStore). What it copies from the device, pinned by
-// FakeStoreMatchesTheDevice below: append creates a missing file and writes at its end; listFiles gives file names, not
-// paths, and no directories; remove of a missing file is false; listFiles fails only for a missing folder (the device
-// store asks exists() first, because the SDK lists a folder it cannot open as empty). Where it is more permissive than
-// the device: no write is ever short or slow, the card never unmounts between the operations of one batch (the device
-// can: Storage locks per call, so a sleep unmount can land between an open and its write, and that batch fails), and a
-// name is never longer than the device's 127.
+// FakeStoreMatchesTheDevice below: create makes a missing file and writes at its end; append writes at the end of an
+// existing file and answers Missing, creating nothing, for one that is not there (the device opens it without the
+// create flag, so the open fails first, before any refusal); listFiles gives file names, not paths, and no directories;
+// remove of a missing file is false; listFiles fails only for a missing folder (the device store asks exists() first,
+// because the SDK lists a folder it cannot open as empty). Where it is more permissive than the device: no write is
+// ever short or slow, the card never unmounts between the operations of one batch (the device can: Storage locks per
+// call, so a sleep unmount can land between an open and its write, and that batch fails), and a name is never longer
+// than the device's 127.
 class FakeStore final : public DiagLog::FileStore {
  public:
   bool ready() override { return mounted; }
@@ -47,7 +49,17 @@ class FakeStore final : public DiagLog::FileStore {
     if (failRemove) return false;
     return files.erase(path) == 1;
   }
-  bool append(const char* path, const char* data, size_t length) override {
+  bool create(const char* path, const char* data, size_t length) override { return write(path, data, length); }
+  Appended append(const char* path, const char* data, size_t length) override {
+    if (files.count(path) == 0 || appendsMissing) {
+      appends++;
+      return Appended::Missing;
+    }
+    return write(path, data, length) ? Appended::Written : Appended::Failed;
+  }
+
+  // create and append share the failure knobs, and each call of either counts in `appends`.
+  bool write(const std::string& path, const char* data, size_t length) {
     appends++;
     if (failAppends > 0) {
       failAppends--;
@@ -77,6 +89,9 @@ class FakeStore final : public DiagLog::FileStore {
   bool failAppendsAlways = false;
   bool failBatches = false;
   bool failRemove = false;
+  // A mounted card that refuses opens: the device's append open fails, and its Storage.exists check, itself an open in
+  // SdFat, fails too, so a present file answers Missing. Headers (create) still go through.
+  bool appendsMissing = false;
   int failAppends = 0;
   int appends = 0;
   std::map<std::string, std::string> files;
@@ -266,6 +281,112 @@ TEST(DiagLogWriter, AWriteFailureIsCountedItsLinesAreReportedLostAndTheNextBatch
   EXPECT_FALSE(contains(rig.store.total(), "failed batch"));
   EXPECT_EQ(rig.writer.pump(), Step::Idle);
   clockMs = 1000;
+}
+
+// Entry 11's smoke run: the owner deleted the card logs from the Wi-Fi file manager mid-run, and the next batch
+// remade the file without a header, which `merge` refuses. A batch never makes a file: the deletion costs that batch.
+TEST(DiagLogWriter, FilesDeletedBetweenBatchesCostOneBatchAndTheNextFileStartsWithItsHeader) {
+  Rig<> rig;
+  rig.log("[1] [INF] [A] before\n");
+  ASSERT_EQ(rig.writer.pump(), Step::Wrote);
+  ASSERT_EQ(rig.store.files.size(), 1u);
+  rig.store.files.clear();  // every file in the folder deleted
+  const std::string lost = "[2] [INF] [A] in the batch after the delete\n";
+  rig.log(lost);
+  EXPECT_EQ(rig.writer.pump(), Step::Failed);
+  EXPECT_TRUE(rig.store.files.empty());  // the failed batch made no file
+  EXPECT_EQ(rig.writer.stats().writeFailures, 1u);
+  EXPECT_EQ(rig.writer.stats().bytesLost, lost.size());
+  rig.log("[3] [INF] [A] after\n");
+  clockMs = 4242;
+  EXPECT_EQ(rig.writer.pump(), Step::Wrote);
+  ASSERT_EQ(rig.store.files.size(), 1u);
+  EXPECT_TRUE(contains(rig.store.files.begin()->first, "b0001-s01-"));
+  const std::string file = rig.store.files.begin()->second;
+  EXPECT_EQ(file.rfind(std::string(DiagLog::MAGIC) + "\n", 0), 0u) << file;
+  EXPECT_TRUE(contains(file, "# segment 1\n"));
+  const std::string notice = "[4242] [ERR] [DIAG] lost " + std::to_string(lost.size()) + " bytes (card write failed)\n";
+  EXPECT_EQ(Rig<>::content(file), notice + "[3] [INF] [A] after\n");
+  EXPECT_EQ(rig.store.directories.size(), 2u);  // the folder is made again before the new file, in case it went too
+  EXPECT_EQ(rig.writer.pump(), Step::Idle);
+  clockMs = 1000;
+}
+
+// The streak rule keeps a card that refuses batches on the file it started; a file that is gone must not hold it there,
+// or every later batch of the boot would fail on it.
+TEST(DiagLogWriter, AFileDeletedDuringARefusalStreakStartsANewSegmentWhenTheCardRecovers) {
+  Rig<8192> rig;
+  rig.log("[1] [INF] [A] first\n");
+  ASSERT_EQ(rig.writer.pump(), Step::Wrote);  // s00
+  rig.store.failBatches = true;
+  rig.lines(10, 11);
+  EXPECT_EQ(rig.writer.pump(), Step::Failed);  // s00's batch refused: the next goes to s01
+  rig.lines(11, 12);
+  EXPECT_EQ(rig.writer.pump(), Step::Failed);  // s01's header written, its batch refused: the streak stays on s01
+  const std::string dir = std::string(DIRECTORY) + "/";
+  ASSERT_TRUE(rig.store.files.count(dir + "b0001-s01-3F2A.log"));
+  const uint32_t segmentsBefore = rig.writer.stats().segments;
+  rig.store.files.erase(dir + "b0001-s01-3F2A.log");
+  rig.store.failBatches = false;  // the card recovers
+  rig.lines(12, 13);
+  EXPECT_EQ(rig.writer.pump(), Step::Failed);  // s01 is gone: this batch is lost, s01 is not remade
+  EXPECT_FALSE(rig.store.files.count(dir + "b0001-s01-3F2A.log"));
+  rig.lines(13, 14);
+  clockMs = 777;
+  EXPECT_TRUE(rig.writer.flush());
+  EXPECT_EQ(rig.writer.stats().segments, segmentsBefore + 1);
+  ASSERT_TRUE(rig.store.files.count(dir + "b0001-s02-3F2A.log"));
+  for (const auto& [path, file] : rig.store.files) {
+    EXPECT_EQ(file.rfind(std::string(DiagLog::MAGIC) + "\n", 0), 0u) << path;
+  }
+  const std::string notice =
+      "[777] [ERR] [DIAG] lost " + std::to_string(rig.writer.stats().bytesLost) + " bytes (card write failed)\n";
+  EXPECT_TRUE(contains(rig.store.files[dir + "b0001-s02-3F2A.log"], notice));
+  EXPECT_EQ(rig.writer.stats().bytesLost, 3u * 60u);  // the three lost batches, one 60-byte line each
+  clockMs = 1000;
+}
+
+// A card that refuses opens answers Missing for a file that is there; the streak's one extra segment for a gone file
+// must not become a new file, and a deletion of the oldest, on every try.
+TEST(DiagLogWriter, ACardThatRefusesOpensAndSaysMissingCostsAtMostTwoSegmentsNotAFilePerTry) {
+  DiagLog::Limits limits;
+  limits.maxFiles = 4;
+  Rig<8192> rig(limits);
+  const std::string dir = std::string(DIRECTORY) + "/";
+  for (int boot = 1; boot <= 3; boot++) {
+    char name[64];
+    std::snprintf(name, sizeof(name), "b%04d-s00-3F2A.log", boot);
+    rig.store.files[dir + name] = "old good log\n";
+  }
+  rig.log("[1] [INF] [A] first\n");
+  ASSERT_EQ(rig.writer.pump(), Step::Wrote);  // b0004-s00
+  const uint32_t segmentsBefore = rig.writer.stats().segments;
+  const size_t removedBefore = rig.store.removed.size();
+  rig.store.appendsMissing = true;
+  for (int i = 0; i < 10; i++) {
+    rig.lines(i, i + 1);
+    EXPECT_EQ(rig.writer.pump(), Step::Failed) << i;
+  }
+  EXPECT_LE(rig.writer.stats().segments, segmentsBefore + 2);
+  EXPECT_LE(rig.store.removed.size(), removedBefore + 2);
+  for (const auto& [path, file] : rig.store.files) {
+    if (contains(path, "b0004-")) {
+      EXPECT_EQ(file.rfind(std::string(DiagLog::MAGIC) + "\n", 0), 0u) << path;
+    }
+  }
+  rig.store.appendsMissing = false;
+  EXPECT_TRUE(rig.writer.flush());  // and it recovers
+}
+
+TEST(DiagLogWriter, TheFakeAppendAnswersMissingAndMakesNothingWhileCreateMakesTheFile) {
+  FakeStore store;
+  EXPECT_EQ(store.append("/crosshatch-log/x.log", "a\n", 2), DiagLog::FileStore::Appended::Missing);
+  EXPECT_TRUE(store.files.empty());
+  EXPECT_TRUE(store.create("/crosshatch-log/x.log", "h\n", 2));
+  EXPECT_EQ(store.append("/crosshatch-log/x.log", "a\n", 2), DiagLog::FileStore::Appended::Written);
+  store.failAppends = 1;
+  EXPECT_EQ(store.append("/crosshatch-log/x.log", "b\n", 2), DiagLog::FileStore::Appended::Failed);
+  EXPECT_EQ(store.files["/crosshatch-log/x.log"], "h\na\n");
 }
 
 TEST(DiagLogWriter, ACardThatKeepsFailingNeverWedgesTheWriterOrTheBufferAndTheNoticeComesAfterItRecovers) {
@@ -607,8 +728,14 @@ TEST(DiagLogWriter, FakeStoreMatchesTheDevice) {
   const std::string root = REPO_ROOT_DIR;
   const std::string device = readFile(root + "/src/diagnostics/DiagLogStorage.cpp");
   ASSERT_FALSE(device.empty());
-  // append: created when missing, written at the end, closed.
+  // create: made when missing, written at the end, closed. append: opened without the create flag, so a missing file
+  // fails the open and is not made (SdFat's open reaches its create step only with O_CREAT), and a failed open is
+  // Missing only when the file is not there. The flag is in create's open and nowhere else.
   EXPECT_TRUE(contains(device, "Storage.open(path, O_WRONLY | O_CREAT | O_APPEND)"));
+  EXPECT_TRUE(contains(device, "Storage.open(path, O_WRONLY | O_APPEND)"));
+  EXPECT_EQ(device.find("O_CREAT"), device.rfind("O_CREAT")) << "the create flag belongs only in create's open";
+  EXPECT_TRUE(
+      contains(device, "return Storage.ready() && !Storage.exists(path) ? Appended::Missing : Appended::Failed;"));
   EXPECT_TRUE(contains(device, "written == length && closed"));
   // the device lists through Storage and checks the card first (SDCardManager prints on an unmounted card).
   EXPECT_TRUE(contains(device, "Storage.listFiles(directory"));

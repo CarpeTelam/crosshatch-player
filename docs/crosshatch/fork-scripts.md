@@ -148,7 +148,11 @@ python3 scripts/device_log.py summary run-logs/merged.log
 - **What it says it lost.** The hook never waits for the card: it copies the line into an 8 KiB buffer and a writer task
   drains it. A full buffer drops whole lines, and the next file says `[ERR] [DIAG] dropped N lines (buffer full)`; a
   failed write is `[ERR] [DIAG] lost N bytes (card write failed)` and a new segment. `summary` counts both. Lines logged
-  before the card mounts wait in the buffer and are written once it does, up to about 8 KB.
+  before the card mounts wait in the buffer and are written once it does, up to about 8 KB. Deleting the logs, or their
+  folder, from the device's file manager mid-run is safe: only a file's header write makes a file, so it costs the next
+  batch (at most 512 bytes of lines), which the next file, starting with its header, reports with the same
+  `[ERR] [DIAG] lost N bytes (card write failed)` notice as a refused write, and every file on the card stays
+  mergeable.
 - **Giving `merge` the cards.** Each CARD is a log file, a folder of them, or a card's root (its `crosshatch-log` folder
   is found); `NAME=` before it names the device in the merged log, otherwise the header's device id does. A device's
   files are read in boot order, and every boot in a folder is merged, so give it only the cards of this run: delete or

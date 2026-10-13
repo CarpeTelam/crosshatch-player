@@ -12,11 +12,13 @@
 // (maxFiles x segmentBytes). Each file starts with a header (`# key value` lines; the first is the magic) that names
 // the device, the firmware, the boot, and the segment, so one file is read alone.
 //
-// Writes. Every batch is open, append, close (FileStore::append): no file stays open between batches, because the SD
-// card is unmounted for sleep and for the USB drive under any open handle (HalStorage::prepareForDeepSleep), and a
-// closed file is complete on the card. A batch is at most chunkBytes. A failed append is counted, its bytes are
-// reported in the next file as `lost N bytes`, and the next batch starts a new segment; the writer never retries a
-// batch, so a dead card costs the lines the buffer cannot hold and nothing more.
+// Writes. Every write is open, write, close: no file stays open between batches, because the SD card is unmounted for
+// sleep and for the USB drive under any open handle (HalStorage::prepareForDeepSleep), and a closed file is complete on
+// the card. Only the header's write (FileStore::create) makes a file; a batch (FileStore::append) never does, so every
+// file starts with its header even when the owner deletes the logs from the device's file manager mid-run. A batch is
+// at most chunkBytes. A failed append, or one whose file is gone, is counted, its bytes are reported in the next file
+// as `lost N bytes`, and the next batch starts a new segment; the writer never retries a batch, so a dead card costs
+// the lines the buffer cannot hold, and a deleted file one batch, and nothing more.
 
 #include <cstddef>
 #include <cstdint>
@@ -43,8 +45,19 @@ class FileStore {
   virtual bool makeDirectory(const char* path) = 0;
   virtual bool listFiles(const char* directory, NameSink& sink) = 0;
   virtual bool remove(const char* path) = 0;
-  // Creates the file when missing and writes all `length` bytes at its end; true only when every byte was written.
-  virtual bool append(const char* path, const char* data, size_t length) = 0;
+  // Creates the file when missing and writes all `length` bytes at its end; true only when every byte was written. The
+  // writer calls it only for a header, so it is the one call that makes a file.
+  virtual bool create(const char* path, const char* data, size_t length) = 0;
+
+  // What a batch's append did.
+  enum class Appended : uint8_t {
+    Written,  // every byte reached the end of the file
+    Missing,  // the file is not there (deleted mid-run); nothing was created or written
+    Failed,   // the card refused the open or the write; the file may end in part of the batch
+  };
+  // Writes all `length` bytes at the end of an existing file; never creates one, so a deleted file is not remade
+  // without its header.
+  virtual Appended append(const char* path, const char* data, size_t length) = 0;
 };
 
 // The strings of a file's header; each must outlive the writer.
@@ -66,7 +79,8 @@ enum class Step : uint8_t {
   Idle,      // nothing to write
   Wrote,     // one batch reached the card
   NotReady,  // the card is not mounted
-  Failed,    // the card refused a write or a folder step; counted, and the next pump tries again
+  Failed,    // the card refused a write or a folder step, or a batch's file is gone; counted, and the next pump tries
+             // again
 };
 
 struct Stats {
@@ -128,22 +142,29 @@ class Writer {
     const size_t noticeBytes = used;
     used += buffer_.drain(chunk_ + used, chunkBytes_ - used);
     if (used == 0) return Step::Idle;
-    if (!store_.append(path_, chunk_, used)) {
+    const FileStore::Appended appended = store_.append(path_, chunk_, used);
+    if (appended != FileStore::Appended::Written) {
       // The batch is gone: its lines count as lost and the next file says so; a notice that was in it is said again
       // there. The next batch starts a new segment, since this file may now end in half a batch, unless the batch
       // before also failed: a card that takes headers and refuses batches would otherwise start a file, and delete the
-      // oldest, on every retry. A streak of failures costs one extra segment.
+      // oldest, on every retry. A file that is gone starts a new segment once more in a streak: append never creates
+      // one, so staying on it would fail every batch for the rest of the boot. Only once: a card that refuses opens
+      // also answers Missing (SdFat's exists is an open), and must not start a file per try either. A streak costs at
+      // most one extra segment, plus one more if its file is gone.
       stats_.writeFailures++;
       stats_.bytesLost += static_cast<uint32_t>(used - noticeBytes);
       pendingLost_ += static_cast<uint32_t>(used - noticeBytes);
-      if (!lastBatchFailed_) {
+      const bool fileGone = appended == FileStore::Appended::Missing;
+      if (!lastBatchFailed_ || (fileGone && !streakFileGone_)) {
         segment_++;
         needFile_ = true;
       }
+      if (fileGone) streakFileGone_ = true;
       lastBatchFailed_ = true;
       return Step::Failed;
     }
     lastBatchFailed_ = false;
+    streakFileGone_ = false;
     if (saidDropped) pendingDropped_ -= noticeDropped;
     if (saidLost) pendingLost_ -= noticeLost;
     segmentBytes_ += used;
@@ -259,7 +280,7 @@ class Writer {
                              static_cast<unsigned>(now_()));
     }
     if (length <= 0 || static_cast<size_t>(length) >= chunkBytes_) return fail();
-    if (!store_.append(path_, chunk_, static_cast<size_t>(length))) {
+    if (!store_.create(path_, chunk_, static_cast<size_t>(length))) {
       store_.remove(path_);  // best effort: a torn header must not be glued to the retry's
       return fail();
     }
@@ -300,6 +321,7 @@ class Writer {
   uint32_t segment_ = 0;
   bool needFile_ = true;
   bool lastBatchFailed_ = false;  // the previous batch was refused: a streak starts one new segment, not one per try
+  bool streakFileGone_ = false;   // a batch of this streak found its file gone: the streak's one extra segment is spent
   size_t segmentBytes_ = 0;
   uint32_t pendingDropped_ = 0;  // dropped lines not yet said in a file
   uint32_t pendingLost_ = 0;     // bytes lost to a failed write, not yet said in a file
