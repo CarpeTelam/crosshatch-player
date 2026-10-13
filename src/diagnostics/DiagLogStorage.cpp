@@ -27,10 +27,24 @@ class StorageFileStore final : public DiagLog::FileStore {
     return true;
   }
   bool remove(const char* path) override { return Storage.ready() && Storage.remove(path); }
-  bool append(const char* path, const char* data, size_t length) override {
+  bool create(const char* path, const char* data, size_t length) override {
     if (!Storage.ready()) return false;
     HalFile file = Storage.open(path, O_WRONLY | O_CREAT | O_APPEND);
-    if (!file) return false;
+    return file && writeAndClose(file, data, length);
+  }
+  Appended append(const char* path, const char* data, size_t length) override {
+    if (!Storage.ready()) return Appended::Failed;
+    // Without the create flag SdFat's open (FatFile::open, ExFatFile::open) fails for a name it does not find and makes
+    // nothing, so a file deleted mid-run is not remade without its header. Storage.exists is itself a read-only open,
+    // so a card that refuses opens reads as Missing too; the writer bounds that to one new segment per streak of
+    // failures.
+    HalFile file = Storage.open(path, O_WRONLY | O_APPEND);
+    if (!file) return Storage.ready() && !Storage.exists(path) ? Appended::Missing : Appended::Failed;
+    return writeAndClose(file, data, length) ? Appended::Written : Appended::Failed;
+  }
+
+ private:
+  static bool writeAndClose(HalFile& file, const char* data, size_t length) {
     const size_t written = file.write(reinterpret_cast<const uint8_t*>(data), length);
     file.flush();
     const bool closed = file.close();
