@@ -19,7 +19,11 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   only when the fork-only define `CROSSHATCH_TOUCH_LOG` is set, in any env, so a dev build's 16-line crash buffer is not
   filled with taps and hidden Battleship taps are not logged. For a device run, build with
   `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro -t upload` (under AGENTS.md's build lock; `sim.sh
-  build` runs `pio run`, so the variable reaches the simulator build too). "Sent" means `classify` accepted the gesture.
+  build` runs `pio run`, so the variable reaches the simulator build too). To also keep the device's log on its SD card,
+  so the run needs no computer (`docs/crosshatch/fork-scripts.md`, "Capturing a device run"), put
+  `-DCROSSHATCH_SD_LOG=1` in the same variable, with `-DCROSSHATCH_BUILD_ID=<short commit>` (a bare token, no quotes) so
+  each file's header names the build; without it the header names the version string, which names the commit for
+  `default` and `sticky` only. "Sent" means `classify` accepted the gesture.
   A later drop keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch that began ...
   before the hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in builds with the
   define and `LOG_LEVEL` 2 (the development envs of `platformio.ini` and the simulator); the release envs use 1 and

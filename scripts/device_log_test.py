@@ -12,6 +12,12 @@ What stands in for what, and how far it can be trusted: the pty stands in for th
 log for its output. A test below pins that every format string the summary parses is still literally in its firmware
 source (read from the working tree). The pty is more permissive than the device: its loss is an immediate EIO and it
 has no sleep timing, so the reconnect against a real X4 Pro's port is unmeasured until a device run.
+
+The `merge` tests (MergeTest) stand a card file in for the device's SD card: a file laid out as lib/DiagLog's writer lays
+it out (its header format is pinned against DiagLogWriter.h below) around the same recorded simulator lines. The device
+logs lines to the card through the very logPrintf that prints them, so a card file holds what the serial port gave; the
+two differ only in the header and in the lines the log itself adds when it drops or loses some, and the card file is more
+permissive than a real card in that no write is ever cut short or lost to an unmount.
 """
 
 import contextlib
@@ -19,6 +25,7 @@ import errno
 import io
 import os
 import pathlib
+import random
 import re
 import signal
 import subprocess
@@ -72,6 +79,9 @@ FORMATS = {
     'radio_failed': ('src/games/EspNowLink.h', 'bring-up failed at %s'),
     'udp_up': ('src/games/UdpLink.cpp', 'udp link up on %u'),
     'peer_gone_reason': ('src/activities/games/GameMatchActivity.cpp', '%s: the other player is gone: %s'),
+    # The diagnostics log's own lines (lib/DiagLog/DiagLogWriter.h), logged by the writer into the card file.
+    'diag_dropped': ('lib/DiagLog/DiagLogWriter.h', 'dropped %u lines (buffer full)'),
+    'diag_lost': ('lib/DiagLog/DiagLogWriter.h', 'lost %u bytes (card write failed)'),
     # The lobby's own failures, logged at LOG_ERR under GAME (there are six, all `Nearby: ...`; the radio's is pinned).
     'lobby_radio_failed': ('src/activities/games/GameLobbyActivity.cpp', 'Nearby: the radio did not start for %s'),
 }
@@ -924,6 +934,374 @@ class SummaryTest(unittest.TestCase):
         stop.set()
         thread.join(WAIT_SECONDS)
         self.assertIn('sudoku: arena peak 301568 B, stack high-water 10068 B free', section(self.summary(merged), 'A'))
+
+
+HEADER_FORMAT_KEYS = ('device', 'board', 'firmware', 'version', 'built', 'boot', 'segment', 'opened_ms')
+
+
+def card_text(device, boot, segment, body, firmware='abc1234', board='x4pro', opened_ms=0):
+    """A card file as lib/DiagLog's writer lays it out: the magic line, the `# key value` header, then the log lines."""
+    header = [device_log.SD_MAGIC, f'# device {device}', f'# board {board}', f'# firmware {firmware}',
+              '# version 1.0.0-x4pro', '# built Oct 13 2026 12:00:00', f'# boot {boot}', f'# segment {segment}',
+              f'# opened_ms {opened_ms}']
+    return '\n'.join(header) + '\n' + body
+
+
+def link_line(millis, text):
+    return f'[{millis}] [INF] [LINK] {text}\n'
+
+
+def exchange(session, start_a, start_b, offset_b, latencies, sender_first='a'):
+    """Two devices' STATE lines for one session: the true time of each event is on one clock, A's millis are that clock
+    plus start_a and B's are that clock plus start_b (offset_b = start_b - start_a is what the merge must find)."""
+    a, b = [], []
+    clock = 1000
+    for ver, latency in enumerate(latencies, start=1):
+        sender = a if (ver % 2 == 1) == (sender_first == 'a') else b
+        receiver = b if sender is a else a
+        send_ms, recv_ms = clock, clock + latency
+        sender.append((send_ms + (start_a if sender is a else start_b),
+                       f'session={session} state sent ver={ver}'))
+        receiver.append((recv_ms + (start_b if receiver is b else start_a),
+                         f'session={session} state recv ver={ver} seat=1'))
+        clock += 400
+    return a, b
+
+
+class MergeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+        self.out = self.root / 'out'
+
+    def card(self, name, files):
+        """A card's folder with the files {name: text}, under the card root's crosshatch-log folder."""
+        folder = self.root / name / device_log.SD_DIR_NAME
+        folder.mkdir(parents=True, exist_ok=True)
+        for file_name, text in files.items():
+            (folder / file_name).write_text(text)
+        return self.root / name
+
+    def merge(self, *specs):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(device_log.merge_cards([str(spec) for spec in specs], self.out), 0)
+        return out.getvalue()
+
+    def merged_lines(self):
+        return (self.out / 'merged.log').read_text().splitlines()
+
+    def recorded_cards(self):
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, RECORDED_HOST)})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, RECORDED_GUEST)})
+        return a, b
+
+    def test_two_recorded_cards_merge_in_order_each_device_named_and_each_send_before_its_receive(self):
+        a, b = self.recorded_cards()
+        self.merge(a, b)
+        lines = self.merged_lines()
+        sent, received = {}, {}
+        for index, line in enumerate(lines):
+            match = device_log.MERGED_PREFIX.fullmatch(line)
+            self.assertTrue(match, line)
+            anchor = device_log.state_anchor(match.group(3))
+            if anchor:
+                (sent if anchor[0] == 'sent' else received)[(anchor[1], anchor[2])] = (index, match.group(2))
+        self.assertEqual(sorted(sent), [('dc1b97fb', ver) for ver in (1, 2, 3, 4)])
+        for key, (index, name) in sent.items():
+            self.assertLess(index, received[key][0], f'STATE {key} was received before it was sent')
+            self.assertNotEqual(name, received[key][1], f'STATE {key} was sent and received by one device')
+        names = {device_log.MERGED_PREFIX.fullmatch(line).group(2) for line in lines}
+        self.assertEqual(names, {'3F2A', '91C4'})
+        # each device's own lines stay in the order its file has them, and the stamps never go back
+        for name, log in (('3F2A', RECORDED_HOST), ('91C4', RECORDED_GUEST)):
+            own = [device_log.MERGED_PREFIX.fullmatch(line) for line in lines]
+            own = [m for m in own if m.group(2) == name and not m.group(3).startswith(device_log.EVENT_TAG)]
+            self.assertEqual([m.group(3) for m in own], log.splitlines())
+            stamps = [m.group(1) for m in own]
+            self.assertEqual(stamps, sorted(stamps))
+
+    def test_the_offset_comes_from_the_fastest_state_each_way_and_the_note_says_so(self):
+        a, b = self.recorded_cards()
+        text = self.merge(a, b)
+        self.assertIn('3F2A boot 1: clock: reference', text)
+        self.assertRegex(text, r'91C4 boot 1: clock: offset \+1742\.5 ms from 3F2A boot 1, 4 STATE pair\(s\), '
+                               r'link latency about 3\.5 ms')
+
+    def test_the_raw_logs_are_the_card_files_unchanged_and_the_summary_is_written_and_printed(self):
+        a, b = self.recorded_cards()
+        text = self.merge(a, b)
+        self.assertEqual((self.out / '3F2A.raw.log').read_bytes(),
+                         (a / device_log.SD_DIR_NAME / 'b0001-s00-3F2A.log').read_bytes())
+        self.assertEqual((self.out / '91C4.raw.log').read_bytes(),
+                         (b / device_log.SD_DIR_NAME / 'b0001-s00-91C4.log').read_bytes())
+        self.assertEqual((self.out / 'summary.txt').read_text(), text)
+        self.assertIn('== 3F2A (', text)
+        self.assertIn('== 91C4 (', text)
+
+    def test_the_summary_figures_equal_a_serial_capture_of_the_same_run(self):
+        a, b = self.recorded_cards()
+        card_summary = self.merge(a, b)
+        host, guest = self.root / '3F2A.raw.log', self.root / '91C4.raw.log'
+        host.write_text(RECORDED_HOST)
+        guest.write_text(RECORDED_GUEST)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            device_log.summary([str(host), str(guest)])
+        serial_summary = out.getvalue()
+
+        def figures(text, name):
+            body = section(text, name).splitlines()[1:]
+            kept = [line for line in body if not line.startswith(('  card:', '  diagnostics log:'))]
+            # the time of an event is a card-run stamp in one summary and the device's millis in the other
+            return [re.sub(r'1970-01-01T\d\d:\d\d:\d\d\.\d{3}Z|\[\d+\]', 'T', line) for line in kept]
+
+        for name in ('3F2A', '91C4'):
+            self.assertEqual(figures(card_summary, name), figures(serial_summary, name), name)
+
+    def test_a_card_summary_names_the_boots_the_firmware_and_the_diagnostics_losses(self):
+        body = (RECORDED_HOST + device_line(90000, 'ERR', 'DIAG', 'diag_dropped', 12) + '\n'
+                + device_line(90001, 'ERR', 'DIAG', 'diag_lost', 512) + '\n')
+        a = self.card('cardA', {'b0003-s00-3F2A.log': card_text('3F2A', 3, 0, body, firmware='deadbee')})
+        text = self.merge(a)
+        a_section = section(text, '3F2A')
+        self.assertIn('card: 1 file(s), boots 1, firmware deadbee, board x4pro', a_section)
+        self.assertIn('diagnostics log: 12 lines dropped (buffer full), 512 bytes lost (card write failed)', a_section)
+        self.assertNotIn('connected', a_section)
+
+    def test_devices_on_different_firmware_get_a_warning_at_the_top(self):
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, RECORDED_HOST, firmware='1111111')})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, RECORDED_GUEST, firmware='2222222')})
+        text = self.merge(a, b)
+        self.assertTrue(text.startswith('3F2A boot 1'), text)
+        self.assertIn('WARNING: the devices ran different firmware: 3F2A 1111111; 91C4 2222222', text)
+        same = self.merge(*self.recorded_cards())
+        self.assertNotIn('WARNING', same)
+
+    def test_a_devices_segments_join_in_order_and_a_second_boot_is_its_own_clock(self):
+        # Device B ran twice: boot 1 (segments 0 and 1), then boot 2 after a sleep, its millis starting again.
+        first, second = exchange('c0ffee01', 0, 50000, 50000, [3, 4, 3, 5])
+        third, fourth = exchange('c0ffee02', 20000, 200, 200 - 20000, [4, 3], sender_first='b')
+        a_body = ''.join(link_line(m, t) for m, t in first)
+        a2_body = ''.join(link_line(m, t) for m, t in third)
+        b_body = [link_line(m, t) for m, t in second]
+        b2_body = ''.join(link_line(m, t) for m, t in fourth)
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, a_body),
+                                'b0002-s00-3F2A.log': card_text('3F2A', 2, 0, a2_body, opened_ms=20000)})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, ''.join(b_body[:2])),
+                                'b0001-s01-91C4.log': card_text('91C4', 1, 1, ''.join(b_body[2:])),
+                                'b0001-s02-91C4.log': card_text('91C4', 2, 0, b2_body, opened_ms=200)})
+        text = self.merge(a, b)
+        b_section = section(text, '91C4')
+        self.assertIn('card: 3 file(s), boots 2,', b_section)
+        # B's boot-1 lines came out in file order across its two segments
+        own = [m.group(3) for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
+               if m.group(2) == '91C4' and 'ver=' in m.group(3)]
+        self.assertEqual(len(own), 4 + 2)
+        self.assertIn('boot 1: clock: offset', text)
+        # B's boot 1 is aligned to A's by the first session's STATEs; the second boots share only the second session,
+        # so A's boot 2 is placed after its boot 1 and B's boot 2 is aligned to that.
+        self.assertEqual(text.count('clock: offset'), 2)
+        self.assertEqual(text.count('placed after boot 1 of the same device'), 1)
+
+    def test_a_card_root_a_log_folder_a_file_and_a_name_for_it_all_work(self):
+        a, b = self.recorded_cards()
+        folder = b / device_log.SD_DIR_NAME
+        self.merge(f'A={a}', f'B={folder}')
+        names = {device_log.MERGED_PREFIX.fullmatch(line).group(2) for line in self.merged_lines()}
+        self.assertEqual(names, {'A', 'B'})
+        self.merge(a, folder / 'b0001-s00-91C4.log')
+        names = {device_log.MERGED_PREFIX.fullmatch(line).group(2) for line in self.merged_lines()}
+        self.assertEqual(names, {'3F2A', '91C4'})
+
+    def test_devices_that_share_no_state_are_merged_unaligned_and_the_note_says_so(self):
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, '[100] [INF] [MAIN] a\n[300] [INF] [MAIN] a2\n')})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, '[200] [INF] [MAIN] b\n')})
+        text = self.merge(a, b)
+        self.assertIn('91C4 boot 1: clock: not aligned (no STATE pair with another device)', text)
+        order = [m.group(2) + ' ' + m.group(3) for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
+                 if '[MAIN]' in m.group(3)]
+        self.assertEqual(order, ['3F2A [100] [INF] [MAIN] a', '91C4 [200] [INF] [MAIN] b', '3F2A [300] [INF] [MAIN] a2'])
+
+    def test_one_direction_only_takes_the_fastest_pair_as_the_offset_and_says_the_latency_is_unknown(self):
+        sent = ''.join(link_line(1000 + 500 * i, f'session=0a0a0a0a state sent ver={i}') for i in range(1, 4))
+        recv = ''.join(link_line(31000 + 500 * i + 7 * i, f'session=0a0a0a0a state recv ver={i} seat=1')
+                       for i in range(1, 4))
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, sent)})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, recv)})
+        text = self.merge(a, b)
+        self.assertIn('one direction only, latency taken as 0', text)
+        self.assertIn('offset -30007 ms', text)
+
+    def test_the_offset_found_is_within_the_latency_spread_and_causality_holds_for_any_clock_start(self):
+        rng = random.Random(20261013)
+        for trial in range(25):
+            start_b = rng.randrange(0, 4_000_000)
+            latencies = [rng.randrange(2, 40) for _ in range(rng.randrange(2, 9))]
+            sent_by_a, sent_by_b = exchange('abcdef12', 0, start_b, start_b, latencies)
+            folder_a = self.card(f'a{trial}', {'b0001-s00-3F2A.log': card_text(
+                '3F2A', 1, 0, ''.join(link_line(m, t) for m, t in sent_by_a))})
+            folder_b = self.card(f'b{trial}', {'b0001-s00-91C4.log': card_text(
+                '91C4', 1, 0, ''.join(link_line(m, t) for m, t in sent_by_b))})
+            devices = device_log.read_cards([str(folder_a), str(folder_b)])
+            nodes = [(name, 1) for name in devices]
+            events = {(name, 1): [(m, line.decode()) for m, line in devices[name][0].lines] for name in devices}
+            offsets, _ = device_log.align_clocks(nodes, events)
+            true_offset = -start_b  # B's millis plus this lands on A's clock
+            spread = max(latencies) - min(latencies)
+            # With both directions the error is at most half the difference of the two fastest latencies.
+            self.assertLessEqual(abs(offsets[nodes[1]] - true_offset), spread / 2 + 0.5, (trial, latencies))
+            out = self.root / f'out{trial}'
+            with contextlib.redirect_stdout(io.StringIO()):
+                device_log.merge_cards([str(folder_a), str(folder_b)], out)
+            seen = {}
+            for index, line in enumerate((out / 'merged.log').read_text().splitlines()):
+                anchor = device_log.state_anchor(device_log.MERGED_PREFIX.fullmatch(line).group(3))
+                if anchor:
+                    seen.setdefault((anchor[1], anchor[2]), {})[anchor[0]] = index
+            for key, pair in seen.items():
+                self.assertLess(pair['sent'], pair['recv'], (trial, key, latencies))
+
+    def test_a_state_both_devices_sent_is_ambiguous_and_the_others_still_align(self):
+        start_b = 1_000_000
+        sent_by_a, sent_by_b = exchange('abcdef12', 0, start_b, start_b, [5, 7, 6, 8])
+        sent_by_b.append((start_b + 1100, 'session=abcdef12 state sent ver=1'))  # B also logged a send of ver 1
+        sent_by_b.sort()
+        a = self.card('cardA', {'b0001-s00-3F2A.log': card_text(
+            '3F2A', 1, 0, ''.join(link_line(m, t) for m, t in sent_by_a))})
+        b = self.card('cardB', {'b0001-s00-91C4.log': card_text(
+            '91C4', 1, 0, ''.join(link_line(m, t) for m, t in sent_by_b))})
+        text = self.merge(a, b)
+        self.assertIn('3 STATE pair(s)', text)  # vers 2, 3, 4; ver 1 pairs with nothing
+        devices = device_log.read_cards([str(a), str(b)])
+        nodes = [(name, 1) for name in devices]
+        events = {(name, 1): [(m, line.decode()) for m, line in devices[name][0].lines] for name in devices}
+        offsets, _ = device_log.align_clocks(nodes, events)
+        self.assertLessEqual(abs(offsets[nodes[1]] + start_b), 1)
+
+    def test_a_send_and_its_receive_at_one_millisecond_keep_the_receivers_own_lines_in_file_order(self):
+        sent = link_line(1000, 'session=abcdef12 state sent ver=1')
+        received = (link_line(5000, 'session=abcdef12 state recv ver=1 seat=1') +
+                    '[5000] [INF] [GAME] the receiver\'s next line\n[5000] [INF] [GAME] and the one after\n')
+        for order in (('3F2A', '91C4'), ('91C4', '3F2A')):
+            out = self.root / f'out-{order[0]}'
+            files = {'3F2A': ('b0001-s00-3F2A.log', card_text('3F2A', 1, 0, sent)),
+                     '91C4': ('b0001-s00-91C4.log', card_text('91C4', 1, 0, received))}
+            folders = [self.card(f'{name}-{order[0]}', {files[name][0]: files[name][1]}) for name in order]
+            with contextlib.redirect_stdout(io.StringIO()):
+                device_log.merge_cards([str(folder) for folder in folders], out)
+            lines = [device_log.MERGED_PREFIX.fullmatch(line) for line in (out / 'merged.log').read_text().splitlines()]
+            own = [m.group(3) for m in lines if m.group(2) == '91C4' and not m.group(3).startswith(device_log.EVENT_TAG)]
+            self.assertEqual(own, [line for line in received.splitlines()], order)
+            texts = [m.group(3) for m in lines]
+            self.assertLess(texts.index(sent.strip()), texts.index(received.splitlines()[0]), order)
+
+    def test_bad_cards_are_setup_errors_that_say_what_is_wrong(self):
+        text_file = self.root / 'plain.log'
+        text_file.write_text('[1] [INF] [A] x\n')
+        empty = self.root / 'empty'
+        empty.mkdir()
+        a, b = self.recorded_cards()
+        mixed = self.card('mixed', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, ''),
+                                    'b0001-s01-91C4.log': card_text('91C4', 1, 1, '')})
+        twice = self.card('twice', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, ''),
+                                    'b0001-s00-3F2A-copy.log': card_text('3F2A', 1, 0, '')})
+        headless = self.root / 'headless.log'
+        headless.write_text(device_log.SD_MAGIC + '\n# boot 1\n[1] [INF] [A] x\n')
+        cases = [
+            ([text_file], 'is not a diagnostics log'),
+            ([empty], 'no .log files'),
+            ([self.root / 'missing'], 'neither a log file nor a folder'),
+            ([a, a], 'is given twice'),
+            ([f'X={a}', f'Y={a}'], 'is given twice'),
+            ([f'X={mixed}'], 'come from devices 3F2A, 91C4'),
+            ([f'A={a}', f'B={a / device_log.SD_DIR_NAME / "b0001-s00-3F2A.log"}'], 'is given twice'),
+            ([twice], 'two files for the same boot and segment'),
+            ([headless], 'has no "# device" line'),
+            ([f'A={a}', f'B={self.card("again", {"b0009-s00-3F2A.log": card_text("3F2A", 9, 0, "")})}'],
+             'device 3F2A is on both A and B'),
+            ([], 'give at least one CARD'),
+        ]
+        for specs, message in cases:
+            with self.subTest(message=message, specs=[str(s) for s in specs]):
+                with self.assertRaises(device_log.SetupError) as raised:
+                    device_log.merge_cards([str(spec) for spec in specs], self.out)
+                self.assertIn(message, str(raised.exception))
+
+    def test_an_unwritable_output_is_a_setup_error(self):
+        a, b = self.recorded_cards()
+        blocker = self.root / 'blocker'
+        blocker.write_text('a file where the directory should go')
+        with self.assertRaises(device_log.SetupError):
+            device_log.merge_cards([str(a), str(b)], blocker / 'out')
+
+    def test_the_command_line_merges_and_exits_0_and_a_bad_card_exits_2(self):
+        a, b = self.recorded_cards()
+        done = subprocess.run([sys.executable, str(SCRIPT), 'merge', '--out', str(self.out), str(a), str(b)],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn('== 91C4 (', done.stdout)
+        self.assertTrue((self.out / 'merged.log').exists())
+        bad = subprocess.run([sys.executable, str(SCRIPT), 'merge', '--out', str(self.out), str(self.root / 'nope')],
+                             capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn('error:', bad.stderr)
+        missing = subprocess.run([sys.executable, str(SCRIPT), 'merge', str(a)], capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 2)
+
+    def test_a_merged_log_from_cards_summarizes_the_same_when_read_back_alone(self):
+        a, b = self.recorded_cards()
+        first = self.merge(a, b)
+        again = io.StringIO()
+        with contextlib.redirect_stdout(again):
+            device_log.summary([str(self.out / 'merged.log')])
+        self.assertTrue(first.endswith(again.getvalue()))
+
+
+class DiagLogFormatsTest(unittest.TestCase):
+    def test_the_header_the_writer_lays_down_has_the_keys_merge_reads(self):
+        source = (ROOT / 'lib/DiagLog/DiagLogWriter.h').read_text()
+        self.assertIn(f'inline constexpr char MAGIC[] = "{device_log.SD_MAGIC}";', source)
+        for key in HEADER_FORMAT_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(f'# {key} %', source)
+        self.assertIn(f'inline constexpr char DIRECTORY[] = "/{device_log.SD_DIR_NAME}";', source)
+        self.assertIn('"%s/b%04u-s%02u-%s.log"', source)
+
+    def test_the_card_file_name_pattern_reads_the_name_the_writer_makes(self):
+        match = device_log.SD_FILE_NAME.match('b0007-s02-3F2A.log')
+        self.assertEqual((match.group(1), match.group(2)), ('0007', '02'))
+
+    def test_the_writers_notices_are_read_by_the_summary(self):
+        for kind, pattern in (('diag_dropped', device_log.DIAG_DROPPED), ('diag_lost', device_log.DIAG_LOST)):
+            with self.subTest(kind):
+                self.assertTrue(pattern.search(device_line(5, 'ERR', 'DIAG', kind, 3)))
+        source = (ROOT / 'lib/DiagLog/DiagLogWriter.h').read_text()
+        self.assertIn('"[%u] [ERR] [DIAG] dropped %u lines (buffer full)\\n"', source)
+        self.assertIn('"[%u] [ERR] [DIAG] lost %u bytes (card write failed)\\n"', source)
+
+    def test_the_hook_is_one_guarded_call_in_logprintf_and_the_define_is_off_everywhere_by_default(self):
+        logging = (ROOT / 'lib/Logging/Logging.cpp').read_text()
+        self.assertIn('#if CROSSHATCH_SD_LOG\n  DiagLog::append(buf);\n#endif', logging)
+        self.assertIn('#if CROSSHATCH_SD_LOG\n#include <DiagLog.h>\n#endif', logging)
+        self.assertEqual(logging.count('CROSSHATCH_SD_LOG'), 2)
+        ini = (ROOT / 'platformio.ini').read_text()
+        self.assertNotIn('CROSSHATCH_SD_LOG', ini)
+        device = (ROOT / 'lib/DiagLog/DiagLogDevice.cpp').read_text()
+        self.assertTrue(device.lstrip().startswith('#include "DiagLog.h"\n\n#if CROSSHATCH_SD_LOG'))
+        self.assertTrue(device.rstrip().endswith('#endif  // CROSSHATCH_SD_LOG'))
+        # the log stays independent of the games, and nothing in it logs or prints
+        storage = (ROOT / 'src/diagnostics/DiagLogStorage.cpp').read_text()
+        self.assertTrue(storage.lstrip().startswith('#include <DiagLogStore.h>\n\n#if CROSSHATCH_SD_LOG'))
+        self.assertTrue(storage.rstrip().endswith('#endif  // CROSSHATCH_SD_LOG'))
+        for path in [*(ROOT / 'lib/DiagLog').iterdir(), ROOT / 'src/diagnostics/DiagLogStorage.cpp']:
+            text = path.read_text()
+            self.assertNotIn('GameCore', text)
+            self.assertNotIn('Logging.h', text)
+            self.assertNotRegex(text, r'#include\s*<(SdFat|FS|SDCardManager)\.h>|\bFsFile\b|\bSDCard\b')
+            self.assertNotRegex(text, r'\bLOG_(ERR|INF|DBG)\(')
+            self.assertNotRegex(text, r'Serial\.print')
 
 
 class FirmwareFormatsTest(unittest.TestCase):
