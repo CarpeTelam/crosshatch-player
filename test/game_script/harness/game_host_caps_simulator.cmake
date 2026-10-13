@@ -1,5 +1,5 @@
 # gameHostCaps() as the simulator builds it (entry 16 of epic-play-nearby): GameHostCaps.cpp with SIMULATOR on reports
-# nearby on, while HostCapsValues::NEARBY_BUILT stays false. The shared libraries hold a copy built without SIMULATOR,
+# nearby on whatever HostCapsValues::NEARBY_BUILT says (it is true since entry 11). The shared libraries hold a copy built without SIMULATOR,
 # so this suite builds its own copy into its own executable and links neither game_match_src nor game_harness_src (a
 # second gameHostCaps() would be a duplicate definition).
 

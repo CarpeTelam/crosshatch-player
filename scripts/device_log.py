@@ -20,7 +20,9 @@ not reset a board that wires them to its reset line.
               SIGINT, SIGTERM, and --duration end it cleanly, with a half line flushed to the merged log
   summary [--mem-all] LOG [LOG ...]
               per device, from a raw device log or the merged log: connects and losses, each `VM stopped` with its
-              game, dropped touches and hand-offs per game, and the `[MEM]` figures (device-run-packet.md L1 to L3)
+              game, dropped touches and hand-offs per game, the `[MEM]` figures (device-run-packet.md L1 to L3), and
+              a nearby match's lines: the radio bring-ups, each `LINK` session's `STATE`s, resends, silences, `ABORT`s,
+              leaves and `GameLink` task stack, the `PeerGone` entries and their reasons (epic-play-nearby R13)
 
 Exit 0: done. 1: not used (no rule is checked). 2: the command could not run (a bad argument, an output directory
 that cannot be made, an unreadable log).
@@ -332,6 +334,23 @@ DROPPED_BEFORE_DISPLAY = re.compile(r'\[GAME\] ([^\s:]+): dropped a touch before
 HAND_OFF_PUSHED = re.compile(r'\[GAME\] ([^\s:]+): hand-off screen pushed in (\d+) ms')
 MEM_LINE = re.compile(
     r'\[MEM\] (PSRAM: )?Free: (\d+) bytes, Total: (\d+) bytes, Min Free: (\d+) bytes, MaxAlloc: (\d+) bytes')
+# A nearby match (src/games/GameLinkLog.h writes the `session=` lines, EspNowLink.h the radio's, GameMatchActivity.cpp the
+# PeerGone ones). The prefix is `[ms] [LEVEL] [LINK] `; a LINK line the patterns below do not know is kept as `other`.
+LINK_LINE = re.compile(r'\[(?:INF|ERR|DBG)\] \[LINK\] (.*)$')
+LINK_ERROR_LINE = re.compile(r'\[ERR\] \[LINK\] (.*)$')
+RADIO_UP = re.compile(r'radio up on channel (\d+) as ((?:[0-9A-F]{2}:){5}[0-9A-F]{2})\s*$')
+LINK_SESSION = re.compile(r'session=([0-9a-f]{8}) (.*)$')
+LINK_STATE_SENT = re.compile(r'state sent ver=(\d+)\s*$')
+LINK_STATE_RECV = re.compile(r'state recv ver=(\d+) seat=(\d+)\s*$')
+LINK_STATE_ADOPT = re.compile(r'state adopt ver=(\d+) seat=(\d+) result=([A-Za-z]+)\s*$')
+LINK_QUEUE_FULL = re.compile(r'queue full ver=(\d+) overflows=(\d+)\s*$')
+LINK_ABORT_RECV = re.compile(r'abort recv reason=([a-z_]+) seat=(\d+)\s*$')
+LINK_LEAVE = re.compile(r'leave reason=([a-z_]+) waited=(\d+)ms unacked=(\d+) copies=(\d+)\s*$')
+LINK_COUNTER = re.compile(r'(resend|silence|abort sent|link refused) n=(\d+) total=(\d+)\s*$')
+LINK_TASK_STARTED = re.compile(r'task started; stack (\d+) bytes\s*$')
+LINK_TASK_STOPPED = re.compile(r'task stopped; stack high-water (\d+) bytes free\s*$')
+NEARBY_ERROR = re.compile(r'\[ERR\] \[GAME\] (Nearby: .*)$')  # the lobby's own failures (GameLobbyActivity.cpp)
+PEER_GONE_REASON = re.compile(r'\[GAME\] ([^\s:]+): the other player is gone: ([a-z_]+)\s*$')
 
 MemFigures = collections.namedtuple('MemFigures', 'when free total min_free max_alloc')
 VmStop = collections.namedtuple('VmStop', 'when game arena stack hook')
@@ -343,6 +362,27 @@ class GameStats:
         self.dropped_before_display = 0
         self.hand_offs = 0
         self.largest_hand_off_ms = None
+
+
+class LinkSession:
+    """What the LINK lines of one `session=` id say (GameLinkLog.h); the host's id, or 00000000 before a guest joined."""
+
+    def __init__(self, session):
+        self.session = session
+        self.state_sent = 0
+        self.last_sent_ver = None
+        self.state_recv = 0
+        self.last_recv_ver = None
+        self.adopted = collections.OrderedDict()  # result -> count
+        self.last_adopt_ver = None
+        self.queue_full = 0
+        self.last_overflows = None
+        self.abort_recv = collections.OrderedDict()  # (reason, seat) -> count
+        self.leaves = []  # (when, reason, waited ms, unacked, copies)
+        self.counters = collections.OrderedDict((name, 0) for name in ('resend', 'silence', 'abort sent', 'link refused'))
+        self.stack_bytes = None
+        self.high_water = []  # (when, bytes free) of each `task stopped`
+        self.other = []  # (when, text) of each LINK line of this session the patterns do not know
 
 
 class MemSeries:
@@ -379,9 +419,22 @@ class DeviceStats:
         self.psram = MemSeries()
         self.other_mem = []  # (when, text) of each other [MEM] line
         self.mem_lines = []  # (when, text) of every [MEM] line, for --mem-all
+        self.radio_up = []  # (when, text) of each `radio up` line: one per bring-up
+        self.link_sessions = collections.OrderedDict()  # session id -> LinkSession, first seen first
+        self.link_errors = []  # (when, text) of each [ERR] [LINK] line
+        self.link_other = []  # (when, text) of each other LINK line
+        self.peer_gone = []  # (when, game, event) of each lifecycle entry into PeerGone
+        self.peer_gone_reasons = collections.OrderedDict()  # reason -> count, from `the other player is gone`
 
     def game_stats(self, game):
         return self.games.setdefault(game, GameStats())
+
+    def link_session(self, session):
+        return self.link_sessions.setdefault(session, LinkSession(session))
+
+    def has_nearby(self):
+        return bool(self.radio_up or self.link_sessions or self.link_errors or self.link_other or self.peer_gone
+                    or self.peer_gone_reasons)
 
 
 def read_lines(path):
@@ -411,6 +464,21 @@ def add_line(device, when_stamp, text):
     match = LIFECYCLE.search(text)
     if match:
         device.game = match.group(1)
+        if match.group(3) == 'PeerGone':
+            device.peer_gone.append((when, match.group(1), match.group(4)))
+        return
+    match = PEER_GONE_REASON.search(text)
+    if match:
+        reason = match.group(2)
+        device.peer_gone_reasons[reason] = device.peer_gone_reasons.get(reason, 0) + 1
+        return
+    match = LINK_LINE.search(text)
+    if match:
+        add_link_line(device, when, match.group(1), bool(LINK_ERROR_LINE.search(text)))
+        return
+    match = NEARBY_ERROR.search(text)
+    if match:
+        device.link_errors.append((when, match.group(1)))
         return
     match = VM_STOPPED.search(text)
     if match:
@@ -441,6 +509,48 @@ def add_line(device, when_stamp, text):
             (device.psram if match.group(1) else device.heap).add(figures)
         else:
             device.other_mem.append((when, message))
+
+
+def add_link_line(device, when, message, is_error):
+    """Fold one LINK line (its message after the `[LINK] ` tag) into the device's nearby figures."""
+    if is_error:
+        device.link_errors.append((when, message))
+        return
+    match = RADIO_UP.search(message)
+    if match:
+        device.radio_up.append((when, message))
+        return
+    match = LINK_SESSION.match(message)
+    if not match:
+        device.link_other.append((when, message))
+        return
+    link = device.link_session(match.group(1))
+    body = match.group(2)
+    if (found := LINK_STATE_SENT.match(body)):
+        link.state_sent += 1
+        link.last_sent_ver = int(found.group(1))
+    elif (found := LINK_STATE_RECV.match(body)):
+        link.state_recv += 1
+        link.last_recv_ver = int(found.group(1))
+    elif (found := LINK_STATE_ADOPT.match(body)):
+        link.adopted[found.group(3)] = link.adopted.get(found.group(3), 0) + 1
+        link.last_adopt_ver = int(found.group(1))
+    elif (found := LINK_QUEUE_FULL.match(body)):
+        link.queue_full += 1
+        link.last_overflows = int(found.group(2))
+    elif (found := LINK_ABORT_RECV.match(body)):
+        key = (found.group(1), int(found.group(2)))
+        link.abort_recv[key] = link.abort_recv.get(key, 0) + 1
+    elif (found := LINK_LEAVE.match(body)):
+        link.leaves.append((when, found.group(1), *(int(found.group(n)) for n in (2, 3, 4))))
+    elif (found := LINK_COUNTER.match(body)):
+        link.counters[found.group(1)] = int(found.group(3))  # the running total as the firmware last logged it
+    elif (found := LINK_TASK_STARTED.match(body)):
+        link.stack_bytes = int(found.group(1))
+    elif (found := LINK_TASK_STOPPED.match(body)):
+        link.high_water.append((when, int(found.group(1))))
+    else:
+        link.other.append((when, body))
 
 
 def read_logs(paths):
@@ -498,6 +608,58 @@ def mem_report(label, series):
     ]
 
 
+def nearby_report(device):
+    """The summary lines of a nearby match: the radio, each LINK session, the PeerGone entries."""
+    if not device.has_nearby():
+        return ['  nearby: none']
+    device_stack = next((link.stack_bytes for link in device.link_sessions.values() if link.stack_bytes), None)
+    lines = [f'  nearby: radio up {len(device.radio_up)}, LINK sessions {len(device.link_sessions)}, '
+             f'PeerGone {len(device.peer_gone)}, LINK errors {len(device.link_errors)}']
+    for when, message in device.radio_up:
+        lines.append(f'    {when} {message}')
+    for session in device.link_sessions.values():
+        lines.append(f'    session {session.session}:')
+        lines.append(f'      STATE sent {session.state_sent} (last ver {fmt(session.last_sent_ver)}), '
+                     f'received {session.state_recv} (last ver {fmt(session.last_recv_ver)})')
+        adopted = ', '.join(f'{result} {count}' for result, count in session.adopted.items()) or 'none'
+        lines.append(f'      adopted: {adopted} (last ver {fmt(session.last_adopt_ver)})')
+        lines.append(f'      queue full {session.queue_full} (overflows {fmt(session.last_overflows)})')
+        lines.append('      ' + ', '.join(f'{name} {total}' for name, total in session.counters.items())
+                     + ' (the firmware\'s running totals)')
+        aborts = ', '.join(f'{reason} from seat {seat} x{count}' for (reason, seat), count in session.abort_recv.items())
+        lines.append(f'      ABORT received (one line per copy the device heard): {aborts or "none"}')
+        for when, reason, waited, unacked, copies in session.leaves:
+            lines.append(f'      leave at {when}: reason {reason}, waited {waited} ms, unacked {unacked}, '
+                         f'ABORT copies {copies}')
+        if not session.leaves:
+            lines.append('      leave: none')
+        # A guest's task starts before it knows the host's session id (00000000) and stops under the real one, so a
+        # session with no `task started` line of its own shows the device's, and the 00000000 one has no stop line: the
+        # task did stop, under the other id.
+        stops = ', '.join(f'{free} B free at {when}' for when, free in session.high_water) or 'no stop under this id'
+        stack = session.stack_bytes or device_stack
+        lines.append(f'      GameLink task: stack {fmt(stack, " B")}, high-water {stops}')
+        for when, text in session.other:
+            lines.append(f'      other: {text} at {when}')
+    frees = [free for session in device.link_sessions.values() for _, free in session.high_water]
+    if frees:
+        lines.append(f'    GameLink task stack: least high-water {min(frees)} B free of {fmt(device_stack, " B")} '
+                     f'over {len(frees)} stop(s)')
+    for when, game, event in device.peer_gone:
+        lines.append(f'    PeerGone at {when}: {game} on {event}')
+    for reason, count in device.peer_gone_reasons.items():
+        lines.append(f'    the other player is gone: {reason} x{count}')
+    for when, message in device.link_errors:
+        lines.append(f'    LINK error at {when}: {message}')
+    for when, message in device.link_other:
+        lines.append(f'    LINK at {when}: {message}')
+    return lines
+
+
+def fmt(value, unit=''):
+    return '-' if value is None else f'{value}{unit}'
+
+
 def summarize(devices, mem_all=False):
     """The summary text of the devices from read_logs."""
     lines = []
@@ -515,6 +677,7 @@ def summarize(devices, mem_all=False):
             lines.append(f'    {game}: dropped before the frame was on the panel {stats.dropped_before_display}, '
                          f'dropped before the hand-off passed {stats.dropped_before_hand_off}, '
                          f'hand-off screens pushed {stats.hand_offs}, largest {largest}')
+        lines += nearby_report(device)
         lines += mem_report('heap', device.heap)
         lines += mem_report('PSRAM', device.psram)
         lines.append(f'  [MEM] other: {len(device.other_mem)} lines')

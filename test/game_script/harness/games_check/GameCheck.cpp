@@ -455,7 +455,12 @@ Report playRounds(const Roots& roots, const std::string& id, RoundDetails* detai
                {GameCore::Manifest::MODE_PASS, "pass"},
                {GameCore::Manifest::MODE_NEARBY, "nearby"}};
   for (const auto& mode : modes) {
-    if (manifest.hasMode(mode.bit) && (installed->check.modes & mode.bit) == 0) {
+    if (!manifest.hasMode(mode.bit)) continue;
+    // The check plays solo and pass only (epic-first-party-games R10), whatever the host can start: a nearby round
+    // needs two devices, so the device runs cover it. It is skipped for that reason, not because the host lacks it.
+    if (mode.bit == GameCore::Manifest::MODE_NEARBY) {
+      report.note(id + ": declared mode " + mode.name + " skipped: the games check plays only solo and pass");
+    } else if ((installed->check.modes & mode.bit) == 0) {
       report.note(id + ": declared mode " + mode.name + " skipped: this host cannot start it");
     }
   }

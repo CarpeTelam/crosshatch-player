@@ -31,6 +31,7 @@ FILE_ORDER = [
     'pass-hidden.chgame',
     'pass-art.chgame',
     'slow-restart.chgame',
+    'nearby.chgame',
     'pass-title.chgame',
     'pass-store.chgame',
     'invalid-binary-lua.chgame',
@@ -136,6 +137,7 @@ class FakeTreeTest(unittest.TestCase):
             ('pass-hidden.chgame', fake_hash('-- pass-hidden\n' + MOVE_LINE)),
             ('pass-art.chgame', fake_hash('-- pass-art\n')),
             ('slow-restart.chgame', fake_hash('-- slow-restart\n')),
+            ('nearby.chgame', fake_hash('-- nearby\n')),
             ('pass-title.chgame', fake_hash('-- pass-art\n')),
             ('pass-store.chgame', fake_hash('-- pass-hidden\n' + MOVE_LINE + STORE_LINE)),
             ('invalid-binary-lua.chgame', '(invalid)'),
@@ -327,6 +329,14 @@ class RealTreeTest(unittest.TestCase):
         self.assertEqual(json.loads(store['manifest.json']), {**json.loads(hidden['manifest.json']), 'id': 'pass-store', 'name': 'Pass store'})
         self.assertEqual(store['main.lua'].decode().count('ch.store.set({ moves = state.moves })'), 1)
         self.assertEqual(store['main.lua'].decode().replace('  ch.store.set({ moves = state.moves })\n', ''), hidden['main.lua'].decode())
+
+    def test_the_nearby_package_is_the_fixture_a_two_device_run_plays(self):
+        with zipfile.ZipFile(self.out / 'nearby.chgame') as package:
+            manifest = json.loads(package.read('manifest.json'))
+        self.assertEqual(manifest['id'], 'nearby')
+        self.assertEqual(manifest['seats'], {'min': 2, 'max': 2})
+        self.assertEqual(manifest['modes'], ['pass', 'nearby'])
+        self.assertIn('nearby.chgame', [name for name, _ in hashes_of(self.out)])
 
     def test_the_vector_is_the_committed_file_with_its_recorded_hash(self):
         vectors = json.loads((REPO / pdr.VECTORS).read_text(encoding='utf-8'))['hash_vector']

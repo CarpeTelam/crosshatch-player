@@ -24,6 +24,8 @@
 #include "games/GameRandom.h"
 #if defined(SIMULATOR)
 #include "games/UdpLink.h"
+#else
+#include "games/EspNowLink.h"
 #endif
 
 namespace fui = freeink::ui;
@@ -54,7 +56,7 @@ void textLine(UiAppHost::UiScreen& screen, const char* text, fui::TextStyle styl
 
 }  // namespace
 
-// ---- the device's radio (entry 11 edits these; entry 16 chose UdpLink under SIMULATOR) ----
+// ---- the device's radio (entry 11: EspNowLink and its label; entry 16 chose UdpLink under SIMULATOR) ----
 
 NearbyProbe::Readings NearbyRadio::probe() { return NearbyProbe::read(); }
 
@@ -72,9 +74,18 @@ NearbyRadio::Opened NearbyRadio::open() {
   }
   return opened;
 #else
-  // Entry 11 brings up EspNowLink and builds its label here (EspNow::makeLabel). Until then no radio starts, which the
-  // lobby shows as "Nearby could not start".
-  return Opened{};
+  // The device's link is EspNowLink (entry 11): makeEspNowLink() brings the radio up in AD-18's order, which can wait
+  // up to half a second, and returns null when PSRAM or any step fails (the lobby then shows "Nearby could not start").
+  // The host label is the link's own ("X4 Pro 3F2A", built from the MAC in the radio layer).
+  Opened opened;
+  std::unique_ptr<EspNowLink> espNow = makeEspNowLink();
+  if (espNow) {
+    const std::span<const uint8_t> label = espNow->hostLabel();
+    std::copy_n(label.begin(), std::min(label.size(), sizeof(opened.label)), opened.label);
+    opened.labelLength = std::min(label.size(), sizeof(opened.label));
+    opened.link = std::move(espNow);
+  }
+  return opened;
 #endif
 }
 

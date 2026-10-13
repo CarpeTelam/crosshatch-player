@@ -36,6 +36,26 @@ TEST(GameHostCapsTest, PassIsOnSoASoloAndPassGameOffersBothModes) {
   EXPECT_EQ(result.modes, GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS);
 }
 
+// epic-play-nearby entry 11 turns Play Nearby on for a device build (EspNowLink), so the host offers nearby and
+// Manifest::check then offers a two-seat game that declares it all three modes. This suite is not the simulator, which
+// reports nearby on whatever NEARBY_BUILT says (GameHostCapsSimulatorTest).
+TEST(GameHostCapsTest, NearbyIsOnSoATwoSeatGameThatDeclaresItOffersAllThreeModes) {
+  EXPECT_TRUE(HostCapsValues::NEARBY_BUILT);
+  const GameCore::HostCaps caps = gameHostCaps();
+  EXPECT_TRUE(caps.nearby);
+  GameCore::Manifest game;
+  std::strcpy(game.id, "g");
+  std::strcpy(game.name, "G");
+  game.api = caps.api;
+  game.seatsMin = 1;
+  game.seatsMax = 2;
+  game.modes = GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS | GameCore::Manifest::MODE_NEARBY;
+  const GameCore::CheckResult result = game.check(caps);
+  EXPECT_TRUE(result.ok());
+  EXPECT_EQ(result.modes,
+            GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS | GameCore::Manifest::MODE_NEARBY);
+}
+
 // The harness's double reads the same HostCapsValues (ModePickerTest pins its defaults to them), so
 // pinning the real function to them here keeps the two equal.
 TEST(GameHostCapsTest, ReportsHostCapsValues) {

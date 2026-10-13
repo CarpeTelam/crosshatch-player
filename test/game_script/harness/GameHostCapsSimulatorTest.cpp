@@ -4,13 +4,14 @@
 #include "GameHostCaps.h"
 
 // GameHostCaps.cpp built with SIMULATOR (game_host_caps_simulator.cmake): the simulator plays nearby over UdpLink, so
-// it reports nearby on although nothing is built for the device radio yet. The rest of HostCaps is as on a device.
+// it reports nearby on whatever the device build says (HostCapsValues::NEARBY_BUILT is on since entry 11; the simulator
+// does not depend on it). The rest of HostCaps is as on a device.
 
 namespace {
 
-TEST(GameHostCapsSimulatorTest, NearbyIsOnThoughNearbyIsNotBuilt) {
-  EXPECT_FALSE(HostCapsValues::NEARBY_BUILT);
+TEST(GameHostCapsSimulatorTest, NearbyIsOnAndTheDeviceBuildAgrees) {
   EXPECT_TRUE(gameHostCaps().nearby);
+  EXPECT_TRUE(HostCapsValues::NEARBY_BUILT) << "a device build plays nearby over EspNowLink";
 }
 
 TEST(GameHostCapsSimulatorTest, TheOtherFieldsAreAsOnADevice) {
