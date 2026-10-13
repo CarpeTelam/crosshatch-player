@@ -1458,3 +1458,15 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-endings-peergone-and-the-player-left-view-plan.md`
   summary: A nearby match that ended in PeerGone or Error keeps the radio up and preventAutoSleep() on until the player presses Back, so a device left on the view stays awake.
   evidence: R6 says the match sets preventAutoSleep and the error view has kept the session alive since entry 9; releasing the lock in those two states is one expression, but whether the battery cost matters is a device question (entry 11/14's runs). Location: src/activities/games/GameMatchActivity.h (preventAutoSleep). Severity: low.
+
+## 6.10
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-lobby-screens-and-the-nearby-start-plan.md`
+  summary: No lobby test runs a game with more than two seats, so the host's per-seat liveness loop, "Player 3 joined", and "2 of 3 players" are untested; the loop checks every seated guest, and only a 3-seat nearby game reaches it.
+  evidence: Every `NearbyLobbyTest` lobby is built from `nearbyManifest()` (seats 2..2) and `HostCaps.maxSeats` is 2, so a mutation that checks only seat 2 passes. `LobbyTest.GuestHeardMsOfASeatThatLeftIsZeroAndItIsPerSeat` covers the accessor per seat with 3 seats, not the screen. Trigger: the first game declaring nearby with seats.max 3 (or a `maxSeats` above 2). Location: test/game_script/harness/NearbyLobbyTest.cpp; src/activities/games/GameLobbyActivity.cpp readHost. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-lobby-screens-and-the-nearby-start-plan.md`
+  summary: With more than two seats, one of two seated guests leaving can be overwritten by the screen's resync, so the host line reads "Player N joined" after a departure.
+  evidence: `readHost` resyncs `HostBody` to Joined whenever `seats >= 2` and the body is not Joined, so a `GuestLeft` event with a guest still seated is lost. Unreachable in v1 (`seatLimit()` is 2: one guest, so a leave always drops `seats` below 2). Fix with the first 3-seat game: keep Left when the last polled event was a leave. Location: src/activities/games/GameLobbyActivity.cpp readHost. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-lobby-screens-and-the-nearby-start-plan.md`
+  summary: A host lobby that reaches `HostState::Closed`, or a guest whose link dies mid-lobby without our own cancel, would show "Waiting for a player" or "Looking for games nearby" with no radio and no way out but Back.
+  evidence: The edge-case lens relayed it. `HostState::Closed` and `GuestState::Cancelled` are set only by `cancel()` (after which the session is reset), and `ILink` has no failure signal, so no path reaches it on the host harness; whether `EspNowLink` can drop mid-lobby is unknown until entry 11's device run. If it can, the lobby should `failToChoose()` on it. Location: src/activities/games/GameLobbyActivity.cpp readHost, pollGuest. Severity: medium (unverified).
