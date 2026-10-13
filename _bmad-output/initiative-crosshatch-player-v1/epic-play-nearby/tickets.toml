@@ -327,7 +327,7 @@ hitl = false
 risk = "low"
 unknown = "None beyond what the build records hold."
 references = ["_bmad-output/implementation-artifacts/deferred-work.md, `## e6pre-15`, `## e6pre-17`, `## e5-xr`, `## e5-close` (D3)"]
-touches = ["lib/Game*/**", "src/games/**", "src/activities/games/**", "test/**", "scripts/pack_game.py", "scripts/pack_game_test.py", "_bmad-output/implementation-artifacts/deferred-work.md (the entries the epic met)"]
+touches = ["lib/Game*/**", "src/games/**", "src/activities/games/**", "test/**", "scripts/pack_game.py", "scripts/pack_game_test.py", "scripts/device_log.py", "scripts/device_log_test.py", "lib/DiagLog/**", "src/diagnostics/**", "docs/crosshatch/fork-scripts.md (the device-log sections)", "_bmad-output/implementation-artifacts/deferred-work.md (the entries the epic met)"]
 stays_out = ["games/**", "docs/crosshatch/api-level-1.txt", "every upstream file", ".github/workflows/**"]
 
 [[entry]]
