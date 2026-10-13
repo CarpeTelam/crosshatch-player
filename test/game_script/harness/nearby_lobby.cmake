@@ -4,11 +4,13 @@
 # header that maps activity names to Home's Games row (GamesHomeRowTest.cpp).
 #
 # GameLobbyActivity.cpp and the scripted NearbyProbe::read() join game_launcher_src (games_launcher.cmake: the title screen
-# calls the lobby and the probe, so every suite that links it needs both). The real NearbyProbe.cpp is device only and
-# stays excluded by name (esp_now_link.sources.cmake).
+# calls the lobby and the probe, so every suite that links it needs both) and the radio-less makeEspNowLink() (the
+# device's NearbyRadio::open() calls it; entry 11). The real NearbyProbe.cpp and EspNowLink.cpp are device only and stay
+# excluded by name (esp_now_link.sources.cmake).
 target_sources(game_launcher_src PRIVATE
   ${REPO_ROOT}/src/activities/games/GameLobbyActivity.cpp
-  ${HARNESS_DIR}/list_stubs/NearbyProbeDouble.cpp)
+  ${HARNESS_DIR}/list_stubs/NearbyProbeDouble.cpp
+  ${HARNESS_DIR}/list_stubs/EspNowLinkDouble.cpp)
 
 # GameHostCapsDouble.cpp is in the executable, not a library, so it wins over GameHostCaps.cpp in game_match_src.
 add_executable(NearbyLobbyHarnessTest NearbyLobbyTest.cpp

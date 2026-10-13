@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ApiLevel.h"
+#include "EspNowLinkScript.h"
 #include "GameRegistry.h"
 #include "NearbyLobbySupport.h"
 #include "games/GameHostCaps.h"
@@ -650,10 +651,31 @@ TEST_F(NearbyLobbyTest, TheFakeRadioHandsOutWhatTheDeviceRadioDoes) {
   first.link->end();
   EXPECT_FALSE(first.link->broadcast(frame));
   EXPECT_TRUE(second.link->broadcast(frame));
-  // The device's own radio starts no link until entry 11 wires one (flipped on purpose there), reads the probe, and
-  // keeps the lobby timing defaults.
+  // The device's own radio asks makeEspNowLink() for its link (entry 11): the harness's double is a host with no radio,
+  // so its bring-up fails and the radio starts no link, as on a device whose radio would not start. It also reads the
+  // probe and keeps the lobby timing defaults.
   NearbyRadio device;
-  EXPECT_EQ(device.open().link, nullptr);
+  espnowlink::reset();
+  const NearbyRadio::Opened none = device.open();
+  EXPECT_EQ(none.link, nullptr);
+  EXPECT_EQ(none.labelLength, 0u);
+  EXPECT_EQ(espnowlink::script().attempts, 1) << "one open(), one bring-up";
+  // The success path of the same open(): a radio that comes up gives the link and the label the factory built from
+  // the MAC (EspNow::makeLabel, "X4 Pro" and the last two bytes), copied whole into Opened.
+  espnowlink::reset();
+  espnowlink::script().succeed = true;
+  {
+    NearbyRadio::Opened up = device.open();
+    ASSERT_NE(up.link, nullptr);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(up.label), up.labelLength), "X4 Pro 3F2A");
+    EXPECT_LE(up.labelLength, GameCore::Protocol::MAX_HOST_LABEL_BYTES);
+    EXPECT_EQ(espnowlink::script().attempts, 1);
+    EXPECT_EQ(espnowlink::script().shutdowns, 0) << "up, not torn down yet";
+    up.link.reset();  // whoever owns the link ends it: the radio goes off
+    EXPECT_EQ(espnowlink::script().shutdowns, 1);
+    EXPECT_EQ(espnowlink::script().stationsLeft, 1) << "Wi-Fi handed back";
+  }
+  espnowlink::reset();
   nearbyprobe::script().wifiInUse = true;
   nearbyprobe::script().freeInternalHeapBytes = 1234;
   const NearbyProbe::Readings read = device.probe();

@@ -475,7 +475,9 @@ TEST_F(TitleScreenTest, APassOnlyGameRowPushesItsTitleScreenWhoseNewGameIsPass) 
 }
 
 TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
-  installCounter("\"solo\",\"pass\",\"nearby\"");  // nearby stays off: the host has no radio
+  hostcaps::script().nearby =
+      false;  // a host with no radio: the device starts nearby (NEARBY_BUILT), this host does not
+  installCounter("\"solo\",\"pass\",\"nearby\"");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
   const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected);
@@ -488,6 +490,24 @@ TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
   tapRow(tr(STR_GAMES_MODE));
   render();
   EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past pass: the host cannot start nearby";
+}
+
+// The device's host (HostCapsValues::NEARBY_BUILT, entry 11): nearby is the third mode of the cycle.
+TEST_F(TitleScreenTest, TheModesOptionsCycleOnADeviceHostIncludesNearbyLast) {
+  ASSERT_TRUE(hostcaps::script().nearby) << "a reset host is the device's, which starts nearby";
+  installCounter("\"solo\",\"pass\",\"nearby\"");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_NEARBY));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past nearby";
 }
 
 // e5-r7: a game installed before the pass seat rule that lists solo and pass with one seat still opens, in solo, with
@@ -1609,7 +1629,7 @@ TEST_F(TitleScreenTest, AStaleRememberedChoiceFallsBackValueByValue) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, ",\"default_mode\":\"pass\"" + TWO_SETTINGS,
                   SETTINGS_GAME);
   GameSaveStore::Prefs prefs;
-  prefs.mode = NEARBY;  // the host has no radio
+  prefs.mode = NEARBY;  // a mode this game does not declare
   const std::pair<const char*, const char*> entries[] = {{"level", "Impossible"}, {"gone", "Yes"}, {"board", "Large"}};
   for (const auto& [id, value] : entries) {
     GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];

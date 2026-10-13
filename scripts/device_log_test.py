@@ -54,7 +54,30 @@ FORMATS = {
     'mem': ('src/main.cpp', 'Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes'),
     'psram': ('src/main.cpp', 'PSRAM: Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes'),
     'web_mem': ('src/network/CrossPointWebServer.cpp', '[MEM] Free heap before begin: %d bytes'),
+    # A nearby match (epic-play-nearby): GameLinkLog.h's one function per LINK line, the radio's, and the match's.
+    'link_state_sent': ('src/games/GameLinkLog.h', 'session=%08x state sent ver=%u'),
+    'link_state_recv': ('src/games/GameLinkLog.h', 'session=%08x state recv ver=%u seat=%u'),
+    'link_state_adopt': ('src/games/GameLinkLog.h', 'session=%08x state adopt ver=%u seat=%u result=%s'),
+    'link_queue_full': ('src/games/GameLinkLog.h', 'session=%08x queue full ver=%u overflows=%u'),
+    'link_abort_recv': ('src/games/GameLinkLog.h', 'session=%08x abort recv reason=%s seat=%u'),
+    'link_leave': ('src/games/GameLinkLog.h', 'session=%08x leave reason=%s waited=%ums unacked=%u copies=%u'),
+    'link_resend': ('src/games/GameLinkLog.h', 'session=%08x resend n=%u total=%u'),
+    'link_silence': ('src/games/GameLinkLog.h', 'session=%08x silence n=%u total=%u'),
+    'link_abort_sent': ('src/games/GameLinkLog.h', 'session=%08x abort sent n=%u total=%u'),
+    'link_refused': ('src/games/GameLinkLog.h', 'session=%08x link refused n=%u total=%u'),
+    'link_task_started': ('src/games/GameLinkLog.h', 'session=%08x task started; stack %u bytes'),
+    'link_task_stopped': ('src/games/GameLinkLog.h', 'session=%08x task stopped; stack high-water %u bytes free'),
+    'link_bring_up_failed': ('src/games/GameLinkLog.h', 'session=%08x bring-up failed: %s'),
+    'radio_up': ('src/games/EspNowLink.h', 'radio up on channel %u as %02X:%02X:%02X:%02X:%02X:%02X'),
+    'radio_failed': ('src/games/EspNowLink.h', 'bring-up failed at %s'),
+    'udp_up': ('src/games/UdpLink.cpp', 'udp link up on %u'),
+    'peer_gone_reason': ('src/activities/games/GameMatchActivity.cpp', '%s: the other player is gone: %s'),
 }
+# The LINK formats that are logged at LOG_INF (the other two, bring-up failures, at LOG_ERR).
+LINK_INF_KINDS = ('link_state_sent', 'link_state_recv', 'link_state_adopt', 'link_queue_full', 'link_abort_recv',
+                  'link_leave', 'link_resend', 'link_silence', 'link_abort_sent', 'link_refused', 'link_task_started',
+                  'link_task_stopped', 'radio_up', 'udp_up')
+LINK_ERR_KINDS = ('link_bring_up_failed', 'radio_failed')
 
 
 def device_line(millis, level, origin, kind, *values):
@@ -600,6 +623,56 @@ def sample_raw_log():
     return '\n'.join(lines) + '\n'
 
 
+# Recorded 2026-10-13 from two simulator instances of this worktree (sim.sh, SIM_INSTANCE=1 and 2, the `nearby` fixture):
+# the lines of the host's and the guest's logs that name the link or the match's lifecycle, in the order they were
+# printed, unedited, from lobby to Start, two moves and one tap on a taken square, the host's Leave, "The other player
+# left" on the guest, and the guest's Back. The simulator compiles the same GameLinkLog.h and GameMatchActivity.cpp the
+# device does, over UdpLink instead of EspNowLink, so the lines have the device's format and none of its timing: its
+# stack high-water is the simulator's constant 2048, and no radio-up line is printed (the radio-up, queue-full, and
+# link-refused lines are made from FORMATS below). The device's own capture replaces this at entry 11's smoke run.
+RECORDED_HOST = '''\
+[38907] [INF] [LINK] udp link up on 23872
+[38908] [INF] [LINK] session=dc1b97fb task started; stack 4096 bytes
+[58381] [INF] [GAME] nearby: Starting -> Playing on Started
+[58384] [INF] [LINK] session=dc1b97fb state sent ver=1
+[58789] [INF] [LINK] session=dc1b97fb resend n=1 total=1
+[64503] [INF] [LINK] session=dc1b97fb state sent ver=2
+[70700] [INF] [LINK] session=dc1b97fb state recv ver=3 seat=2
+[70708] [INF] [LINK] session=dc1b97fb state adopt ver=3 seat=2 result=Adopted
+[73796] [INF] [LINK] session=dc1b97fb state sent ver=4
+[77019] [INF] [GAME] nearby: Playing -> Paused on Back
+[77021] [INF] [GAME] nearby: Paused screen pushed in 1 ms
+[82227] [INF] [GAME] nearby: Paused -> Leaving on Leave
+[82227] [INF] [LINK] session=dc1b97fb leave reason=left waited=0ms unacked=0 copies=3
+[82227] [INF] [LINK] session=dc1b97fb abort sent n=3 total=3
+[82239] [INF] [LINK] session=dc1b97fb task stopped; stack high-water 2048 bytes free
+'''
+
+RECORDED_GUEST = '''\
+[40265] [INF] [LINK] udp link up on 23873
+[40266] [INF] [LINK] session=00000000 task started; stack 4096 bytes
+[56711] [INF] [GAME] nearby: Starting -> Playing on Started
+[57056] [INF] [LINK] session=dc1b97fb state recv ver=1 seat=1
+[57065] [INF] [LINK] session=dc1b97fb state adopt ver=1 seat=1 result=RoundStarted
+[62772] [INF] [LINK] session=dc1b97fb state recv ver=2 seat=1
+[62776] [INF] [LINK] session=dc1b97fb state adopt ver=2 seat=1 result=Adopted
+[68954] [INF] [LINK] session=dc1b97fb state sent ver=3
+[72057] [INF] [LINK] session=dc1b97fb state recv ver=4 seat=1
+[72059] [INF] [LINK] session=dc1b97fb state adopt ver=4 seat=1 result=Adopted
+[80491] [INF] [LINK] session=dc1b97fb abort recv reason=left seat=1
+[80491] [INF] [LINK] session=dc1b97fb abort recv reason=left seat=1
+[80491] [INF] [LINK] session=dc1b97fb abort recv reason=left seat=1
+[80497] [INF] [GAME] nearby: Playing -> PeerGone on PeerGone
+[80497] [INF] [GAME] nearby: the other player is gone: left
+[80500] [INF] [GAME] nearby: PeerGone screen pushed in 3 ms
+[90499] [INF] [LINK] session=dc1b97fb silence n=1 total=1
+[97797] [INF] [GAME] nearby: PeerGone -> Leaving on Back
+[97797] [INF] [LINK] session=dc1b97fb leave reason=left waited=0ms unacked=0 copies=3
+[97797] [INF] [LINK] session=dc1b97fb abort sent n=3 total=3
+[97809] [INF] [LINK] session=dc1b97fb task stopped; stack high-water 2048 bytes free
+'''
+
+
 def section(text, name):
     """The part of a summary under one device's heading."""
     match = re.search(r'^== ' + re.escape(name) + r' \(.*?(?=^== |\Z)', text, re.DOTALL | re.MULTILINE)
@@ -737,6 +810,100 @@ class SummaryTest(unittest.TestCase):
         text = self.summary(path)
         self.assertIn('VM stopped: 0', section(text, 'E'))
 
+    def test_a_recorded_nearby_match_gives_each_device_its_link_lines_and_peer_gone(self):
+        host, guest = self.root / 'A.raw.log', self.root / 'B.raw.log'
+        host.write_text(RECORDED_HOST)
+        guest.write_text(RECORDED_GUEST)
+        text = self.summary(host, guest)
+        a, b = section(text, 'A'), section(text, 'B')
+        self.assertIn('nearby: radio up 0, LINK sessions 1, PeerGone 0, LINK errors 0', a)
+        self.assertIn('session dc1b97fb:', a)
+        self.assertIn('STATE sent 3 (last ver 4), received 1 (last ver 3)', a)
+        self.assertIn('adopted: Adopted 1 (last ver 3)', a)
+        self.assertIn('queue full 0 (overflows -)', a)
+        self.assertIn('resend 1, silence 0, abort sent 3, link refused 0', a)
+        self.assertIn('ABORT received (one line per copy the device heard): none', a)
+        self.assertIn('leave at [82227]: reason left, waited 0 ms, unacked 0, ABORT copies 3', a)
+        self.assertIn('GameLink task: stack 4096 B, high-water 2048 B free at [82239]', a)
+        self.assertIn('GameLink task stack: least high-water 2048 B free of 4096 B over 1 stop(s)', a)
+        self.assertIn('LINK at [38907]: udp link up on 23872', a)
+        self.assertNotIn('the other player is gone', a)
+        self.assertIn('nearby: radio up 0, LINK sessions 2, PeerGone 1, LINK errors 0', b)
+        self.assertIn('session 00000000:', b)  # a guest's link before it joined: the id is not known yet
+        self.assertIn('STATE sent 1 (last ver 3), received 3 (last ver 4)', b)
+        self.assertIn('adopted: RoundStarted 1, Adopted 2 (last ver 4)', b)
+        self.assertIn('resend 0, silence 1, abort sent 3, link refused 0', b)
+        self.assertIn('ABORT received (one line per copy the device heard): left from seat 1 x3', b)
+        self.assertIn('leave at [97797]: reason left, waited 0 ms, unacked 0, ABORT copies 3', b)
+        self.assertIn('GameLink task: stack 4096 B, high-water 2048 B free at [97809]', b)  # the stop's session has no start
+        self.assertIn('GameLink task: stack 4096 B, high-water not stopped', b)  # session 00000000's own
+        self.assertIn('PeerGone at [80497]: nearby on PeerGone', b)
+        self.assertIn('the other player is gone: left x1', b)
+
+    def test_every_recorded_link_line_is_read_by_a_pattern_except_the_link_up_line(self):
+        for name, log in (('A', RECORDED_HOST), ('B', RECORDED_GUEST)):
+            path = self.root / f'{name}.raw.log'
+            path.write_text(log)
+            device = device_log.read_logs([str(path)])[name]
+            self.assertEqual(len(device.link_other), 1, device.link_other)
+            self.assertTrue(device.link_other[0][1].startswith('udp link up on '))
+            for session in device.link_sessions.values():
+                self.assertEqual(session.other, [], f'device {name} session {session.session}')
+            self.assertEqual(device.link_errors, [])
+
+    def test_the_lines_no_recording_has_the_radio_up_a_full_queue_refusals_and_errors_are_read(self):
+        lines = [
+            device_line(100, 'INF', 'LINK', 'radio_up', 1, 0x24, 0x0A, 0xC4, 0x3F, 0x2A, 0x91),
+            device_line(110, 'INF', 'LINK', 'link_task_started', 0xAB12CD34, 4096),
+            device_line(120, 'INF', 'LINK', 'link_queue_full', 0xAB12CD34, 7, 1),
+            device_line(130, 'INF', 'LINK', 'link_queue_full', 0xAB12CD34, 9, 2),
+            device_line(140, 'INF', 'LINK', 'link_refused', 0xAB12CD34, 2, 5),
+            device_line(150, 'INF', 'LINK', 'link_resend', 0xAB12CD34, 1, 1),
+            device_line(160, 'INF', 'LINK', 'link_resend', 0xAB12CD34, 3, 4),
+            device_line(165, 'INF', 'LINK', 'link_abort_recv', 0xAB12CD34, 'script_error', 2),
+            device_line(170, 'INF', 'LINK', 'link_task_stopped', 0xAB12CD34, 1700),
+            device_line(180, 'INF', 'GAME', 'peer_gone_reason', 'nearby', 'timeout'),
+            device_line(185, 'INF', 'GAME', 'lifecycle', 'nearby', 'Playing', 'PeerGone', 'PeerGone'),
+            device_line(190, 'INF', 'LINK', 'radio_up', 1, 0x24, 0x0A, 0xC4, 0x3F, 0x2A, 0x91),
+            device_line(200, 'ERR', 'LINK', 'radio_failed', 'initEspNow'),
+            device_line(210, 'ERR', 'LINK', 'link_bring_up_failed', 0, 'no memory for the session'),
+            '[215] [ERR] [GAME] Nearby: the radio did not start for nearby',
+            '[220] [INF] [LINK] some line a later firmware adds',
+            '[230] [INF] [LINK] session=ab12cd34 a session line a later firmware adds',
+        ]
+        path = self.root / 'C.raw.log'
+        path.write_text('\n'.join(lines) + '\n')
+        c = section(self.summary(path), 'C')
+        self.assertIn('nearby: radio up 2, LINK sessions 1, PeerGone 1, LINK errors 3', c)
+        self.assertIn('[100] radio up on channel 1 as 24:0A:C4:3F:2A:91', c)
+        self.assertIn('queue full 2 (overflows 2)', c)
+        self.assertIn('resend 4, silence 0, abort sent 0, link refused 5', c)  # the running totals, not the steps
+        self.assertIn('ABORT received (one line per copy the device heard): script_error from seat 2 x1', c)
+        self.assertIn('GameLink task: stack 4096 B, high-water 1700 B free at [170]', c)
+        self.assertIn('PeerGone at [185]: nearby on PeerGone', c)
+        self.assertIn('the other player is gone: timeout x1', c)
+        self.assertIn('LINK error at [200]: bring-up failed at initEspNow', c)
+        self.assertIn('LINK error at [210]: session=00000000 bring-up failed: no memory for the session', c)
+        self.assertIn('LINK error at [215]: Nearby: the radio did not start for nearby', c)
+        self.assertIn('LINK at [220]: some line a later firmware adds', c)
+        self.assertIn('other: a session line a later firmware adds at [230]', c)
+
+    def test_a_device_with_no_nearby_line_says_none(self):
+        path = self.root / 'A.raw.log'
+        path.write_text(sample_raw_log())
+        self.assertIn('  nearby: none', section(self.summary(path), 'A'))
+
+    def test_the_merged_log_carries_the_nearby_lines_per_device_with_host_times(self):
+        merged = self.root / 'merged.log'
+        lines = [f'2026-10-13T10:00:{i:02d}.000Z A {line}' for i, line in enumerate(RECORDED_HOST.splitlines())]
+        lines += [f'2026-10-13T10:01:{i:02d}.000Z B {line}' for i, line in enumerate(RECORDED_GUEST.splitlines())]
+        merged.write_text('\n'.join(lines) + '\n')
+        text = self.summary(merged)
+        a, b = section(text, 'A'), section(text, 'B')
+        self.assertRegex(a, r'leave at 2026-10-13T10:00:\d\d\.000Z: reason left')
+        self.assertRegex(b, r'PeerGone at 2026-10-13T10:01:\d\d\.000Z: nearby on PeerGone')
+        self.assertNotIn('PeerGone at', a)
+
     def test_capture_then_summary_end_to_end(self):
         out = self.root / 'out'
         link = self.root / 'port'
@@ -774,6 +941,15 @@ class FirmwareFormatsTest(unittest.TestCase):
         for kind in ('lifecycle', 'drop_hand_off', 'drop_display', 'hand_off'):
             self.assertIn(f'LOG_INF("GAME", "{FORMATS[kind][1]}"', match_cpp)
 
+    def test_the_link_formats_keep_their_origin_and_level(self):
+        for kind in LINK_INF_KINDS + LINK_ERR_KINDS:
+            level = 'LOG_INF' if kind in LINK_INF_KINDS else 'LOG_ERR'
+            path, text = FORMATS[kind]
+            with self.subTest(kind):
+                self.assertIn(f'{level}("LINK", "{text}"', (ROOT / path).read_text())
+        self.assertIn('LOG_INF("GAME", "%s: the other player is gone: %s"',
+                      (ROOT / FORMATS['peer_gone_reason'][0]).read_text())
+
     def test_the_parsers_read_what_the_formats_print(self):
         cases = [
             (device_log.LIFECYCLE, device_line(1, 'INF', 'GAME', 'lifecycle', 'g-1', 'A', 'B', 'C')),
@@ -784,7 +960,32 @@ class FirmwareFormatsTest(unittest.TestCase):
             (device_log.MEM_LINE, device_line(1, 'INF', 'MEM', 'mem', 1, 2, 3, 4)),
             (device_log.MEM_LINE, device_line(1, 'INF', 'MEM', 'psram', 1, 2, 3, 4)),
             (device_log.MILLIS_PREFIX, device_line(1, 'INF', 'MEM', 'mem', 1, 2, 3, 4)),
+            (device_log.PEER_GONE_REASON, device_line(1, 'INF', 'GAME', 'peer_gone_reason', 'g-1', 'left')),
+            (device_log.LINK_LINE, device_line(1, 'INF', 'LINK', 'udp_up', 23872)),
+            (device_log.LINK_ERROR_LINE, device_line(1, 'ERR', 'LINK', 'radio_failed', 'setChannel')),
+            (device_log.RADIO_UP, device_line(1, 'INF', 'LINK', 'radio_up', 1, 1, 2, 3, 4, 5, 6)),
+            (device_log.LINK_SESSION, device_line(1, 'INF', 'LINK', 'link_resend', 7, 1, 1)),
         ]
+        sessions = [
+            (device_log.LINK_STATE_SENT, 'link_state_sent', (1, 5)),
+            (device_log.LINK_STATE_RECV, 'link_state_recv', (1, 5, 2)),
+            (device_log.LINK_STATE_ADOPT, 'link_state_adopt', (1, 5, 2, 'Adopted')),
+            (device_log.LINK_QUEUE_FULL, 'link_queue_full', (1, 5, 2)),
+            (device_log.LINK_ABORT_RECV, 'link_abort_recv', (1, 'version_mismatch', 2)),
+            (device_log.LINK_LEAVE, 'link_leave', (1, 'left', 800, 1, 3)),
+            (device_log.LINK_COUNTER, 'link_resend', (1, 1, 1)),
+            (device_log.LINK_COUNTER, 'link_silence', (1, 1, 1)),
+            (device_log.LINK_COUNTER, 'link_abort_sent', (1, 3, 3)),
+            (device_log.LINK_COUNTER, 'link_refused', (1, 1, 1)),
+            (device_log.LINK_TASK_STARTED, 'link_task_started', (1, 4096)),
+            (device_log.LINK_TASK_STOPPED, 'link_task_stopped', (1, 1800)),
+        ]
+        for pattern, kind, values in sessions:
+            line = device_line(1, 'INF', 'LINK', kind, *values)
+            body = device_log.LINK_SESSION.search(line)
+            with self.subTest(kind):
+                self.assertTrue(body, line)
+                self.assertTrue(pattern.match(body.group(2)), line)
         for pattern, line in cases:
             with self.subTest(line=line):
                 self.assertTrue(pattern.search(line))

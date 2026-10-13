@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "GameCheck.h"
+#include "GameHostCaps.h"
 #include "HalDisplay.h"
 #include "ScriptVm.h"
 #include "TestSupport.h"
@@ -597,7 +598,10 @@ return { mode = "nearby", steps = { { seat = 1, x = 1, y = 1 } }, unfinished = t
   EXPECT_EQ(report.failures.size(), 1u) << report.text();
 }
 
+// The host starts nearby (HostCapsValues::NEARBY_BUILT, entry 11 of epic-play-nearby), so the skip is the check's own
+// rule, not the host's: it plays solo and pass only (epic-first-party-games R10), and a nearby round needs two devices.
 TEST_F(GamesCheckEngineTest, ADeclaredNearbyIsSkippedAndLoggedNeverAFailure) {
+  ASSERT_TRUE(gameHostCaps().nearby) << "this host starts nearby, so the skip below is not for want of the capability";
   copyGame("pass-open", "pass-open");
   edit("pass-open", "manifest.json", "\"modes\": [\"solo\", \"pass\"]", "\"modes\": [\"solo\", \"pass\", \"nearby\"]");
   round("pass-open", "x-wins-in-pass", X_WINS_IN_PASS);
@@ -605,7 +609,8 @@ TEST_F(GamesCheckEngineTest, ADeclaredNearbyIsSkippedAndLoggedNeverAFailure) {
   expectGreen(games_check::checkPackage(sticky(), "pass-open"));
   const Report report = games_check::playRounds(sticky(), "pass-open");
   expectGreen(report);
-  EXPECT_TRUE(noted(report, "declared mode nearby skipped: this host cannot start it")) << report.text();
+  EXPECT_TRUE(noted(report, "declared mode nearby skipped: the games check plays only solo and pass")) << report.text();
+  EXPECT_FALSE(noted(report, "this host cannot start it")) << report.text();
 }
 
 TEST_F(GamesCheckEngineTest, AMalformedRoundFileFailsNamingTheKeyAndTheOtherRoundsStillRun) {

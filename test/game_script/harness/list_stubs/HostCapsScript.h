@@ -3,9 +3,9 @@
 // gameHostCaps() for the screens that list games, standing in for the device's gameHostCaps()
 // (src/games/GameHostCaps.cpp): the same answer (API_LEVEL and API_MIN_LEVEL from ApiLevel.h, and HostCapsValues'
 // seats, radio, and pass) with the four values a test changes:
-//  - `nearby`, the capability, off as on the device until epic-play-nearby turns it on (HostCapsValues::NEARBY_BUILT);
-//    a test turns it on to see a host whose lobby speaks for a nearby-capable device (GameLobbyActivity::lobbyGameFor
-//    copies gameHostCaps() into the LobbyGame).
+//  - `nearby`, the capability, on by default as on the device (HostCapsValues::NEARBY_BUILT, on since entry 11 of
+//    epic-play-nearby); a test turns it off to see a host with no radio (GameLobbyActivity::lobbyGameFor copies
+//    gameHostCaps() into the LobbyGame, and Manifest::check leaves a game's nearby mode out).
 //  - `pass`, the capability, on by default as on the device (HostCapsValues::PASS); a test turns it off to see a
 //    host that cannot start pass, where Manifest::check leaves a solo and pass game only solo.
 //  - `minApi`, the oldest api the host runs. 0 stands for the real one (API_MIN_LEVEL), so a test cannot ask for a
