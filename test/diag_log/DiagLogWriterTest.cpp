@@ -557,6 +557,36 @@ TEST(DiagLogFlush, EverySleepPathInMainFlushesJustBeforeItUnmountsTheCard) {
                        "constexpr uint32_t SLEEP_FLUSH_TIMEOUT_MS = 250;"));
 }
 
+// The [MEM] heap lines' condition in loop() is pinned the same way (row 14, entry 21): with the define on, the `if`
+// tests only the period, so a run with no USB host still puts the lines on the card; with it off, upstream's comment
+// and condition compile unchanged; and both branches test the same period, taken from upstream's line.
+TEST(DiagLogMain, TheHeapLinesNeedNoUsbHostOnlyWhenTheDefineIsOn) {
+  const std::string main = readFile(std::string(REPO_ROOT_DIR) + "/src/main.cpp");
+  ASSERT_FALSE(main.empty());
+  const std::string hostTest = "(Serial || FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF) && ";
+  const std::string period = "millis() - lastMemPrint >= 10000) {\n";
+  const std::string upstream =
+      "#else\n  // The ROM console does not depend on Arduino USB CDC's connection state.\n  if (" + hostTest + period +
+      "#endif\n    const auto heap = HalMemory::getInternalHeap();\n";
+  const size_t at = main.find(upstream);
+  ASSERT_NE(at, std::string::npos) << "upstream's [MEM] comment or condition in loop() changed, or the "
+                                      "#else / #endif around it moved: update row 14 and its #if CROSSHATCH_SD_LOG "
+                                      "branch to match";
+  EXPECT_EQ(main.find(upstream, at + 1), std::string::npos);
+
+  // Between `#if CROSSHATCH_SD_LOG` and `#else`: one comment line and an `if` on the period alone.
+  const std::string guard = "#if CROSSHATCH_SD_LOG\n";
+  const size_t from = main.rfind(guard, at);
+  ASSERT_NE(from, std::string::npos);
+  const std::string onBranch = main.substr(from + guard.size(), at - from - guard.size());
+  const size_t commentEnd = onBranch.find('\n');
+  ASSERT_NE(commentEnd, std::string::npos);
+  EXPECT_EQ(onBranch.rfind("  // ", 0), 0u) << "the define-on branch starts with one comment line:\n" << onBranch;
+  EXPECT_EQ(onBranch.substr(commentEnd + 1), "  if (" + period)
+      << "the define-on `if` tests upstream's period alone, with no host test:\n"
+      << onBranch;
+}
+
 TEST(DiagLogWriter, ASmallScratchBufferOrAZeroLimitIsAFailureNotACrash) {
   FakeStore store;
   DiagLog::LineBuffer<1024> buffer;
