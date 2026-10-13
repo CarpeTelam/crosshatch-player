@@ -22,6 +22,9 @@
 #include "games/GameClock.h"
 #include "games/GameHostCaps.h"
 #include "games/GameRandom.h"
+#if defined(SIMULATOR)
+#include "games/UdpLink.h"
+#endif
 
 namespace fui = freeink::ui;
 
@@ -51,22 +54,28 @@ void textLine(UiAppHost::UiScreen& screen, const char* text, fui::TextStyle styl
 
 }  // namespace
 
-// ---- the device's radio (entries 11 and 16 edit these) ----
+// ---- the device's radio (entry 11 edits these; entry 16 chose UdpLink under SIMULATOR) ----
 
-NearbyProbe::Readings NearbyRadio::probe() {
-#if defined(SIMULATOR)
-  // NearbyProbe.cpp is device only and the simulator has no radio until entry 16: Wi-Fi is never in use and the heap is
-  // never short.
-  return NearbyProbe::Readings{false, SIZE_MAX};
-#else
-  return NearbyProbe::read();
-#endif
-}
+NearbyProbe::Readings NearbyRadio::probe() { return NearbyProbe::read(); }
 
 NearbyRadio::Opened NearbyRadio::open() {
-  // Entry 11 brings up EspNowLink and builds its label here (EspNow::makeLabel); entry 16 chooses UdpLink under
-  // SIMULATOR. Until then no radio starts, which the lobby shows as "Nearby could not start".
+#if defined(SIMULATOR)
+  // The simulator's link is UDP on loopback (entry 16): the first free port of the range, labelled "Simulator <port>".
+  // No free port leaves the link null, which the lobby shows as "Nearby could not start".
+  Opened opened;
+  std::unique_ptr<UdpLink> udp = makeUdpLink();
+  if (udp) {
+    const std::span<const uint8_t> label = udp->hostLabel();
+    std::copy_n(label.begin(), std::min(label.size(), sizeof(opened.label)), opened.label);
+    opened.labelLength = std::min(label.size(), sizeof(opened.label));
+    opened.link = std::move(udp);
+  }
+  return opened;
+#else
+  // Entry 11 brings up EspNowLink and builds its label here (EspNow::makeLabel). Until then no radio starts, which the
+  // lobby shows as "Nearby could not start".
   return Opened{};
+#endif
 }
 
 const GameCore::IClock& NearbyRadio::clock() {

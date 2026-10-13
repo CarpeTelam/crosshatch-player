@@ -367,6 +367,78 @@ class CheckLayersTest(unittest.TestCase):
                           'Other.cpp:1: src/activities/games may not include <esp_now.h> (platform radio/crypto)',
                           'Other.cpp:4: src/activities/games may not include <openssl/sha.h>', '4 problem(s)')
 
+    def test_simulator_socket_headers_follow_the_simulator_guard(self):
+        # Entry 16: UdpLink's socket headers are admitted for src/games, only inside a SIMULATOR branch.
+        sockets = ('#include <arpa/inet.h>\n#include <fcntl.h>\n#include <netinet/in.h>\n#include <sys/socket.h>\n'
+                   '#include <sys/uio.h>\n#include <unistd.h>\n')
+        path = 'src/games/UdpLink.cpp'
+        code, out = self.run_check(self.tree({path: f'#if FREEINK_CAP_GAMES && defined(SIMULATOR)\n{sockets}#endif\n'}))
+        self.assertEqual(code, 0, out)
+        for guard in ('#ifdef SIMULATOR', '#if defined(SIMULATOR)', '#if SIMULATOR && X', '#if X && defined SIMULATOR'):
+            with self.subTest(guard):
+                code, out = self.run_check(self.tree({path: f'{guard}\n{sockets}#endif\n'}))
+                self.assertEqual(code, 0, out)
+        unsafe = {
+            'unguarded': (sockets, 1),
+            'under !defined(SIMULATOR)': (f'#if FREEINK_CAP_GAMES && !defined(SIMULATOR)\n{sockets}#endif\n', 2),
+            'under a || condition': (f'#if defined(SIMULATOR) || X\n{sockets}#endif\n', 2),
+            'under only the games flag': (f'#if FREEINK_CAP_GAMES\n{sockets}#endif\n', 2),
+            'in the #else': (f'#if defined(SIMULATOR)\n#else\n{sockets}#endif\n', 3),
+            'after the #endif': (f'#ifdef SIMULATOR\n#endif\n{sockets}', 3),
+        }
+        for name, (text, line) in unsafe.items():
+            with self.subTest(name):
+                out = self.assert_fails({path: text}, f'{path}:{line}: <arpa/inet.h> is a simulator socket header',
+                                        f'{path}:{line + 1}: <fcntl.h> is a simulator socket header', '5 problem(s)')
+                self.assertNotIn('unistd.h', out)
+
+    def test_simulator_socket_headers_only_reach_src_games(self):
+        # Even inside a SIMULATOR branch: the edge is src/games's alone.
+        guarded = '#if defined(SIMULATOR)\n#include <sys/socket.h>\n#endif\n'
+        self.assert_fails({'src/activities/games/Other.cpp': guarded, 'lib/GameCore/Other.h': guarded},
+                          'src/activities/games/Other.cpp:2: src/activities/games may not include <sys/socket.h> '
+                          '(simulator sockets)', 'lib/GameCore/Other.h:2: lib/GameCore may not include <sys/socket.h> '
+                          '(simulator sockets)', '2 problem(s)')
+
+    def test_unistd_stays_admitted_unguarded(self):
+        code, out = self.run_check(self.tree({'src/games/Other.cpp': '#include <unistd.h>\n',
+                                              'src/activities/games/Other.cpp': '#include <unistd.h>\n'}))
+        self.assertEqual(code, 0, out)
+
+    def test_simulator_guard_reads_else_and_elif_chains(self):
+        path = 'src/games/UdpLink.cpp'
+        include = '#include <sys/socket.h>\n'
+        cases = {
+            'the #else': (f'#if defined(SIMULATOR)\n#else\n{include}#endif\n', 3, False),
+            'an #elif !defined(SIMULATOR)': (f'#if X\n#elif !defined(SIMULATOR)\n{include}#endif\n', 3, False),
+            'an #elif defined(SIMULATOR)': (f'#if X\n#elif defined(SIMULATOR)\n{include}#endif\n', 3, True),
+            'an #elifdef SIMULATOR': (f'#if X\n#elifdef SIMULATOR\n{include}#endif\n', 3, True),
+            'the #else after an #elif': (f'#if X\n#elif defined(SIMULATOR)\n#else\n{include}#endif\n', 4, False),
+        }
+        for name, (text, line, passes) in cases.items():
+            with self.subTest(name):
+                if passes:
+                    code, out = self.run_check(self.tree({path: text}))
+                    self.assertEqual(code, 0, out)
+                else:
+                    self.assert_fails({path: text}, f'{path}:{line}: <sys/socket.h> is a simulator socket header',
+                                      '1 problem(s)')
+
+    def test_games_branch_refuses_a_macro_it_has_no_pattern_for(self):
+        with self.assertRaises(ValueError):
+            check_layers.games_branch('if', 'OTHER', 'OTHER')
+
+    def test_games_branch_reads_the_simulator_guard(self):
+        accepted = [('ifdef', 'SIMULATOR'), ('if', 'defined(SIMULATOR)'), ('if', 'defined SIMULATOR'),
+                    ('elif', 'FREEINK_CAP_GAMES && defined(SIMULATOR)'), ('if', 'SIMULATOR == 1')]
+        refused = [('ifndef', 'SIMULATOR'), ('if', '!defined(SIMULATOR)'), ('if', 'defined(SIMULATOR) || X'),
+                   ('else', ''), ('ifdef', 'SIMULATOR_X'), ('if', 'FREEINK_CAP_GAMES'), ('elifndef', 'SIMULATOR')]
+        for kind, condition in accepted:
+            self.assertTrue(check_layers.games_branch(kind, condition, 'SIMULATOR'), (kind, condition))
+        for kind, condition in refused:
+            self.assertFalse(check_layers.games_branch(kind, condition, 'SIMULATOR'), (kind, condition))
+        self.assertFalse(check_layers.games_branch('ifdef', 'SIMULATOR'))
+
     def test_missing_game_folder_could_not_run(self):
         root = self.tree(remove=[p for p in BASE if p.startswith('lib/GameIcons/')])
         code, out = self.run_check(root)
