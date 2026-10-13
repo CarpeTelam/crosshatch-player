@@ -64,3 +64,8 @@ target_link_libraries(GameCoreTest PRIVATE
 )
 
 gtest_discover_tests(GameCoreTest)
+
+# The diagnostics log's suite (lib/DiagLog, epic-play-nearby entry 6.19) has no game code, but it is wired from here: its
+# folder is a fork path and this file is a fork file, while test/CMakeLists.txt is upstream's and the ledger (row 3) lets
+# it change by the two game suites only.
+add_subdirectory(${REPO_ROOT}/test/diag_log ${CMAKE_BINARY_DIR}/diag_log)

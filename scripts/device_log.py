@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Capture the serial logs of two or more devices at once into one merged log, and summarize a device log.
+Capture the serial logs of two or more devices at once into one merged log, merge the logs two devices wrote to their
+SD cards, and summarize a device log.
 
 A two-device run (epic-play-nearby) needs both devices' logs on one clock. `capture` reads the ports with `termios`
 and `select` (no pyserial), reconnects by itself when a port goes away and comes back (the X4 Pro renumbers its USB
@@ -18,6 +19,15 @@ not reset a board that wires them to its reset line.
 
   capture --port NAME=PATH [--port NAME=PATH ...] --out DIR [--baud 115200] [--duration SECONDS]
               SIGINT, SIGTERM, and --duration end it cleanly, with a half line flushed to the merged log
+  merge --out DIR CARD [CARD ...]
+              the no-computer run: a CARD is a log file a diagnostics build (`-DCROSSHATCH_SD_LOG=1`) wrote to a
+              device's SD card, or the folder `crosshatch-log` holding them (a card's root also works), optionally
+              `NAME=` before it (`A=/media/cardA`); the files of one device are read in boot order. The devices share
+              no clock, so it lines them up by the `LINK` lines: a `STATE` a device sent at `ver` is received by the
+              other at the same `session` and `ver`, and the fastest pairs in each direction give the clock offset.
+              It writes the same merged.log and <NAME>.raw.log as `capture` (the raw log is the device's files joined,
+              unchanged) plus summary.txt, and prints the alignment and the summary. Stamps are the run clock (time
+              since the earliest logged line or file-open time of any device, on the 1970 epoch), not wall-clock time.
   summary [--mem-all] LOG [LOG ...]
               per device, from a raw device log or the merged log: connects and losses, each `VM stopped` with its
               game, dropped touches and hand-offs per game, the `[MEM]` figures (device-run-packet.md L1 to L3), and
@@ -25,11 +35,12 @@ not reset a board that wires them to its reset line.
               leaves and `GameLink` task stack, the `PeerGone` entries and their reasons (epic-play-nearby R13)
 
 Exit 0: done. 1: not used (no rule is checked). 2: the command could not run (a bad argument, an output directory
-that cannot be made, an unreadable log).
+that cannot be made, an unreadable log, a card file that is not a diagnostics log).
 
 Local run (a computer with two USB ports; docs/crosshatch/fork-scripts.md has the walkthrough):
     python3 scripts/device_log.py capture --port A=/dev/serial/by-id/usb-A --port B=/dev/serial/by-id/usb-B --out logs
     python3 scripts/device_log.py summary logs/merged.log
+    python3 scripts/device_log.py merge --out run-logs A=/media/cardA B=/media/cardB   # SD cards, no computer needed
     python3 scripts/device_log_test.py
 """
 
@@ -349,6 +360,11 @@ LINK_LEAVE = re.compile(r'leave reason=([a-z_]+) waited=(\d+)ms unacked=(\d+) co
 LINK_COUNTER = re.compile(r'(resend|silence|abort sent|link refused) n=(\d+) total=(\d+)\s*$')
 LINK_TASK_STARTED = re.compile(r'task started; stack (\d+) bytes\s*$')
 LINK_TASK_STOPPED = re.compile(r'task stopped; stack high-water (\d+) bytes free\s*$')
+# The diagnostics log's own lines (lib/DiagLog/DiagLogWriter.h writes them into the card file; the test pins the formats).
+DIAG_DROPPED = re.compile(r'\[ERR\] \[DIAG\] dropped (\d+) lines')
+DIAG_LOST = re.compile(r'\[ERR\] \[DIAG\] lost (\d+) bytes')
+# What `merge` writes to merged.log for a card file; summary reads the firmware and the boots back from these.
+CARD_EVENT = re.compile(r'card file (\S+): boot (\d+), segment (\d+), firmware (.*?), board (.*)$')
 NEARBY_ERROR = re.compile(r'\[ERR\] \[GAME\] (Nearby: .*)$')  # the lobby's own failures (GameLobbyActivity.cpp)
 PEER_GONE_REASON = re.compile(r'\[GAME\] ([^\s:]+): the other player is gone: ([a-z_]+)\s*$')
 
@@ -412,6 +428,13 @@ class DeviceStats:
         self.connected = 0
         self.lost = 0
         self.merged = False
+        self.cards = False  # the log came from `merge`: card files, not a serial capture
+        self.card_files = 0
+        self.boots = set()
+        self.firmware = []  # distinct firmware ids of the card files, first seen first
+        self.boards = []
+        self.diag_dropped = 0  # lines the device's log buffer dropped when full (the [DIAG] dropped lines)
+        self.diag_lost = 0  # bytes its writer lost to a failed card write
         self.game = None
         self.stops = []
         self.games = collections.OrderedDict()
@@ -458,9 +481,27 @@ def add_line(device, when_stamp, text):
         elif event.startswith('lost '):
             device.lost += 1
             device.game = None
+        else:
+            card = CARD_EVENT.match(event)
+            if card:
+                device.cards = True
+                device.card_files += 1
+                device.boots.add(int(card.group(2)))
+                if card.group(4) not in device.firmware:
+                    device.firmware.append(card.group(4))
+                if card.group(5) not in device.boards:
+                    device.boards.append(card.group(5))
         return
     millis = MILLIS_PREFIX.match(text)
     when = when_stamp or (f'[{millis.group(1)}]' if millis else '?')
+    match = DIAG_DROPPED.search(text)
+    if match:
+        device.diag_dropped += int(match.group(1))
+        return
+    match = DIAG_LOST.search(text)
+    if match:
+        device.diag_lost += int(match.group(1))
+        return
     match = LIFECYCLE.search(text)
     if match:
         device.game = match.group(1)
@@ -663,9 +704,19 @@ def fmt(value, unit=''):
 def summarize(devices, mem_all=False):
     """The summary text of the devices from read_logs."""
     lines = []
+    firmware = {device.name: ', '.join(device.firmware) for device in devices.values() if device.cards}
+    if len(set(firmware.values())) > 1:
+        lines.append('WARNING: the devices ran different firmware: '
+                     + '; '.join(f'{name} {text}' for name, text in firmware.items()))
+        lines.append('')
     for device in devices.values():
         lines.append(f'== {device.name} ({", ".join(device.sources)}) ==')
-        if device.merged:
+        if device.cards:
+            lines.append(f'  card: {device.card_files} file(s), boots {len(device.boots)}, '
+                         f'firmware {", ".join(device.firmware)}, board {", ".join(device.boards)}')
+            lines.append(f'  diagnostics log: {device.diag_dropped} lines dropped (buffer full), '
+                         f'{device.diag_lost} bytes lost (card write failed)')
+        elif device.merged:
             lines.append(f'  connected {device.connected}, lost {device.lost}')
         lines.append(f'  VM stopped: {len(device.stops)}')
         for stop in device.stops:
@@ -695,6 +746,314 @@ def summary(paths, mem_all=False):
     if not paths:
         raise SetupError('give at least one log file')
     print(summarize(read_logs(paths), mem_all), end='')
+    return fork_common.PASS
+
+
+# --- merge: the logs two devices wrote to their SD cards -------------------------------------------------------------
+
+SD_MAGIC = '# crosshatch-diag-log 1'  # the first line of every card file (lib/DiagLog/DiagLogWriter.h writes the header)
+SD_DIR_NAME = 'crosshatch-log'  # the folder on the card
+SD_HEADER = re.compile(r'# ([a-z_]+) (.*)')
+SD_FILE_NAME = re.compile(r'b(\d+)-s(\d+)-')
+NO_SESSION = '00000000'  # a guest's link before it knows the host's session id: not an anchor
+
+Anchor = collections.namedtuple('Anchor', 'node millis')
+
+
+class CardFile:
+    """One file the diagnostics log wrote: its header, its raw bytes, and its log lines as (millis or None, bytes)."""
+
+    def __init__(self, path):
+        self.path = pathlib.Path(path)
+        try:
+            self.raw = self.path.read_bytes()
+        except OSError as exc:
+            raise SetupError(f'cannot read {path}: {exc}')
+        lines = self.raw.split(b'\n')
+        if lines and lines[-1] == b'':
+            lines.pop()
+        lines = [line.rstrip(b'\r') for line in lines]
+        if not lines or lines[0].decode('utf-8', errors='replace') != SD_MAGIC:
+            raise SetupError(f'{path} is not a diagnostics log: its first line is not "{SD_MAGIC}"')
+        self.headers = {}
+        self.lines = []
+        for line in lines[1:]:
+            text = line.decode('utf-8', errors='replace')
+            header = SD_HEADER.fullmatch(text)
+            if header and not self.lines:
+                self.headers[header.group(1)] = header.group(2)
+            elif text.strip():
+                millis = MILLIS_PREFIX.match(text)
+                self.lines.append((int(millis.group(1)) if millis else None, line))
+        named = SD_FILE_NAME.match(self.path.name)
+        self.boot = self.number('boot', int(named.group(1)) if named else 0)
+        self.segment = self.number('segment', int(named.group(2)) if named else 0)
+        self.device = self.headers.get('device', '')
+        if not self.device:
+            raise SetupError(f'{path} has no "# device" line in its header')
+
+    def number(self, key, default):
+        value = self.headers.get(key, '')
+        return int(value) if value.isdigit() else default
+
+    @property
+    def opened_ms(self):
+        return self.number('opened_ms', self.lines[0][0] if self.lines and self.lines[0][0] is not None else 0)
+
+
+def card_paths(spec_path):
+    """The log files of one CARD argument: a file, or the .log files of a folder (a card's root or its crosshatch-log)."""
+    path = pathlib.Path(spec_path)
+    try:
+        if path.is_dir():
+            folder = path / SD_DIR_NAME if (path / SD_DIR_NAME).is_dir() else path
+            files = sorted(entry for entry in folder.iterdir() if entry.is_file() and entry.suffix == '.log')
+            if not files:
+                raise SetupError(f'no .log files in {folder}')
+            return files
+    except OSError as exc:
+        raise SetupError(f'cannot read {spec_path}: {exc}')
+    if not path.is_file():
+        raise SetupError(f'{spec_path} is neither a log file nor a folder of them')
+    return [path]
+
+
+def read_cards(specs):
+    """OrderedDict of device name -> its CardFiles in boot order, from CARD arguments ([NAME=]PATH)."""
+    if not specs:
+        raise SetupError('give at least one CARD (a log file, or a folder of them)')
+    devices = collections.OrderedDict()
+    seen = {}
+    for spec in specs:
+        name, separator, path = spec.partition('=')
+        if separator and NAME_PATTERN.fullmatch(name) and path:
+            explicit = name
+        elif separator and not os.path.exists(spec):
+            raise SetupError(f'{spec!r} is not [NAME=]PATH (a name of letters, digits, _ and -, then the path)')
+        else:
+            explicit, path = None, spec
+        for file_path in card_paths(path):
+            real = os.path.realpath(file_path)
+            if real in seen:
+                raise SetupError(f'{file_path} is given twice (also as {seen[real]})')
+            seen[real] = file_path
+            card = CardFile(file_path)
+            name = explicit or re.sub(r'[^A-Za-z0-9_-]', '_', card.device)
+            devices.setdefault(name, []).append(card)
+    by_device = {}
+    for name, cards in devices.items():
+        ids = {card.device for card in cards}
+        if len(ids) > 1:
+            raise SetupError(f'the files named {name} come from devices {", ".join(sorted(ids))}; '
+                             'name each card with NAME=PATH')
+        (device_id,) = ids
+        if device_id in by_device:
+            raise SetupError(f'device {device_id} is on both {by_device[device_id]} and {name}; give one card per device')
+        by_device[device_id] = name
+        cards.sort(key=lambda card: (card.boot, card.segment, str(card.path)))
+        keys = [(card.boot, card.segment) for card in cards]
+        if len(set(keys)) != len(keys):
+            raise SetupError(f'device {name} has two files for the same boot and segment')
+    return devices
+
+
+def state_anchor(text):
+    """('sent' or 'recv', session, ver) for a `STATE` LINK line of a known session, else None."""
+    link = LINK_LINE.search(text)
+    session = LINK_SESSION.match(link.group(1)) if link else None
+    if not session or session.group(1) == NO_SESSION:
+        return None
+    for kind, pattern in (('sent', LINK_STATE_SENT), ('recv', LINK_STATE_RECV)):
+        found = pattern.match(session.group(2))
+        if found:
+            return kind, session.group(1), int(found.group(1))
+    return None
+
+
+def state_sends(nodes, events):
+    """({(session, ver): Anchor of the first `state sent`}, set of keys more than one device sent).
+
+    The key names a STATE only if one device sent it; two devices that both logged a send at one (session, ver) make the
+    pairing ambiguous, so such a key is left out of the first result and a receive of it is paired with nothing.
+    """
+    sent, senders = {}, collections.defaultdict(set)
+    for node in nodes:
+        for millis, text in events[node]:
+            anchor = state_anchor(text)
+            if anchor and anchor[0] == 'sent':
+                key = (anchor[1], anchor[2])
+                senders[key].add(node[0])
+                sent.setdefault(key, Anchor(node, millis))
+    ambiguous = {key for key, names in senders.items() if len(names) > 1}
+    return {key: send for key, send in sent.items() if key not in ambiguous}, ambiguous
+
+
+def align_clocks(nodes, events):
+    """Offsets (ms, added to a node's millis) that put every boot's clock on the first device's, and the notes saying how.
+
+    A node is one boot of one device: nodes is [(name, boot)] in device order; events maps a node to its
+    (millis, text) lines. The devices share no clock, so the offset comes from the STATEs: the one a device sent at
+    `ver` in a `session` is the one the other received. With d_uv the fastest (receive minus send) over the STATEs u sent
+    and v received, and d_vu the same the other way, the offset of v over u is (d_vu - d_uv) / 2 and the link latency
+    (d_uv + d_vu) / 2; with one direction only the latency is taken as 0. A boot with no such pair keeps its device's
+    previous boot's end (or, for a device's first boot, starts when the first device's did) and says so. A (session, ver)
+    that two devices both logged a send for is ambiguous and anchors nothing.
+    """
+    sent, _ = state_sends(nodes, events)
+    received = collections.defaultdict(dict)
+    for node in nodes:
+        for millis, text in events[node]:
+            anchor = state_anchor(text)
+            if anchor and anchor[0] == 'recv':
+                received[(anchor[1], anchor[2])].setdefault(node, millis)
+    fastest = collections.defaultdict(lambda: None)  # (sender node, receiver node) -> least receive - send
+    pairs = collections.Counter()
+    for key, send in sent.items():
+        for node, millis in received.get(key, {}).items():
+            if node[0] != send.node[0]:
+                edge = (send.node, node)
+                delta = millis - send.millis
+                fastest[edge] = delta if fastest[edge] is None else min(fastest[edge], delta)
+                pairs[edge] += 1
+    neighbours = collections.defaultdict(set)
+    for sender, receiver in fastest:
+        neighbours[sender].add(receiver)
+        neighbours[receiver].add(sender)
+
+    offsets, notes = {}, {}
+
+    def walk(root):
+        queue = collections.deque([root])
+        while queue:
+            node = queue.popleft()
+            for other in sorted(neighbours[node]):
+                if other in offsets:
+                    continue
+                forward, back = fastest.get((node, other)), fastest.get((other, node))
+                if forward is not None and back is not None:
+                    shift, latency = (back - forward) / 2, (forward + back) / 2
+                    how = f'link latency about {latency:g} ms'
+                elif forward is not None:
+                    shift, how = -forward, 'one direction only, latency taken as 0'
+                else:
+                    shift, how = back, 'one direction only, latency taken as 0'
+                offsets[other] = offsets[node] + shift
+                count = pairs.get((node, other), 0) + pairs.get((other, node), 0)
+                notes[other] = (f'clock: offset {offsets[other] - offsets[node]:+g} ms from {node[0]} boot {node[1]}, '
+                                f'{count} STATE pair(s), {how}')
+                queue.append(other)
+
+    for node in nodes:
+        if node in offsets:
+            continue
+        previous = [n for n in nodes if n[0] == node[0] and n[1] < node[1] and n in offsets]
+        if node == nodes[0]:
+            offsets[node], notes[node] = 0.0, 'clock: reference (the first device\'s first boot)'
+        elif previous:
+            before = previous[-1]
+            end = max((m for m, _ in events[before]), default=0)
+            offsets[node] = offsets[before] + end
+            notes[node] = f'clock: not aligned by STATEs; placed after boot {before[1]} of the same device'
+        else:
+            offsets[node] = 0.0
+            notes[node] = 'clock: not aligned (no STATE pair with another device); its boot is taken to start with the first'
+        walk(node)
+    return offsets, notes
+
+
+def place(lines, moved):
+    """{device: [ms]}: each device's aligned times with the monotone clamp, a line in `moved` ((device, index) -> least ms)
+    no earlier than that."""
+    times = {}
+    for name, items in lines.items():
+        latest, placed = 0, []
+        for index, (raw, _, _) in enumerate(items):
+            latest = max(latest, raw, moved.get((name, index), 0))
+            placed.append(latest)
+        times[name] = placed
+    return times
+
+
+def merge_cards(specs, out_dir, out=None):
+    """Merge the card files into out_dir (merged.log, <NAME>.raw.log, summary.txt) and print the alignment and summary."""
+    devices = read_cards(specs)
+    out = sys.stdout if out is None else out
+    nodes, events, file_marks = [], {}, []
+    for name, cards in devices.items():
+        for card in cards:
+            node = (name, card.boot)
+            if node not in events:
+                nodes.append(node)
+                events[node] = []
+            last = events[node][-1][0] if events[node] else card.opened_ms
+            for millis, line in card.lines:
+                last = last if millis is None else millis
+                events[node].append((last, line.decode('utf-8', errors='replace')))
+            file_marks.append((node, card, card.opened_ms))
+    offsets, notes = align_clocks(nodes, events)
+
+    floor = min((millis + offsets[node] for node in nodes for millis, _ in events[node]), default=0)
+    floor = min([floor] + [opened + offsets[node] for node, _, opened in file_marks])
+    names = list(devices)
+    sends, _ = state_sends(nodes, events)
+    # Each device's lines in file order: (aligned ms, node, text). A device's time never goes back.
+    lines = {name: [] for name in names}
+    send_at, receives = {}, []  # (key -> (device, index) of its send); [(device, index, key)] of the receives
+    for name in names:
+        for node in (n for n in nodes if n[0] == name):
+            for millis, text in events[node]:
+                anchor = state_anchor(text)
+                if anchor:
+                    key = (anchor[1], anchor[2])
+                    if anchor[0] == 'sent' and key in sends and sends[key].node[0] == name:
+                        send_at.setdefault(key, (name, len(lines[name])))
+                    elif anchor[0] == 'recv':
+                        receives.append((name, len(lines[name]), key))
+                lines[name].append((round(millis + offsets[node] - floor), node, text))
+    # A STATE's receive comes after its send: where the estimate puts it at or before, the receive moves to the send's
+    # time plus 1 ms and the clamp carries the receiver's later lines along. Repeats until nothing moves (a receive that
+    # moves can push a send of its own device later); the bound only stops a log that contradicts itself.
+    moved = {}
+    for _ in range(len(receives) + 2):
+        times = place(lines, moved)
+        changed = False
+        for name, index, key in receives:
+            send = send_at.get(key)
+            if send and send[0] != name and times[name][index] <= times[send[0]][send[1]]:
+                moved[(name, index)] = times[send[0]][send[1]] + 1
+                changed = True
+        if not changed:
+            break
+    times = place(lines, moved)
+    entries = []  # (aligned ms, device index, sequence, bytes); a card file's marks have sequences below 0
+    first_time = {}
+    for index, name in enumerate(names):
+        for sequence, ((_, node, text), when) in enumerate(zip(lines[name], times[name])):
+            first_time.setdefault(node, when)
+            entries.append((when, index, sequence, text.encode()))
+    for node, card, opened in file_marks:
+        index = names.index(node[0])
+        text = (f'{EVENT_TAG} card file {card.path.name}: boot {card.boot}, segment {card.segment}, '
+                f'firmware {card.headers.get("firmware", "unknown")}, board {card.headers.get("board", "unknown")}')
+        entries.append((max(0, round(opened + offsets[node] - floor)), index, -1, text.encode()))
+    for node in nodes:
+        entries.append((first_time.get(node, 0), names.index(node[0]), -2, f'{EVENT_TAG} {notes[node]}'.encode()))
+    entries.sort(key=lambda entry: entry[:3])
+
+    out_path = pathlib.Path(out_dir)
+    try:
+        out_path.mkdir(parents=True, exist_ok=True)
+        merged = b''.join(format_stamp(ms).encode() + b' ' + names[index].encode() + b' ' + text + b'\n'
+                          for ms, index, _, text in entries)
+        (out_path / MERGED_LOG).write_bytes(merged)
+        for name, cards in devices.items():
+            (out_path / f'{name}{RAW_SUFFIX}').write_bytes(b''.join(card.raw for card in cards))
+        report = '\n'.join(f'{node[0]} boot {node[1]}: {notes[node]}' for node in nodes) + '\n\n'
+        report += summarize(read_logs([str(out_path / MERGED_LOG)]))
+        (out_path / 'summary.txt').write_text(report)
+    except OSError as exc:
+        raise SetupError(f'cannot write the logs in {out_path}: {exc}')
+    print(report, end='', file=out)
     return fork_common.PASS
 
 
@@ -735,6 +1094,10 @@ def main(argv=None):
     capture_parser.add_argument('--out', required=True, metavar='DIR', help='the directory for the logs')
     capture_parser.add_argument('--baud', type=int, default=DEFAULT_BAUD, help=f'default {DEFAULT_BAUD}')
     capture_parser.add_argument('--duration', type=float, metavar='SECONDS', help='stop after this long')
+    merge_parser = sub.add_parser('merge', help='merge the logs two devices wrote to their SD cards')
+    merge_parser.add_argument('--out', required=True, metavar='DIR', help='the directory for merged.log and the rest')
+    merge_parser.add_argument('cards', nargs='+', metavar='[NAME=]CARD',
+                              help='a log file a diagnostics build wrote, or a folder of them; one per device')
     summary_parser = sub.add_parser('summary', help='list the device-run packet\'s figures from device logs')
     summary_parser.add_argument('--mem-all', action='store_true', help='print every [MEM] line')
     summary_parser.add_argument('logs', nargs='*', metavar='LOG')
@@ -743,6 +1106,8 @@ def main(argv=None):
     def step():
         if args.command == 'summary':
             return summary(args.logs, args.mem_all)
+        if args.command == 'merge':
+            return merge_cards(args.cards, args.out)
         ports = parse_ports(args.port)
         if args.duration is not None and not args.duration > 0:  # also rejects nan
             raise SetupError('--duration must be above 0')

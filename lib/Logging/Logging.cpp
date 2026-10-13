@@ -5,6 +5,10 @@
 
 #include <string>
 
+#if CROSSHATCH_SD_LOG
+#include <DiagLog.h>
+#endif
+
 #define MAX_ENTRY_LEN 256
 #define MAX_LOG_LINES 16
 
@@ -72,6 +76,9 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
   logSerial.print(buf);
 #endif
   addToLogRingBuffer(buf);
+#if CROSSHATCH_SD_LOG
+  DiagLog::append(buf);
+#endif
 }
 
 std::string getLastLogs() {
