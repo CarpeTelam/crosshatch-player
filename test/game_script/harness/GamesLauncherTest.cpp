@@ -1342,8 +1342,8 @@ TEST_F(ListTest, NoFailureShowsNoNote) {
 
 // Row 9 of entry 3's changes (DESIGN.md, Launcher game row): the second line of a game this host can start names the
 // modes it can start here, in solo, pass, nearby order, joined by " · ", from the manifest's check; a mode the manifest
-// lists that this host cannot start (nearby with no radio, pass with no pass) is not named. The device starts nearby
-// (HostCapsValues::NEARBY_BUILT, entry 11), so the no-radio rows script a host without it.
+// lists that this host cannot start (nearby with no radio, pass with no pass) is not named. The X4 Pro device starts
+// nearby (HostCapsValues::NEARBY_BUILT, entry 11), so the no-radio rows script a host without it.
 TEST_F(ListTest, TheModesLineNamesTheModesThisHostCanStartInOrder) {
   hostcaps::script().pass = true;
   hostcaps::script().nearby = true;

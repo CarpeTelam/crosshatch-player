@@ -19,6 +19,10 @@ add_library(game_installer_src STATIC
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
   ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp)
 target_compile_definitions(game_installer_src PUBLIC FREEINK_CAP_GAMES=1 GAME_HASH_OPENSSL=1)
+# The installer suites run as the X4 Pro host, the board that offers Play Nearby (entry 20 of epic-play-nearby; the harness
+# double stands in for the same board). PRIVATE, and not a source property (those are directory-wide and would reach
+# game_host_caps_boards.cmake's copies): only GameHostCaps.cpp among this library's sources reads the define.
+target_compile_definitions(game_installer_src PRIVATE FREEINK_DEVICE_X4PRO=1)
 target_include_directories(game_installer_src PUBLIC
   # The panel and FreeRTOS the converter includes, then the shared doubles (the fake card).
   ${HARNESS_DIR}/installer_stubs

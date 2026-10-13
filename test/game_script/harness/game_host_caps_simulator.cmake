@@ -1,6 +1,6 @@
 # gameHostCaps() as the simulator builds it (entry 16 of epic-play-nearby): GameHostCaps.cpp with SIMULATOR on reports
-# nearby on whatever HostCapsValues::NEARBY_BUILT says (it is true since entry 11). The shared libraries hold a copy built without SIMULATOR,
-# so this suite builds its own copy into its own executable and links neither game_match_src nor game_harness_src (a
+# nearby on, with no device define (the X4 Pro and Sticky simulators are game_host_caps_boards.cmake's). The shared
+# libraries hold a copy built without SIMULATOR, so this suite builds its own copy into its own executable and links neither game_match_src nor game_harness_src (a
 # second gameHostCaps() would be a duplicate definition).
 
 add_library(game_host_caps_simulator STATIC ${REPO_ROOT}/src/games/GameHostCaps.cpp)
