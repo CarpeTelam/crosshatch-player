@@ -271,6 +271,21 @@ touches = ["src/games/GameHostCaps.*", "test/game_core/GameHostCapsTest.cpp", "t
 stays_out = ["platformio.ini", "lib/**", "games/**", "every upstream file"]
 
 [[entry]]
+id = 21
+type = "story"
+title = "Heap lines reach the diagnostics log without a USB host"
+description = "Completes the owner's Decision of 2026-10-13 (the on-device diagnostics log: a device run needs no computer). Upstream `src/main.cpp`'s loop logs the `[MEM]` lines (internal heap `Free`, `Min Free`, `MaxAlloc`, and PSRAM) every 10 s only while `Serial` reports a host or the board logs through the ROM console, so on an X4 Pro with no computer attached a diagnostics build writes none to the card, and the smoke run's ten-cycle heap check (entry 11's packet, step 6, spec Open Question 2) and entry 14's heap after teardown (R12) have nothing to read. With `CROSSHATCH_SD_LOG` on, the `[MEM]` lines are logged on the same 10 s period whether or not a host is attached; with it off, the loop is unchanged. Ledger row 14 (`src/main.cpp`, already the diagnostics log's) is amended to name the change; `docs/crosshatch/fork-scripts.md`'s cardless run says the card gets the `[MEM]` lines."
+verify = "`pio run -e x4pro` with `-DCROSSHATCH_SD_LOG=1` builds, and its ELF shows the `[MEM]` condition no longer needs `Serial` (read the disassembly or the preprocessed source, and say which); `pio run -e x4pro`, `-e default`, and `-e sticky` without the define have the same loaded image as the commit before (row 14's rule: the app descriptor's stamps and digests may differ, every loaded byte is the same; compare as entry 19 did); `python3 scripts/check_upstream_touches.py` passes with the amended row 14; host suites, fast checks, and the firmware checks pass. A device check waits for entry 11's smoke run (a cardless run's card log holds a `[MEM]` pair every 10 s)."
+covers = ["R12", "R14"]
+after = [19]
+hitl = false
+risk = "low"
+unknown = "Whether the change reads cleanest as a second condition inside the define or as a constant the existing condition takes; keep the upstream line's diff minimal and the control flow plain (`.agents/skills/control-flow-clarity/SKILL.md`), and say which in the plan."
+references = ["epic-play-nearby.md, Notes, Decision (owner, 2026-10-13, the on-device diagnostics log, the hook version), Decision (owner, 2026-10-13, entry 19's flush before sleep, option a), and the Scope note for entry 21", "src/main.cpp (loop, the `[MEM]` block and `lastMemPrint`)", "docs/crosshatch/upstream-touches.md, row 14", "docs/crosshatch/fork-scripts.md, The run without a computer", "entry 19's plan (how it compared the loaded images)", "story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-packet.md, step 6"]
+touches = ["src/main.cpp (the `[MEM]` block's condition only, inside or beside `#if CROSSHATCH_SD_LOG`; ledger row 14)", "docs/crosshatch/upstream-touches.md (row 14's text)", "docs/crosshatch/fork-scripts.md (the cardless run's section)"]
+stays_out = ["every other upstream file", "lib/Logging/**", "lib/DiagLog/** and src/diagnostics/** (unless the plan shows the change cannot be made in `src/main.cpp`; then stop and report)", "platformio.ini", "games/**", "src/games/** and src/activities/**"]
+
+[[entry]]
 id = 13
 type = "story"
 title = "Refactor sweep"
