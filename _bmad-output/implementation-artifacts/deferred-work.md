@@ -1536,3 +1536,12 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-nearby-on-two-x4-pros-wiring-and-the-smoke-run-plan.md`
   summary: `## 6.3`'s serial-capture checks (a second reader, no reset on connect, lost and connected lines across a sleep) are still unrun.
   evidence: The smoke run was cardless (owner Decisions 2026-10-13), so no serial capture ran. They wait for a run over USB. Location: scripts/device_log.py:capture. Severity: low.
+
+## 6.23
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-merge-keeps-an-aligned-boot-s-times-when-the-device-has-earl-plan.md`
+  summary: A clock note on the first boot of a group of aligned boots that no STATE links to the reference says "not aligned by STATEs; placed after boot N" (or "no STATE pair with another device") although the boot has STATE pairs.
+  evidence: Text unchanged from a1ffc5b5. In a cardless run the first device's match boot is such a root (smoke run: "A boot 4: clock: not aligned by STATEs; placed after boot 3"), so the note misleads on every run whose first device has earlier boots. Renaming it changes no placement; test_a_devices_segments_join_in_order_and_a_second_boot_is_its_own_clock counts the "placed after boot 1 of the same device" substring. For entry 13's sweep. Location: scripts/device_log.py:align_clocks (first pass, the floating-root notes). Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-merge-keeps-an-aligned-boot-s-times-when-the-device-has-earl-plan.md`
+  summary: A floating aligned root is placed after its device's earlier boots (or at 0) without looking at that device's later boots already placed by another component, so it can overlap a later aligned boot unnoted and the clamp then holds the later boot's lines.
+  evidence: Pre-existing placement; reachable with three devices, or two when a device's first boot aligns only with a boot the reference does not reach (edge-case lens probe: A1, B1-C1, A1-B2 freezes B2's lines). Not reachable in the two-device smoke-run shape. Location: scripts/device_log.py:align_clocks (first pass). Severity: low.

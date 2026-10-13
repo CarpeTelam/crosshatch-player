@@ -3,7 +3,7 @@ title: 'Merge keeps an aligned boot''s times when the device has earlier boots'
 type: 'bugfix'
 ticket: '23'
 created: '2026-10-13'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 review: 'thorough'
