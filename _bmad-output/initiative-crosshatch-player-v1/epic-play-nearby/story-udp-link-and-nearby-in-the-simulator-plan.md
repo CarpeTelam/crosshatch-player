@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/AGENTS.md'
   - '{project-root}/.agents/skills/heap-discipline/SKILL.md'
@@ -170,6 +170,39 @@ Lenses ran as four context-free foreground subagents launched in one message (bl
   - (intent) `[low]` `[reject]` Reading R-C (two live simulators play a round) is expected at the running simulator, and the diff's tests exercise the link, the layer rule, and `sim.sh where`; the lobby, caps, and probe changes have no host test - descriptive, not a defect: the two-instance run in Verification is the evidence for R-C, and the untested wiring is the verification-gap rows above (one patched, three deferred). The auditor's other notes (tagged handle, "device suites unchanged" read as additive, no flash measurement in the diff) are covered by Design Notes 1 and 10 and the Verification results.
 - routes: no intent_gap or bad_plan entries; patches applied by the same implementation subagent, re-engaged; four deferred items in the frontmatter.
 
+### 2026-10-13 - Review pass (follow-up)
+A follow-up pass on the `built` plan at commit `13a4c60b`: four context-free subagents (blind hunter, edge-case hunter, verification gap, intent alignment) launched together over `git diff a30727191db8a17d4840016ea650476eb0ac80a8 13a4c60b` minus the plan and the PNGs (`.../scratchpad/6.16/followup.diff`, 85,121 B). The edge-case hunter was backgrounded by the harness and its report was awaited before any triage. A row marked `carried` has the same location and claim as a first-pass row and the code still reads as that row describes: its verdict and route are kept and it is not patched or deferred again.
+- verdicts: 27 findings - high 0, medium 1, low 22, false 4, maybe-false 0
+- findings:
+  - (blind) `[false]` `[reject]` carried: `CROSSPOINT_SIM_SD` and `CROSSPOINT_SIM_HTTP_PORT` have no reader - disproved in the first pass (`HalStorage.cpp:21`, `SimulatorNetworkPorts.h:13` in the simulator library under `.pio/libdeps`); the lens searched only tracked sources.
+  - (blind) `[low]` `[defer]` carried: `sim.sh start`'s exported variables and isolation are untested (deferred item 2).
+  - (blind) `[low]` `[defer]` carried: `sim_instance_test.py` is not run by CI (deferred item 1).
+  - (blind) `[low]` `[patch]` carried: `script` with `SIM_INSTANCE` uses the instance's state but the shared `./fs_` - SKILL.md states it; behaviour kept.
+  - (blind) `[low]` `[reject]` `MAX_BASE_PORT` 65527 refuses 65528, where eight ports would still fit - true, but the stricter side is harmless: sim.sh derives 21000..28992, the default is 45700, nobody sets 65528, and the fix moves a constant, its comment, and two test rows.
+  - (blind) `[low]` `[reject]` `heard_` is never cleared, so a process that takes a left peer's port is reachable by the old handle - by design and stated in Design Note 1 (to UDP the port is the peer; ILink.h's "never reused" is not claimed); simulator only; a guard would add state.
+  - (blind) `[low]` `[reject]` `nextInstanceTag` wraps unevenly at 2^32 - unreachable (four billion links in one process); a `uint16_t` counter adds a skip branch.
+  - (blind) `[false]` `[reject]` carried: `GameLobbyActivity.cpp` leans on transitive includes and `labelLength` narrows - the file includes `<algorithm>`, `<span>`, `<utility>` itself (`<memory>` through its header), `NearbyRadio::Opened::labelLength` is `size_t` (the `uint8_t` one is a different struct), and the simulator build compiles it.
+  - (blind) `[low]` `[defer]` carried: `NearbyRadio::open()`'s simulator branch is never run by the host suite (deferred item 3).
+  - (blind) `[low]` `[reject]` `NearbyProbe.cpp` now builds under `SIMULATOR` and `esp_now_link.sources.cmake` still calls it "device code" - the comment is in an existing test file this entry may not edit and its exclusion is still right for the host build (no `WiFi.h`); the file is fork-only `src/games`, and the simulator reader is two lines (Design Note 5).
+  - (blind) `[low]` `[reject]` `where` prints `state` and `shots` relative and `sd` and `inbox` absolute - the SD root must be absolute for the binary (`sim.sh` comment); display only, the test asserts both forms.
+  - (blind) `[low]` `[reject]` `cmd_inbox` runs `scripts/pack_game.py` relative to the cwd, with a stub packer in its test, and checks no `nearby` mode - every `sim.sh` command runs from the repo root (its header says so); mode checking is the packer's and the game's, not the inbox's.
+  - (blind) `[low]` `[reject]` Port-range and test fragility (probe-then-create window, 2 ms `PUMP`, a 1-in-1000 base collision between worktrees) - the window is microseconds inside a pid-derived range, loopback delivery is in-kernel before `sendto` returns, `UdpLinkTest` passed 20 repeats, and `where` plus the variable override recover a worktree collision; a retry loop adds branches to a test. Same root as the edge hunter's two test rows.
+  - (blind) `[false]` `[reject]` carried: `check_layers` now fails existing `sys/socket.h`, `sys/uio.h`, or `fcntl.h` includes elsewhere - `check_layers.py` passes on the tree (834 edges); none exist. The "unread" wording for a SIMULATOR branch spanning a comment is cosmetic.
+  - (blind) `[false]` `[reject]` carried: no NOTICE or usage-text update - the MIT notice follows `EspNowLink.h`; `sim.sh usage()` is generated from the case comments, which name `where` and `inbox`, and `SIM_INSTANCE` is in the header comment and SKILL.md.
+  - (edge) `[low]` `[reject]` carried: a flood of dropped datagrams keeps `receive()` looping.
+  - (edge) `[low]` `[reject]` A replacement process on a left peer's port receives sends on the old handle - same root as the blind `heard_` row; Design Note 1.
+  - (edge) `[low]` `[reject]` `bind` failures other than `EADDRINUSE` read as "no free udp port" and `create(100)` tries privileged ports - the log line is imprecise only when every slot fails, `create` returns null either way and the lobby shows "Nearby could not start"; the environment path already refuses bases under 1024; a branch for a message is not worth it.
+  - (edge) `[low]` `[reject]` carried: a hand-set invalid `CROSSHATCH_UDP_PORT_BASE` falls back silently - both instances fall back to the same range and still meet.
+  - (edge) `[low]` `[reject]` The stranger socket at `base + SLOTS` can be taken by another test process - needs two `ctest -j` processes whose pid-derived ranges are adjacent (pids 473 apart in the formula), then a failed `ASSERT` on open, never a wrong pass; same root as the blind test-fragility row.
+  - (edge) `[low]` `[reject]` `freeBase()` releases its probes before `create` - same root as the blind test-fragility row.
+  - (edge, claim) `[medium]` `[patch]` carried: the default instance now exports the shared base on `start` - patched in the first pass on purpose (the default and numbered instances must meet); SKILL.md says so.
+  - (edge, claim) `[low]` `[patch]` carried: `script` with `SIM_INSTANCE` lands in the instance's state directory - SKILL.md states it.
+  - (verification-gap) `[low]` `[defer]` carried: `sim.sh start`'s wiring is untested and `sim_instance_test.py` is outside CI (deferred items 1 and 2). The lens would patch the stub-binary case; the first pass deferred it on the same claim and its severity-if-dropped note stands.
+  - (verification-gap) `[low]` `[defer]` carried: the simulator branch of `NearbyRadio::open()` has no host test (deferred item 3).
+  - (verification-gap) `[low]` `[defer]` carried: the simulator branch of `NearbyProbe::read()` has no test (deferred item 3).
+  - (intent) `[low]` `[reject]` carried: the intent's expectations live at the running two-window surface while the diff's tests exercise the link, the layer rule, and `sim.sh where`; descriptive, and the two-instance run with its 18 screenshots is the evidence for that surface (first pass, intent row).
+- routes: no intent_gap, bad_plan, or patch entries that are not carried; nothing new deferred; no code or screenshot changed, so no re-verification of the firmware or the two-simulator round was due.
+
 ## Design Notes
 
 1. **Handle and tag.** `ILink.h` (Rules) and the epic's Assumption (orchestrator, 2026-10-12, from entry 2's review) make handle values unique across link instances with an instance tag in the high bits; `UdpLink` takes the port in the low 16 bits and a tag (1..0xFFFF) above it, from its own `constinit` atomic (AD-2: a mutable static over 64 B or dynamically initialized is forbidden; this is 4 B and constant-initialized; it exists only under `SIMULATOR`). A peer is "named" when a datagram from a port in the range other than its own is received, tracked in a one-byte mask; `send` to a handle of this link's tag whose slot was never heard is false (ILink.h: "names no peer this link has received from"). A different process that later takes a left peer's port is, to UDP, the same address; ILink.h's "never reused for a different peer" cannot be tested with ports and is not claimed.
@@ -237,10 +270,12 @@ Lenses ran as four context-free foreground subagents launched in one message (bl
 
 **Review breakdown:** four lenses ran (blind hunter, edge-case hunter, verification gap, intent alignment). 36 rows: 18 patched (grouped into 7 fixes: the `SIMULATOR` host-caps suite, test port ranges, the base-value parser, the `heard_` width check, the receive size bound, `check_layers` keyed guards and tests, `sim.sh`'s default-instance base and SKILL.md's claims), 4 deferred (see frontmatter), 14 rejected with reasons in the Review Triage Log (five false, the rest low and not worth the added branches, or pre-existing). Patched by severity: medium 2 entries (the host-caps pin, the default instance not meeting numbered ones), low 5 entries.
 
+**Follow-up pass (2026-10-13):** `lenses_ran` unchanged (four fresh context-free lenses); triage in the second Review Triage Log entry. Nothing accepted, so the further commit holds only this plan.
+
 **Verification:** see Results above. Screenshots: 18 in `story-udp-link-screenshots/`, listed above.
 
 **Formatting:** `./bin/clang-format-fix` changed only this story's own files (the implementer's run); no file outside its paths and no upstream file.
 
-**Follow-up review recommended:** true. The patches after the review (the receive size bound in `UdpLink.cpp`, `check_layers.py`'s keyed guard patterns, `sim.sh`'s base export for every `start`) were verified by the host suites, the layer check, the `sim_instance_test.py` cases, the firmware measurements, and the two-instance run, but no second review lens read them; the unverified risk is a regression in those three changed paths that the tests above do not pin (for example a `sim.sh` command that differs only without `SIM_INSTANCE`).
+**Follow-up review recommended:** false. The follow-up pass (2026-10-13, four context-free lenses over `a30727191db8..13a4c60b`) found 27 findings: 0 high, 1 medium (carried from the first pass), 22 low, 4 false; 16 carried rows kept their first-pass routes, 11 new rows were rejected with reasons (all low or false) and none was patched or newly deferred, so the work has converged. The three patched paths the first pass left unreviewed (the receive size bound, `check_layers.py`'s keyed guards, `sim.sh`'s base export) drew no finding that the code does not already answer. Patched in the follow-up: medium 0, low 0. No code, test, or screenshot changed in this pass, so the measurements under Results (commit `13a4c60b`) stand and none was repeated.
 
 **Residual risks:** `sim_instance_test.py` is not run by CI. The simulator branches of `NearbyRadio::open()` and `NearbyProbe::read()` are exercised only by the simulator run. No test pins "a datagram from the link's own port is dropped". The base derivation (`21000 + cksum % 1000 * 8`) can collide with another program's ports; `where` shows it and the caller's variable overrides it. A timing figure in this plan: none claimed.
