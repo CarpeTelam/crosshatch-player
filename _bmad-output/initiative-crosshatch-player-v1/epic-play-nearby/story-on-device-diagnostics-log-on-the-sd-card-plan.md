@@ -3,7 +3,7 @@ title: 'On-device diagnostics log on the SD card'
 type: 'feature'
 ticket: '19'
 created: '2026-10-13'
-status: built
+status: done
 route: 'full'
 route_source: 'auto'
 review: 'thorough'

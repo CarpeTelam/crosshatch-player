@@ -1485,3 +1485,24 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-and-nearby-in-the-simulator-plan.md`
   summary: `test/game_core/LinkContract.h` still has no three-link variant; `ThreeLinkContract.h` in the harness folder covers `UdpLink` and `FakeLink` only.
   evidence: `LinkContract.h` is outside this entry's `touches`. `deferred-work.md` `## 6.2`'s second item is met for `UdpLink` here; `EspNowLink` can run the variant only in a device run (entry 11). Location: test/game_script/harness/ThreeLinkContract.h. Severity: low.
+
+## 6.19
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: The writer's open/append/close every ~25 ms under the shared storage lock may stall page or asset loads or a game frame, and wears the card; unmeasured.
+  evidence: Same priority as the loop task, one SD operation set per batch. Only a device run can measure it: compare frame and page times with and without the define, and the writer's keep-up (the dropped-lines notice in the files reports overruns). Location: lib/DiagLog/DiagLogDevice.cpp:writerMain. Severity: medium.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: No CI job compiles lib/DiagLog/DiagLogDevice.cpp or the logPrintf hook with the define on, so a change to Storage, BoardConfig, or Logging can break the diagnostics build unseen.
+  evidence: The plan forbids a CI build with the define (inception Q4 did the same for CROSSHATCH_TOUCH_LOG). Add one define-on `pio run -e x4pro` and `-e default` to the device-run packet's checks when it is built. Location: lib/DiagLog/DiagLogDevice.cpp, lib/Logging/Logging.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: The writer lists the folder through Storage.listFiles (a std::vector<String> built with throwing allocation) up to maxFiles + 8 times per new file, and a folder over 200 files or a matching name over 47 characters defeats the boot count and the deletion.
+  evidence: The same HAL call upstream uses everywhere; the pass runs once per 1 MiB segment; only hand-placed files reach the 200 limit. A nothrow directory walk is a HalStorage addition outside this entry's files. Location: lib/DiagLog/DiagLogDevice.cpp:StorageFileStore::listFiles, lib/DiagLog/DiagLogWriter.h:makeRoom. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: No test runs a file the real Writer wrote through device_log.py merge; the merge tests use card files laid out by hand whose header is pinned to DiagLogWriter.h by key.
+  evidence: An end-to-end test needs a gtest to write a sample file that a Python test reads; the first define-on device run is the first real card file. Location: scripts/device_log_test.py:card_text, test/diag_log/DiagLogWriterTest.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: The simulator cannot build the diagnostics log: its FreeRTOS shim lacks UBaseType_t, TickType_t, pdPASS, and xTaskNotifyGive, so no simulator run writes a card file for merge.
+  evidence: `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_SD_LOG=1 sim.sh build x4pro` stops in lib/DiagLog/DiagLogDevice.cpp on those names; the simulator's storage double was not reached. A SIMULATOR branch of the writer task (a std::thread and a condition variable instead of the notification) would do it. Location: lib/DiagLog/DiagLogDevice.cpp. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-on-device-diagnostics-log-on-the-sd-card-plan.md`
+  summary: An unmount (the USB drive, or sleep when a line lands after the flush or the card is slow) landing between the writer's Storage.open and its write may leave a HalFile on an ended volume, and whether SdFat then returns an error or faults is unread.
+  evidence: HalStorage.h says open HalFiles become invalid after prepareForDeepSleep(); the plan's Design Notes assume a straddling batch fails and is counted. Reading SdFat's FatFile::write after FsVolume::end(), or one device run that sleeps with a line logged just before the unmount (with the define on), settles it. The sleep flush (row 14) closes the window for sleep unless the card is slow or a task logs after the flush; the USB drive has no barrier. Location: src/diagnostics/DiagLogStorage.cpp:StorageFileStore::append. Severity: medium (unverified).
