@@ -18,7 +18,10 @@ class StorageFileStore final : public DiagLog::FileStore {
   bool ready() override { return Storage.ready(); }
   bool makeDirectory(const char* path) override { return Storage.ready() && Storage.ensureDirectoryExists(path); }
   bool listFiles(const char* directory, NameSink& sink) override {
-    if (!Storage.ready()) return false;
+    // Storage.listFiles answers an empty vector for a folder it cannot open, the same as for an empty one, and an
+    // empty answer would number this boot 1 and appends its header to an older boot's file: so a missing folder is a
+    // failure here.
+    if (!Storage.ready() || !Storage.exists(directory)) return false;
     const std::vector<String> names = Storage.listFiles(directory, MAX_DIRECTORY_FILES);
     for (const String& name : names) sink.name(name.c_str());
     return true;

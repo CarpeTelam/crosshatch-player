@@ -22,6 +22,10 @@
 #include <XteinkDetect.h>
 #include <builtinFonts/all.h>
 
+#if CROSSHATCH_SD_LOG
+#include <DiagLog.h>
+#endif
+
 #include <cstring>
 
 #include "CrossPointSettings.h"
@@ -375,6 +379,9 @@ void enterDeepSleep(bool fromTimeout = false) {
 
   halTiltSensor.deepSleep();
   display.deepSleep();
+#if CROSSHATCH_SD_LOG
+  DiagLog::flushBeforeSleep();
+#endif
   Storage.prepareForDeepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
@@ -541,6 +548,9 @@ void setup() {
       // device; otherwise the button must still be held (ghost-wake debounce).
       if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
         LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
+#if CROSSHATCH_SD_LOG
+        DiagLog::flushBeforeSleep();
+#endif
         Storage.prepareForDeepSleep();
         powerManager.startDeepSleep(gpio);
       }
@@ -560,6 +570,9 @@ void setup() {
       // the device in a USB-replug boot loop (or sleep right after a flash).
       break;
 #else
+#if CROSSHATCH_SD_LOG
+      DiagLog::flushBeforeSleep();
+#endif
       Storage.prepareForDeepSleep();
       powerManager.startDeepSleep(gpio);
       break;

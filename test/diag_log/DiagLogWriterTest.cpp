@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "DiagLogBuffer.h"
+#include "DiagLogFlush.h"
 #include "DiagLogWriter.h"
 
 using DiagLog::DIRECTORY;
@@ -18,10 +19,11 @@ namespace {
 // A card as the writer sees it (DiagLog::FileStore), standing in for Storage / HalFile
 // (src/diagnostics/DiagLogStorage.cpp's StorageFileStore). What it copies from the device, pinned by
 // FakeStoreMatchesTheDevice below: append creates a missing file and writes at its end; listFiles gives file names, not
-// paths, and no directories; remove of a missing file is false. Where it is more permissive than the device: no write
-// is ever short or slow, the card never unmounts between the operations of one batch (the device can: Storage locks per
-// call, so a sleep unmount can land between an open and its write, and that batch fails), and a name is never longer
-// than the device's 127.
+// paths, and no directories; remove of a missing file is false; listFiles fails only for a missing folder (the device
+// store asks exists() first, because the SDK lists a folder it cannot open as empty). Where it is more permissive than
+// the device: no write is ever short or slow, the card never unmounts between the operations of one batch (the device
+// can: Storage locks per call, so a sleep unmount can land between an open and its write, and that batch fails), and a
+// name is never longer than the device's 127.
 class FakeStore final : public DiagLog::FileStore {
  public:
   bool ready() override { return mounted; }
@@ -445,6 +447,116 @@ TEST(DiagLogWriter, FlushWritesEverythingAppendedBeforeItAndSaysNoWhenTheCardIsG
   EXPECT_GT(rig.buffer.used(), 0u);  // nothing is lost by trying: the lines stay buffered
 }
 
+// The platform half of DiagLog::waitUntilDrained, standing in for FlushProbe in lib/DiagLog/DiagLogDevice.cpp (the
+// writer task's state and FreeRTOS's clock and delay). The writer "task" runs inside pause(), one batch per call, so a
+// test is deterministic; on the device it runs concurrently, so this is more permissive: no batch is ever in flight
+// when the caller looks, a writer that was not ready or was refused pumps again at the next pause (the device retries
+// every 25 ms while a flush waits, every 500 ms otherwise), and `stalled` is the only way to model a writer that does
+// not get to run.
+template <class Rig>
+struct FlushProbeDouble {
+  explicit FlushProbeDouble(Rig& rigIn) : rig(rigIn) {}
+  uint32_t nowMs() const { return clockMs; }
+  void pause() {
+    pauses++;
+    clockMs += 5;
+    if (stalled) return;
+    failing = rig.writer.pump() == Step::Failed;
+  }
+  void wake() { wakes++; }
+  bool cardReady() const { return rig.store.ready(); }
+  bool writerBusy() const { return false; }
+  bool writerFailing() const { return failing; }
+
+  Rig& rig;
+  bool stalled = false;
+  bool failing = false;
+  int pauses = 0;
+  int wakes = 0;
+};
+
+TEST(DiagLogFlush, ReturnsOnceEveryBufferedLineIsInTheStoreAndNotBefore) {
+  Rig<8192> rig;
+  const std::string sent = rig.lines(0, 60, 90);  // several batches
+  FlushProbeDouble<Rig<8192>> probe(rig);
+  EXPECT_TRUE(DiagLog::waitUntilDrained(rig.buffer, probe, 250));
+  EXPECT_EQ(rig.buffer.used(), 0u);
+  EXPECT_EQ(rig.allLines(), sent);  // in the store, in order, when it returned
+  EXPECT_EQ(probe.wakes, 1);
+  EXPECT_LT(clockMs - 1000u, 250u);  // and well inside its bound
+}
+
+TEST(DiagLogFlush, AWriterThatDoesNotRunCostsTheBoundAndNoMore) {
+  Rig<> rig;
+  rig.lines(0, 5);
+  FlushProbeDouble<Rig<>> probe(rig);
+  probe.stalled = true;
+  EXPECT_FALSE(DiagLog::waitUntilDrained(rig.buffer, probe, 250));
+  const uint32_t waited = clockMs - 1000u;
+  EXPECT_GE(waited, 250u);
+  EXPECT_LE(waited, 250u + 5u);      // one pause past the bound at most
+  EXPECT_GT(rig.buffer.used(), 0u);  // nothing is lost by trying
+}
+
+TEST(DiagLogFlush, ACardThatRefusesEveryWriteSaysNoWithinTheBoundBecauseTheLinesAreGone) {
+  Rig<> rig;
+  rig.lines(0, 5);
+  rig.store.failAppendsAlways = true;  // takes nothing, not even a header
+  FlushProbeDouble<Rig<>> probe(rig);
+  EXPECT_FALSE(DiagLog::waitUntilDrained(rig.buffer, probe, 250));
+  EXPECT_LE(clockMs - 1000u, 250u + 5u);
+  EXPECT_EQ(rig.store.bytes(), 0u);
+}
+
+TEST(DiagLogFlush, AnUnmountedCardWithLinesBufferedSaysNoAtOnceAndAnEmptyBufferSaysYes) {
+  Rig<> rig;
+  rig.lines(0, 5);
+  rig.store.mounted = false;
+  FlushProbeDouble<Rig<>> probe(rig);
+  EXPECT_FALSE(DiagLog::waitUntilDrained(rig.buffer, probe, 250));
+  EXPECT_EQ(probe.pauses, 0);  // it did not wait the bound for a card that is not there
+  EXPECT_GT(rig.buffer.used(), 0u);
+
+  Rig<> idle;
+  idle.store.mounted = false;
+  FlushProbeDouble<Rig<>> idleProbe(idle);
+  EXPECT_TRUE(DiagLog::waitUntilDrained(idle.buffer, idleProbe, 250));  // nothing to lose
+}
+
+TEST(DiagLogFlush, TheBoundHoldsAcrossTheClockWrapping) {
+  Rig<> rig;
+  rig.lines(0, 5);
+  clockMs = 0xFFFFFFF0u;
+  FlushProbeDouble<Rig<>> probe(rig);
+  probe.stalled = true;
+  EXPECT_FALSE(DiagLog::waitUntilDrained(rig.buffer, probe, 250));
+  EXPECT_GE(static_cast<uint32_t>(clockMs - 0xFFFFFFF0u), 250u);
+  EXPECT_LE(static_cast<uint32_t>(clockMs - 0xFFFFFFF0u), 255u);
+  clockMs = 1000;
+}
+
+// src/main.cpp is not built by the host suite, so the calls the sleep paths make are pinned by their text (the
+// ledger's row 14): every Storage.prepareForDeepSleep() has the flush right before it, inside the define's guard, and
+// the bound is the one the row names.
+TEST(DiagLogFlush, EverySleepPathInMainFlushesJustBeforeItUnmountsTheCard) {
+  const std::string main = readFile(std::string(REPO_ROOT_DIR) + "/src/main.cpp");
+  ASSERT_FALSE(main.empty());
+  const std::string unmount = "Storage.prepareForDeepSleep();";
+  int sites = 0;
+  for (size_t at = main.find(unmount); at != std::string::npos; at = main.find(unmount, at + 1)) {
+    sites++;
+    const size_t lineStart = main.rfind('\n', at) + 1;
+    const std::string indent = main.substr(lineStart, at - lineStart);
+    const std::string before = "#if CROSSHATCH_SD_LOG\n" + indent + "DiagLog::flushBeforeSleep();\n#endif\n";
+    ASSERT_GE(lineStart, before.size()) << "site " << sites;
+    EXPECT_EQ(main.substr(lineStart - before.size(), before.size()), before) << "site " << sites;
+  }
+  EXPECT_EQ(sites, 3);
+  EXPECT_TRUE(contains(main, "#if CROSSHATCH_SD_LOG\n#include <DiagLog.h>\n#endif\n"));
+  EXPECT_TRUE(contains(readFile(std::string(REPO_ROOT_DIR) + "/lib/DiagLog/DiagLog.h"),
+                       "constexpr uint32_t SLEEP_FLUSH_TIMEOUT_MS = 250;"));
+}
+
 TEST(DiagLogWriter, ASmallScratchBufferOrAZeroLimitIsAFailureNotACrash) {
   FakeStore store;
   DiagLog::LineBuffer<1024> buffer;
@@ -470,6 +582,9 @@ TEST(DiagLogWriter, FakeStoreMatchesTheDevice) {
   EXPECT_TRUE(contains(device, "written == length && closed"));
   // the device lists through Storage and checks the card first (SDCardManager prints on an unmounted card).
   EXPECT_TRUE(contains(device, "Storage.listFiles(directory"));
+  // listFiles answers an empty vector for a folder it cannot open, so the store asks exists() first and fails on a
+  // missing folder: that is the only way the device's listFiles returns false, as FakeStore::failList does.
+  EXPECT_TRUE(contains(device, "!Storage.exists(directory)"));
   // The SDK is a submodule that a fresh clone does not have until `git submodule update --init`: skip, not fail.
   const std::string manager = readFile(root + "/freeink-sdk/libs/hardware/SDCardManager/src/SDCardManager.cpp");
   if (manager.empty()) GTEST_SKIP() << "freeink-sdk is not checked out";
@@ -479,6 +594,8 @@ TEST(DiagLogWriter, FakeStoreMatchesTheDevice) {
   const std::string body = manager.substr(list, manager.find("\n}\n", list) - list);
   EXPECT_TRUE(contains(body, "if (f.isDirectory())"));
   EXPECT_TRUE(contains(body, "f.getName(name, sizeof(name));"));
+  // a folder it cannot open lists as empty (no error to tell it from an empty folder).
+  EXPECT_TRUE(contains(body, "auto root = vol().open(path);\n  if (!root)"));
   // a folder that exists is not an error (ensureDirectoryExists returns true for it).
   EXPECT_TRUE(contains(manager, "bool SDCardManager::ensureDirectoryExists"));
 }

@@ -125,7 +125,7 @@ then pull the card or open the device's USB drive and run `merge` on the files:
 
 ```sh
 flock /tmp/crosshatch-build.lock sh -c \
-  'PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=$(git rev-parse --short HEAD)" \
+  'PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=$(git describe --always --dirty)" \
    pio run -e x4pro -t upload'
 python3 scripts/device_log.py merge --out run-logs A=/media/cardA B=/media/cardB
 python3 scripts/device_log.py summary run-logs/merged.log
@@ -158,14 +158,17 @@ python3 scripts/device_log.py summary run-logs/merged.log
   fast both ways, so read an ordering closer than the latency as a tie. Stamps in `merged.log` are the run clock (time
   since the earliest logged line or file-open time of any device, on the 1970 epoch), not wall-clock time; `summary`
   reads the file unchanged.
-- **RAM.** An 8 KiB line buffer and a 6 KiB task stack, static, plus about 0.7 KiB for the writer's context, on the C3
+- **RAM.** An 8 KiB line buffer (static), a 6 KiB task stack and about 0.7 KiB for the writer's context (both taken from the heap
+  when the first line is logged), on the C3
   and the S3 alike; the run-time cost is unmeasured.
 - **Output.** The same `merged.log` and `<NAME>.raw.log` as `capture` (the raw log is the device's files joined,
   unchanged) plus `summary.txt`.
 - **What it cannot capture.** A crash or panic (the buffer is in RAM and the writer is a task), the last tens of
-  milliseconds before a sleep or a reset, and every line logged after `Storage.prepareForDeepSleep()` unmounts the card,
-  including "Entering deep sleep". It drains within about 25 ms of a line and closes the file after each batch, so a
-  file is complete on the card, but a batch that straddles the unmount fails and is counted. The first line of a boot
+  milliseconds before a reset, and every line logged after the sleep paths' flush, including "Entering deep sleep". The
+  sleep paths of `src/main.cpp` wait for the writer before they unmount the card (`DiagLog::flushBeforeSleep()`, ledger
+  row 14), at most 250 ms, so a card that refuses writes cannot hold sleep longer; past that bound the lines still in
+  the buffer are lost. The writer drains within about 25 ms of a line and closes the file after each batch, so a file
+  is complete on the card. The first line of a boot
   waits for the card, so a card that never mounts yields no file, only dropped lines nobody can read. Tasks that log in
   bursts can overrun the buffer; `dropped` says how much. Whether the writer keeps up on a real card during a match is
   unmeasured until a device run.

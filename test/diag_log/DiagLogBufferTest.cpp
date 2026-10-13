@@ -139,7 +139,7 @@ TEST(DiagLogBuffer, TheRingWrapsWithoutTearingALine) {
 }
 
 TEST(DiagLogBuffer, SeveralThreadsAppendWhileOneDrainsEachWritersOrderHoldsAndEveryLineIsAccountedFor) {
-  constexpr int THREADS = 4;
+  constexpr int THREADS = 8;
   constexpr int LINES = 3000;
   LineBuffer<2048> buffer;  // small on purpose: appends overtake the drain, so drops happen
   std::atomic<int> producersDone{0};

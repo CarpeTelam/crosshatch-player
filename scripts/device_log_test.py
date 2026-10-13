@@ -15,8 +15,9 @@ has no sleep timing, so the reconnect against a real X4 Pro's port is unmeasured
 
 The `merge` tests (MergeTest) stand a card file in for the device's SD card: a file laid out as lib/DiagLog's writer lays
 it out (its header format is pinned against DiagLogWriter.h below) around the same recorded simulator lines. The device
-logs lines to the card through the very logPrintf that prints them, so a card file holds what the serial port gave; the
-two differ only in the header and in the lines the log itself adds when it drops or loses some, and the card file is more
+logs lines to the card through the very logPrintf that prints them, so a card file holds what the serial port gave through
+logPrintf (not the SDK's own Serial.printf lines, such as the SD manager's, which bypass it); the two differ only in the header
+and in the lines the log itself adds when it drops or loses some, and the card file is more
 permissive than a real card in that no write is ever cut short or lost to an unmount.
 """
 

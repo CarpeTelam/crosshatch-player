@@ -14,6 +14,7 @@
 #include <new>
 
 #include "DiagLogBuffer.h"
+#include "DiagLogFlush.h"
 #include "DiagLogStore.h"
 #include "DiagLogWriter.h"
 
@@ -27,11 +28,12 @@
 //
 // Timing. Lines logged before the card mounts (setup logs before Storage.begin) wait in the buffer, which holds about
 // 8 KB, and are written when the card is ready; if the card never mounts, the buffer fills and counts what it drops.
-// Sleep. The writer drains within tens of milliseconds of a line and closes the file after every batch, so the card
-// holds everything logged before Storage.prepareForDeepSleep() unmounts it except the last few milliseconds (HalStorage
-// serializes the unmount against a batch in flight only call by call, so a batch that straddles it fails and is
-// counted). Lines logged after the unmount (the "Entering deep sleep" line) cannot reach the card; the wake resets the
-// MCU and the next boot starts a new file. flush() is for a caller that must be sure; no existing code calls it.
+// Sleep. The writer drains within tens of milliseconds of a line and closes the file after every batch. The sleep paths
+// of src/main.cpp call flushBeforeSleep() just before Storage.prepareForDeepSleep() unmounts the card (ledger row 14),
+// which waits, up to SLEEP_FLUSH_TIMEOUT_MS, until the writer has put everything logged so far on the card, so a batch
+// does not straddle the unmount unless the card is slow or failing (then a batch that straddles it fails and is
+// counted). Lines logged after that call (the "Entering deep sleep" line) cannot reach the card; the wake resets the
+// MCU and the next boot starts a new file.
 
 namespace {
 
@@ -66,6 +68,13 @@ Buffer buffer;
 std::atomic<bool> started{false};
 std::atomic<TaskHandle_t> writerTask{nullptr};
 std::atomic<bool> writerBusy{false};
+// True from a refused batch until the next pump that is not refused: flush must not call lines that left the buffer in
+// a refused batch "on the card".
+std::atomic<bool> writerFailing{false};
+// True while a flush waits: the writer then retries a card that was not ready or refused a batch every COALESCE_TICKS
+// instead of every RETRY_TICKS, so a flush a few hundred milliseconds long still gets its turn (the lines of the boot
+// wait for the card, and the early-sleep paths of src/main.cpp can flush just after it mounted).
+std::atomic<bool> flushWaiting{false};
 // Set by the task when it could not allocate its context and deleted itself. The creator may store the task's handle
 // after that, so the handle alone says nothing about a live task: append and flush check this first.
 std::atomic<bool> writerDead{false};
@@ -98,6 +107,8 @@ void writerMain(void*) {
   for (;;) {
     writerBusy.store(true);
     const DiagLog::Step step = context->writer->pump();
+    // A refused batch's lines are gone from the buffer, so the flag outlives an unmount that follows the refusal.
+    writerFailing.store(step == DiagLog::Step::Failed || (step == DiagLog::Step::NotReady && writerFailing.load()));
     writerBusy.store(false);
     switch (step) {
       case DiagLog::Step::Wrote:
@@ -109,7 +120,11 @@ void writerMain(void*) {
         break;
       case DiagLog::Step::NotReady:
       case DiagLog::Step::Failed:
-        vTaskDelay(RETRY_TICKS);
+        // RETRY_TICKS in COALESCE_TICKS slices, so a flush that starts during the wait ends it at the next slice.
+        for (TickType_t waited = 0; waited < RETRY_TICKS; waited += COALESCE_TICKS) {
+          vTaskDelay(COALESCE_TICKS);
+          if (flushWaiting.load()) break;
+        }
         break;
     }
   }
@@ -139,19 +154,33 @@ void append(const char* line) {
   if (handle != nullptr) xTaskNotifyGive(handle);
 }
 
+namespace {
+
+// The platform half of DiagLog::waitUntilDrained (DiagLogFlush.h) over this file's task state.
+struct FlushProbe {
+  TaskHandle_t handle;
+  uint32_t nowMs() const { return static_cast<uint32_t>(millis()); }
+  void pause() const { vTaskDelay(pdMS_TO_TICKS(5)); }
+  void wake() const { xTaskNotifyGive(handle); }
+  bool cardReady() const { return deviceFileStore().ready(); }
+  bool writerBusy() const { return ::writerBusy.load(); }
+  bool writerFailing() const { return ::writerFailing.load(); }
+};
+
+}  // namespace
+
 bool flush(uint32_t timeoutMs) {
   if (writerDead.load()) return false;
   const TaskHandle_t handle = writerTask.load();
   if (handle == nullptr) return false;
-  const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeoutMs);
-  xTaskNotifyGive(handle);
-  while (xTaskGetTickCount() < deadline) {
-    if (!deviceFileStore().ready()) return false;
-    if (buffer.used() == 0 && !writerBusy.load()) return true;
-    vTaskDelay(pdMS_TO_TICKS(5));
-  }
-  return buffer.used() == 0 && !writerBusy.load();
+  FlushProbe probe{handle};
+  flushWaiting.store(true);
+  const bool drained = waitUntilDrained(buffer, probe, timeoutMs);
+  flushWaiting.store(false);
+  return drained;
 }
+
+void flushBeforeSleep() { flush(SLEEP_FLUSH_TIMEOUT_MS); }
 
 }  // namespace DiagLog
 

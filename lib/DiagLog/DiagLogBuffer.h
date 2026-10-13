@@ -6,11 +6,11 @@
 //
 // Why a critical section and not a mutex: logPrintf is called from the loop, the VM task, the GameLink task, and the
 // Wi-Fi tasks, at any priority, and a mutex held by a low-priority task could stall a high-priority one in the middle
-// of a game frame. The lock here covers only a memcpy of at most 256 bytes (in at most two pieces, split at the end
-// of the ring; its time on the device is unmeasured), so a task never waits on anything but that copy. On the device it
-// is FreeRTOS's critical section (interrupts masked on this core, a spinlock against the other core); a plain spinlock
-// would deadlock on the single-core C3 when a higher-priority task preempts the holder. Off the device (the host tests)
-// it is a spinlock that yields.
+// of a game frame. The lock here covers only a memcpy of at most 256 bytes (an append, or one record of a drain; in at
+// most two pieces, split at the end of the ring; its time on the device is unmeasured), so a task never waits on
+// anything but that copy. On the device it is FreeRTOS's critical section (interrupts masked on this core, a spinlock
+// against the other core); a plain spinlock would deadlock on the single-core C3 when a higher-priority task preempts
+// the holder. Off the device (the host tests) it is a spinlock that yields.
 
 #include <atomic>
 #include <cstddef>
@@ -82,9 +82,10 @@ class LineBuffer {
   // Moves whole lines, oldest first, into out (at most maxBytes, and at least MAX_LINE so a line always fits); returns
   // the bytes written. Stops before a line that would not fit, so a caller loops until it returns 0.
   size_t drain(char* out, size_t maxBytes) {
-    Guard guard(lock_);
     size_t produced = 0;
-    while (used_ > 0) {
+    for (;;) {
+      Guard guard(lock_);  // one record per hold, so no hold is longer than an append's
+      if (used_ == 0) break;
       const size_t record = data_[tail_];
       if (produced + record > maxBytes) break;
       tail_ = next(tail_);
