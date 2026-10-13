@@ -1470,3 +1470,18 @@
 - source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-lobby-screens-and-the-nearby-start-plan.md`
   summary: A host lobby that reaches `HostState::Closed`, or a guest whose link dies mid-lobby without our own cancel, would show "Waiting for a player" or "Looking for games nearby" with no radio and no way out but Back.
   evidence: The edge-case lens relayed it. `HostState::Closed` and `GuestState::Cancelled` are set only by `cancel()` (after which the session is reset), and `ILink` has no failure signal, so no path reaches it on the host harness; whether `EspNowLink` can drop mid-lobby is unknown until entry 11's device run. If it can, the lobby should `failToChoose()` on it. Location: src/activities/games/GameLobbyActivity.cpp readHost, pollGuest. Severity: medium (unverified).
+
+## 6.16
+
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-and-nearby-in-the-simulator-plan.md`
+  summary: `sim_instance_test.py` lives in the skill folder, so CI's `scripts/*_test.py` glob never runs it.
+  evidence: `scripts/sim_sh_test.py` and `crosshatch-ci.yml` are outside this entry's `touches`. Move the cases into `scripts/` (or a new `scripts/sim_instance_test.py`) when a touches list allows; it runs in seconds. Location: .claude/skills/run-crosshatch-player/sim_instance_test.py. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-and-nearby-in-the-simulator-plan.md`
+  summary: `sim.sh start`'s per-instance environment (`CROSSPOINT_SIM_SD`, `CROSSPOINT_SIM_HTTP_PORT`, `CROSSHATCH_UDP_PORT_BASE`) is observed only by the manual two-instance run, not by a test.
+  evidence: A test would need stub `Xvfb` and binary that dump their environment. The two-instance run of this entry shows the SD roots, ports, and base are honoured. Severity if a variable were dropped: medium (instances collide or never meet). Location: .claude/skills/run-crosshatch-player/sim.sh:cmd_start. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-and-nearby-in-the-simulator-plan.md`
+  summary: The simulator branches of `NearbyRadio::open()` (link and label copy) and `NearbyProbe::read()` are compiled and run only by the simulator, not by a host suite.
+  evidence: The host build does not define `SIMULATOR` and builds neither `GameLobbyActivity.cpp` nor `NearbyProbe.cpp` with it. Covering them means a `SIMULATOR` build of the lobby activity in the harness. The two-instance run shows the host label ("Simulator <port>") on the host screen and the guest's list, which exercises the label copy. Location: src/activities/games/GameLobbyActivity.cpp:NearbyRadio::open; src/games/NearbyProbe.cpp:read. Severity: low.
+- source_plan: `_bmad-output/initiative-crosshatch-player-v1/epic-play-nearby/story-udp-link-and-nearby-in-the-simulator-plan.md`
+  summary: `test/game_core/LinkContract.h` still has no three-link variant; `ThreeLinkContract.h` in the harness folder covers `UdpLink` and `FakeLink` only.
+  evidence: `LinkContract.h` is outside this entry's `touches`. `deferred-work.md` `## 6.2`'s second item is met for `UdpLink` here; `EspNowLink` can run the variant only in a device run (entry 11). Location: test/game_script/harness/ThreeLinkContract.h. Severity: low.
