@@ -24,12 +24,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "EspNowLink.h"
@@ -61,6 +63,40 @@ inline std::string seatsLine(const unsigned taken, const unsigned max) {
   return fmt(tr(STR_GAMES_NEARBY_SEATS), taken, max);
 }
 
+// The clock the lobby reads: FakeRtosClock, plus a one-shot jump for the test thread. `jumpOnce(skip, ms)` lets the
+// test thread's next `skip` reads through and answers the one after with `ms` more, then goes back to the plain
+// clock. How a test stages a reading taken later than the one before it inside a single loop pass (the lobby's poll
+// and the Start tap that follows it), which the device's 100 ms poll cadence makes a window no fake-time step can
+// land in. Another thread's reads (a link task's) are never touched.
+class JumpOnceClock final : public GameCore::IClock {
+ public:
+  uint64_t nowMs() const override {
+    const uint64_t now = fakertos::millis();
+    if (armed.load() && std::this_thread::get_id() == owner) {
+      if (skip > 0) {
+        --skip;
+      } else {
+        armed.store(false);
+        return now + jump;
+      }
+    }
+    return now;
+  }
+  void jumpOnce(const int skipReads, const uint64_t ms) {
+    owner = std::this_thread::get_id();
+    skip = skipReads;
+    jump = ms;
+    armed.store(true);
+  }
+  bool spent() const { return !armed.load(); }
+
+ private:
+  mutable std::atomic<bool> armed{false};
+  mutable int skip = 0;
+  std::thread::id owner;
+  uint64_t jump = 0;
+};
+
 class FakeNearbyRadio final : public NearbyRadio {
  public:
   FakeNearbyRadio() : net(time, 1), random_({0x5E551011u, 0x5E551012u, 0x5E551013u}) {}
@@ -86,7 +122,7 @@ class FakeNearbyRadio final : public NearbyRadio {
     return opened;
   }
 
-  const GameCore::IClock& clock() override { return time; }
+  const GameCore::IClock& clock() override { return lobbyClock; }
   GameCore::IRandom& random() override { return random_; }
   GameCore::LobbySettings lobbySettings() override { return settings; }
   NearbySessionOptions sessionOptions() override { return nearby::fastOptions(); }
@@ -101,6 +137,7 @@ class FakeNearbyRadio final : public NearbyRadio {
   }
 
   nearby::FakeRtosClock time;
+  JumpOnceClock lobbyClock;
   GameCore::LinkTest::FakeLinkNet net;
   GameCore::LobbyTest::FixedRandom random_;
   NearbyProbe::Readings readings{false, SIZE_MAX};

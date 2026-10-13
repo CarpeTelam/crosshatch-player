@@ -208,6 +208,33 @@ TEST_F(NearbyLobbyTest, AGuestNotHeardForTheLiveWindowGreysStartAndHeardAgainEna
   EXPECT_TRUE(run([&] { return h.match && g.match; })) << "heard again, Start starts the match";
 }
 
+TEST_F(NearbyLobbyTest, AStartTappedOnADrawnEnabledStartReadsTheGuestsLivenessAgainAndStartsNothingOverAGhost) {
+  radio->settings = nearby::fastSettings();
+  radio->settings.link.silenceMs = 10000;
+  radio->settings.link.keepaliveMs = 1000;
+  Dev& h = addDev("host");
+  Dev& g = addDev("guest");
+  ASSERT_NO_FATAL_FAILURE(hostAndJoin(h, g));
+  advance(1500);
+  ASSERT_TRUE(shows(h, joinedLine(2)));
+  // Start is drawn enabled from a poll that ran an instant ago, so the tap's own pass does not poll (under POLL_MS
+  // since the last), and the guest's last frame is far older than the live window by the time the tap reads the clock:
+  // the lobby's first clock read of the pass (the poll check) is the plain one, its second (Start's re-read) is
+  // LIVE_WINDOW_MS + 2000 ms later. Without the re-read the stale Start would start a match over a ghost seat.
+  frame(h);
+  radio->lobbyClock.jumpOnce(1, GameLobbyActivity::LIVE_WINDOW_MS + 2000);
+  click(h, Button::Confirm);
+  ASSERT_TRUE(radio->lobbyClock.spent()) << "the staged late reading was taken by the lobby's pass";
+  EXPECT_FALSE(run([&] { return h.match != nullptr; }, 400)) << "a guest not heard for the live window: Start refuses";
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_TRUE(logHas("found the guest quiet"));
+  EXPECT_TRUE(shows(h, joinedLine(2))) << "the seat is held: only Start greys";
+  // The guest is heard on the plain clock: the next Start goes through.
+  advance(1500);
+  click(h, Button::Confirm);
+  EXPECT_TRUE(run([&] { return h.match && g.match; })) << "heard lately, Start starts the match";
+}
+
 TEST_F(NearbyLobbyTest, AGuestThatStaysQuietLosesItsSeatAtTheSilenceLimit) {
   radio->settings = nearby::fastSettings();
   radio->settings.link.silenceMs = 10000;
@@ -867,6 +894,18 @@ TEST_F(NearbyTitleTest, NearbyOverAPassSaveAsksNoQuestionKeepsResumeBinAndRememb
   EXPECT_EQ(activityManager.asks.replaced, 0);
   EXPECT_EQ(fakesd::bytesOf(resumePath()), save) << "resume.bin is byte-identical";
   EXPECT_EQ(rememberedMode(), NEARBY) << "prefs.bin holds Nearby";
+}
+
+TEST_F(NearbyTitleTest, ALobbyThatCannotBeAllocatedPushesNothingOpensNoRadioAndWritesNothing) {
+  openTitle(PASS | NEARBY, NEARBY);  // nearby by the manifest's default: prefs.bin holds nothing
+  oom::failSize = sizeof(GameLobbyActivity);
+  tapRow(tr(STR_GAMES_NEW_GAME));
+  oom::failSize = 0;
+  EXPECT_TRUE(logHas("OOM:"));
+  EXPECT_EQ(activityManager.pushedActivities.size(), 1u) << "no lobby";
+  EXPECT_EQ(radio->opens, 0);
+  EXPECT_EQ(rememberedMode(), 0) << "the mode is remembered when the lobby opens, not before";
+  // Not pinned: the repaint after the failure (a tap asks for one by itself on this double, so a test cannot tell).
 }
 
 TEST_F(NearbyTitleTest, BackFromTheLobbyLandsOnTheTitleScreenAsItWas) {
