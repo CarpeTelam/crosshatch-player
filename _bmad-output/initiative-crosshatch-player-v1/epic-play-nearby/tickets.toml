@@ -241,6 +241,21 @@ touches = ["src/games/GameHostCaps.* (`NEARBY_BUILT`; after entry 16)", "src/gam
 stays_out = ["lib/GameCore/**", "games/**", "every upstream file"]
 
 [[entry]]
+id = 20
+type = "story"
+title = "Nearby on the X4 Pro only until a Sticky run"
+description = "Carries the owner's Decision of 2026-10-13: Play Nearby is offered on the X4 Pro only until a Sticky has run it (SPEC Open Questions; this epic's runs use two X4 Pros). The host caps report nearby on for the X4 Pro device build and the simulator (R16), and off on every other games board (Sticky first), so `Manifest::check` keeps a declared `nearby` unavailable there, as before entry 11. A host test pins the caps per board; the device flag stays one expression in `GameHostCaps` with a comment naming the Decision and the condition that lifts it (a Sticky device run)."
+verify = "Host suites pass, with a `GameHostCapsTest` case per board (X4 Pro and simulator on, Sticky off) built with each board's define; `pio run -e x4pro`, `-e sticky`, and `-e default` build; `sim.sh build x4pro` and `build sticky` build; the x4pro flash-budget compare is unchanged like for like; fast checks pass."
+covers = ["R9"]
+after = [11]
+hitl = false
+risk = "low"
+unknown = "Which define names the X4 Pro board in this fork (`FREEINK_DEVICE_*`); read `platformio.ini` and the existing guards."
+references = ["epic-play-nearby.md, Notes, Decision (owner, 2026-10-13, Nearby on the X4 Pro only)", "src/games/GameHostCaps.{h,cpp}", "test/game_core/GameHostCapsTest.cpp", "platformio.ini (the boards' defines)"]
+touches = ["src/games/GameHostCaps.*", "test/game_core/GameHostCapsTest.cpp", "test/game_script/** (any test that follows the caps)"]
+stays_out = ["platformio.ini", "lib/**", "games/**", "every upstream file"]
+
+[[entry]]
 id = 13
 type = "story"
 title = "Refactor sweep"
