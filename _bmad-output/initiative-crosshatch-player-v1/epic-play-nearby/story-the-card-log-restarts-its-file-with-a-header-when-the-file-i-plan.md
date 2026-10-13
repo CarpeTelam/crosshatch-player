@@ -3,7 +3,7 @@ title: 'The card log restarts its file with a header when the file is deleted mi
 type: 'bugfix'
 ticket: '22'
 created: '2026-10-13'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 review: 'thorough'
@@ -17,8 +17,6 @@ context:
 warnings: [oversized]
 deferred: []
 baseline_revision: '1f5c0b33f79bb2527ee8f27409aa75d2f7188e6c'
-blocked_at: "2026-10-13"
-blocked_reason: "firmware checks could not run: the disk is full, and a framework reinstall that pioarduino started during this run's first post-review build (x4pro) failed with ENOSPC, leaving the shared ~/.platformio/packages/framework-arduinoespressif32-libs half-installed (0-byte package.json, most chip folders missing), so every pio run and pio check on the machine fails until space is freed and the package reinstalled"
 ---
 
 <intent-contract>
