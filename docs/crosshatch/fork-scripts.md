@@ -163,8 +163,15 @@ python3 scripts/device_log.py summary run-logs/merged.log
   the link latency (half the sum); with one direction only the offset is that time and the latency is taken as 0. A
   receive the estimate puts at or before its send is moved to 1 ms after it, and the receiver's later lines with it, so
   every send precedes its receive; a `STATE` that both devices logged a send for is ambiguous and anchors nothing. A
-  boot with no shared `STATE` is placed after its device's previous boot, or starts with the first device's, and `merge`
-  says so (a `[device_log] clock:` line per boot in `merged.log` and `summary.txt`). The estimate assumes the link is as
+  boot that shares a `STATE` with another device's boot keeps the offset the `STATE`s give it; a group of such boots not
+  linked to the first device's first boot is placed by its first boot, which starts after its device's earlier boots
+  (their lengths chained forward). A boot with none is placed by its device's other boots (a boot runs from its millis 0
+  to its last line): one followed by an aligned boot is placed to end when the next boot starts, chained backwards,
+  so the restarts before a match (closing the Wi-Fi file transfer restarts the device) land before it; one with no
+  aligned boot after it is placed after its device's previous boot, or starts with the first device's. Boots chained
+  backwards that are longer than the gap since the device's previous aligned boot overlap it: that boot keeps its times,
+  the overlapping lines are held at its last stamp, and the note says by how many ms. `merge` says how each boot was
+  placed (a `[device_log] clock:` line per boot in `merged.log` and `summary.txt`). The estimate assumes the link is as
   fast both ways, so read an ordering closer than the latency as a tie. Stamps in `merged.log` are the run clock (time
   since the earliest logged line or file-open time of any device, on the 1970 epoch), not wall-clock time; `summary`
   reads the file unchanged.
