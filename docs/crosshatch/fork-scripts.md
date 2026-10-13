@@ -139,6 +139,12 @@ python3 scripts/device_log.py summary run-logs/merged.log
   file can pass that by one batch, under 512 bytes), and the oldest files are deleted so at most 16 remain. `firmware`
   is the `CROSSHATCH_BUILD_ID` the build was given, else the version string, which names the commit for `default` and
   `sticky` only.
+- **Heap lines.** The card gets the `[MEM]` lines whether or not a computer is attached: internal heap `Free`,
+  `Total`, `Min Free`, and `MaxAlloc`, and a second line with the same for PSRAM on a board that has it. They come
+  at least 10 s apart, the first about 10 s after boot; a busy loop stretches the gap, and none come while the card
+  is lent to a computer as a USB drive. A normal build logs them only while a USB host is attached or the board logs
+  through the ROM console (ledger row 14). Taking the figures reads the heaps every 10 s, which before only a
+  host-attached run did; its cost during a match is unmeasured.
 - **What it says it lost.** The hook never waits for the card: it copies the line into an 8 KiB buffer and a writer task
   drains it. A full buffer drops whole lines, and the next file says `[ERR] [DIAG] dropped N lines (buffer full)`; a
   failed write is `[ERR] [DIAG] lost N bytes (card write failed)` and a new segment. `summary` counts both. Lines logged

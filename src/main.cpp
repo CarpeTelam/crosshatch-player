@@ -722,8 +722,13 @@ void loop() {
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
+#if CROSSHATCH_SD_LOG
+  // With the diagnostics log on, the heap lines go to its card file, so they need no USB host (ledger row 14).
+  if (millis() - lastMemPrint >= 10000) {
+#else
   // The ROM console does not depend on Arduino USB CDC's connection state.
   if ((Serial || FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF) && millis() - lastMemPrint >= 10000) {
+#endif
     const auto heap = HalMemory::getInternalHeap();
     LOG_INF("MEM", "Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes", heap.freeBytes,
             heap.totalBytes, heap.minFreeBytes, heap.largestBlockBytes);
