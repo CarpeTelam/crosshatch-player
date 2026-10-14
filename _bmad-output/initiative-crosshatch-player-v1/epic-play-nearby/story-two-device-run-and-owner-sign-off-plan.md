@@ -246,8 +246,8 @@ Each field is filled after the run, by the owner or by the orchestrator, from `m
 
 | Field | Value |
 |-------|-------|
-| Firmware commit, file, size, SHA-256 (the orchestrator) | FILL |
-| Release firmware flashed back in step 13: file and SHA-256 (the orchestrator), done on both (the owner) | FILL |
+| Firmware commit, file, size, SHA-256 (the orchestrator) | `471eda60fc32e646b0e5fafb7638f6d218e4da68`, `crosshatch-x4pro-471eda60-diag.bin`, 6,270,032 B, SHA-256 `77f9c19255c769ab7d48d26597ef147a0936f44c0e6396867ebc7c462ac30e4e` (packages: nearby `2bef3752d7af24a2`, Ultimate tic-tac-toe `3aeb7cf5a0ffe519`, Battleship `c7a3a73bea899174`, Sudoku `411a1048bae48675`) |
+| Release firmware flashed back in step 13: file and SHA-256 (the orchestrator), done on both (the owner) | `crosshatch-x4pro-471eda60-release.bin`, SHA-256 `bafeb4cc57872a80f4d6d4e0af124b5cbf5f584ded363ccbf415f0c618a00e77`; done on both: |
 | Package hashes and sizes: `nearby`, `ultimate-tic-tac-toe`, `battleship`, `sudoku` (the orchestrator) | FILL |
 | Inbox file sizes on each card before install (`## e5-run2`) | |
 | The card log: header and `lost N bytes` notice after the mid-run delete (row 6); `[DIAG]` dropped or lost lines per device | |

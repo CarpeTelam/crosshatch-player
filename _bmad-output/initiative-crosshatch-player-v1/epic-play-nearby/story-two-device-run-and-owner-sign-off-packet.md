@@ -24,10 +24,10 @@ The orchestrator fills these fields when it builds.
 
 - One build from the epic head, under the build lock, with the touch log, the SD-card log and the build id:
   `PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_TOUCH_LOG=1 -DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=<commit>" pio run -e x4pro`.
-  - Firmware commit: FILL. Each card file's `firmware` header line reads its `CROSSHATCH_BUILD_ID`.
-  - File name: FILL.
-  - Size: FILL bytes.
-  - SHA-256: FILL.
+  - Firmware commit: `471eda60fc32e646b0e5fafb7638f6d218e4da68`, the PR's head when it was built (2026-10-14, the main checkout, under the build lock). Every later commit on the epic branch is documentation only. Each card file's `firmware` header line reads `471eda60`, its `CROSSHATCH_BUILD_ID`. The build contains the card log's hook and flush, the battery line, and the per-tap touch line (`check_flash_budget.py touch-line`).
+  - File name: `crosshatch-x4pro-471eda60-diag.bin`.
+  - Size: 6,270,032 bytes.
+  - SHA-256: `77f9c19255c769ab7d48d26597ef147a0936f44c0e6396867ebc7c462ac30e4e`.
 - **Check the SHA-256 before flashing, and flash only a file that matches.** Both devices get the same file, because a level-1 surface mismatch ends a match (AD-13).
 - Flash it with CrossPoint Reader Flash Tools, or upload the `.bin` with File Transfer and use Settings' firmware update from the SD card.
 - **What this diagnostics build adds:**
@@ -36,8 +36,8 @@ The orchestrator fills these fields when it builds.
   - Every 10 s it writes `[MEM] Battery: <mV> mV, <pct>%` and the heap lines: internal heap as `[MEM] Free: N bytes, Total: N bytes, Min Free: N bytes, MaxAlloc: N bytes`, and PSRAM as `[MEM] PSRAM: ...`.
   - Every line also goes to the card.
 - **Release firmware for step 13** (the orchestrator fills these):
-  - File name: FILL.
-  - SHA-256: FILL.
+  - File name: `crosshatch-x4pro-471eda60-release.bin`. This is the same commit built with no diagnostics define, the normal `pio run -e x4pro`: 6,255,904 bytes, with no card log and no touch line.
+  - SHA-256: `bafeb4cc57872a80f4d6d4e0af124b5cbf5f584ded363ccbf415f0c618a00e77`.
 
 ## Packages
 
@@ -45,10 +45,10 @@ The orchestrator fills these fields when it builds.
 
 | File | Goes on | Package hash | Bytes | KB as the file manager shows it |
 | --- | --- | --- | --- | --- |
-| `nearby.chgame` | A and B | FILL | FILL | FILL |
-| `ultimate-tic-tac-toe.chgame` | A and B | FILL | FILL | FILL |
-| `battleship.chgame` | A and B | FILL | FILL | FILL |
-| `sudoku.chgame` | A only | FILL | FILL | FILL |
+| `nearby.chgame` | A and B | `2bef3752d7af24a2` | 1,999 | 1.95 KB |
+| `ultimate-tic-tac-toe.chgame` | A and B | `3aeb7cf5a0ffe519` | 5,489 | 5.36 KB |
+| `battleship.chgame` | A and B | `c7a3a73bea899174` | 11,038 | 10.78 KB |
+| `sudoku.chgame` | A only | `411a1048bae48675` | 42,958 | 41.95 KB |
 
 - **Nearby** is a noughts-and-crosses fixture for two seats.
   - A tap on a free square is a move.
