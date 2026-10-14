@@ -66,8 +66,9 @@ class CanvasGate {
   // `atMs` is before that push completed, else frameDisplayed.
   uint32_t frameAt(const uint32_t atMs) const {
     std::lock_guard<std::mutex> lock(pushMutex);
-    // Wrap-safe, as millis() is: before the last push completed, the frame before it was on the panel.
-    if (lastPush.doneMs != 0 && static_cast<int32_t>(atMs - lastPush.doneMs) < 0) return lastPush.before;
+    // Wrap-safe, as millis() is: before the last push completed, the frame before it was on the panel. `recorded`,
+    // not doneMs != 0, says a push was recorded: one can complete at millis() 0, the 2^32 ms wrap.
+    if (lastPush.recorded && static_cast<int32_t>(atMs - lastPush.doneMs) < 0) return lastPush.before;
     return frameDisplayed.load(std::memory_order_acquire);
   }
 
@@ -77,7 +78,7 @@ class CanvasGate {
   // RenderLock (the caller's), then pushMutex; the loop takes pushMutex alone.
   void recordPush(const Clock clock) {
     std::lock_guard<std::mutex> lock(pushMutex);
-    lastPush = LastPush{frameDisplayed.load(std::memory_order_relaxed), clock()};
+    lastPush = LastPush{frameDisplayed.load(std::memory_order_relaxed), clock(), true};
   }
 
   // Render task, every way out of renderCanvas past the gate, a frame replay skipped as identical to the one on screen
@@ -94,10 +95,11 @@ class CanvasGate {
 
  private:
   // The last canvas push that changed the panel, written by recordPush and read by frameAt, under pushMutex: the frame
-  // on the panel before it, and millis() when it completed.
+  // on the panel before it, millis() when it completed, and whether a push was recorded at all.
   struct LastPush {
     uint32_t before = 0;
     uint32_t doneMs = 0;
+    bool recorded = false;
   };
 
   std::atomic<uint32_t> roundsStartedAwaited{1};

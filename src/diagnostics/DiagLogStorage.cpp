@@ -44,6 +44,11 @@ class StorageFileStore final : public DiagLog::FileStore {
   }
 
  private:
+  // An unmount can land between the open and this write, since Storage locks per call. SdFat 2.3.1's FsVolume::end()
+  // only nulls its pointers, and the volume lives in the static SDCardManager, so nothing freed is touched; the SDMMC
+  // block device then refuses sector I/O, so the write or the close fails and this batch reports Failed (counted as
+  // lost bytes in the next file). After the USB drive's detach the device stays live, so a file opened before it would
+  // write to a card the host owns: unverified (deferred-work ## 6.13).
   static bool writeAndClose(HalFile& file, const char* data, size_t length) {
     const size_t written = file.write(reinterpret_cast<const uint8_t*>(data), length);
     file.flush();

@@ -6,8 +6,9 @@
 // esp_timer.h, esp_random.h) all reach one state.
 //
 // What it models, and how it differs from the device:
-//   - A task is a detached std::thread. xTaskCreatePinnedToCore ignores the priority
-//     and core. The thread's stack is the host's (8 MB); pxTaskGetStackStart answers
+//   - A task is a detached std::thread. xTaskCreatePinnedToCore records the name, priority,
+//     and core it was given (Task) but does not apply them: the host schedules the thread,
+//     on any core. The thread's stack is the host's (8 MB); pxTaskGetStackStart answers
 //     the requested depth below the task's first frame, as the simulator's shim does, so
 //     the hook's headroom check runs against a 16 KB model. uxTaskGetStackHighWaterMark
 //     is a constant (GameVM only logs it).
@@ -27,10 +28,11 @@
 //     is a stub call, so the gate below can hold it.
 //   - The gate holds a task thread at its next clock read (At::Clock) or log line
 //     (At::Log), after skipping the first `skip` of them: a script stuck inside a host
-//     call. A clock read is outside GameVM's locked bindings (GameVM::abandon may delete
-//     the task there); a log line from ch.log is inside one (it may not). pass() lets the
-//     held task by that one point with the gate still armed (so the next read holds it
-//     again); release() disarms it.
+//     call. Armed with a task name, it holds only the tasks of that name and lets the others
+//     run on, as on the device, where one stuck VM stops no other task. A clock read is outside GameVM's locked
+//     bindings (GameVM::abandon may delete the task there); a log line from ch.log is inside one (it may not). pass()
+//     lets the held task by that one point with the gate still armed (so the next read holds it again); release()
+//     disarms it.
 // vTaskDelay, delay(), and a notify wait that times out really wait (1 tick = 1 ms) and also move
 // the clock by what they waited, so a wait that counts elapsed millis() ends, and a test that
 // advances the clock by hand adds to what the code's own waits have advanced.
@@ -42,6 +44,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -55,7 +58,12 @@ struct Task {
   bool counted = true;              // in liveTasks (under State::m)
   uint32_t notifyCount = 0;         // under State::m
   uintptr_t stackBase = 0;          // written and read by the task itself
+  // What xTaskCreatePinnedToCore was given, written before the thread starts: the stack depth, the name (a copy, as
+  // FreeRTOS keeps one), the priority, and the core the device pins it to.
   uint32_t stackBytes = 0;
+  std::string name;
+  unsigned priority = 0;
+  int core = -1;
 };
 
 struct State {
@@ -75,6 +83,7 @@ struct State {
   bool gateArmed = false;
   int gateAt = 0;  // At
   int gateSkip = 0;
+  std::string gateOnly;  // empty: every task; else only the tasks of this name
   uint64_t gateGeneration = 0;
   int gateParked = 0;
   std::vector<uint64_t> gateWaiting;  // the generation each held task waits on
@@ -108,7 +117,7 @@ inline void holdIfNeeded(std::unique_lock<std::mutex>& lock, Task* task, const i
       task->parked = false;
       continue;
     }
-    if (where >= 0 && s.gateArmed && s.gateAt == where) {
+    if (where >= 0 && s.gateArmed && s.gateAt == where && (s.gateOnly.empty() || task->name == s.gateOnly)) {
       if (s.gateSkip > 0) {
         --s.gateSkip;
         return;
@@ -150,11 +159,12 @@ inline uint64_t millis() {
 inline void advance(const uint64_t ms) { S().nowMs += ms; }
 
 // ---- the gate (a script stuck in a host call) ----
-inline void arm(const At at = At::Clock, const int skip = 0) {
+inline void arm(const At at = At::Clock, const int skip = 0, const char* onlyTask = nullptr) {
   std::lock_guard<std::mutex> lock(S().m);
   S().gateArmed = true;
   S().gateAt = static_cast<int>(at);
   S().gateSkip = skip;
+  S().gateOnly = onlyTask != nullptr ? onlyTask : "";
 }
 // True once a task thread is held at the gate.
 inline bool waitParked(const int timeoutMs = 10000) {
@@ -202,6 +212,7 @@ inline void reset() {
   s.failNextCreate = false;
   s.gateArmed = false;
   s.gateSkip = 0;
+  s.gateOnly.clear();
   s.onLoopNotify = nullptr;
   s.cv.notify_all();
 }

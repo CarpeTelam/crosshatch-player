@@ -992,6 +992,21 @@ class ReadManifestTest(unittest.TestCase):
     def test_unknown_keys_are_ignored(self):
         self.assertEqual(self.read(manifest_text(color='red', tags=['a', 1, None], nested={'a': {'b': [1]}})), [])
 
+    def test_the_modes_are_the_mode_tables_names_in_order(self):
+        # GameCore::MODE_TABLE is the device's one list of modes; a mode added there but not here would be refused at
+        # pack time only.
+        table = (REPO / 'lib' / 'GameCore' / 'ModeTable.h').read_text()
+        rows = re.findall(r'\{Mode::\w+, Manifest::MODE_\w+, "(\w+)"\},', table)
+        self.assertEqual(tuple(rows), pg.MODES)
+
+    def test_the_first_party_nearby_games_declare_nearby(self):
+        # Battleship and Ultimate tic-tac-toe are the first-party games played nearby; the games check only logs a
+        # skipped nearby, so nothing else notices the mode dropped from a manifest.
+        for game in ('battleship', 'ultimate-tic-tac-toe'):
+            with self.subTest(game=game):
+                manifest = json.loads((REPO / 'games' / game / 'manifest.json').read_text())
+                self.assertIn('nearby', manifest['modes'])
+
 
 class PngSizeTest(unittest.TestCase):
     def test_reads_the_ihdr(self):

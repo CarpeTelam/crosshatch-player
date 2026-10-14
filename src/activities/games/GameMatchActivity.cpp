@@ -335,7 +335,9 @@ void GameMatchActivity::handle(const MatchEvent event) {
       break;
     case MatchState::Leaving:
       // onExit() stops and flushes itself after a forced exit.
-      // From PeerGone or Error the peer is already gone or told: three ABORT(left) at once, no wait for its acks.
+      // From PeerGone or Error the peer is already gone or told: no wait for its acks. Three ABORT(left) at once to
+      // each peer whose own ABORT was not heard (NearbySession::leave skips one that sent it, so after the peer's ABORT
+      // none).
       if (event != MatchEvent::ForcedExit) {
         leave(from == MatchState::PeerGone || from == MatchState::Error ? 0 : LEAVE_FLUSH_MS);
       }
@@ -447,6 +449,12 @@ void GameMatchActivity::pushBlank(const char* when) {
 }
 
 void GameMatchActivity::retryResumeDelete(const bool forced) { persistence.retryResumeDelete(forced); }
+
+void GameMatchActivity::flushDue() {
+  store.flushIfDue(millis());
+  flushResume();
+  retryResumeDelete(false);
+}
 
 void GameMatchActivity::flushResume() {
   if (vm) flushResumeOf(*vm);
@@ -632,9 +640,7 @@ void GameMatchActivity::loopPlaying() {
   contact.endIfNotHeld();
   vm->pollTimer();
   vm->pollNearby();
-  store.flushIfDue(millis());
-  flushResume();
-  retryResumeDelete(false);  // pending only after a Play again over an Over delete that failed
+  flushDue();
 
   // Any frame before the new round's first is the last round's; once the count
   // moves, coalescing shows the newest frame.
@@ -654,9 +660,7 @@ void GameMatchActivity::loopView() {
   if (state != MatchState::Error && state != MatchState::PeerGone) {
     if (!vmHealthy()) return;
     vm->pollNearby();
-    store.flushIfDue(millis());
-    flushResume();
-    retryResumeDelete(false);
+    flushDue();
     // The host's next round has started (a round started that the one this Over ended did not count): a follower leaves
     // Over by itself. Not `started > ended`: a round the host also finished before this pass would hide it.
     if (state == MatchState::Over && followsHost() && vm->roundsStarted() > roundsSeen) {
@@ -699,12 +703,9 @@ void GameMatchActivity::loopView() {
 
 void GameMatchActivity::loopHandOff() {
   const MatchState state = lifecycle.state();
-  const auto now = static_cast<uint32_t>(millis());
   // As in a menu: the VM may still fail, hang, or set ch.store in a call that was running when the screen changed.
   if (!vmHealthy()) return;
-  store.flushIfDue(now);
-  flushResume();
-  retryResumeDelete(false);
+  flushDue();
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     handle(MatchEvent::Back);
     return;
@@ -848,8 +849,8 @@ void GameMatchActivity::renderCanvas() {
   // render without one is a repaint after something else drew (an overlay such
   // as the light panel closed): the screen no longer shows the frame. The VM may publish a newer one before drawFront
   // takes the front, which is why the frame on the panel is the number drawFront reports, not this. Read before the
-  // view's clearScreen below on purpose: that clear is the seam where PassMatchTest's frame-race test publishes, so
-  // moving this read below it would leave the test passing whatever CanvasGate::frameDisplayed stored.
+  // view's clearScreen below on purpose: that clear is the seam where PassMatchTest's frame-race tests publish, so
+  // moving this read below it would leave them passing whatever CanvasGate::frameDisplayed and renderedFrame stored.
   const uint32_t frame = vm->frameGen();
   if (viewOnScreen) {
     // A view covered the canvas; a game that never clears would keep its pixels.
@@ -858,11 +859,16 @@ void GameMatchActivity::renderCanvas() {
     viewOnScreen = false;
   }
   if (frame == renderedFrame.load(std::memory_order_relaxed)) replay.forceFull();
-  renderedFrame.store(frame, std::memory_order_release);
   // Lock order: RenderLock (held), then the frame mutex inside drawFront; the
   // refresh runs after the mutex is released so the VM can publish during it.
   uint32_t taken = frame;  // drawFront's number of the frame it took; this one when there is none
-  if (vm->drawFront(renderer, viewport, replay, &taken)) {
+  const bool drawn = vm->drawFront(renderer, viewport, replay, &taken);
+  // The frame drawFront took, not `frame`: one the VM published after the read above is taken already, so the loop
+  // asks for no second render of it, and a later repaint finds it here and is drawn in full. A loop pass inside
+  // drawFront's own window (after the VM published, before this store) still asks: that render reads as a repaint and
+  // is drawn in full, never with stale pixels.
+  renderedFrame.store(taken, std::memory_order_release);
+  if (drawn) {
     const auto pushBegan = static_cast<uint32_t>(millis());
     renderer.displayBuffer(replay.refreshMode());
     LOG_INF("GAME", "%s: frame %u pushed in %u ms", manifest.id, static_cast<unsigned>(taken),

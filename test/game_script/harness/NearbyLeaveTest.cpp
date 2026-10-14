@@ -98,6 +98,46 @@ TEST(NearbyLeaveTest, ARefusedAbortIsNotACopy) {
   EXPECT_EQ(d.hostProbe.abortFrames.load(), 3) << "all three were handed to the link";
 }
 
+// The guest left first: its ABORT(left) reached the host, whose "player left" view then leaves too (Back, or a forced
+// exit with no flush). The guest's session is over, so the host sends it nothing, and the leave line says copies=0
+// (smoke run 2026-10-13: three wasted ABORTs and copies=3).
+TEST(NearbyLeaveTest, AfterThePeersAbortItSendsThePeerNothing) {
+  Duo d;
+  d.openBoth(fastSettings(60000));
+  ASSERT_TRUE(d.host && d.guest);
+  ASSERT_TRUE(d.joinAndStart());
+  EXPECT_EQ(d.guest->leave(AbortReason::Left, 0).copies, 3);
+  ASSERT_TRUE(waitFor([&] { return linkLines("abort recv reason=left seat=2") == 3u; }));
+  ASSERT_TRUE(d.host->endLatched());
+  for (const uint32_t flushMs : {0u, 800u}) {
+    SCOPED_TRACE(flushMs);
+    fakelog::clearLines();
+    const int abortsBefore = d.hostProbe.abortFrames.load();
+    const NearbySession::LeaveResult result = d.host->leave(AbortReason::Left, flushMs);
+    EXPECT_EQ(result.copies, 0);
+    EXPECT_EQ(d.hostProbe.abortFrames.load(), abortsBefore) << "an ABORT went to a peer that had left";
+    EXPECT_EQ(linkLines("leave reason=left waited="), 1u);
+    EXPECT_EQ(linkLines(" copies=0"), 1u);
+  }
+}
+
+// A peer that went silent (Timeout, no ABORT heard) may still hear us one way: the three copies go out as before.
+TEST(NearbyLeaveTest, AfterTheSilenceLimitItStillSendsThreeAborts) {
+  Duo d;
+  d.openBoth(fastSettings(1500));
+  ASSERT_TRUE(d.host && d.guest);
+  ASSERT_TRUE(d.joinAndStart());
+  d.net.blackhole(d.guestEnd.index());  // the guest's frames no longer reach the host
+  ASSERT_TRUE(waitFor([&] { return d.host->endLatched(); }));
+  AbortReason reason = AbortReason::Left;
+  ASSERT_TRUE(d.host->takeEnd(reason));
+  ASSERT_EQ(reason, AbortReason::Timeout);
+  const NearbySession::LeaveResult result = d.host->leave(AbortReason::Left, 0);
+  EXPECT_EQ(result.copies, 3);
+  EXPECT_EQ(d.hostProbe.abortFrames.load(), 3);
+  EXPECT_EQ(linkLines(" copies=3"), 1u);
+}
+
 TEST(NearbyLeaveTest, BeforeTheMatchBeganItSendsNothing) {
   Duo d;
   d.openHost();

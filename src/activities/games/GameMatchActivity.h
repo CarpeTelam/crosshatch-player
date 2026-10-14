@@ -193,6 +193,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // Removes resume.bin again after Over's delete failed (MatchPersistence::deletePending), at most
   // every FLUSH_INTERVAL_MS from the last failed try unless `forced` (Leave, the forced exit).
   void retryResumeDelete(bool forced);
+  // A loop pass's writes, in this order: a dirty ch.store once due (MatchStore::flushIfDue at millis()), resume.bin
+  // (flushResume), and resume.bin's delete again (retryResumeDelete, unforced; pending only after a Play again over an
+  // Over delete that failed).
+  void flushDue();
   // Cancels a VM past WATCHDOG_MS, abandons it if it does not join, and shows the error view.
   void stopStuckVm();
   // For a VM that did not join: abandons it (GameVM::abandon), writing its last snapshot
@@ -291,9 +295,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // Loop task: the pause menu was opened in the Play-again gap (its "Starting the next round" line is on screen), so
   // it is redrawn once the new round's first frame is published.
   bool gapWhenPaused = false;
-  // Written by render: the frameGen its last render saw. The loop does not ask
-  // again for a frame a render already took, so a render that sees no new frame
-  // is always a repaint someone else asked for.
+  // Written by render: the number of the frame its last render took. renderCanvas stores drawFront's (or the frameGen
+  // it read when there was none to take); renderView, drawing the canvas under a view, still stores the frameGen it
+  // read before drawFront (deferred: a frame published between the two is asked for once more). The loop does not ask
+  // again for a frame a render already took, so a render that sees no new frame is a repaint someone else asked for.
   std::atomic<uint32_t> renderedFrame{0};
   // Render task only: the screen does not hold the canvas (a view was drawn over
   // it, or a render skipped it while awaiting a round), so the next frame is drawn

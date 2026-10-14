@@ -119,7 +119,7 @@ TEST(CanvasGateTest, FrameAtBeforeAnyPushIsTheFrameOnThePanel) {
   CanvasGate gate;
   gate.markDisplayed(5, 1, 0);
   EXPECT_EQ(gate.frameOnPanel(), 5u);
-  EXPECT_EQ(gate.frameAt(0), 5u) << "doneMs == 0: no push recorded, whatever the time";
+  EXPECT_EQ(gate.frameAt(0), 5u) << "no push recorded, whatever the time";
   EXPECT_EQ(gate.frameAt(UINT32_MAX), 5u);
 }
 
@@ -142,6 +142,16 @@ TEST(CanvasGateTest, FrameAtComparesAcrossTheClockWrap) {
   gate.markDisplayed(5, 1, 0);
   EXPECT_EQ(gate.frameAt(UINT32_MAX - 5), 4u) << "a touch-down just before the wrap precedes the push";
   EXPECT_EQ(gate.frameAt(11), 5u);
+}
+
+TEST(CanvasGateTest, APushThatCompletedAtClockZeroIsStillRecorded) {
+  CanvasGate gate;
+  gate.markDisplayed(4, 1, 0);
+  clockNow = 0;  // the push completed at the 2^32 ms wrap
+  gate.recordPush(fakeClock);
+  gate.markDisplayed(5, 1, 0);
+  EXPECT_EQ(gate.frameAt(UINT32_MAX - 15), 4u) << "a touch-down 16 ms before the push precedes it";
+  EXPECT_EQ(gate.frameAt(0), 5u);
 }
 
 TEST(CanvasGateTest, RecordPushNamesTheFrameOnThePanelBeforeItAndTheClockTime) {

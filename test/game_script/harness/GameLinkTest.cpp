@@ -74,7 +74,11 @@ TEST_F(GameLinkTest, StartRunsStepsOnATaskOfTheRightStackAndStopJoinsIt) {
   {
     std::lock_guard<std::mutex> lock(fakertos::S().m);
     ASSERT_EQ(fakertos::S().tasks.size(), 1u);
-    EXPECT_EQ(fakertos::S().tasks[0]->stackBytes, GameLink::TASK_STACK_BYTES);
+    const fakertos::Task& task = *fakertos::S().tasks[0];
+    EXPECT_EQ(task.stackBytes, GameLink::TASK_STACK_BYTES);
+    EXPECT_EQ(task.name, "GameLink");
+    EXPECT_EQ(task.priority, static_cast<unsigned>(GameLink::TASK_PRIORITY));
+    EXPECT_EQ(task.core, GameLink::TASK_CORE);
   }
   EXPECT_TRUE(link.stop());
   EXPECT_FALSE(link.running());

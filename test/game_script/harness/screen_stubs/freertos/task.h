@@ -14,15 +14,17 @@ using TaskFunction_t = void (*)(void*);
 enum eNotifyAction { eNoAction = 0, eSetBits, eIncrement, eSetValueWithOverwrite, eSetValueWithoutOverwrite };
 enum eTaskState { eRunning = 0, eReady, eBlocked, eSuspended, eDeleted, eInvalid };
 
-inline BaseType_t xTaskCreatePinnedToCore(TaskFunction_t entry, const char* /*name*/, const uint32_t stackBytes,
-                                          void* param, UBaseType_t /*priority*/, TaskHandle_t* out,
-                                          BaseType_t /*core*/) {
+inline BaseType_t xTaskCreatePinnedToCore(TaskFunction_t entry, const char* name, const uint32_t stackBytes,
+                                          void* param, UBaseType_t priority, TaskHandle_t* out, BaseType_t core) {
   fakertos::State& s = fakertos::S();
   if (s.failNextCreate.exchange(false)) return pdFAIL;  // *out stays as the caller set it
   // Kept in the registry for good: a notify to an ended task must still land on a live object.
   auto owned = std::make_unique<fakertos::Task>();
   fakertos::Task* task = owned.get();
   task->stackBytes = stackBytes;
+  task->name = name != nullptr ? name : "";
+  task->priority = static_cast<unsigned>(priority);
+  task->core = static_cast<int>(core);
   {
     std::lock_guard<std::mutex> lock(s.m);
     s.tasks.push_back(std::move(owned));

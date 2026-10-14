@@ -249,27 +249,13 @@ void GamesLauncherActivity::closeRemoveDialog() {
 
 bool GamesLauncherActivity::handleRemoveInput() {
   // Touch: render() registered the dialog's buttons; onRemoveChoice runs for a tap on one.
-  const auto route = UiAppHost::routeTouch(mappedInput);
-  if (route.routed && app.invalidated()) requestUpdate();
-  if (route) return true;
-  answerRemove(confirm.readButtons(mappedInput));
-  return true;  // the confirmation owns every pass while it is open
+  return confirm.handleInput(*this, mappedInput,
+                             [this](const GameConfirmDialog::Answer answer) { answerRemove(answer); });
 }
 
 void GamesLauncherActivity::answerRemove(const GameConfirmDialog::Answer answer) {
-  switch (answer) {
-    case GameConfirmDialog::Answer::None:
-      break;
-    case GameConfirmDialog::Answer::Repaint:
-      requestUpdate();
-      break;
-    case GameConfirmDialog::Answer::Cancel:
-      closeRemoveDialog();
-      break;
-    case GameConfirmDialog::Answer::Confirm:
-      confirmRemove();
-      break;
-  }
+  GameConfirmDialog::dispatch(
+      answer, [this] { requestUpdate(); }, [this] { closeRemoveDialog(); }, [this] { confirmRemove(); });
 }
 
 void GamesLauncherActivity::onRemoveChoice(const fui::ActionEvent& event, void* user) {

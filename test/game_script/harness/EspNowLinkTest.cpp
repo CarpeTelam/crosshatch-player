@@ -1,6 +1,6 @@
 // EspNowLinkT (src/games/EspNowLink.h) over a fake radio and a fake air: the bring-up order, a failure at each
 // fallible step, PSRAM failure, end(), an unquiesced shutdown, the handle matrix, send refusals, the host label, and
-// the contract every ILink passes (LinkContract.h) over two links.
+// the contract every ILink passes (LinkContract.h) over two links and over three.
 //
 // The doubles stand in for ESP-IDF's ESP-NOW and Wi-Fi on one X4 Pro (FakeRadio) and for the air between two
 // (FakeAir). Device behaviours they model, each pinned by a test below:
@@ -10,9 +10,10 @@
 //   - esp_now_add_peer of an existing peer is ESP_ERR_ESPNOW_EXIST, which the driver treats as success;
 //   - esp_now_deinit drops the peers.
 // More permissive than the device: no Wi-Fi-task thread (FrameRingTest covers the ring's two threads), no airtime or
-// loss, no 250 B v1 limit, no 20-peer limit, esp_now_send fails only when scripted, no inCallback race. What the host
-// cannot show is left to entry 11's device run: the real WiFi and esp_now calls, the restore of the auto-reconnect
-// value, the wake window's effect, PSRAM writes from the Wi-Fi task, and heap after teardown.
+// loss, no 250 B v1 limit, no 20-peer limit, esp_now_send fails only when scripted, no receive-callback race
+// (RxGateTest runs that handshake on two threads). What the host cannot show is left to entry 11's device run: the real
+// WiFi and esp_now calls, the restore of the auto-reconnect value, the wake window's effect, PSRAM writes from the
+// Wi-Fi task, and heap after teardown.
 
 #include <gtest/gtest.h>
 
@@ -784,6 +785,21 @@ TEST_F(EspNowLinkTest, TwoLinksOnOneAirPassTheLinkContract) {
   ASSERT_NE(b, nullptr);
   EXPECT_NE(labelText(a->hostLabel()), labelText(b->hostLabel()));
   GameCore::LinkTest::expectLinkContract(*a, *b, [] {});
+  EXPECT_EQ(fakepsram::overruns, 0u);
+}
+
+TEST_F(EspNowLinkTest, ThreeLinksOnOneAirPassTheThreeLinkContract) {
+  // Three X4 Pros in range: each names the other two with handles of its own, never another link's (deferred-work 6.2,
+  // second item; 6.16, fourth).
+  FakeRadio second{air, macWith(0x5A, 0x5B)};
+  FakeRadio third{air, macWith(0x6C, 0x6D)};
+  auto a = create(radio);
+  auto b = create(second);
+  auto c = create(third);
+  ASSERT_NE(a, nullptr);
+  ASSERT_NE(b, nullptr);
+  ASSERT_NE(c, nullptr);
+  GameCore::LinkTest::expectThreeLinkContract(*a, *b, *c, [] {});
   EXPECT_EQ(fakepsram::overruns, 0u);
 }
 

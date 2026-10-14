@@ -15,6 +15,7 @@
 #include "GameLobbyActivity.h"
 #include "GameMatchActivity.h"
 #include "GameOptionsActivity.h"
+#include "GamePanelStyle.h"
 #include "GameSplashLayout.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -542,27 +543,13 @@ void GameModeActivity::closeConfirm() {
 
 bool GameModeActivity::handleConfirmInput() {
   // Touch: render() registered the dialog's buttons; onConfirmChoice runs for a tap on one.
-  const auto route = UiAppHost::routeTouch(mappedInput);
-  if (route.routed && app.invalidated()) requestUpdate();
-  if (route) return true;
-  answerConfirm(confirm.readButtons(mappedInput));
-  return true;  // the confirmation owns every pass while it is open
+  return confirm.handleInput(*this, mappedInput,
+                             [this](const GameConfirmDialog::Answer answer) { answerConfirm(answer); });
 }
 
 void GameModeActivity::answerConfirm(const GameConfirmDialog::Answer answer) {
-  switch (answer) {
-    case GameConfirmDialog::Answer::None:
-      break;
-    case GameConfirmDialog::Answer::Repaint:
-      requestUpdate();
-      break;
-    case GameConfirmDialog::Answer::Cancel:
-      closeConfirm();
-      break;
-    case GameConfirmDialog::Answer::Confirm:
-      confirmNew();
-      break;
-  }
+  GameConfirmDialog::dispatch(
+      answer, [this] { requestUpdate(); }, [this] { closeConfirm(); }, [this] { confirmNew(); });
 }
 
 void GameModeActivity::onConfirmChoice(const fui::ActionEvent& event, void* user) {
@@ -636,16 +623,7 @@ void GameModeActivity::buildRefusalDialog(UiScreen& screen) {
   refusalProps.messageText.maxLines = 3;
   refusalProps.buttonText = screen.theme().smallText;
   refusalProps.inputMask = fui::InputTouch;  // physical buttons stay in handleRefusalInput()
-  // A framed panel, as GameConfirmDialog and OptionPopup draw it.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  refusalProps.styles = fui::defaultPopupStyles();
-  refusalProps.styles.normal.border = fui::Paint::solid(fui::Color::Black);
-  refusalProps.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  refusalProps.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  refusalProps.styles.selected = refusalProps.styles.normal;
-  refusalProps.styles.focused = refusalProps.styles.normal;
-  refusalProps.styles.active = refusalProps.styles.normal;
-  refusalProps.styles.disabled = refusalProps.styles.normal;
+  setGamePanelStyle(refusalProps.styles);
 
   const fui::Rect body = screen.body();
   int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);

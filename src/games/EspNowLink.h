@@ -391,6 +391,6 @@ class EspNowLinkT final : public GameCore::ILink {
 using EspNowLink = EspNowLinkT<EspIdfDriver>;
 extern template class EspNowLinkT<EspIdfDriver>;
 
-// The device's link, or null when PSRAM or any bring-up step fails (EspNowLink.cpp). Nothing calls it yet: the lobby
-// and the GameLink task are later entries.
+// The device's link, or null when PSRAM or any bring-up step fails (EspNowLink.cpp). NearbyRadio::open()
+// (GameLobbyActivity.cpp) calls it when the lobby hosts or looks for games.
 std::unique_ptr<EspNowLink> makeEspNowLink();
