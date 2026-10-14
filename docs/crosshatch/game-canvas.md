@@ -157,8 +157,12 @@ which keeps the first reason until the match's `loop()` reads it once. The move 
 before its state switch, only in a state that can move to it) and the adoption of queued `STATE`s wait for `loop()` and
 the VM, that is until the overlay closes, while the link and the detection do not. The end is read by the loop, and a
 round end the VM has already counted is entered first (Playing only: `loopPlaying` enters Over, delivering the over
-event and flushing the store, and the next pass reads the end). A `STATE` still queued when the match becomes `PeerGone`
-is not adopted, so a peer that wins and leaves at once can show the other device "player left" instead of its last board.
+event and flushing the store, and the next pass reads the end). Before that, in Playing, a latched end waits behind a
+`STATE` of the peer the VM has not adopted (one still queued, or one the VM has taken and not yet drawn and counted):
+the loop wakes the VM, which adopts it and counts the round end, so a peer that wins and leaves at once still takes the
+other device to Over before "player left". The hold is bounded: `PEER_END_HOLD_MS` (1,000 ms of `millis()`) after the
+first pass that held it, the end is honoured all the same, with one log line naming the wait, so a stuck VM cannot hold
+it (cross-story review row 2). Paused and every other state read the end as before.
 `GameCore` builds the policy (entry 7); the `GameLink` task and the PSRAM storage are entry 8's.
 
 ### Leaving
@@ -167,21 +171,24 @@ A user exit runs from `loop()`. A nearby match says goodbye first, before it tak
 and the render task must not be held for it): `NearbySession::leave(Left, 800)` waits until nothing the link task has
 staged or sent is unacked, or 800 ms have passed (the loop task wakes nobody meanwhile, so a shipment the VM has not yet
 staged is not waited for), then puts three `ABORT(left)` on the link; with a peer that cannot be reached the wait ends
-at 800 ms and the three go all the same, and the peer learns by silence. Back from the error view and from the
-player-left view send the same three `ABORT(left)` without the wait (the peer is gone or told already, and its slot is
-first-wins). It then takes `RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it,
-writing the last pending snapshot as `resume.bin` between the two unless the round is over. In a hidden pass match whose
-panel holds a seat's frame (a pause menu over it), it then pushes the blank, a plain white screen
-(`FrameReplay::drawBlank`), with a half refresh (logged "leave: blank screen pushed"). In a nearby match the session
-is released inside the lock before that (the radio goes down, unless an abandoned VM keeps it: the destructor releases
-that one unfreed), so Games is built with the heap back. It releases the lock, flushes a dirty `ch.store`, and calls
-`goToGames()`. The blank goes up before Games is asked for: if `goToGames()` runs out of memory, the match stays
-current in Leaving with no VM, and the seat's frame must not stay on the panel. A Leave from the
-end-of-round menu (over seat 0's frame, which is everyone's) or from the hand-off screen's pause menu (on no frame)
-pushes nothing. When an abandon leaves the task alive (the simulator always does, since it cannot stop a thread), the
-slot is still flushed, then leaked with the task when the match is destroyed: the slot's mutex is held only for a copy
-inside a locked binding, which an abandon never deletes or leaves suspended, so the flush waits at most one copy and
-saves every set made before the leak.
+at 800 ms and the three go all the same, and the peer learns by silence. Back from the error view sends the same three
+`ABORT(left)` without the wait (the peer is told already, and its slot is first-wins). Back from the player-left view
+also leaves without the wait, and sends no `ABORT` to a seat whose own `ABORT` was heard (it has ended its session),
+only to one that went silent (the sweep's F8): after the peer left, the leave logs `copies=0`. It then takes
+`RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it, writing the last pending snapshot as
+`resume.bin` between the two unless the round is over. In a hidden pass match whose panel holds a seat's frame (a pause
+menu over it), it then pushes the blank, a plain white screen (`FrameReplay::drawBlank`), with a half refresh (logged
+"leave: blank screen pushed"). In a nearby match the session is released inside the lock before that (the radio goes
+down, unless an abandoned VM keeps it: the destructor releases that one unfreed, after it has stopped the session's
+`GameLink` task and ended its link, which the leaked VM never calls, so the radio is off after the match all the same:
+`NearbySession::shutDownLink`, cross-story review row 4), so Games is built with the heap back. It releases the lock,
+flushes a dirty `ch.store`, and calls `goToGames()`. The blank goes up before Games is asked for: if `goToGames()` runs
+out of memory, the match stays current in Leaving with no VM, and the seat's frame must not stay on the panel. A Leave
+from the end-of-round menu (over seat 0's frame, which is everyone's) or from the hand-off screen's pause menu (on no
+frame) pushes nothing. When an abandon leaves the task alive (the simulator always does, since it cannot stop a thread),
+the slot is still flushed, then leaked with the task when the match is destroyed: the slot's mutex is held only for a
+copy inside a locked binding, which an abandon never deletes or leaves suspended, so the flush waits at most one copy
+and saves every set made before the leak.
 
 ### The forced exit
 

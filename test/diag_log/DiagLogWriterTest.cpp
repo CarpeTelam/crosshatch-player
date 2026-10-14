@@ -680,7 +680,10 @@ TEST(DiagLogFlush, EverySleepPathInMainFlushesJustBeforeItUnmountsTheCard) {
 
 // The [MEM] heap lines' condition in loop() is pinned the same way (row 14, entry 21): with the define on, the `if`
 // tests only the period, so a run with no USB host still puts the lines on the card; with it off, upstream's comment
-// and condition compile unchanged; and both branches test the same period, taken from upstream's line.
+// and condition compile unchanged; and both branches test the same period, taken from upstream's line. Inside the
+// define-on `if` comes the battery line (cross-story review row 8): the two reads and the line under a RenderLock that
+// is only tried (the themes read the same gauge, and the loop must not wait out a push; no line when the try fails),
+// from a function-local BatteryMonitor (no allocation).
 TEST(DiagLogMain, TheHeapLinesNeedNoUsbHostOnlyWhenTheDefineIsOn) {
   const std::string main = readFile(std::string(REPO_ROOT_DIR) + "/src/main.cpp");
   ASSERT_FALSE(main.empty());
@@ -695,16 +698,39 @@ TEST(DiagLogMain, TheHeapLinesNeedNoUsbHostOnlyWhenTheDefineIsOn) {
                                       "branch to match";
   EXPECT_EQ(main.find(upstream, at + 1), std::string::npos);
 
-  // Between `#if CROSSHATCH_SD_LOG` and `#else`: one comment line and an `if` on the period alone.
+  // Between `#if CROSSHATCH_SD_LOG` and `#else`: comment lines, an `if` on the period alone, and the battery line.
   const std::string guard = "#if CROSSHATCH_SD_LOG\n";
   const size_t from = main.rfind(guard, at);
   ASSERT_NE(from, std::string::npos);
   const std::string onBranch = main.substr(from + guard.size(), at - from - guard.size());
-  const size_t commentEnd = onBranch.find('\n');
-  ASSERT_NE(commentEnd, std::string::npos);
-  EXPECT_EQ(onBranch.rfind("  // ", 0), 0u) << "the define-on branch starts with one comment line:\n" << onBranch;
-  EXPECT_EQ(onBranch.substr(commentEnd + 1), "  if (" + period)
-      << "the define-on `if` tests upstream's period alone, with no host test:\n"
+  const std::string ifLine = "  if (" + period;
+  const size_t ifAt = onBranch.find(ifLine);
+  ASSERT_NE(ifAt, std::string::npos) << "the define-on `if` tests upstream's period alone, with no host test:\n"
+                                     << onBranch;
+  const std::string comment = onBranch.substr(0, ifAt);
+  ASSERT_FALSE(comment.empty()) << "the define-on branch starts with its comment:\n" << onBranch;
+  for (size_t line = 0; line < comment.size();) {
+    EXPECT_EQ(comment.compare(line, 5, "  // "), 0) << "only comment lines before the `if`:\n" << onBranch;
+    const size_t end = comment.find('\n', line);
+    if (end == std::string::npos) {
+      ADD_FAILURE() << "the `if` does not start a line:\n" << onBranch;
+      break;
+    }
+    line = end + 1;
+  }
+  const std::string battery =
+      "    {\n"
+      "      static const BatteryMonitor battery;\n"
+      "      RenderLock lock(RenderLock::Mode::Try);\n"
+      "      if (lock.ownsLock()) {\n"
+      "        const uint16_t batteryMv = battery.readMillivolts();\n"
+      "        const uint16_t batteryPercent = powerManager.getBatteryPercentage();\n"
+      "        LOG_INF(\"MEM\", \"Battery: %u mV, %u%%\", static_cast<unsigned>(batteryMv), "
+      "static_cast<unsigned>(batteryPercent));\n"
+      "      }\n"
+      "    }\n";
+  EXPECT_EQ(onBranch.substr(ifAt + ifLine.size()), battery)
+      << "after the `if`, the battery read under a tried RenderLock and its one line, and nothing else:\n"
       << onBranch;
 }
 

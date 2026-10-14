@@ -52,6 +52,7 @@ struct NearbySessionOptions {
 // reading it (the device's is NearbyRadio::clock()'s static). The IRandom of a host is read only in HostLobby's
 // constructor (the session id), so it need not outlive openHost. The destructor stops and joins the task, then ends the
 // link and frees the pool; a task that will not stop leaks its state rather than freeing what it touches (logged).
+// shutDownLink() does the first two without the third, for a session that is leaked with an abandoned VM.
 // Call it on a task that may wait up to Options::joinMs. It sends no goodbye: in the lobby phase that is the lobby's
 // cancel() (call it first when players are seated), in a match it is leave().
 class NearbySession {
@@ -165,6 +166,14 @@ class NearbySession {
   LeaveResult leave(GameCore::Protocol::AbortReason reason, uint32_t flushMs);
   // Any task.
   Counters counters() const;
+  // Owner's task, for a match whose VM task was abandoned and leaks this session with it (R7, cross-story review row
+  // 4): stops the GameLink task (waits up to Options::joinMs) and, once it stopped, ends the link, so the radio is off
+  // after the match; it frees nothing. What a leaked VM still calls never reaches the link: ship() touches the lock,
+  // the outbound slot and the pool's outbound buffer; adoptNext() (takeState, releaseState) the lock, the queue and the
+  // pool, and logs with session() (sessionNow); takeEnd() and endLatched() the end slot. The only sender, the task's
+  // shipStep, is stopped. True when the link is down (also on a second call, which ends it no second time); false,
+  // logged as the destructor logs it, when the task did not stop, and the link is left up.
+  bool shutDownLink();
 
  private:
   struct Core;

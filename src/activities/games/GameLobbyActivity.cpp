@@ -188,6 +188,13 @@ void GameLobbyActivity::drawFooter() {
 
 // ---- drawing ----
 
+void GameLobbyActivity::render(RenderLock&& lock) {
+  const uint32_t drawing = rowSerial;  // under the lock the caller holds: the rows this push draws
+  UiListActivity::render(std::move(lock));
+  // After the push: a tap routed while the panel still showed the rows before is dropped (activateIndex).
+  builtSerial.store(drawing);
+}
+
 void GameLobbyActivity::buildScreen(UiScreen& ui) {
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   // Content: the safe area minus the header band GUI.drawHeader paints, as on a plain list screen.
@@ -196,7 +203,6 @@ void GameLobbyActivity::buildScreen(UiScreen& ui) {
                                             static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)),
                                             static_cast<int16_t>(safe.x)});
   ui.spacer(static_cast<int16_t>(UITheme::getInstance().getMetrics().verticalSpacing));
-  builtSerial.store(rowSerial);  // the rows this table is built from
   drawStatus(ui);
   fui::ListProps props;
   props.items = rowItems;

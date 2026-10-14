@@ -70,14 +70,15 @@
 // it shows "Waiting for the host" and takes no tap, its end-of-round menu offers only Leave under the same line, and it
 // leaves Over by itself when the host's next round has started. Only the VM task adopts a peer's STATE or ships its own
 // (GameVM); the loop only wakes it (GameVM::pollNearby), so an overlay, which stops the loop, delays adoption and not
-// the link's acks. preventAutoSleep() is set for the whole match.
+// the link's acks. preventAutoSleep() is set while the match is live, and cleared in the player-left and error views.
 //
 // A nearby match ends one of two ways. This device's own: Leave (flush 800 ms, three ABORT(left)), the forced exit
 // (three ABORT(left) at once, before the VM stops), or a script error (three ABORT(script_error) at once, then the
 // error view), each through NearbySession::leave; a user Leave then stops the VM and ends the link before asking for
 // Games. The peer's: loop() takes the latched end (NearbySession::takeEnd) once, behind any open overlay, and the match
-// enters PeerGone, whose view has one reason line and Back (which leaves as Leave does). Error keeps its view when the
-// peer then leaves.
+// enters PeerGone, whose view has one reason line and Back (which leaves as Leave does). In Playing the end first
+// waits, up to PEER_END_HOLD_MS, behind a STATE of the peer the VM has not adopted, so a round the peer won reaches
+// Over first. Error keeps its view when the peer then leaves.
 //
 // The match follows AD-21's solo states, or the hidden pass ones (GameCore::MatchLifecycle), changed only by
 // handle(). The VM exists from Playing (or a hidden match's first HandOff) until Leaving, or until a stuck VM is
@@ -117,8 +118,13 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   void render(RenderLock&&) override;
   // True while a callback runs, so the CPU stays at full clock for the budget (AD-5).
   bool skipLoopDelay() override { return vm && vm->busy(); }
-  // The radio is up for the whole of a nearby match (spine AD-18): the device must not sleep under it.
-  bool preventAutoSleep() override { return nearby != nullptr; }
+  // The radio is up for the whole of a nearby match (spine AD-18): the device must not sleep under it while the match
+  // is live. The player-left and error views are its end (cross-story review row 3): they may sleep, and the forced
+  // exit that follows tears the session down (onExit, AD-20).
+  bool preventAutoSleep() override {
+    const MatchState state = lifecycle.state();
+    return nearby != nullptr && state != MatchState::PeerGone && state != MatchState::Error;
+  }
   // Home never leaves a match directly (AD-21): it pauses a round in play and is
   // ignored otherwise, until the match is Leaving.
   bool handleHomeGesture() override;
@@ -139,6 +145,10 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // A nearby Leave waits this long for the peer to ack what it has sent before it says goodbye (AD-20, R6); the forced
   // exit and a script error say it at once.
   static constexpr uint32_t LEAVE_FLUSH_MS = 800;
+  // In Playing, the longest a peer's latched end waits behind a STATE of the peer the VM has not adopted, counted in
+  // millis() from the first pass that held it (cross-story review row 2): long enough for a draw, short enough that a
+  // stuck VM cannot hold the end.
+  static constexpr uint32_t PEER_END_HOLD_MS = 1000;
 
   // Takes the transition `event` names and does what entering the new state
   // requires: Over flushes ch.store, PeerGone logs why, a user's Leaving stops the VM, flushes, and
@@ -148,6 +158,9 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // screen or host-started round, which have no first frame of their own to ask for) rather than leaving it to the
   // frame test.
   bool needsRenderAskOnEnteringPlay(MatchEvent event) const;
+  // loop(), Playing: true while the session's end is latched behind a STATE of the peer the VM has not adopted (queued,
+  // or taken and still adopting), up to PEER_END_HOLD_MS; it wakes the VM meanwhile. Logs once when the bound ends it.
+  bool holdEndForQueuedState();
   // Shows the error view (a ScriptError, AD-14) with a translated headline and a
   // detail: Lua's message or a translated reason. The first error view stays.
   void fail(StrId headline, const char* detail);
@@ -247,7 +260,7 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   MatchStore store;
   // A nearby match's session (AD-20): declared before vm, so it is destroyed after the VM task is gone (the task calls
   // adoptNext and ship). The destructor releases it unfreed beside the store when an abandoned VM task may still call
-  // it.
+  // it, after stopping its GameLink task and ending its link (NearbySession::shutDownLink), which the VM never calls.
   std::unique_ptr<NearbySession> nearby;
   std::unique_ptr<GameVM> vm;
   // An abandon left the VM task alive: the slot is still flushed on Leave and in
@@ -331,4 +344,8 @@ class GameMatchActivity final : public Activity, private UiAppHost {
   // Why a nearby match ended, written once by loop() before the match enters PeerGone and read by the render task after
   // it saw `shown` == PeerGone (as errorDetail is).
   GameCore::Protocol::AbortReason endReason = GameCore::Protocol::AbortReason::Left;
+  // Loop task: holdEndForQueuedState's hold (Idle: none; Holding: since endHoldSinceMs; Spent: the bound ran out).
+  enum class EndHold : uint8_t { Idle, Holding, Spent };
+  EndHold endHold = EndHold::Idle;
+  uint32_t endHoldSinceMs = 0;
 };

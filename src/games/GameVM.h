@@ -126,6 +126,10 @@ class GameVM {
   // FreeRTOS shim ignores a timeout, so the loop is what wakes it; while an overlay stops the loop, adoption waits (R5)
   // and the link keeps acking.
   void pollNearby();
+  // Loop task, a nearby match: true from before the VM takes a queued STATE until that adoption is drawn and its round
+  // end counted (roundsEnded), so a STATE that has left the session's queue is still seen as not adopted. Read after
+  // the session's queueSize: a false read then sees the count the adoption made.
+  bool adopting() const { return adoptingState.load(std::memory_order_acquire); }
   // Rounds that have ended so far: the VM counts one when the status turns over,
   // after the Session has delivered `over` and the round's last frame is
   // published. The match enters Over when the count moves (AD-21). Any task.
@@ -309,6 +313,8 @@ class GameVM {
   // VM task to loop task: the Session holds a shipment the link has not taken (pollNearby wakes the VM to offer it
   // again).
   std::atomic<bool> shipOutstanding{false};
+  // VM task to loop task: nearbyStep is taking or adopting a STATE (adopting()).
+  std::atomic<bool> adoptingState{false};
   // VM task, a hidden pass match only: the Session run() plays; the state whose seat the VM
   // draws (HandOff: none, Playing: the turn seat, Result: the mover); the seat that last
   // passed the turn; a timer event held until the next seat is shown; and the request being
@@ -321,7 +327,8 @@ class GameVM {
   uint32_t seatTaken = 0;
   bool seatPending = false;
   // VM task, any match: the seat whose frame was published last (NO_SEAT before the first), and
-  // the frameGen() of that seat's first frame since another seat's (noteSeatDrawn).
+  // the frameGen() of that seat's first frame since another seat's (noteSeatDrawn); in a nearby match also of the
+  // last frame an adopt drew (nearbyStep).
   uint8_t drawnSeat = GameCore::NO_SEAT;
   uint32_t seatFrame = 0;
   // Loop task to VM task: showTurnSeat()'s requests. VM task to any: the request served,

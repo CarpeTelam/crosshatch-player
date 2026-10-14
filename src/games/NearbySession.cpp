@@ -73,6 +73,7 @@ struct NearbySession::Core final : public GameLinkWork {
   bool shipRefusedLogged = false;
   std::atomic<bool> begun{false};
   std::atomic<uint32_t> sessionNow{0};  // the lobby's session id as of the last step: readable without the lock
+  bool linkDown = false;                // owner's task, without the lock: shutDownLink() ended the link
   GameLink task{*this};
 };
 
@@ -172,14 +173,20 @@ NearbySession::NearbySession(std::unique_ptr<Core> corePtr) : core(std::move(cor
 
 NearbySession::~NearbySession() {
   if (!core) return;
+  // The task still runs and may hold the lock or the link: freeing either under it is worse than a leak. The link is
+  // not ended either, for the same reason (shutDownLink logged it).
+  if (!shutDownLink()) (void)core.release();
+}
+
+bool NearbySession::shutDownLink() {
+  if (core->linkDown) return true;
   if (!core->task.stop(joinMs)) {
-    // The task still runs and may hold the lock or the link: freeing either under it is worse than a leak. The link is
-    // not ended either, for the same reason.
     GameLinkLog::taskLeaked(core->sessionNow.load(std::memory_order_acquire));
-    (void)core.release();
-    return;
+    return false;
   }
+  core->linkDown = true;
   core->link->end();
+  return true;
 }
 
 std::unique_ptr<NearbySession> NearbySession::finish(std::unique_ptr<Core> core, const Options& options) {

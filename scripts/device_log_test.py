@@ -63,6 +63,7 @@ FORMATS = {
     'mem': ('src/main.cpp', 'Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes'),
     'psram': ('src/main.cpp', 'PSRAM: Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes'),
     'web_mem': ('src/network/CrossPointWebServer.cpp', '[MEM] Free heap before begin: %d bytes'),
+    'battery': ('src/main.cpp', 'Battery: %u mV, %u%%'),
     # A nearby match (epic-play-nearby): GameLinkLog.h's one function per LINK line, the radio's, and the match's.
     'link_state_sent': ('src/games/GameLinkLog.h', 'session=%08x state sent ver=%u'),
     'link_state_recv': ('src/games/GameLinkLog.h', 'session=%08x state recv ver=%u seat=%u'),
@@ -785,6 +786,71 @@ class SummaryTest(unittest.TestCase):
         self.assertIn('[MEM] heap: 1 lines', a)
         self.assertIn('Min Free 188880 B', a)
         self.assertIn('[MEM] heap: none', b)
+
+    def test_a_raw_card_log_over_two_boots_gives_the_first_and_last_battery_reading_of_each(self):
+        boot3 = (device_line(10000, 'INF', 'MEM', 'battery', 4100, 90) + '\n'
+                 + device_line(10001, 'INF', 'MEM', 'mem', 1, 2, 3, 4) + '\n'
+                 + device_line(20000, 'INF', 'MEM', 'battery', 4080, 89) + '\n'
+                 + device_line(30000, 'INF', 'MEM', 'battery', 4060, 88) + '\n')
+        boot4 = (device_line(10000, 'INF', 'MEM', 'battery', 3990, 85) + '\n'
+                 + device_line(40000, 'INF', 'MEM', 'battery', 0, 84) + '\n')
+        path = self.root / '3F2A.raw.log'
+        path.write_text(card_text('3F2A', 3, 0, boot3) + card_text('3F2A', 4, 0, boot4))
+        a = section(self.summary(path), '3F2A')
+        self.assertIn('  battery: 5 lines\n'
+                      '    first: 4100 mV, 90% at [10000]\n'
+                      '    last: 0 mV, 84% at [40000]\n'
+                      '    boot 3: 3 lines, first 4100 mV, 90% at [10000], last 4060 mV, 88% at [30000]\n'
+                      '    boot 4: 2 lines, first 3990 mV, 85% at [10000], last 0 mV, 84% at [40000]\n', a)
+        # A battery line is a [MEM] line of its own, not an other one; the heap line beside it is still read.
+        self.assertIn('[MEM] other: 0 lines', a)
+        self.assertIn('[MEM] heap: 1 lines', a)
+
+    def test_a_merged_log_of_two_devices_gives_each_its_battery_readings_per_device_and_per_boot(self):
+        merged = self.root / 'merged.log'
+
+        def card_event(name, boot):
+            return (f'{name} [device_log] card file b{boot:04d}-s00-{name}.log: boot {boot}, segment 0, '
+                    'firmware abc1234, board x4pro')
+
+        lines = [
+            f'1970-01-01T00:00:00.000Z {card_event("A", 7)}',
+            f'1970-01-01T00:00:00.000Z {card_event("B", 2)}',
+            f'1970-01-01T00:00:10.000Z A {device_line(10000, "INF", "MEM", "battery", 4100, 90)}',
+            f'1970-01-01T00:00:11.000Z B {device_line(5000, "INF", "MEM", "battery", 3900, 70)}',
+            f'1970-01-01T00:00:20.000Z A {device_line(20000, "INF", "MEM", "battery", 4090, 90)}',
+            f'1970-01-01T00:00:21.000Z B {device_line(15000, "INF", "MEM", "battery", 3880, 69)}',
+            f'1970-01-01T00:01:00.000Z {card_event("A", 8)}',
+            f'1970-01-01T00:01:05.000Z A {device_line(5000, "INF", "MEM", "battery", 4000, 86)}',
+        ]
+        merged.write_text('\n'.join(lines) + '\n')
+        text = self.summary(merged)
+        a, b = section(text, 'A'), section(text, 'B')
+        self.assertIn('  battery: 3 lines\n'
+                      '    first: 4100 mV, 90% at 1970-01-01T00:00:10.000Z\n'
+                      '    last: 4000 mV, 86% at 1970-01-01T00:01:05.000Z\n'
+                      '    boot 7: 2 lines, first 4100 mV, 90% at 1970-01-01T00:00:10.000Z, '
+                      'last 4090 mV, 90% at 1970-01-01T00:00:20.000Z\n'
+                      '    boot 8: 1 lines, first 4000 mV, 86% at 1970-01-01T00:01:05.000Z, '
+                      'last 4000 mV, 86% at 1970-01-01T00:01:05.000Z\n', a)
+        self.assertIn('  battery: 2 lines\n'
+                      '    first: 3900 mV, 70% at 1970-01-01T00:00:11.000Z\n'
+                      '    last: 3880 mV, 69% at 1970-01-01T00:00:21.000Z\n'
+                      '    boot 2: 2 lines, first 3900 mV, 70% at 1970-01-01T00:00:11.000Z, '
+                      'last 3880 mV, 69% at 1970-01-01T00:00:21.000Z\n', b)
+        self.assertIn('[MEM] other: 0 lines', a)
+        self.assertIn('[MEM] other: 0 lines', b)
+
+    def test_a_serial_log_names_no_boot_and_a_log_with_no_battery_line_says_none(self):
+        path = self.root / 'A.raw.log'
+        path.write_text(device_line(10, 'INF', 'MEM', 'battery', 4012, 87) + '\n')
+        self.assertIn('    boot -: 1 lines, first 4012 mV, 87% at [10], last 4012 mV, 87% at [10]\n',
+                      section(self.summary(path), 'A'))
+        none = self.root / 'B.raw.log'
+        none.write_text(sample_raw_log())
+        b = section(self.summary(none), 'B')
+        self.assertIn('  battery: none\n', b)
+        self.assertNotIn('boot ', b)
 
     def test_two_raw_logs_are_two_devices_in_first_seen_order(self):
         (self.root / 'B.raw.log').write_text(device_line(5, 'INF', 'GAME', 'stopped', 5, 6, 7) + '\n')
@@ -1573,6 +1639,7 @@ class FirmwareFormatsTest(unittest.TestCase):
         main_cpp = (ROOT / 'src/main.cpp').read_text()
         self.assertIn('LOG_INF("MEM", "Free: %zu bytes', main_cpp)
         self.assertIn('LOG_INF("MEM", "PSRAM: Free: %zu bytes', main_cpp)
+        self.assertIn('LOG_INF("MEM", "Battery: %u mV, %u%%"', main_cpp)
         self.assertIn('LOG_INF("GAME", "VM stopped;', (ROOT / 'src/games/GameVM.cpp').read_text())
         match_cpp = (ROOT / 'src/activities/games/GameMatchActivity.cpp').read_text()
         for kind in ('lifecycle', 'drop_hand_off', 'drop_display', 'hand_off'):
@@ -1598,6 +1665,7 @@ class FirmwareFormatsTest(unittest.TestCase):
             (device_log.HAND_OFF_PUSHED, device_line(1, 'INF', 'GAME', 'hand_off', 'g-1', 5)),
             (device_log.MEM_LINE, device_line(1, 'INF', 'MEM', 'mem', 1, 2, 3, 4)),
             (device_log.MEM_LINE, device_line(1, 'INF', 'MEM', 'psram', 1, 2, 3, 4)),
+            (device_log.BATTERY_LINE, device_line(1, 'INF', 'MEM', 'battery', 4012, 87)),
             (device_log.MILLIS_PREFIX, device_line(1, 'INF', 'MEM', 'mem', 1, 2, 3, 4)),
             (device_log.PEER_GONE_REASON, device_line(1, 'INF', 'GAME', 'peer_gone_reason', 'g-1', 'left')),
             (device_log.LINK_LINE, device_line(1, 'INF', 'LINK', 'udp_up', 23872)),

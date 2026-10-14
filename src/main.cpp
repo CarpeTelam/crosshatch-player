@@ -723,8 +723,20 @@ void loop() {
   renderer.setFadingFix(SETTINGS.fadingFix);
 
 #if CROSSHATCH_SD_LOG
-  // With the diagnostics log on, the heap lines go to its card file, so they need no USB host (ledger row 14).
+  // With the diagnostics log on, the heap lines go to its card file, so they need no USB host (ledger row 14). A
+  // battery line goes first: the cell's millivolts (0 when the read fails) and the status bar's percent, read under
+  // the render lock, since the themes read the same gauge and HalPowerManager's cache is unsynchronized. The lock is
+  // only tried, so the loop never waits out an e-ink push: a period whose try fails logs no battery line.
   if (millis() - lastMemPrint >= 10000) {
+    {
+      static const BatteryMonitor battery;
+      RenderLock lock(RenderLock::Mode::Try);
+      if (lock.ownsLock()) {
+        const uint16_t batteryMv = battery.readMillivolts();
+        const uint16_t batteryPercent = powerManager.getBatteryPercentage();
+        LOG_INF("MEM", "Battery: %u mV, %u%%", static_cast<unsigned>(batteryMv), static_cast<unsigned>(batteryPercent));
+      }
+    }
 #else
   // The ROM console does not depend on Arduino USB CDC's connection state.
   if ((Serial || FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF) && millis() - lastMemPrint >= 10000) {
