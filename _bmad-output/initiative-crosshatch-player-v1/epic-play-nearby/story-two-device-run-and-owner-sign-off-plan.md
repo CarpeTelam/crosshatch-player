@@ -272,7 +272,7 @@ Each field is filled after the run, by the owner or by the orchestrator, from `m
 | AI-7: Sudoku sleep and Continue, Back before the first frame then Resume, the right-edge taps (`off the canvas` count) | |
 | B5a, B5b, B5c: each try's result (`## e5-close`) | |
 | `## e8-touch-log`: the define-on build ran, and the per-tap `touch` lines are on the card | |
-| Label test (`## e6pre-5`): three run URLs with times and conclusions; the pack not cancelled by an overlapping unrelated label, the pack cancelled by an overlapping push | |
+| Label test (`## e6pre-5`): three run URLs with times and conclusions; the pack not cancelled by an overlapping unrelated label, the pack cancelled by an overlapping push | Step 1 (the owner, 2026-10-14): `package-games` added; pack run [38557985710](https://github.com/CarpeTelam/crosshatch-player/actions/runs/38557985710) at `6b28ecb`, 11:38:23 to 11:38:39 UTC, `success` (16 s, too short to overlap by hand). Step 3 (the orchestrator, by the owner's leave): `package-games` re-added through the API and this commit pushed seconds later; runs below. Step 2 (the owner): to come. |
 | USB capture (only if Q2 is yes): no reset on connect; lost and connected lines across a sleep | |
 | The 400 ms, 10 s and 100 KB values: confirmed or changed, and where recorded | |
 | Owner answers: Q1 to Q5, and the Q6 deferrals | |
