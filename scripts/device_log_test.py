@@ -1091,6 +1091,20 @@ class MergeTest(unittest.TestCase):
         self.assertIn('diagnostics log: 12 lines dropped (buffer full), 512 bytes lost (card write failed)', a_section)
         self.assertNotIn('connected', a_section)
 
+    def test_merge_reads_the_card_file_the_writer_wrote(self):
+        # test/diag_log/sample/ holds a file lib/DiagLog's Writer wrote (DiagLogWriterTest's
+        # TheSampleCardFileTheMergeTestReadsIsWhatTheWriterWrites pins its bytes), not one laid out by card_text.
+        sample = ROOT / 'test' / 'diag_log' / 'sample' / 'b0001-s00-3F2A.log'
+        body = [line for line in sample.read_text().splitlines() if not line.startswith('#')]
+        text = self.merge(sample)
+        self.assertTrue(text.startswith('3F2A boot 1: clock: reference'), text)
+        a_section = section(text, '3F2A')
+        self.assertIn('card: 1 file(s), boots 1, firmware abc1234, board x4pro', a_section)
+        self.assertIn('STATE sent 2 (last ver 2), received 1 (last ver 3)', a_section)
+        own = [m.group(3) for m in map(device_log.MERGED_PREFIX.fullmatch, self.merged_lines())
+               if m.group(2) == '3F2A' and not m.group(3).startswith('[device_log]')]
+        self.assertEqual(own, body)
+
     def test_devices_on_different_firmware_get_a_warning_at_the_top(self):
         a = self.card('cardA', {'b0001-s00-3F2A.log': card_text('3F2A', 1, 0, RECORDED_HOST, firmware='1111111')})
         b = self.card('cardB', {'b0001-s00-91C4.log': card_text('91C4', 1, 0, RECORDED_GUEST, firmware='2222222')})
@@ -1270,9 +1284,73 @@ class MergeTest(unittest.TestCase):
         for boot in (1, 2, 3):
             self.assertEqual(stamps[('A', boot)][-1][1], stamps[('A', boot + 1)][0][1], boot)
         self.assertEqual(stamps[('B', 2)][0][1] - stamps[('A', 4)][0][1], -3000)
-        self.assertIn('A boot 4: clock: not aligned by STATEs; placed after boot 3 of the same device\n', text)
+        # A's boot 4 has STATE pairs, with B's boot 2: its note says so, and that the reference does not reach them.
+        self.assertIn('A boot 4: clock: aligned by STATEs with B boot 2, not linked to the reference; placed after boot 3 '
+                      'of the same device\n', text)
         self.assertIn('B boot 2: clock: offset -3000 ms from A boot 4', text)
         self.assertNotIn('overlaps', text)
+
+    def merge_boots(self, bodies):
+        """Merges one card file per (device, boot) in bodies; the merge's printed text."""
+        cards = {}
+        for (name, boot), body in bodies.items():
+            cards.setdefault(name, {})[f'b{boot:04d}-s00-{name}.log'] = card_text(name, boot, 0, body)
+        return self.merge(*(f'{name}={self.card("card" + name, files)}' for name, files in cards.items()))
+
+    def test_a_first_boot_not_reached_from_the_reference_names_the_boots_it_shares_states_with(self):
+        # B's and C's first boots exchanged STATEs, A's none: B's boot 1 roots a group the reference does not reach, and
+        # it has no earlier boot to follow.
+        b_link, c_link = exchange('0e0e0001', 0, 2000, 2000, [3, 3])
+        bodies = {('A', 1): boot_body('a1', 9000, 1000), ('B', 1): boot_body('b1', 9000, 1000, b_link),
+                  ('C', 1): boot_body('c1', 9000, 1000, c_link)}
+        text = self.merge_boots(bodies)
+        self.assertIn('B boot 1: clock: aligned by STATEs with C boot 1, not linked to the reference; its boot is taken '
+                      'to start with the first\n', text)
+        self.assertIn('C boot 1: clock: offset -2000 ms from B boot 1', text)
+        self.assertEqual(self.stamps('B', bodies[('B', 1)])[0][1], self.stamps('A', bodies[('A', 1)])[0][1])
+
+    def test_a_first_boot_root_that_would_run_past_its_devices_later_placed_boot_is_pulled_back_too(self):
+        # A1-B2 put B's boot 2 on the reference's clock, starting 5 s after A's boot 1. B1-C1 is a group the reference
+        # does not reach, rooted at B's boot 1, which has no earlier boot: taken to start with the first, its 9 s would
+        # run past boot 2's start, so it is pulled back to end when boot 2 starts (before the reference's start), with
+        # no earlier boot to overlap.
+        a_link, b2_link = exchange('0f0f0001', 6000, 1000, -5000, [3, 3])
+        b1_link, c_link = exchange('0f0f0002', 0, 2000, 2000, [3, 3])
+        bodies = {('A', 1): boot_body('a1', 9000, 1000, a_link), ('B', 1): boot_body('b1', 9000, 1000, b1_link),
+                  ('B', 2): boot_body('b2', 9000, 1000, b2_link), ('C', 1): boot_body('c1', 9000, 1000, c_link)}
+        text = self.merge_boots(bodies)
+        self.assertIn('B boot 1: clock: aligned by STATEs with C boot 1, not linked to the reference; placed to end when '
+                      'boot 2 of the same device starts\n', text)
+        stamps = {node: self.stamps(node[0], body) for node, body in bodies.items()}
+        self.assertEqual(stamps[('B', 2)][0][1] - stamps[('A', 1)][0][1], 5000)
+        self.assertEqual(stamps[('B', 1)][-1][1], stamps[('B', 2)][0][1], 'boot 1 ends when boot 2 starts')
+        self.assertNotIn('overlaps', text)
+
+    def test_a_root_that_would_run_past_its_devices_later_placed_boot_is_pulled_back_to_end_when_it_starts(self):
+        # A1-B1 and B1-A3 put A's boots 1 and 3 on the reference's clock, A's boot 3 starting at 20 s. A2-B2 is a group
+        # the reference does not reach: A's boot 2 (15 s long) after A's boot 1 (10 s) would end at 25 s, past boot 3's
+        # start, so it is pulled back to end at 20 s, which overlaps boot 1 by 5 s. B's boot 2 keeps its offset to it.
+        # (B's boot 1 spans A's boot 2, so no true timeline has this shape; A2-B2 is one STATE, A to B, so the rule
+        # that a receive follows its send moves only B's lines, held at B's boot 1's end by the clamp.)
+        a1_link, b1_first = exchange('0a0a0001', 0, 0, 0, [3, 3])
+        a3_link, b1_second = exchange('0a0a0002', 5000, 25000, 20000, [3, 3])
+        a2_link, b2_link = exchange('0a0a0003', 3000, 500, -2500, [3])
+        bodies = {('A', 1): boot_body('a1', 10000, 1000, a1_link), ('A', 2): boot_body('a2', 15000, 1000, a2_link),
+                  ('A', 3): boot_body('a3', 20000, 1000, a3_link),
+                  ('B', 1): boot_body('b1', 40000, 1000, b1_first + b1_second),
+                  ('B', 2): boot_body('b2', 9000, 1000, b2_link)}
+        text = self.merge_boots(bodies)
+        self.assertIn('A boot 3: clock: offset +20000 ms from B boot 1', text)
+        self.assertIn('A boot 2: clock: aligned by STATEs with B boot 2, not linked to the reference; placed to end when '
+                      'boot 3 of the same device starts; it overlaps boot 1 by 5000 ms, whose times are kept\n', text)
+        self.assertIn('B boot 2: clock: offset +2497 ms from A boot 2', text)
+        stamps = {node: self.stamps(node[0], body) for node, body in bodies.items()}
+        a1_start = stamps[('A', 1)][0][1]
+        self.assertEqual(stamps[('A', 3)][0][1] - a1_start, 20000)
+        self.assertEqual(stamps[('A', 2)][-1][1], stamps[('A', 3)][0][1], 'boot 2 ends when boot 3 starts')
+        # Boot 2 starts at 5 s: its lines up to its millis 5000 fall before boot 1's end and are held there.
+        for millis, merged in stamps[('A', 2)]:
+            self.assertEqual(merged - a1_start, max(10000, 5000 + millis), millis)
 
     def test_an_unaligned_boot_after_the_last_aligned_one_is_placed_after_it(self):
         a_link, b_link = exchange('0c0c0001', 0, 7000, 7000, [3, 3])

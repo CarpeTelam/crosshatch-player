@@ -757,6 +757,31 @@ TEST(DiagLogWriter, FakeStoreMatchesTheDevice) {
   EXPECT_TRUE(contains(manager, "bool SDCardManager::ensureDirectoryExists"));
 }
 
+// test/diag_log/sample/b0001-s00-3F2A.log is the file this Writer writes for a fixed identity (the Rig's), clock
+// (1000), and lines; scripts/device_log_test.py merges that same file, so merge reads a file the real Writer wrote
+// (deferred-work 6.19, item 4). A change to the Writer's bytes fails here first: rewrite the sample to match, and the
+// merge test then says whether merge still reads it.
+TEST(DiagLogWriter, TheSampleCardFileTheMergeTestReadsIsWhatTheWriterWrites) {
+  const char* const lines[] = {
+      "[1000] [INF] [MAIN] Starting CrossPoint version 1.0.0-x4pro\n",
+      "[38907] [INF] [LINK] session=dc1b97fb task started; stack 4096 bytes\n",
+      "[58381] [INF] [GAME] nearby: Starting -> Playing on Started\n",
+      "[58384] [INF] [LINK] session=dc1b97fb state sent ver=1\n",
+      "[64503] [INF] [LINK] session=dc1b97fb state sent ver=2\n",
+      "[70700] [INF] [LINK] session=dc1b97fb state recv ver=3 seat=2\n",
+      "[77019] [INF] [GAME] nearby: Playing -> Paused on Back\n",
+  };
+  Rig<> rig;
+  for (const char* line : lines) rig.log(line);
+  EXPECT_TRUE(rig.writer.flush());
+  ASSERT_EQ(rig.store.files.size(), 1u);
+  const auto& [path, file] = *rig.store.files.begin();
+  EXPECT_EQ(path, std::string(DIRECTORY) + "/b0001-s00-3F2A.log");
+  const std::string sample = readFile(std::string(REPO_ROOT_DIR) + "/test/diag_log/sample/b0001-s00-3F2A.log");
+  ASSERT_FALSE(sample.empty()) << "the sample card file is missing";
+  EXPECT_EQ(file, sample);
+}
+
 TEST(DiagLogWriter, TheNoticeAndHeaderFormatsAreTheOnesTheMergeScriptReads) {
   EXPECT_STREQ(DiagLog::MAGIC, "# crosshatch-diag-log 1");
   EXPECT_STREQ(DiagLog::DROPPED_NOTICE_FORMAT, "[%u] [ERR] [DIAG] dropped %u lines (buffer full)\n");

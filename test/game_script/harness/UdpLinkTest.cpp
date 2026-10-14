@@ -17,7 +17,6 @@
 
 #include "../../game_core/LinkContract.h"
 #include "NearbySessionSupport.h"
-#include "ThreeLinkContract.h"
 #include "UdpLink.h"
 
 // UdpLink, the simulator's ILink over UDP on loopback (entry 16 of epic-play-nearby), over real sockets. The raw socket
@@ -177,14 +176,6 @@ TEST(UdpLinkTest, ThreeLinksPassTheThreeLinkContract) {
   ASSERT_TRUE(a && b && c);
   EXPECT_EQ(c->port(), range.base + 2);
   expectThreeLinkContract(*a, *b, *c, PUMP);
-}
-
-TEST(UdpLinkTest, ThreeFakeLinksPassTheSameThreeLinkContract) {
-  // The double and the real link agree (deferred-work 6.2): FakeLink is what the lobby and session suites stand on.
-  GameCore::LinkTest::ManualClock clock;
-  GameCore::LinkTest::FakeLinkNet net(clock, 1);
-  GameCore::LinkTest::FakeLink a(net), b(net), c(net);
-  expectThreeLinkContract(a, b, c, [] {});
 }
 
 TEST(UdpLinkTest, EightLinksHaveDistinctPortsTagsAndHandlesAndANinthIsRefused) {

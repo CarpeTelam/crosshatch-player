@@ -1715,6 +1715,48 @@ TEST_F(PassMatchTest, AFramePublishedWhileRenderDrawsIsTheOneTheNextTapIsMadeUnd
   EXPECT_EQ(fakelog::countLines("Dropped a touch"), 1u);
 }
 
+// The render that took a frame the VM published after its frameGen() read (the same seam: render's view clear) leaves
+// the loop nothing to ask for: renderedFrame is the frame drawFront took, not the count read before it (entry 5's
+// cross-story renderedFrame item). A later repaint (the light panel closed) finds that frame and draws it in full.
+TEST_F(PassMatchTest, AFramePublishedWhileRenderDrawsIsNotAskedForAgain) {
+  installFixture("pass-open");
+  enter("pass-open", "Pass open", GameCore::Roster::pass(2));
+  showFrame();
+  ASSERT_TRUE(waitFor(match::roundStarted));  // the task's own log line comes after the first frame: arm past it
+  fakertos::arm(fakertos::At::Log);
+  tapCanvas(cellX(1), cellY(1));  // seat 1's move: held at its "tap for seat 1"
+  frame();
+  ASSERT_TRUE(fakertos::waitParked());
+  tapCanvas(cellX(2), cellY(2));  // seat 1's second tap, queued: its drop is logged after seat 2's frame is published
+  frame();
+  input->click(Button::Back);
+  frame();
+  ASSERT_EQ(state(), "Paused");
+  renderView();
+  input->click(Button::Back);  // Resume: the next render clears the screen and draws the canvas again
+  frame();
+  ASSERT_EQ(state(), "Playing");
+  bool published = false;
+  bool cleared = false;
+  renderer->onClear = [&] {
+    if (cleared) return;  // render's own clear only, before drawFront takes the frame mutex
+    cleared = true;
+    fakertos::release();  // the move is played, seat 2's first frame published, the queued tap dropped
+    published = waitFor([] { return fakelog::anyLine("Dropped a touch"); });
+  };
+  render();
+  renderer->onClear = nullptr;
+  ASSERT_TRUE(published);
+  const std::vector<std::string>& pushed = renderer->shown.back().texts;
+  ASSERT_NE(std::find(pushed.begin(), pushed.end(), "Player 2 (O) to move"), pushed.end()) << "seat 2's frame";
+  for (int i = 0; i < 5; ++i) frame();
+  EXPECT_FALSE(activityManager.updateRequested()) << "the loop asked again for the frame render took";
+  const size_t pushes = renderer->shown.size();
+  render();  // a repaint: the light panel closed over the frame
+  ASSERT_EQ(renderer->shown.size(), pushes + 1) << "the repaint pushed nothing";
+  EXPECT_EQ(renderer->shown.back().mode, HalDisplay::FULL_REFRESH);
+}
+
 // The loop posts each touch with the frame on the panel (cross-story review row 5): seat 1's second tap, made under its
 // frame while its turn-passing move is still being played, is dropped by the VM, never seat 2's move.
 TEST_F(PassMatchTest, ATapMadeUnderSeatOnesFrameBehindItsTurnPassingMoveNeverReachesSeatTwo) {

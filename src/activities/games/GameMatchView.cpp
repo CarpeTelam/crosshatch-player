@@ -8,8 +8,8 @@
 #include <cstdio>
 #include <iterator>
 
+#include "GamePanelStyle.h"
 #include "GameSplashLayout.h"
-#include "components/UITheme.h"
 #include "games/GameIconDraw.h"
 #include "games/GameViewIcons.h"
 
@@ -165,19 +165,8 @@ void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& render
   props.contentHeight = GameViewIcons::forView(state) ? static_cast<int16_t>(GameViewIcons::VIEW_PIXELS) : 0;
   // Touch only: the buttons are read in loopView().
   props.inputMask = fui::InputTouch;
-  // A framed panel, as OptionPopup draws it, so it stands out over the game.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
+  // A framed panel, so it stands out over the game.
+  setGamePanelStyle(props.styles);
 
   const fui::Rect safe = screen.frame().safeRect();
   const auto width = static_cast<int16_t>(safe.width * 4 / 5);
@@ -190,24 +179,13 @@ void GameMatchView::buildHandOffView(UiAppHost::UiScreen& screen, const GfxRende
   const MatchState state = input.state;
   const fui::Rect safe = screen.frame().safeRect();
   const auto& theme = screen.theme();
-  const auto& metrics = UITheme::getInstance().getMetrics();
   // The banner and the button are each the screen's one tap target, routed like any FreeInkUI control: a tap on it
   // passes the device on (loopHandOff), a tap elsewhere routes nothing. Touch only: Confirm is read in loopHandOff.
   fui::ButtonProps& props = bannerProps;
   props.action = ACTION_PASS;
   props.inputMask = fui::InputTouch;
   props.text = theme.bodyText;
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
+  setGamePanelStyle(props.styles);
   const auto width = static_cast<int16_t>(safe.width * 4 / 5);
   const auto left = static_cast<int16_t>(safe.x + (safe.width - width) / 2);
   if (state == MatchState::Result) {

@@ -62,7 +62,7 @@ namespace GameCore::Protocol {
 
 // Bumped for any change to the header, a payload, or a type code, and for any bump of
 // GameScript::Codec::VERSION (AD-13: proto "includes the codec version"). lib/GameCore cannot include
-// lib/GameScript, so nothing here ties the two numbers; a test that does is deferred to entry 13.
+// lib/GameScript, so CodecTest's ProtoIsBumpedWithTheCodecVersion pins the pair.
 inline constexpr uint8_t PROTO = 1;
 inline constexpr size_t HEADER_BYTES = 12;
 // The whole datagram, header included; a protocol constant (entry 5 checks it against what the radio carries).

@@ -165,7 +165,9 @@ python3 scripts/device_log.py summary run-logs/merged.log
   every send precedes its receive; a `STATE` that both devices logged a send for is ambiguous and anchors nothing. A
   boot that shares a `STATE` with another device's boot keeps the offset the `STATE`s give it; a group of such boots not
   linked to the first device's first boot is placed by its first boot, which starts after its device's earlier boots
-  (their lengths chained forward). A boot with none is placed by its device's other boots (a boot runs from its millis 0
+  (their lengths chained forward), or, if it would then run past a later boot of its device already placed, ends when
+  that boot starts (the note says by how many ms it overlaps the boot before it); its note names the boots it shares
+  `STATE`s with. A boot with none is placed by its device's other boots (a boot runs from its millis 0
   to its last line): one followed by an aligned boot is placed to end when the next boot starts, chained backwards,
   so the restarts before a match (closing the Wi-Fi file transfer restarts the device) land before it; one with no
   aligned boot after it is placed after its device's previous boot, or starts with the first device's. Boots chained

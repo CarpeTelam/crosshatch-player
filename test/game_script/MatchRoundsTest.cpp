@@ -5,9 +5,11 @@
 
 #include "GameInput.h"
 #include "GameTimer.h"
+#include "IGameRules.h"
 #include "LuaGameFixture.h"
 #include "MatchRounds.h"
 #include "SeatShown.h"
+#include "Session.h"
 
 // The round loop as the GameVM task runs it (AD-21): the ended-round count
 // the match watches, and Play again on the same Session.
@@ -975,6 +977,67 @@ TEST_F(NearbyRoundsTest, AdoptingTheHostsNextRoundCancelsTheTimerTheFollowerArme
   InputEvent due;
   EXPECT_FALSE(host.game.timer().takeDueEvent(clock.nowMs(), due)) << "nothing falls due into the new round";
   EXPECT_EQ(logged("timer for seat"), 0u);
+}
+
+// Stands in for a game whose status names a turn that is no seat of the roster. LuaGame refuses such a status
+// (popSeat takes only 1..n), so only rules that are not Lua reach MatchRounds' fail-closed branches. One-byte state;
+// every draw and input call is counted.
+class NoSeatTurnRules : public GameCore::IGameRules {
+ public:
+  Outcome setup(const GameCore::GameContext&, std::span<const uint8_t>& state) override {
+    state = {&byte, 1};
+    return Outcome::Ok;
+  }
+  Outcome status(std::span<const uint8_t>, const GameCore::Roster&, GameCore::Status& out) override {
+    out = GameCore::Status{};
+    out.turn = 3;
+    return Outcome::Ok;
+  }
+  Outcome apply(std::span<const uint8_t> state, uint8_t, std::span<const uint8_t>, std::span<const uint8_t>& next,
+                std::span<char>) override {
+    next = state;
+    return Outcome::Ok;
+  }
+  Outcome draw(std::span<const uint8_t>, uint8_t) override {
+    ++draws;
+    return Outcome::Ok;
+  }
+  Outcome input(std::span<const uint8_t>, uint8_t, const GameCore::GameEvent&,
+                std::span<const uint8_t>& move) override {
+    ++inputs;
+    move = {&byte, 1};
+    return Outcome::Ok;
+  }
+
+  int draws = 0;
+  int inputs = 0;
+
+ private:
+  uint8_t byte = 1;
+};
+
+TEST(MatchRoundsNoSeatTest, ATurnThatIsNoSeatIsNeverDrawnOrReadAndNoRoundStarts) {
+  NoSeatTurnRules rules;
+  GameCore::Session session(GameCore::Roster::pass(2), rules);
+  GameTimer timer;
+  InputQueue queue;
+  MatchRounds rounds(timer, queue);
+  ASSERT_EQ(rounds.start(session), Outcome::Ok);
+  EXPECT_EQ(rounds.shownSeat(), GameCore::NO_SEAT);
+  EXPECT_EQ(rules.draws, 0) << "start's drawShown draws no seat for turn 3";
+  ASSERT_EQ(rounds.step(InputEvent{InputKind::Tap, 100, 200}), Outcome::Ok);
+  EXPECT_EQ(rules.inputs, 0) << "step delivers the tap to no seat";
+  EXPECT_EQ(rules.draws, 0) << "nor draws one after it";
+  // A timer due while the turn is no seat (a pass roster, every seat local, so not noSeatTimer's drop) reaches the same
+  // guard: delivered to no seat, nothing drawn.
+  timer.arm(0, 10);
+  GameCore::GameEvent due;
+  ASSERT_TRUE(timer.takeDueEvent(10, due));
+  ASSERT_EQ(rounds.step(due), Outcome::Ok);
+  EXPECT_EQ(rules.inputs, 0) << "step delivers the timer to no seat";
+  EXPECT_EQ(rules.draws, 0);
+  EXPECT_EQ(rounds.roundsStarted(), 0u);
+  EXPECT_EQ(session.ver(), 1u) << "no move was applied";
 }
 
 }  // namespace

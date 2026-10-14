@@ -48,10 +48,12 @@ struct NearbySessionOptions {
 //  - End (GameLink task to VM task): the first reason the match is over (an ABORT, or a silent peer) is latched in the
 //    EndSlot; takeEnd returns it once.
 //
-// Lifetime: the caller keeps the IClock (and the IRandom of a host) alive for the session's life. The destructor stops
-// and joins the task, then ends the link and frees the pool; a task that will not stop leaks its state rather than
-// freeing what it touches (logged). Call it on a task that may wait up to Options::joinMs. It sends no goodbye: in the
-// lobby phase that is the lobby's cancel() (call it first when players are seated), in a match it is leave().
+// Lifetime: the IClock must outlive the GameLink task, not only the session, since a task that will not stop keeps
+// reading it (the device's is NearbyRadio::clock()'s static). The IRandom of a host is read only in HostLobby's
+// constructor (the session id), so it need not outlive openHost. The destructor stops and joins the task, then ends the
+// link and frees the pool; a task that will not stop leaks its state rather than freeing what it touches (logged).
+// Call it on a task that may wait up to Options::joinMs. It sends no goodbye: in the lobby phase that is the lobby's
+// cancel() (call it first when players are seated), in a match it is leave().
 class NearbySession {
  public:
   using Options = NearbySessionOptions;
@@ -72,7 +74,7 @@ class NearbySession {
     uint8_t fromSeat = 0;
   };
   // What leave did: how long it waited for the frame to be acked, the reliable frames still unacked when the goodbye
-  // was sent, and the copies of the ABORT the link took for every peer.
+  // was sent, and the copies of the ABORT the link took for every peer sent to (0 when every peer's ABORT was heard).
   struct LeaveResult {
     uint32_t waitedMs = 0;
     size_t unackedAtSend = 0;
@@ -157,7 +159,8 @@ class NearbySession {
   bool endLatched() const;
   // VM task: the goodbye. With flushMs > 0 waits (no lock held; the task keeps resending and acking meanwhile) until
   // nothing is unacked, flushMs of clock time passed, or flushMs / 5 + 2 polls were made; then sends ABORT(reason)
-  // CANCEL_ABORT_COPIES times to every peer. With flushMs == 0 sends at once (the forced exit). Before beginMatch()
+  // CANCEL_ABORT_COPIES times to every peer whose own ABORT was not heard (one that sent it has ended its session; a
+  // silent one may still hear us). With flushMs == 0 sends at once (the forced exit). Before beginMatch()
   // it sends nothing (the lobby's cancel() is the lobby phase's goodbye). The deadline is the caller's.
   LeaveResult leave(GameCore::Protocol::AbortReason reason, uint32_t flushMs);
   // Any task.

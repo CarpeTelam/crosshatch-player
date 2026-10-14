@@ -45,9 +45,14 @@ class GameLinkSinkGate final : public GameCore::ReliableLink::Sink {
       }
     } else if (frame.header.type == GameCore::Protocol::Type::Abort) {
       GameLinkLog::abortReceived(session, frame.abortReason, seat);
+      abortSeats |= seatBit(seat);
     }
     return verdict;
   }
+
+  // Whether `seat` sent an ABORT (any reason): its session is over, so NearbySession::leave sends it no goodbye. Per
+  // seat (R3, AD-11): with more seats the others still get one.
+  bool abortHeardFrom(const uint8_t seat) const { return (abortSeats & seatBit(seat)) != 0; }
 
   void onPeerSilent(const GameCore::PeerHandle peer) override {
     sink.onPeerSilent(peer);
@@ -61,4 +66,8 @@ class GameLinkSinkGate final : public GameCore::ReliableLink::Sink {
   GameCore::ReliableLink* link;
   uint32_t session;
   GameCore::MatchSink sink;
+  // Bit s: seat s sent an ABORT (seats are 1..Roster::MAX_SEATS, 16).
+  uint32_t abortSeats = 0;
+
+  static constexpr uint32_t seatBit(const uint8_t seat) { return seat < 32 ? 1u << seat : 0u; }
 };

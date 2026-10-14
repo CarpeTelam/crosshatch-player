@@ -6,14 +6,14 @@
 #include <atomic>
 #include <cstdint>
 
+#include "GamePanelStyle.h"
 #include "MappedInputManager.h"
-#include "components/UITheme.h"
 #include "components/UiAppHost.h"
 
 // A two-button question built into a FUI screen, Cancel first and focused when it opens: the title screen's New over a
-// save and the launcher's remove ask with it. The screen keeps whether it is open and what it asks about, routes touch
-// (routeTouch) before readButtons, and answers each Answer itself. Its own header, so the launcher does not depend on
-// the title screen to ask.
+// save and the launcher's remove ask with it. The screen keeps whether it is open and what it asks about (its open
+// guards), and its own close (Cancel) and accept (the action) bodies; handleInput and dispatch are the input glue they
+// share. Its own header, so the launcher does not depend on the title screen to ask.
 struct GameConfirmDialog {
   // What an input did: nothing, moved the focus (draw it), or answered Cancel or the action.
   enum class Answer : uint8_t { None, Repaint, Cancel, Confirm };
@@ -46,9 +46,45 @@ struct GameConfirmDialog {
     return tapped == 1 ? Answer::Confirm : Answer::Cancel;
   }
 
-  // Builds the question, a framed panel centred in the body, into `screen`; its buttons fire `action` on a tap.
-  void build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const freeink::ui::ActionId action,
-             const char* title, const char* headline, const char* message, const char* actionLabel) {
+  // One loop pass while the question is open, on `host` (the screen whose render built it). Touch first: a tap on a
+  // button answers inside routeTouch, in the screen's tap callback (answerTap), so a routed touch ends the pass, with
+  // a Repaint first when routing changed the app. Else the physical buttons' answer (readButtons). `respond` runs an
+  // Answer on the screen (dispatch, from the screen's own answer function). True: the question owns every pass while
+  // it is open.
+  template <class Respond>
+  bool handleInput(UiAppHost& host, const MappedInputManager& input, Respond&& respond) {
+    const auto route = host.routeTouch(input);
+    if (route.routed && host.app.invalidated()) respond(Answer::Repaint);
+    if (route) return true;
+    respond(readButtons(input));
+    return true;
+  }
+
+  // Runs `answer` on the screen that asked: Repaint asks for a render (`repaint`), Cancel runs its close (`cancel`),
+  // Confirm its action (`accept`), and None nothing.
+  template <class Repaint, class Cancel, class Accept>
+  static void dispatch(const Answer answer, Repaint&& repaint, Cancel&& cancel, Accept&& accept) {
+    switch (answer) {
+      case Answer::None:
+        break;
+      case Answer::Repaint:
+        repaint();
+        break;
+      case Answer::Cancel:
+        cancel();
+        break;
+      case Answer::Confirm:
+        accept();
+        break;
+    }
+  }
+
+  // Builds the question, a framed panel centred in the body, into `screen`; its buttons fire `action` on a tap. Kept
+  // out of line: once its style block became one call it was inlined into the title screen's build, where the
+  // optionDialog call got a second specialized copy (x4pro games-on firmware 1,680 B larger, measured 2026-10-14).
+  [[gnu::noinline]] void build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer,
+                               const freeink::ui::ActionId action, const char* title, const char* headline,
+                               const char* message, const char* actionLabel) {
     namespace fui = freeink::ui;
     // Read once: the loop task may move it while this draws.
     const uint8_t focused = focus.load();
@@ -74,16 +110,7 @@ struct GameConfirmDialog {
     props.messageText.maxLines = 2;
     props.buttonText = screen.theme().smallText;
     props.inputMask = fui::InputTouch;  // physical buttons stay in readButtons()
-    // A framed panel, as OptionPopup draws it.
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    props.styles = fui::defaultPopupStyles();
-    props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
-    props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-    props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-    props.styles.selected = props.styles.normal;
-    props.styles.focused = props.styles.normal;
-    props.styles.active = props.styles.normal;
-    props.styles.disabled = props.styles.normal;
+    setGamePanelStyle(props.styles);
 
     const fui::Rect body = screen.body();
     int16_t width = static_cast<int16_t>(renderer.getScreenWidth() * 3 / 4);

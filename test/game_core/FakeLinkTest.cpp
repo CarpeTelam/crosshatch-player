@@ -659,6 +659,14 @@ TEST(FakeLinkTest, FakeLinkAgreesWithTheLinkContract) {
   expectLinkContract(p.a, p.b, [] {});
 }
 
+TEST(FakeLinkTest, ThreeFakeLinksAgreeWithTheThreeLinkContract) {
+  // The double and the real links agree (deferred-work 6.2): FakeLink is what the lobby and session suites stand on.
+  ManualClock clock;
+  FakeLinkNet net(clock, 1);
+  FakeLink a(net), b(net), c(net);
+  expectThreeLinkContract(a, b, c, [] {});
+}
+
 TEST(FakeLinkTest, FakeLinkWithDelayAgreesWithTheLinkContractOnceFramesAreDue) {
   Pair p;
   Faults f;

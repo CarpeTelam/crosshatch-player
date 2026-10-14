@@ -32,8 +32,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <atomic>
 #include <cstring>
+
+#include "RxGate.h"
 
 // ESP-NOW v2 carries a frame up to 1,470 B, which is the largest Protocol frame.
 static_assert(GameCore::Protocol::MAX_FRAME_BYTES <= ESP_NOW_MAX_DATA_LEN_V2);
@@ -49,23 +50,16 @@ static_assert(GameCore::Protocol::MAX_FRAME_BYTES <= ESP_NOW_MAX_DATA_LEN_V2);
 
 namespace {
 
-// The receive callback is a bare C function pointer with nowhere to hang user data, so the ring it fills is
-// reachable from file scope. Only one link runs at a time. Both are constant-initialized: no static initializer.
-constinit std::atomic<FrameRing*> activeRing{nullptr};
-constinit std::atomic<uint32_t> inCallback{0};  // callbacks running now: shutdownEspNow waits for it to reach 0
+// The receive callback is a bare C function pointer with nowhere to hang user data, so the gate holding the ring it
+// fills is reachable from file scope. Only one link runs at a time. Constant-initialized: no static initializer.
+constinit RxGate rxGate;
 
 constexpr TickType_t QUIESCE_TICKS = pdMS_TO_TICKS(100);
 
-// Runs on the Wi-Fi task. It copies a frame into the ring and does nothing else: no GameCore code, no lock, no
-// allocation, no log. The default (sequentially consistent) orders pair with shutdownEspNow's: either the callback
-// sees the null ring or shutdownEspNow sees inCallback above 0.
+// Runs on the Wi-Fi task: RxGate::receive, which copies a frame into the ring and does nothing else (no GameCore code,
+// no lock, no allocation, no log), counted for shutdownEspNow's wait.
 void onReceive(const esp_now_recv_info_t* info, const uint8_t* data, const int length) {
-  inCallback.fetch_add(1);
-  FrameRing* const ring = activeRing.load();
-  if (ring != nullptr && info != nullptr && info->src_addr != nullptr && data != nullptr && length > 0) {
-    ring->push(info->src_addr, data, static_cast<size_t>(length));
-  }
-  inCallback.fetch_sub(1);
+  rxGate.receive(info, data, length);
 }
 
 }  // namespace
@@ -113,9 +107,9 @@ bool EspIdfDriver::initEspNow() {
 }
 
 bool EspIdfDriver::registerReceive(FrameRing& ring) {
-  activeRing.store(&ring);
+  rxGate.open(ring);
   if (esp_now_register_recv_cb(&onReceive) != ESP_OK) {
-    activeRing.store(nullptr);
+    rxGate.close();
     LOG_ERR("LINK", "could not register receive callback");
     return false;
   }
@@ -173,31 +167,28 @@ bool EspIdfDriver::sendTo(const uint8_t* mac, const std::span<const uint8_t> fra
 }
 
 bool EspIdfDriver::shutdownEspNow() {
-  // Null first, so a callback that starts now sees no ring; then no more callbacks; then wait out one that began
-  // before. This closes the one race between the Wi-Fi task and the release of the PSRAM block holding the ring.
-  activeRing.store(nullptr);
-  // A failure is logged and does not change the result: the ring pointer is already null, so a late callback
-  // pushes nothing. A failed deinit leaves ESP-NOW up, which the next bring-up would fail on at init.
-  const esp_err_t unregistered = esp_now_unregister_recv_cb();
-  if (unregistered != ESP_OK) {
-    LOG_ERR("LINK", "could not unregister the receive callback (%d)", static_cast<int>(unregistered));
-  }
-  const esp_err_t deinitialized = esp_now_deinit();
-  if (deinitialized != ESP_OK) {
-    LOG_ERR("LINK", "esp_now_deinit failed (%d)", static_cast<int>(deinitialized));
-  }
-  // Forces power save off rather than restoring what was there; leaveStation follows and switches Wi-Fi off, and the
-  // core re-applies its own setting on the next station start.
-  const esp_err_t powerSaveOff = esp_wifi_set_ps(WIFI_PS_NONE);
-  if (powerSaveOff != ESP_OK) {
-    LOG_ERR("LINK", "could not turn power save off (%d)", static_cast<int>(powerSaveOff));
-  }
-  const TickType_t start = xTaskGetTickCount();
-  while (inCallback.load() != 0) {
-    if (xTaskGetTickCount() - start >= QUIESCE_TICKS) return false;
-    vTaskDelay(1);
-  }
-  return true;
+  // RxGate::quiesce: null first, so a callback that starts now sees no ring; then no more callbacks (below); then wait
+  // out one that began before, up to QUIESCE_TICKS. This closes the one race between the Wi-Fi task and the release of
+  // the PSRAM block holding the ring.
+  const auto stopCallbacks = [] {
+    // A failure is logged and does not change the result: the ring pointer is already null, so a late callback
+    // pushes nothing. A failed deinit leaves ESP-NOW up, which the next bring-up would fail on at init.
+    const esp_err_t unregistered = esp_now_unregister_recv_cb();
+    if (unregistered != ESP_OK) {
+      LOG_ERR("LINK", "could not unregister the receive callback (%d)", static_cast<int>(unregistered));
+    }
+    const esp_err_t deinitialized = esp_now_deinit();
+    if (deinitialized != ESP_OK) {
+      LOG_ERR("LINK", "esp_now_deinit failed (%d)", static_cast<int>(deinitialized));
+    }
+    // Forces power save off rather than restoring what was there; leaveStation follows and switches Wi-Fi off, and
+    // the core re-applies its own setting on the next station start.
+    const esp_err_t powerSaveOff = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (powerSaveOff != ESP_OK) {
+      LOG_ERR("LINK", "could not turn power save off (%d)", static_cast<int>(powerSaveOff));
+    }
+  };
+  return rxGate.quiesce(stopCallbacks, [] { return xTaskGetTickCount(); }, [] { vTaskDelay(1); }, QUIESCE_TICKS);
 }
 
 void EspIdfDriver::leaveStation() {

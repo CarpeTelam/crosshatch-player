@@ -505,6 +505,30 @@ TEST(NearbySessionTest, ThirdDevicesSendingIntoTheMatchAreRefusedForgottenAndNev
   expectNoRenderLockFromTasks();
 }
 
+// The gate keeps which seats sent an ABORT, per seat (R3, AD-11: nothing assumes two seats), for NearbySession::leave,
+// which sends its goodbye only to the others. A stranger's ABORT marks no seat.
+TEST(NearbySessionGateTest, AnAbortMarksOnlyTheSeatThatSentIt) {
+  MatchTest::ArrayStateStore store;
+  StateQueue queue(store);
+  EndSlot end;
+  const GameCore::PeerHandle two = GameCore::PeerHandle::fromValue(0x101);
+  const GameCore::PeerHandle three = GameCore::PeerHandle::fromValue(0x102);
+  const SeatPeer seatPeers[2] = {SeatPeer{two, 2}, SeatPeer{three, 3}};
+  GameLinkSinkGate gate(queue, end, nullptr, 0xABCD0002u, seatPeers);
+  GameCore::Protocol::Frame abort;
+  abort.header.type = Type::Abort;
+  abort.header.session = 0xABCD0002u;
+  abort.abortReason = AbortReason::Left;
+  gate.onFrame(GameCore::PeerHandle::fromValue(0x1FF), abort);  // a stranger
+  EXPECT_FALSE(gate.abortHeardFrom(2));
+  EXPECT_FALSE(gate.abortHeardFrom(3));
+  gate.onFrame(three, abort);
+  EXPECT_FALSE(gate.abortHeardFrom(1));
+  EXPECT_FALSE(gate.abortHeardFrom(2)) << "seat 2 sent nothing and still gets the goodbye";
+  EXPECT_TRUE(gate.abortHeardFrom(3));
+  EXPECT_TRUE(end.latched());
+}
+
 TEST(NearbySessionGateTest, AStrangerIsRefusedCountedAndForgottenSoThePeerTableStaysFree) {
   using LobbyTest::RawPeer;
   LinkTest::ManualClock clock;

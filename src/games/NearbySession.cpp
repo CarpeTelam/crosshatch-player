@@ -392,11 +392,18 @@ NearbySession::LeaveResult NearbySession::leave(const Protocol::AbortReason reas
   abort.header.type = Protocol::Type::Abort;
   abort.abortReason = reason;
   // ABORT is unsequenced and ignores anything unacked, so it is sent CANCEL_ABORT_COPIES times (crossplay
-  // LinkSession.cpp kByeRepeats): the peer notices a lost one only as silence.
+  // LinkSession.cpp kByeRepeats): the peer notices a lost one only as silence. Not to a seat whose ABORT the gate
+  // heard: its session is over (per seat, never assuming the match has one other seat). A copy counts only when it went
+  // to at least one peer.
   for (uint8_t copy = 0; copy < CANCEL_ABORT_COPIES; ++copy) {
     bool all = true;
-    for (size_t i = 0; i < c.peerCount; ++i) all = link.send(c.peers[i].handle, abort) && all;
-    if (all) ++result.copies;
+    bool any = false;
+    for (size_t i = 0; i < c.peerCount; ++i) {
+      if (c.gate && c.gate->abortHeardFrom(c.peers[i].seat)) continue;
+      any = true;
+      all = link.send(c.peers[i].handle, abort) && all;
+    }
+    if (any && all) ++result.copies;
   }
   GameLinkLog::leaveSent(c.sessionId(), reason, result.waitedMs, static_cast<uint32_t>(result.unackedAtSend),
                          result.copies);

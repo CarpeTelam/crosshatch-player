@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <utility>
@@ -344,6 +345,49 @@ class NearbyMatchTest : public match::ScreenTest {
       idle(5);
     }
   }
+  // ---- a stuck VM (deferred-work ## 6.9, ## 6.15 item 1) ----
+
+  // Holds the host's VM inside the game's "tap for seat 1" ch.log line. The gate at a log line stands in for a script
+  // stuck in a host call inside one of GameVM's locked bindings, so neither the stop nor GameVM::abandon can end the
+  // task ("VM stuck and not safely deletable"), as on the device. It holds VM tasks only: the GameLink tasks run on, as
+  // they do on the device (held at their own LINK lines, under the session's lock, they would stall the goodbye and
+  // the session's teardown). The guest's VM is idle and logs nothing meanwhile. The abandoned task may still call
+  // adoptNext and ship on the session, so the match must keep that unfreed and its link up.
+  void holdHostVmInACall() {
+    expectCleanPsram = false;  // the VM, the store slot, and the session are leaked on purpose
+    fakertos::arm(fakertos::At::Log, 0, "GameVM");
+    scriptTapCell(*host, 5);
+    frame(*host);
+    ASSERT_TRUE(fakertos::waitParked());
+  }
+  // The host's screen goes as the manager takes it down: onExit (unless it ran), then the destructor, under the lock.
+  void destroyHost() {
+    if (!host->exited) activityManager.exitHolding(*host->activity);
+    host->exited = true;
+    activityManager.destroyHolding(host->activity);
+  }
+  // After the host's activity has gone and leaked its session: the held VM task is let go (it ends at its next hook,
+  // its cancel flag set), the guest goes as usual, and the leaked session's GameLink task, which nothing stops, is
+  // deleted (FakeRtos parks a deleted task for good). The Duo, whose net, links, probes, and clock the leaked session
+  // still holds, cannot be freed: it is leaked with the session.
+  void endTheLeakedTasks() {
+    fakertos::release();
+    activityManager.exitHolding(*guest->activity);
+    guest->exited = true;
+    activityManager.destroyHolding(guest->activity);
+    ASSERT_TRUE(match::waitFor([] { return fakertos::S().liveTasks.load() == 1; })) << "the leaked VM task ran on";
+    fakertos::Task* link = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(fakertos::S().m);
+      for (const auto& task : fakertos::S().tasks) {
+        if (task->alive && task->name == "GameLink") link = task.get();
+      }
+    }
+    ASSERT_NE(link, nullptr) << "the leaked session's GameLink task";
+    vTaskDelete(link);
+    (void)duo.release();
+  }
+
   // The reason line the player-left view shows, and the match's own log line for the reason.
   static std::string leftLine() { return tr(STR_GAMES_PEER_LEFT); }
   static std::string goneLogged(const char* reason) { return std::string("the other player is gone: ") + reason; }
@@ -829,7 +873,9 @@ TEST_F(NearbyMatchTest, LeaveOnTheHostFlushesSendsThreeAbortsEndsTheLinkAndAsksF
   EXPECT_EQ(activityManager.asks.goToGames, 2);
   ASSERT_EQ(endsAtGames.size(), 2u);
   EXPECT_EQ(endsAtGames[1].second, 1) << "the guest's link was ended before Games was asked for";
-  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 3) << "Back from the player-left view says goodbye too";
+  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 0)
+      << "Back from the player-left view sent ABORTs to a peer it heard leave";
+  EXPECT_EQ(nearby::linkLines(" copies=0"), 1u) << linkDump();
 }
 
 TEST_F(NearbyMatchTest, LeaveOnTheGuestEndsTheHostsMatchInTheSameWay) {
@@ -922,17 +968,19 @@ TEST_F(NearbyMatchTest, AScriptErrorOnTheMoverSendsThreeAbortsAtOnceAndThePeersV
   ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, tr(STR_GAMES_PEER_ERROR)); }));
   EXPECT_EQ(matchLogged(*guest, goneLogged("script_error")), 1u);
 
-  // The peer leaves from its player-left view: the error view stays, and the host never reads that end.
+  // The peer leaves from its player-left view, sending nothing (it heard the host's ABORT): the error view stays, and
+  // the host never reads the end the peer's silence latches.
   guest->input->click(Button::Back);
   ASSERT_TRUE(run([&] { return state(*guest) == "Leaving"; }));
+  EXPECT_EQ(duo->guestProbe.abortFrames.load(), 0);
   ASSERT_TRUE(run([&] { return host->session->endLatched(); }));
   idle(60);
   EXPECT_EQ(state(*host), "Error");
   EXPECT_TRUE(shows(*host, tr(STR_GAMES_ERROR)));
   EXPECT_EQ(entered(*host, "PeerGone"), 0u);
-  GameCore::Protocol::AbortReason unread = GameCore::Protocol::AbortReason::Timeout;
+  GameCore::Protocol::AbortReason unread = GameCore::Protocol::AbortReason::Left;
   EXPECT_TRUE(host->session->takeEnd(unread)) << "the slot was not read while the match was in Error";
-  EXPECT_EQ(unread, GameCore::Protocol::AbortReason::Left);
+  EXPECT_EQ(unread, GameCore::Protocol::AbortReason::Timeout);
 
   // Back from the error view leaves without waiting: three more ABORT(left), the link ended before Games is asked for.
   host->input->click(Button::Back);
@@ -1034,6 +1082,35 @@ TEST_F(NearbyMatchTest, PeerGoneIsEnteredFromPausedAsFromPlaying) {
   EXPECT_FALSE(shows(*guest, tr(STR_GAMES_RESUME))) << "the pause menu is gone";
 }
 
+// A Leave whose VM will not stop: the goodbye goes, the VM is abandoned and leaked, and the session it may still call
+// stays, unfreed, with its link up (leave()'s `!slotLeaked` guard, then the destructor's release).
+TEST_F(NearbyMatchTest, ALeaveWithAStuckVmNeverEndsTheLeakedSessionsLink) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(holdHostVmInACall());
+  ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*host));
+  EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
+  EXPECT_TRUE(logHas("The ch.store slot stays with the leaked VM"));
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3) << "the goodbye goes all the same";
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "Leave ended the link of the session the leaked VM may call";
+  destroyHost();
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "the destructor freed the session the leaked VM may call";
+  ASSERT_NO_FATAL_FAILURE(endTheLeakedTasks());
+}
+
+// The same for the forced exit (onExit's goodbye, then the stop that abandons): the destructor's release keeps it.
+TEST_F(NearbyMatchTest, AForcedExitWithAStuckVmNeverEndsTheLeakedSessionsLink) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(holdHostVmInACall());
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
+  EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0);
+  destroyHost();
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "the destructor freed the session the leaked VM may call";
+  ASSERT_NO_FATAL_FAILURE(endTheLeakedTasks());
+}
+
 TEST_F(NearbyMatchTest, ThePlayerLeftViewHasBackAloneAndNothingElseLeavesIt) {
   ASSERT_NO_FATAL_FAILURE(startRawGuest());
   ASSERT_TRUE(rig->putAbort(GameCore::Protocol::AbortReason::Left));
@@ -1077,8 +1154,8 @@ TEST_F(NearbyMatchTest, AMatchThatEndsInPeerGoneTouchesNoResumeFile) {
   EXPECT_TRUE(match::resumeFilesOnCard().empty());
 }
 
-// Back from the player-left view says the three ABORT(left) without waiting for acks from a peer already known gone,
-// even with a STATE of its own still unacked.
+// Back from the player-left view leaves without waiting for acks from a peer already known gone, even with a STATE of
+// its own still unacked, and sends that peer no ABORT: its own ABORT said it left.
 TEST_F(NearbyMatchTest, BackFromThePlayerLeftViewSendsTheGoodbyeWithoutWaitingForAcks) {
   installBoth();
   duo = std::make_unique<Duo>();
@@ -1099,7 +1176,7 @@ TEST_F(NearbyMatchTest, BackFromThePlayerLeftViewSendsTheGoodbyeWithoutWaitingFo
   host->input->click(Button::Back);
   ASSERT_TRUE(run([&] { return state(*host) == "Leaving"; }));
   EXPECT_EQ(lastLeaveWaitedMs(), 0) << "no wait for acks from a peer that is gone";
-  EXPECT_EQ(duo->hostProbe.abortFrames.load() - abortsBefore, 3);
+  EXPECT_EQ(duo->hostProbe.abortFrames.load() - abortsBefore, 0) << "an ABORT went to the peer that had left";
   ASSERT_EQ(endsAtGames.size(), 2u);
   EXPECT_EQ(endsAtGames[1].first, 1) << "the host's link was ended before Games was asked for";
 }
