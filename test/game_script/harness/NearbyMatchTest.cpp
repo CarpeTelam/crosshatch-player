@@ -13,10 +13,14 @@
 #include <utility>
 #include <vector>
 
+#include "GameAssets.h"
 #include "GameHash.h"
+#include "MatchStore.h"
 #include "MatchSupport.h"
 #include "NearbySessionSupport.h"
+#include "RoundFile.h"
 #include "SaveSupport.h"
+#include "ScriptVm.h"
 #include "activities/games/GameMatchActivity.h"
 
 // Two GameMatchActivity instances over FakeLink and the nearby fixture (entry 9 of epic-play-nearby): the mover
@@ -62,6 +66,7 @@ struct Device {
   bool asked = false;   // the loop asked for a render since the last one
   bool exited = false;  // onExit has run
   bool loops = true;    // the test runs this device's loop (false: an overlay holds it)
+  size_t renders = 0;   // render() calls: a frame replay skips the push of a frame identical to the panel's
 };
 
 class NearbyMatchTest : public match::ScreenTest {
@@ -101,6 +106,12 @@ class NearbyMatchTest : public match::ScreenTest {
     }
   }
   GameCore::Manifest manifestFor(const std::string& id) const {
+    if (firstParty) {
+      // A first-party game's own manifest, under the device's id (its folder on the shared card).
+      GameCore::Manifest manifest = *firstParty;
+      std::snprintf(manifest.id, sizeof(manifest.id), "%s", id.c_str());
+      return manifest;
+    }
     GameCore::Manifest manifest = match::manifestOf(id, "Nearby");
     manifest.seatsMin = 2;
     manifest.seatsMax = 2;
@@ -158,6 +169,7 @@ class NearbyMatchTest : public match::ScreenTest {
   }
   static void render(Device& d) {
     d.asked = false;
+    ++d.renders;
     d.activity->render(RenderLock(*d.activity));
   }
   // One pass of each device that loops, drawing what its loop asked for.
@@ -367,25 +379,201 @@ class NearbyMatchTest : public match::ScreenTest {
     activityManager.destroyHolding(host->activity);
   }
   // After the host's activity has gone and leaked its session: the held VM task is let go (it ends at its next hook,
-  // its cancel flag set), the guest goes as usual, and the leaked session's GameLink task, which nothing stops, is
-  // deleted (FakeRtos parks a deleted task for good). The Duo, whose net, links, probes, and clock the leaked session
-  // still holds, cannot be freed: it is leaked with the session.
+  // its cancel flag set, and calls the session no more), and the guest goes as usual. The leaked session's GameLink
+  // task was stopped by the destructor (NearbySession::shutDownLink), so no task is left; the Duo, whose net and links
+  // the leaked session still points at, is then touched by nothing and is freed as usual.
   void endTheLeakedTasks() {
     fakertos::release();
     activityManager.exitHolding(*guest->activity);
     guest->exited = true;
     activityManager.destroyHolding(guest->activity);
-    ASSERT_TRUE(match::waitFor([] { return fakertos::S().liveTasks.load() == 1; })) << "the leaked VM task ran on";
-    fakertos::Task* link = nullptr;
+    if (match::waitFor([] { return fakertos::S().liveTasks.load() == 0; })) return;
+    ADD_FAILURE() << "the leaked VM task ran on, or the leaked session's GameLink task was left running";
+    // A GameLink task left running still reads the Duo's net, links, and clock: it is deleted (FakeRtos parks a deleted
+    // task for good) and the Duo is leaked with the session, so the failure is reported rather than a crash.
+    expectCleanPsram = false;
+    std::vector<fakertos::Task*> links;
     {
       std::lock_guard<std::mutex> lock(fakertos::S().m);
       for (const auto& task : fakertos::S().tasks) {
-        if (task->alive && task->name == "GameLink") link = task.get();
+        if (task->alive && task->name == "GameLink") links.push_back(task.get());
       }
     }
-    ASSERT_NE(link, nullptr) << "the leaked session's GameLink task";
-    vTaskDelete(link);
+    for (fakertos::Task* link : links) vTaskDelete(link);
     (void)duo.release();
+  }
+
+  // ---- the first-party games (cross-story review row 9) ----
+
+  // The `state adopt` lines of STATEs from `fromSeat` (the other device's adoptions: both devices log under the host's
+  // session id), with `ver` when given.
+  static size_t adoptLines(const uint8_t fromSeat, const int ver = -1) {
+    const std::string seat = " seat=" + std::to_string(fromSeat) + " result=";
+    size_t count = 0;
+    for (const std::string& line : fakelog::snapshot()) {
+      const size_t at = line.find("state adopt ver=");
+      if (at == std::string::npos || line.find(seat) == std::string::npos) continue;
+      if (ver >= 0 && line.find("state adopt ver=" + std::to_string(ver) + seat) == std::string::npos) continue;
+      ++count;
+    }
+    return count;
+  }
+  // The highest ver among the STATEs `probe`'s link took to send; -1 when none.
+  static int lastSentVer(const nearby::LinkProbe& probe) {
+    int ver = -1;
+    for (const nearby::StateFrame& frame : probe.statesSent()) ver = std::max<int>(ver, frame.ver);
+    return ver;
+  }
+  // Every `state adopt` line whose result is not Adopted or RoundStarted, one per line (empty when none).
+  static std::string adoptionsRefused() {
+    std::string refused;
+    for (const std::string& line : fakelog::snapshot()) {
+      if (line.find("state adopt ver=") == std::string::npos) continue;
+      if (line.find("result=Adopted") == std::string::npos && line.find("result=RoundStarted") == std::string::npos) {
+        refused += line + "\n";
+      }
+    }
+    return refused;
+  }
+  // Whether any push of `d` from index `from` on holds `part`.
+  static bool pushedSince(const Device& d, const size_t from, const std::string& part) {
+    for (size_t i = from; i < d.renderer->shown.size(); ++i) {
+      if (match::holds(d.renderer->shown[i], part)) return true;
+    }
+    return false;
+  }
+  // The companion's rounds/won-by-seat-1.lua of first-party game `game` as its steps, read by the games check's
+  // RoundFile on the harness canvas (the Sticky's 474 x 788, which GameViewport gives the 480 x 800 panel here), with
+  // the game's modules from the host's installed copy and the companion's top-level modules beside them.
+  void loadWinningRound(const std::string& game, std::vector<games_check::Step>& steps) {
+    MatchStore store;
+    ASSERT_TRUE(store.allocate((game + "-a").c_str(), 0));
+    GameAssets assets;
+    ASSERT_EQ(assets.load((game + "-a").c_str(), store.saves(), store.slot()), GameAssets::LoadResult::Ok);
+    const std::filesystem::path companion = std::filesystem::path(NEARBY_COMPANION_DIR) / game;
+    std::vector<games_check::ModuleText> modules;
+    for (const auto& entry : std::filesystem::directory_iterator(companion)) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".lua") continue;
+      std::ifstream in(entry.path(), std::ios::binary);
+      modules.push_back({entry.path().stem().string(),
+                         std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>())});
+    }
+    std::ifstream in(companion / "rounds" / "won-by-seat-1.lua", std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    ASSERT_FALSE(text.empty()) << companion / "rounds" / "won-by-seat-1.lua";
+    auto settings = std::make_unique<GameCore::ManifestSettings>();  // large: on the heap
+    games_check::GameFacts facts;
+    facts.manifest = firstParty.get();
+    facts.settings = settings.get();
+    facts.hostMaxSeats = 2;
+    facts.hostModes = GameCore::Manifest::MODE_PASS | GameCore::Manifest::MODE_NEARBY;
+    std::string error;
+    auto vm = games_check::OwnedVm::create(assets.sources(), modules, assets.images(), 1, error,
+                                           games_check::CANVAS_474, games_check::VmLimits::check());
+    ASSERT_NE(vm, nullptr) << error;
+    games_check::Round round;
+    ASSERT_TRUE(games_check::loadRound(std::move(vm), "won-by-seat-1", text, facts, round, error)) << error;
+    ASSERT_FALSE(round.stepsFromFunction) << "the round's steps are a list";
+    ASSERT_EQ(round.winners, 1u) << "seat 1 wins";
+    steps = round.steps;
+  }
+  // Waits until `mover`'s tap of `planned` has played out on both devices: a move's STATE was sent, the other device
+  // adopted it and rendered the frame it drew, and the mover rendered its own; a `move = false` tap ships nothing, so
+  // only the mover's render is waited for. A render, not a push: the frame replay skips the push of a frame identical
+  // to the one on the panel (Battleship's waiting seat while the other places its ships), and the frame counts as
+  // displayed all the same (CanvasGate::markDisplayed). Each tap is made only once its device shows the move before it
+  // (row 1's floor drops a tap made earlier, which would stall the round here).
+  void playStep(Device& mover, Device& other, nearby::LinkProbe& moverProbe, const games_check::Step& planned,
+                const size_t index) {
+    if (planned.waitMs > 0) fakertos::advance(planned.waitMs);
+    const size_t moverPushes = mover.renderer->shown.size();
+    const size_t moverRenders = mover.renders;
+    const size_t otherRenders = other.renders;
+    const int sentVer = lastSentVer(moverProbe);
+    mover.input->tap(CANVAS_X + planned.x, CANVAS_Y + planned.y);
+    step();
+    if (planned.moves) {
+      int ver = -1;
+      ASSERT_TRUE(run([&] {
+        ver = lastSentVer(moverProbe);
+        return ver > sentVer && adoptLines(mover.seat, ver) >= 1 && other.renders > otherRenders &&
+               mover.renders > moverRenders;
+      })) << "step "
+          << index + 1 << " (seat " << planned.seat << " at " << planned.x << ", " << planned.y
+          << ") did not play out on both devices\n"
+          << linkDump();
+    } else {
+      ASSERT_TRUE(run([&] { return mover.renders > moverRenders; }))
+          << "step " << index + 1 << " (move = false) drew nothing";
+      idle(10);
+      EXPECT_EQ(lastSentVer(moverProbe), sentVer) << "step " << index + 1 << " is move = false and shipped a STATE";
+    }
+    idle(2);  // a render the last pass asked for
+    if (planned.hasShows) {
+      EXPECT_TRUE(pushedSince(mover, moverPushes, planned.shows))
+          << "step " << index + 1 << ": the mover's next push does not show \"" << planned.shows << "\"\n"
+          << screenText(mover);
+    }
+  }
+  // First-party game `game` (its folder under games/, the device ids <game>-a and <game>-b) played to Over in a nearby
+  // match from its companion's winning round, then through the host's Play again into the next round.
+  void playFirstParty(const std::string& game) {
+    {
+      std::ifstream in(std::filesystem::path(NEARBY_GAMES_DIR) / game / "manifest.json", std::ios::binary);
+      const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      firstParty = std::make_unique<GameCore::Manifest>();
+      ASSERT_EQ(GameCore::Manifest::parse(json, *firstParty), GameCore::ManifestError::None) << game;
+      ASSERT_TRUE(firstParty->hasMode(GameCore::Manifest::MODE_NEARBY)) << game << " declares nearby";
+    }
+    const std::string hostId = game + "-a";
+    const std::string guestId = game + "-b";
+    match::installPackageAs(std::filesystem::path(NEARBY_GAMES_DIR) / game, hostId);
+    match::installPackageAs(std::filesystem::path(NEARBY_GAMES_DIR) / game, guestId);
+    ASSERT_NO_FATAL_FAILURE(startDuo());
+    std::vector<games_check::Step> steps;
+    ASSERT_NO_FATAL_FAILURE(loadWinningRound(game, steps));
+    host = enter(hostId, 1, std::move(duo->host));
+    guest = enter(guestId, 2, std::move(duo->guest));
+    ASSERT_TRUE(run([&] {
+      return !host->renderer->shown.empty() && adoptLines(1) >= 1 && !guest->renderer->shown.empty() &&
+             !shows(*guest, "Waiting for the host");
+    })) << "the first round did not reach both panels";
+
+    for (size_t i = 0; i < steps.size(); ++i) {
+      const bool hostMoves = steps[i].seat == 1;
+      ASSERT_NO_FATAL_FAILURE(playStep(hostMoves ? *host : *guest, hostMoves ? *guest : *host,
+                                       hostMoves ? duo->hostProbe : duo->guestProbe, steps[i], i));
+    }
+    ASSERT_TRUE(run([&] { return state(*host) == "Over" && state(*guest) == "Over"; })) << linkDump();
+    EXPECT_EQ(entered(*guest, "Over"), 1u) << "the guest reaches Over once";
+    EXPECT_EQ(entered(*host, "Over"), 1u);
+    EXPECT_EQ(adoptionsRefused(), "") << "every adoption is Adopted or RoundStarted";
+
+    // The over STATE the winner (the host) sent is the one the guest received and adopted: the same ver and the same
+    // snapshot bytes.
+    const int overVer = lastSentVer(duo->hostProbe);
+    ASSERT_GE(overVer, 0);
+    const std::vector<nearby::StateFrame> sent = duo->hostProbe.statesSent();
+    const std::vector<nearby::StateFrame> received = duo->guestProbe.statesReceived();
+    const auto sentOver = std::find_if(sent.rbegin(), sent.rend(), [&](const auto& f) { return f.ver == overVer; });
+    const auto receivedOver =
+        std::find_if(received.rbegin(), received.rend(), [&](const auto& f) { return f.ver == overVer; });
+    ASSERT_NE(sentOver, sent.rend());
+    ASSERT_NE(receivedOver, received.rend()) << "the guest never received the over STATE";
+    EXPECT_FALSE(sentOver->snapshot.empty());
+    EXPECT_EQ(sentOver->snapshot, receivedOver->snapshot) << "the two devices end on different snapshots";
+    EXPECT_EQ(adoptLines(1, overVer), 1u) << "the guest adopted the over STATE once";
+
+    // Through the host's Play again, both devices reach the new round.
+    const size_t roundStarts = fakelog::countLines("result=RoundStarted");
+    ASSERT_TRUE(run([&] { return shows(*host, tr(STR_GAMES_PLAY_AGAIN)); }));
+    host->input->click(Button::Confirm);  // Play again, the focused first row
+    ASSERT_TRUE(run([&] {
+      return state(*host) == "Playing" && state(*guest) == "Playing" &&
+             matchLogged(*guest, "Over -> Playing on PlayAgain") == 1u &&
+             fakelog::countLines("result=RoundStarted") > roundStarts;
+    })) << linkDump();
+    EXPECT_EQ(adoptionsRefused(), "");
   }
 
   // The reason line the player-left view shows, and the match's own log line for the reason.
@@ -394,6 +582,8 @@ class NearbyMatchTest : public match::ScreenTest {
 
   // The settings the manifest of both devices declares (the host is given values for them, the guest none).
   uint8_t declaredSettings = 0;
+  // A first-party game's manifest (playFirstParty), which manifestFor gives both devices under their own ids.
+  std::unique_ptr<GameCore::Manifest> firstParty;
   uint64_t rawHeardAt = 0;                  // startRawGuest: the fake time the raw host was last heard
   std::unique_ptr<nearby::RawHostRig> rig;  // declared before the devices: destroyed after them, their link's net
   std::unique_ptr<Duo> duo;                 // destroyed after the devices, whose sessions use its links
@@ -797,10 +987,24 @@ TEST_F(NearbyMatchTest, TheFixturesStoreWriteLandsOnTheMoversDeviceOnly) {
 
 // ---- the session, the screen, the doubles ----
 
-TEST_F(NearbyMatchTest, ANearbyMatchHoldsTheDeviceAwakeAndASoloOneDoesNot) {
+// The radio is up while the match is live (Playing, Paused, Over), so the device stays awake; the player-left and error
+// views are the match's end, where it may sleep (cross-story review row 3: a device left on one never slept), and the
+// forced exit that follows ends the session (AD-20). A solo match never holds it awake.
+TEST_F(NearbyMatchTest, ANearbyMatchHoldsTheDeviceAwakeWhileLiveButNotInThePlayerLeftViewAndASoloOneNever) {
   ASSERT_NO_FATAL_FAILURE(startMatch());
   EXPECT_TRUE(host->activity->preventAutoSleep());
   EXPECT_TRUE(guest->activity->preventAutoSleep());
+  ASSERT_TRUE(openPauseMenu(*guest));
+  EXPECT_TRUE(guest->activity->preventAutoSleep()) << "Paused";
+  guest->input->click(Button::Confirm);  // Resume
+  ASSERT_TRUE(run([&] { return state(*guest) == "Playing"; }));
+  ASSERT_NO_FATAL_FAILURE(playRound(hostWins()));
+  EXPECT_TRUE(host->activity->preventAutoSleep()) << "Over";
+  EXPECT_TRUE(guest->activity->preventAutoSleep()) << "Over";
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; }));
+  EXPECT_FALSE(guest->activity->preventAutoSleep()) << "PeerGone";
   GfxRenderer soloRenderer(480, 800);
   MappedInputManager soloInput(gpio, soloRenderer);
   GameMatchActivity solo(soloRenderer, soloInput, match::manifestOf("solo"), GameCore::Roster::solo());
@@ -965,8 +1169,10 @@ TEST_F(NearbyMatchTest, AScriptErrorOnTheMoverSendsThreeAbortsAtOnceAndThePeersV
   EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
   EXPECT_NE(lineAt("leave reason=script_error waited=0ms"), std::string::npos);
   EXPECT_EQ(activityManager.asks.goToGames, 0) << "the erroring device stays on its error view";
+  EXPECT_FALSE(host->activity->preventAutoSleep()) << "the error view may sleep (cross-story review row 3)";
   ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone" && showsLine(*guest, tr(STR_GAMES_PEER_ERROR)); }));
   EXPECT_EQ(matchLogged(*guest, goneLogged("script_error")), 1u);
+  EXPECT_FALSE(guest->activity->preventAutoSleep()) << "the player-left view may sleep";
 
   // The peer leaves from its player-left view, sending nothing (it heard the host's ABORT): the error view stays, and
   // the host never reads the end the peer's silence latches.
@@ -1083,22 +1289,28 @@ TEST_F(NearbyMatchTest, PeerGoneIsEnteredFromPausedAsFromPlaying) {
 }
 
 // A Leave whose VM will not stop: the goodbye goes, the VM is abandoned and leaked, and the session it may still call
-// stays, unfreed, with its link up (leave()'s `!slotLeaked` guard, then the destructor's release).
-TEST_F(NearbyMatchTest, ALeaveWithAStuckVmNeverEndsTheLeakedSessionsLink) {
+// stays unfreed (leave()'s `!slotLeaked` guard, then the destructor's release). Its GameLink task and link are not
+// among what the VM calls (NearbySession::shutDownLink), so the destructor stops the task and ends the link once before
+// the release (cross-story review row 4): the radio is off after the match (R7), the next Nearby is not refused "Wi-Fi
+// is in use", and no keepalive keeps the peer's silence limit from firing.
+TEST_F(NearbyMatchTest, ALeaveWithAStuckVmEndsTheLeakedSessionsLinkInTheDestructorAndFreesNothing) {
   ASSERT_NO_FATAL_FAILURE(startMatch());
   ASSERT_NO_FATAL_FAILURE(holdHostVmInACall());
   ASSERT_NO_FATAL_FAILURE(leaveFromPauseMenu(*host));
   EXPECT_TRUE(logHas("VM stuck and not safely deletable"));
   EXPECT_TRUE(logHas("The ch.store slot stays with the leaked VM"));
   EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3) << "the goodbye goes all the same";
-  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "Leave ended the link of the session the leaked VM may call";
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "Leave itself keeps the session up until the destructor";
   destroyHost();
-  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "the destructor freed the session the leaked VM may call";
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 1) << "the destructor ends the leaked session's link, once";
+  EXPECT_FALSE(host->session->taskRunning()) << "and its GameLink task is stopped (the session itself is leaked)";
   ASSERT_NO_FATAL_FAILURE(endTheLeakedTasks());
+  if (duo) EXPECT_EQ(duo->hostProbe.endCalls.load(), 1) << "nothing ends it a second time";
 }
 
-// The same for the forced exit (onExit's goodbye, then the stop that abandons): the destructor's release keeps it.
-TEST_F(NearbyMatchTest, AForcedExitWithAStuckVmNeverEndsTheLeakedSessionsLink) {
+// The same for the forced exit (onExit's goodbye, then the stop that abandons): the destructor stops the task and ends
+// the link before its release.
+TEST_F(NearbyMatchTest, AForcedExitWithAStuckVmEndsTheLeakedSessionsLinkInTheDestructorAndFreesNothing) {
   ASSERT_NO_FATAL_FAILURE(startMatch());
   ASSERT_NO_FATAL_FAILURE(holdHostVmInACall());
   activityManager.exitHolding(*host->activity);
@@ -1107,7 +1319,8 @@ TEST_F(NearbyMatchTest, AForcedExitWithAStuckVmNeverEndsTheLeakedSessionsLink) {
   EXPECT_EQ(duo->hostProbe.abortFrames.load(), 3);
   EXPECT_EQ(duo->hostProbe.endCalls.load(), 0);
   destroyHost();
-  EXPECT_EQ(duo->hostProbe.endCalls.load(), 0) << "the destructor freed the session the leaked VM may call";
+  EXPECT_EQ(duo->hostProbe.endCalls.load(), 1) << "the destructor ends the leaked session's link, once";
+  EXPECT_FALSE(host->session->taskRunning());
   ASSERT_NO_FATAL_FAILURE(endTheLeakedTasks());
 }
 
@@ -1212,6 +1425,181 @@ TEST_F(NearbyMatchTest, ARoundEndTheVmHasCountedIsEnteredBeforeTheEndIsRead) {
   ASSERT_NE(over, std::string::npos);
   ASSERT_NE(gone, std::string::npos);
   EXPECT_LT(over, gone);
+}
+
+// ---- a peer's STATE adopted under the player's tap (cross-story review row 1) ----
+
+// R4 and inception Q3: a tap is played only against a board the player saw. The guest's tap is made under the host's
+// turn while the host's move is queued (its loop was held): the VM adopts that move first, which draws the guest's own
+// seat again, and the tap, tagged with the frame before the adopt, is dropped; nothing is applied or shipped. A tap
+// made once the adopted frame is on the panel is played.
+TEST_F(NearbyMatchTest, ATapQueuedBehindAStateThatPassesTheTurnIsDroppedAndOneMadeAfterTheAdoptIsPlayed) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  guest->loops = false;  // an overlay: the host's move queues on the guest
+  ASSERT_TRUE(run([&] { return showsTurn(*host); }));
+  tapCell(*host, 5);
+  ASSERT_TRUE(nearby::waitFor([&] {
+    step();
+    return guest->session->counters().queueSize == 1 && host->session->counters().unacked == 0;
+  }));
+  const size_t taps = logged(*guest, "tap for seat 2");
+  const size_t guestSent = duo->guestProbe.statesSent().size();
+  // One guest pass: the tap is posted under the frame on the panel (the host to move), then the VM is woken.
+  scriptTapCell(*guest, 1);
+  frame(*guest);
+  guest->loops = true;
+  ASSERT_TRUE(run([&] { return showsTurn(*guest); }));
+  idle(40);
+  EXPECT_EQ(fakelog::countLines("Dropped a touch made under frame"), 1u) << linkDump();
+  EXPECT_EQ(logged(*guest, "tap for seat 2"), taps) << "the tap reached the game's input";
+  EXPECT_EQ(logged(*guest, "apply seat 2"), 0u);
+  EXPECT_EQ(duo->guestProbe.statesSent().size(), guestSent) << "the guest shipped a move the player never saw";
+  EXPECT_TRUE(showsTurn(*guest)) << "the turn is still the guest's";
+
+  // (c) The adopted frame is on the panel: a tap made now is played.
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 1));
+  EXPECT_EQ(logged(*guest, "apply seat 2 cell 1"), 1u);
+  EXPECT_EQ(fakelog::countLines("Dropped a touch made under frame"), 1u);
+}
+
+// A8: the same for a tap queued behind the host's over and next-round STATEs: the RoundStarted adopt moves the floor
+// too, so the tap is not played in the new round.
+TEST_F(NearbyMatchTest, ATapQueuedBehindTheOverAndTheNextRoundsStatesIsDropped) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 1));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 4));
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 2));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 5));
+  ASSERT_TRUE(run([&] { return showsTurn(*host); }));
+  guest->loops = false;
+  tapCell(*host, 3);  // the winning move
+  ASSERT_TRUE(run([&] { return state(*host) == "Over"; }));
+  host->input->click(Button::Confirm);  // Play again
+  ASSERT_TRUE(run([&] { return state(*host) == "Playing" && logged(*host, "setup") == 2u; }));
+  ASSERT_TRUE(run([&] { return guest->session->counters().queueSize >= 2; }));
+  const size_t taps = logged(*guest, "tap for seat 2");
+  scriptTapCell(*guest, 9);  // a free cell, under the frame before both STATEs
+  frame(*guest);
+  guest->loops = true;
+  ASSERT_TRUE(run([&] {
+    return state(*guest) == "Playing" && shows(*guest, "Player 2 (O): Player 1 to move") &&
+           matchLogged(*guest, "Over -> Playing on PlayAgain") == 1u;
+  }));
+  idle(40);
+  EXPECT_EQ(fakelog::countLines("Dropped a touch made under frame"), 1u) << linkDump();
+  EXPECT_EQ(logged(*guest, "tap for seat 2"), taps) << "the tap reached the new round's input";
+  EXPECT_EQ(logged(*guest, "over for seat 2"), 1u);
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 5));  // the new round plays on
+}
+
+// ---- an end latched behind a queued STATE (cross-story review row 2) ----
+
+// The host wins while the guest's loop is held (the over STATE queued and acked on the guest), then leaves: the end is
+// latched behind the STATE. When the loop runs again it adopts the over first, so the guest reaches Over (R4: the over
+// event, the store flush), and only then reads the end.
+TEST_F(NearbyMatchTest, AnEndLatchedBehindAQueuedOverStateWaitsForOverAndThenEntersPeerGone) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 1));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 4));
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 2));
+  ASSERT_NO_FATAL_FAILURE(move(*guest, *host, 5));
+  ASSERT_TRUE(run([&] { return showsTurn(*host); }));
+  guest->loops = false;
+  tapCell(*host, 3);  // the winning move: its over STATE queues on the guest
+  ASSERT_TRUE(nearby::waitFor([&] {
+    step();
+    return guest->session->counters().queueSize == 1 && host->session->counters().unacked == 0;
+  }));
+  activityManager.exitHolding(*host->activity);
+  host->exited = true;
+  ASSERT_TRUE(nearby::waitFor([&] { return guest->session->endLatched(); }));
+  EXPECT_EQ(guest->session->counters().queueSize, 1u) << "the over STATE is still queued behind the end";
+  guest->loops = true;
+  ASSERT_TRUE(run([&] { return state(*guest) == "PeerGone"; })) << linkDump();
+  EXPECT_EQ(logged(*guest, "over for seat 2"), 1u) << "the over event ran once";
+  EXPECT_EQ(matchLogged(*guest, "Playing -> Over on RoundOver"), 1u);
+  EXPECT_EQ(matchLogged(*guest, "Over -> PeerGone on PeerGone"), 1u);
+  const size_t overEvent = lineAt(std::string("INF ") + GUEST_ID + ": over for seat 2");
+  const size_t over = lineAt(std::string("INF GAME: ") + GUEST_ID + ": Playing -> Over on RoundOver");
+  const size_t gone = lineAt(std::string("INF GAME: ") + GUEST_ID + ": Over -> PeerGone on PeerGone");
+  ASSERT_NE(overEvent, std::string::npos);
+  ASSERT_NE(over, std::string::npos);
+  ASSERT_NE(gone, std::string::npos);
+  EXPECT_LT(overEvent, gone);
+  EXPECT_LT(over, gone);
+  EXPECT_EQ(fakelog::countLines("did not adopt; honouring it"), 0u) << "the VM adopted within the bound";
+}
+
+// The bound: a VM that took the STATE and never counts it (held at its `state adopt` log line, after the take and
+// before the draw) holds the end for PEER_END_HOLD_MS (1,000 ms of the match's millis()) from the first pass that held
+// it, not less, and the end is honoured then, with one log line.
+TEST_F(NearbyMatchTest, AnEndHeldBehindAStateTheVmNeverAdoptsIsHonouredAfterTheBound) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  guest->loops = false;
+  ASSERT_TRUE(run([&] { return showsTurn(*host); }));
+  tapCell(*host, 5);
+  ASSERT_TRUE(nearby::waitFor([&] {
+    step();
+    return guest->session->counters().queueSize == 1 && host->session->counters().unacked == 0;
+  }));
+  activityManager.exitHolding(*host->activity);  // the host's VM is stopped: the only GameVM task left is the guest's
+  host->exited = true;
+  ASSERT_TRUE(nearby::waitFor([&] { return guest->session->endLatched(); }));
+  fakertos::arm(fakertos::At::Log, 0, "GameVM");
+  const uint64_t heldFrom = fakertos::millis();
+  frame(*guest);  // the first pass that holds: it wakes the VM, which takes the STATE and stops at its log line
+  ASSERT_TRUE(fakertos::waitParked());
+  EXPECT_EQ(guest->session->counters().queueSize, 0u) << "the VM took the STATE before it stopped";
+  while (fakertos::millis() < heldFrom + 900) {
+    frame(*guest);
+    ASSERT_EQ(state(*guest), "Playing") << "the end was honoured " << fakertos::millis() - heldFrom
+                                        << " ms after the hold began";
+    fakertos::advance(100);
+  }
+  uint64_t honouredAt = 0;
+  ASSERT_TRUE(nearby::waitFor([&] {
+    frame(*guest);
+    if (state(*guest) != "PeerGone") return false;
+    honouredAt = fakertos::millis();
+    return true;
+  }));
+  EXPECT_GE(honouredAt - heldFrom, 1000u) << "honoured before the bound";
+  EXPECT_EQ(fakelog::countLines("did not adopt; honouring it"), 1u);
+  EXPECT_EQ(matchLogged(*guest, "Playing -> PeerGone on PeerGone"), 1u);
+  fakertos::release();
+}
+
+// ---- the recorded STATEs ----
+
+// ObservedLink's STATE records stand in for what the radio carried: the frame one device's link took to send is the
+// frame the other's received, ver and snapshot bytes alike.
+TEST_F(NearbyMatchTest, ARecordedStateSentIsTheStateThePeerReceived) {
+  ASSERT_NO_FATAL_FAILURE(startMatch());
+  ASSERT_NO_FATAL_FAILURE(move(*host, *guest, 5));
+  const int ver = lastSentVer(duo->hostProbe);
+  ASSERT_GE(ver, 1);
+  const std::vector<nearby::StateFrame> sent = duo->hostProbe.statesSent();
+  const std::vector<nearby::StateFrame> received = duo->guestProbe.statesReceived();
+  const auto mine = std::find_if(sent.begin(), sent.end(), [&](const auto& f) { return f.ver == ver; });
+  const auto theirs = std::find_if(received.begin(), received.end(), [&](const auto& f) { return f.ver == ver; });
+  ASSERT_NE(mine, sent.end());
+  ASSERT_NE(theirs, received.end());
+  EXPECT_FALSE(mine->snapshot.empty());
+  EXPECT_EQ(mine->snapshot, theirs->snapshot);
+  EXPECT_TRUE(duo->guestProbe.statesSent().empty()) << "the guest has not moved";
+}
+
+// ---- the first-party games (cross-story review row 9) ----
+
+// Each first-party game played to Over in a nearby match and through Play again, from its companion's winning round
+// (seat 1's taps on the host, seat 2's on the guest). Battleship's placement is a phase of one seat at a time, whose
+// moves keep the turn: each adopt passes adopt's turn rule.
+TEST_F(NearbyMatchTest, BattleshipIsPlayedToOverAndThroughPlayAgainInANearbyMatch) {
+  ASSERT_NO_FATAL_FAILURE(playFirstParty("battleship"));
+}
+
+TEST_F(NearbyMatchTest, UltimateTicTacToeIsPlayedToOverAndThroughPlayAgainInANearbyMatch) {
+  ASSERT_NO_FATAL_FAILURE(playFirstParty("ultimate-tic-tac-toe"));
 }
 
 }  // namespace

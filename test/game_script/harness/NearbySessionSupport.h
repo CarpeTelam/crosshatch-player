@@ -13,7 +13,11 @@
 //   a device.
 // - ObservedLink stands in for EspNowLink (device) and UdpLink (simulator): it forwards to a FakeLink the test keeps,
 //   records every end() and every ABORT frame sent, and refuses the next `refuseSends` sends like a full send queue
-//   (ILink.h: send returns false, nothing sent). NearbySessionTest pins that a destroyed session ends it. More
+//   (ILink.h: send returns false, nothing sent). It also records each STATE frame the link took to send and each one it
+//   received (ver and snapshot bytes, LinkProbe::statesSent and statesReceived): what a device's radio carried, which
+//   the device shows only as `state sent` / `state recv` lines, so a test can compare the snapshot one device sent
+//   with the one the other received (NearbyMatchTest.ARecordedStateSentIsTheStateThePeerReceived pins that the two
+//   records of one frame are equal). NearbySessionTest pins that a destroyed session ends it. More
 //   permissive than the device: FakeLink's (its header lists them), and a refusal is by count, not by a queue that
 //   fills and drains. Thread-safe where FakeLink is not: the session's lock is the only caller of the inner link while
 //   a session runs, and the probe's fields are atomic.
@@ -35,6 +39,7 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <thread>
@@ -77,12 +82,47 @@ class FakeRtosClock final : public IClock {
   uint64_t nowMs() const override { return fakertos::millis(); }
 };
 
+// One STATE frame as the link carried it.
+struct StateFrame {
+  uint16_t ver = 0;
+  std::vector<uint8_t> snapshot;
+};
+
 struct LinkProbe {
   std::atomic<int> endCalls{0};
   std::atomic<int> abortFrames{0};  // ABORT frames handed to send() or broadcast(), taken or refused
   std::atomic<int> sentFrames{0};   // frames the inner link took
   std::atomic<int> refused{0};      // sends refused by refuseSends
   std::atomic<size_t> refuseSends{0};
+
+  // The STATE frames the inner link took to send (resends included) and the ones received, in order; copies, since
+  // the GameLink task appends while the test reads.
+  std::vector<StateFrame> statesSent() const {
+    std::lock_guard<std::mutex> lock(statesMutex);
+    return sent;
+  }
+  std::vector<StateFrame> statesReceived() const {
+    std::lock_guard<std::mutex> lock(statesMutex);
+    return received;
+  }
+  // GameLink task: records `frame` when it is a STATE.
+  void noteState(const std::span<const uint8_t> frame, const bool wasSent) {
+    Protocol::Frame decoded;
+    if (Protocol::decode(frame, Protocol::ANY_SESSION, decoded) != Protocol::DecodeStatus::Ok ||
+        decoded.header.type != Protocol::Type::State) {
+      return;
+    }
+    StateFrame state;
+    state.ver = decoded.state.ver;
+    state.snapshot.assign(decoded.state.snapshot.begin(), decoded.state.snapshot.end());
+    std::lock_guard<std::mutex> lock(statesMutex);
+    (wasSent ? sent : received).push_back(std::move(state));
+  }
+
+ private:
+  mutable std::mutex statesMutex;
+  std::vector<StateFrame> sent;
+  std::vector<StateFrame> received;
 };
 
 class ObservedLink final : public ILink {
@@ -93,18 +133,26 @@ class ObservedLink final : public ILink {
     noteAbort(frame);
     if (takeRefusal()) return false;
     const bool taken = inner.send(to, frame);
-    if (taken) ++probe.sentFrames;
+    if (taken) {
+      ++probe.sentFrames;
+      probe.noteState(frame, true);
+    }
     return taken;
   }
   bool broadcast(const std::span<const uint8_t> frame) override {
     noteAbort(frame);
     if (takeRefusal()) return false;
     const bool taken = inner.broadcast(frame);
-    if (taken) ++probe.sentFrames;
+    if (taken) {
+      ++probe.sentFrames;
+      probe.noteState(frame, true);
+    }
     return taken;
   }
   bool receive(PeerHandle& from, const std::span<uint8_t> buffer, size_t& length) override {
-    return inner.receive(from, buffer, length);
+    const bool got = inner.receive(from, buffer, length);
+    if (got) probe.noteState(buffer.first(length), false);
+    return got;
   }
   void end() override {
     ++probe.endCalls;

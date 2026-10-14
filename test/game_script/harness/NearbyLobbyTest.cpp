@@ -113,7 +113,26 @@ TEST_F(NearbyLobbyTest, TheChooseScreenOffersHostAndJoinUnderTheGamesNameWithCan
   EXPECT_EQ(hints.btn3, tr(STR_DIR_UP));
   EXPECT_EQ(hints.btn4, tr(STR_DIR_DOWN));
   EXPECT_EQ(radio->opens, 0) << "nothing opens the radio until Host or Join is picked";
-  EXPECT_TRUE(d.lobby->preventAutoSleep());
+  // No session, no radio: a device left on Choose may sleep (cross-story review row 3; it never did).
+  EXPECT_FALSE(d.lobby->preventAutoSleep());
+}
+
+// The lobby holds the device awake while it holds a live session (Host, Browse, Joined: spine AD-18), and lets it sleep
+// on Choose (no session) and on a guest's ended screen (its wait is over; Back goes to the list): cross-story review
+// row 3. The forced exit that follows a sleep ends the session (onExit).
+TEST_F(NearbyLobbyTest, TheLobbyHoldsTheDeviceAwakeOnlyWhileItsSessionIsLive) {
+  Dev& h = addDev("host");
+  Dev& g = addDev("guest");
+  EXPECT_FALSE(h.lobby->preventAutoSleep()) << "Choose";
+  ASSERT_NO_FATAL_FAILURE(host(h));
+  EXPECT_TRUE(h.lobby->preventAutoSleep()) << "Host";
+  ASSERT_NO_FATAL_FAILURE(joinScreen(g));
+  EXPECT_TRUE(g.lobby->preventAutoSleep()) << "Browse";
+  ASSERT_NO_FATAL_FAILURE(joinHost(g, labelOf(0), h));
+  EXPECT_TRUE(g.lobby->preventAutoSleep()) << "Joined";
+  click(h, Button::Back);  // the host leaves: the guest's wait is over
+  ASSERT_TRUE(run([&] { return shows(g, tr(STR_GAMES_NEARBY_HOST_LEFT)); })) << screenText(g);
+  EXPECT_FALSE(g.lobby->preventAutoSleep()) << "Ended";
 }
 
 TEST_F(NearbyLobbyTest, ARadioThatWillNotStartLeavesTheChooseScreenWithTheNoticeAndNoSession) {
@@ -356,6 +375,59 @@ TEST_F(NearbyLobbyTest, ATapOnRowsRebuiltSinceTheyWereDrawnIsDroppedAndNeitherJo
   // The rows drawn now are the ones to tap: Cancel leaves.
   ASSERT_TRUE(tapRow(g, tr(STR_CANCEL)));
   EXPECT_EQ(activityManager.asks.popped, 2);
+}
+
+// Cross-story review row 16: the touch table is published before the push that shows its rows, so a tap made while
+// the panel still shows the rows before (during the push) must not act on the new ones. A guest lists two hosts; the
+// first goes and expires, and the second moves into row 0. Inside that push the guest taps row 0's new rect and runs a
+// loop pass: the tap is dropped (the rows count as drawn only once the push is done), so nothing is joined, and no
+// RenderLock is taken by the render that holds it.
+TEST_F(NearbyLobbyTest, ATapDuringThePushOfRebuiltRowsJoinsNothing) {
+  Dev& g = addDev("guest");
+  ASSERT_NO_FATAL_FAILURE(joinScreen(g));  // the radio's first link: the hosts are labelOf(1) and labelOf(2)
+  Dev& first = addDev("first");
+  ASSERT_NO_FATAL_FAILURE(host(first));
+  ASSERT_TRUE(run([&] { return shows(g, labelOf(1)); })) << screenText(g);
+  Dev& second = addDev("second");
+  ASSERT_NO_FATAL_FAILURE(host(second));
+  ASSERT_TRUE(run([&] { return shows(g, labelOf(1)) && shows(g, labelOf(2)); })) << screenText(g);
+  int firstY = -1;
+  int secondY = -1;
+  for (const screen::DrawnText& drawn : g.target->drawn) {
+    if (drawn.text == labelOf(1)) firstY = drawn.rect.y;
+    if (drawn.text == labelOf(2)) secondY = drawn.rect.y;
+  }
+  ASSERT_GE(firstY, 0);
+  ASSERT_GT(secondY, firstY) << "the first host is row 0, the second below it";
+
+  bool tapped = false;
+  const int deadlocks = fakelock::selfDeadlocks.load();
+  g.renderer->onDisplay = [&] {
+    // The push that draws the rows without the first host: the panel is being refreshed, the new table is published.
+    if (tapped || match::holds(g.renderer->shown.back(), labelOf(1)) ||
+        !match::holds(g.renderer->shown.back(), labelOf(2))) {
+      return;
+    }
+    for (const screen::DrawnText& drawn : g.target->drawn) {
+      if (drawn.text != labelOf(2)) continue;
+      tapped = true;
+      g.input->tap(drawn.rect.x + drawn.rect.width / 2, drawn.rect.y + drawn.rect.height / 2);
+      frame(g);
+      return;
+    }
+  };
+  click(first, Button::Back);
+  ASSERT_TRUE(run([&] { return tapped; }, 60000)) << "the rows were never redrawn without the first host\n"
+                                                  << screenText(g);
+  g.renderer->onDisplay = nullptr;
+  idle(40);
+  EXPECT_EQ(fakelock::selfDeadlocks.load(), deadlocks) << "the tap's pass took the RenderLock the render holds";
+  EXPECT_TRUE(shows(second, seatsLine(1, 2))) << "the host the player did not tap was joined\n" << screenText(second);
+  EXPECT_FALSE(shows(second, joinedLine(2)));
+  EXPECT_FALSE(shows(g, tr(STR_GAMES_NEARBY_WAITING_FOR_START))) << screenText(g);
+  EXPECT_TRUE(shows(g, labelOf(2))) << "the guest is still browsing\n" << screenText(g);
+  // The rows on the panel now are the ones to tap.
+  ASSERT_NO_FATAL_FAILURE(joinHost(g, labelOf(2), second));
 }
 
 // A raw host (an oracle that speaks Protocol by hand) on the radio's net, advertising this game.

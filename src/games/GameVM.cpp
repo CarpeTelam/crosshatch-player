@@ -271,19 +271,34 @@ bool GameVM::nearbyStep(GameCore::Session& session, uint32_t& published, GameScr
 
   const uint32_t endedBefore = rounds.roundsEnded();
   const uint32_t startedBefore = rounds.roundsStarted();
+  const uint32_t frameBefore = frameBuffers.frameGen();
+  // Set before the take and cleared only once the adoption is drawn and its round end counted, so the loop task never
+  // sees a STATE that has left the queue but not reached roundsEnded() (the match holds a latched end over it).
+  adoptingState.store(true, std::memory_order_release);
   const NearbySession::AdoptStep step = nearby->adoptNext(session);
-  if (!step.taken) return false;
+  if (!step.taken) {
+    adoptingState.store(false, std::memory_order_release);
+    return false;
+  }
   // A refusal by adopt changed nothing and is logged by adoptNext; the over event's ScriptError or Cancelled ends the
   // VM as any step's does.
   outcome = step.outcome;
   if (outcome == GameScript::Outcome::Ok) {
     outcome = rounds.adopted(step.result);
     const bool adopted = step.result == GameCore::Adoption::Adopted || step.result == GameCore::Adoption::RoundStarted;
-    if (outcome == GameScript::Outcome::Ok && adopted) noteSeatDrawn(rounds.shownSeat());
+    if (outcome == GameScript::Outcome::Ok && adopted) {
+      noteSeatDrawn(rounds.shownSeat());
+      // R4 and inception Q3: a touch is played only against a board the player saw. An adopt that drew shows the
+      // peer's move (or the host's new round) under the same local seat, which noteSeatDrawn leaves alone, so the
+      // touch-tag floor moves to the frame just published: a touch made under an earlier frame is dropped
+      // (madeUnderAnotherSeat). An adopt that drew nothing (no local seat) leaves it.
+      if (frameBuffers.frameGen() != frameBefore) seatFrame = frameBuffers.frameGen();
+    }
   }
   publishCommitted(mailbox, session, published, outcome);
   if (outcome == GameScript::Outcome::Ok)
     logRound(session, rounds, endedBefore, rounds.roundsStarted() != startedBefore);
+  adoptingState.store(false, std::memory_order_release);
   return true;
 }
 

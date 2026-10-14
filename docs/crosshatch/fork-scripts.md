@@ -145,6 +145,13 @@ python3 scripts/device_log.py summary run-logs/merged.log
   is lent to a computer as a USB drive. A normal build logs them only while a USB host is attached or the board logs
   through the ROM console (ledger row 14). Taking the figures reads the heaps every 10 s, which before only a
   host-attached run did; its cost during a match is unmeasured.
+- **Battery.** Beside the heap lines, a diagnostics build logs `[MEM] Battery: <mV> mV, <percent>%` at the same 10 s
+  period, just before them: the cell's millivolts (`BatteryMonitor::readMillivolts()`, the fuel gauge on the X4 Pro and
+  the ADC elsewhere; 0 when the read fails) and the percent the status bar shows
+  (`powerManager.getBatteryPercentage()`), both read under the render lock, since the themes read the same gauge (ledger
+  row 14, cross-story review row 8). The lock is only tried, so the loop never waits out a push: a period whose try
+  fails logs no battery line, and the heap lines still go. A cardless run reads a match's battery cost, and the idle
+  drain that the no-restart Decision compares, from the first and last of them. A normal build logs no battery line.
 - **What it says it lost.** The hook never waits for the card: it copies the line into an 8 KiB buffer and a writer task
   drains it. A full buffer drops whole lines, and the next file says `[ERR] [DIAG] dropped N lines (buffer full)`; a
   failed write is `[ERR] [DIAG] lost N bytes (card write failed)` and a new segment. `summary` counts both. Lines logged
@@ -192,19 +199,23 @@ python3 scripts/device_log.py summary run-logs/merged.log
   bursts can overrun the buffer; `dropped` says how much. Whether the writer keeps up on a real card during a match is
   unmeasured until a device run.
 
-`summary` lists the device-run packet's figures from a raw log or from `merged.log`, per device: the connects and
-losses (merged log only), each `VM stopped` line with its game (the last lifecycle line before it) and time, the
-dropped touches and hand-off screens per game, and the `[MEM]` lines (count, first and last, the smallest `Min Free`
-and `MaxAlloc`; `--mem-all` lists every line). For a nearby match (epic-play-nearby) it adds a `nearby:` block: each
-`radio up` line (one per bring-up), then per `LINK` session id the `STATE`s sent and received with the last `ver`, the
-adopt verdicts, queue-full count, the resend, silence, `ABORT` sent, and link-refused running totals, each `ABORT`
-received (reason and seat; the firmware logs one line per copy it hears, and a leaver sends three), each leave (reason,
-wait, unacked, `ABORT` copies), and the `GameLink` task's stack and its high-water at each stop, with the least over all
-stops (a guest's task starts under session `00000000` and stops under the host's id, so the first shows "no stop under
-this id"); then each entry into `PeerGone` and the reason line "the other player is gone: ...", every `[ERR] [LINK]`
-line and the lobby's `[ERR] [GAME] Nearby: ...` lines, and any `LINK` line it has no pattern for (listed verbatim, so a
-reworded firmware line shows up rather than vanishes). It takes one log per device, the raw log or `merged.log` and not
-both, since a device found in two files would count every figure twice (exit 2):
+`summary` lists the device-run packet's figures from a raw log or from `merged.log`, per device: the connects and losses
+(merged log only), each `VM stopped` line with its game (the last lifecycle line before it) and time, the dropped
+touches and hand-off screens per game, and the `[MEM]` lines (count, first and last, the smallest `Min Free` and
+`MaxAlloc`; `--mem-all` lists every line). For a nearby match (epic-play-nearby) it adds a `nearby:` block: each `radio
+up` line (one per bring-up), then per `LINK` session id the `STATE`s sent and received with the last `ver`, the adopt
+verdicts, queue-full count, the resend, silence, `ABORT` sent, and link-refused running totals, each `ABORT` received
+(reason and seat; the firmware logs one line per copy it hears, and a leaver sends three), each leave (reason, wait,
+unacked, `ABORT` copies), and the `GameLink` task's stack and its high-water at each stop, with the least over all stops
+(a guest's task starts under session `00000000` and stops under the host's id, so the first shows "no stop under this
+id"); then each entry into `PeerGone` and the reason line "the other player is gone: ...", every `[ERR] [LINK]` line and
+the lobby's `[ERR] [GAME] Nearby: ...` lines, and any `LINK` line it has no pattern for (listed verbatim, so a reworded
+firmware line shows up rather than vanishes). A `battery:` block follows the `[MEM]` figures: the number of battery
+lines, the first and last reading (millivolts, percent, and time), and the same for each boot, which a merged log's
+`card file ... boot N` events or a raw card log's `# boot N` header lines name (`boot -` when the log names none, as a
+serial capture's does); a log with no battery line says `battery: none`, and a battery line is never counted among the
+other `[MEM]` lines. It takes one log per device, the raw log or `merged.log` and not both, since a device found in two
+files would count every figure twice (exit 2):
 
 ```sh
 python3 scripts/device_log.py summary run-logs/merged.log

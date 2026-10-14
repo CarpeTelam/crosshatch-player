@@ -112,8 +112,12 @@ class GameLobbyActivity final : public UiListActivity {
   // Ends the session when the lobby leaves any way but its own (Home, sleep). RenderLock is held by the caller and
   // never taken here.
   void onExit() override;
-  // The radio is up for the whole of the lobby (spine AD-18): the device must not sleep under it.
-  bool preventAutoSleep() override { return true; }
+  // The radio is up while the lobby holds a session (spine AD-18): the device must not sleep under it. Choose holds
+  // none, and Ended's wait is over (Back goes to the list): both may sleep (cross-story review row 3), and the forced
+  // exit that follows ends the session (onExit).
+  bool preventAutoSleep() override { return session != nullptr && current != Screen::Ended; }
+  // UiListActivity's render, then builtSerial: the rows of this push count as drawn once the panel shows them.
+  void render(RenderLock&& lock) override;
 
  private:
   // The screens, and what a guest's ended screen says.
@@ -224,11 +228,12 @@ class GameLobbyActivity final : public UiListActivity {
   RowKind rowKind[MAX_ROWS] = {};
   freeink::ui::ListItem rowItems[MAX_ROWS] = {};
   size_t rowCount = 0;
-  // Which build of the rows the render task last drew. The loop task rebuilds the rows (buildRows: rowSerial counts
-  // them, under RenderLock) before the render task builds the screen from them (buildScreen sets builtSerial), so a tap
-  // can be routed against the table of the build before while rowKind and the host rows are already the next one's. A
-  // tap that finds the two apart is dropped (activateIndex): it names a row that is no longer there, and joining the
-  // host now at that index would join one the player did not touch.
+  // Which build of the rows the panel last showed. The loop task rebuilds the rows (buildRows: rowSerial counts them,
+  // under RenderLock) before the render task builds the screen from them and pushes it (render sets builtSerial after
+  // the push), so a tap can be routed against the table of the build before while rowKind and the host rows are already
+  // the next one's, or against the new table while the panel still shows the old rows (the touch table is published
+  // before the push, cross-story review row 16). A tap that finds the two apart is dropped (activateIndex): it names a
+  // row the player did not see, and joining the host now at that index would join one the player did not touch.
   uint32_t rowSerial = 0;
   std::atomic<uint32_t> builtSerial{0};
   // A listed host's row text, and the (handle, session) the row was drawn for: a tap joins that and nothing newer.

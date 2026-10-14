@@ -46,10 +46,12 @@ using harness::Bytes;
 // card (NearbyMatchTest runs two matches in one process). Stands in for each device having its own SD card, so the
 // game's folder, its /.games-data/<id>/ files (store.bin, resume.bin), and its ch.log lines (the origin is the id) are
 // the device's own. More permissive than two devices: one card (a path outside the two ids is shared) and one log.
-inline void installFixtureAs(const std::string& name, const std::string& id) {
-  const std::filesystem::path root = std::filesystem::path(MATCH_FIXTURES_DIR) / name;
+//
+// installPackageAs does the same for any game folder `root` (a package directory: manifest.json, Lua, and images), such
+// as a first-party game's under games/, which the suite names by its path.
+inline void installPackageAs(const std::filesystem::path& root, const std::string& id) {
   if (!std::filesystem::is_directory(root)) {
-    ADD_FAILURE() << "no fixture game " << root;
+    ADD_FAILURE() << "no game folder " << root;
     return;
   }
   for (const auto& entry : std::filesystem::directory_iterator(root)) {
@@ -58,6 +60,9 @@ inline void installFixtureAs(const std::string& name, const std::string& id) {
     const Bytes bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     fakesd::addFile("/.games/" + id + "/" + entry.path().filename().string(), bytes);
   }
+}
+inline void installFixtureAs(const std::string& name, const std::string& id) {
+  installPackageAs(std::filesystem::path(MATCH_FIXTURES_DIR) / name, id);
 }
 inline void installFixture(const std::string& name) { installFixtureAs(name, name); }
 

@@ -120,6 +120,9 @@ GameMatchActivity::~GameMatchActivity() {
   // A leaked VM task may still call ch.store.set; its slot must outlive it. It may call the nearby session too
   // (adoptNext, ship), which NearbySession's destructor would free under it: leave that unfreed as well, with its task.
   store.leak();
+  // Its GameLink task and link are not among what the VM calls (NearbySession::shutDownLink): they stop first, so the
+  // radio is off after the match (R7) and the next Nearby is not refused "Wi-Fi is in use".
+  if (nearby) (void)nearby->shutDownLink();
   (void)nearby.release();
 }
 
@@ -400,7 +403,7 @@ void GameMatchActivity::leave(const uint32_t flushMs) {
     stopVm();
     // The radio goes down before Games is built, so its activity gets the heap back (goToGames() constructs it at
     // once). The lock keeps the render task out, which followsHost() reads `nearby` in. An abandoned VM keeps the
-    // session, which the destructor releases unfreed.
+    // session, which the destructor releases unfreed once it has stopped the session's task and link.
     if (!slotLeaked) nearby.reset();
     // A hidden pass match's Leave from a pause menu over a seat's frame blanks the panel before Games draws: if
     // goToGames() runs out of memory, this match stays current with no VM, and the frame would stay on the panel.
@@ -527,8 +530,13 @@ void GameMatchActivity::loop() {
   // A round end the VM has already counted but the loop has not entered is entered first (Playing only): loopPlaying
   // enters Over, which delivers the over event and flushes the store (R4), and the next pass reads the end. In Paused a
   // pending round end must not hold the end back.
+  // Before that, in Playing, a latched end waits behind a STATE of the peer the VM has not adopted (cross-story review
+  // row 2): the peer's winning STATE, acked and queued, then its ABORT. The VM is woken to adopt it, which counts the
+  // round end read below; a VM that never does is outwaited after PEER_END_HOLD_MS. Read after the hold, so a pass
+  // that sees the queue drained and the VM done also sees the count.
+  const bool endHeld = current == MatchState::Playing && holdEndForQueuedState();
   const bool roundEndPending = current == MatchState::Playing && vm && vm->roundsEnded() != roundsSeen;
-  if (nearby && !roundEndPending && lifecycle.allows(MatchEvent::PeerGone)) {
+  if (nearby && !endHeld && !roundEndPending && lifecycle.allows(MatchEvent::PeerGone)) {
     GameCore::Protocol::AbortReason reason;
     if (nearby->takeEnd(reason)) {
       endReason = reason;
@@ -554,6 +562,30 @@ void GameMatchActivity::loop() {
     case MatchState::Leaving:
       return;
   }
+}
+
+bool GameMatchActivity::holdEndForQueuedState() {
+  // The end latches once a match, so a hold that ran out is never begun again.
+  if (endHold == EndHold::Spent) return false;
+  // The queue's size under the session's lock, then the VM's flag: a VM that took the last STATE is adopting it.
+  const bool unadopted = nearby && vm && nearby->endLatched() && (nearby->counters().queueSize > 0 || vm->adopting());
+  if (!unadopted) {
+    endHold = EndHold::Idle;
+    return false;
+  }
+  const uint32_t now = millis();
+  if (endHold == EndHold::Idle) {
+    endHold = EndHold::Holding;
+    endHoldSinceMs = now;
+  }
+  if (now - endHoldSinceMs < PEER_END_HOLD_MS) {
+    vm->pollNearby();
+    return true;
+  }
+  endHold = EndHold::Spent;
+  LOG_INF("GAME", "%s: the peer's end waited %u ms behind a STATE the VM did not adopt; honouring it", manifest.id,
+          static_cast<unsigned>(now - endHoldSinceMs));
+  return false;
 }
 
 void GameMatchActivity::loopPlaying() {

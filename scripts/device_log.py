@@ -32,7 +32,10 @@ not reset a board that wires them to its reset line.
               per device, from a raw device log or the merged log: connects and losses, each `VM stopped` with its
               game, dropped touches and hand-offs per game, the `[MEM]` figures (device-run-packet.md L1 to L3), and
               a nearby match's lines: the radio bring-ups, each `LINK` session's `STATE`s, resends, silences, `ABORT`s,
-              leaves and `GameLink` task stack, the `PeerGone` entries and their reasons (epic-play-nearby R13)
+              leaves and `GameLink` task stack, the `PeerGone` entries and their reasons (epic-play-nearby R13), and the
+              battery lines of a diagnostics build (`battery:`): their count, the first and last reading (mV, percent,
+              time), and the same for each boot (a merged log's `card file` events or a raw card log's `# boot` header
+              lines name it; `-` when neither does); a log with none says `battery: none`
 
 Exit 0: done. 1: not used (no rule is checked). 2: the command could not run (a bad argument, an output directory
 that cannot be made, an unreadable log, a card file that is not a diagnostics log).
@@ -345,6 +348,11 @@ DROPPED_BEFORE_DISPLAY = re.compile(r'\[GAME\] ([^\s:]+): dropped a touch before
 HAND_OFF_PUSHED = re.compile(r'\[GAME\] ([^\s:]+): hand-off screen pushed in (\d+) ms')
 MEM_LINE = re.compile(
     r'\[MEM\] (PSRAM: )?Free: (\d+) bytes, Total: (\d+) bytes, Min Free: (\d+) bytes, MaxAlloc: (\d+) bytes')
+# A diagnostics build's battery line beside the heap lines (src/main.cpp, ledger row 14): millivolts, 0 when the read
+# failed, and the status bar's percent.
+BATTERY_LINE = re.compile(r'\[MEM\] Battery: (\d+) mV, (\d+)%')
+# A raw card log's header line naming the boot its file is of (lib/DiagLog/DiagLogWriter.h writes the header).
+CARD_BOOT_HEADER = re.compile(r'# boot (\d+)\s*$')
 # A nearby match (src/games/GameLinkLog.h writes the `session=` lines, EspNowLink.h the radio's, GameMatchActivity.cpp the
 # PeerGone ones). The prefix is `[ms] [LEVEL] [LINK] `; a LINK line the patterns below do not know is kept as `other`.
 LINK_LINE = re.compile(r'\[(?:INF|ERR|DBG)\] \[LINK\] (.*)$')
@@ -369,6 +377,7 @@ NEARBY_ERROR = re.compile(r'\[ERR\] \[GAME\] (Nearby: .*)$')  # the lobby's own 
 PEER_GONE_REASON = re.compile(r'\[GAME\] ([^\s:]+): the other player is gone: ([a-z_]+)\s*$')
 
 MemFigures = collections.namedtuple('MemFigures', 'when free total min_free max_alloc')
+BatteryReading = collections.namedtuple('BatteryReading', 'when millivolts percent')
 VmStop = collections.namedtuple('VmStop', 'when game arena stack hook')
 
 
@@ -421,6 +430,20 @@ class MemSeries:
             self.least_max_alloc = figures
 
 
+class BatterySeries:
+    """The battery lines of a device, or of one of its boots: how many, the first and the last."""
+
+    def __init__(self):
+        self.count = 0
+        self.first = None
+        self.last = None
+
+    def add(self, reading):
+        self.count += 1
+        self.first = self.first or reading
+        self.last = reading
+
+
 class DeviceStats:
     def __init__(self, name):
         self.name = name
@@ -441,6 +464,9 @@ class DeviceStats:
         self.heap = MemSeries()
         self.psram = MemSeries()
         self.other_mem = []  # (when, text) of each other [MEM] line
+        self.boot = None  # the boot the lines being read are of: a merged log's card file event, a raw card log's header
+        self.battery = BatterySeries()
+        self.battery_boots = collections.OrderedDict()  # boot (None when unknown) -> BatterySeries, first seen first
         self.mem_lines = []  # (when, text) of every [MEM] line, for --mem-all
         self.radio_up = []  # (when, text) of each `radio up` line: one per bring-up
         self.link_sessions = collections.OrderedDict()  # session id -> LinkSession, first seen first
@@ -486,11 +512,16 @@ def add_line(device, when_stamp, text):
             if card:
                 device.cards = True
                 device.card_files += 1
-                device.boots.add(int(card.group(2)))
+                device.boot = int(card.group(2))
+                device.boots.add(device.boot)
                 if card.group(4) not in device.firmware:
                     device.firmware.append(card.group(4))
                 if card.group(5) not in device.boards:
                     device.boards.append(card.group(5))
+        return
+    boot = CARD_BOOT_HEADER.match(text)
+    if boot:
+        device.boot = int(boot.group(1))
         return
     millis = MILLIS_PREFIX.match(text)
     when = when_stamp or (f'[{millis.group(1)}]' if millis else '?')
@@ -545,7 +576,12 @@ def add_line(device, when_stamp, text):
         match = MEM_LINE.search(text)
         message = text[millis.end():] if millis else text
         device.mem_lines.append((when, message))
-        if match:
+        battery = BATTERY_LINE.search(text)
+        if battery:
+            reading = BatteryReading(when, int(battery.group(1)), int(battery.group(2)))
+            device.battery.add(reading)
+            device.battery_boots.setdefault(device.boot, BatterySeries()).add(reading)
+        elif match:
             figures = MemFigures(when, *(int(match.group(n)) for n in range(2, 6)))
             (device.psram if match.group(1) else device.heap).add(figures)
         else:
@@ -649,6 +685,25 @@ def mem_report(label, series):
     ]
 
 
+def battery_text(reading):
+    return f'{reading.millivolts} mV, {reading.percent}% at {reading.when}'
+
+
+def battery_report(device):
+    """The battery lines' figures: the first and last reading of the device, then of each boot (`-` when unknown)."""
+    if not device.battery.count:
+        return ['  battery: none']
+    lines = [
+        f'  battery: {device.battery.count} lines',
+        f'    first: {battery_text(device.battery.first)}',
+        f'    last: {battery_text(device.battery.last)}',
+    ]
+    for boot, series in device.battery_boots.items():
+        lines.append(f'    boot {fmt(boot)}: {series.count} lines, first {battery_text(series.first)}, '
+                     f'last {battery_text(series.last)}')
+    return lines
+
+
 def nearby_report(device):
     """The summary lines of a nearby match: the radio, each LINK session, the PeerGone entries."""
     if not device.has_nearby():
@@ -731,6 +786,7 @@ def summarize(devices, mem_all=False):
         lines += nearby_report(device)
         lines += mem_report('heap', device.heap)
         lines += mem_report('PSRAM', device.psram)
+        lines += battery_report(device)
         lines.append(f'  [MEM] other: {len(device.other_mem)} lines')
         if device.other_mem:
             lines.append(f'    first: {device.other_mem[0][1]} at {device.other_mem[0][0]}')
