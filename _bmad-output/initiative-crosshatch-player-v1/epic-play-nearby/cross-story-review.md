@@ -49,3 +49,23 @@ How the fixes get built and checked:
 - **The fix's own review:** the fix commit gets the same three context-free lenses before the push, recorded below.
 - **Flash:** the epic stands at +40,016 B flash and +80 B static RAM (entry 13), which leaves 1,984 B and 80 B of its share. The fix measures its own delta like for like. Row 8 is define-on only, so it costs the gate nothing.
 - **Epic file currency:** the fix build also checks the epic file for any Requirement, Done when, or Boundaries line that a Decision in the Notes has superseded and that still says the old thing. Examples: the Sticky lines after Nearby went X4 Pro only, and any line that still names a serial capture as the device-run path. It fixes them in the same commit, keeping each Decision's own wording.
+
+## The fix build
+
+- **Built:** `acac8871` on lane A, plan `_bmad-output/implementation-artifacts/plan-e6-xr-cross-story-fixes.md`, status `built`. Merged as `b68581ae`.
+- **Rows:** 1, 2, 3, 4, 5, 6 (the doc), 8, 9 and 16, plus the epic file's currency (R9, R12, R13, R14 and Boundaries brought up to date, each citing its Decision; an "As built" sentence on the flush-before-sleep Decision).
+- **Review of the fix:** the build's four context-free lenses (blind hunter, edge-case hunter, verification gap, intent alignment; `lenses_ran`) reviewed the fix's diff against this file. They found 26 items:
+  - 4 were patched, among them the battery read now *tries* the render lock and skips the line when it cannot take it;
+  - 2 were deferred: R6, R8 and AD-21's "set preventAutoSleep" wording for row 3, and no CI build of the define-on `main.cpp` (row 17's owner question);
+  - 20 were rejected, each with its reason in the plan.
+
+  `followup_review_recommended: false`.
+- **Verification:**
+  - Host suites: 2,607 of 2,607 pass.
+  - Each fix's new tests fail with the fix reverted (the plan's mutation cases).
+  - The define-on `x4pro` and `default` builds pass. They are the first compile of the battery line.
+  - `pio check` passes four ways.
+  - The define-off `x4pro`, `default` and `sticky` images differ from the base only in descriptor stamps and the trailer.
+- **Flash:** +528 B flash and +0 B static RAM, measured like for like over `c58f28aa`. The epic stands at +40,544 B / +80 B, which leaves 1,456 B / 80 B of its 42,000 B / 160 B share.
+- **Deferred:** rows 14 and 15 and the two review deferrals are under `deferred-work.md` `## e6-xr`. The owner confirms them at entry 14.
+- **Owner at entry 14:** row 3's change, the auto-sleep allowed on the "player left" and error views. R6's and R8's literal "set preventAutoSleep" lines were left as written for the owner to amend or reverse.
