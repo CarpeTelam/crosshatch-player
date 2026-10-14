@@ -47,7 +47,7 @@ struct Game {
     facts.manifest = &manifest;
     facts.settings = &reader->settings();
     facts.hostMaxSeats = 2;
-    // What gameHostCaps() lets a game start: solo and pass, not nearby.
+    // What the games check plays: solo and pass, never nearby (epic-first-party-games R10), whatever the host starts.
     facts.hostModes =
         static_cast<uint8_t>(manifest.modes & (GameCore::Manifest::MODE_SOLO | GameCore::Manifest::MODE_PASS));
   }

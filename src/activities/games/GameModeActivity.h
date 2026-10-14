@@ -8,6 +8,7 @@
 
 #include "GameConfirmDialog.h"
 #include "GamePicture.h"
+#include "GamesHomeRow.h"
 #include "activities/UiListActivity.h"
 #include "games/GameRegistry.h"
 #include "games/GameSaveStore.h"
@@ -49,17 +50,27 @@ struct Roster;
 // (GameCore::SettingValues, ctx.settings). Continue resumes the save (Start::Resume): the match plays the roster the
 // save records (GameMatchActivity::seedResume), and one it cannot read or start stops in its error view with the file
 // kept. The roster Continue passes is played only when the match finds no usable save (a new match): the first mode
-// this host can start in solo, pass, nearby order (rosterFor), so solo for a game that starts solo. New game with no
+// this host can start in solo, pass, nearby order (rosterFor), so solo for a game that starts solo. Nearby has no
+// roster without a lobby, so Continue skips it: a game that starts only nearby gets no match from Continue, and the
+// Continue row says why ("This saved game cannot be continued on this device"), the save kept. New game with no
 // save starts the current mode at once: solo; pass as an open pass match with the fewest seats it can have
-// (passSeats; the seat choice is deferred, deferred-work.md ## e5-inception); nearby solo until epic-play-nearby. New
-// game over any save (Unstartable included) asks first, Cancel focused ("Start a new game?" / the current mode's name
-// / "This replaces the saved game."), since the new match replaces the one save the game has; Cancel or Back keeps
-// it, and New game starts the match.
+// (passSeats; the seat choice is deferred, deferred-work.md ## e5-inception). New game over any save (Unstartable
+// included) in solo or pass asks first, Cancel focused ("Start a new game?" / the current mode's name / "This
+// replaces the saved game."), since the new match replaces the one save the game has; Cancel or Back keeps it, and New
+// game starts the match.
+//
+// New game in nearby starts no match and replaces nothing: a nearby match saves nothing (AD-17), so it asks no
+// question over a save and never touches resume.bin. It first reads the precondition (NearbyProbe, through
+// GameLobbyActivity::probe): with Wi-Fi in use it shows a dialog on this screen ("Wi-Fi is in use. Close it and try
+// again."), else with internal heap under 100 KiB another ("Not enough memory for Nearby. Restart the reader and try
+// again."), each with one OK button (Back and Confirm close it too), and opens no radio; with the precondition met it
+// remembers Nearby in prefs.bin as it does any started mode and pushes the lobby (GameLobbyActivity), so Back from the
+// lobby lands here as it was, and the lobby's Start replaces this screen and the launcher with the match.
 class GameModeActivity final : public UiListActivity {
  public:
-  // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
-  // mapping and the constructor cannot disagree.
-  static constexpr const char* NAME = "GameMode";
+  // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, from
+  // GamesHomeRow.h, so the mapping and the constructor cannot disagree.
+  static constexpr const char* NAME = GamesHomeRow::GAME_MODE;
 
   // The rows there can be: Continue, New game, Options.
   static constexpr size_t MAX_ROWS = 3;
@@ -104,20 +115,27 @@ class GameModeActivity final : public UiListActivity {
   // The rows for the save peek() found, and New game's line for the current choices.
   void buildRows();
   void writeNewGameLine();
-  // The roster a match in mode `modeBit` (a Manifest::Mode bit) plays: solo; pass with the fewest seats it can have;
-  // nearby solo until epic-play-nearby. False when that mode cannot start: no mode, or pass with no seat count this
-  // host fits. Logs nothing: Continue's search tries modes that may not start, so the callers log.
+  // The roster a match in mode `modeBit` (a Manifest::Mode bit) plays: solo; pass with the fewest seats it can have.
+  // False when that mode cannot start: no mode, pass with no seat count this host fits, or nearby (its roster comes
+  // from the lobby's session). Logs nothing: Continue's search tries modes that may not start, so the callers log.
   bool rosterFor(uint8_t modeBit, GameCore::Roster& roster) const;
   // Says on the New game row that the settings were not read, so nothing started. Takes the render lock.
   void showSettingsNotice();
-  // Starts a New match in the current mode.
+  // Says on the Continue row that this host can start no mode to continue the save in. Takes the render lock.
+  void showResumeNotice();
+  // Starts a New match in the current mode (nearby: the lobby, startNearby).
   void startNew();
+  // New game in nearby: the precondition, then the lobby pushed, or the refusal dialog.
+  void startNearby();
   // Starts the match from the save.
   void startResume();
   // Replaces this screen with the match; repaints this screen, logged, when the activity cannot be allocated, or, for a
   // New match only, when the manifest's settings were not read (loadSettings; showSettingsNotice). Continue starts. A
   // New match in a mode other than the one prefs.bin holds writes it first.
   void startMatch(const GameCore::Roster& roster, bool resume);
+  // A New match (or lobby) in a mode other than the one prefs.bin holds makes it the remembered one (rememberChoices),
+  // unless the file's mode is one this host does not offer or the file would not read.
+  void rememberModeIfChanged();
   // Writes the current choices as prefs.bin (logged when it cannot, and skipped, logged, when the manifest's settings
   // were not read); `saved` follows a write that succeeds. A prefs.bin that was Unreadable is read again first, and
   // when it reads, the choices still as the screen opened them take its values.
@@ -136,7 +154,16 @@ class GameModeActivity final : public UiListActivity {
   void buildConfirmDialog(UiScreen& screen);
   static void onConfirmChoice(const freeink::ui::ActionEvent& event, void* user);
 
+  // The refusal notice: opened by startNearby, closed by OK, Back, or Confirm. The list is not built under it.
+  enum class Refusal : uint8_t { None, WifiInUse, LowMemory };
+  void openRefusal(Refusal reason);
+  void closeRefusal();
+  bool handleRefusalInput();
+  void buildRefusalDialog(UiScreen& screen);
+  static void onRefusalTap(const freeink::ui::ActionEvent& event, void* user);
+
   static constexpr freeink::ui::ActionId ACTION_CONFIRM_CHOICE = ACTION_USER;
+  static constexpr freeink::ui::ActionId ACTION_REFUSAL_OK = ACTION_USER + 1;
 
   GameCore::Manifest manifest;
   // Manifest::Mode bits: CheckResult::modes of the game's check on this host, less pass (onEnter) when this host fits
@@ -149,6 +176,8 @@ class GameModeActivity final : public UiListActivity {
   bool hasSave = false;
   // New game was tapped while the settings were unread: its row's line says so (showSettingsNotice).
   bool settingsNotice = false;
+  // Continue was tapped and no mode this host can start fits the save: its row's line says so (showResumeNotice).
+  bool resumeNotice = false;
   // The manifest's settings (read in onEnter), what prefs.bin held when the screen opened (or last wrote; empty for no
   // usable file), and the choices New game starts with. Options edits `choices` and sets `optionsChanged`; this screen
   // outlives it. `optionsChanged` stays set until a write is tried (onOptionsClosed, else onExit()).
@@ -172,4 +201,11 @@ class GameModeActivity final : public UiListActivity {
   // confirmRow as this render read it (drawChrome, then buildScreen from it). Render task only.
   int8_t renderedConfirmRow = -1;
   GameConfirmDialog confirm;
+  // The open refusal (None: none). Written by the loop task, read once per build by the render task, like confirmRow.
+  std::atomic<Refusal> refusal{Refusal::None};
+  // refusal as this render read it (drawChrome, then buildScreen from it). Render task only.
+  Refusal renderedRefusal = Refusal::None;
+  // Filled by each build and read only inside it (about 700 B: too big for the render task's stack), like the
+  // confirmation's.
+  freeink::ui::OptionDialogProps refusalProps;
 };

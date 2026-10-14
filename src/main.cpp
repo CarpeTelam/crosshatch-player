@@ -22,6 +22,10 @@
 #include <XteinkDetect.h>
 #include <builtinFonts/all.h>
 
+#if CROSSHATCH_SD_LOG
+#include <DiagLog.h>
+#endif
+
 #include <cstring>
 
 #include "CrossPointSettings.h"
@@ -375,6 +379,9 @@ void enterDeepSleep(bool fromTimeout = false) {
 
   halTiltSensor.deepSleep();
   display.deepSleep();
+#if CROSSHATCH_SD_LOG
+  DiagLog::flushBeforeSleep();
+#endif
   Storage.prepareForDeepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
@@ -541,6 +548,9 @@ void setup() {
       // device; otherwise the button must still be held (ghost-wake debounce).
       if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
         LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
+#if CROSSHATCH_SD_LOG
+        DiagLog::flushBeforeSleep();
+#endif
         Storage.prepareForDeepSleep();
         powerManager.startDeepSleep(gpio);
       }
@@ -560,6 +570,9 @@ void setup() {
       // the device in a USB-replug boot loop (or sleep right after a flash).
       break;
 #else
+#if CROSSHATCH_SD_LOG
+      DiagLog::flushBeforeSleep();
+#endif
       Storage.prepareForDeepSleep();
       powerManager.startDeepSleep(gpio);
       break;
@@ -709,8 +722,25 @@ void loop() {
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
+#if CROSSHATCH_SD_LOG
+  // With the diagnostics log on, the heap lines go to its card file, so they need no USB host (ledger row 14). A
+  // battery line goes first: the cell's millivolts (0 when the read fails) and the status bar's percent, read under
+  // the render lock, since the themes read the same gauge and HalPowerManager's cache is unsynchronized. The lock is
+  // only tried, so the loop never waits out an e-ink push: a period whose try fails logs no battery line.
+  if (millis() - lastMemPrint >= 10000) {
+    {
+      static const BatteryMonitor battery;
+      RenderLock lock(RenderLock::Mode::Try);
+      if (lock.ownsLock()) {
+        const uint16_t batteryMv = battery.readMillivolts();
+        const uint16_t batteryPercent = powerManager.getBatteryPercentage();
+        LOG_INF("MEM", "Battery: %u mV, %u%%", static_cast<unsigned>(batteryMv), static_cast<unsigned>(batteryPercent));
+      }
+    }
+#else
   // The ROM console does not depend on Arduino USB CDC's connection state.
   if ((Serial || FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF) && millis() - lastMemPrint >= 10000) {
+#endif
     const auto heap = HalMemory::getInternalHeap();
     LOG_INF("MEM", "Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes", heap.freeBytes,
             heap.totalBytes, heap.minFreeBytes, heap.largestBlockBytes);

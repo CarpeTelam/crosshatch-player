@@ -12,11 +12,15 @@ namespace fakelock {
 
 inline std::atomic<int> acquisitions{0};
 inline std::atomic<int> selfDeadlocks{0};
-bool held();  // some thread holds the lock now
+inline std::atomic<int> taskAcquisitions{0};  // acquisitions made on a task thread
+inline std::atomic<int> taskAttempts{0};      // attempts made on a task thread, whether or not they got the lock
+bool held();                                  // some thread holds the lock now
 
 inline void reset() {
   acquisitions = 0;
   selfDeadlocks = 0;
+  taskAcquisitions = 0;
+  taskAttempts = 0;
 }
 
 }  // namespace fakelock

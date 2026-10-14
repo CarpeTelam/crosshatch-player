@@ -1032,6 +1032,82 @@ local function waitingAndSeat0()
   eq(ui.help, nil, "seat 0 has no question button")
 end
 
+-- Out of turn: a tap by the seat that is not on turn (nearby, where each device draws one seat) changes nothing and says
+-- nothing. The game stays seat-agnostic in `input`; a move it returns is the Session's to discard (a move from any seat
+-- but the turn seat is dropped), so what is pinned here is that `state` and `ui.message` are as they were, no tap
+-- sets `ui.vertical` for a seat that has nothing to place, and the question mark still opens the page and any tap closes it.
+local function outOfTurn()
+  local L = layout.compute(ch.screen.w, ch.screen.h)
+  local f1, f2 = build(ACROSS), build(DOWN)
+  -- Every phase with the seat that is not on turn: seat 2 while seat 1 places, seat 1 while seat 2 places, and either
+  -- seat while the other fires.
+  local cases = {
+    { "seat 1 places", stateWith({}), 2 },
+    { "seat 2 places", stateWith({ f = { f1, fleet.EMPTY }, p = 2 }), 1 },
+    { "seat 1 fires", firing(f1, f2, 1), 2 },
+    { "seat 2 fires", firing(f1, f2, 2), 1 },
+  }
+  for _, case in ipairs(cases) do
+    local what, state, seat = case[1] .. ", seat " .. case[3], case[2], case[3]
+    local before = dump(state)
+    local seen = 0
+    local function tap(x, y)
+      local ui = {}
+      game.input(state, seat, ui, tapEvent(x, y))
+      if ui.message ~= nil or ui.vertical ~= nil or dump(state) ~= before then
+        error(what .. ": a tap at " .. x .. "," .. y .. " changed the state or the ui", 0)
+      end
+      if ui.help then seen = seen + 1 end
+    end
+    -- A sweep of the canvas, then each cell and button.
+    for y = 0, ch.screen.h - 1, 13 do
+      for x = 0, ch.screen.w - 1, 13 do tap(x, y) end
+    end
+    for row = 1, 10 do
+      for col = 1, 10 do tap(taps.cell(row, col)) end
+    end
+    for _, name in ipairs(layout.BUTTONS) do tap(taps.button(name)) end
+    assert(seen > 0, what .. ": no tap opened the page")
+    collectgarbage("collect")
+    -- The question mark opens the page, and any tap closes it, a move for nobody.
+    local ui = {}
+    local qx, qy = taps.help()
+    eq(game.input(state, seat, ui, tapEvent(qx, qy)), nil, what .. ": the question mark is no move")
+    eq(ui.help, true, what .. ": the question mark opens the page")
+    eq(game.input(state, seat, ui, tapEvent(L.big.x + 5, L.big.y + 5)), nil, what .. ": a tap on the page is no move")
+    eq(ui.help, nil, what .. ": a tap closes the page")
+    eq(dump(state), before, what .. ": the state after the page")
+  end
+end
+
+-- A finished round draws no question button for any seat: its rectangle is no tap target, no tap is a move, and no
+-- tap changes the state or leaves a message.
+local function overInput()
+  local over = firing(build(ACROSS), string.rep("o", 83) .. "AAAAABBBBCCCDDDEE", 1)
+  eq(game.status(over).over, true, "the round is over")
+  local before = dump(over)
+  local qx, qy = taps.help()
+  for seat = 0, 2 do
+    local what = "Over, seat " .. seat
+    local ui = {}
+    eq(game.input(over, seat, ui, tapEvent(qx, qy)), nil, what .. ": the question rectangle is no move")
+    eq(ui.help, nil, what .. ": the question rectangle opens no page")
+    eq(ui.message, nil, what .. ": the question rectangle leaves no message")
+    for row = 1, 10 do
+      for col = 1, 10 do
+        eq(tapCell(over, seat, ui, row, col), nil, what .. ": a tap at " .. row .. "," .. col .. " is no move")
+      end
+    end
+    for _, name in ipairs(layout.BUTTONS) do eq(tapButton(over, seat, ui, name), nil, what .. ": the " .. name .. " button") end
+    eq(ui.help, nil, what .. ": no tap opens the page")
+    eq(dump(over), before, what .. ": the state")
+    -- A page left open by the round before it ended still closes on a tap.
+    local open = { help = true }
+    eq(game.input(over, seat, open, tapEvent(qx, qy)), nil, what .. ": a tap with the page open is no move")
+    eq(open.help, nil, what .. ": a tap closes an open page")
+  end
+end
+
 -- ---- text ----
 
 local function wrapCount(text, size, maxw)
@@ -1061,9 +1137,36 @@ local function helpPageFits()
   assert(ch.text_width("HOW TO PLAY", "large") <= layout.W - 48, "the page title is too wide")
   local text = ""
   for _, line in ipairs(lines) do text = text .. " " .. line.text:lower() end
-  for _, word in ipairs({ "rotate", "random", "clear", "ready", "overlap", "touch", "10 by 10", "sunk", "twice", "look away" }) do
+  for _, word in ipairs({ "rotate", "random", "clear", "ready", "overlap", "touch", "10 by 10", "sunk", "twice", "secret" }) do
     assert(text:find(word, 1, true), "the page does not mention '" .. word .. "'")
   end
+end
+
+-- The help page does not say the device is handed on, passed, or looked away from (it reads right when each player has
+-- a device of their own), and says what Ready does and that the ships are a secret.
+local function helpAvoidsHandOver()
+  local text = ""
+  for _, line in ipairs((game.help_lines())) do text = text .. " " .. line.text:lower() end
+  for _, word in ipairs({ "hand", "pass", "device", "look away" }) do
+    assert(not text:find(word, 1, true), "the page says '" .. word .. "'")
+  end
+  for _, phrase in ipairs({ "ready finishes your placement", "keep your ships secret",
+                            "the other player must not see your screen" }) do
+    assert(text:find(phrase, 1, true), "the page does not say '" .. phrase .. "'")
+  end
+end
+
+-- setup reads nothing of its ctx: a ctx that raises on any read gives the state a pass ctx and a nearby ctx give.
+local function noCtx()
+  local raising = setmetatable({}, {
+    __index = function(_, key) error("setup read ctx." .. tostring(key), 0) end,
+    __newindex = function(_, key) error("setup wrote ctx." .. tostring(key), 0) end,
+  })
+  local want = dump(game.setup({ seats = 2, mode = "pass", api = 1, settings = {} }))
+  eq(dump(game.setup(raising)), want, "setup with a ctx that raises on a read")
+  eq(dump(game.setup({ seats = 2, mode = "nearby", api = 1, settings = {} })), want, "setup in nearby")
+  eq(dump(game.setup({ mode = "pass" })), want, "setup with a pass ctx and nothing else")
+  eq(dump(game.setup({ mode = "nearby" })), want, "setup with a nearby ctx and nothing else")
 end
 
 local function textFits()
@@ -1159,7 +1262,11 @@ return {
   { name = "the question button and messages", run = inputHelpAndMessages },
   { name = "the last-shot lines and shot counts each seat reads", run = shotLines },
   { name = "waiting headlines and no question button on seat 0", run = waitingAndSeat0 },
+  { name = "a tap by the seat that is not on turn changes nothing and says nothing", run = outOfTurn },
+  { name = "a finished round has no question button and takes no tap for any seat", run = overInput },
   { name = "the HOW TO PLAY page fits the canvas", run = helpPageFits },
+  { name = "the HOW TO PLAY page does not hand the device on", run = helpAvoidsHandOver },
+  { name = "setup reads nothing of its ctx", run = noCtx },
   { name = "header, prompt, and reason texts fit", run = textFits },
   { name = "the launcher draws the boat in the fill weight", run = launcherIcon },
 }

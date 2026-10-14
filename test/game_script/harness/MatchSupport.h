@@ -41,19 +41,30 @@ using harness::Bytes;
 
 // The fixture games (test/game_script/fixtures), the ones a package can hold: a folder of
 // manifest.json, Lua, and images is copied onto the fake card as /.games/<name>/.
-inline void installFixture(const std::string& name) {
-  const std::filesystem::path root = std::filesystem::path(MATCH_FIXTURES_DIR) / name;
+//
+// installFixtureAs places fixture `name` under another game id (`id`): the files of a second "device" that shares this
+// card (NearbyMatchTest runs two matches in one process). Stands in for each device having its own SD card, so the
+// game's folder, its /.games-data/<id>/ files (store.bin, resume.bin), and its ch.log lines (the origin is the id) are
+// the device's own. More permissive than two devices: one card (a path outside the two ids is shared) and one log.
+//
+// installPackageAs does the same for any game folder `root` (a package directory: manifest.json, Lua, and images), such
+// as a first-party game's under games/, which the suite names by its path.
+inline void installPackageAs(const std::filesystem::path& root, const std::string& id) {
   if (!std::filesystem::is_directory(root)) {
-    ADD_FAILURE() << "no fixture game " << root;
+    ADD_FAILURE() << "no game folder " << root;
     return;
   }
   for (const auto& entry : std::filesystem::directory_iterator(root)) {
     if (!entry.is_regular_file()) continue;  // solo/screenshots: the loader ignores a folder too
     std::ifstream in(entry.path(), std::ios::binary);
     const Bytes bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    fakesd::addFile("/.games/" + name + "/" + entry.path().filename().string(), bytes);
+    fakesd::addFile("/.games/" + id + "/" + entry.path().filename().string(), bytes);
   }
 }
+inline void installFixtureAs(const std::string& name, const std::string& id) {
+  installPackageAs(std::filesystem::path(MATCH_FIXTURES_DIR) / name, id);
+}
+inline void installFixture(const std::string& name) { installFixtureAs(name, name); }
 
 // A game of the test's own: `main.lua` is `source`.
 inline void installGame(const std::string& id, const std::string& source) {

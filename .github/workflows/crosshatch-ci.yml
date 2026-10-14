@@ -9,7 +9,9 @@
 #   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections
 #   more than the RAM limit larger (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so
 #   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
-#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2).
+#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2), and the games-on
+#   build (which logs DBG) if its ELF holds the per-tap touch log line's format text, which only CROSSHATCH_TOUCH_LOG
+#   compiles in.
 #   scripts/check_flash_budget.py holds the logic and how to run it locally.
 # - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
 #   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
@@ -86,9 +88,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 270 KiB is
-      # 276,480 bytes. Set it below the measured difference to see the job fail.
-      FLASH_BUDGET_KIB: 270
+      # Limit in KiB, 1 KiB = 1,024 bytes (ESP32 flash and the app slot are sized in binary units), so 300 KiB is
+      # 307,200 bytes. Set it below the measured difference to see the job fail.
+      FLASH_BUDGET_KIB: 300
       # Static internal RAM limit in bytes (1 KiB), the same way.
       RAM_BUDGET_BYTES: 1024
     steps:
@@ -153,6 +155,13 @@ jobs:
       - name: Check game objects
         if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}
         run: python3 scripts/check_flash_budget.py objects
+
+      # Fails when the x4pro games-on build, the one that logs DBG (LOG_LEVEL 2), holds the per-tap touch log line
+      # (compiled in only by CROSSHATCH_TOUCH_LOG). The release envs log at LOG_LEVEL 1, where LOG_DBG compiles out
+      # whatever the define. Needs only the games-on build.
+      - name: Check the touch log line is compiled out
+        if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}
+        run: python3 scripts/check_flash_budget.py touch-line
 
   x4pro-static-analysis:
     name: x4pro static analysis

@@ -23,6 +23,8 @@ constexpr const char* forView(const GameCore::MatchState state) {
       return "flag-checkered";
     case GameCore::MatchState::Error:
       return "warning";
+    case GameCore::MatchState::PeerGone:
+      return "users";
     case GameCore::MatchState::Starting:
     case GameCore::MatchState::Playing:
     case GameCore::MatchState::Leaving:
@@ -34,8 +36,8 @@ constexpr const char* forView(const GameCore::MatchState state) {
 }
 
 // The icon of the menu row that raises `event`; null for an event that is never a
-// menu choice (MatchLifecycle::menuFor). Back is only the error view's row, which
-// leaves the match.
+// menu choice (MatchLifecycle::menuFor). Back is only the error and player-left views'
+// row, which leaves the match.
 constexpr const char* forOption(const GameCore::MatchEvent event) {
   switch (event) {
     case GameCore::MatchEvent::Resume:
@@ -52,6 +54,7 @@ constexpr const char* forOption(const GameCore::MatchEvent event) {
     case GameCore::MatchEvent::ForcedExit:
     case GameCore::MatchEvent::TurnChanged:
     case GameCore::MatchEvent::Tap:
+    case GameCore::MatchEvent::PeerGone:
       break;  // never a menu choice
   }
   return nullptr;

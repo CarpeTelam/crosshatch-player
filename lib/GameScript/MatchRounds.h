@@ -2,13 +2,15 @@
 
 #include <GameEvent.h>
 #include <IGameRules.h>
+#include <SeatShown.h>
 
 #include <atomic>
 #include <cstdint>
 
 namespace GameCore {
 class Session;
-}
+enum class Adoption : uint8_t;
+}  // namespace GameCore
 
 namespace GameScript {
 
@@ -27,8 +29,14 @@ class InputQueue;
 // their caller and never pick one. The open match's composition (start, restart, step)
 // runs them with the seat GameCore::seatShown names: the one local seat, or with
 // several the turn seat, and seat 0 once the round is over. A turn seat this device
-// does not play gets no input and no draw, so its round counts as started only at a
-// local seat's first frame.
+// does not play is shown as the local seat that last drew (else the first local seat),
+// so the round starts, and a move, a timer, and a tap are served, while the turn is
+// remote. A turn that is no seat gets no input and no draw, so its round counts as
+// started only at a local seat's first frame.
+//
+// A nearby device that is not seat 1 never starts a round (Session::hasState): it attach()es to the Session and the
+// owner calls adopted() after each Session::adopt, so the loop is still the one round driver (epic-play-nearby entry
+// 9). Until that device holds a state, step reads nothing and draws nothing.
 class MatchRounds {
  public:
   MatchRounds(GameTimer& timer, InputQueue& queue) : timer(timer), queue(queue) {}
@@ -71,27 +79,52 @@ class MatchRounds {
   static bool lateTimer(const GameCore::GameEvent& event, const bool roundOver) {
     return event.kind == GameCore::EventKind::Timer && roundOver;
   }
+  // A Timer event on a roster with no local seat: no seat of this device could read it, and seat 0, the frame for
+  // everyone, is never an input seat, so play and step drop it too (after the late check; the caller that logs the
+  // drop asks first, with game.timer().accepts). Every other event kind is read as before.
+  bool noSeatTimer(const GameCore::GameEvent& event) const;
   // Draws the snapshot for `seat` (0: the frame for everyone). A round's first
-  // frame counts it as started; a frame of a round that is over counts its end, once.
+  // frame counts it as started; a frame of a round that is over counts its end, once. A local seat drawn is the
+  // one that last showed (lastLocalSeat).
   GameCore::Outcome draw(uint8_t seat);
+
+  // ---- a nearby device that has no state yet (VM task) ----
+
+  // Takes `session` as the one this loop plays without starting a round on it: a device that is not seat 1 waits for
+  // the host's first STATE (Session::adopt). Arms the round to come to count as started at its first draw. Runs no
+  // game code and draws nothing, so roundsStarted() stays 0 and no frame is published.
+  void attach(GameCore::Session& session);
+  // After Session::adopt answered `adoption` (and Ok): Adopted draws the seat shown (an over status counts the round's
+  // end there, once); RoundStarted is a new round begun by the host: the pending timer is cancelled (as beginAgain
+  // does), the round is armed to count as started at this draw, then the seat is drawn. Every refusal returns Ok and
+  // changes nothing, drawing nothing.
+  GameCore::Outcome adopted(GameCore::Adoption adoption);
 
   // ---- the open match (VM task): the steps with the seat seatShown names ----
 
-  // When seatShown names NO_SEAT (a turn seat this device does not play), each of these
+  // When seatShown names NO_SEAT (a turn that is no seat of the roster), each of these
   // reads no input, draws nothing, and returns Ok.
   // begin, then draw.
   GameCore::Outcome start(GameCore::Session& session);
   // beginAgain, then draw.
   GameCore::Outcome restart();
-  // One event as the game sees it: a stale or late timer event is dropped with no draw; else
+  // One event as the game sees it: a Session with no state yet (a nearby device before the host's first STATE) reads
+  // nothing and draws nothing; a stale or late timer event is dropped with no draw; else
   // play, then draw (the seat shown after the move).
   GameCore::Outcome step(const GameCore::GameEvent& event);
   // The seat GameCore::seatShown names for the session's status now: after start, restart, or a step that drew, the
   // seat whose frame was published last (GameVM notes it, to drop a touch posted under another seat's frame).
   uint8_t shownSeat() const;
+  // The local seat draw() published last, or NO_SEAT before one: "the local seat that last showed" for a turn seat
+  // another device plays. Seat 0 and NO_SEAT frames never update it. Kept for the life of the object, Play again
+  // included. VM task.
+  uint8_t lastLocalSeat() const { return lastLocal; }
 
  private:
   GameCore::Outcome beginRound();
+  // The round the host began is on this device (Session::adopt): arms it to count as started, then draws the seat
+  // shown.
+  GameCore::Outcome beginAdopted();
   // draw(shownSeat()), or nothing (Ok) for NO_SEAT.
   GameCore::Outcome drawShown();
   void countRoundEnd();
@@ -99,8 +132,9 @@ class MatchRounds {
   GameTimer& timer;
   InputQueue& queue;
   GameCore::Session* session = nullptr;
-  bool roundOver = false;          // VM task: the current round has been counted
-  bool firstFramePending = false;  // VM task: the current round has not drawn yet
+  bool roundOver = false;                 // VM task: the current round has been counted
+  bool firstFramePending = false;         // VM task: the current round has not drawn yet
+  uint8_t lastLocal = GameCore::NO_SEAT;  // VM task: the local seat drawn last
   std::atomic<bool> playAgain{false};
   std::atomic<uint32_t> started{0};
   std::atomic<uint32_t> ended{0};

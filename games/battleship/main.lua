@@ -1,7 +1,6 @@
 -- Battleship: two players, each with a hidden fleet of five ships on a 10 x 10 board. They place their ships one at a
--- time (the device is passed between them), then take turns firing at the other board; the first to sink all five
--- ships wins. Each seat's frame shows only its own fleet and its own shots; seat 0, shown once the round is over,
--- shows both fleets.
+-- time, then take turns firing at the other board; the first to sink all five ships wins. Each seat's frame shows only
+-- its own fleet and its own shots; once the round is over every seat's frame, seat 0's included, shows both fleets.
 --
 -- state = {
 --   f = { <100 chars>, <100 chars> },  seat s's own fleet (fleet.lua has the alphabet),
@@ -29,11 +28,11 @@ local HELP_PARAGRAPHS = {
   "Sink all five of the other player's ships before they sink yours. The ships are 5, 4, 3, 3, and 2 squares long, "
     .. "on a 10 by 10 board.",
   "Placing: tap a square to put the next ship there, longest first. Rotate turns it. Random places the ships you have "
-    .. "not placed yet, Clear lifts them all, and Ready hands the device on. Ships may touch but not overlap.",
+    .. "not placed yet, Clear lifts them all, and Ready finishes your placement. Ships may touch but not overlap.",
   "Firing: tap a square on the big board. A wave is a miss, a flame a hit, and a sunk ship is named. You cannot fire "
     .. "at a square twice.",
   "The small board is your fleet: rings are the other player's misses, and crossed ships their hits.",
-  "When the device is passed, look away. The first to sink all five ships wins.",
+  "Keep your ships secret: the other player must not see your screen. The first to sink all five ships wins.",
   "The question mark button opens this page. Tap anywhere to close it.",
 }
 
@@ -105,7 +104,8 @@ function game.apply(state, seat, move)
 end
 
 -- What a seat's frame may hold: its own fleet, the other fleet as `fleet.mask` shows it (only once firing starts),
--- and the number of the other seat's ships not yet sunk (public: every sinking is announced). Seat 0 sees both fleets.
+-- and the number of the other seat's ships not yet sunk (public: every sinking is announced). Seat 0 sees both fleets,
+-- and view.lua draws seat 0's views for any seat once the round is over, so every seat sees both fleets at Over.
 -- view.lua draws everything about the other seat from here, so secrecy is one function the checks pin.
 function game.views(state, seat)
   if seat == 0 then return { fleets = { state.f[1], state.f[2] } } end
@@ -131,10 +131,10 @@ function game.headline(state, seat)
   return "Player " .. seat .. ": waiting"
 end
 
--- The layout mode of a seat's frame: "over" (seat 0), "firing", "placing", or "waiting" (placed, the other seat is
--- placing). The same four decide what a tap means.
+-- The layout mode of a seat's frame: "over" (seat 0, or any seat once the round is over), "firing", "placing", or
+-- "waiting" (placed, the other seat is placing). The same four decide what a tap means.
 local function mode(state, seat)
-  if seat == 0 then return "over" end
+  if seat == 0 or game.status(state).over then return "over" end
   if state.p == 3 then return "firing" end
   if state.p == seat then return "placing" end
   return "waiting"
@@ -152,13 +152,14 @@ function game.input(state, seat, ui, ev)
   end
   ui.message = nil
   local L = canvas()
-  -- Seat 0's frame draws no question button, so it has no tap target there either.
-  if seat ~= 0 and layout.inside(L.question_rect, ev.x, ev.y) then
+  local m = mode(state, seat)
+  -- An Over frame (seat 0's, or any seat's once the round is over) draws no question button, so it has no tap target
+  -- there either, and takes no move.
+  if m == "over" then return nil end
+  if layout.inside(L.question_rect, ev.x, ev.y) then
     ui.help = true
     return nil
   end
-  if game.status(state).over then return nil end
-  local m = mode(state, seat)
   -- A tap in the margin beside the edge cells or buttons counts as that target (layout.snap); exact hits come first.
   local bigRect = layout.board_rect(L.big)
   local bpx, bpy = layout.snap(L, ev.x, ev.y, bigRect, L.big.cell, L.big.cell)

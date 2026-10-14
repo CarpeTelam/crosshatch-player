@@ -6,9 +6,10 @@
 #include <I18n.h>
 
 #include <cstdio>
+#include <iterator>
 
+#include "GamePanelStyle.h"
 #include "GameSplashLayout.h"
-#include "components/UITheme.h"
 #include "games/GameIconDraw.h"
 #include "games/GameViewIcons.h"
 
@@ -25,6 +26,9 @@ bool labelIsBlack(const fui::Paint& paint, const fui::TextStyle& text) {
   return GameViewIcons::labelIsBlack(paint.kind == fui::PaintKind::Solid, paint.color == fui::Color::White,
                                      GameViewIcons::textInkIsWhite(text.color == fui::Color::White, text.inverted));
 }
+
+// A nearby follower's end-of-round menu: only the host plays again.
+constexpr MatchEvent FOLLOWER_OVER_MENU[] = {MatchEvent::Leave};
 
 // A menu choice's label.
 StrId optionLabel(const MatchEvent event) {
@@ -44,12 +48,29 @@ StrId optionLabel(const MatchEvent event) {
     case MatchEvent::ForcedExit:
     case MatchEvent::TurnChanged:
     case MatchEvent::Tap:
+    case MatchEvent::PeerGone:
       break;  // never a menu choice (MatchLifecycle::menuFor)
   }
   return StrId::STR_BACK;
 }
 
 }  // namespace
+
+StrId GameMatchView::peerGoneLine(const GameCore::Protocol::AbortReason reason) {
+  using GameCore::Protocol::AbortReason;
+  switch (reason) {
+    case AbortReason::ScriptError:
+      return StrId::STR_GAMES_PEER_ERROR;
+    case AbortReason::Timeout:
+      return StrId::STR_GAMES_PEER_SILENT;
+    case AbortReason::VersionMismatch:
+      return StrId::STR_GAMES_PEER_VERSION;
+    case AbortReason::Left:
+    case AbortReason::Full:  // cannot reach a match (MatchSink refuses strangers); a left line is true if one did
+      break;
+  }
+  return StrId::STR_GAMES_PEER_LEFT;
+}
 
 const char* GameMatchView::viewHeadline(const Input& input) {
   switch (input.state) {
@@ -59,6 +80,8 @@ const char* GameMatchView::viewHeadline(const Input& input) {
       return tr(STR_GAMES_OVER);
     case MatchState::Error:
       return I18N.get(input.errorHeadline);
+    case MatchState::PeerGone:
+      return I18N.get(peerGoneLine(input.endReason));
     case MatchState::Starting:
     case MatchState::Playing:
     case MatchState::Leaving:
@@ -69,13 +92,33 @@ const char* GameMatchView::viewHeadline(const Input& input) {
   return nullptr;
 }
 
+GameCore::MatchMenu GameMatchView::menuFor(const MatchState state, const bool followsHost) {
+  if (followsHost && state == MatchState::Over) {
+    return GameCore::MatchMenu{FOLLOWER_OVER_MENU, static_cast<uint8_t>(std::size(FOLLOWER_OVER_MENU))};
+  }
+  return MatchLifecycle::menuFor(state);
+}
+
+void GameMatchView::buildWaitingView(UiAppHost::UiScreen& screen) {
+  const fui::Rect safe = screen.frame().safeRect();
+  fui::TextStyle text = screen.theme().bodyText;
+  text.align = fui::TextAlign::Center;
+  const int16_t lineHeight = screen.target().lineHeight(text.font);
+  const fui::Rect line{safe.x, static_cast<int16_t>(safe.y + (safe.height - lineHeight) / 2), safe.width, lineHeight};
+  screen.target().text(line, tr(STR_GAMES_WAITING_FOR_HOST), text);
+}
+
 void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& renderer, const Input& input) {
   const MatchState state = input.state;
+  if (input.waiting) {
+    buildWaitingView(screen);
+    return;
+  }
   if (state == MatchState::Result || state == MatchState::HandOff) {
     buildHandOffView(screen, renderer, input);
     return;
   }
-  const GameCore::MatchMenu menu = MatchLifecycle::menuFor(state);
+  const GameCore::MatchMenu menu = menuFor(state, input.followsHost);
   const char* headline = viewHeadline(input);
   if (menu.count == 0 || !headline) return;
   const uint8_t count = menu.count < MAX_OPTIONS ? menu.count : MAX_OPTIONS;
@@ -108,6 +151,11 @@ void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& render
     props.message = tr(STR_GAMES_NEXT_ROUND_STARTING);
     props.messageText.align = fui::TextAlign::Center;
   }
+  if (state == MatchState::Over && input.followsHost) {
+    // Only the host plays again; this device leaves Over by itself when the next round starts.
+    props.message = tr(STR_GAMES_WAITING_FOR_HOST);
+    props.messageText.align = fui::TextAlign::Center;
+  }
   props.buttonText = theme.bodyText;
   props.buttonStyles = theme.button;
   props.options = options;
@@ -117,19 +165,8 @@ void GameMatchView::build(UiAppHost::UiScreen& screen, const GfxRenderer& render
   props.contentHeight = GameViewIcons::forView(state) ? static_cast<int16_t>(GameViewIcons::VIEW_PIXELS) : 0;
   // Touch only: the buttons are read in loopView().
   props.inputMask = fui::InputTouch;
-  // A framed panel, as OptionPopup draws it, so it stands out over the game.
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
+  // A framed panel, so it stands out over the game.
+  setGamePanelStyle(props.styles);
 
   const fui::Rect safe = screen.frame().safeRect();
   const auto width = static_cast<int16_t>(safe.width * 4 / 5);
@@ -142,24 +179,13 @@ void GameMatchView::buildHandOffView(UiAppHost::UiScreen& screen, const GfxRende
   const MatchState state = input.state;
   const fui::Rect safe = screen.frame().safeRect();
   const auto& theme = screen.theme();
-  const auto& metrics = UITheme::getInstance().getMetrics();
   // The banner and the button are each the screen's one tap target, routed like any FreeInkUI control: a tap on it
   // passes the device on (loopHandOff), a tap elsewhere routes nothing. Touch only: Confirm is read in loopHandOff.
   fui::ButtonProps& props = bannerProps;
   props.action = ACTION_PASS;
   props.inputMask = fui::InputTouch;
   props.text = theme.bodyText;
-  fui::BoxStyle& panel = props.styles.normal;
-  panel.background = fui::Paint::solid(fui::Color::White);
-  panel.foreground = fui::Paint::solid(fui::Color::Black);
-  panel.border = fui::Paint::solid(fui::Color::Black);
-  panel.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
-  panel.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
-  props.styles.selected = panel;
-  props.styles.focused = panel;
-  props.styles.active = panel;
-  props.styles.disabled = panel;
-  props.styles.explicitlySet = true;
+  setGamePanelStyle(props.styles);
   const auto width = static_cast<int16_t>(safe.width * 4 / 5);
   const auto left = static_cast<int16_t>(safe.x + (safe.width - width) / 2);
   if (state == MatchState::Result) {

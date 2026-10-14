@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build, launch, and drive the CrossPoint desktop simulator headlessly.
 # Run from the repo root. State (pids, log, screenshots) lives in build/sim/.
+# SIM_INSTANCE=1..9 runs a numbered instance beside the others, so two windows can play a nearby round: its own
+# display, state directory (build/sim/inst-N), SD root, web server port, and inbox. See `where` and `inbox`.
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +16,37 @@ MARK_BEGIN="; >>> crosshatch simulator (managed by .claude/skills/run-crosshatch
 MARK_END="; <<< crosshatch simulator"
 
 die() { echo "sim: $*" >&2; exit 1; }
+
+# A numbered instance (SIM_INSTANCE unset or empty: the default instance, as before). INSTANCE stays empty for the
+# default. SD is the instance's SD root (absolute: the binary runs in the repo root), INBOX its games inbox.
+INSTANCE="${SIM_INSTANCE:-}"
+SD="$ROOT/fs_"
+HTTP_PORT=8080
+if [ -n "$INSTANCE" ]; then
+  case "$INSTANCE" in
+    [1-9]) ;;
+    *) die "SIM_INSTANCE must be 1..9 (or unset), got '$INSTANCE'" ;;
+  esac
+  STATE=build/sim/inst-$INSTANCE
+  SHOTS=$STATE/shots
+  DISP="${SIM_DISPLAY:-:$((77 + INSTANCE))}"
+  SD="$ROOT/$STATE/fs_"
+  HTTP_PORT=$((8080 + 10 * INSTANCE))
+fi
+INBOX="$SD/games"
+
+# The UDP port base the instances of this worktree share (UdpLink: CROSSHATCH_UDP_PORT_BASE). The caller's wins; else it
+# comes from the repo root, so worktrees running simulators at once do not hear each other: 21000 + (cksum % 1000) * 8,
+# in 21000..28992, clear of the link's default (45700).
+udp_base() {
+  if [ -n "${CROSSHATCH_UDP_PORT_BASE:-}" ]; then
+    echo "$CROSSHATCH_UDP_PORT_BASE"
+    return
+  fi
+  local sum
+  sum=$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)
+  echo $((21000 + (sum % 1000) * 8))
+}
 
 env_for() {
   case "${1:-x4pro}" in
@@ -119,6 +152,14 @@ cmd_start() {
   [ -x "$bin" ] || die "$bin missing; run '$0 build ${1:-x4pro}'"
   cmd_stop >/dev/null 2>&1 || true
   mkdir -p "$STATE" "$SHOTS"
+  # The UDP base is the one thing every simulator of this worktree shares, the default instance included.
+  export CROSSHATCH_UDP_PORT_BASE
+  CROSSHATCH_UDP_PORT_BASE=$(udp_base)
+  if [ -n "$INSTANCE" ]; then
+    # Its own SD root and web server port.
+    mkdir -p "$INBOX"
+    export CROSSPOINT_SIM_SD="$SD" CROSSPOINT_SIM_HTTP_PORT="$HTTP_PORT"
+  fi
   Xvfb "$DISP" -screen 0 1280x1024x24 >"$STATE/xvfb.log" 2>&1 &
   echo $! > "$STATE/xvfb.pid"
   sleep 0.5
@@ -223,6 +264,26 @@ cmd_ss() {
   echo "$out"
 }
 
+# What this instance uses, as key=value lines. Reads nothing and creates nothing.
+cmd_where() {
+  echo "instance=${INSTANCE:-default}"
+  echo "display=$DISP"
+  echo "state=$STATE"
+  echo "shots=$SHOTS"
+  echo "sd=$SD"
+  echo "inbox=$INBOX"
+  echo "http_port=$HTTP_PORT"
+  echo "udp_base=$(udp_base)"
+}
+
+# Packs a game folder into this instance's inbox; the Games screen installs it on open.
+cmd_inbox() {
+  [ $# -eq 1 ] || die "usage: inbox GAME_DIR"
+  [ -d "$1" ] || die "no game folder '$1'"
+  python3 scripts/pack_game.py "$1" "$INBOX"
+  echo "sim: packed $1 into $INBOX"
+}
+
 cmd_log() {
   tail -n "${1:-20}" "$STATE/sim.log"
 }
@@ -269,6 +330,8 @@ case "${1:-}" in
   key) shift; cmd_key "$@" ;;        # NAME [HOLD_MS]
   ss) shift; cmd_ss "$@" ;;          # [NAME] -> prints PNG path
   log) shift; cmd_log "$@" ;;        # [LINES] tail firmware log
+  where) shift; cmd_where "$@" ;;    # key=value lines: display, state, SD root, inbox, ports (SIM_INSTANCE=1..9)
+  inbox) shift; cmd_inbox "$@" ;;    # GAME_DIR pack a game into the instance's fs_/games
   script) shift; cmd_script "$@" ;;  # DEVICE INPUT SHOTS one-shot run
   *) usage; exit 1 ;;
 esac

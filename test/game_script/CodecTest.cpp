@@ -13,6 +13,7 @@
 #include "ArenaAllocator.h"
 #include "BlobHeader.h"
 #include "Codec.h"
+#include "Protocol.h"
 #include "StreamingJsonParser.h"
 
 // The expected bytes live in codec_vectors.json, which scripts/game_codec_test.py
@@ -280,6 +281,25 @@ TEST(CodecVectorsTest, ConstantsMatchVectors) {
   for (const auto& [name, constant] : constants) {
     ASSERT_EQ(v.scalars.count(name), 1u) << name;
     EXPECT_EQ(std::stoul(v.scalars.at(name)), constant) << name;
+  }
+}
+
+// The codec bytes ride in a STATE frame's snapshot, so the link's protocol version includes the codec's (AD-13).
+// lib/GameCore cannot include lib/GameScript, so this suite, which sees both, pins the pair. Every (Codec::VERSION,
+// Protocol::PROTO) pair that has shipped is a row, oldest first, and the last row is the build's: a new codec version
+// is a new row, which must carry a higher PROTO than the row before it, so a codec bump cannot ship on the old PROTO.
+TEST(CodecVectorsTest, ProtoIsBumpedWithTheCodecVersion) {
+  struct Pair {
+    int codec;
+    int proto;
+  };
+  constexpr Pair SHIPPED[] = {{1, 1}};
+  const Pair& now = SHIPPED[std::size(SHIPPED) - 1];
+  EXPECT_EQ(Codec::VERSION, now.codec) << "Codec::VERSION changed: add a row with a higher Protocol::PROTO";
+  EXPECT_EQ(GameCore::Protocol::PROTO, now.proto) << "Protocol::PROTO changed: add a row for it";
+  for (size_t i = 1; i < std::size(SHIPPED); ++i) {
+    EXPECT_GT(SHIPPED[i].proto, SHIPPED[i - 1].proto) << "row " << i << ": every row is a new PROTO";
+    EXPECT_GE(SHIPPED[i].codec, SHIPPED[i - 1].codec) << "row " << i << ": the codec version never goes back";
   }
 }
 

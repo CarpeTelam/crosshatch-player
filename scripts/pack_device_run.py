@@ -11,6 +11,8 @@ Writes `<out-dir>/` (created if missing):
   pass-hidden.chgame           the fixture of the same name: a hidden pass match's hand-off
   pass-art.chgame              the fixture of the same name: title.png, handoff.png, default_mode, and settings
   slow-restart.chgame          the fixture of the same name: a Play-again setup that spins for 2 s
+  nearby.chgame                the fixture of the same name: two seats, `pass` and `nearby` modes (epic-play-nearby entry 11's
+                               smoke run packs it for both X4 Pros: one package, one hash, on both cards)
   pass-title.chgame            pass-art without handoff.png, for the title.png fallback (derived, see DERIVED)
   pass-store.chgame            pass-hidden plus one ch.store.set per move, so a store flush can land in a hand-off
   invalid-binary-lua.chgame    the hardening generator's `binary-lua-stored` case, which the installer must set aside
@@ -58,6 +60,7 @@ GAMES = (
     ('pass-hidden', 'pass-hidden'),
     ('pass-art', 'pass-art'),
     ('slow-restart', 'slow-restart'),
+    ('nearby', 'nearby'),
 )
 # Games the device run needs that no committed fixture is: (fixture folder copied, its name, new id, new name, files
 # removed, (file, pattern, replacement) edits). Each is copied to scratch, edited, and packed, so no fixture is added to the tree.

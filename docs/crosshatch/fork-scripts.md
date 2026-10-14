@@ -78,3 +78,151 @@ for t in scripts/*_test.py; do
   printf '%s\n' "$out" | grep -Eq '^Ran [1-9][0-9]* tests? in ' || echo "RAN NO TESTS: $t"
 done
 ```
+
+## Capturing a device run
+
+`scripts/device_log.py` reads the serial logs of two or more devices at once, so a two-device run (epic-play-nearby)
+has one log on one clock instead of two files kept by hand. It uses `termios` and `select` only, so it needs no
+pyserial and runs on Linux and macOS. `capture` needs a computer with one USB port per device, two for a two-device run;
+`merge` (below) needs none during the run.
+
+```sh
+python3 scripts/device_log.py capture \
+  --port A=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_AA:BB:CC:DD:EE:01-if00 \
+  --port B=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_AA:BB:CC:DD:EE:02-if00 \
+  --out run-logs
+```
+
+- **Port paths.** Use `/dev/serial/by-id/...` on Linux: the name follows the board's serial number, while
+  `/dev/ttyACM0` and `/dev/ttyACM1` swap or renumber when a device sleeps and wakes. On macOS the ports are
+  `/dev/cu.usbmodem*` (use `cu`, not `tty`). List the directory with each device plugged in alone to learn which is
+  which, then name them (`A`, `B`; letters, digits, `_`, `-`).
+- **Output.** `--out` is required and is made if missing; point it outside the repository. `A.raw.log` and
+  `B.raw.log` hold every byte each port gave, unchanged, across reconnects. `merged.log` holds one line per device
+  line, `<UTC stamp> <NAME> <line>`, in host-time order, for example
+  `2026-10-12T09:15:02.481Z A [41230] [INF] [GAME] sudoku: Playing -> Leaving on ForcedExit`. The stamp is taken when
+  the line's newline arrives on the host, so a slow line is stamped up to its transfer time late. Files already in the
+  directory are appended to.
+- **Reconnect.** A port that disappears (a sleep renumbers the USB device) or is not there yet is tried again every
+  0.5 s. The merged log gets `<stamp> <NAME> [device_log] lost <path>: <reason>; waiting for it to come back` and
+  later `... connected <path>`; a half line at the loss is written to the merged log; the other device keeps flowing.
+  Stop with Ctrl-C, SIGTERM, or `--duration SECONDS`; a second Ctrl-C acts as it always does. If the host clock steps
+  backwards, the stamps hold at the latest value until it catches up, so the merged log stays in order.
+- **Exit codes.** 0: done. 2: it could not run (a bad argument, a log that cannot be written, an unreadable log).
+- **Permissions.** The port needs read permission (on Linux, membership of the `dialout` group). ModemManager can
+  grab a CDC port and swallow bytes; stop it for the run (`sudo systemctl stop ModemManager`) if bytes go missing.
+- **DTR and RTS** are cleared on every connect (best effort), so connecting does not reset a board that wires them to
+  reset. Opening the port can still pulse them once before they are cleared. `--baud` defaults to 115200.
+- **Not yet measured.** The tests use pseudo-terminals, which close with an immediate error and have no sleep timing.
+  Whether the reconnect holds on a real X4 Pro's CDC port across a sleep is unmeasured until a device run.
+
+### The run without a computer
+
+A build with `-DCROSSHATCH_SD_LOG=1` (the define is off in every env, so a normal build has none of this code, and its
+image differs only in the app descriptor's build stamps and digests) writes every log line to files on the device's own SD card, so a two-device run needs no
+computer until it is over. Build and flash each device (`docs/crosshatch/game-canvas.md` has the build command), play,
+then pull the card or open the device's USB drive and run `merge` on the files:
+
+```sh
+flock /tmp/crosshatch-build.lock sh -c \
+  'PLATFORMIO_BUILD_FLAGS="-DCROSSHATCH_SD_LOG=1 -DCROSSHATCH_BUILD_ID=$(git describe --always --dirty)" \
+   pio run -e x4pro -t upload'
+python3 scripts/device_log.py merge --out run-logs A=/media/cardA B=/media/cardB
+python3 scripts/device_log.py summary run-logs/merged.log
+```
+
+- **What the card holds.** `/crosshatch-log/b<boot>-s<segment>-<device>.log`. The card has no clock, so a boot's number
+  is one more than the highest in the folder and a segment is one file of the boot; `<device>` is the last two bytes of
+  the station MAC in upper case, the nearby label's suffix. Each file starts with a `# crosshatch-diag-log 1` line and
+  `# key value` lines (device, board, firmware, version, build time, boot, segment, and the device clock at the file's
+  start as `opened_ms`), then the device's log lines unchanged, `[ms] [LVL] [origin] text`. A segment closes at 1 MiB (a
+  file can pass that by one batch, under 512 bytes), and the oldest files are deleted so at most 16 remain. `firmware`
+  is the `CROSSHATCH_BUILD_ID` the build was given, else the version string, which names the commit for `default` and
+  `sticky` only.
+- **Heap lines.** The card gets the `[MEM]` lines whether or not a computer is attached: internal heap `Free`,
+  `Total`, `Min Free`, and `MaxAlloc`, and a second line with the same for PSRAM on a board that has it. They come
+  at least 10 s apart, the first about 10 s after boot; a busy loop stretches the gap, and none come while the card
+  is lent to a computer as a USB drive. A normal build logs them only while a USB host is attached or the board logs
+  through the ROM console (ledger row 14). Taking the figures reads the heaps every 10 s, which before only a
+  host-attached run did; its cost during a match is unmeasured.
+- **Battery.** Beside the heap lines, a diagnostics build logs `[MEM] Battery: <mV> mV, <percent>%` at the same 10 s
+  period, just before them: the cell's millivolts (`BatteryMonitor::readMillivolts()`, the fuel gauge on the X4 Pro and
+  the ADC elsewhere; 0 when the read fails) and the percent the status bar shows
+  (`powerManager.getBatteryPercentage()`), both read under the render lock, since the themes read the same gauge (ledger
+  row 14, cross-story review row 8). The lock is only tried, so the loop never waits out a push: a period whose try
+  fails logs no battery line, and the heap lines still go. A cardless run reads a match's battery cost, and the idle
+  drain that the no-restart Decision compares, from the first and last of them. A normal build logs no battery line.
+- **What it says it lost.** The hook never waits for the card: it copies the line into an 8 KiB buffer and a writer task
+  drains it. A full buffer drops whole lines, and the next file says `[ERR] [DIAG] dropped N lines (buffer full)`; a
+  failed write is `[ERR] [DIAG] lost N bytes (card write failed)` and a new segment. `summary` counts both. Lines logged
+  before the card mounts wait in the buffer and are written once it does, up to about 8 KB. Deleting the logs, or their
+  folder, from the device's file manager mid-run is safe: only a file's header write makes a file, so it costs the next
+  batch (at most 512 bytes of lines), which the next file, starting with its header, reports with the same
+  `[ERR] [DIAG] lost N bytes (card write failed)` notice as a refused write, and every file on the card stays
+  mergeable.
+- **Giving `merge` the cards.** Each CARD is a log file, a folder of them, or a card's root (its `crosshatch-log` folder
+  is found); `NAME=` before it names the device in the merged log, otherwise the header's device id does. A device's
+  files are read in boot order, and every boot in a folder is merged, so give it only the cards of this run: delete or
+  move the older boots' files first. It exits 2 for a file that is not a diagnostics log, a device given under two
+  names, or a path that is not there.
+- **Alignment.** The devices share no clock. A `STATE` one device sent at `ver` in a `LINK` `session` is the one the
+  other received, so the fastest send-to-receive time in each direction gives the clock offset (half the difference) and
+  the link latency (half the sum); with one direction only the offset is that time and the latency is taken as 0. A
+  receive the estimate puts at or before its send is moved to 1 ms after it, and the receiver's later lines with it, so
+  every send precedes its receive; a `STATE` that both devices logged a send for is ambiguous and anchors nothing. A
+  boot that shares a `STATE` with another device's boot keeps the offset the `STATE`s give it; a group of such boots not
+  linked to the first device's first boot is placed by its first boot, which starts after its device's earlier boots
+  (their lengths chained forward), or, if it would then run past a later boot of its device already placed, ends when
+  that boot starts (the note says by how many ms it overlaps the boot before it); its note names the boots it shares
+  `STATE`s with. A boot with none is placed by its device's other boots (a boot runs from its millis 0
+  to its last line): one followed by an aligned boot is placed to end when the next boot starts, chained backwards,
+  so the restarts before a match (closing the Wi-Fi file transfer restarts the device) land before it; one with no
+  aligned boot after it is placed after its device's previous boot, or starts with the first device's. Boots chained
+  backwards that are longer than the gap since the device's previous aligned boot overlap it: that boot keeps its times,
+  the overlapping lines are held at its last stamp, and the note says by how many ms. `merge` says how each boot was
+  placed (a `[device_log] clock:` line per boot in `merged.log` and `summary.txt`). The estimate assumes the link is as
+  fast both ways, so read an ordering closer than the latency as a tie. Stamps in `merged.log` are the run clock (time
+  since the earliest logged line or file-open time of any device, on the 1970 epoch), not wall-clock time; `summary`
+  reads the file unchanged.
+- **RAM.** An 8 KiB line buffer (static), a 6 KiB task stack and about 0.7 KiB for the writer's context (both taken from the heap
+  when the first line is logged), on the C3
+  and the S3 alike; the run-time cost is unmeasured.
+- **Output.** The same `merged.log` and `<NAME>.raw.log` as `capture` (the raw log is the device's files joined,
+  unchanged) plus `summary.txt`.
+- **What it cannot capture.** A crash or panic (the buffer is in RAM and the writer is a task), the last tens of
+  milliseconds before a reset, and every line logged after the sleep paths' flush, including "Entering deep sleep". The
+  sleep paths of `src/main.cpp` wait for the writer before they unmount the card (`DiagLog::flushBeforeSleep()`, ledger
+  row 14), at most 250 ms, so a card that refuses writes cannot hold sleep longer; past that bound the lines still in
+  the buffer are lost. The writer drains within about 25 ms of a line and closes the file after each batch, so a file
+  is complete on the card. The first line of a boot
+  waits for the card, so a card that never mounts yields no file, only dropped lines nobody can read. Tasks that log in
+  bursts can overrun the buffer; `dropped` says how much. Whether the writer keeps up on a real card during a match is
+  unmeasured until a device run.
+
+`summary` lists the device-run packet's figures from a raw log or from `merged.log`, per device: the connects and losses
+(merged log only), each `VM stopped` line with its game (the last lifecycle line before it) and time, the dropped
+touches and hand-off screens per game, and the `[MEM]` lines (count, first and last, the smallest `Min Free` and
+`MaxAlloc`; `--mem-all` lists every line). For a nearby match (epic-play-nearby) it adds a `nearby:` block: each `radio
+up` line (one per bring-up), then per `LINK` session id the `STATE`s sent and received with the last `ver`, the adopt
+verdicts, queue-full count, the resend, silence, `ABORT` sent, and link-refused running totals, each `ABORT` received
+(reason and seat; the firmware logs one line per copy it hears, and a leaver sends three), each leave (reason, wait,
+unacked, `ABORT` copies), and the `GameLink` task's stack and its high-water at each stop, with the least over all stops
+(a guest's task starts under session `00000000` and stops under the host's id, so the first shows "no stop under this
+id"); then each entry into `PeerGone` and the reason line "the other player is gone: ...", every `[ERR] [LINK]` line and
+the lobby's `[ERR] [GAME] Nearby: ...` lines, and any `LINK` line it has no pattern for (listed verbatim, so a reworded
+firmware line shows up rather than vanishes). A `battery:` block follows the `[MEM]` figures: the number of battery
+lines, the first and last reading (millivolts, percent, and time), and the same for each boot, which a merged log's
+`card file ... boot N` events or a raw card log's `# boot N` header lines name (`boot -` when the log names none, as a
+serial capture's does); a log with no battery line says `battery: none`, and a battery line is never counted among the
+other `[MEM]` lines. It takes one log per device, the raw log or `merged.log` and not both, since a device found in two
+files would count every figure twice (exit 2):
+
+```sh
+python3 scripts/device_log.py summary run-logs/merged.log
+python3 scripts/device_log.py summary --mem-all run-logs/A.raw.log
+```
+
+The `nearby:` block's patterns are pinned to the firmware's format strings (`src/games/GameLinkLog.h`,
+`src/games/EspNowLink.h`, `src/activities/games/GameMatchActivity.cpp`) by `scripts/device_log_test.py`, which also
+reads a recording of two simulator instances playing a round to "player left"; the simulator prints the device's format
+with its own constants (a stack high-water of 2048 B, no `radio up` line), so the device's figures are the smoke run's.

@@ -19,8 +19,10 @@
 #include "InstallerScript.h"
 #include "LauncherSupport.h"
 #include "MatchSupport.h"
+#include "NearbyProbeScript.h"
 #include "RemoveScript.h"
 #include "SaveSupport.h"
+#include "activities/games/GameLobbyActivity.h"
 #include "activities/games/GameMatchActivity.h"
 #include "activities/games/GameModeActivity.h"
 #include "activities/games/GameOptionsActivity.h"
@@ -158,6 +160,8 @@ class TitleScreenTest : public match::ScreenTest {
     ScreenTest::SetUp();
     installerscript::reset();
     hostcaps::reset();
+    nearbyprobe::reset();
+    GameLobbyActivity::setRadio(nullptr);
     GamesLauncherActivity::forgetOpenedGame();
     ButtonNavigator::setMappedInputManager(*input);
   }
@@ -471,7 +475,9 @@ TEST_F(TitleScreenTest, APassOnlyGameRowPushesItsTitleScreenWhoseNewGameIsPass) 
 }
 
 TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
-  installCounter("\"solo\",\"pass\",\"nearby\"");  // nearby stays off: the host has no radio
+  // A host with no radio: the device starts nearby (NEARBY_BUILT), this host does not.
+  hostcaps::script().nearby = false;
+  installCounter("\"solo\",\"pass\",\"nearby\"");
   ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
   const std::vector<std::string> expected{tr(STR_GAMES_NEW_GAME), tr(STR_GAMES_OPTIONS)};
   EXPECT_EQ(rowsDrawn(), expected);
@@ -484,6 +490,24 @@ TEST_F(TitleScreenTest, TheModesOptionsCyclesAreTheOnesCheckLeavesForThisHost) {
   tapRow(tr(STR_GAMES_MODE));
   render();
   EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past pass: the host cannot start nearby";
+}
+
+// The device's host (HostCapsValues::NEARBY_BUILT, entry 11): nearby is the third mode of the cycle.
+TEST_F(TitleScreenTest, TheModesOptionsCycleOnADeviceHostIncludesNearbyLast) {
+  ASSERT_TRUE(hostcaps::script().nearby) << "a reset host is the device's, which starts nearby";
+  installCounter("\"solo\",\"pass\",\"nearby\"");
+  ASSERT_NO_FATAL_FAILURE(openTitleThroughLauncher("Counter"));
+  ASSERT_NO_FATAL_FAILURE(openOptions());
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_PASS));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_NEARBY));
+  tapRow(tr(STR_GAMES_MODE));
+  render();
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_MODE)), tr(STR_GAMES_MODE_SOLO)) << "wraps past nearby";
 }
 
 // e5-r7: a game installed before the pass seat rule that lists solo and pass with one seat still opens, in solo, with
@@ -694,14 +718,21 @@ TEST_F(TitleScreenTest, NewGameOfAPassAndNearbyGameStartsPass) {
   EXPECT_FALSE(logHas("Mode nearby picked"));
 }
 
-TEST_F(TitleScreenTest, NewGameInARememberedNearbyStartsNearbyAsSolo) {
+// New game in nearby starts no match (epic play-nearby, entry 10): the precondition passes and the lobby is pushed over
+// the title screen, which stays under it. NearbyLobbyTest has the lobby's own screens and the refusals.
+TEST_F(TitleScreenTest, NewGameInARememberedNearbyPushesTheLobbyAndStartsNoSoloMatch) {
   installCounter("\"pass\",\"nearby\"");
   remember("counter", NEARBY);
   openTitleFor(PASS | NEARBY);
   EXPECT_EQ(newGameLine(), tr(STR_GAMES_MODE_NEARBY));
   tapRow(tr(STR_GAMES_NEW_GAME));
-  EXPECT_TRUE(logHas("Mode nearby picked for counter: the match plays solo until it can run nearby"));
+  EXPECT_EQ(activityManager.asks.replaced, 0) << "no match, solo or otherwise";
+  EXPECT_EQ(activityManager.pushedActivities.size(), 2u) << "the lobby is pushed over the title screen";
+  EXPECT_NE(dynamic_cast<GameLobbyActivity*>(activityManager.pushedActivities.back().get()), nullptr);
+  EXPECT_TRUE(logHas("Mode nearby picked for counter"));
+  EXPECT_FALSE(logHas("the match plays solo"));
   EXPECT_FALSE(logHas("Mode pass picked"));
+  EXPECT_EQ(nearbyprobe::script().reads, 1);
 }
 
 // New game in pass starts an open pass match with the fewest seats it can have (two), and seat 1 is drawn first.
@@ -1220,24 +1251,33 @@ TEST_F(TitleScreenTest, AContinueThatCannotFitAPassMatchStartsNothing) {
 }
 
 // On a host with no pass seat count for the game (one seat), the title screen drops pass beside another mode
-// (onEnter), so a pass-and-nearby game is left with nearby alone: no Options row, and Continue passes nearby's roster
-// (solo until epic-play-nearby). It does not reach startResume's skip of a mode rosterFor refuses, since onEnter leaves
-// pass only when it is the game's only mode, where Continue starts nothing
-// (AContinueThatCannotFitAPassMatchStartsNothing).
-TEST_F(TitleScreenTest, APassThisHostCannotSeatIsDroppedBesideNearbyAndContinuePassesNearbysRoster) {
+// (onEnter), so a pass-and-nearby game is left with nearby alone: no Options row, and Continue has no roster to pass
+// (a nearby match's roster comes from a lobby's session), so it starts nothing and the Continue row says why (F14), the
+// save kept. It does not reach startResume's skip of a mode rosterFor refuses between modes, since onEnter leaves pass
+// only when it is the game's only mode, where Continue starts nothing (AContinueThatCannotFitAPassMatchStartsNothing).
+TEST_F(TitleScreenTest, ANearbyOnlyGameContinueStartsNothingAndTheRowSaysWhy) {
   hostcaps::script().maxSeats = 1;
   addCountingGame("counter", "Counter", "\"pass\"");
   save("counter", SAVED_PASS, 2);
+  const Bytes saved = fakesd::bytesOf(resumePath("counter"));
   fakesd::sim().failOpen.insert(resumePath("counter"));
   openTitleFor(PASS | NEARBY);
   // Pass, which this host fits no seat count for, is not offered beside nearby: one mode, so no Options row.
   const std::vector<std::string> expected{tr(STR_GAMES_CONTINUE), tr(STR_GAMES_NEW_GAME)};
   ASSERT_EQ(rowsDrawn(), expected);
+  EXPECT_EQ(lineUnder(tr(STR_GAMES_CONTINUE)), tr(STR_GAMES_CONTINUE_DESC));
+  activityManager.markRendered();
   tapRow(tr(STR_GAMES_CONTINUE));
-  EXPECT_FALSE(logHas("Cannot start counter")) << "a row the search skips is no error";
-  EXPECT_FALSE(logHas("Cannot continue counter"));
-  EXPECT_TRUE(logHas("Continue counter: a solo roster of 1 seat(s) unless the save says otherwise"));
-  EXPECT_EQ(activityManager.asks.replaced, 1);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.pushedActivities.size(), 1u) << "no lobby either";
+  EXPECT_TRUE(logHas("Cannot continue counter: no mode this host can start")) << "the log line stays";
+  EXPECT_FALSE(logHas("Cannot start counter"));
+  EXPECT_TRUE(activityManager.updateRequested());
+  render();
+  bool says = false;  // the sentence wraps in the row: read it as the screen passed it
+  for (const screen::DrawnText& call : ui().textCalls) says = says || call.text == tr(STR_GAMES_RESUME_NOT_HERE);
+  EXPECT_TRUE(says) << "F14: the Continue row says why: " << ui().joined();
+  EXPECT_EQ(fakesd::bytesOf(resumePath("counter")), saved) << "the save is untouched";
 }
 
 // The same host and save for a game that also starts solo: its Continue passes the solo roster, and the match stops in
@@ -1589,7 +1629,7 @@ TEST_F(TitleScreenTest, AStaleRememberedChoiceFallsBackValueByValue) {
   addCountingGame("counter", "Counter", "\"solo\",\"pass\"", 1, 2, ",\"default_mode\":\"pass\"" + TWO_SETTINGS,
                   SETTINGS_GAME);
   GameSaveStore::Prefs prefs;
-  prefs.mode = NEARBY;  // the host has no radio
+  prefs.mode = NEARBY;  // a mode this game does not declare
   const std::pair<const char*, const char*> entries[] = {{"level", "Impossible"}, {"gone", "Yes"}, {"board", "Large"}};
   for (const auto& [id, value] : entries) {
     GameCore::SettingValues::Entry& entry = prefs.settings.entries[prefs.settings.count++];
@@ -2142,6 +2182,7 @@ TEST_F(GamePictureTest, TheIconIsTheLaunchersChoice) {
 // The double stands in for the device's gameHostCaps(): after a reset it must answer what the device answers
 // (GameHostCapsTest pins the real function to the same HostCapsValues), so a suite here sees the device's host.
 TEST(HostCapsDouble, DefaultsAreTheDevicesValues) {
+  hostcaps::script().nearby = !HostCapsValues::NEARBY_BUILT;
   hostcaps::script().pass = !HostCapsValues::PASS;
   hostcaps::script().minApi = API_MIN_LEVEL + 1;
   hostcaps::script().maxSeats = 1;

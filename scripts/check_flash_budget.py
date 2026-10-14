@@ -15,9 +15,13 @@ same commit, so upstream growth never counts against the budget.
   objects     read every object the games-on build compiled from lib/Game*, src/games, and src/activities/games,
               and fail on a static initializer (a .ctors, .init_array, or .preinit_array entry, or the guard
               variable of a dynamically initialized local static) or a mutable static over 64 B
+  touch-line  fail when the x4pro games-on build, the one that logs DBG (LOG_LEVEL 2), holds the per-tap touch log
+              line's format text (`%s: touch %s`), which only the fork-only define CROSSHATCH_TOUCH_LOG compiles in
+              (docs/crosshatch/game-canvas.md). The release envs log at LOG_LEVEL 1, where LOG_DBG compiles out
+              whatever the define, so this does not look at them
 
 The flash limit is in KiB (1 KiB = 1,024 bytes) because ESP32 flash and the app slot in partitions.csv are sized in
-binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 270 KiB is 276,480 bytes. The RAM limit is
+binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 300 KiB is 307,200 bytes. The RAM limit is
 1 KiB, 1,024 bytes; the image size does not show RAM, since .dram0.bss takes no space in firmware.bin.
 
 A mutable static is an object symbol in a writable section (or a common symbol): constexpr data lands in .rodata
@@ -45,20 +49,25 @@ FREEINK_CAP_GAMES=1 and the "off" build does not define it at all: a misspelled 
 the env, would make both builds the same and the check pass without measuring anything. The metadata also names
 the ELF, the toolchain (`size` sits beside `cc_path`), and the build directory `objects` reads.
 
-Exit 0: within the limits. 1: over a limit, or a game object breaks a rule. 2: the check could not run (build
-failed, missing output, wrong flag state, missing toolchain, game sources the build did not compile).
+Exit 0: within the limits. 1: over a limit, a game object breaks a rule, or the touch log line is in the ELF. 2: the
+check could not run (build failed, missing output or an empty ELF, wrong flag state, missing toolchain, game sources
+the build did not compile, or GameMatchActivity.cpp no longer holds the touch line's format, so the search would find
+nothing whatever the build).
 
 Local run, the same commands as the CI job (each build takes several minutes):
     python3 scripts/check_flash_budget.py build on
     python3 scripts/check_flash_budget.py build off
-    python3 scripts/check_flash_budget.py compare [--limit-kib 270 | --limit-bytes N] [--ram-limit-bytes 1024]
+    python3 scripts/check_flash_budget.py compare [--limit-kib 300 | --limit-bytes N] [--ram-limit-bytes 1024]
     python3 scripts/check_flash_budget.py objects
+    python3 scripts/check_flash_budget.py touch-line
+To see `touch-line` fail, run `build on` with PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 first.
 A limit below the measured difference (zero or negative is allowed) shows the failing case without a rebuild.
 """
 
 import argparse
 import collections
 import json
+import mmap
 import os
 import pathlib
 import re
@@ -74,7 +83,7 @@ FLAG = fork_common.GAMES_MACRO
 # the job instead of passing it.
 UNFLAG = fork_common.GAMES_BUILD_FLAG
 KIB = 1024
-DEFAULT_LIMIT_KIB = 270
+DEFAULT_LIMIT_KIB = 300
 DEFAULT_RAM_LIMIT_BYTES = 1 * KIB
 PROJECT_DIR = pathlib.Path(__file__).resolve().parent.parent
 OFF_BUILD_DIR = PROJECT_DIR / '.pio' / 'build-games-off'
@@ -95,6 +104,12 @@ GAME_SOURCE_DIRS = ('src/games', 'src/activities/games')
 GAME_LIB_GLOB = 'lib/Game*'
 SOURCE_SUFFIXES = ('.c', '.cc', '.cpp', '.S')
 MUTABLE_STATIC_LIMIT = 64
+# The per-tap log line of GameMatchActivity.cpp, compiled in only with -DCROSSHATCH_TOUCH_LOG=1. Logging.h appends
+# the newline, so the ELF holds this text followed by "\n"; searching for the text alone also finds a reworded tail.
+TOUCH_LINE_FORMAT = b'%s: touch %s'
+TOUCH_LINE_SOURCE = 'src/activities/games/GameMatchActivity.cpp'
+TOUCH_LINE_DEFINE = 'CROSSHATCH_TOUCH_LOG'
+TOUCH_LINE_PAGE = 'docs/crosshatch/game-canvas.md'
 # This toolchain puts static constructors in .ctors; .init_array and .preinit_array are the same for other targets.
 INITIALIZER_SECTIONS = ('.ctors', '.init_array', '.preinit_array')
 GUARD_PREFIX = '_ZGV'  # Itanium C++ ABI guard variable of a dynamically initialized static
@@ -564,6 +579,61 @@ def check_objects(metadata_dir, summary_path=None, project_dir=PROJECT_DIR):
     return fork_common.FAIL if problems else fork_common.PASS
 
 
+def check_touch_line(metadata_dir, summary_path=None, project_dir=PROJECT_DIR):
+    """Return 0 when the games-on ELF holds no touch log line, 1 when it does.
+
+    The source must still hold the format as a quoted C string, so a reworded log line is a SetupError and never a
+    pass that searches for text nothing contains.
+    """
+    build_record = load_build(metadata_dir, 'on')
+    check_flag('on', build_record.defines)
+    elf = build_record.elf
+    try:
+        size = elf.stat().st_size
+    except OSError as exc:
+        raise SetupError(f'cannot read the games-on ELF {elf} ({exc}); run "build on"')
+    if size == 0:
+        raise SetupError(f'the games-on ELF {elf} is empty; run "build on"')
+    source = pathlib.Path(project_dir) / TOUCH_LINE_SOURCE
+    try:
+        source_bytes = source.read_bytes()
+    except OSError as exc:
+        raise SetupError(f'cannot read {TOUCH_LINE_SOURCE} ({exc})')
+    if b'"' + TOUCH_LINE_FORMAT + b'"' not in source_bytes:
+        raise SetupError(
+            f'{TOUCH_LINE_SOURCE} no longer holds the format "{TOUCH_LINE_FORMAT.decode()}" as a C string; '
+            f'update TOUCH_LINE_FORMAT in {pathlib.Path(__file__).name} to the touch log line\'s new format'
+        )
+    try:
+        with open(elf, 'rb') as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as image:
+            offset = image.find(TOUCH_LINE_FORMAT)
+    except (OSError, ValueError) as exc:
+        raise SetupError(f'cannot search the games-on ELF {elf} ({exc})')
+    lines = ['## x4pro touch log line', '']
+    if offset < 0:
+        lines += [
+            f'The games-on ELF ({size:,} B) holds no `{TOUCH_LINE_FORMAT.decode()}` text: the per-tap touch log line '
+            f'is compiled out of the x4pro games-on build (the one that logs DBG), as in the default build.',
+            '',
+            '**No problems.**',
+            '',
+        ]
+    else:
+        lines += [
+            f'The games-on ELF ({size:,} B) holds `{TOUCH_LINE_FORMAT.decode()}` at offset {offset:#x} ({offset:,}): '
+            f'the per-tap touch log line is compiled in.',
+            '',
+            f'**Problem:** the default build must not define `{TOUCH_LINE_DEFINE}`. Remove the define from the '
+            f'build (it is opt-in for a device run only; `{TOUCH_LINE_PAGE}` says how it is used).',
+            '',
+        ]
+    text = '\n'.join(lines)
+    print(text)
+    if summary_path:
+        fork_common.write_step_summary(text + '\n', summary_path)
+    return fork_common.PASS if offset < 0 else fork_common.FAIL
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--metadata-dir', default=str(DEFAULT_METADATA_DIR), help=argparse.SUPPRESS)
@@ -582,6 +652,7 @@ def main(argv=None):
         help=f'static internal RAM limit in bytes (default {DEFAULT_RAM_LIMIT_BYTES})',
     )
     sub.add_parser('objects', help='check the games-on build\'s game objects for static initializers and statics')
+    sub.add_parser('touch-line', help='check the games-on ELF holds no per-tap touch log line')
     args = parser.parse_args(argv)
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
 
@@ -591,6 +662,8 @@ def main(argv=None):
             return fork_common.PASS
         if args.command == 'objects':
             return check_objects(args.metadata_dir, summary, args.project_dir)
+        if args.command == 'touch-line':
+            return check_touch_line(args.metadata_dir, summary, args.project_dir)
         if args.limit_bytes is not None:
             limit_bytes = args.limit_bytes
         else:
@@ -598,7 +671,8 @@ def main(argv=None):
         return compare(args.metadata_dir, limit_bytes, summary, args.ram_limit_bytes)
 
     # A SetupError also goes to the job summary, so a check that could not run does not look like an empty report.
-    heading = 'x4pro game objects' if args.command == 'objects' else 'x4pro flash budget'
+    headings = {'objects': 'x4pro game objects', 'touch-line': 'x4pro touch log line'}
+    heading = headings.get(args.command, 'x4pro flash budget')
     return fork_common.exit_code(step, summary_heading=heading)
 
 

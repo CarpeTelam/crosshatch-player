@@ -1,5 +1,7 @@
 #pragma once
 
+#include <MatchLifecycle.h>
+
 #include <cstdint>
 
 class MatchStore;
@@ -25,8 +27,28 @@ class MatchPersistence {
   // (sdStepAllowed allows).
   void bind(MatchStore& store, const char* gameId, Clock clock);
 
-  // The state allows resume.bin to be written: Playing, Paused, Result, or HandOff, not yet Over or Error
-  // (handle() keeps it).
+  // Whether resume.bin may be written in `state`: Playing, Paused, Result, and HandOff, not Over, Error, or PeerGone
+  // (a finished round, a failed game, and a match whose peer is gone never write it). No `default`: a new state warns
+  // at compile time until it is placed here. Starting and Leaving make no call (handle() skips them), so their answers
+  // are never read.
+  static constexpr bool writableIn(const GameCore::MatchState state) {
+    switch (state) {
+      case GameCore::MatchState::Playing:
+      case GameCore::MatchState::Paused:
+      case GameCore::MatchState::Result:
+      case GameCore::MatchState::HandOff:
+        return true;
+      case GameCore::MatchState::Starting:
+      case GameCore::MatchState::Over:
+      case GameCore::MatchState::Error:
+      case GameCore::MatchState::Leaving:
+      case GameCore::MatchState::PeerGone:
+        return false;
+    }
+    return false;
+  }
+
+  // The state allows resume.bin to be written (writableIn; handle() sets it on every transition but Leaving).
   void setWritable(bool writable) { resumeWritable = writable; }
   bool writable() const { return resumeWritable; }
 

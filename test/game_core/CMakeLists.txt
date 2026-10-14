@@ -1,21 +1,37 @@
 add_executable(GameCoreTest
   ApiLevelTest.cpp
+  FakeLinkTest.cpp
   ForkReleaseTest.cpp
   GameImagesTest.cpp
   GameHostCapsTest.cpp
+  LobbyHandshakeTest.cpp
+  LobbyTest.cpp
   ManifestCheckTest.cpp
   ManifestTest.cpp
   MatchLifecycleTest.cpp
+  MatchSinkTest.cpp
   ModeTableTest.cpp
+  NearbyMatchTest.cpp
   PackageLimitsTest.cpp
   PauseClockTest.cpp
+  ProtocolTest.cpp
+  ReliableLinkTest.cpp
   SeatShownTest.cpp
+  SessionAdoptTest.cpp
   SessionTest.cpp
+  StateQueueTest.cpp
   ${REPO_ROOT}/lib/GameCore/GameImages.cpp
+  ${REPO_ROOT}/lib/GameCore/GuestLobby.cpp
+  ${REPO_ROOT}/lib/GameCore/HostLobby.cpp
+  ${REPO_ROOT}/lib/GameCore/Lobby.cpp
   ${REPO_ROOT}/lib/GameCore/Manifest.cpp
   ${REPO_ROOT}/lib/GameCore/MatchLifecycle.cpp
+  ${REPO_ROOT}/lib/GameCore/MatchSink.cpp
+  ${REPO_ROOT}/lib/GameCore/Protocol.cpp
+  ${REPO_ROOT}/lib/GameCore/ReliableLink.cpp
   ${REPO_ROOT}/lib/GameCore/Roster.cpp
   ${REPO_ROOT}/lib/GameCore/Session.cpp
+  ${REPO_ROOT}/lib/GameCore/StateQueue.cpp
   ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
   ${REPO_ROOT}/src/games/GameHostCaps.cpp
 )
@@ -48,3 +64,8 @@ target_link_libraries(GameCoreTest PRIVATE
 )
 
 gtest_discover_tests(GameCoreTest)
+
+# The diagnostics log's suite (lib/DiagLog, epic-play-nearby entry 6.19) has no game code, but it is wired from here: its
+# folder is a fork path and this file is a fork file, while test/CMakeLists.txt is upstream's and the ledger (row 3) lets
+# it change by the two game suites only.
+add_subdirectory(${REPO_ROOT}/test/diag_log ${CMAKE_BINARY_DIR}/diag_log)

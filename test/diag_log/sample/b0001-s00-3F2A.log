@@ -1,0 +1,16 @@
+# crosshatch-diag-log 1
+# device 3F2A
+# board x4pro
+# firmware abc1234
+# version 1.0.0-x4pro
+# built Oct 13 2026 12:00:00
+# boot 1
+# segment 0
+# opened_ms 1000
+[1000] [INF] [MAIN] Starting CrossPoint version 1.0.0-x4pro
+[38907] [INF] [LINK] session=dc1b97fb task started; stack 4096 bytes
+[58381] [INF] [GAME] nearby: Starting -> Playing on Started
+[58384] [INF] [LINK] session=dc1b97fb state sent ver=1
+[64503] [INF] [LINK] session=dc1b97fb state sent ver=2
+[70700] [INF] [LINK] session=dc1b97fb state recv ver=3 seat=2
+[77019] [INF] [GAME] nearby: Playing -> Paused on Back

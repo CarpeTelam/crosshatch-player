@@ -757,6 +757,7 @@ TEST_F(InstallerTest, TheFixtureGamesTheReadmeListsInstallAndCanStart) {
       {"icons", Manifest::MODE_SOLO},
       {"limits", Manifest::MODE_SOLO},
       {"loop", Manifest::MODE_SOLO},
+      {"nearby", static_cast<uint8_t>(Manifest::MODE_PASS | Manifest::MODE_NEARBY)},
       {"pass-art", static_cast<uint8_t>(Manifest::MODE_SOLO | Manifest::MODE_PASS)},
       {"pass-hidden", Manifest::MODE_PASS},
       {"pass-keep", Manifest::MODE_PASS},

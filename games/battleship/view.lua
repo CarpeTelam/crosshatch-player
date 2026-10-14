@@ -1,6 +1,7 @@
 -- view.lua: everything Battleship draws, from the state, the ui table, and layout.lua: the HOW TO PLAY page, a seat's
--- header, its boards, tray, buttons, and lines, and seat 0's two fleets at Over. main.lua passes itself in as `game`
--- for the views and text lines the checks pin; this module never requires main.
+-- header, its boards, tray, buttons, and lines, and the two fleets at Over (every seat's frame once the round is
+-- over). main.lua passes itself in as `game` for the views and text lines the checks pin; this module never requires
+-- main.
 local fleet = require("fleet")
 local layout = require("layout")
 
@@ -178,7 +179,7 @@ local function drawFiring(game, L, state, seat, ui)
   drawMessage(ui, col.x, y + 56, col.w)
 end
 
--- Seat 0 at Over: both fleets and each player's shot count.
+-- The Over frame: both fleets and each player's shot count.
 local function drawBoth(game, L, state)
   local seen = game.views(state, 0)
   for i = 1, 2 do
@@ -191,14 +192,14 @@ end
 -- A frame: `game` is main's table, L the canvas's layout, and m the seat's layout mode (main's `mode`).
 function view.draw(game, L, state, seat, ui, m)
   ch.gfx.clear("white")
-  if ui.help then
-    drawHelp(game, L)
+  -- Over is the frame for everyone (seat 0's): it wins over an open help page, which seat 0 never has.
+  if m == "over" then
+    ch.gfx.text(L.big.x, L.oy + 12, game.headline(state, 0), "medium", "black")
+    if game.status(state).over then drawBoth(game, L, state) end
     return
   end
-  local over = game.status(state).over
-  if seat == 0 then
-    ch.gfx.text(L.big.x, L.oy + 12, game.headline(state, 0), "medium", "black")
-    if over then drawBoth(game, L, state) end
+  if ui.help then
+    drawHelp(game, L)
     return
   end
   drawHeader(game, L, state, seat)

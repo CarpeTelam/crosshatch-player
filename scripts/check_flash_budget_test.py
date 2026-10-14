@@ -350,8 +350,8 @@ class CompareTest(unittest.TestCase):
         )
         return proc.returncode, proc.stdout + proc.stderr
 
-    def test_default_limit_is_270_kib_in_bytes(self):
-        self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 276480)
+    def test_default_limit_is_300_kib_in_bytes(self):
+        self.assertEqual(cfb.DEFAULT_LIMIT_KIB * cfb.KIB, 307200)
 
     def test_workflow_limit_matches_the_script_default(self):
         workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml'
@@ -370,12 +370,12 @@ class CompareTest(unittest.TestCase):
         self.assertIn('Within budget', text)
 
     def test_exact_limit_passes(self):
-        self.put('on', 1_276_480, ON_DEFINES)
+        self.put('on', 1_307_200, ON_DEFINES)
         self.put('off', 1_000_000, OFF_DEFINES)
         self.assertEqual(self.run_compare(), 0)
 
     def test_over_budget_fails(self):
-        self.put('on', 1_276_481, ON_DEFINES)
+        self.put('on', 1_307_201, ON_DEFINES)
         self.put('off', 1_000_000, OFF_DEFINES)
         self.assertEqual(self.run_compare(), 1)
         self.assertIn('Over budget** by 1 B', self.summary.read_text())
@@ -884,6 +884,166 @@ class ObjectsTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('error: cannot run', out)
         self.assertIn('## x4pro game objects\n\nThe check could not run', self.summary.read_text())
+
+
+class TouchLineTest(unittest.TestCase):
+    """`touch-line` over a fixture project and a fake ELF: the format text present is exit 1, absent is exit 0."""
+
+    NEEDLE = b'%s: touch %s'
+    SOURCE = 'LOG_DBG("GAME", "%s: touch %s", id, text);\n'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.project = self.root / 'project'
+        self.source = self.project / cfb.TOUCH_LINE_SOURCE
+        self.source.parent.mkdir(parents=True)
+        self.source.write_text(self.SOURCE)
+        self.build = self.root / 'build' / 'x4pro'
+        self.build.mkdir(parents=True)
+        self.elf = self.build / 'firmware.elf'
+        self.meta = self.root / 'meta'
+        self.meta.mkdir()
+        self.summary = self.root / 'summary.md'
+        self.write_metadata()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_metadata(self, defines=ON_DEFINES):
+        data = {'x4pro': {'defines': defines, 'prog_path': str(self.elf)}}
+        cfb.metadata_path(self.meta, 'on').write_text(json.dumps(data))
+
+    def write_elf(self, before=b'', needle=b'', after=b'', filler=4096):
+        self.elf.write_bytes(b'\x7fELF' + before + b'\0' * filler + needle + after + b'\0' * filler)
+
+    def run_check(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = cfb.check_touch_line(self.meta, self.summary, self.project)
+        return code, out.getvalue()
+
+    def run_cli(self):
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), '--metadata-dir', str(self.meta), '--project-dir', str(self.project),
+             'touch-line'],
+            env=dict(os.environ, GITHUB_STEP_SUMMARY=str(self.summary)),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return proc.returncode, proc.stdout + proc.stderr
+
+    def test_absent_passes_and_the_summary_says_so(self):
+        self.write_elf()
+        code, out = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertIn('## x4pro touch log line', out)
+        self.assertIn('compiled out', out)
+        self.assertEqual(self.summary.read_text().strip(), out.strip())
+
+    def test_present_fails_naming_the_offset_and_the_define(self):
+        self.write_elf(needle=self.NEEDLE + b'\n')
+        code, out = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertIn('0x1004', out)  # b'\x7fELF' plus 4,096 filler bytes
+        self.assertIn('CROSSHATCH_TOUCH_LOG', out)
+        self.assertIn('docs/crosshatch/game-canvas.md', out)
+        self.assertIn('0x1004', self.summary.read_text())
+
+    def test_the_needle_is_found_at_the_start_the_middle_and_the_end(self):
+        for where in ('start', 'middle', 'end'):
+            with self.subTest(where=where):
+                if where == 'start':
+                    self.elf.write_bytes(self.NEEDLE + b'\0' * 100)
+                elif where == 'middle':
+                    self.write_elf(needle=self.NEEDLE)
+                else:
+                    self.elf.write_bytes(b'\0' * 100 + self.NEEDLE)
+                self.assertEqual(self.run_check()[0], 1)
+
+    def test_a_near_miss_passes(self):
+        for near in (b'%s: touch %d', b'%s: touch', b'%s touch %s', b'%s: Touch %s'):
+            with self.subTest(near=near):
+                self.write_elf(needle=near)
+                self.assertEqual(self.run_check()[0], 0)
+
+    def test_source_without_the_format_is_setup_error(self):
+        self.write_elf()
+        for text in ('LOG_DBG("GAME", "%s: tap %s", id, text);\n', '// %s: touch %s but not as a string\n', ''):
+            with self.subTest(text=text):
+                self.source.write_text(text)
+                with self.assertRaisesRegex(cfb.SetupError, 'TOUCH_LINE_FORMAT'):
+                    self.run_check()
+
+    def test_missing_source_is_setup_error(self):
+        self.write_elf()
+        self.source.unlink()
+        with self.assertRaisesRegex(cfb.SetupError, 'cannot read'):
+            self.run_check()
+
+    def test_missing_or_empty_elf_is_setup_error(self):
+        with self.assertRaisesRegex(cfb.SetupError, 'cannot read the games-on ELF'):
+            self.run_check()
+        self.elf.write_bytes(b'')
+        with self.assertRaisesRegex(cfb.SetupError, 'is empty'):
+            self.run_check()
+
+    def test_off_state_or_missing_metadata_is_setup_error(self):
+        self.write_elf()
+        self.write_metadata(OFF_DEFINES)
+        with self.assertRaisesRegex(cfb.SetupError, 'must define exactly'):
+            self.run_check()
+        cfb.metadata_path(self.meta, 'on').unlink()
+        with self.assertRaisesRegex(cfb.SetupError, 'no usable metadata'):
+            self.run_check()
+
+    def test_cli_exit_codes_and_the_summary_file(self):
+        self.write_elf()
+        code, out = self.run_cli()
+        self.assertEqual(code, 0, out)
+        self.assertIn('No problems', self.summary.read_text())
+        self.summary.unlink()
+        self.write_elf(needle=self.NEEDLE + b'\n')
+        code, out = self.run_cli()
+        self.assertEqual(code, 1, out)
+        self.assertIn('CROSSHATCH_TOUCH_LOG', self.summary.read_text())
+        self.summary.unlink()
+        self.elf.unlink()
+        code, out = self.run_cli()
+        self.assertEqual(code, 2, out)
+        self.assertIn('error: cannot read the games-on ELF', out)
+        self.assertIn('## x4pro touch log line\n\nThe check could not run', self.summary.read_text())
+
+    def test_the_real_source_holds_the_format_inside_a_log_call(self):
+        text = (cfb.PROJECT_DIR / cfb.TOUCH_LINE_SOURCE).read_text()
+        self.assertIn('LOG_DBG("GAME", "' + cfb.TOUCH_LINE_FORMAT.decode() + '"', text)
+        self.assertIn('#ifdef ' + cfb.TOUCH_LINE_DEFINE, text)
+
+    def flash_budget_job(self):
+        workflow = cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml'
+        text = workflow.read_text()
+        job = text.split('\n  flash-budget:\n', 1)[1].split('\n  x4pro-static-analysis:\n', 1)[0]
+        return job
+
+    def test_workflow_runs_touch_line_after_build_on_with_its_success_condition(self):
+        job = self.flash_budget_job()
+        self.assertEqual(job.count('check_flash_budget.py touch-line'), 1)
+        self.assertLess(job.index('check_flash_budget.py build on'), job.index('check_flash_budget.py touch-line'))
+        step = job.split('check_flash_budget.py touch-line', 1)[0].rsplit('      - name:', 1)[1]
+        self.assertIn("if: ${{ !cancelled() && steps.build-on.outcome == 'success' }}", step)
+
+    def test_x4pro_still_compiles_log_dbg_or_the_gate_checks_nothing(self):
+        text = (cfb.PROJECT_DIR / 'platformio.ini').read_text()
+        section = text.split('[env:x4pro]', 1)[1].split('\n[', 1)[0]
+        flags = [token for line in section.splitlines() for token in line.split(';', 1)[0].split()]
+        self.assertIn('-DENABLE_SERIAL_LOG', flags, 'x4pro no longer logs, so the touch-line gate checks nothing')
+        self.assertIn('-DLOG_LEVEL=2', flags,
+                      'x4pro no longer logs at LOG_LEVEL 2, where LOG_DBG compiles, so the touch-line gate checks nothing')
+
+    def test_workflow_builds_nothing_with_the_touch_log_define(self):
+        text = (cfb.PROJECT_DIR / '.github' / 'workflows' / 'crosshatch-ci.yml').read_text()
+        code = [line for line in text.splitlines() if not line.lstrip().startswith('#')]
+        self.assertFalse([line for line in code if cfb.TOUCH_LINE_DEFINE in line])
 
 
 class BuildEnvironmentTest(unittest.TestCase):

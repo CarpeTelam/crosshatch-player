@@ -19,7 +19,11 @@ its own screen from a display list (AD-7) and has no FreeInkUI elements to hit-t
   only when the fork-only define `CROSSHATCH_TOUCH_LOG` is set, in any env, so a dev build's 16-line crash buffer is not
   filled with taps and hidden Battleship taps are not logged. For a device run, build with
   `PLATFORMIO_BUILD_FLAGS=-DCROSSHATCH_TOUCH_LOG=1 pio run -e x4pro -t upload` (under AGENTS.md's build lock; `sim.sh
-  build` runs `pio run`, so the variable reaches the simulator build too). "Sent" means `classify` accepted the gesture.
+  build` runs `pio run`, so the variable reaches the simulator build too). To also keep the device's log on its SD card,
+  so the run needs no computer (`docs/crosshatch/fork-scripts.md`, "Capturing a device run"), put
+  `-DCROSSHATCH_SD_LOG=1` in the same variable, with `-DCROSSHATCH_BUILD_ID=$(git describe --always --dirty)` (a bare token, no quotes; `--dirty` marks an uncommitted tree) so
+  each file's header names the build; without it the header names the version string, which names the commit for
+  `default` and `sticky` only. "Sent" means `classify` accepted the gesture.
   A later drop keeps its own line ("dropped a touch before the frame was on the panel", "dropped a touch that began ...
   before the hand-off passed"), and the VM or the game declining a tap is not logged. The lines show in builds with the
   define and `LOG_LEVEL` 2 (the development envs of `platformio.ini` and the simulator); the release envs use 1 and
@@ -97,6 +101,8 @@ the only place that changes state and runs what entering a state requires. Any e
 | Over | Play again | Playing | The new round's snapshots are written to `resume.bin` again. The queued events are dropped; the VM cancels the pending timer and runs `Session::start()` and `draw()`; ver keeps counting (`GameScript::MatchRounds`). The end-of-round menu stays on screen until the new round's first frame is published (`GameVM::roundsStarted()` moves), so a frame from a step still running when Play again came is never shown. Gestures made until that frame is published, and then until the render task has drawn it and handed it to the panel (`displayBuffer` has returned, `CanvasGate::roundsDisplayed`), are read and dropped (`GameMatchActivity::loopPlaying`, through `GameTouchRoute::decide`). |
 | Playing, Paused, Over | a ScriptError or a stuck call | Error | The VM is stopped (a stuck one cancelled, then abandoned after 500 ms); the error view shows. |
 | Error | Back | Leaving | See Leaving. |
+| any but Error, PeerGone, Leaving | the other device left, went silent, or stopped with an error (a nearby match only) | PeerGone | `loop()` took the `EndSlot`'s reason (once, the first wins; behind an open overlay it waits for the loop, see Overlays) and logs "the other player is gone: <reason>" (`left`, `script_error`, `timeout`, `version_mismatch`, `full`). The view has one reason line and Back; the VM is idle (the loop polls nothing for it) and nothing is written to `resume.bin`. Error keeps its error view when its peer then leaves: the device that stopped with an error has told its peer already, and a second end replaces nothing. |
+| PeerGone | Back | Leaving | See Leaving. Confirm does nothing and Home is ignored. |
 | any but Leaving | forced exit (sleep, any Replace) | Leaving | See the forced exit. |
 
 ### Resume
@@ -122,8 +128,8 @@ again after Continue runs `setup` with the title screen's current choices as `ct
 may differ from those of the saved round. The VM task never touches the card (AD-5).
 
 Back never leaves a match directly: in play it pauses, in the pause menu it resumes, in the end-of-round menu it does
-nothing, and only in the error view does it leave. Home pauses a round in play and is ignored otherwise, until the
-match is Leaving (it then goes Home as on any screen, should `goToGames()` fail).
+nothing, and only in the error view and the player-left view does it leave. Home pauses a round in play and is ignored
+otherwise, until the match is Leaving (it then goes Home as on any screen, should `goToGames()` fail).
 
 The VM counts a round as ended after the round's last frame is published (`GameVM::roundsEnded()`); the match enters
 Over when the count moves, so a round that ends while the pause menu is open shows its end-of-round menu after Resume.
@@ -138,34 +144,61 @@ Fixing it needs files outside the ledger (`FrontlightPanelActivity`, or `Activit
 is deferred (`deferred-work.md`, 3.7).
 
 Owner decision (R10, e6pre-3, 2026-10-04), option (b): the supervision above stays paused under an overlay in solo and
-pass matches, and the nearby link does not depend on it for pumping or detection (the match's reaction to a lost peer still waits for `loop()`, below). What pauses under an overlay: the watchdog, the timer poll, and the
-store flush. What must not pause: the ESP-NOW link pump (draining the receive ring, `ReliableLink` resends and acks) and
-the peer-silence detection (a peer silent for 10 s). Both run on the `GameLink` task (spine AD-18; detection on that task is new to the spine), not in
-`GameMatchActivity::loop()`, so an open overlay cannot stall them; no `ActivityManager` change and no ledger row. The
-constraint on that task: it never takes `RenderLock` and never touches activity state (no `ActivityManager` call, no
-view or match-state write); it reports a lost peer to the match through the session's queue, and the match acts on it
-in its next `loop()`, that is when the overlay closes, so the move to `PeerGone` waits for the overlay while the link and the detection do not. The queue is depth-bounded, so epic-play-nearby states its overflow policy for a long overlay (a lost-peer event is never dropped). The link is not built yet (epic-play-nearby).
+pass matches, and the nearby link does not depend on it for pumping or detection. What pauses under an overlay: the
+watchdog, the timer poll, and the store flush. What must not pause: the link pump (draining the link, `ReliableLink`
+resends and acks) and the peer-silence detection (a peer silent for 10 s), both on the `GameLink` task (spine AD-18;
+detection on that task is new to the spine), not in `GameMatchActivity::loop()`, so an open overlay cannot stall them;
+no `ActivityManager` change and no ledger row. The constraint on that task: it never takes `RenderLock`, never touches
+activity state (no `ActivityManager` call, no view or match-state write), and calls nothing in the match. It hands the
+match two things. The peer's `STATE`s go into the four-entry `StateQueue`: a newer `STATE` replaces the newest queued
+one unless that one ends a round, and a `STATE` that finds the queue full is left unacked, so the peer resends it after
+the resend interval and nothing is lost, each overflow counted. A lost peer or a received `ABORT` sets the `EndSlot`,
+which keeps the first reason until the match's `loop()` reads it once. The move to `PeerGone` (`loop()` reads the slot
+before its state switch, only in a state that can move to it) and the adoption of queued `STATE`s wait for `loop()` and
+the VM, that is until the overlay closes, while the link and the detection do not. The end is read by the loop, and a
+round end the VM has already counted is entered first (Playing only: `loopPlaying` enters Over, delivering the over
+event and flushing the store, and the next pass reads the end). Before that, in Playing, a latched end waits behind a
+`STATE` of the peer the VM has not adopted (one still queued, or one the VM has taken and not yet drawn and counted):
+the loop wakes the VM, which adopts it and counts the round end, so a peer that wins and leaves at once still takes the
+other device to Over before "player left". The hold is bounded: `PEER_END_HOLD_MS` (1,000 ms of `millis()`) after the
+first pass that held it, the end is honoured all the same, with one log line naming the wait, so a stuck VM cannot hold
+it (cross-story review row 2). Paused and every other state read the end as before.
+`GameCore` builds the policy (entry 7); the `GameLink` task and the PSRAM storage are entry 8's.
 
 ### Leaving
 
-A user exit runs from `loop()`. It takes `RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it,
-writing the last pending snapshot as `resume.bin` between the two unless the round is over. In a hidden pass match whose
-panel holds a seat's frame (a pause menu over it), it then pushes the blank, a plain white screen
-(`FrameReplay::drawBlank`), with a half refresh (logged "leave: blank screen pushed"). It releases the lock, flushes a
-dirty `ch.store`, and calls `goToGames()`. The blank goes up before Games is asked for: if `goToGames()` runs out of
-memory, the match stays current in Leaving with no VM, and the seat's frame must not stay on the panel. A Leave from the
-end-of-round menu (over seat 0's frame, which is everyone's) or from the hand-off screen's pause menu (on no frame)
-pushes nothing. When an abandon leaves the task alive (the simulator always does, since it cannot stop a thread), the
-slot is still flushed, then leaked with the task when the match is destroyed: the slot's mutex is held only for a copy
-inside a locked binding, which an abandon never deletes or leaves suspended, so the flush waits at most one copy and
-saves every set made before the leak.
+A user exit runs from `loop()`. A nearby match says goodbye first, before it takes the lock (the wait is up to 800 ms
+and the render task must not be held for it): `NearbySession::leave(Left, 800)` waits until nothing the link task has
+staged or sent is unacked, or 800 ms have passed (the loop task wakes nobody meanwhile, so a shipment the VM has not yet
+staged is not waited for), then puts three `ABORT(left)` on the link; with a peer that cannot be reached the wait ends
+at 800 ms and the three go all the same, and the peer learns by silence. Back from the error view sends the same three
+`ABORT(left)` without the wait (the peer is told already, and its slot is first-wins). Back from the player-left view
+also leaves without the wait, and sends no `ABORT` to a seat whose own `ABORT` was heard (it has ended its session),
+only to one that went silent (the sweep's F8): after the peer left, the leave logs `copies=0`. It then takes
+`RenderLock`, then cancels the VM and joins it for up to 500 ms or abandons it, writing the last pending snapshot as
+`resume.bin` between the two unless the round is over. In a hidden pass match whose panel holds a seat's frame (a pause
+menu over it), it then pushes the blank, a plain white screen (`FrameReplay::drawBlank`), with a half refresh (logged
+"leave: blank screen pushed"). In a nearby match the session is released inside the lock before that (the radio goes
+down, unless an abandoned VM keeps it: the destructor releases that one unfreed, after it has stopped the session's
+`GameLink` task and ended its link, which the leaked VM never calls, so the radio is off after the match all the same:
+`NearbySession::shutDownLink`, cross-story review row 4), so Games is built with the heap back. It releases the lock,
+flushes a dirty `ch.store`, and calls `goToGames()`. The blank goes up before Games is asked for: if `goToGames()` runs
+out of memory, the match stays current in Leaving with no VM, and the seat's frame must not stay on the panel. A Leave
+from the end-of-round menu (over seat 0's frame, which is everyone's) or from the hand-off screen's pause menu (on no
+frame) pushes nothing. When an abandon leaves the task alive (the simulator always does, since it cannot stop a thread),
+the slot is still flushed, then leaked with the task when the match is destroyed: the slot's mutex is held only for a
+copy inside a locked binding, which an abandon never deletes or leaves suspended, so the flush waits at most one copy
+and saves every set made before the leak.
 
 ### The forced exit
 
 `onExit()` without a user exit (sleep, any Replace) runs under the `RenderLock` that `ActivityManager` already holds and
 never takes it again (pitfall 12cc816). It notes `millis()` at its very start, and the order is:
 
-1. cancel the VM and join it (up to 500 ms);
+1. in a nearby match that is not Leaving, first `NearbySession::leave(Left, 0)`: three `ABORT(left)` on the link at
+   once, with no wait, so the peer learns now and a slow stop cannot delay it (not an SD step, no `RenderLock`, three
+   sends under the session's short lock; the deadline below counts from the start of `onExit()`, so it is inside it);
+   then cancel the VM and join it (up to 500 ms);
 2. the pending snapshot is written as `resume.bin` (in Playing, Paused, Result, or HandOff only), before an abandon can
    free the memory it lives in;
 3. abandon the VM if it did not join (up to 500 ms more); a VM that ends within that wait has its last published
@@ -414,6 +447,7 @@ and holds the room rule; `GameViewIconsTest` checks every name against the libra
 | Pause menu | `pause`; rows `play`, `sign-out` | Paused | -- | Resume, Leave | Back resumes; Up and Down move; Confirm chooses |
 | End-of-round menu | `flag-checkered`; rows `arrows-clockwise`, `sign-out` | Game over | -- | Play again, Leave | Up and Down move; Confirm chooses |
 | Error view | `warning`; row `sign-out` | The game stopped with an error, or The game could not start | Lua's message or the reason, small type, wrapped to 8 lines | Back | Back |
+| Player-left view (nearby) | `users`; row `sign-out` | one reason line, up to two lines: "The other player left" (also for a full session), "The other player went silent", "The other game stopped with an error", or "The other player has a different version" | -- | Back | Back; Confirm does nothing; Home is ignored |
 | Result banner (hidden pass) | -- | -- | "Tap to pass to player N" in a framed panel at the bottom, over the mover's frame | a tap on the banner | Confirm passes; Back pauses; no hints |
 | Hand-off screen (hidden pass) | the title screen's splash band: the game's `handoff.bmp`, else its `title.bmp`, else its own icon at 128 px (no library view icon) | -- | "Player N's turn", plain text in the title screen's first menu row | "I'm ready", filling its second two-line row (as with a save) | Confirm passes; Back pauses; no hints |
 

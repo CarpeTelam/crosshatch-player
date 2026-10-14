@@ -34,7 +34,7 @@ cannot be.
 | 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys added, changed, or removed (the prefix only; no key outside it changes) | prefix-scoped |
 | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
 | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |
-| 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping (the `GamesLauncher`, `GameMode`, and `GameMatch` activity names select Home's Games row), `goToGames()` opens `GamesLauncherActivity`; its includes (`GamesLauncherActivity.h`, `GameModeActivity.h`) | yes |
+| 5 | `src/activities/ActivityManager.cpp` | `goHome` mapping (one call to `GamesHomeRow::isGamesActivity`, the pure header listing the five names, `GamesLauncher`, `GameMode`, `GameOptions`, `GameLobby`, and `GameMatch`, which select Home's Games row), `goToGames()` opens `GamesLauncherActivity`; its includes (`GamesLauncherActivity.h`, `GamesHomeRow.h`) | yes |
 | 6 | `src/activities/home/HomeActivity.h` | Games in the index mapping after File Transfer and before Settings, one mapping for list and cover-grid Home; `onGamesOpen()`; no game header | yes |
 | 7 | `src/activities/home/HomeActivity.cpp` | Games in the item count in both Home modes, switch case, list-mode label; list mode reuses an existing `UIIcon`; no game header | yes |
 | 8 | `src/components/CoverGridHomeUi.h` | tab array size, one more for the Games tab; no game header | yes |
@@ -42,6 +42,10 @@ cannot be.
 | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison, and into `games/ForkReleaseProbe.h` after a failed fetch; a `static_assert` that `assetName` is `ForkRelease::ASSET_NAME_CAPACITY` bytes (AD-25) | yes |
 | 11 | `src/activities/boot_sleep/BootActivity.cpp` | the boot screen draws `CrosshatchMark120` and `STR_GAMES_PRODUCT_NAME` ("Crosshatch") in place of `Logo120` and `STR_CROSSPOINT`, same layout; one include and one `#if`/`#else` hunk; no game header (the bitmap is `src/images/CrosshatchMark120.h`) | yes |
 | 12 | `src/activities/boot_sleep/SleepActivity.cpp` | `renderDefaultSleepScreen` draws the same mark and title, same layout and inversion; one include and one `#if`/`#else` hunk; no game header | yes |
+| 13 | `lib/Logging/Logging.cpp` | the diagnostics log's hook: `#include <DiagLog.h>` and one `DiagLog::append(buf)` call after `addToLogRingBuffer(buf)` in `logPrintf`, each inside `#if CROSSHATCH_SD_LOG`; no game header, and with the define off (the default; no env sets it) neither is in the build and the firmware image is unchanged (the app descriptor's ELF digest and build stamp, and the image digest after it, differ; every loaded byte is the same); the library is `lib/DiagLog` | yes, by `CROSSHATCH_SD_LOG` |
+| 14 | `src/main.cpp` | the diagnostics log's flush before sleep (owner Decision 2026-10-13, entry 19's flush before sleep, option a): `#include <DiagLog.h>` and one `DiagLog::flushBeforeSleep()` call before each of the three `Storage.prepareForDeepSleep()` calls (`enterDeepSleep` and the two early-sleep paths in `setup()`), each inside `#if CROSSHATCH_SD_LOG`; the call waits at most `DiagLog::SLEEP_FLUSH_TIMEOUT_MS` (250 ms) for the writer to put the buffered lines on the card, ignores the result, and so cannot hold sleep longer than that; and the `[MEM]` heap lines in `loop()` (entry 21): inside `#if CROSSHATCH_SD_LOG` their `if` tests only the 10 s period, so a run with no USB host still logs them to the card, and inside that `if`, in the same branch, one `[MEM]` battery line before them (cross-story review row 8): `Battery: <mV> mV, <percent>%`, the millivolts from a function-local `static const BatteryMonitor`'s `readMillivolts()` (0 when the read fails) and the percent from `powerManager.getBatteryPercentage()` (the status bar's), both read, and the line logged, only when a `RenderLock` taken with `RenderLock::Mode::Try` is owned (the themes read the same gauge, and the loop never waits out a push; a period whose try fails logs no battery line, the heap lines still go); it allocates nothing; the `#else` branch is upstream's comment and `Serial` / ROM-console condition unchanged; no game header, and with the define off neither the include, the calls, nor the `#if CROSSHATCH_SD_LOG` branch of the `[MEM]` `if` are in the build and the loaded firmware image is unchanged | yes, by `CROSSHATCH_SD_LOG` |
+
+Rows 13 and 14 are guarded by the fork-only define `CROSSHATCH_SD_LOG`, not `FREEINK_CAP_GAMES`: the diagnostics log is independent of the games and builds on any board, the C3 included. Row 14 exists because the sleep paths unmount the card (`Storage.prepareForDeepSleep()`): a barrier before them is a call site in upstream code, which the hook alone (row 13) cannot be. It also holds the `[MEM]` condition, since upstream makes those lines only for a USB host or the ROM console, and the hook can write only lines that are made; and, in the same define-on branch, the battery line a cardless run records a match's battery cost from (millivolts and the status bar's percent, read at most once per 10 s, only when the render lock is free to try), which needs the same period and is made nowhere else.
 
 Rows 11 and 12 (the brand swap, `STR_GAMES_PRODUCT_NAME` in row 2's prefix) make no game include: the mark is
 `src/images/CrosshatchMark120.h`, generated by `scripts/gen_crosshatch_mark.py` with the games' 64 and 128 px bitmaps.
@@ -103,6 +107,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 `/`, and `?` and `[...]` work too).
 
 - `lib/Game*`
+- `lib/DiagLog` -- the on-device diagnostics log (epic-play-nearby entry 19); it has no game code, and rows 13 and 14 are its upstream touches.
+- `src/diagnostics` -- the log's file store over `Storage` (a project source, because `HalStorage.h` needs SdFat's include path, which a library in the `hal` -> `Logging` -> `DiagLog` cycle does not get).
 - `lib/lua`
 - `src/games`
 - `src/activities/games`
@@ -111,6 +117,7 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `docs/crosshatch`
 - `test/game_core`
 - `test/game_script`
+- `test/diag_log` -- the diagnostics log's host suite, wired from `test/game_core/CMakeLists.txt` so row 3 stays as it is.
 - `scripts/pack_game.py`
 - `scripts/pack_game_test.py`
 - `scripts/pack_device_run.py`
@@ -123,6 +130,8 @@ it, or one of its leading directories, matches an entry as a shell-style glob (P
 - `scripts/check_upstream_touches_test.py`
 - `scripts/check_flash_budget.py`
 - `scripts/check_flash_budget_test.py`
+- `scripts/device_log.py` -- captures two devices' serial logs into one merged log (epic-play-nearby R13).
+- `scripts/device_log_test.py`
 - `scripts/fork_release.py`
 - `scripts/fork_release_test.py`
 - `scripts/fork_common.py` -- shared by the fork scripts; `docs/crosshatch/fork-scripts.md` has the conventions.

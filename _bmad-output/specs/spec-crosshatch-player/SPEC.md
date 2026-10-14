@@ -68,7 +68,7 @@ A vision and a pain. The author, a developer who writes games with an AI assista
 - Only simple turn-structured games are in scope, and every API addition must serve one. The API has no frame loop, drag input, sprites, sound, or timers under 1 s.
 - The API is versioned by an integer level. Levels are cumulative and only add; a released level is frozen, and level 1 is a preview until the freezing release (spine AD-19). Icon names are part of the level.
 - Play Nearby never runs while the web server or any other Wi-Fi activity is up. The radio is unencrypted, so the design assumes everyone in the room cooperates.
-- The runtime adds at most 270 KB of flash to the x4pro image (amended 2026-10-02, owner, from 250 KB: epic-pass-and-play's approved title-screen, Options, and hand-off design). Its internal-RAM costs are the 16 KB VM stack, the 4 KB link stack, and the Wi-Fi driver; everything else lives in PSRAM. The Nearby lobby refuses to open below 100 KB of free internal heap.
+- The runtime adds at most 300 KB of flash to the x4pro image (amended 2026-10-13, owner, from 290 KB: epic-play-nearby's lobby screens with the ESP-NOW driver measured +40,256 B over its base; amended 2026-10-12, owner, from 270 KB: epic-play-nearby's ESP-NOW driver measured +11,456 B; amended 2026-10-02, owner, from 250 KB: epic-pass-and-play's approved title-screen, Options, and hand-off design). Its internal-RAM costs are the 16 KB VM stack, the 4 KB link stack, and the Wi-Fi driver; everything else lives in PSRAM. The Nearby lobby refuses to open below 100 KB of free internal heap.
 - A child can finish every v1 flow unaided: no text entry, large touch targets, and short `tr(STR_GAMES_*)` text.
 
 ## Non-goals

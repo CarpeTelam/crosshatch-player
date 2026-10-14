@@ -1,5 +1,5 @@
 -- draws.lua: what Battleship's draw puts on the canvas beyond text, read through trace.lua's recording `ch.gfx`: the recorder
--- itself, secrecy at the level of the commands, the icon and shape kinds, and seat 0's Over frame. Every pin is called from
+-- itself, secrecy at the level of the commands, the icon and shape kinds, and the Over frame (seat 0's, and the same frame for seats 1 and 2). Every pin is called from
 -- one round, rounds/draw-commands.lua, in its `steps(state)`; an error that names the first thing wrong fails that round.
 -- They live here, in the round's own VM, and not in checks.lua: that VM holds the game's modules and the 55 KB of checks
 -- (about 190 KB of the sandbox's 256 KB, once compiled), and a frame's draw leaves about 47 KB of garbage, so a check that
@@ -54,12 +54,12 @@ end
 -- The same fleet with its intact ships (lower-case letters) taken out: what a shot-only view of it holds.
 local function withoutIntact(f) return (f:gsub("[a-e]", ".")) end
 
--- The commands of game.draw(state, seat, {}) as text, one per line, and, when `keep`, as a list of
--- { name = "rect", <arguments in order> }.
-local function frame(state, seat, keep)
+-- The commands of game.draw(state, seat, ui) as text, one per line (`ui` is empty when left out), and, when `keep`, as
+-- a list of { name = "rect", <arguments in order> }.
+local function frame(state, seat, keep, ui)
   collectgarbage("collect")
   local events = keep and {} or nil
-  local text = trace.record(function() game.draw(state, seat, {}) end, keep and function(name, ...)
+  local text = trace.record(function() game.draw(state, seat, ui or {}) end, keep and function(name, ...)
     events[#events + 1] = { name = name, ... }
   end or nil)
   collectgarbage("collect")
@@ -314,6 +314,50 @@ function draws.over()
   end
 end
 
+-- Any seat at Over: the frame seat 0 draws, command for command, with or without the help page open (Over wins over
+-- it): the winner headline, both fleets with their 17 ship cells and the misses, both shot counts, no question button,
+-- and no text starting in the host's end-of-round dialog band. Positive control: the same seat's frame one shot before
+-- the last is not that frame, so equal empty frames cannot pass.
+function draws.ownOver()
+  local sunk = (build(DOWN):gsub("%l", string.upper))
+  local almost = sunk:gsub("A", "a", 1) -- the Carrier's first cell afloat: the round is not over
+  local alive = shotAt(build(ACROSS), { 8, 3 }, { 9, 9 }, { 3, 1 })
+  for winner = 1, 2 do
+    local function round(beaten)
+      return winner == 1 and firing(alive, beaten, 1) or firing(beaten, alive, 2)
+    end
+    local state, before = round(sunk), round(almost)
+    eq(game.status(state).over, true, "winner " .. winner .. ": the round is over")
+    eq(game.status(before).over, nil, "winner " .. winner .. ": one shot before the last, the round goes on")
+    local want = frame(state, 0)
+    local _, events = frame(state, 0, true)
+    local bars, counts, headline = 0, 0, false
+    for _, e in ipairs(events) do
+      assert(e.name ~= "icon", "winner " .. winner .. ": an icon (the question button) in the Over frame: " .. tostring(e[1]))
+      if e.name == "rect" and e[6] == true and e[5] == "black" then bars = bars + 1 end
+      if e.name == "text" then
+        assert(not (e[2] >= host.dialog_top and e[2] < host.dialog_bottom), "winner " .. winner .. ": the text '"
+          .. tostring(e[3]) .. "' starts at y " .. e[2] .. ", under the dialog (y " .. host.dialog_top .. " to " .. host.dialog_bottom .. ")")
+        if e[3] == "Player " .. winner .. " wins!" then headline = true end
+        if e[3]:find(" fired ", 1, true) then counts = counts + 1 end
+      end
+    end
+    assert(headline, "winner " .. winner .. ": the headline 'Player " .. winner .. " wins!' is not drawn")
+    eq(counts, 2, "winner " .. winner .. ": shot counts")
+    assert(bars >= 34, "winner " .. winner .. ": " .. bars .. " filled bars for the 34 ship cells")
+    for seat = 1, 2 do
+      for _, ui in ipairs({ {}, { help = true } }) do
+        local what = "winner " .. winner .. ", seat " .. seat .. (ui.help and " with the help page" or "")
+        local count = sameFrames(want, frame(state, seat, false, ui), what .. ": the Over frame is seat 0's")
+        assert(count >= 40, what .. ": the frame holds " .. count .. " commands")
+        -- Positive control: before the last shot, the same seat's frame (with the same ui) is not the Over frame.
+        local ok, err = pcall(sameFrames, want, frame(before, seat, false, ui), what)
+        assert(not ok and tostring(err):find("differs", 1, true), what .. ": expected a frame that differs one shot before the last")
+      end
+    end
+  end
+end
+
 -- The lines f() sends to ch.log.
 local function logged(f)
   local real, lines = ch.log, {}
@@ -372,6 +416,7 @@ function draws.sameAtBothCanvases()
       s.l = { 1, 10, 10, 0, 0 } return s end)(), 1, {} },
     { "help", stateWith({}), 1, { help = true } },
     { "over", firing(shotAt(own, { 8, 3 }), sunk, 1), 0, {} },
+    { "over, seat 2", firing(shotAt(own, { 8, 3 }), sunk, 1), 2, {} },
   }
   for _, screen in ipairs(screens) do
     local a = eventsAt(466, 788, screen[2], screen[3], screen[4])
@@ -399,6 +444,8 @@ function draws.ink()
       s.l = { 1, 10, 10, 0, 0 } return s end)(), 1, {} },
     { "help", stateWith({}), 1, { help = true } },
     { "over", firing(shotAt(own, { 8, 3 }, { 1, 1 }), sunk, 1), 0, {} },
+    { "over, seat 1", firing(shotAt(own, { 8, 3 }, { 1, 1 }), sunk, 1), 1, {} },
+    { "over, seat 2 with the help page", firing(shotAt(own, { 8, 3 }, { 1, 1 }), sunk, 1), 2, { help = true } },
   }
   local inverted_seen, hits_seen = false, false
   for _, screen in ipairs(screens) do

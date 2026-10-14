@@ -1342,15 +1342,23 @@ TEST_F(ListTest, NoFailureShowsNoNote) {
 
 // Row 9 of entry 3's changes (DESIGN.md, Launcher game row): the second line of a game this host can start names the
 // modes it can start here, in solo, pass, nearby order, joined by " · ", from the manifest's check; a mode the manifest
-// lists that this host cannot start (nearby with no radio, pass with no pass) is not named.
+// lists that this host cannot start (nearby with no radio, pass with no pass) is not named. The X4 Pro device starts
+// nearby (HostCapsValues::NEARBY_BUILT, entry 11), so the no-radio rows script a host without it.
 TEST_F(ListTest, TheModesLineNamesTheModesThisHostCanStartInOrder) {
   hostcaps::script().pass = true;
+  hostcaps::script().nearby = true;
   addGame("all-three", "AllThree", "\"nearby\",\"pass\",\"solo\"", 1, 1, 2);
   addGame("pass-nearby", "PassNearby", "\"pass\",\"nearby\"", 1, 2, 2);
   open();
   const std::string dot = " \xC2\xB7 ";
+  EXPECT_EQ(lineAfter(ui(), "AllThree"),
+            std::string(tr(STR_GAMES_MODE_SOLO)) + dot + tr(STR_GAMES_MODE_PASS) + dot + tr(STR_GAMES_MODE_NEARBY))
+      << "all three, in solo, pass, nearby order";
+  EXPECT_EQ(lineAfter(ui(), "PassNearby"), std::string(tr(STR_GAMES_MODE_PASS)) + dot + tr(STR_GAMES_MODE_NEARBY));
+  hostcaps::script().nearby = false;
+  reopen();
   EXPECT_EQ(lineAfter(ui(), "AllThree"), std::string(tr(STR_GAMES_MODE_SOLO)) + dot + tr(STR_GAMES_MODE_PASS))
-      << "no nearby: the host has no radio";
+      << "no nearby: a host with no radio";
   EXPECT_EQ(lineAfter(ui(), "PassNearby"), tr(STR_GAMES_MODE_PASS));
   hostcaps::script().pass = false;
   reopen();

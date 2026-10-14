@@ -17,8 +17,8 @@ and src/activities/games is resolved to what it reaches:
   - any include to a header under lib/<name>/ or lib/<name>/src/ (the component lib/<name>);
   - an angle include to a src/ path (`<games/GameVM.h>`);
   - otherwise to the C/C++ standard library, the platform (Arduino, ESP-IDF, FreeRTOS, POSIX; its radio and crypto
-    headers apart), or an SDK header, by the tables below. A header none of these know is reported, so a new edge is
-    classified on purpose.
+    headers and the simulator's socket headers apart), or an SDK header, by the tables below. A header none of these
+    know is reported, so a new edge is classified on purpose.
 A repository path under src/ outside the game folders is upstream (`src (upstream)`), except src/fontIds.h, which the
 table names on its own. Screens may include upstream src/ code (their screen infrastructure), so the check also:
   - fails any other source file under src/ or lib/ (outside the game folders and the vendored lib/lua) that includes
@@ -31,6 +31,9 @@ table names on its own. Screens may include upstream src/ code (their screen inf
     condition is FREEINK_CAP_GAMES, defined(FREEINK_CAP_GAMES), or FREEINK_CAP_GAMES == 1, alone or joined to others
     by && and with no ||; an #else, an #ifndef or #elifndef, a negation, or any other spelling does not count, so an
     unusual guard fails visibly instead of passing;
+  - fails a socket header (SIM_SOCKETS: arpa/inet.h, netinet/in.h, sys/socket.h, sys/uio.h, fcntl.h) in src/games
+    that is not in the SIMULATOR branch of an #if, #ifdef, #elif, or #elifdef, read as the games branch is (the
+    simulator's UdpLink, entry 16); the edge exists in BEYOND_TABLE for src/games only, and no other component has it;
   - fails a Screens file that uses the word GameScript anywhere outside comments and literals (GameScript::,
     `using namespace`, a namespace alias, a #define): Screens reach lib/GameScript only through src/games;
   - fails a src/games header that re-exports GameScript at global scope (`using namespace GameScript;`,
@@ -69,6 +72,8 @@ SUMMARY_HEADING = 'Layer check'
 STD = 'std'
 PLATFORM = 'platform'
 RADIO_CRYPTO = 'platform radio/crypto'
+SIM_SOCKETS = 'simulator sockets'
+SIMULATOR_MACRO = 'SIMULATOR'
 UPSTREAM_SRC = 'src (upstream)'
 FONT_IDS = 'src/fontIds.h'
 SCREENS = 'src/activities/games'
@@ -144,8 +149,9 @@ BEYOND_TABLE = {
     # The C++ standard library, which the Domain row names and the adapter needs as much.
     'lib/GameScript': {STD},
     # The standard library; the platform (Arduino, ESP-IDF, FreeRTOS) that ESP-NOW and mbedTLS run on; GfxRenderer from
-    # the diagram's upstream node; the conventions.
-    ADAPTERS: {STD, PLATFORM, 'lib/GfxRenderer', *CONVENTIONS},
+    # the diagram's upstream node; the conventions; the simulator's socket headers for UdpLink (entry 16), which stand
+    # where ESP-NOW does on the device, only in a SIMULATOR branch (sim_socket_problems), so they are no device edge.
+    ADAPTERS: {STD, PLATFORM, 'lib/GfxRenderer', SIM_SOCKETS, *CONVENTIONS},
     # The standard library; the platform without the radio and crypto the table gives only to src/games; lib/I18n for
     # tr(); the diagram's upstream node (HAL, Storage, ZipFile, PngToBmpConverter); the conventions.
     SCREENS: {STD, PLATFORM, 'lib/I18n', 'lib/hal', 'lib/ZipFile', 'lib/PngToBmpConverter', *CONVENTIONS},
@@ -194,6 +200,9 @@ RADIO_CRYPTO_PATTERNS = (
     'WiFi*.h', 'esp_now*.h', 'esp_wifi*.h', 'esp_netif*.h', 'esp_http*.h', 'esp_tls*.h', 'lwip/*', 'mbedtls/*',
     'openssl/*',
 )
+# The POSIX socket headers of the simulator's UdpLink (fcntl.h for O_NONBLOCK), which only src/games may include and
+# only inside a SIMULATOR branch. Matched before PLATFORM_PATTERNS, whose sys/* would otherwise admit them anywhere.
+SIM_SOCKET_HEADERS = {'arpa/inet.h', 'netinet/in.h', 'sys/socket.h', 'sys/uio.h', 'fcntl.h'}
 # The rest of the platform: Arduino, ESP-IDF (esp_timer, esp_random, ...), FreeRTOS, and POSIX.
 PLATFORM_PATTERNS = ('Arduino.h', 'esp_*.h', 'freertos/*', 'sys/*', 'strings.h', 'unistd.h')
 # SDK headers (the freeink-sdk submodule, which the check does not need checked out), each its own edge.
@@ -214,9 +223,18 @@ PREPROCESSOR_LINE = re.compile(r'^[ \t]*#[^\n]*', re.M)
 CONDITIONAL = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$')
 # A backslash ending a physical line (compilers allow trailing blanks after it, with a warning).
 CONTINUATION = re.compile(r'\\[ \t]*$')
-GAMES = re.escape(fork_common.GAMES_MACRO)
-# One &&-joined part of an #if or #elif condition that requires the games flag.
-GAMES_CONJUNCT = re.compile(rf'(?:{GAMES}(?:\s*==\s*1)?|defined\s*\(\s*{GAMES}\s*\)|defined\s+{GAMES})')
+
+
+def conjunct_pattern(macro):
+    """One &&-joined part of an #if or #elif condition that requires `macro` (the games flag, or SIMULATOR)."""
+    name = re.escape(macro)
+    return re.compile(rf'(?:{name}(?:\s*==\s*1)?|defined\s*\(\s*{name}\s*\)|defined\s+{name})')
+
+
+GAMES_CONJUNCT = conjunct_pattern(fork_common.GAMES_MACRO)
+SIMULATOR_CONJUNCT = conjunct_pattern(SIMULATOR_MACRO)
+# The guard patterns games_branch knows, by macro.
+CONJUNCTS = {fork_common.GAMES_MACRO: GAMES_CONJUNCT, SIMULATOR_MACRO: SIMULATOR_CONJUNCT}
 REEXPORT_START = re.compile(r'\s*(using\b|namespace\s+\w+\s*=)')
 
 
@@ -261,9 +279,11 @@ def lib_index(root):
 
 
 def classify_external(name):
-    """std, platform, platform radio/crypto, sdk:<name>, or None for a header outside the repository."""
+    """std, platform, platform radio/crypto, simulator sockets, sdk:<name>, or None for a header outside the repo."""
     if name in STD_HEADERS:
         return STD
+    if name in SIM_SOCKET_HEADERS:
+        return SIM_SOCKETS
     if any(fnmatch.fnmatchcase(name, pattern) for pattern in RADIO_CRYPTO_PATTERNS):
         return RADIO_CRYPTO
     if any(fnmatch.fnmatchcase(name, pattern) for pattern in PLATFORM_PATTERNS):
@@ -402,14 +422,17 @@ def reexport_problems(rel, text):
     return problems
 
 
-def games_branch(kind, condition):
-    """True when the branch #<kind> <condition> opens is compiled only with the games flag on (GAMES_CONJUNCT)."""
+def games_branch(kind, condition, macro=fork_common.GAMES_MACRO):
+    """True when the branch #<kind> <condition> opens is compiled only with `macro` on: the games flag (GAMES_CONJUNCT)
+    by default, SIMULATOR for the socket headers (SIMULATOR_CONJUNCT)."""
     condition = condition.strip()
+    if macro not in CONJUNCTS:
+        raise ValueError(f'no guard pattern for {macro}; add it to CONJUNCTS')
     if kind in ('ifdef', 'elifdef'):
-        return condition == fork_common.GAMES_MACRO
+        return condition == macro
     if kind not in ('if', 'elif') or '||' in condition:
         return False
-    return any(GAMES_CONJUNCT.fullmatch(part.strip()) for part in condition.split('&&'))
+    return any(CONJUNCTS[macro].fullmatch(part.strip()) for part in condition.split('&&'))
 
 
 def logical_lines(text):
@@ -433,14 +456,14 @@ def logical_lines(text):
         yield first, number, ''.join(parts)
 
 
-def games_guarded_lines(text):
-    """(guarded, unread) for text: the line numbers inside the games branch of an #if, #ifdef, #elif, or #elifdef, at
-    any depth (comments do not count as directives), and the line numbers inside a branch that would be a games
-    branch but for a comment. Lines are spliced at each backslash-newline first and comments blanked after, in C's
-    order, so a directive is read from its whole logical line, and every physical line of a guarded logical line is
-    guarded. A conditional whose line opens a block comment that spans lines is never a games branch: its condition
-    may continue after the comment (`#if FREEINK_CAP_GAMES /*` then `*/ || 1`). Its lines are `unread`, so the
-    problem for an include there can say so (cross-story finding 13)."""
+def games_guarded_lines(text, macro=fork_common.GAMES_MACRO):
+    """(guarded, unread) for text: the line numbers inside the games branch (or the `macro` branch) of an #if, #ifdef,
+    #elif, or #elifdef, at any depth (comments do not count as directives), and the line numbers inside a branch
+    that would be a games branch but for a comment. Lines are spliced at each backslash-newline first and comments
+    blanked after, in C's order, so a directive is read from its whole logical line, and every physical line of a
+    guarded logical line is guarded. A conditional whose line opens a block comment that spans lines is never a
+    games branch: its condition may continue after the comment (`#if FREEINK_CAP_GAMES /*` then `*/ || 1`). Its
+    lines are `unread`, so the problem for an include there can say so (cross-story finding 13)."""
     logical = list(logical_lines(text))
     if not logical:
         return set(), set()
@@ -463,7 +486,7 @@ def games_guarded_lines(text):
                 unread.update(range(first, last + 1))
             continue
         kind, rest = match.groups()
-        would = games_branch(kind, rest)
+        would = games_branch(kind, rest, macro)
         branch = (would and index not in spanning, would and index in spanning)
         if kind in ('if', 'ifdef', 'ifndef'):
             branches.append(branch)
@@ -474,6 +497,14 @@ def games_guarded_lines(text):
         elif branches and kind == 'endif':
             branches.pop()
     return guarded, unread
+
+
+def sim_socket_problems(rel, text, lines):
+    """path:line problems for the socket headers of src/games (the `lines` numbers) outside a SIMULATOR branch."""
+    guarded, _ = games_guarded_lines(text, SIMULATOR_MACRO)
+    return [f'{rel}:{number}: {name} is a simulator socket header; src/games includes it only inside a '
+            f'#if {SIMULATOR_MACRO} branch (alone or joined by &&, no ||), so no device build sees it'
+            for number, name in lines if number not in guarded]
 
 
 def upstream_problems(root, index):
@@ -523,6 +554,7 @@ def check(root):
         for rel, path in source_files(root, comp):
             files += 1
             text = read_text(path)
+            sockets = []
             for number, target_match, line in includes(blank(text, literals=False)):
                 if not target_match:
                     problems.append(f'{rel}:{number}: cannot check a computed include ({line.strip()})')
@@ -535,6 +567,10 @@ def check(root):
                 elif not allowed(rel, comp, target):
                     problems.append(f'{rel}:{number}: {comp} may not include {target_match.group(1)} ({target}); '
                                     f'the spine\'s layer table allows {comp}: {describe_allowed(comp)}')
+                elif target == SIM_SOCKETS:
+                    sockets.append((number, target_match.group(1)))
+            if sockets:
+                problems.extend(sim_socket_problems(rel, text, sockets))
             if comp == SCREENS:
                 problems.extend(screen_name_problems(rel, text))
             if comp == ADAPTERS and path.suffix in HEADER_SUFFIXES:

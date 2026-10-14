@@ -14,6 +14,7 @@
 
 #include "FrameReplay.h"
 #include "GameViewport.h"
+#include "NearbySession.h"
 
 namespace {
 
@@ -47,7 +48,8 @@ void logRound(const GameCore::Session& session, const GameScript::MatchRounds& r
 
 std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& viewport, const FrameReplay& replay,
                                        const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster,
-                                       const bool handOff, const GameCore::SettingValues& settings) {
+                                       const bool handOff, const GameCore::SettingValues& settings,
+                                       NearbySession* const nearby) {
   const GameScript::Canvas canvas{static_cast<int16_t>(viewport.width()), static_cast<int16_t>(viewport.height()),
                                   replay.textMetrics()};
   // The two frames, then the mailbox's one snapshot: one block, since the mailbox lives
@@ -62,7 +64,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
   // The constructor is private, so makeUniqueNoThrow cannot reach it; the unique_ptr
   // owns the nothrow allocation at once.
   std::unique_ptr<GameVM> vm(new (std::nothrow) GameVM(std::move(assets), std::move(frameStorage), canvas, gameId,
-                                                       store, roster, handOff, settings));
+                                                       store, roster, handOff, settings, nearby));
   if (!vm) {
     LOG_ERR("GAME", "OOM: %u byte GameVM", static_cast<unsigned>(sizeof(GameVM)));
     return nullptr;
@@ -73,7 +75,7 @@ std::unique_ptr<GameVM> GameVM::create(GameAssets&& assets, const GameViewport& 
 
 GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameScript::Canvas& canvas,
                const char* gameId, GameScript::StoreSlot& store, const GameCore::Roster& roster, const bool handOff,
-               const GameCore::SettingValues& settings)
+               const GameCore::SettingValues& settings, NearbySession* const nearby)
     : assets(std::move(loaded)),
       roster(roster),
       frameStorage(std::move(storage)),
@@ -82,7 +84,8 @@ GameVM::GameVM(GameAssets&& loaded, HalMemory::PsramBuffer storage, const GameSc
       log(gameId),
       game(arena.allocator(), frameBuffers, assets.sources(), GameScript::HostPorts{random, clock, log, store, &paused},
            canvas, assets.images()),
-      handOff(handOff) {
+      handOff(handOff),
+      nearby(nearby) {
   game.setSettings(settings);
 }
 
@@ -156,13 +159,17 @@ void GameVM::run() {
       handOffView = GameCore::MatchState::HandOff;
       outcome = rounds.begin(*session);
       announceTurnSeat(outcome);
+    } else if (followsHost()) {
+      // The device that does not hold seat 1 runs no setup: its first state is the host's first STATE (adopted at the
+      // top of a pass), and until then it draws nothing and counts no round.
+      rounds.attach(*session);
     } else {
       outcome = rounds.start(*session);
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
     }
     publishCommitted(mailbox, *session, published, outcome);
-    // A hidden round has drawn nothing yet: it logs its start at its first seat's frame.
-    if (outcome == Outcome::Ok) logRound(*session, rounds, 0, !handOff);
+    // A hidden round has drawn nothing yet: it logs its start at its first seat's frame; a follower has no round yet.
+    if (outcome == Outcome::Ok) logRound(*session, rounds, 0, !handOff && session->hasState());
   }
   while (outcome == Outcome::Ok && !quitRequested.load(std::memory_order_acquire)) {
     const uint32_t endedBefore = rounds.roundsEnded();
@@ -176,7 +183,10 @@ void GameVM::run() {
         seatPending = true;
       }
     }
-    if (rounds.takePlayAgain()) {
+    if (nearby && nearbyStep(*session, published, outcome)) continue;
+    // A nearby host leaves Play again alone while its over STATE has not gone: the next round's would replace it
+    // (NearbySession::ship refuses a different version over a staged `over`). The request stays set until it has.
+    if ((!nearby || !session->shipmentPending()) && rounds.takePlayAgain()) {
       if (handOff) {
         // The new round begins on the hand-off screen, as the first did; a held timer was the
         // last round's (beginAgain cancels the pending one).
@@ -215,6 +225,11 @@ void GameVM::run() {
         LOG_DBG("GAME", "Dropped a timer due after the round was over");
         continue;
       }
+      // A roster with no local seat reads no timer (step drops it too); a stale one drops silently.
+      if (rounds.noSeatTimer(event) && game.timer().accepts(event)) {
+        LOG_INF("GAME", "Dropped a timer: this device plays no seat");
+        continue;
+      }
       outcome = rounds.step(event);
       // The seat step drew, when it drew (a stale timer draws nothing and leaves the seat as it was).
       if (outcome == Outcome::Ok) noteSeatDrawn(rounds.shownSeat());
@@ -246,6 +261,52 @@ void GameVM::run() {
   done.store(true, std::memory_order_release);
 }
 
+bool GameVM::nearbyStep(GameCore::Session& session, uint32_t& published, GameScript::Outcome& outcome) {
+  GameCore::Shipment shipment;
+  // The first ship() of a version stages it and answers false; the call after the link took it answers true once, and
+  // shipped() is called then and only then (a refused send loses nothing: the shipment stays pending and is offered
+  // again).
+  if (session.pendingShipment(shipment) && nearby->ship(shipment)) session.shipped();
+  shipOutstanding.store(session.shipmentPending(), std::memory_order_release);
+
+  const uint32_t endedBefore = rounds.roundsEnded();
+  const uint32_t startedBefore = rounds.roundsStarted();
+  const uint32_t frameBefore = frameBuffers.frameGen();
+  // Set before the take and cleared only once the adoption is drawn and its round end counted, so the loop task never
+  // sees a STATE that has left the queue but not reached roundsEnded() (the match holds a latched end over it).
+  adoptingState.store(true, std::memory_order_release);
+  const NearbySession::AdoptStep step = nearby->adoptNext(session);
+  if (!step.taken) {
+    adoptingState.store(false, std::memory_order_release);
+    return false;
+  }
+  // A refusal by adopt changed nothing and is logged by adoptNext; the over event's ScriptError or Cancelled ends the
+  // VM as any step's does.
+  outcome = step.outcome;
+  if (outcome == GameScript::Outcome::Ok) {
+    outcome = rounds.adopted(step.result);
+    const bool adopted = step.result == GameCore::Adoption::Adopted || step.result == GameCore::Adoption::RoundStarted;
+    if (outcome == GameScript::Outcome::Ok && adopted) {
+      noteSeatDrawn(rounds.shownSeat());
+      // R4 and inception Q3: a touch is played only against a board the player saw. An adopt that drew shows the
+      // peer's move (or the host's new round) under the same local seat, which noteSeatDrawn leaves alone, so the
+      // touch-tag floor moves to the frame just published: a touch made under an earlier frame is dropped
+      // (madeUnderAnotherSeat). An adopt that drew nothing (no local seat) leaves it.
+      if (frameBuffers.frameGen() != frameBefore) seatFrame = frameBuffers.frameGen();
+    }
+  }
+  publishCommitted(mailbox, session, published, outcome);
+  if (outcome == GameScript::Outcome::Ok)
+    logRound(session, rounds, endedBefore, rounds.roundsStarted() != startedBefore);
+  adoptingState.store(false, std::memory_order_release);
+  return true;
+}
+
+void GameVM::pollNearby() {
+  if (!nearby) return;
+  if (shipOutstanding.load(std::memory_order_acquire) || nearby->counters().queueSize > 0) notifyTask();
+}
+
 void GameVM::playAgain() {
   rounds.requestPlayAgain();
   notifyTask();
@@ -258,7 +319,7 @@ uint32_t GameVM::showTurnSeat() {
 }
 
 GameScript::Outcome GameVM::drawShown() {
-  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
+  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover, rounds.lastLocalSeat());
   // The hand-off (or a Result without a mover this device plays): no seat's frame.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
   const GameScript::Outcome outcome = rounds.draw(seat);
@@ -275,10 +336,12 @@ GameScript::Outcome GameVM::showSeatNow() {
     const GameScript::Outcome drained = stepHandOff(queued);
     if (drained != GameScript::Outcome::Ok) return drained;
   }
-  // A turn seat this device does not play (a roster with some seats local, not all): no seat takes the device, so the
-  // view stays HandOff and the request stays unserved, and the match keeps the blank on the panel.
-  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover) == GameCore::NO_SEAT) {
-    LOG_INF("GAME", "Turn seat %u is not this device's; no seat shown", static_cast<unsigned>(playing->status().turn));
+  // A turn seat another device plays (a roster with some seats local, not all) is served with the local seat that last
+  // showed, else the first (seatShown). A turn that is no seat takes no seat: the view stays HandOff and the request
+  // stays unserved, and the match keeps the blank on the panel.
+  if (GameCore::seatShown(GameCore::MatchState::Playing, roster, playing->status(), mover, rounds.lastLocalSeat()) ==
+      GameCore::NO_SEAT) {
+    LOG_INF("GAME", "Turn %u is no seat of the roster; no seat shown", static_cast<unsigned>(playing->status().turn));
     return GameScript::Outcome::Ok;
   }
   handOffView = GameCore::MatchState::Playing;
@@ -305,27 +368,35 @@ GameScript::Outcome GameVM::stepHandOff(GameScript::InputEvent event) {
     // No seat holds the device: nothing reads its input.
     if (handOffView == GameCore::MatchState::HandOff) return GameScript::Outcome::Ok;
   }
-  // Playing: the turn seat (seat 0 once over); Result: the mover, whose move the Session
-  // discards (it is not the turn seat), so a tap queued behind a turn-passing move changes
-  // only that seat's own view.
-  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover);
+  // Playing: the turn seat (the local seat that last showed while the turn is another device's; seat 0 once over);
+  // Result: the mover, whose move the Session discards (it is not the turn seat), so a tap queued behind a
+  // turn-passing move changes only that seat's own view.
+  const uint8_t seat = GameCore::seatShown(handOffView, roster, playing->status(), mover, rounds.lastLocalSeat());
   // A timer due after the round is over is dropped, never delivered, whichever seat is shown (status.over, not seat 0:
   // a roster with no local seat shows none and is dropped the same way, and logged).
   if (GameScript::MatchRounds::lateTimer(event, playing->status().over)) {
     LOG_DBG("GAME", "Dropped a timer due after the round was over");
     return GameScript::Outcome::Ok;
   }
-  // Fails closed, as seatShown does: no seat this device plays, so no input is read.
+  // A roster with no local seat reads no timer (rounds.play drops it too, silently).
+  if (rounds.noSeatTimer(event)) {
+    LOG_INF("GAME", "Dropped a timer: this device plays no seat");
+    return GameScript::Outcome::Ok;
+  }
+  // Fails closed, as seatShown does: a turn that is no seat, so no input is read.
   if (seat == GameCore::NO_SEAT) return GameScript::Outcome::Ok;
   // A touch made under another seat's frame never reaches this one: seat 0's after the move that ended the round, or
   // the next seat's (postInput). The mover's own late tap in Result was made under the mover's frame and goes on.
   if (madeUnderAnotherSeat(event)) return GameScript::Outcome::Ok;
   const bool wasPlaying = handOffView == GameCore::MatchState::Playing;
+  // Read before the move: the shown seat can differ from the turn seat (a remote turn), and only a move by the turn
+  // seat itself can pass the turn.
+  const bool wasTurnSeat = playing->status().turn == seat;
   GameScript::Outcome outcome = rounds.play(event, seat);
   if (outcome != GameScript::Outcome::Ok) return outcome;
   const GameCore::Status& status = playing->status();
   // A move that ends the round is RoundOver's (seat 0 is drawn), never a turn change.
-  const bool passed = wasPlaying && !status.over && status.turn != seat;
+  const bool passed = wasPlaying && wasTurnSeat && !status.over && status.turn != seat;
   if (passed) {
     handOffView = GameCore::MatchState::Result;
     mover = seat;
