@@ -58,6 +58,8 @@ class SweepControl {
   // Sticky: nothing clears it but reset().
   void requestStop() { change(STOP, 0); }
   bool runRequested() const { return (word_.load() & RUN) != 0; }
+  // A stop was asked for (either side may read it).
+  bool stopRequested() const { return (word_.load() & STOP) != 0; }
   bool insidePanel() const { return (word_.load() & IN_PANEL) != 0; }
 
   // --- task --------------------------------------------------------------------------------------------------------

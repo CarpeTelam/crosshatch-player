@@ -5,7 +5,9 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <thread>
 
 #include "SweepControl.h"
@@ -162,27 +164,73 @@ TEST(SweepControl, HeartbeatAgeWrapsAndNeverGoesNegative) {
   EXPECT_EQ(c.enterPanel(4000, GAP_US), Gate::Enter);
 }
 
-TEST(SweepControl, ATaskLoopingThroughThePanelSeesStopAndEndsOutside) {
+TEST(SweepControl, StopRequestedIsSeenAndClearedOnlyByReset) {
   SweepControl c;
   c.reset(0);
-  std::atomic<uint32_t> entries{0};
-  std::atomic<bool> ended{false};
-  std::thread task([&] {
-    while (c.enterPanel(0, GAP_US) == Gate::Enter) {
-      entries.fetch_add(1);
-      c.leavePanel();
-    }
-    ended.store(true);
-  });
-  while (entries.load() < 1000) std::this_thread::yield();
+  EXPECT_FALSE(c.stopRequested());
   c.requestStop();
-  // Once the owner sees the task outside after its Stop, the task never enters again.
-  while (c.insidePanel()) std::this_thread::yield();
-  const uint32_t seen = entries.load();
-  task.join();
-  EXPECT_TRUE(ended.load());
-  EXPECT_EQ(entries.load(), seen);
-  EXPECT_FALSE(c.insidePanel());
+  EXPECT_TRUE(c.stopRequested());
+  c.take();
+  c.requestRun(true);
+  EXPECT_TRUE(c.stopRequested());
+  c.reset(0);
+  EXPECT_FALSE(c.stopRequested());
+}
+
+TEST(SweepControl, PreviousThenConfirmCleansAndRuns) {
+  SweepControl c;
+  c.reset(0);
+  c.take();
+  c.requestClean();                 // Previous
+  c.requestRun(!c.runRequested());  // Confirm
+  const SweepControl::Requests r = c.take();
+  EXPECT_TRUE(r.clean);
+  EXPECT_TRUE(r.run);
+  EXPECT_FALSE(r.replay);
+}
+
+TEST(SweepControl, ATaskLoopingThroughThePanelSeesStopAndEndsOutside) {
+  using Clock = std::chrono::steady_clock;
+  // Shared with the thread, so a thread left running by a failed round never touches freed state.
+  struct Shared {
+    SweepControl control;
+    std::atomic<uint32_t> entries{0};
+    std::atomic<bool> ended{false};
+  };
+  constexpr int ROUNDS = 200;
+  for (int round = 0; round < ROUNDS; ++round) {
+    const auto shared = std::make_shared<Shared>();
+    SweepControl& c = shared->control;
+    c.reset(0);
+    std::thread task([shared] {
+      while (shared->control.enterPanel(0, GAP_US) == Gate::Enter) {
+        shared->entries.fetch_add(1);
+        shared->control.leavePanel();
+      }
+      shared->ended.store(true);
+    });
+    const auto deadline = Clock::now() + std::chrono::seconds(10);
+    const auto waitFor = [&](auto&& done) {
+      while (!done()) {
+        if (Clock::now() > deadline) return false;
+        std::this_thread::yield();
+      }
+      return true;
+    };
+    bool inTime = waitFor([&] { return shared->entries.load() >= 20; });
+    c.requestStop();
+    // Once the owner sees the task outside after its Stop, the task never enters again.
+    inTime = inTime && waitFor([&] { return !c.insidePanel(); });
+    const uint32_t seen = shared->entries.load();
+    inTime = inTime && waitFor([&] { return shared->ended.load(); });
+    if (!inTime) {
+      task.detach();
+      FAIL() << "round " << round << ": the task did not stop within 10 s";
+    }
+    task.join();
+    ASSERT_EQ(shared->entries.load(), seen) << "round " << round;
+    ASSERT_FALSE(c.insidePanel()) << "round " << round;
+  }
 }
 
 }  // namespace

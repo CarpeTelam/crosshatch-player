@@ -129,9 +129,8 @@ class TransitionTestActivity final : public UiListActivity {
   void togglePause();
   // Wakes the sweep task to read its requests.
   void notifySweep();
-  // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (the scan or the clean in
-  // flight), and
-  // deletes it. The caller holds no render lock.
+  // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (after the scan or the
+  // clean in flight), and deletes it. The caller holds no render lock.
   void stopSweep();
   // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks the task to stop and waits for
   // its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that mutex.
@@ -161,7 +160,10 @@ class TransitionTestActivity final : public UiListActivity {
   void advanceClock(uint32_t nowUs);
   // Logs the window's speed (`DLAB gray scans_s=...`).
   void logStats(uint32_t nowUs) const;
-  // Logs the speed and keeps its figures for the Speed row, then starts a new window.
+  // The run's stack line (size, `freeBytes` at the high-water mark, the least room before a scan), and an error when
+  // `freeBytes` is under SWEEP_STACK_MARGIN_BYTES; from the task's end, or after endSweepLocked deleted it.
+  void logStackEnd(uint32_t freeBytes) const;
+  // Logs the speed and, when the window delivered a scan, keeps its figures for the Speed row; starts a new window.
   void reportStats(uint32_t nowUs);
 
   DisplayLabActivity& lab;

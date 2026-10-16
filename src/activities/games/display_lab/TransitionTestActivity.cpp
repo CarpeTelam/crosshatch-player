@@ -261,6 +261,8 @@ void TransitionTestActivity::loop() {
     if (covered) LOG_INF("DLAB", "gray sweep: covered by another screen");
     if (covered || !sweepTask || sweepDone.load(std::memory_order_acquire)) {
       stopSweep();
+      // A cover the loop saw first (the task paused, or ended by the stop above) reads as one too.
+      if (covered && sweepEnd == SweepEnd::Stopped) sweepEnd = SweepEnd::Covered;
       leaveView(endText());
       // This pass's input belonged to the test view: a Back or Confirm release here must not pop the screen or
       // start a run. The next pass serves the rows.
@@ -285,8 +287,8 @@ void TransitionTestActivity::startRun() {
   elapsedUs = 0;
   sceneMs = 0;
   leastScanHeadroom = UINT32_MAX;
-  // A run that ends before its first report shows a 0.0 speed, not the last run's.
-  statsReported = true;
+  // A run that ends before a report over delivered scans keeps the Speed line as it was.
+  statsReported = false;
   reportedTenths = 0;
   reportedMsPerScan = 0;
   scheduler.stop();
@@ -343,14 +345,14 @@ void TransitionTestActivity::endSweepLocked() {
     // DisplayLabActivity::scan's refusals (and logs them) before entering the panel, so no log call, which can block
     // on the USB serial's lock, runs inside it; the one window left is the display being inverted between that
     // check and scan()'s own, whose LOG_ERR then runs inside the panel. The mutex wait cannot end while this caller
-    // holds the mutex, and the task runs on SWEEP_CORE, the loop task's core, where this task is the one running,
-    // so it cannot move between the check and the delete.
+    // holds the mutex, the task runs on SWEEP_CORE, the loop task's core, and the sequence from the check to the
+    // delete makes no blocking call, so the task cannot run between them; the logging comes after the delete.
     if (control.insidePanel() && eTaskGetState(sweepTask) == eBlocked) {
-      LOG_INF("DLAB", "gray sweep task ended: stack %u bytes, high-water %u bytes free, least before a scan %u bytes",
-              static_cast<unsigned>(SWEEP_STACK_BYTES), static_cast<unsigned>(uxTaskGetStackHighWaterMark(sweepTask)),
-              static_cast<unsigned>(leastScanHeadroom == UINT32_MAX ? 0 : leastScanHeadroom));
+      const auto freeBytes = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(sweepTask));
+      vTaskSuspend(sweepTask);
       vTaskDelete(sweepTask);
       sweepTask = nullptr;
+      logStackEnd(freeBytes);
       LOG_INF("DLAB", "gray sweep: task deleted while it waited for the render lock");
       if (sweeping) logStats(micros());
       sweeping = false;
@@ -366,8 +368,9 @@ void TransitionTestActivity::endSweepLocked() {
 const char* TransitionTestActivity::endText() const {
   switch (sweepEnd) {
     case SweepEnd::Stopped:
-    case SweepEnd::Covered:
       return tr(STR_GAMES_DLAB_STOPPED);
+    case SweepEnd::Covered:
+      return tr(STR_GAMES_DLAB_COVERED);
     case SweepEnd::ScanFailed:
       return DisplayLabActivity::outcomeText(failedScan);
   }
@@ -429,14 +432,7 @@ void TransitionTestActivity::sweepRun() {
   if (sweeping) reportStats(micros());
   sweeping = false;
   scheduler.stop();
-  const auto freeBytes = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr));
-  LOG_INF("DLAB", "gray sweep task ended: stack %u bytes, high-water %u bytes free, least before a scan %u bytes",
-          static_cast<unsigned>(SWEEP_STACK_BYTES), static_cast<unsigned>(freeBytes),
-          static_cast<unsigned>(leastScanHeadroom == UINT32_MAX ? 0 : leastScanHeadroom));
-  if (freeBytes < SWEEP_STACK_MARGIN_BYTES) {
-    LOG_ERR("DLAB", "gray sweep task stack: %u bytes free, under the %u byte margin", static_cast<unsigned>(freeBytes),
-            static_cast<unsigned>(SWEEP_STACK_MARGIN_BYTES));
-  }
+  logStackEnd(static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr)));
   sweepDone.store(true, std::memory_order_release);
 }
 
@@ -519,7 +515,10 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
   if (lab.scansBeforeClean() < SCANS_PER_SLOT) {
     LOG_INF("DLAB", "gray sweep: session cap near, cleaning first");
     reportStats(nowUs);  // the speed up to the clean
-    if (!cleanToWhite()) return false;
+    if (!cleanToWhite()) {
+      sweeping = false;  // reported already: sweepRun must not report the empty window after it
+      return false;
+    }
     // The clean's FULL refresh is a pause of the sweep: the clock, the slot and the speed window restart after it.
     slotStartUs = micros();
     clockUs = slotStartUs;
@@ -538,13 +537,32 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
 
   DisplayLabActivity::Scan failure = DisplayLabActivity::Scan::Done;
   bool refused = false;
-  const auto scan = [this, &preset, &failure, &refused](const MaskPlanes& masks, uint32_t& busyUs) {
+  // The delivered (Done) scans and their busy time, for the speed window.
+  uint32_t doneScans = 0;
+  uint32_t doneBusyUs = 0;
+  const auto scan = [this, &preset, &failure, &refused, &doneScans, &doneBusyUs](const MaskPlanes& masks,
+                                                                                 uint32_t& busyUs) {
+    // A stop asked for ends the run as Stopped, whatever the refusal checks below would say.
+    if (control.stopRequested()) {
+      sweepEnd = SweepEnd::Stopped;
+      refused = true;
+      return false;
+    }
     // DisplayLabActivity::scan's refusals, checked (and logged) here, outside the panel: its own LOG_ERR runs before
     // its render lock, and a task deleted inside a log call would keep the USB serial's lock (endSweepLocked).
     ScanBackend* backend = lab.backend();
-    if (!backend || !lab.masks().valid() || display.isInverted() || preset.rateIndex >= backend->rateCount()) {
-      LOG_ERR("DLAB", "gray sweep: scan refused (no session, display inverted, or rate index %u out of range)",
-              static_cast<unsigned>(preset.rateIndex));
+    bool refusedHere = true;
+    if (!backend || !lab.masks().valid()) {
+      LOG_ERR("DLAB", "gray sweep: scan refused: no lab session (backend or masks)");
+    } else if (display.isInverted()) {
+      LOG_ERR("DLAB", "gray sweep: scan refused: display inverted");
+    } else if (preset.rateIndex >= backend->rateCount()) {
+      LOG_ERR("DLAB", "gray sweep: scan refused: rate index %u of %u", static_cast<unsigned>(preset.rateIndex),
+              static_cast<unsigned>(backend->rateCount()));
+    } else {
+      refusedHere = false;
+    }
+    if (refusedHere) {
       failure = DisplayLabActivity::Scan::Refused;
       return false;
     }
@@ -565,15 +583,21 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
                               .swapPolarity = preset.swapPolarity};
     const DisplayLabActivity::Scan result = lab.scan(request, busyUs);
     control.leavePanel();
-    if (result != DisplayLabActivity::Scan::Done) failure = result;
-    return result == DisplayLabActivity::Scan::Done;
+    if (result != DisplayLabActivity::Scan::Done) {
+      failure = result;
+      return false;
+    }
+    ++doneScans;
+    doneBusyUs += busyUs;
+    return true;
   };
   const GameDisplayLab::SlotResult slot =
       GameDisplayLab::runGraySlot(model, lab.masks(), follow, preset, weakRow, scan);
   const uint32_t endUs = micros();
   scheduler.slotDone(slotStartUs, endUs, slot.busyUs);
-  // Only delivered scans count: a scan the gate or the pre-check refused was never sent.
-  scheduler.record((slot.driveDone ? 1u : 0u) + (slot.followDone ? 1u : 0u), slot.busyUs);
+  // Only delivered scans and their busy time count: a refused scan was never sent, and a TimedOut or Dropped scan's
+  // time is no measurement.
+  scheduler.record(doneScans, doneBusyUs);
   if (refused) return false;
   if (failure != DisplayLabActivity::Scan::Done) {
     // The lab logged why (and cleaned the panel after a timeout); the run ends here and the rows say how.
@@ -585,6 +609,16 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
   return true;
 }
 
+void TransitionTestActivity::logStackEnd(const uint32_t freeBytes) const {
+  LOG_INF("DLAB", "gray sweep task ended: stack %u bytes, high-water %u bytes free, least before a scan %u bytes",
+          static_cast<unsigned>(SWEEP_STACK_BYTES), static_cast<unsigned>(freeBytes),
+          static_cast<unsigned>(leastScanHeadroom == UINT32_MAX ? 0 : leastScanHeadroom));
+  if (freeBytes < SWEEP_STACK_MARGIN_BYTES) {
+    LOG_ERR("DLAB", "gray sweep task stack: %u bytes free, under the %u byte margin", static_cast<unsigned>(freeBytes),
+            static_cast<unsigned>(SWEEP_STACK_MARGIN_BYTES));
+  }
+}
+
 void TransitionTestActivity::logStats(const uint32_t nowUs) const {
   LOG_INF("DLAB", "gray scans_s=%u.%u ms_per_scan=%u skipped=%lu",
           static_cast<unsigned>(scheduler.scansPerSecondTenths(nowUs) / 10),
@@ -594,10 +628,13 @@ void TransitionTestActivity::logStats(const uint32_t nowUs) const {
 
 void TransitionTestActivity::reportStats(const uint32_t nowUs) {
   logStats(nowUs);
-  // The loop task writes the Speed line from these once the run is over (leaveView), under the render lock.
-  reportedTenths = scheduler.scansPerSecondTenths(nowUs);
-  reportedMsPerScan = scheduler.msPerScan();
-  statsReported = true;
+  // The loop task writes the Speed line from these once the run is over (leaveView), under the render lock. A window
+  // without a delivered scan (a report just after the last one, or before a refused clean) keeps the last real speed.
+  if (scheduler.windowScans() > 0) {
+    reportedTenths = scheduler.scansPerSecondTenths(nowUs);
+    reportedMsPerScan = scheduler.msPerScan();
+    statsReported = true;
+  }
   scheduler.resetWindow(nowUs);
   statsSinceUs = nowUs;
 }

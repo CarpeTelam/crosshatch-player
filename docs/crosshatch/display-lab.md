@@ -226,7 +226,9 @@ or after the clean in flight (a replay's, Previous's or the session cap's clean 
   last "N.N scans/s, N ms per scan".
 - Another screen over the test (the light panel's top-edge swipe) stops the sweep: once the screen's loop has not run
   for 0.3 s the task sends no further scan, and when the other screen closes the view ends as Back does, with the rows'
-  FULL refresh. A forced refresh (the power or home button's Refresh) does nothing while it runs.
+  FULL refresh and "Covered by another screen" on the Run row. The check cannot tell a cover from a stall: a main-loop
+  pass that takes over 0.3 s while the view is up ends the run the same way. A forced refresh (the power or home
+  button's Refresh) does nothing while it runs.
 - Home and sleep end the sweep task before the screen frees anything; a task that was waiting for the render lock
   when sleep or a screen change took it is deleted where it waits.
 
@@ -235,11 +237,16 @@ it and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` a
 (`skipped` counts the slot periods lost to slow slots in that same window, about 2 s; they are dropped, never
 queued), and at the end of every run `gray sweep task ended: stack N bytes, high-water N bytes free, least before a
 scan N bytes` (an error line follows when under 1,024 bytes were left; the same line is logged when sleep or a
-screen change deleted the task). The sweep task's other lines: `gray sweep: loop silent for over N ms, a screen covers
-the view; ending` (the cover check), `gray sweep: task deleted while it waited for the render lock` (sleep or a screen
-change ended it inside a scan or a clean), `gray sweep: scan refused (...)` (no session, the display inverted, or a
-bad rate index; the run ends "Refused (see log)"), and `Cannot create the sweep task (N byte stack)` (no internal
-RAM for its stack; the Run row says "Stopped: not enough memory").
+screen change deleted the task, by the screen's loop task). Other lines, by the task that logs them:
+
+- sweep task: `gray sweep: loop silent for over N ms, a screen covers the view; ending` (its cover check, before a
+  scan or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or
+  `...: rate index N of N` (the run ends "Refused (see log)"); the stats, pause, resume, clean and start lines.
+- loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after
+  the gap; a cover usually logs this line and the sweep task's); `gray sweep: task deleted while it waited for the
+  render lock` (sleep or a screen change ended the task inside a scan or a clean); `Cannot create the sweep task (N
+  byte stack)` (no internal RAM for its stack; the Run row says "Stopped: not enough memory"); `gray sweep stopped:
+  <outcome>` when the view ends.
 
 How to read it:
 

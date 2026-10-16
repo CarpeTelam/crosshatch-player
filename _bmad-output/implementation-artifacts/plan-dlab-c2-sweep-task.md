@@ -11,7 +11,7 @@ review: ''
 review_source: ''
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/story-dlab-c2-sweep-task.md'
   - '{project-root}/.agents/skills/heap-discipline/SKILL.md'
@@ -32,6 +32,27 @@ deferred:
     location: >-
       src/activities/games/display_lab/TransitionTestActivity.cpp (stopSweep, endSweepLocked)
     severity: medium
+  - summary: >-
+      Cover detection is a heartbeat timing: scans continue for up to COVERED_GAP_US plus the scan in flight under a covering screen, and a main-loop pass stalled over 300 ms ends the run as covered.
+    evidence: |-
+      ActivityManager::loop knows when it pushes the light panel over this screen but nothing tells the screen; an onCovered hook in the push path, or an atomic top-activity generation checked in enterPanel, would make it deterministic. Design change outside this story; the doc states both effects.
+    location: >-
+      src/activities/games/display_lab/TransitionTestActivity.cpp (loop, the enterPanel gate); src/activities/ActivityManager.cpp
+    severity: medium
+  - summary: >-
+      The delivered-scan count and busy sum the screen passes to SlotScheduler::record have no test.
+    evidence: |-
+      Reverting to record(slot.scans, slot.busyUs) passes every host test; the screen is device-only. Closes with serve()'s deferred extraction (a SlotResult delivered-scans accessor pinned in test_gray_model.cpp).
+    location: >-
+      src/activities/games/display_lab/TransitionTestActivity.cpp (runSlot)
+    severity: medium
+  - summary: >-
+      endSweepLocked can still delete a task blocked in DisplayLabActivity::scan's own inverted-display LOG_ERR when the display is inverted between the lambda's pre-check and scan's check.
+    evidence: |-
+      Closing it needs a flag set inside DisplayLabActivity::scan right before its RenderLock, which the story forbids changing; the window is one register read wide and the lab is dev-only.
+    location: >-
+      src/activities/games/display_lab/TransitionTestActivity.cpp (endSweepLocked); DisplayLabActivity.cpp (scan)
+    severity: low
 ---
 
 <intent-contract>
@@ -128,12 +149,12 @@ scan lambda 48, `DisplayLabActivity::scan` 48, `Ssd1677ScanBackend::scan` 160 (4
 shallower: `logPrintf` (336) from the backend about 2,316 B, the clean path through `GfxRenderer::displayBuffer`'s log
 about 2,204 B, the SPI writes (`copyGrayscaleMsb` 320 with `EpdBus`) about 1,000 B. Plus 512 B allowed for an
 interrupt's exception frame and the coprocessor save area: 2,976 B. +2 KiB = 5,024 B, rounded up to 5 KiB; set to
-**6,144 B** (6 KiB) because the heap and SPI-lock externals are read by hand, not measured. The realistic peak is
+**8,192 (6,144 before the first review round) B** (8 KiB) because the heap and SPI-lock externals are read by hand, not measured. The realistic peak is
 lower (no float formats reach `_dtoa_r`). The UltraChip lab backends on the experimental branch run deeper SDK
-sessions on this task: their first hardware run's HWM line decides whether 6 KiB holds there.
+sessions on this task: their first hardware run's HWM line decides whether 8 KiB holds there.
 
 **Results** (all with `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache` and the locks):
-- Host suite: 2,193 tests, all pass (11 new `SweepControl.*` in `test_scan_lut`).
+- Host suite: 2,193 tests, all pass (12 new, then 14 after the two review rounds `SweepControl.*` in `test_scan_lut`).
 - `scripts/check_layers.py`: passed. `scripts/check_upstream_touches.py`: PASS (it checks HEAD; the staged diff
   touches only `english.yaml` among upstream files, ledger row 2).
 - `./bin/clang-format-fix`: no changes; second run no changes.
@@ -141,7 +162,7 @@ sessions on this task: their first hardware run's HWM line decides whether 6 KiB
   `--fail-on-defect`: no defects.
 - Plain x4pro image against 8874e2ce (both built in this worktree, same way): Flash 6,249,106 -> 6,250,962 B
   (+1,856); `firmware.bin` 6,254,176 -> 6,256,032 B (+1,856); RAM 104,232 -> 104,232 B (+0); `size -A`
-  `.dram0.data`, `.dram0.bss`, `.noinit`, `.iram0.*` all unchanged. The task's 6 KiB stack is heap, only during a run.
+  `.dram0.data`, `.dram0.bss`, `.noinit`, `.iram0.*` all unchanged. The task's 8 KiB stack is heap, only during a run.
 - Flash gate (`build on`, `build off`, `compare --limit-kib 270 --ram-limit-bytes 1024`, `objects`): on 6,218,576 B,
   off 5,960,384 B, games delta +258,192 B (18,288 B to spare), static RAM +784 B (240 B to spare), objects clean:
   identical to the 8874e2ce base measured the same way (+258,192 B, +784 B), so the games delta moved by +0.
@@ -184,6 +205,28 @@ sessions on this task: their first hardware run's HWM line decides whether 6 KiB
   - `[low]` `[reject]` (intent 9) the device-only statement lives in the plan and the doc code map — where the story asks for it.
   - `[low]` `[reject]` (intent 10) a new STR_GAMES_DLAB_NO_TASK rather than reusing STR_GAMES_OUT_OF_MEMORY — the story asks for "Stopped" with the reason in one row line; english.yaml is ledger row 2.
   - `[low]` `[reject]` (intent, build claims) "default and sticky still build" and "no local over 256 B" are claimed only in the plan — the orchestrator's verification run below is the evidence.
+
+### 2026-10-16 — Follow-up review pass (same four lenses, orchestrator-run, over commit 1d873a0c)
+- verdicts: 36 findings — high 0, medium 6, low 15, false 0, maybe-false 0, rejected-by-rule 15
+- findings:
+  - `[medium]` `[patch]` (blind 1, edge claim) the round-1 stack LOG_INF sat between endSweepLocked's eBlocked check and vTaskDelete; a log can block on the serial lock and yield, so the task could be deleted holding it and the caller's next log hang under the render mutex (graded medium: dev-only bench, needs the pre-lock race and a blocked serial write at once) — HWM into a local, vTaskSuspend then vTaskDelete with no call between, logging after; one `logStackEnd` helper serves both ends.
+  - `[low]` `[patch]` (blind 2, edge claim C4) the delete path had no stack-margin LOG_ERR — the shared helper has it.
+  - `[medium]` `[patch]` (blind 3, edge F5) busy time of TimedOut/Dropped scans was spread over the Done count — busy summed for Done scans only.
+  - `[medium]` `[patch]` (blind 4, edge F4) a final report over an empty window overwrote a real speed; the cap path could report twice — figures kept only when the window had a delivered scan; `sweeping = false` before a refused cap clean returns.
+  - `[low]` `[patch]` (blind 9) statsReported was set true in startRun and never cleared — reset per run, set by a non-empty report.
+  - `[low]` `[patch]` (blind 5) the lambda's refusal message hid which check failed — one reason per check, with rateCount().
+  - `[medium]` `[defer]` (blind 6, edge F2, intent I4/I5) cover detection is a heartbeat timing: scans continue for up to 300 ms plus the scan in flight under a cover, and a main-loop stall over 300 ms reads as a cover — a deterministic signal from ActivityManager's push path is a design change outside this story; the doc states both; deferred.
+  - `[low]` `[patch]` (blind 6, part) a covered run showed "Stopped" — STR_GAMES_DLAB_COVERED, also when the loop sees the cover first.
+  - `[low]` `[reject]` (blind 7, intent I12) the stack comment cites plan notes that said 8,192 (6,144 before the first review round) — the orchestrator corrected the plan's Implementation Notes and Results (a plan edit, outside the code review).
+  - `[low]` `[patch]` (blind 8) the stopSweep header comment broke mid-sentence — reflowed.
+  - `[medium]` `[patch]` (blind 10, verification-gap 1) the threaded handshake test caught a non-atomic enterPanel about 1 run in 6 and spun without a deadline — 200 rounds with a 10 s deadline that fails instead of hanging; "Previous then Confirm" and stopRequested tests added.
+  - `[low]` `[patch]` (blind 11) the loop task's cover line was undocumented — the log list is grouped by task.
+  - `[low]` `[defer]` (edge F1, edge claim C3, intent I9) the pre-lock race left (an inversion between the lambda's pre-check and scan's own) could only be closed by a flag set inside DisplayLabActivity::scan, which the story forbids changing — deferred (low).
+  - `[low]` `[reject]` (edge F3) heartbeat wrap after a 36-minute covered pause — carried from round 1; rejected for the same reason.
+  - `[medium]` `[patch]` (edge F6) Stop requested while inverted ran the refusal pre-check before the Stop gate, so Back showed "Refused" — SweepControl::stopRequested() checked first, pinned by a test.
+  - `[low]` `[reject]` (edge claims C1, C2) take() uses a CAS loop not fetch_and; skipLoopDelay returns false unlike the plan's task text — plan wording; the triage log records both deviations.
+  - `[medium]` `[defer]` (verification-gap 2) the delivered-scan count the screen passes to record() has no test — device-only, closes with serve()'s deferred extraction; deferred.
+  - `[low]` `[reject]` (intent I1, I2, I3, I6, I7, I8, I10, I11) the UC8179 backend is on the experimental branch; the UltraChip stack figure is a provision until the first hardware line; the stack floor is log-only and the joins unbounded (deferred in round 1); the refusal pre-check duplicates scan's three checks by design (no log inside the panel); slot-boundary pause, the clean-in-flight wait on Back, preventAutoSleep false while paused and the Stats row written at view end are the settled readings — all recorded; no code change.
 
 ## Design Notes
 
@@ -270,6 +313,15 @@ both device-only).
 (+2,212 B over 8874e2ce's 6,249,106 B), 104,232 B RAM (+0); `default` and `sticky` build; `pio check -e x4pro` no
 defects; flash gate (D6): games delta +258,192 B (+0 against the dlab-c1 base, 18,288 B to spare), static RAM
 +784 B (240 B to spare), `objects` clean. The simulator compiles the lab out, so no screenshot.
+
+**Follow-up pass (same four lenses over 1d873a0c).** 36 findings, 9 patched (the delete path's log ordering,
+the Stop-before-refusal order, the busy sum of undelivered scans, the empty-window report and the stats flag, the
+refusal log's reason, the Covered row text, a comment, the handshake test's 200 rounds and deadline plus two new
+tests, the doc's log list), 3 more deferred (a deterministic cover signal, the delivered-scan count's test, the
+pre-lock race), the rest rejected with reasons. No high finding was patched, so `followup_review_recommended` is
+false. Verification repeated on the follow-up tree: host suite 2,196/2,196; layer and ledger checks pass; x4pro
+6,251,426 B flash (+2,320 B over 8874e2ce), 104,232 B RAM (+0); default and sticky build; pio check x4pro clean;
+flash gate games delta +258,192 B (+0), static RAM +784 B (240 B to spare), objects clean.
 
 **Residual risks.** The stack's UltraChip figure is a provision, not a measurement, until the first UC8179 run's
 `gray sweep task ended` line; the delete-while-waiting path's remaining window (an inversion between the lambda's
