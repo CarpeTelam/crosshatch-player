@@ -14,25 +14,6 @@
 
 namespace fui = freeink::ui;
 
-namespace {
-
-// The Run row's status after a run that ended with `result`.
-const char* outcomeText(const DisplayLabActivity::Scan result) {
-  switch (result) {
-    case DisplayLabActivity::Scan::Done:
-      return tr(STR_GAMES_DLAB_DONE);
-    case DisplayLabActivity::Scan::TimedOut:
-      return tr(STR_GAMES_DLAB_TIMED_OUT);
-    case DisplayLabActivity::Scan::Dropped:
-      return tr(STR_GAMES_DLAB_DROPPED);
-    case DisplayLabActivity::Scan::Refused:
-      return tr(STR_GAMES_DLAB_REFUSED);  // no session, an inverted display, or a bad request: the log says which
-  }
-  return "";
-}
-
-}  // namespace
-
 FramePeriodActivity::FramePeriodActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                          DisplayLabActivity& lab)
     : UiListActivity(NAME, renderer, mappedInput), lab(lab) {}
@@ -133,7 +114,7 @@ void FramePeriodActivity::run() {
     if (result != DisplayLabActivity::Scan::Done) {
       // The lab logged why (a timeout, after which it cleaned the panel, a dropped call, or a refusal); the run ends
       // here, and the scans not reached keep "Not run".
-      outcome = outcomeText(result);
+      outcome = DisplayLabActivity::outcomeText(result);
       snprintf(results[i], sizeof(results[i]), "%s", outcome);
       break;
     }

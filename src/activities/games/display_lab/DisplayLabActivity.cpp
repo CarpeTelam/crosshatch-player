@@ -9,9 +9,12 @@
 #include <Memory.h>
 
 #include "FramePeriodActivity.h"
+#include "GrayPresetFile.h"
 #include "MappedInputManager.h"
 #include "PolarityActivity.h"
 #include "ScanBackends.h"
+#include "TransitionTestActivity.h"
+#include "TuningActivity.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -30,10 +33,16 @@ const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_T
 
 void DisplayLabActivity::onEnter() {
   UiListActivity::onEnter();
+  // The gray preset: the file's, or InkBoy's defaults (GrayPresetFile logs which). Read before the render lock, so the
+  // render task never waits on the SD card; openSession takes it.
+  GameDisplayLab::GrayPreset loaded = GameDisplayLab::GrayPreset::inkBoyDefaults();
+  if (available()) GrayPresetFile::load(loaded);
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
+  saveStatus = nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
+  grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
   if (!available()) {
     // The launcher never offers the row elsewhere; a scan on another panel is never sent.
     LOG_ERR("DLAB", "Not an X4 Pro with a scan backend for its controller; the lab runs nothing");
@@ -41,14 +50,14 @@ void DisplayLabActivity::onEnter() {
   } else if (display.isInverted()) {
     LOG_ERR("DLAB", "Display inverted; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_INVERTED);
-  } else if (!openSession()) {
+  } else if (!openSession(loaded)) {
     closeSession();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
   }
   buildRows();
 }
 
-bool DisplayLabActivity::openSession() {
+bool DisplayLabActivity::openSession(const GameDisplayLab::GrayPreset& loaded) {
   // A request's masks are full-screen bitmaps in the framebuffer's byte order, as many bytes as the framebuffer.
   const size_t bytes = display.getBufferSize();
   const uint16_t width = display.getDisplayWidth();
@@ -75,6 +84,13 @@ bool DisplayLabActivity::openSession() {
   maskPlanes = GameDisplayLab::MaskPlanes(blackMask.get(), whiteMask.get(), width, height);
   maskPlanes.clear();
   LOG_INF("DLAB", "backend %s, %u rates", scanBackend->name(), static_cast<unsigned>(scanBackend->rateCount()));
+  // The preset onEnter read; a rate index written for another backend's list falls back to the first rate.
+  grayPreset = loaded;
+  if (grayPreset.rateIndex >= scanBackend->rateCount()) {
+    LOG_ERR("DLAB", "preset rate index %u not below the backend's %u rates: rate 0",
+            static_cast<unsigned>(grayPreset.rateIndex), static_cast<unsigned>(scanBackend->rateCount()));
+    grayPreset.rateIndex = 0;
+  }
   return true;
 }
 
@@ -100,6 +116,33 @@ void DisplayLabActivity::cleanPanel() {
   budget.cleaned();
 }
 
+void DisplayLabActivity::cleanNow() {
+  if (scanBackend) cleanPanel();
+}
+
+bool DisplayLabActivity::savePreset() {
+  // The SD write runs outside the render lock; only the row's line is shared with the render task.
+  const bool saved = GrayPresetFile::save(grayPreset);
+  RenderLock lock(*this);
+  saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
+  if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = saveStatus;
+  return saved;
+}
+
+const char* DisplayLabActivity::outcomeText(const Scan result) {
+  switch (result) {
+    case Scan::Done:
+      return tr(STR_GAMES_DLAB_DONE);
+    case Scan::TimedOut:
+      return tr(STR_GAMES_DLAB_TIMED_OUT);
+    case Scan::Dropped:
+      return tr(STR_GAMES_DLAB_DROPPED);
+    case Scan::Refused:
+      return tr(STR_GAMES_DLAB_REFUSED);  // no session, an inverted display, or a bad request: the log says which
+  }
+  return "";
+}
+
 void DisplayLabActivity::buildRows() {
   if (notice) {
     fui::ListItem item;
@@ -117,6 +160,9 @@ void DisplayLabActivity::buildRows() {
   };
   set(Row::FramePeriod, tr(STR_GAMES_DLAB_FRAME_PERIOD), tr(STR_GAMES_DLAB_FRAME_PERIOD_DESC));
   set(Row::Polarity, tr(STR_GAMES_DLAB_POLARITY), tr(STR_GAMES_DLAB_POLARITY_DESC));
+  set(Row::TransitionTest, tr(STR_GAMES_DLAB_TRANSITION_TEST), tr(STR_GAMES_DLAB_TRANSITION_TEST_DESC));
+  set(Row::Tuning, tr(STR_GAMES_DLAB_TUNING), tr(STR_GAMES_DLAB_TUNING_DESC));
+  set(Row::SavePreset, tr(STR_GAMES_DLAB_SAVE_PRESET), saveStatus ? saveStatus : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
   set(Row::Exit, tr(STR_GAMES_DLAB_EXIT), nullptr);
 }
 
@@ -154,7 +200,7 @@ void DisplayLabActivity::openScreen() {
 
 void DisplayLabActivity::activateIndex(const int index) {
   if (index < 0 || index >= listCount()) return;
-  app.clearTapFlash();  // every row leaves this screen
+  app.clearTapFlash();  // every row but Save preset leaves this screen, which repaints its line
   if (notice) {
     finish();
     return;
@@ -165,6 +211,16 @@ void DisplayLabActivity::activateIndex(const int index) {
       return;
     case Row::Polarity:
       openScreen<PolarityActivity>();
+      return;
+    case Row::TransitionTest:
+      openScreen<TransitionTestActivity>();
+      return;
+    case Row::Tuning:
+      openScreen<TuningActivity>();
+      return;
+    case Row::SavePreset:
+      savePreset();
+      requestUpdate();
       return;
     case Row::Exit:
       finish();
