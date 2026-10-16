@@ -259,7 +259,8 @@ one weight each) the same sum was 40,964 B of a 48 KiB limit. The tracer's four 
 (without their strings).
 
 The flash cost of the whole game runtime, the icons included, is measured by `scripts/check_flash_budget.py` (x4pro
-`firmware.bin`, games on minus games off):
+`firmware.bin`, games on minus games off; since the display-lab epic's D6 both builds also leave the dev-only display
+lab out, so the gate measures shipped firmware):
 
 | x4pro | At `068a9ad0` (four icons) | 62 icons, one weight | After entry 7 (`8e233695`) | Phosphor names, both weights (entry 9) |
 | --- | ---: | ---: | ---: | ---: |

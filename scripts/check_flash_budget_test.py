@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 
 import check_flash_budget as cfb  # noqa: E402
 
+# The happy-path metadata of both builds: neither defines FREEINK_CAP_DISPLAY_LAB (the display-lab epic, D6).
 ON_DEFINES = ['FREEINK_DEVICE_X4PRO=1', 'FREEINK_CAP_GAMES=1', 'BOARD_HAS_PSRAM']
 OFF_DEFINES = ['FREEINK_DEVICE_X4PRO=1', 'BOARD_HAS_PSRAM']
 
@@ -411,6 +412,25 @@ class CompareTest(unittest.TestCase):
                 self.put('off', 1_000_000, OFF_DEFINES + [leftover])
                 with self.assertRaisesRegex(cfb.SetupError, 'games-off build still defines'):
                     self.run_compare()
+
+    def test_fixture_metadata_leaves_the_display_lab_out(self):
+        for defines in (ON_DEFINES, OFF_DEFINES):
+            self.assertFalse([d for d in defines if d.startswith(cfb.LAB_MACRO)])
+
+    def test_display_lab_in_either_build_is_setup_error(self):
+        # D6: the gate measures shipped firmware, which never carries the dev-only lab.
+        for state in cfb.STATES:
+            for leftover in ('FREEINK_CAP_DISPLAY_LAB=1', 'FREEINK_CAP_DISPLAY_LAB'):
+                with self.subTest(state=state, leftover=leftover):
+                    self.put('on', 1_000_000, ON_DEFINES + ([leftover] if state == 'on' else []))
+                    self.put('off', 1_000_000, OFF_DEFINES + ([leftover] if state == 'off' else []))
+                    with self.assertRaisesRegex(cfb.SetupError, f'games-{state} build still defines {leftover}'):
+                        self.run_compare()
+
+    def test_similar_lab_define_names_are_not_the_lab(self):
+        self.put('on', 1_000_000, ON_DEFINES + ['FREEINK_CAP_DISPLAY_LAB_EXTRA=1'])
+        self.put('off', 1_000_000, OFF_DEFINES)
+        self.assertEqual(self.run_compare(), 0)
 
     def test_similar_define_names_are_not_the_flag(self):
         self.put('on', 1_000_000, ON_DEFINES)
@@ -850,6 +870,11 @@ class ObjectsTest(unittest.TestCase):
         with self.assertRaisesRegex(cfb.SetupError, 'games-on build must define'):
             self.run_objects()
 
+    def test_display_lab_metadata_is_setup_error(self):
+        self.write_metadata(ON_DEFINES + ['FREEINK_CAP_DISPLAY_LAB=1'])
+        with self.assertRaisesRegex(cfb.SetupError, 'games-on build still defines FREEINK_CAP_DISPLAY_LAB=1'):
+            self.run_objects()
+
     def test_unreadable_readelf_output_is_setup_error(self):
         self.game('src/games/A.cpp', 'src/games/A.cpp.o')
         (self.build / 'src/games/A.cpp.o').write_text('readelf: Error: not an ELF file\n')
@@ -887,20 +912,32 @@ class ObjectsTest(unittest.TestCase):
 
 
 class BuildEnvironmentTest(unittest.TestCase):
-    def test_on_is_the_plain_env_even_with_overrides_set(self):
-        env = cfb.build_environment('on', {'PATH': '/bin', 'PLATFORMIO_BUILD_UNFLAGS': 'x', 'PLATFORMIO_BUILD_DIR': 'y'})
-        self.assertEqual(env, {'PATH': '/bin'})
+    OVERRIDES = {'PATH': '/bin', 'PLATFORMIO_BUILD_UNFLAGS': 'x', 'PLATFORMIO_BUILD_DIR': 'y'}
 
-    def test_off_removes_exactly_the_flag_into_its_own_build_dir(self):
-        env = cfb.build_environment('off', {'PATH': '/bin'})
-        self.assertEqual(env['PLATFORMIO_BUILD_UNFLAGS'], '-DFREEINK_CAP_GAMES=1')
-        self.assertEqual(env['PLATFORMIO_BUILD_DIR'], str(cfb.OFF_BUILD_DIR))
+    def test_on_is_the_plain_env_without_the_display_lab_even_with_overrides_set(self):
+        # D6: the "on" build is the shipped firmware, the x4pro env minus the dev-only lab, in the default build dir.
+        env = cfb.build_environment('on', self.OVERRIDES)
+        self.assertEqual(env, {'PATH': '/bin', 'PLATFORMIO_BUILD_UNFLAGS': '-DFREEINK_CAP_DISPLAY_LAB=1'})
+        self.assertEqual(cfb.LAB_UNFLAG, '-DFREEINK_CAP_DISPLAY_LAB=1')
+
+    def test_off_removes_exactly_the_games_and_the_lab_into_its_own_build_dir(self):
+        env = cfb.build_environment('off', self.OVERRIDES)
+        self.assertEqual(env, {
+            'PATH': '/bin',
+            'PLATFORMIO_BUILD_UNFLAGS': '-DFREEINK_CAP_GAMES=1 -DFREEINK_CAP_DISPLAY_LAB=1',
+            'PLATFORMIO_BUILD_DIR': str(cfb.OFF_BUILD_DIR),
+        })
         self.assertNotEqual(cfb.OFF_BUILD_DIR, cfb.PROJECT_DIR / '.pio' / 'build')
 
-    def test_unflag_matches_the_define_in_platformio_ini(self):
+    def x4pro_flags(self):
         text = (cfb.PROJECT_DIR / 'platformio.ini').read_text()
-        section = text.split('[env:x4pro]', 1)[1].split('\n[', 1)[0]
-        self.assertIn(cfb.UNFLAG, section.split())
+        return text.split('[env:x4pro]', 1)[1].split('\n[', 1)[0].split()
+
+    def test_unflag_matches_the_define_in_platformio_ini(self):
+        self.assertIn(cfb.UNFLAG, self.x4pro_flags())
+
+    def test_lab_unflag_matches_the_define_in_platformio_ini(self):
+        self.assertIn(cfb.LAB_UNFLAG, self.x4pro_flags())
 
 
 class BuildTest(unittest.TestCase):
