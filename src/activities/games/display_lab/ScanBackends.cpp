@@ -5,6 +5,7 @@
 #include <Memory.h>
 
 #include "Ssd1677ScanBackend.h"
+#include "UC8279ScanBackend.h"
 
 using Controller = HalDisplay::Controller;
 
@@ -33,7 +34,7 @@ Factory factoryFor(const Controller controller) {
     case Controller::UC8279C:
       return nullptr;
     case Controller::UC8279:
-      return nullptr;
+      return &make<UC8279ScanBackend>;
   }
   return nullptr;
 }

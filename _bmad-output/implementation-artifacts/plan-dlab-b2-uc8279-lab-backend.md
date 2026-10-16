@@ -3,101 +3,218 @@ title: 'dlab-b2: the UC8279 lab backend over the SDK seam'
 type: 'feature'
 ticket: 'story-dlab-b2-uc8279-lab-backend'
 created: '2026-10-16'
-status: 'blocked'
-blocked_reason: 'intent gap: G1 frames over 63 vs the UC8279 6-bit phase count; G2 lab session lifetime vs the screens repainting between runs; G3 VCOM/WW/KK tables zero bytes vs GND level with T1 frames'
+status: 'built'
+baseline_revision: '536a61b4829cd37d8bef6ed2c764aca8c25e62fc'
 route: 'full'
 route_source: 'auto'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'thorough'
+review_source: 'pinned'
+lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 context:
-  - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/epic-display-lab.md'
   - '{project-root}/freeink-sdk/docs/display-lab.md'
-warnings: []
-deferred: []
+  - '{project-root}/.agents/skills/heap-discipline/SKILL.md'
+warnings: [oversized]
+deferred:
+  - summary: >-
+      factoryFor's UC8279 case (and the whole controller-to-backend table) is pinned by no test.
+    evidence: |-
+      ScanBackends.cpp compiles only in x4pro; nothing under test/ references hasScanBackend or makeScanBackend. Leaving
+      the UC8279 case at nullptr or moving it to UC8279C passes every check. Same item as dlab-0's carried deferral in
+      deferred-work.md; a pure controller-to-backend-kind mapping in lib/GameDisplayLab would let a host test pin it,
+      best done once lanes A and B have both merged their cases.
+    location: >-
+      src/activities/games/display_lab/ScanBackends.cpp:36
+    severity: medium
 ---
 
 <intent-contract>
 
 ## Intent
 
-**Problem:** The scan bench and the grayscale engine run on the SSD1677 batch only; the X4 Pro's UC8279 batch has no `ScanBackend`.
+**Problem:** The display lab's scan screens run on the SSD1677 batch only; the X4 Pro's UC8279 batch (`Uc8279X4Driver`) has no `ScanBackend`.
 
-**Approach:** Add `UC8279ScanBackend` (`src/activities/games/display_lab/`) over the seam's `FreeInkDisplay` lab API (`display.eink()`), with its pure parts in `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}` (host-tested): the five 43-byte register-prefixed one-frame tables, the PLL code list, and the old/new plane encoding from the two masks (D2). `scan()` uploads the tables, sets the PLL code, then `labScan(old, new, busyUs)`; `clean()` is `labEnd` then a FULL refresh; `factoryFor` maps `UC8279` to it.
+**Approach:** Add `UC8279ScanBackend` over the SDK seam's `FreeInkDisplay` lab API (`display.eink()`), with its pure parts in `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}` (the five 43-byte one-group tables, split per D7, levels per D9; the PLL code list; the old/new planes per D2) and its call sequence in a pure template (`UC8279ScanSession.h`) that host tests drive with a recording fake. Each `scan()` is a self-contained lab session (D8); `factoryFor` maps `UC8279` to it, so the launcher row and both scan screens appear on UC8279 units.
 
 ## Boundaries & Constraints
 
-**Always:** D1's `ScanBackend` shape unchanged; tables byte-pinned by host tests; voltages never written; the seam's `labEnd` on every exit; the lab wrapper (timeout, cap, dropped, inverted) unchanged; C3 `default` and `sticky` build with the lab compiled out.
+**Always:** D1's `ScanBackend` shape unchanged; table bytes pinned by host tests; voltages never written; `labEnd` ends every scan that made a lab call, and `clean()` calls `labEnd` before its FULL refresh; the lab wrapper (`DisplayLabActivity::scan`: timeout, cap, dropped, inverted) unchanged; locals under 256 B (the 215-byte tables live in the backend object, not on the stack); PSRAM planes allocated with the backend; C3 `default` and `sticky` build with the lab compiled out.
 
-**Never:** an OTP/MTP command; an edit under `freeink-sdk/`; a change to the SSD1677 backend or its bytes; the UC8179 case of `factoryFor` (lane A).
+**Never:** an OTP/MTP command; an edit under `freeink-sdk/`, `.agents/`, the epic file, or the dlab-0 screens (`FramePeriodActivity`, `PolarityActivity`, `DisplayLabActivity`); a change to the SSD1677 backend or its bytes; the UC8179 case in `factoryFor` (lane A); new i18n keys; an upload cache across scans (withdrawn by D8).
 
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
-| Backend choice | controller UC8279, X4 Pro | `UC8279ScanBackend`; `labSupported()` true | `labSupported()` false: not available, lab shows its notice |
-| All-hold scan | both masks clear, frames n, rate i | old == new == 0xFF (white) everywhere; tables with T1 = n; PLL = code i | rate out of range: Refused, nothing sent |
-| Polarity scan | whiteMask all set | old 0x00, new 0xFF (KW table); swapPolarity swaps KW/WK level codes | — |
-| Table upload | first scan after a table change | `labUploadWaveform` once, then not again until a change | refused: Refused, logged |
-| Clean / exit | any | `labEnd` then FULL refresh | — |
+| All-hold scan | both masks clear, frames n ≤ 252, rate i | old == new == 0xFF everywhere; all five tables carry n frames split per D7, VCOM/WW/KK at GND, prefixes 0x20-0x24; calls: upload, PLL `{0x0E,0x0D,0x0F}[i]`, labScan, labEnd; Done with labScan's busyUs | — |
+| Polarity scan | whiteMask all set (row 1) / blackMask all set (row 2) | row 1: old 0x00, new 0xFF; row 2: old 0xFF, new 0x00; KW = VSL, WK = VSH unswapped, exchanged when swapPolarity | — |
+| Frame split (D7) | frames 1, 10, 63, 64, 100, 252 | phases fill 63 at a time in order (64 = 63+1, 100 = 63+37, 252 = 4×63), unused phases 0x00 | frames 253-255: builder false, scan Refused, no lab call |
+| Bad request | rate ≥ 3, or a null mask | Refused, busyUs 0 | no lab call |
+| Driver refuses | `labSupported()` false | Refused | no other lab call |
+| Lab call fails | upload, PLL or labScan returns false | Refused, busyUs 0, logged | labEnd still called, nothing after it |
 
 </intent-contract>
 
 ## Code Map
 
-- `src/activities/games/display_lab/ScanBackend.h` -- D1 interface and `CROSSHATCH_DISPLAY_LAB` gate; unchanged.
-- `src/activities/games/display_lab/ScanBackends.cpp` -- `factoryFor`: the `Controller::UC8279` case (`return nullptr;`) becomes `&make<UC8279ScanBackend>`; leave the UC8179 line to lane A. dlab-0 deferral: no test pins this table.
-- `src/activities/games/display_lab/Ssd1677ScanBackend.{h,cpp}` -- golden example: PSRAM planes sized `display.getBufferSize()` in the ctor, `available()`, refusal log lines, `clean()` = `renderer.displayBuffer(HalDisplay::FULL_REFRESH)`.
-- `src/activities/games/display_lab/DisplayLabActivity.cpp` -- wrapper `scan()` (rate check before the lock, cap clean, budget); `onExit` cleans only when `budget.sinceClean() > 0`.
-- `src/activities/games/display_lab/FramePeriodActivity.cpp` (`run()` ends with `promoteNextRefresh(FULL_REFRESH)` + `requestUpdate()`) and `PolarityActivity.cpp` (`drive()` / `activateIndex`) -- repaint through the renderer between runs, not through the backend (evidence for G2).
-- `lib/GameDisplayLab/Ssd1677Encoding.{h,cpp}`, `LabExperiments.h` (`FRAME_PERIOD_TPS = {1, 10, 100}`, `POLARITY_TP = 10`) -- pattern for the pure parts; shared, unchanged.
-- `test/game_display_lab/CMakeLists.txt` -- add the new test file.
-- `freeink-sdk/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp` (read only) -- `labTablesValid` (len 215, prefix 0x20+t), 42 caller bytes padded to the 49-byte register, `labScan` refuses until an upload in this session, `streamPlane(invert=false)`, `labEnd` restores PSR/CDI/PLL/TSSET; `makeQualityBank` and `kXtfPreBwMid` give the group layout.
-- `docs/crosshatch/display-lab.md` -- add the UC8279 backend.
+- `src/activities/games/display_lab/ScanBackend.h` -- D1 interface, `ScanRequest`, `CROSSHATCH_DISPLAY_LAB` gate; read only.
+- `src/activities/games/display_lab/ScanBackends.cpp` -- `factoryFor`: the `case Controller::UC8279: return nullptr;` line becomes `return &make<UC8279ScanBackend>;` plus the include; leave the UC8179 line (lane A).
+- `src/activities/games/display_lab/Ssd1677ScanBackend.{h,cpp}` -- golden example: ctor allocates two planes of `display.getBufferSize()` with `HalMemory::allocatePsram`, `available()`, `LOG_ERR("DLAB", "scan refused: …")` lines, `clean()` = `renderer.displayBuffer(HalDisplay::FULL_REFRESH)`, includes (`Arduino.h`, `GfxRenderer.h`, `HalDisplay.h`, `Logging.h`).
+- `src/activities/games/display_lab/DisplayLabActivity.cpp` -- wrapper already refuses inverted / bad rate before the lock, counts only Done, cleans on timeout and exit; read only.
+- `lib/GameDisplayLab/Ssd1677Encoding.{h,cpp}`, `LabExperiments.h` (`FRAME_PERIOD_TPS {1,10,100}`, `POLARITY_TP 10`, `POLARITY_ROW_MASKS`), `MaskPlanes.h` -- patterns and shared inputs; read only.
+- `test/game_display_lab/CMakeLists.txt` -- add the new test file and `UC8279ScanLut.cpp` to `test_scan_lut`; `test_ssd1677_encoding.cpp` is the style example.
+- SDK (read only): `freeink-sdk/libs/display/FreeInkDisplay/include/FreeInkDisplay.h` lines 301-316 (`labSupported() const`, `labUploadWaveform(const uint8_t*, size_t)`, `labSetFrameRate(uint8_t)`, `labScan(const uint8_t*, const uint8_t*, uint32_t&)`, `labEnd()`); `src/driver/Uc8279X4Driver.cpp` ~828-925 (`labTablesValid`: len 215, `bytes[t*43] == 0x20+t`; 42 bytes padded to 49; `labScan` false until an upload this session; `labEnd` restores PSR/CDI/PLL/TSSET).
+- `docs/crosshatch/display-lab.md` -- lines 7, 31, 50, 117-118 say SSD1677 only; add the UC8279 backend and its files.
 
 ## Tasks & Acceptance
 
-Pending the G1-G3 answers; the shape is settled:
-
 **Execution:**
-- [ ] `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}` -- `UC8279_RATE_COUNT`, `uc8279RateLabel`, `uc8279RowLabel(row, swap)`, `buildUc8279ScanTables(out[215], frames, swap)`, `uc8279PllCode(index)`, `encodeUc8279Planes(black, white, old, new, bytes)`.
-- [ ] `test/game_display_lab/test_uc8279_scan_lut.cpp` + CMake entry -- pin every table byte, rates, labels, the matrix's plane cases.
-- [ ] `src/activities/games/display_lab/UC8279ScanBackend.{h,cpp}` + `ScanBackends.cpp` case.
-- [ ] `docs/crosshatch/display-lab.md` -- UC8279 section.
+- [x] `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}` -- namespace `GameDisplayLab`: `UC8279_TABLES = 5`, `UC8279_TABLE_BYTES = 43`, `UC8279_SCAN_TABLE_BYTES = 215`, `UC8279_MAX_FRAMES = 252`, `UC8279_PLL_CODES[] = {0x0E, 0x0D, 0x0F}`, `UC8279_RATE_COUNT`; `uc8279RateLabel(i)` ("0x0E", "0x0D", "0x0F", nullptr out of range); `bool uc8279PllCode(i, uint8_t& code)`; `uc8279RowLabel(row, swap)` (row 1 "KW VSL" / swapped "KW VSH", row 2 "WK VSH" / "WK VSL", else nullptr); `bool buildUc8279ScanTables(uint8_t* out, uint8_t frames, bool swap)` (false, out untouched, when frames > 252); `encodeUc8279Planes(black, white, oldPlane, newPlane, bytes)` (`old = ~white`, `new = ~black`). Pure C++, no Arduino include; comments cite D7-D9 and the sources in Design Notes.
+- [x] `lib/GameDisplayLab/UC8279ScanSession.h` -- header-only `template <typename Lab> ScanOutcome runUc8279Scan(Lab& lab, const uint8_t* tables, uint8_t pllCode, const uint8_t* oldPlane, const uint8_t* newPlane, uint32_t& busyUs)` returning a small enum (`Done`, `Unsupported`, `UploadRefused`, `RateRefused`, `ScanRefused`): `busyUs = 0`; `!lab.labSupported()` → Unsupported (no other call); upload, PLL, labScan in order, the first false → `lab.labEnd()` and that outcome; else `lab.labEnd()` and Done. The backend passes `display.eink()`.
+- [x] `test/game_display_lab/test_uc8279_scan_lut.cpp` + CMake -- pin every table byte for frames 0, 1, 10, 63, 64, 100, 252 both swaps; 253/255 false with out untouched; rate list, labels, row labels; the matrix's plane cases on 800×480 masks plus a both-masks pixel (0,0); every FRAME_PERIOD_TPS and POLARITY_TP builds; the session template with a `RecordingLab` fake (records call order and bytes; refuses as the seam documents: wrong length/prefix upload, labScan before an upload) covering each matrix row.
+- [x] `src/activities/games/display_lab/UC8279ScanBackend.{h,cpp}` -- `final : ScanBackend`; ctor `(GfxRenderer&)` allocates `oldPlane`/`newPlane` (PSRAM, `display.getBufferSize()`), logs OOM; member `uint8_t tables[UC8279_SCAN_TABLE_BYTES]`; `available()` = both planes; `name()` "UC8279"; rates via UC8279ScanLut; `supportsWeakRow()` false; `scan()`: refuse (log, busyUs 0) on no planes, null mask, bad rate, frames > 252, then encode, `runUc8279Scan(display.eink(), …)`, log any non-Done outcome, map to `Scan::Done` / `Scan::Refused`; `clean()` = `display.eink().labEnd()` then `renderer.displayBuffer(HalDisplay::FULL_REFRESH)`.
+- [x] `src/activities/games/display_lab/ScanBackends.cpp` -- the UC8279 case and include.
+- [x] `docs/crosshatch/display-lab.md` -- UC8279 alongside SSD1677: launcher row, row labels, rate list, per-scan session, the new files.
 
 **Acceptance Criteria:**
-- Given a UC8279 X4 Pro, when the launcher opens, then the Display lab row shows and both scan screens run through `UC8279ScanBackend`.
+- Given a UC8279 X4 Pro, when Games opens, then the Display lab row shows; the frame-period screen lists nine scans labelled `tp=… fr=0x0E/0x0D/0x0F`, and the polarity screen labels rows "Row 1 (KW VSL)" and "Row 2 (WK VSH)".
+- Given any lab exit or cap/timeout clean on a UC8279, when `clean()` runs, then `labEnd` precedes the FULL refresh.
+- Given the `default` and `sticky` envs, when built, then no display_lab or UC8279 lab code compiles in.
 
 ## Implementation Notes
 
+- 2026-10-16, build: all six Execution items done. New: `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}`,
+  `lib/GameDisplayLab/UC8279ScanSession.h`, `src/activities/games/display_lab/UC8279ScanBackend.{h,cpp}`,
+  `test/game_display_lab/test_uc8279_scan_lut.cpp` (20 tests); edited `ScanBackends.cpp` (UC8279 case + include;
+  UC8179 line untouched), `test/game_display_lab/CMakeLists.txt`, `docs/crosshatch/display-lab.md` (new "The UC8279
+  backend" section, launcher/rows/rates/code map, safety paragraph split per controller).
+- Additions beyond the Code Map, kept small: `UC8279_PHASE_MAX_FRAMES` (63) and `UC8279_PHASES` (4), from which
+  `UC8279_MAX_FRAMES` is derived; `scanOutcomeName(ScanOutcome)` in the session header for the backend's one
+  `LOG_ERR("DLAB", "scan refused: UC8279 %s", …)` line; host-tested.
+- `runUc8279Scan` zeroes `busyUs` again on a labScan refusal (the fake and the driver already do), so a refused scan
+  can never carry a time; the backend also zeroes it on any non-Done outcome.
+- The backend's `scan()` checks rate before frames (both before any lab call), matching the matrix's "Bad request"
+  and "frames 253-255" rows; these refusals and `clean()`'s labEnd-then-FULL order live in firmware-only code and are
+  not host-tested (the pure parts they call are: `uc8279PllCode` false at 3+, `buildUc8279ScanTables` false at 253+).
+- `Arduino.h` is not included by the backend (no `micros()`: the driver times the scan); the other golden-example
+  includes are.
+- Verification run here: full host suite (2,126 tests, all pass, the 20 new ones included); every `scripts/*_test.py`
+  passes; `scripts/check_layers.py` passes; `check_upstream_touches.py` on a dangling commit of the working tree
+  flags only `.gitmodules` and the `freeink-sdk` pointer (the orchestrator's, as Design Notes expect);
+  `./bin/clang-format-fix` reformatted the new test file once, second run clean. Not run (after review): the
+  firmware builds, `pio check`, the flash budget gate.
+- 2026-10-16, verify (parent session): the matrix audit found the "Bad request" row (null mask, rate 3+, frames
+  253+: no lab call) covered only by firmware code. Moved the backend's request checks, the table build and the plane
+  encoding into `runUc8279Request<Lab, Request>` in `UC8279ScanSession.h` (outcomes `NoMasks`, `BadRate`,
+  `TooManyFrames`); `scan()` keeps only the planes check and one log line. Two tests added (`Uc8279Request.*`); host
+  suite 2,128 of 2,128 pass; `check_upstream_touches.py` flags only `.gitmodules` and the `freeink-sdk` pointer.
+
 ## Plan Change Log
+
+- 2026-10-16, first pass: halted at planning (intent gap G1 frames > 63, G2 session lifetime, G3 hold-table timing; commit `536a61b4`). The orchestrator answered with epic decisions D7, D8, D9 (below); the intent contract now carries them and drops the upload cache. KEEP: the settled layout, level, PLL and plane choices in Design Notes.
 
 ## Review Triage Log
 
+### 2026-10-16 — Review pass
+- verdicts: 23 findings — high 0, medium 4, low 18, false 1, maybe-false 0
+- findings:
+  - `[low]` `[reject]` BH: the gate never asks `labSupported()` (story's "Backend choice" error row) — unreachable: the lab needs `FREEINK_CAP_DISPLAY_LAB`, which compiles the seam, and an X4 Pro UC8279 resolves to `uc8279X4Driver()` (`FreeInkDisplay.cpp:210`), whose `labSupported()` is true; making `available()` false would show the out-of-memory notice, a worse message. Each scan still refuses (`Unsupported`) if it ever happens.
+  - `[low]` `[patch]` BH: `Refused` after a successful upload breaks ScanBackend's "nothing sent" wording — both cases unreachable on an X4 Pro; documented in `UC8279ScanBackend.h`.
+  - `[medium]` `[patch]` BH: busyUs window differs per controller and nothing says so — backend header and doc now state DRF-to-BUSY only, slopes comparable, intercepts not.
+  - `[low]` `[patch]` BH: checklist step 6 SSD1677-only wording and log samples — UC8279 wording and `vs=KW VSL` / `vs=WK VSH` added.
+  - `[low]` `[patch]` BH: "Expected ranges" has no UC8279 reading — UC8279 bullet added (intercept, polarity reading).
+  - `[low]` `[patch]` BH: doc's refusal log list wrong after the `runUc8279Request` refactor — corrected to the real lines and reasons.
+  - `[low]` `[patch]` BH: stale `runUc8279Scan` references in the backend header and code map — now name `runUc8279Request`.
+  - `[low]` `[patch]` BH: plane-to-table mapping cites only the CDI equality — comments and doc now cite `kQualityLutReg` (same selection as D2) and the polarity screen as the hardware check.
+  - `[low]` `[patch]` BH: request path tested at rate 0 and POLARITY_TP only — `Uc8279Request.FramePeriodRequestsSendEachRatesPllAndTables` covers 3 rates × FRAME_PERIOD_TPS.
+  - `[low]` `[patch]` BH: `const_cast` in the fake, hard-coded "frames over 252", ragged prose — `mutable calls`, `static_assert(UC8279_MAX_FRAMES == 252)`, reflowed doc and CMake comment.
+  - `[medium]` `[patch]` EC: a hung panel stalls through five untimed SDK BUSY waits — the 15 s timeout still fires (the DRF wait is timed, so a stuck BUSY yields busyUs ≈ 30 s); the doc's "up to 30 s per scan" was false for the UC8279 and now states about 150 s.
+  - `[low]` `[patch]` EC: post-upload refusals reported as Refused — same root cause as BH's contract finding; documented.
+  - `[medium]` `[patch]` EC: doc claims 30 s worst case — grouped with the stall finding; corrected.
+  - `[medium]` `[defer]` VG: `factoryFor`'s UC8279 case is pinned by no test — pre-existing dlab-0 deferral already carried in deferred-work.md (controller-to-backend table); closing it restructures the switch lane A also edits; deferred.
+  - `[low]` `[reject]` VG: the backend's outcome-to-`Scan` mapping is untested — a four-line `!= Done` mapping over the tested `runUc8279Request`; a harness for `display.eink()` and the backend class does not exist for the SSD1677 backend either.
+  - `[low]` `[reject]` VG: `DisplayLabActivity.h:21` comment says "SSD1677 only so far" — a dlab-0 file this plan leaves untouched so the lanes merge cleanly; lane A changes the same line; named for the orchestrator under residual risks.
+  - `[low]` `[reject]` IA: `labSupported()` checked per scan, not at backend choice — same as BH's first finding (unreachable).
+  - `[low]` `[reject]` IA: the menu does not offer dlab-u1's stock bench or dlab-c1's transition test — neither exists on this branch; they arrive with their lanes, and D8 bars screen edits.
+  - `[false]` `[reject]` IA: the host `Request` struct could drift from `ScanRequest` silently — `runUc8279Request` is instantiated with `ScanRequest` in the x4pro build, so a renamed or retyped field fails to compile.
+  - `[low]` `[reject]` IA: post-upload Refused meaning — same as BH's contract finding (patched by documentation).
+  - `[low]` `[reject]` IA: the story says the owner's unit is a UC8179 while hardware verification needs a UC8279 — an owner logistics question, not a code defect; the hardware step stays the owner's.
+  - `[low]` `[reject]` IA: `supportsWeakRow()` false — D2 gives the UltraChip encoding two drive tables (KW, WK) and holds WW/KK; no third row exists to report.
+  - `[low]` `[patch]` IA: "level 1 = VSH" is an inference — comment now cites the UltraChip level-select convention and the polarity screen as the check.
+
 ## Design Notes
 
-Settled by the sources (cited):
-
-- Group layout: 7-byte groups `[0x01, P1, P2, P3, P4, 0x01, 0x01]`, `Pn = level << 6 | frames` (6-bit count), as `makeQualityBank` writes them (hardware-validated per its comment) and every stock group in `kXtfPreBwMid` and `kUc8279X3_BwGc` reads; level 1 = VSH, 2 = VSL (`makeQualityBank`'s net-charge sign). The 42 caller bytes are six groups; the driver zero-pads the seventh.
-- Level codes: unswapped KW (0x22, drive-to-white, row 1) = VSL (0x80), WK (0x23, row 2) = VSH (0x40), the direction of the stock GC and pre-BW tables (`kUc8279X3_BwGc` KW `0x9A`, WK `0x5A`); swapped exchanges them. Row labels "KW VSL" / "WK VSH" (D1a's "KW table" example), swapped "KW VSH" / "WK VSL".
-- PLL list: no UC8279 PLL table is documented in the tree, the SDK, or the research run; the story's fallback, three codes bracketing the driver's `pll = 0x0E`, ordered as the SSD1677 list (the known value first, so the polarity screen's rate 0 is stock): {0x0E, 0x0D, 0x0F}. 0x0F is also Ink-boy's and the X3 init's code (research [7]).
-- Planes (D2, framebuffer convention 1 = white; the lab's CDI `cdiAa` equals the B/W refresh's `cdiBwFull`, 0x97): per byte `old = ~white`, `new = ~black`, so hold = (1, 1), drive-to-white = (0, 1), drive-to-black = (1, 0); a pixel in both masks (undefined by D1) gives (0, 0), the KK table, which also holds.
-- `.gitmodules` and the `freeink-sdk` pointer differ from `develop` on this branch: the orchestrator's touch (epic Decision 2026-10-16, experimental branch), not this story's; the ledger check's flag on it is expected.
+- **D7** (orchestrator, 2026-10-16): "a UC8279 phase byte holds at most 63 frames. Spread `frames` over the single group's four phases at the same level (100 = 63 + 37; ceiling 252); above 252 return `Scan::Refused`. Host-test the split (1, 10, 63, 64, 100, 252, 253)."
+- **D8**: "`scan()` is a self-contained session every call: upload tables, set PLL, `labScan`, then `labEnd`. The story's 'upload once, then not again until a change' is withdrawn; no D1 change, no end-of-run hook, no edits to the dlab-0 screens. The matrix's upload row becomes 'before every scan'." Why: the seam requires `labEnd()` before any other display call and an ordinary refresh drops the waveform (`freeink-sdk/docs/display-lab.md`), while the screens repaint between runs.
+- **D9**: "VCOM, WW and KK carry the same frame counts as KW and WK (group 0, split per D7) at the GND level; D2's 'all zero' meant level, not length."
+- Group layout: one 7-byte group `[0x01, P1, P2, P3, P4, 0x01, 0x01]`, `Pn = level << 6 | frames` (6-bit), then 35 zero bytes, as `makeQualityBank` writes groups (hardware-validated per its comment) and as every stock group in `kXtfPreBwMid` / `kUc8279X3_BwGc` reads; level 0 GND, 1 VSH, 2 VSL (`makeQualityBank`'s net-charge sign). "Repeat 1" is that framing.
+- Example, frames 100, unswapped: KW `0x22, 0x01, 0xBF, 0xA5, 0x00, 0x00, 0x01, 0x01`, then zeros to 43 bytes; WK `0x23, 0x01, 0x7F, 0x65, 0x00, 0x00, 0x01, 0x01, …`; WW `0x21, 0x01, 0x3F, 0x25, 0x00, 0x00, 0x01, 0x01, …`. Frames 0: all four phase bytes 0x00 (as the SSD1677 builder accepts TP 0; no caller sends it).
+- Levels: unswapped KW (0x22, drive-to-white, row 1, white mask) = VSL, WK (0x23, row 2, black mask) = VSH: the direction of the stock GC tables (`kUc8279X3_BwGc` KW `0x9A`, WK `0x5A`) and pre-BW tables; swapped exchanges them. Row labels follow D1a ("KW table" example).
+- PLL list: no UC8279 PLL code table is documented in the tree, the SDK, or the research run, so the story's fallback applies: three codes bracketing the driver's `pll = 0x0E` (`uc8279X4DefaultConfig`), the stock value first as in the SSD1677 list, so the polarity screen's rate 0 is stock: {0x0E, 0x0D, 0x0F}. 0x0F is also Ink-boy's and the X3 init's code (research [7]).
+- Planes (D2; framebuffer 1 = white; the lab's CDI `cdiAa` equals the B/W refresh's `cdiBwFull`, 0x97, so plane bits mean what they mean in a B/W refresh): hold (1,1) selects WW, drive-to-white (0,1), drive-to-black (1,0); a pixel in both masks (undefined by D1) gives (0,0), KK, which holds at GND too.
+- X4 Classic refuses `labSetFrameRate`; unreachable, since `DisplayLabActivity::available()` requires `BoardConfig::isX4Pro()`; the session still maps it to Refused with `labEnd`.
+- `RecordingLab` stands in for `FreeInkDisplay`'s lab API as `docs/display-lab.md` and `Uc8279X4Driver` define it: it refuses an upload whose length is not 215 or whose prefixes are not 0x20-0x24, and a `labScan` before an upload since the last `labEnd`. More permissive than the device: it never refuses for inversion (the wrapper checks that) and never times BUSY.
+- `.gitmodules` and the `freeink-sdk` pointer differ from `develop` on this branch: the orchestrator's touch (epic Decision 2026-10-16, the experimental branch), not this story's; `check_upstream_touches.py` flagging them is expected.
+- Flash gate: on this branch `check_flash_budget.py` still builds the lab into its "on" image (D6 not applied here), so the backend counts against the games budget; the delta is `pio run -e x4pro` firmware.bin at the baseline commit and at this story's commit, same cache, same lock.
 
 ## Verification
 
-**Commands:** (after the answers) host suite under the hosttest lock; `scripts/check_upstream_touches.py`; `./bin/clang-format-fix`; then under the build lock with `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`: `pio run -e x4pro`, `-e default`, `-e sticky`; `pio check -e x4pro`; the flash-budget gate against the epic base.
+**Commands:** (host-test lock: `flock /tmp/crosshatch-hosttest.lock sh -c '…'`; build lock: `flock /tmp/crosshatch-build.lock sh -c 'export PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache; …'`)
+- `cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/test && ctest --test-dir build/test --output-on-failure -j` -- expected: all pass, the new suite included.
+- `python3 scripts/check_upstream_touches.py` -- expected: only `.gitmodules` / `freeink-sdk` (orchestrator's).
+- `./bin/clang-format-fix` twice -- expected: no change on the second run.
+- After review: `pio run -e x4pro`, `pio run -e default`, `pio run -e sticky`, `pio check -e x4pro --fail-on-defect low --fail-on-defect medium --fail-on-defect high`; `scripts/check_flash_budget.py build on`, `build off`, `compare --limit-kib 270 --ram-limit-bytes 1024`, `objects` -- expected: all succeed; record the x4pro firmware.bin delta against the baseline build.
+
+**Manual checks:** hardware (owner): the nine-line frame-period table and the polarity answer on the UC8279 unit.
 
 ## Auto Run Result
 
-**Status: blocked (intent gap).** Planning stopped at step 2; no code changed. Three questions, each with readings that differ on hardware:
+**Status: built.** `UC8279ScanBackend` gives the X4 Pro's UC8279 batch the display lab's two scan screens over the SDK
+seam: one self-contained lab session per scan (D8), five 43-byte tables with frames split over the group's four phases
+(D7) and VCOM/WW/KK at GND for the same length (D9), PLL list {0x0E, 0x0D, 0x0F}, planes `old = ~white`,
+`new = ~black` (D2). The first pass halted on G1-G3; D7-D9 answered them.
 
-**G1. `frames` over 63.** The UC8279 phase byte holds a 6-bit frame count (`makeQualityBank`: `frames & 0x3F`, cap 63; level in bits 7:6), but the frame-period experiment sends `frames = 100` (`LabExperiments.h` `FRAME_PERIOD_TPS = {1, 10, 100}`), and the story asks for "one group of one phase, T1 = frames, repeat 1" and a nine-line table on hardware. Options: (A) refuse `frames > 63` (Scan::Refused, logged): six timed lines, the TP=100 lines show Refused; (B) one group, frames split over its four phases at the same level (100 = 63 + 37; up to 252, above that Refused): nine timed lines, a continuous drive of `frames` frames; (C) repeat count > 1: not exact for every n, and the repeat byte is undocumented. **Recommend B.** (UC8179's tables carry 8-bit counts, so lane A does not have this.)
+**Files**
+- `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}`: tables, PLL list and labels, row labels, plane encoding.
+- `lib/GameDisplayLab/UC8279ScanSession.h`: `runUc8279Request` (request checks, tables, planes) and `runUc8279Scan`
+  (labSupported, upload, PLL, labScan, labEnd on every path), templated for the host fake.
+- `src/activities/games/display_lab/UC8279ScanBackend.{h,cpp}`: the backend (PSRAM planes, member table buffer,
+  `clean()` = labEnd then FULL refresh).
+- `src/activities/games/display_lab/ScanBackends.cpp`: `UC8279` → `UC8279ScanBackend` (UC8179 line untouched).
+- `test/game_display_lab/test_uc8279_scan_lut.cpp` (23 tests) and `CMakeLists.txt`.
+- `docs/crosshatch/display-lab.md`: the UC8279 backend, checklist, expected ranges, safety, code map.
 
-**G2. Session lifetime.** The seam requires `labEnd()` before any other display call, and an ordinary refresh drops the uploaded waveform without clearing the driver's `_labWaveformLoaded` (`freeink-sdk/docs/display-lab.md` "Call labEnd() before any other display call"; `Uc8279X4Driver.cpp` clears it only in `labEnd`). The screens repaint through the renderer between runs (`FramePeriodActivity::run` end, `PolarityActivity` after each look), not through `clean()`, and D1 has no end-of-run hook. With the story's upload cache ("once, then not again until a change"), the second run after a repaint would skip the upload and scan whatever waveform the OTP refresh left in the LUT registers (a hold scan could drive every pixel), and the repaint itself runs at the lab's PLL code. Options: (A) per-scan session inside `scan()`: upload, PLL, `labScan`, `labEnd` every scan (about 260 extra SPI bytes per scan, outside the timed DRF window; no shared-file or D1 change; the matrix's upload row becomes "before every scan"); (B) a D1 addition (`endScans()`) the lab calls before each repaint, keeping the cache (edits D1, both screens, lane A); (C) the screens call the lab's clean instead of promote + repaint (edits both dlab-0 screens, shared with lane A). **Recommend A.** Lane A's UC8179 backend faces the same rule.
+**Review** (four lenses, 23 findings): 13 patched (documentation of the busy-time window, the UC8279 worst-case stall,
+the post-upload Refused exception, checklist and log lines, plane/level evidence; a rate-by-TP request test; fake and
+static_assert tidy-ups); 1 deferred (factoryFor untested, the carried dlab-0 item); 9 rejected with reasons in the
+Review Triage Log (unreachable labSupported-false gate, dlab-u1/c1 screens not on this branch, `Request` drift caught
+by the x4pro compile, outcome mapping too thin to harness, owner's unit, weak row, stale `DisplayLabActivity.h:21`
+comment left for the merge). Patched entries by verdict: medium 2, low 11. Follow-up review recommended: the
+rewritten doc text (Safety, Busy time, Expected ranges, including "Row 1 should lighten") was patched after the
+lenses read the diff and no lens has read it.
 
-**G3. The hold tables' timing.** The story says "VCOM all zero; WW and KK all zero", but D3 says all five tables carry "one group of one phase (T1 = frames)" and the matrix's all-hold row expects "tables with T1 = n". Every stock UC8279 table in the driver gives all five tables the same frame counts and differs only in level bits, and `makeQualityBank` pads tables "so all five LUTs finish on the same frame". The frame-period experiment's hold pixels all select WW; with WW and VCOM at zero frames the activation length may not follow TP. Options: (A) VCOM, WW, KK all zero bytes; (B) VCOM, WW, KK with group 0 phase 1 = GND level (0x00) for T1 frames, framing bytes as KW/WK. **Recommend B.**
+**Verification**
+- Host suite (Ninja, hosttest lock): 2,129 of 2,129 pass, 23 `Uc8279*` among them.
+- `check_upstream_touches.py`: FAIL on `.gitmodules` and the `freeink-sdk` pointer only, the orchestrator's touch on
+  this experimental branch; every file this story touches is fork-only.
+- `./bin/clang-format-fix`: second run clean; no formatting change outside this story's paths.
+- Build lock, `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`: `pio run -e x4pro`, `-e default`,
+  `-e sticky` succeed; `pio check -e x4pro` (low/medium/high) "No defects found" (the first attempt failed with
+  `MissingPackageManifestError` while the shared framework package was being rewritten, 07:51; the retry passed).
+- Flash gate (`build on`/`off`, `compare --limit-kib 270 --ram-limit-bytes 1024`, `objects`): within budget, 6,016 B
+  flash and 240 B static RAM to spare; objects "No problems". On this branch the gate still builds the lab into its
+  "on" image (D6 not applied here).
+- Size delta, same method at both ends (`pio run -e x4pro`, shared cache, build lock): firmware.bin 6,227,904 B at
+  baseline `536a61b4` → 6,229,376 B with this story's sources = +1,472 B; static RAM 104,256 B both (pio's RAM line),
+  gate RAM delta +784 B at both.
+- Hardware: none here; the owner's nine-line frame-period table and polarity answer on a UC8279 unit remain.
 
-Evidence read: the story, the epic (R1-R6, D1-D6), `story-sdk-seam-display-lab.md`, `freeink-sdk/docs/display-lab.md`, `FreeInkDisplay.h`/`.cpp` lab section, `Uc8279X4Driver.{h,cpp}`, `Uc8279X3Luts.h`, `Uc8179Driver.cpp` (table format), dlab-0's backend, screens and plan, the research doc. Files changed: this plan only. Formatting: no source touched.
+**Residual risks**
+- Group framing bytes (`0x01 … 0x01, 0x01`), level names and the KW/WK roles rest on the driver's stock tables, not a
+  datasheet; the polarity screen is the check.
+- The PLL codes 0x0D and 0x0F are a bracket, not documented frequencies.
+- `DisplayLabActivity.h:21` still says "SSD1677 only so far"; lane A edits the same line, so the orchestrator fixes it
+  at merge.
+- `factoryFor` stays untested (deferred).
+
