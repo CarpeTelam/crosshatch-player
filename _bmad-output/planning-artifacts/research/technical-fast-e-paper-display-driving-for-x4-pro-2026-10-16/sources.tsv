@@ -1,0 +1,29 @@
+n	publisher	url	pub_date	supports
+1	kuslota/InkBoy repository @2673c8a (code, docs/how-it-works.md, docs/tuning.md)	https://github.com/kuslota/InkBoy	2026-10-12	InkBoy driver mechanics, timings, calibration tooling, caps
+2	kuslota/esp32-gameboy README and GitHub API	https://github.com/kuslota/esp32-gameboy	2026-10-13	esp32-gameboy scope and metadata
+3	GitHub API, kuslota repositories	https://api.github.com/users/kuslota/repos	2026-10-13	three sibling repos
+4	YouTube oEmbed, "GameBoy on E-Paper ESP32 at 30FPS", channel Bo Made It	https://www.youtube.com/watch?v=XiZmM6hwwAU	unknown	video identity
+5	kuslota video transcript (user-supplied import)	imports/kuslota-video-transcript.md	unknown	author's process account
+6	Hacker News item 50039536	https://news.ycombinator.com/item?id=50039536	2026-10-11	community questions on calibration and wear
+7	hellominecraft913-dev/Ink-boy repository @f8d9c30 and GitHub API	https://github.com/hellominecraft913-dev/Ink-boy	2026-10-15	Ink-boy lineage, preset, timings, missing driver
+8	Free-Ink/freeink-sdk @e91e34e	https://github.com/Free-Ink/freeink-sdk	2026-10-12	upstream SDK SSD1677 and UC82xx driver facts, VCOM ghosting note
+9	freeink-sdk baseline import (local SSD1677/UC8179 drivers and docs, prior-run X4 Pro timings)	imports/freeink-sdk-ssd1677-baseline.md	2026-10-16	current X4 Pro driver capabilities and measured refresh times
+10	GxEPD2 @de82887, GDEQ0426T82 (SSD1677) driver	https://github.com/ZinggJM/GxEPD2/blob/master/src/gdeq/GxEPD2_426_GDEQ0426T82.cpp	unknown	no 0x32 LUT, 0x1A temperature fast path, measured 1567 ms full / 500 ms partial
+11	GxEPD2 @de82887, GDEY075T7 (UC8179) driver	https://github.com/ZinggJM/GxEPD2/blob/master/src/gdey/GxEPD2_750_GDEY075T7.cpp	unknown	UC8179 register LUT layout and partial LUT
+12	Modos-Labs/Glider README @ed94ef7 (ZephRay)	https://github.com/Modos-Labs/Glider	unknown	per-pixel driving fundamentals; controller vs bare-panel latency table
+13	vroland/epdiy @42c1612	https://github.com/vroland/epdiy	unknown	bare-panel waveform generation, DU frames, temperature dependence
+14	CNX Software, "PaperBoy Game Boy emulator works at 60 FPS on ESP32-S3 e-ink devkit"	https://www.cnx-software.com/2026/07/02/paperboy-game-boy-emulator-works-at-60-fps-on-esp32-s3-e-ink-devkit/	2026-07-02	PaperBoy drives a bare panel, 30-60 fps
+15	Frontiers in Physics, Wang et al., "driving waveform" (2021)	https://www.frontiersin.org/journals/physics/articles/10.3389/fphy.2021.723106/full	2021-08-09	DC balance rule, 50 Hz frames, two-stage 4-gray waveform
+16	E Ink patent US11935495	https://patents.google.com/patent/US11935495	unknown	DC imbalance degrades electrodes; DC balance costs 2-3x update time
+17	Amazon/E Ink patents US20210358424 and US9024862	https://patents.justia.com/patent/20210358424	unknown	DC-balanced waveforms needed to avoid damage; selection keys on temperature, prior state, dwell
+18	Espressif Component Registry, cleishm/idfxx_epaper_ssd1680 readme	https://components.espressif.com/components/cleishm/idfxx_epaper_ssd1680/versions/1.0.0/readme	unknown	temperature-forcing fast mode; batch and temperature variance; full every ~10 partials
+19	Tony Weston, EPD_Painter / Bad Apple page, and Hackaday 2026-07-21	https://hackaday.com/2026/07/21/20-fps-on-e-paper-display-without-help/	2026-07-21	20 fps 4-gray on a bare 960x540 panel; trial-and-error calibration; ghosting
+20	Pimoroni forum, "Inky Frame 7.3 burn-in"	https://forums.pimoroni.com/t/inky-frame-7-3-burn-in/24574	2024-08-05	residue after tens of thousands of refreshes, recoverable
+21	Soldered, Inkplate partial update docs	https://docs.soldered.com/inkplate/6motion/basics/partial-update/	unknown	full refresh every 5-10 partials for lifespan
+22	Adafruit, e-ink usage expectations; Core Electronics forum	https://learn.adafruit.com/adafruit-eink-display-breakouts/usage-expectations	unknown	vendor minimum refresh interval guidance
+23	Arduino forum, "GxEPD2 minimize full refresh time"	https://forum.arduino.cc/t/gxepd2-minimize-full-refresh-time/1166833	2023-09-09	differential refresh "tens of milliseconds" on UC8151D, incomplete pixels
+24	Espressif ESP-IDF SPI master docs	https://docs.espressif.com/projects/esp-idf/en/v3.1.5/api-reference/peripherals/spi_master.html	unknown	40 MHz GPIO-matrix SPI limit
+25	OpenELAB and Eckstein reseller listings for GDEQ0426T82	https://openelab.com/products/4-26-inch-e-ink	unknown	vendor-quoted full/fast/partial seconds (inconsistent)
+26	Zephyr reel_board dts; NuttX ssd1680 driver; Solomon Systech SSD1677 page	https://www.solomon-systech.com/?p=5604	unknown	SSD168x LUT group structure, 0x32 command, SSD1677 programmable waveform
+27	Zephyr ultrachip,uc81xx-common binding	https://codex.ac6.fr/Zephyr/raw/Zephyr-latest/dts/bindings/display/ultrachip%2Cuc81xx-common.yaml	unknown	UC81xx register LUT override of OTP
+28	Espressif esp_lcd_ssd1681 readme; dzarda7/esp_epaper	https://components.espressif.com/components/espressif/esp_lcd_ssd1681/versions/0.1.0/readme	unknown	power-on reloads OTP LUT; thin open-driver ecosystem
