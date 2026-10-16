@@ -89,6 +89,14 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   uint8_t rate; bool swapPolarity;}` with masks as full-screen 1-bpp bitmaps in the framebuffer's byte order
   (set bit = drive that way). The pure parts of each backend (table bytes, plane encoding from the two masks) live in
   `lib/GameDisplayLab/` and are host-tested; only the facade calls live in `src/`.
+- D1a (2026-10-16, after dlab-0's review): `ScanBackend` also exposes `const char* rowLabel(uint8_t row) const` (row 1
+  and row 2, short text for the polarity screen and its `vs=` log token, e.g. "LUT1 VSL" on the SSD1677, "KW table"
+  on UltraChip). The polarity screen and its log line use it; no backend-specific strings outside the backends.
+- D6 (2026-10-16): the flash-budget gate measures shipped firmware. The display lab is dev-env only, so
+  `scripts/check_flash_budget.py` builds both of its images with `FREEINK_CAP_DISPLAY_LAB` unset (an unflag on the
+  "on" build as well as the "off" build), its sidecar test pins that, and the epic's base measurement is re-taken
+  with the gate so changed (AGENTS.md: a change to how a gate measures means re-measuring the base). Until then
+  the lab's cost is tracked here: dlab-0 +2,016 B (7,696 B left under the old counting).
 - D2. SSD1677 encoding: black mask to the RED plane, white mask to the BW plane (a set bit selects LUT2 or LUT1);
   hold = both clear. UltraChip encoding (UC8179, UC8279): the "old" plane (DTM1) and "new" plane (DTM2) are derived
   from the masks: hold = old == new (white), drive-to-white = old black, new white (the KW table), drive-to-black =
@@ -102,6 +110,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   repaints with a FULL refresh (Part A's polarity rule).
 - D5. The gray engine's slot period is `max(measured scan time + 5 ms, 100 ms)` from the backend's last busy time;
   a board game needs a few scans per second, so whole-screen correctness beats windowed speed.
+
+## Story results
+
+- dlab-0 (lane 0): built, commit `40a71c4d` on `dlab-lane-0`; 33 review findings, 8 patched, 3 deferred; 2,104 host
+  tests; x4pro, default, sticky build; pio check clean; flash +2,016 B, static RAM unchanged. Follow-up review pass
+  dispatched (three mediums patched after the lenses) together with D1a.
 
 ## Measurement (base)
 

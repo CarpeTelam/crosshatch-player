@@ -28,6 +28,12 @@ The lab menu gains "Transition test", "Tuning" and "Save preset" rows. History r
 in this story: implement the model fields and the budget rules for them, with the weak row used only when
 `backend->supportsWeakRow()` is true, and leave both off in the default preset.
 
+**Also in this story (epic D6):** change `scripts/check_flash_budget.py` so both of its builds unflag
+`FREEINK_CAP_DISPLAY_LAB` (the lab is dev-env only and not shipped), extend `scripts/check_flash_budget_test.py` to
+pin it, update the script's docstring and `docs/crosshatch/` text that describes the gate, and record the re-taken
+base figures (`build on`, `build off`, `compare`) in the plan's Verification before your own change is measured.
+Do this first, as its own commit if the workflow allows, so the engine's delta is measured against the new base.
+
 ## Boundaries & Constraints
 
 **Always:** pixel state and the two mask planes in PSRAM (`HalMemory::allocatePsram`), allocated in `onEnter`, freed
@@ -35,8 +41,7 @@ in `onExit`; the model, preset and scheduler are pure C++ with host tests that p
 level arithmetic from the digest (`level += (target*64 - level) / remaining`); every scan goes through
 `ScanBackend::scan` with the lab's budget wrapper (timeout, cap, dropped, inverted); the sweep stops on any non-Done
 outcome and the screen says why; a full refresh before the first sweep and on exit; `STR_GAMES_DLAB_*` keys; no
-change to `ScanBackend`'s shape; flash: the engine must stay within the epic's measured headroom (9,712 B at base);
-report the measured delta, and HALT as blocked if it does not fit rather than trimming the safety code.
+change to `ScanBackend`'s shape; flash: with the gate excluding the lab (D6) the engine is outside the games delta; still report its measured size.
 
 **Never:** no dithering path in this story; no per-frame heap allocation; no background task; no change to the
 SSD1677/UltraChip encodings; no edit to `freeink-sdk/`; no new ledger row.
