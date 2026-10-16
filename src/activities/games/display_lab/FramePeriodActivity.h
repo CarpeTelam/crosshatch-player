@@ -5,7 +5,6 @@
 #if CROSSHATCH_DISPLAY_LAB
 
 #include <LabExperiments.h>
-#include <Ssd1677ScanLut.h>
 
 #include <cstddef>
 #include <cstdint>

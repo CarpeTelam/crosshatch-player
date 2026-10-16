@@ -1,4 +1,4 @@
-# Display lab: the SSD1677 scan bench (spike, Part A)
+# Display lab: the panel scan bench (spike, Part A)
 
 The display lab is a bench, not a product mode. It lives in `src/activities/games/display_lab/` and
 `lib/GameDisplayLab/`, compiles only under `FREEINK_CAP_DISPLAY_LAB`, which the `x4pro` development env alone sets, so
@@ -47,15 +47,16 @@ clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
    The screen lists the same nine busy times. A line reading `timeout` (and a "Timed out" row) means a scan ran over
    15 s: the run stopped there and the panel was cleaned; report it with the lines before it. A "Dropped" row means the
    facade refused the call (see Expected ranges).
-6. **Polarity**: select it, then Row 1. The whole panel is driven with VSL for 10 frames and the screen is *not*
+6. **Polarity**: select it, then Row 1, labelled "Row 1 (LUT1 VSL)" on an SSD1677 (the backend names each row). The
+   whole panel is driven with VSL for 10 frames and the screen is *not*
    repainted: look at the panel and note whether it went darker or lighter all over (the change is uniform and may be
    subtle, since 10 frames is a short drive). Only Confirm or a tap brings the screen back, with a FULL refresh; Up and
    Down move the selection but do not repaint while the drive is shown. After that repaint the next activation runs
    the row it lands on: select Row 2 and do the same with VSH1. Two log lines name each row and its time:
 
    ```
-   [DLAB] polarity row=1 vs=VSL ms=...
-   [DLAB] polarity row=2 vs=VSH1 ms=...
+   [DLAB] polarity row=1 vs=LUT1 VSL ms=...
+   [DLAB] polarity row=2 vs=LUT2 VSH1 ms=...
    ```
 
 7. Photograph the panel after each polarity drive (before pressing a key) and the frame-period table.
@@ -83,9 +84,10 @@ polarity answer as the row-to-color mapping, and builds on the scan seam (the di
 of two full-screen drive masks (`GameDisplayLab::MaskPlanes`: black, white, a pixel in neither holds), a frame count, a
 rate index and a polarity swap, sent through `DisplayLabActivity::scan`, which wraps the controller's `ScanBackend`
 with the session cap, the timeout and the dropped-call floor. A new controller is one backend class plus its case in
-the one switch of `ScanBackends.cpp`, and the safety rules stay as they are; but the screens still carry SSD1677 facts
-from `Ssd1677ScanLut` (the polarity rows' labels and `vs=` log names, and the frame-period TPs), so an UltraChip
-backend needs a way to name its drive rows, which D1 does not have yet. On top of it come the
+the one switch of `ScanBackends.cpp`, and the screens and the safety rules stay as they are: the backend names its
+own drive rows (`ScanBackend::rowLabel`, the epic's Amendment D1a; on the SSD1677 "LUT1 VSL" and "LUT2 VSH1"), which
+the polarity screen shows and logs as `vs=`, and the frame-period screen runs the backend's own rate list. The
+frame-period TPs and the polarity TP are frame counts every backend takes. On top of it come the
 per-pixel level and dose model, the transition-test screen with sweeping rectangles, the live tuning list, and the SD
 preset. Nothing in Part A is a product feature; the launcher row and the lab can be removed once Part B has its own
 entry.
@@ -96,12 +98,14 @@ entry.
   reserved) and the experiment tables; pure C++, pinned byte for byte by `test/game_display_lab/test_scan_lut.cpp`.
   Its `planeFillFor` and `framePeriodScan` are no longer used by the screens: they are Part A's reference, which
   `test_ssd1677_encoding.cpp` pins the seam against.
-- `lib/GameDisplayLab/LabExperiments.h`: the experiments' request layout, controller-neutral: the frame-period scan
-  order (`framePeriodTp`, `framePeriodRate`: tp outer, rate inner) and the polarity row to mask table
-  (`POLARITY_ROW_MASKS`: row 1 white, row 2 black); pinned against Part A by `test_ssd1677_encoding.cpp`.
+- `lib/GameDisplayLab/LabExperiments.h`: the experiments' request layout, controller-neutral: `FRAME_PERIOD_TPS`,
+  `POLARITY_TP`, the frame-period scan order (`framePeriodTp`, `framePeriodRate`: tp outer, rate inner) and the
+  polarity row to mask table (`POLARITY_ROW_MASKS`: row 1 white, row 2 black); pinned against Part A by
+  `test_ssd1677_encoding.cpp`.
 - `lib/GameDisplayLab/Ssd1677Encoding.{h,cpp}`: the SSD1677 backend's pure parts: its rate list (the three frame-rate
   bytes, in order), the LUT for one request (`buildOneFrameLut` with the rate's byte and the row codes, swapped on
-  request), and the planes from the masks (white to BW, black to RED); pinned against Part A's bytes by
+  request), the row labels (`ssd1677RowLabel`), and the planes from the masks (white to BW, black to RED); pinned
+  against Part A's bytes by
   `test/game_display_lab/test_ssd1677_encoding.cpp`.
 - `lib/GameDisplayLab/MaskPlanes.{h,cpp}`: the two drive masks in the framebuffer's byte order (MSB first, row-major,
   100 bytes per row at 800 px): clear, fill, clipped rectangles and pixels; pinned by

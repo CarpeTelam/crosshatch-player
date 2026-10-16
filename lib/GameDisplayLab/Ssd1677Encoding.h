@@ -26,6 +26,10 @@ struct Ssd1677RowCodes {
 // POLARITY_ROW1 on row 1 and POLARITY_ROW2 on row 2, or the two swapped when `swap`.
 Ssd1677RowCodes ssd1677RowCodes(bool swap);
 
+// The name of drive row `row` (1 or 2) under ssd1677RowCodes(swap): its LUT and code ("LUT1 VSL", "LUT2 VSH1", or
+// "LUT1 VSH1", "LUT2 VSL" when `swap`); nullptr for any other row.
+const char* ssd1677RowLabel(uint8_t row, bool swap);
+
 // Writes the scan LUT (LUT_BYTES) for `frames` frames at rate `rateIndex` into `out`: buildOneFrameLut with
 // FRAME_PERIOD_RATES[rateIndex] and ssd1677RowCodes(swap). False, with `out` untouched, when `rateIndex` is not below
 // SSD1677_RATE_COUNT.

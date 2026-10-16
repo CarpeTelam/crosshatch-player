@@ -32,6 +32,10 @@ const char* Ssd1677ScanBackend::rateLabel(const uint8_t index) { return GameDisp
 
 bool Ssd1677ScanBackend::supportsWeakRow() { return false; }
 
+const char* Ssd1677ScanBackend::rowLabel(const uint8_t row) const {
+  return GameDisplayLab::ssd1677RowLabel(row, false);
+}
+
 ScanBackend::Scan Ssd1677ScanBackend::scan(const ScanRequest& request, uint32_t& busyUs) {
   busyUs = 0;
   if (!available()) {

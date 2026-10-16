@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/epic-display-lab.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/story-dlab-0-backend-seam.md'
@@ -37,6 +37,20 @@ deferred:
       PolarityActivity labels rows from Ssd1677ScanLut's codes; ScanBackend (D1, fixed shape) has no row-name member. Lanes dlab-a1 and dlab-b1 need an orchestrator decision (a D1 addition) before the polarity screen can label UltraChip rows truthfully.
     location: >-
       src/activities/games/display_lab/PolarityActivity.cpp
+    severity: low
+  - summary: >-
+      The controller-to-backend table (factoryFor in ScanBackends.cpp) has no test; a lane mapping UC8179 or UC8279 to the wrong backend would pass every test.
+    evidence: |-
+      ScanBackends.cpp compiles only in x4pro with no host harness; nothing references hasScanBackend or makeScanBackend under test/. A wrong case would show the lab row on an UltraChip unit and send SSD1677 LUT and register writes to it. Lanes dlab-a1/b1 edit exactly these cases; a pure controller-to-backend-kind mapping in lib/GameDisplayLab would let a host test pin it.
+    location: >-
+      src/activities/games/display_lab/ScanBackends.cpp
+    severity: medium
+  - summary: >-
+      ScanBackend::rowLabel(row) const (Amendment D1a) has no swap argument, so a caller sending swapPolarity = true would log the unswapped code.
+    evidence: |-
+      D1a's text mentions the swapped codes but fixes the signature without swap; Ssd1677ScanBackend::rowLabel returns ssd1677RowLabel(row, false). No caller swaps in this story (the polarity screen sends false); Part B's engine may, and needs an orchestrator decision (a swap argument, or labels documented as unswapped).
+    location: >-
+      src/activities/games/display_lab/ScanBackend.h
     severity: low
 ---
 
@@ -92,6 +106,12 @@ deferred:
 - [x] `test/game_display_lab/test_mask_planes.cpp`, `test_ssd1677_encoding.cpp`, `CMakeLists.txt` -- add to `test_scan_lut`; cover the matrix rows (rect bytes incl. clipping and partial bytes, pixel bit order, Part A byte equality for all 9 frame-period scans and both polarity rows, swap, bad rate index).
 - [x] `docs/crosshatch/display-lab.md` -- code map and "Where Part B picks up" name the seam.
 
+- [x] Follow-up pass, Amendment D1a (story file, orchestrator 2026-10-16): `src/activities/games/display_lab/ScanBackend.h` -- add `virtual const char* rowLabel(uint8_t row) const = 0;` (rows 1 and 2; nullptr otherwise): short text naming what that row drives on this controller.
+- [x] D1a: `lib/GameDisplayLab/Ssd1677Encoding.{h,cpp}` -- pure `ssd1677RowLabel(row, swap)` returning static strings "LUT1 VSL"/"LUT2 VSH1" (swap: "LUT1 VSH1"/"LUT2 VSL"), nullptr for other rows; `Ssd1677ScanBackend::rowLabel(row)` returns `ssd1677RowLabel(row, false)` (the signature has no swap: the label names the unswapped drive, a swapped request drives the other row's code).
+- [x] D1a: `PolarityActivity.{h,cpp}` -- labels from `lab.backend()->rowLabel(i + 1)` ("?" when null), log `polarity row=%u vs=%s ms=%u` with the same label; drop `VS_CODES`/`vsName`.
+- [x] D1a: `lib/I18n/translations/english.yaml` -- no SSD1677-specific user string outside the backend: `STR_GAMES_DLAB_ROW1/ROW2` become "Row 1 (%s)"/"Row 2 (%s)", `STR_GAMES_DLAB_ROW_DESC` "Panel waveform bench", and `STR_GAMES_DLAB_NOT_SSD1677` is renamed `STR_GAMES_DLAB_NOT_SUPPORTED` ("Needs an X4 Pro whose panel the lab supports", one use in `DisplayLabActivity.cpp`).
+- [x] D1a: `test/game_display_lab/test_ssd1677_encoding.cpp` -- pin `ssd1677RowLabel` against `"LUT1 " + vsName(ssd1677RowCodes(swap).row1)` and `"LUT2 " + ...row2`, both swaps, and nullptr for rows 0 and 3; `docs/crosshatch/display-lab.md` -- the checklist's labels and `vs=` log lines, and the seam paragraph (rows are now named by the backend).
+
 **Acceptance Criteria:**
 - Given an SSD1677 X4 Pro, when either screen runs, then the LUT and plane bytes sent equal Part A's for the same scan (pinned by host tests) and the log lines are textually identical.
 - Given a UC8179/UC8279 X4 Pro, when the launcher opens, then no Display lab row shows; and if the lab is reached, it shows the not-supported notice and sends nothing.
@@ -122,6 +142,16 @@ deferred:
   inverted case are device-only code (`CROSSHATCH_DISPLAY_LAB`, x4pro only) with no host harness, as in Part A; their
   evidence is the x4pro, default and sticky builds plus inspection, and the story's Verification says the SSD1677
   behaviour is pinned by the byte-level tests (Hardware: none).
+
+- Follow-up pass dispatched 2026-10-16 with Amendment D1a (story file, commit `1e21493f`): `ScanBackend::rowLabel(uint8_t row) const`, the polarity screen labelled and logged from it, and no SSD1677-specific user string outside the backend. Read: D1a's signature has no swap argument, so `rowLabel` names the unswapped drive (the polarity screen always sends `swapPolarity = false`), and the pure `ssd1677RowLabel(row, swap)` holds both; "string" is taken as user-visible text and log lines, so the launcher description and the not-supported notice are made neutral too (frame-period TPs are numbers and stay).
+
+- D1a pass built 2026-10-16 on `40a71c4d` (not committed): `rowLabel(uint8_t) const` on `ScanBackend`; pure
+  `ssd1677RowLabel` with static strings (a `switch` on the row number, `default` nullptr), pinned against
+  `"LUT1 "/"LUT2 " + vsName(ssd1677RowCodes(swap))` for both swaps; the polarity screen labels and logs through a
+  `rowLabelOf(index)` helper ("?" without a backend or label), so its log line now reads `polarity row=1 vs=LUT1 VSL
+  ms=...` (a deliberate D1a change to Part A's text); `STR_GAMES_DLAB_NOT_SSD1677` renamed `STR_GAMES_DLAB_NOT_SUPPORTED`
+  (grep finds no other use; no other translation has the DLAB keys). `STR_GAMES_DLAB_FRAME_PERIOD_DESC` ("Nine timed
+  hold scans") is left as the plan lists it untouched, though nine is the SSD1677's count (3 TPs x 3 rates).
 
 ## Plan Change Log
 
@@ -163,6 +193,40 @@ deferred:
   - `[low]` `[patch]` IA: lanes A and B both edit `ScanBackends.cpp`, against the epic's disjoint-files lanes — the two UC cases are separated by an unchanged line so their one-line edits merge cleanly; the CMake source list is a trivial merge for the orchestrator.
   - `[maybe-false]` `[reject]` IA: D1's open points (`Scan` nested, `available()` = buffers allocated, `rate` an index) are now de-facto contract — each follows R1/D1's text (Design Notes); it would only be an issue if a later lane needs another reading, which would settle it; if-true grade low.
   - `[low]` `[defer]` IA: the polarity row labels and `vs=` log name are SSD1677 facts with no D1 hook — not caused by this change (D1 lacks the hook); the UC lanes need an orchestrator decision; deferred.
+
+### 2026-10-16 — Review pass (follow-up, with Amendment D1a)
+- verdicts: 30 findings — high 0, medium 2, low 23, false 5, maybe-false 0
+- findings:
+  - `[medium]` `[defer]` VG: the device glue (mask order into the request, `encodeSsd1677Planes` and `copyGrayscaleBuffers` arguments, `rowLabel` passing `false`) is not tested at any call site — carried: same claim as deferred item 1; the request side is now hardened by designated initializers (BH row below), the backend calls stay inspection-only.
+  - `[medium]` `[defer]` VG: the controller-to-backend table (`factoryFor`) has no test; a lane mapping UC8179 to the SSD1677 backend would pass every test and drive SSD1677 waveforms on an UltraChip panel — device-only code with no host harness; deferred so lanes dlab-a1/b1 pin it (a pure controller-to-backend-kind mapping) when they add their cases.
+  - `[low]` `[patch]` VG (other): `GamesLauncherActivity.h` still says the row shows where the probe said SSD1677 — comment reworded to "controller has a scan backend".
+  - `[low]` `[reject]` VG (other): the plan's matrix and residual risks still name `STR_GAMES_DLAB_NOT_SSD1677` and the missing D1 hook — the fix is an edit to this build's plan; the Auto Run Result is rewritten at Finalize.
+  - `[low]` `[defer]` IA: byte identity at the facade boundary is pinned only at the pure layer — carried (deferred item 1).
+  - `[low]` `[reject]` IA: the wrapper is untested and the not-available/OOM log lines are reworded — carried (deferred item 2); the matrix's identical-log rows (timeout, cap, dropped, inverted) are unchanged.
+  - `[low]` `[patch]` IA: launcher header comment describes SSD1677-only gating — same patch as the VG launcher-comment row.
+  - `[low]` `[defer]` IA: `rowLabel(row) const` has no swap argument, so the backend names only the unswapped drive although D1a mentions swapped codes — D1a fixes the signature; no caller sends `swapPolarity = true` in this story; the pure `ssd1677RowLabel(row, swap)` covers both; deferred for the orchestrator before Part B swaps.
+  - `[false]` `[reject]` IA: `MaskPlanes` byte order is tested against the documented convention, not the real framebuffer — `GfxRenderer.cpp:652` writes pixel x at bit `7 - (x % 8)` of byte `y * widthBytes + x / 8`, the same convention the tests pin.
+  - `[low]` `[reject]` IA: PSRAM doubled and frame-period arrays sized for 48 rows — carried (Design Notes choices).
+  - `[low]` `[patch]` IA: `LabExperiments.h` and the screens still include the SSD1677 header for `FRAME_PERIOD_TPS`/`POLARITY_TP` — constants moved into `LabExperiments.h`, `Ssd1677ScanLut.h` now includes it (grouped with the BH row).
+  - `[low]` `[reject]` EC: a null-mask request can run a due cap clean before the backend refuses — carried.
+  - `[false]` `[reject]` EC: a backend returning TimedOut/Dropped skips the count and clean — carried: the contract and the only backend return Done or Refused.
+  - `[low]` `[reject]` EC: geometry mismatch shows "Not enough memory" — carried (unreachable on the X4 Pro).
+  - `[low]` `[reject]` EC: Run reports Done with zero scans — carried (unreachable).
+  - `[false]` `[reject]` EC: an invalid `Mask` value dereferences null — carried.
+  - `[false]` `[reject]` EC: the polarity label and `vs=` log changed from Part A's text — Amendment D1a requires exactly this (`vs=<rowLabel>`, "LUT1 VSL"); the plan's older acceptance line is superseded (Implementation Notes).
+  - `[low]` `[reject]` BH: the lab checks the rate but not the masks before the lock — carried.
+  - `[false]` `[reject]` BH: a backend returning TimedOut skips the safety handling — carried.
+  - `[low]` `[reject]` BH: geometry mismatch shows "Not enough memory" — carried.
+  - `[low]` `[reject]` BH: identity encoding doubles PSRAM and copies 96 KB per scan — carried.
+  - `[low]` `[reject]` BH: `ScanRequest` has no size — carried (D1 shape fixed; lab masks and backend planes both come from `getBufferSize()`).
+  - `[low]` `[patch]` BH: `name()` is never called and the log never says which backend runs — `openSession` now logs `backend <name>, <n> rates` on success.
+  - `[low]` `[patch]` BH: stale SSD1677-only comments and the doc title — launcher comment, doc title and `PolarityActivity::drive` comment reworded; the "no mask planes" log line is Part A's and stays.
+  - `[low]` `[reject]` BH: `vs=LUT1 VSL` puts a space inside a key=value token — D1a fixes the label text ("LUT1 VSL"); the checklist reads logs by hand.
+  - `[low]` `[reject]` BH: the frame-period screen reserves 16 rates; `rateCount() == 0` reports Done — carried.
+  - `[low]` `[defer]` BH: the seam cannot label a swapped drive, and only `rowLabel` is const — swap part grouped with the IA rowLabel deferral; the const part is carried (D1's literal shape).
+  - `[low]` `[patch]` BH: `LabExperiments.h` depends on the SSD1677 header — constants moved (see the IA row).
+  - `[low]` `[patch]` BH: `framePeriodTp`/`framePeriodRate` tested only at rateCount 3; no backend-table test; stale target name — tests added at rateCount 1 and 16; the table test is deferred (VG row); the target name is carried (reject).
+  - `[low]` `[patch]` BH: `ScanRequest` is built positionally, so swapped masks or frames/rate compile silently — both screens now use designated initializers.
 
 ## Design Notes
 
@@ -229,3 +293,62 @@ independent review.
 - Polarity row labels, `vs=` log names, and frame-period TPs are SSD1677 facts; lanes dlab-a1/b1 need an orchestrator decision on a D1 hook (deferred item 3). User-facing `STR_GAMES_DLAB_NOT_SSD1677` / `FRAME_PERIOD_DESC` wording is still SSD1677's.
 - Lanes A and B both add a case to `ScanBackends.cpp` and a test file to `test/game_display_lab/CMakeLists.txt`; the cases sit on separate lines, the CMake list is a trivial merge.
 - Flash headroom for Part B is now 7,696 B (epic Notes assumed 9.5 KiB).
+
+### Follow-up pass (2026-10-16): Amendment D1a and the second review
+
+**Summary:** Applied Amendment D1a. `ScanBackend::rowLabel(uint8_t row) const` is backed by the pure, tested
+`ssd1677RowLabel(row, swap)` and returns "LUT1 VSL" / "LUT2 VSH1". The polarity screen now labels its rows ("Row 1
+(LUT1 VSL)") and logs `vs=<rowLabel>` from it. The DLAB strings are controller-neutral:
+- `STR_GAMES_DLAB_ROW1` and `ROW2` are "Row 1 (%s)" and "Row 2 (%s)".
+- `ROW_DESC` is "Panel waveform bench".
+- `STR_GAMES_DLAB_NOT_SSD1677` is renamed `STR_GAMES_DLAB_NOT_SUPPORTED`.
+
+This resolves deferred item 3, the missing D1 hook for row names.
+
+The second review's patches:
+- `FRAME_PERIOD_TPS` and `POLARITY_TP` moved into the controller-neutral `LabExperiments.h`, which `Ssd1677ScanLut.h` now includes.
+- Both screens build `ScanRequest` with designated initializers.
+- `openSession` logs `backend <name>, <n> rates`.
+- Neutral comments in the launcher header and `PolarityActivity`, and a neutral doc title.
+- Order tests at rate counts 1 and 16.
+
+**Files (this pass):**
+- `ScanBackend.h`, `Ssd1677ScanBackend.{h,cpp}`, `Ssd1677Encoding.{h,cpp}`: `rowLabel` and `ssd1677RowLabel`.
+- `PolarityActivity.{h,cpp}`: labels and log from `rowLabel`, designated initializers.
+- `FramePeriodActivity.{h,cpp}`: designated initializers, includes `LabExperiments.h`.
+- `LabExperiments.h`, `Ssd1677ScanLut.h`: the shared constants moved.
+- `DisplayLabActivity.cpp`: the renamed notice key and the backend log line.
+- `GamesLauncherActivity.h`: comment only.
+- `english.yaml`: `STR_GAMES_DLAB_*` lines only (ledger row 2).
+- `test_ssd1677_encoding.cpp`: row-label tests and the order tests at 1 and 16 rates.
+- `docs/crosshatch/display-lab.md`: title, checklist labels and logs, seam paragraph, code map.
+
+**Review (follow-up, four lenses over the combined diff since `38dea818`):** 30 findings: high 0, medium 2, low 23, false 5.
+- **Patched (8, all low):** launcher comment, stale comments and doc title, backend log line, constants moved, order tests, designated initializers.
+- **Deferred (2 new):** the `factoryFor` table is untested (medium); `rowLabel` has no swap argument (low).
+- **Carried deferrals:** items 1 and 2.
+- **Rejected:** the rest, each with its reason in the Review Triage Log. The polarity log change is required by D1a, and it supersedes the plan's older "log lines textually identical" acceptance line.
+
+**Follow-up review:** not recommended (`false`). This follow-up pass patched no high finding, so it has converged; it patched 8 low findings and no medium.
+
+**Verification (2026-10-16, after the patches, before the commit):**
+- Host suite: 2,106 of 2,106 pass, of which 42 are in `test_scan_lut`.
+- `check_layers` passes, and all 13 `scripts/*_test.py` exit 0.
+- `./bin/clang-format-fix`, run twice, was stable.
+- `check_upstream_touches` passes on the commit.
+- Under the build lock, with the shared cache:
+  - `pio run -e x4pro`, `-e default` and `-e sticky` all exit 0.
+  - `pio check -e x4pro` at low, medium and high passes with no defects.
+- Flash budget, measured with `build on` / `build off` / `compare`:
+  - Games delta +268,928 B, within budget with 7,552 B to spare. The base `0cb1fc8e`, measured the same way, had 9,712 B spare, so the story costs +2,160 B in total.
+  - Static internal RAM is +784 B with 240 B to spare, +0 B against the base.
+  - `objects` reports no problems.
+- Hardware: none.
+
+**Residual risks:**
+- **Device glue untested:** the order of the device-side arguments into `encodeSsd1677Planes` and `copyGrayscaleBuffers`, and the order of the wrapper's guards, are checked by inspection only (deferred items 1 and 2). The request side is now named fields.
+- **Backend table:** lanes dlab-a1/b1 should pin the controller-to-backend table when they add their cases (deferred item 4).
+- **Swapped labels:** `rowLabel` names the unswapped drive only (deferred item 5).
+- **Frame-period subtitle:** `STR_GAMES_DLAB_FRAME_PERIOD_DESC` still reads "Nine timed hold scans". That is the SSD1677's count; another backend with a different number of rates would make it wrong.
+- **Polarity log format:** the polarity log is now `vs=LUT1 VSL`, with a space inside the value.
+- **Flash headroom for Part B:** 7,552 B.

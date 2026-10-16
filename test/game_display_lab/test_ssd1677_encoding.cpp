@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "LabExperiments.h"
@@ -89,6 +90,23 @@ TEST(Ssd1677Encoding, RowCodesSwapOnRequest) {
   EXPECT_EQ(swapped.row2, POLARITY_ROW1);
 }
 
+TEST(Ssd1677Encoding, RowLabelsNameEachRowsLutAndCode) {
+  for (const bool swap : {false, true}) {
+    const Ssd1677RowCodes codes = ssd1677RowCodes(swap);
+    const std::string row1 = std::string("LUT1 ") + vsName(codes.row1);
+    const std::string row2 = std::string("LUT2 ") + vsName(codes.row2);
+    ASSERT_NE(ssd1677RowLabel(1, swap), nullptr) << "swap " << swap;
+    ASSERT_NE(ssd1677RowLabel(2, swap), nullptr) << "swap " << swap;
+    EXPECT_EQ(row1, ssd1677RowLabel(1, swap)) << "swap " << swap;
+    EXPECT_EQ(row2, ssd1677RowLabel(2, swap)) << "swap " << swap;
+    EXPECT_EQ(ssd1677RowLabel(0, swap), nullptr) << "swap " << swap;
+    EXPECT_EQ(ssd1677RowLabel(3, swap), nullptr) << "swap " << swap;
+  }
+  // The unswapped labels the polarity screen shows.
+  EXPECT_STREQ(ssd1677RowLabel(1, false), "LUT1 VSL");
+  EXPECT_STREQ(ssd1677RowLabel(2, false), "LUT2 VSH1");
+}
+
 TEST(Ssd1677Encoding, FramePeriodScanOrderIsPartA) {
   // The frame-period screen's scan i (framePeriodTp/Rate) is Part A's scan i: the same TP and the same rate byte.
   EXPECT_EQ(SSD1677_RATE_COUNT * sizeof(FRAME_PERIOD_TPS), FRAME_PERIOD_SCANS);
@@ -98,6 +116,20 @@ TEST(Ssd1677Encoding, FramePeriodScanOrderIsPartA) {
     const uint8_t rateIndex = framePeriodRate(i, SSD1677_RATE_COUNT);
     ASSERT_LT(rateIndex, SSD1677_RATE_COUNT) << "scan " << i;
     EXPECT_EQ(FRAME_PERIOD_RATES[rateIndex], params.rate) << "scan " << i;
+  }
+}
+
+TEST(LabExperiments, FramePeriodOrderIsTpOuterRateInnerForAnyRateCount) {
+  constexpr size_t TPS = sizeof(FRAME_PERIOD_TPS);
+  for (const uint8_t rateCount : {static_cast<uint8_t>(1), static_cast<uint8_t>(16)}) {
+    size_t i = 0;
+    for (size_t tp = 0; tp < TPS; ++tp) {
+      for (uint8_t rate = 0; rate < rateCount; ++rate, ++i) {
+        EXPECT_EQ(framePeriodTp(i, rateCount), FRAME_PERIOD_TPS[tp]) << "rates " << +rateCount << " scan " << i;
+        EXPECT_EQ(framePeriodRate(i, rateCount), rate) << "rates " << +rateCount << " scan " << i;
+      }
+    }
+    EXPECT_EQ(i, TPS * rateCount);
   }
 }
 

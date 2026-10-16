@@ -18,6 +18,18 @@ Ssd1677RowCodes ssd1677RowCodes(const bool swap) {
   return {POLARITY_ROW1, POLARITY_ROW2};
 }
 
+const char* ssd1677RowLabel(const uint8_t row, const bool swap) {
+  // Static strings for the four (row, swap) pairs; test_ssd1677_encoding.cpp pins them against ssd1677RowCodes.
+  switch (row) {
+    case 1:
+      return swap ? "LUT1 VSH1" : "LUT1 VSL";
+    case 2:
+      return swap ? "LUT2 VSL" : "LUT2 VSH1";
+    default:
+      return nullptr;  // only rows 1 and 2 are drive rows
+  }
+}
+
 bool buildSsd1677ScanLut(uint8_t* out, const uint8_t frames, const uint8_t rateIndex, const bool swap) {
   if (rateIndex >= SSD1677_RATE_COUNT) return false;
   const Ssd1677RowCodes codes = ssd1677RowCodes(swap);

@@ -37,7 +37,7 @@ void DisplayLabActivity::onEnter() {
   if (!available()) {
     // The launcher never offers the row elsewhere; a scan on another panel is never sent.
     LOG_ERR("DLAB", "Not an X4 Pro with a scan backend for its controller; the lab runs nothing");
-    notice = tr(STR_GAMES_DLAB_NOT_SSD1677);
+    notice = tr(STR_GAMES_DLAB_NOT_SUPPORTED);
   } else if (display.isInverted()) {
     LOG_ERR("DLAB", "Display inverted; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_INVERTED);
@@ -74,6 +74,7 @@ bool DisplayLabActivity::openSession() {
   if (!scanBackend->available()) return false;  // it logged what did not fit
   maskPlanes = GameDisplayLab::MaskPlanes(blackMask.get(), whiteMask.get(), width, height);
   maskPlanes.clear();
+  LOG_INF("DLAB", "backend %s, %u rates", scanBackend->name(), static_cast<unsigned>(scanBackend->rateCount()));
   return true;
 }
 

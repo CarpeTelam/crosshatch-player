@@ -120,7 +120,8 @@ void FramePeriodActivity::run() {
   // All-hold scans: both masks clear, once per run, so every pixel holds and the screen stays.
   GameDisplayLab::MaskPlanes& masks = lab.masks();
   masks.clear();
-  ScanRequest request{masks.black(), masks.white(), 0, 0, false};
+  ScanRequest request{
+      .blackMask = masks.black(), .whiteMask = masks.white(), .frames = 0, .rate = 0, .swapPolarity = false};
   const char* outcome = tr(STR_GAMES_DLAB_DONE);
   for (size_t i = 0; i < scanCount; ++i) {
     const uint8_t tp = tpOf(i);
