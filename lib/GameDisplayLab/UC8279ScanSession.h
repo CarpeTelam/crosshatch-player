@@ -11,7 +11,7 @@
 namespace GameDisplayLab {
 
 // How one scan ended: Done; a request refused before any lab call (NoMasks, BadRate, TooManyFrames); or the first lab
-// call that refused.
+// call that refused. Shared with UC8179ScanSession.h; TooManyFrames ("frames over 252", D7) is UC8279-only.
 enum class ScanOutcome : uint8_t {
   Done,
   NoMasks,
@@ -24,8 +24,10 @@ enum class ScanOutcome : uint8_t {
 };
 
 // One self-contained lab session (D8): upload `tables` (UC8279_SCAN_TABLE_BYTES), set PLL `pllCode`, one labScan of
-// the two planes, then labEnd. Every scan uploads again because the seam requires labEnd() before any other display
-// call and an ordinary refresh drops the waveform, while the screens repaint between scans.
+// the two planes, then labEnd. This is the seam's UltraChip session, shared with UC8179ScanSession.h's
+// runUc8179Request (both controllers take the same calls and the same 215-byte table layout). Every scan uploads again
+// because the seam requires labEnd() before any other display call and an ordinary refresh drops the waveform, while
+// the screens repaint between scans.
 //
 // `busyUs` is 0 unless the scan was sent. When the lab is not supported nothing else is called (Unsupported). Once a
 // lab call has been made, labEnd() ends the session on every path: the first call that returns false ends it there,

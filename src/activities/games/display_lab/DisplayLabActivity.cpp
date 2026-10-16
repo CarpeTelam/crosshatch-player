@@ -24,8 +24,7 @@ namespace fui = freeink::ui;
 
 bool DisplayLabActivity::available() {
   // BoardConfig comes with HalDisplay.h (HalDisplay::Controller is its DisplayController).
-  const HalDisplay::Controller c = display.getController();
-  return BoardConfig::isX4Pro() && (hasScanBackend(c) || usesStockBench(c));
+  return BoardConfig::isX4Pro() && labMenuFor(display.getController()) != GameDisplayLab::LabMenu::None;
 }
 
 DisplayLabActivity::DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -33,7 +32,7 @@ DisplayLabActivity::DisplayLabActivity(GfxRenderer& renderer, MappedInputManager
 
 int DisplayLabActivity::listCount() const {
   if (notice) return 1;
-  return static_cast<int>(stockBench ? STOCK_ROW_COUNT : ROW_COUNT);
+  return static_cast<int>(rowCount);
 }
 
 const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TITLE); }
@@ -51,7 +50,8 @@ void DisplayLabActivity::onEnter() {
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
   const bool supported = available();
-  stockBench = supported && usesStockBench(display.getController());
+  menu = supported ? labMenuFor(display.getController()) : GameDisplayLab::LabMenu::None;
+  const bool stockBench = menu == GameDisplayLab::LabMenu::StockBench;
   if (stockBench) LOG_INF("DLAB", "UltraChip stock-path bench");
   if (!supported) {
     // The launcher never offers the row elsewhere; a scan on another panel is never sent.
@@ -135,7 +135,12 @@ bool DisplayLabActivity::savePreset() {
   const bool saved = GrayPresetFile::save(grayPreset);
   RenderLock lock(*this);
   saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
-  if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = saveStatus;
+  // The Save preset row, found by its Row (only the scan menus have it; Tuning, its other caller, is on them too).
+  if (!notice) {
+    for (size_t i = 0; i < rowCount; ++i) {
+      if (rowItems[i].actionValue == static_cast<int16_t>(Row::SavePreset)) rowItems[i].subtitle = saveStatus;
+    }
+  }
   return saved;
 }
 
@@ -154,6 +159,7 @@ const char* DisplayLabActivity::outcomeText(const Scan result) {
 }
 
 void DisplayLabActivity::buildRows() {
+  rowCount = 0;
   if (notice) {
     fui::ListItem item;
     item.label = notice;
@@ -161,23 +167,47 @@ void DisplayLabActivity::buildRows() {
     rowItems[0] = item;
     return;
   }
-  if (stockBench) {
-    buildStockRows();
-    return;
-  }
-  const auto set = [this](const Row row, const char* label, const char* subtitle) {
+  Row rows[GameDisplayLab::LAB_ROW_COUNT] = {};
+  rowCount = GameDisplayLab::labMenuRows(menu, rows);
+  for (size_t i = 0; i < rowCount; ++i) {
     fui::ListItem item;
-    item.label = label;
-    item.subtitle = subtitle;
-    item.actionValue = static_cast<int16_t>(row);
-    rowItems[static_cast<size_t>(row)] = item;
-  };
-  set(Row::FramePeriod, tr(STR_GAMES_DLAB_FRAME_PERIOD), tr(STR_GAMES_DLAB_FRAME_PERIOD_DESC));
-  set(Row::Polarity, tr(STR_GAMES_DLAB_POLARITY), tr(STR_GAMES_DLAB_POLARITY_DESC));
-  set(Row::TransitionTest, tr(STR_GAMES_DLAB_TRANSITION_TEST), tr(STR_GAMES_DLAB_TRANSITION_TEST_DESC));
-  set(Row::Tuning, tr(STR_GAMES_DLAB_TUNING), tr(STR_GAMES_DLAB_TUNING_DESC));
-  set(Row::SavePreset, tr(STR_GAMES_DLAB_SAVE_PRESET), saveStatus ? saveStatus : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
-  set(Row::Exit, tr(STR_GAMES_DLAB_EXIT), nullptr);
+    item.actionValue = static_cast<int16_t>(rows[i]);
+    switch (rows[i]) {
+      case Row::FramePeriod:
+        item.label = tr(STR_GAMES_DLAB_FRAME_PERIOD);
+        item.subtitle = tr(STR_GAMES_DLAB_FRAME_PERIOD_DESC);
+        break;
+      case Row::Polarity:
+        item.label = tr(STR_GAMES_DLAB_POLARITY);
+        item.subtitle = tr(STR_GAMES_DLAB_POLARITY_DESC);
+        break;
+      case Row::TransitionTest:
+        item.label = tr(STR_GAMES_DLAB_TRANSITION_TEST);
+        item.subtitle = tr(STR_GAMES_DLAB_TRANSITION_TEST_DESC);
+        break;
+      case Row::Tuning:
+        item.label = tr(STR_GAMES_DLAB_TUNING);
+        item.subtitle = tr(STR_GAMES_DLAB_TUNING_DESC);
+        break;
+      case Row::SavePreset:
+        item.label = tr(STR_GAMES_DLAB_SAVE_PRESET);
+        item.subtitle = saveStatus ? saveStatus : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC);
+        break;
+      case Row::TransitionTiming:
+        item.label = tr(STR_GAMES_DLAB_TRANSITION);
+        item.subtitle = tr(STR_GAMES_DLAB_TRANSITION_DESC);
+        break;
+      case Row::GrayRamp:
+        item.label = tr(STR_GAMES_DLAB_GRAY_RAMP);
+        item.subtitle = tr(STR_GAMES_DLAB_GRAY_RAMP_DESC);
+        break;
+      case Row::Exit:
+        item.label = tr(STR_GAMES_DLAB_EXIT);
+        item.subtitle = nullptr;
+        break;
+    }
+    rowItems[i] = item;
+  }
 }
 
 void DisplayLabActivity::buildScreen(UiScreen& screen) {
@@ -219,11 +249,8 @@ void DisplayLabActivity::activateIndex(const int index) {
     finish();
     return;
   }
-  if (stockBench) {
-    activateStock(index);
-    return;
-  }
-  switch (static_cast<Row>(index)) {
+  // The row's own Row, not its index: the menus place the rows differently.
+  switch (static_cast<Row>(rowItems[index].actionValue)) {
     case Row::FramePeriod:
       openScreen<FramePeriodActivity>();
       return;
@@ -239,6 +266,12 @@ void DisplayLabActivity::activateIndex(const int index) {
     case Row::SavePreset:
       savePreset();
       requestUpdate();
+      return;
+    case Row::TransitionTiming:
+      openScreen<TransitionTimingActivity>();
+      return;
+    case Row::GrayRamp:
+      openScreen<GrayRampActivity>();
       return;
     case Row::Exit:
       finish();
@@ -296,39 +329,6 @@ DisplayLabActivity::Scan DisplayLabActivity::scan(const ScanRequest& request, ui
       return Scan::Dropped;
   }
   return Scan::Done;
-}
-
-namespace {
-
-enum class StockRow : uint8_t { Transition, GrayRamp, Exit };
-
-}  // namespace
-
-void DisplayLabActivity::buildStockRows() {
-  const auto set = [this](const StockRow row, const char* label, const char* subtitle) {
-    fui::ListItem item;
-    item.label = label;
-    item.subtitle = subtitle;
-    item.actionValue = static_cast<int16_t>(row);
-    rowItems[static_cast<size_t>(row)] = item;
-  };
-  set(StockRow::Transition, tr(STR_GAMES_DLAB_TRANSITION), tr(STR_GAMES_DLAB_TRANSITION_DESC));
-  set(StockRow::GrayRamp, tr(STR_GAMES_DLAB_GRAY_RAMP), tr(STR_GAMES_DLAB_GRAY_RAMP_DESC));
-  set(StockRow::Exit, tr(STR_GAMES_DLAB_EXIT), nullptr);
-}
-
-void DisplayLabActivity::activateStock(const int index) {
-  switch (static_cast<StockRow>(index)) {
-    case StockRow::Transition:
-      openScreen<TransitionTimingActivity>();
-      return;
-    case StockRow::GrayRamp:
-      openScreen<GrayRampActivity>();
-      return;
-    case StockRow::Exit:
-      finish();
-      return;
-  }
 }
 
 #endif  // CROSSHATCH_DISPLAY_LAB

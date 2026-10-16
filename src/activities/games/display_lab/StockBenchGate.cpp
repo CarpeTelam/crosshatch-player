@@ -6,9 +6,13 @@
 
 #include "ScanBackends.h"
 
-bool usesStockBench(const HalDisplay::Controller controller) {
+GameDisplayLab::LabMenu labMenuFor(const HalDisplay::Controller controller) {
   const bool ultraChip = controller == HalDisplay::Controller::UC8179 || controller == HalDisplay::Controller::UC8279;
-  return ultraChip && !hasScanBackend(controller);  // a backend always wins
+  return GameDisplayLab::labMenuFor(ultraChip, hasScanBackend(controller));
+}
+
+bool usesStockBench(const HalDisplay::Controller controller) {
+  return labMenuFor(controller) == GameDisplayLab::LabMenu::StockBench;  // a backend always gets the scan screens
 }
 
 const char* labRowSubtitle() {

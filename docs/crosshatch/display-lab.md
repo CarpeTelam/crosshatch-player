@@ -3,17 +3,21 @@
 The display lab is a bench, not a product mode. It lives in `src/activities/games/display_lab/` and
 `lib/GameDisplayLab/`, compiles only under `FREEINK_CAP_DISPLAY_LAB`, which the `x4pro` development env alone sets, so
 no release build (`x4pro-gh_release*`) ever carries it (the simulator's HAL stand-in has no `HalDisplay::eink()`, so the
-row is absent there too), and shows its row only on an X4 Pro whose panel probe found a controller with a scan
-backend (SSD1677 and UC8279 so far) or an UltraChip controller without one (the UC8179, until its backend lands),
-which gets the [UltraChip stock-path bench](#ultrachip-stock-path-bench) instead of the scan screens. The row's
-subtitle says which: "Panel waveform bench" for the scan screens, "UltraChip stock-path bench" for the stock bench.
+row is absent there too), and shows its row only on an X4 Pro whose panel probe found a controller with a scan backend
+(SSD1677, UC8179, UC8279) or an UltraChip controller without one, which gets the [UltraChip stock-path
+bench](#ultrachip-stock-path-bench) alone instead of the scan screens (no controller on this branch: every build with
+the lab compiles the SDK's lab seam, whose UltraChip drivers report lab support). The row's subtitle says which: "Panel
+waveform bench" for the scan screens, "UltraChip stock-path bench" for the stock bench alone.
 For the same reason the flash-budget gate (`scripts/check_flash_budget.py`) builds both of its images with
 `FREEINK_CAP_DISPLAY_LAB` unset (the display-lab epic, D6): it measures shipped firmware, so the lab's cost never
 counts against the games budget, and the gate refuses a build whose metadata still defines the lab. Its
 static-object scan (`objects`) therefore no longer reads the lab's screen code, which compiles empty without the flag;
 it still reads `lib/GameDisplayLab`.
-The scan menu has six rows: Frame period, Polarity, Transition test, Tuning, Save preset, Exit; the stock bench's has
-three: Transition timing, Gray ramp, Exit.
+The menu depends on the controller (the display-lab epic's D10, `labMenuFor`): on an SSD1677 six rows: Frame period,
+Polarity, Transition test, Tuning, Save preset, Exit; on an UltraChip controller with a scan backend (UC8179, UC8279)
+eight: those with the stock bench's Transition timing and Gray ramp before Exit, so the stock transition and the OEM
+ramp stay beside the lab to compare against; on an UltraChip controller without a backend the stock bench's three:
+Transition timing, Gray ramp, Exit.
 Part A answers the two numbers only a panel can give before the per-pixel grayscale engine (Part B, the transition
 test and tuning below) can be tuned:
 
@@ -23,17 +27,17 @@ test and tuning below) can be tuned:
    RED-plane row) darkens the panel under the codes the lab tries first (VSL on row 1, VSH1 on row 2, InkBoy's SSD1681
    convention).
 
-Safety: on an SSD1677 every LUT the lab sends carries the panel's stock voltages (bytes 105-109 = `0x17 0x41 0xA8
-0x32 0x30`), the OTP command is never sent, and each scan goes through the SDK facade's overlay-grayscale path with
-`factoryMode=true` (the upload of the 105 LUT bytes plus the voltage registers, command 0x22 = 0xCC, a timed BUSY
-wait); on a UC8279 the lab writes no voltage register and sends no OTP or MTP command (see its section below). On
-either, a scan whose timed wait took over 15,000 ms ends its run and the panel is cleaned. A wait cannot be
-interrupted. On an SSD1677 the SDK caps each BUSY wait at 30 s, so a hung panel stalls the lab up to 30 s per scan. On
-a UC8279 the SDK's BUSY waits have no time limit (`EpdBus::waitBusy`'s `UcIdleHigh` path, by design, the same wait
-every ordinary UC8279 refresh uses), so a panel whose BUSY never releases stalls the lab without bound, and the 15 s
-timeout fires only for a DRF wait that does end after more than 15 s. 2,400 scans since the last clean force
-a FULL refresh, and leaving the lab by any route (Back, Home, sleep) runs one FULL refresh when a scan reached the
-panel since the last clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
+Safety: on an SSD1677 every LUT the lab sends carries the panel's stock voltages (bytes 105-109 =
+`0x17 0x41 0xA8 0x32 0x30`), the OTP command is never sent, and each scan goes through the SDK facade's
+overlay-grayscale path with `factoryMode=true` (the upload of the 105 LUT bytes plus the voltage registers, command 0x22
+= 0xCC, a timed BUSY wait); on a UC8179 or UC8279 the lab writes no voltage register and sends no OTP or MTP command
+(see their sections below). On any of them, a scan whose timed wait took over 15,000 ms ends its run and the panel is
+cleaned. A wait cannot be interrupted. On an SSD1677 the SDK caps each BUSY wait at 30 s, so a hung panel stalls the lab
+up to 30 s per scan. On a UC8179 or UC8279 the SDK's BUSY waits have no time limit (`EpdBus::waitBusy`'s `UcIdleHigh`
+path, by design, the same wait every ordinary UltraChip refresh uses), so a panel whose BUSY never releases stalls the
+lab without bound, and the 15 s timeout fires only for a DRF wait that does end after more than 15 s. 2,400 scans since
+the last clean force a FULL refresh, and leaving the lab by any route (Back, Home, sleep) runs one FULL refresh when a
+scan reached the panel since the last clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
 
 ## The UC8279 backend (X4 Pro UC8279 batch)
 
@@ -73,20 +77,63 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   inversion the lab did not catch first shows as `upload refused`, never as "Dropped". `scan refused: no UC8279 planes`
   is a defensive guard: when the planes do not fit, the lab shows its out-of-memory notice before any scan.
 
+## The UC8179 backend (X4 Pro UC8179 batch)
+
+On a UC8179 X4 Pro (`Uc8179Driver`) the lab drives the same lab API as on the UC8279, with the same screens, safety
+wrapper and experiments, and the same session per scan (the seam's UltraChip sequence is one API for both controllers,
+so `runUc8179Request` reuses the UC8279's `runUc8279Scan`). `ScanBackends.cpp` gives the backend only when the facade's
+driver reports lab support (the story's backend-choice row); every build with the lab compiles the seam, whose
+`Uc8179Driver` reports it, so every UC8179 X4 Pro the lab builds for gets this backend and the scan menu. Where it
+differs:
+
+- **Tables.** The five register-prefixed 43-byte tables (0x20 VCOM, 0x21 WW, 0x22 KW, 0x23 WK, 0x24 KK) each hold one
+  group of one phase and zeros: `[L << 6, frames, 0x00, 0x00, 0x00, 0x01]`, the UC8179's R23h group layout
+  (`Uc8179Driver.cpp`: level select with phase A in bits 7-6, four 8-bit frame counts TA-TD, repeat count 0x01 as in
+  every stock group). The count is 8-bit, so every frame count up to 255 fits one phase and none is refused. KW carries
+  VDL (level 10) and WK VDH (01), exchanged when the polarity is swapped; VCOM, WW and KK carry the same frames at level
+  00, which is GND on WW and KK and VCOM DC on the VCOM table. For example, 10 frames unswapped: KW
+  `22 80 0A 00 00 00 01`, WK `23 40 0A 00 00 00 01`, the other three `2x 00 0A 00 00 00 01`, then zeros. Whether the
+  controller runs a group RP or RP + 1 times is not documented in the tree; the frame-period slope shows it.
+- **Planes.** As on the UC8279: DTM1 (old) is the inverted white mask and DTM2 (new) the inverted black mask. Under
+  the lab's CDI (`cdiActive`, the AA activation's) the driver selects (old, new) (0, 1) KW, (1, 0) WK, (1, 1) WW and
+  (0, 0) KK, so a pixel in neither mask holds (WW), the white mask drives to white (KW), the black mask to black (WK),
+  and a pixel in both holds (KK, level 00).
+- **Rows.** The polarity screen labels Row 1 "KW VDL" and Row 2 "WK VDH"; swapped, "KW VDH" and "WK VDL". Unswapped
+  KW at VDL and WK at VDH follow the stock pre-BW conditioning tables (`kGrayPreBwMid` KW 0xAA, WK 0x55) and the UC8279
+  backend.
+- **Rates.** The frame-rate list is the PLL (0x30) codes {0x06, 0x05, 0x07}: 0x06 first, the 50 Hz rate the driver
+  and `labEnd()` restore (so the polarity scan runs at the stock rate), then 0x05, the driver's documented 40 Hz, and
+  0x07, undocumented. No full UC8179 PLL table is in the tree, so read 0x07's slope as relative. The UC8179 never
+  refuses a PLL code.
+- **Session per scan.** Upload (PSR `psr0`, the five tables, CDI `cdiActive`), PLL, one timed `labScan`, then
+  `labEnd()`, which restores PSR `psr0 & 0xDF`, CDI `cdiIdle`, PLL 0x06 and TSSET; the cleaning refresh calls
+  `labEnd()` before its FULL refresh. A session that starts while the driver's direct grayscale owns the power
+  registers first resets the controller to the stock B/W setup, so every scan runs on the panel's own voltages.
+- **Busy time.** `busy_us` is the driver's DRF-to-BUSY-release time only, as on the UC8279: not the table upload, the
+  plane streaming or PON.
+- **Refusals.** As on the UC8279, logged `scan refused: UC8179 <reason> (rate index N, M frames)`: `request without
+  masks` or `rate index out of range` before any lab call, or `lab unsupported`, `upload refused` or `scan refused`
+  (a facade call returned false; the session still ends with `labEnd()`). There is no `frames over 252` and no
+  `frame rate refused` on a UC8179. An inversion the lab did not catch first shows as `upload refused`.
+  `scan refused: no UC8179 planes` is the same defensive guard as the UC8279's.
+
 ## Hardware checklist (the user's validation script)
 
 1. Build and flash: `flock /tmp/crosshatch-build.lock sh -c 'pio run -e x4pro -t upload'`; open a serial monitor at
    the env's baud with `LOG_LEVEL` 1 or more (the `x4pro` development env prints `DLAB` lines at `LOG_INF`).
-2. If the display is inverted (Settings), turn that off first: the facade drops grayscale calls (on a UC8279, refuses
-   lab calls) while inverted, and the lab shows "Turn off the inverted display first" instead of its menu.
-3. Home → Games. On an SSD1677 or UC8279 X4 Pro the last row is **Display lab** with the subtitle "Panel waveform
-   bench"; on a UC8179 unit it reads "UltraChip stock-path bench" and opens the stock bench's menu instead (Transition
-   timing, Gray ramp, Exit; follow [its own steps](#ultrachip-stock-path-bench) after the warning). Either subtitle is
-   itself a check of the gate (`DisplayLabActivity::available()`, `usesStockBench`).
+2. If the display is inverted (Settings), turn that off first: the facade drops grayscale calls (on a UC8179 or UC8279,
+   refuses lab calls) while inverted, and the lab shows "Turn off the inverted display first" instead of its menu.
+3. Home → Games. On an SSD1677, UC8179 or UC8279 X4 Pro the last row is **Display lab** with the subtitle "Panel
+   waveform bench". On a UC8179 or UC8279 the menu ends Transition timing, Gray ramp, Exit (follow [the stock bench's
+   steps](#ultrachip-stock-path-bench) for those two rows); on an SSD1677 it ends Save preset, Exit. An UltraChip
+   controller without a scan backend would read "UltraChip stock-path bench" and open the stock bench's menu alone
+   (Transition timing, Gray ramp, Exit); no controller does on this branch. The subtitle and the menu are themselves a
+   check of the gate (`DisplayLabActivity::available()`, `labMenuFor`).
 4. Confirm the entry warning. Back or Cancel there returns to the launcher and sends nothing to the panel.
 5. **Frame period**: select it, then Run. The lab shows "Running" and performs nine all-hold scans (no pixel is
    driven, so the screen stays): TP[0A] in {1, 10, 100} against the frame-rate bytes {0x22, 0x11, 0x44}, tp outer
-   (on a UC8279, 1, 10 and 100 frames against the PLL codes {0x0E, 0x0D, 0x0F}, labelled `tp=… fr=0x0E` and so on).
+   (on a UC8279, 1, 10 and 100 frames against the PLL codes {0x0E, 0x0D, 0x0F}, labelled `tp=… fr=0x0E` and so on;
+   on a UC8179, against {0x06, 0x05, 0x07}, labelled `tp=… fr=0x06` and so on).
    Copy the nine lines from the log, for example:
 
    ```
@@ -101,20 +148,22 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
    The screen lists the same nine busy times. A line reading `timeout` (and a "Timed out" row) means a scan ran over
    15 s: the run stopped there and the panel was cleaned; report it with the lines before it. A "Dropped" row means the
    facade refused the call (see Expected ranges).
-6. **Polarity**: select it, then Row 1, labelled "Row 1 (LUT1 VSL)" on an SSD1677 and "Row 1 (KW VSL)" on a UC8279
-   (the backend names each row). The whole panel is driven with VSL for 10 frames (on a UC8279, through the KW table)
+6. **Polarity**: select it, then Row 1, labelled "Row 1 (LUT1 VSL)" on an SSD1677, "Row 1 (KW VSL)" on a UC8279 and
+   "Row 1 (KW VDL)" on a UC8179 (the backend names each row). The whole panel is driven with VSL for 10 frames (on an
+   UltraChip, through the KW table at VSL or VDL)
    and the screen is *not* repainted: look at the panel and note whether it went darker or lighter all over (the
    change is uniform and may be subtle, since 10 frames is a short drive). Only Confirm or a tap brings the screen
    back, with a FULL refresh; Up and Down move the selection but do not repaint while the drive is shown. After that
    repaint the next activation runs the row it lands on: select Row 2 and do the same with VSH1 (on a UC8279, "Row 2
-   (WK VSH)": the WK table at VSH). Two log lines name each row and its time:
+   (WK VSH)": the WK table at VSH; on a UC8179, "Row 2 (WK VDH)": the WK table at VDH). Two log lines name each row and
+   its time:
 
    ```
    [DLAB] polarity row=1 vs=LUT1 VSL ms=...
    [DLAB] polarity row=2 vs=LUT2 VSH1 ms=...
    ```
 
-   On a UC8279 they read `vs=KW VSL` and `vs=WK VSH`.
+   On a UC8279 they read `vs=KW VSL` and `vs=WK VSH`; on a UC8179, `vs=KW VDL` and `vs=WK VDH`.
 
 7. Photograph the panel after each polarity drive (before pressing a key) and the frame-period table.
 8. Leave with Back. The log's `exit: N scans this session` line and one FULL refresh end the session.
@@ -136,6 +185,14 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   table roles are the other way round on this panel, and Swap polarity in Tuning (the preset's `swap_polarity`, sent
   as `ScanRequest::swapPolarity`) swaps the levels. The "Dropped" status cannot occur there (see Busy time and
   Refusals in its section).
+- On a UC8179 the same holds with VDL and VDH: Row 1 (KW at VDL) should lighten and Row 2 (WK at VDH) darken, and Swap
+  polarity exchanges them. As on the UC8279, `busy_us` is the DRF activation and BUSY wait only, with no table upload in
+  it, so the slope compares across controllers but the `tp=1` intercept and the polarity screen's `ms=` do not. Expect
+  the 0x05 rate's slope about 1.25 times the 0x06 one if 0x05 and 0x06 are the 40 Hz and 50 Hz the driver names them. If
+  the slope per frame is about twice what the rate implies, the controller ran the group's repeat count plus one times.
+  PLL 0x07 is undocumented: a "Timed out" row or a stall on its `fr=0x07` lines means the controller does not take that
+  code, and since the UC8179's BUSY wait has no time limit, a stall there needs a power cycle rather than the lab's
+  timeout.
 - On an SSD1677, a "Dropped" status (log line `dropped: scan N came back in M us, under the 500 us floor`) means the
   facade refused the call and the panel was not driven, usually because the display is inverted (the control-center
   panel can invert it while the lab is open; the lab also refuses outright, logged as `scan refused: display inverted`,
@@ -143,15 +200,17 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
 
 ## UltraChip stock-path bench
 
-On the UC8179 and UC8279 batches no facade call reaches the waveform registers yet (the SDK lab seam is the epic's
-option 1), so the one-frame scan bench cannot run there. The stock-path bench (story dlab-u1) measures what the public
-facade already offers on those panels, with `HalDisplay` calls only: no custom LUT, no register write, no `eink()`. The
-gate (`usesStockBench`, `StockBenchGate.h`): an UltraChip controller with no scan backend; a controller with a scan
-backend always gets the scan screens. The lab opens no scan session for it (no backend, no masks), and keeps the entry
-warning, the inverted refusal (on entry and again per run), the 15,000 ms timeout per timed step (the reference, the arm's base and gray pass, each flip, the ramp's base and
-gray pass; a step over it ends the run before the next panel call), and one FULL refresh on
-every way out of a screen that drove the panel (Back promotes it onto the menu's repaint; Home and sleep run it in the
-screen's `onExit`).
+The stock-path bench (story dlab-u1) measures what the public facade offers on the UC8179 and UC8279 batches, with
+`HalDisplay` calls only: no custom LUT, no register write, no `eink()`. It began as the UltraChip panels' only bench,
+before the SDK lab seam (the epic's option 1) gave them scan backends. The gate (`labMenuFor`, `StockBenchGate.h`; the
+epic's D10): an UltraChip controller with a scan backend (every UC8179 and UC8279 X4 Pro the lab builds for) gets its
+two rows on the scan menu, before Exit, so the stock transition and the OEM ramp stay beside the lab to compare against;
+one with no scan backend (none on this branch) would get them as its whole menu (`usesStockBench`); an SSD1677 never
+gets them. On the stock bench alone the lab opens no scan session (no backend, no masks); on the scan menu each scan has
+ended its own lab session before these screens run. It keeps the entry warning, the inverted refusal (on entry and again
+per run), the 15,000 ms timeout per timed step (the reference, the arm's base and gray pass, each flip, the ramp's base
+and gray pass; a step over it ends the run before the next panel call), and one FULL refresh on every way out of a
+screen that drove the panel (Back promotes it onto the menu's repaint; Home and sleep run it in the screen's `onExit`).
 
 **Transition timing** times the stock non-flashing previous-to-current transition, the facade call behind a grayscale
 page's base: `displayGrayscaleBase(FAST_REFRESH)`. The bench calls `HalDisplay` with `turnOffScreen=false`; the reader
@@ -195,8 +254,8 @@ Confirm or tap, which only repaints the screen with a FULL refresh. A panel with
 reports no overlay grayscale" and logs `DLAB gray unsupported`; no pass is sent. On a UC8279, a gray pass whose MSB
 plane covers over 25 % of the panel (this ramp's two gray bands cover half) runs the driver's four-tone quality bank.
 
-Hardware steps (after the checklist's steps 1-4, on a UC8179 or UC8279 unit; the log shows
-`DLAB UltraChip stock-path bench` on entry):
+Hardware steps (after the checklist's steps 1-4, on a UC8179 or UC8279 unit; on the stock bench alone the log shows
+`DLAB UltraChip stock-path bench` on entry, on the scan menu `DLAB backend UC8179, 3 rates` or its UC8279 line):
 
 1. **Transition timing** → Run. The panel shows the checker, a gray pass over it, then ten flips. Copy the lines:
 
@@ -367,21 +426,31 @@ If any does not fit the screen shows "Not enough memory" and runs nothing.
 - `src/activities/games/display_lab/ScanBackend.h`: the gate macro, `ScanRequest`, and the abstract `ScanBackend`
   (the epic's D1).
 - `src/activities/games/display_lab/ScanBackends.{h,cpp}`: `hasScanBackend` and `makeScanBackend`, one case per
-  controller; SSD1677 and UC8279 have a backend so far.
+  controller; SSD1677, UC8279 and UC8179 have a backend (the UC8179 case checks `display.eink().labSupported()`, the
+  story's backend-choice row, which every build with the lab satisfies).
 - `src/activities/games/display_lab/Ssd1677ScanBackend.{h,cpp}`: the SSD1677 facade calls (its two PSRAM planes,
   `copyGrayscaleBuffers`, the timed `displayGrayBuffer(false, lut, true)`) and the cleaning FULL refresh.
 - `lib/GameDisplayLab/UC8279ScanLut.{h,cpp}`: the UC8279 backend's pure parts: the five 43-byte tables of one scan,
   the PLL code list and its labels, the row labels (`uc8279RowLabel`), and the two DTM planes from the masks; pinned
   byte for byte by `test/game_display_lab/test_uc8279_scan_lut.cpp`.
-- `lib/GameDisplayLab/UC8279ScanSession.h`: `runUc8279Request` (the request's checks, the tables and the planes,
-  then `runUc8279Scan`) and `runUc8279Scan`, the one lab session of a UC8279 scan (labSupported, upload, PLL,
-  labScan, labEnd); templates over the lab so `test_uc8279_scan_lut.cpp` drives them with a recording fake that
-  refuses as the SDK seam does.
+- `lib/GameDisplayLab/UC8279ScanSession.h`: `runUc8279Request` (the request's checks, the tables and the planes, then
+  `runUc8279Scan`), `ScanOutcome` and `runUc8279Scan`, the seam's UltraChip lab session (labSupported, upload, PLL,
+  labScan, labEnd), shared with `UC8179ScanSession.h`; `TooManyFrames` ("frames over 252") is UC8279-only. Templates
+  over the lab so `test_uc8279_scan_lut.cpp` drives them with a recording fake that refuses as the SDK seam does.
 - `src/activities/games/display_lab/UC8279ScanBackend.{h,cpp}`: the UC8279 facade calls (its two PSRAM planes, its
   table buffer, `runUc8279Request` over `display.eink()`) and the cleaning `labEnd()` then FULL refresh.
-- `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}`: the menu, the gate, the session (the backend and the
-  two PSRAM masks), the controller-neutral `scan()` wrapper (the inversion and rate checks, the session cap, the
-  timeout rule), and the exit refresh.
+- `lib/GameDisplayLab/UC8179ScanLut.{h,cpp}`: the UC8179 backend's pure parts: the five 43-byte one-group tables of one
+  scan, the PLL code list and its labels, the row labels (`uc8179RowLabel`), and the two DTM planes from the masks;
+  pinned byte for byte by `test/game_display_lab/test_uc8179_scan_lut.cpp`.
+- `lib/GameDisplayLab/UC8179ScanSession.h`: `runUc8179Request` (the request's checks, the tables and the planes, then
+  the shared `runUc8279Scan`); `test_uc8179_scan_lut.cpp` drives it with a recording fake that refuses as the UC8179's
+  side of the seam does.
+- `src/activities/games/display_lab/UC8179ScanBackend.{h,cpp}`: the UC8179 facade calls (its two PSRAM planes, its
+  table buffer, `runUc8179Request` over `display.eink()`) and the cleaning `labEnd()` then FULL refresh.
+- `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}`: the menu (the rows of `labMenuRows` for the session's
+  `LabMenu`, dispatched on each row's `LabRow`), the gate, the session (the backend and the two PSRAM masks), the
+  controller-neutral `scan()` wrapper (the inversion and rate checks, the session cap, the timeout rule), and the exit
+  refresh.
 - `src/activities/games/display_lab/FramePeriodActivity.{h,cpp}` and `PolarityActivity.{h,cpp}`: the two experiments.
 - `lib/GameDisplayLab/GrayPreset.{h,cpp}`: the gray engine's tunable values (`Shade`, the transition order, InkBoy's
   defaults, the tuning steps) and the preset file's codec; pinned by `test/game_display_lab/test_gray_preset.cpp`.
@@ -398,10 +467,13 @@ If any does not fit the screen shows "Not enough memory" and runs nothing.
   screens; `DisplayLabActivity` owns the session's preset and the Save preset row.
 - `lib/GameDisplayLab/StockBench.{h,cpp}`: the stock-path bench's pure parts: the checker frame (`fillChecker`), the
   gray ramp in the overlay encoding (`rampShadeAt`, `fillGrayRamp`), the timing summary (`summarizeTimings`) and the
-  fell-back heuristic (`transitionFellBack`); pinned by `test/game_display_lab/test_stock_bench.cpp`.
-- `src/activities/games/display_lab/StockBenchGate.{h,cpp}`: `usesStockBench` (an UltraChip without a scan backend)
-  and the launcher row's subtitle (`labRowSubtitle`).
+  fell-back heuristic (`transitionFellBack`), and the menu gate (D10: `LabMenu`,
+  `labMenuFor(ultraChip, hasScanBackend)`, and each menu's ordered rows, `LabRow` and `labMenuRows`); pinned by
+  `test/game_display_lab/test_stock_bench.cpp`.
+- `src/activities/games/display_lab/StockBenchGate.{h,cpp}`: `labMenuFor(controller)`, `usesStockBench` (an UltraChip
+  controller without a scan backend, which gets the stock bench alone; none on this branch) and the launcher row's
+  subtitle (`labRowSubtitle`).
 - `src/activities/games/display_lab/TransitionTimingActivity.{h,cpp}` and `GrayRampActivity.{h,cpp}`: the stock
-  bench's two screens; the lab menu (`DisplayLabActivity`, `buildStockRows`, `activateStock`) opens them in place of
-  the scan screens.
+  bench's two screens; the lab menu (`DisplayLabActivity`) opens them from its Transition timing and Gray ramp rows,
+  on the stock bench alone and on an UltraChip's scan menu.
 - `lib/hal/HalDisplay.h`: the one upstream touch, `EInkDisplay& eink()` under `FREEINK_CAP_GAMES` (ledger row 13).

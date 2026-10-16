@@ -8,6 +8,7 @@
 #include <HalMemory.h>
 #include <MaskPlanes.h>
 #include <ScanBudget.h>
+#include <StockBench.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -18,11 +19,14 @@
 // The display lab (Games → Display lab; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A, and the
 // display-lab epic's backend seam and its gray engine, dlab-c1): a bench for the X4 Pro's panel that answers the
 // numbers only the panel can give: the frame period, the drive polarity of the two drive rows, and the gray engine's
-// dose table. Headed "Display lab", six rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity),
-// Transition test (TransitionTestActivity), Tuning (TuningActivity), Save preset (writes the session's gray preset to
-// GrayPresetFile::PATH; its line then says whether that worked), Exit. The launcher shows its row only on an X4 Pro
-// whose controller has a scan backend (available(); SSD1677 and UC8279 so far), and pushes this screen only after the
-// entry warning was confirmed, so Back on the warning sends nothing to the panel.
+// dose table. Headed "Display lab", its menu per the controller (the epic's D10, StockBenchGate.h's labMenuFor): on an
+// SSD1677 six rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity), Transition test
+// (TransitionTestActivity), Tuning (TuningActivity), Save preset (writes the session's gray preset to
+// GrayPresetFile::PATH; its line then says whether that worked), Exit; on an UltraChip controller with a scan backend
+// (UC8179, UC8279) eight: those with the stock-path bench's Transition timing (TransitionTimingActivity) and Gray ramp
+// (GrayRampActivity) before Exit; on an UltraChip controller without one, the stock bench's three: Transition timing,
+// Gray ramp, Exit. The launcher shows its row only on an X4 Pro that gets one of these menus (available()), and pushes
+// this screen only after the entry warning was confirmed, so Back on the warning sends nothing to the panel.
 //
 // It owns the session the experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
 // masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
@@ -48,8 +52,8 @@ class DisplayLabActivity final : public UiListActivity {
   // A facade call back sooner than this never reached the panel (a one-frame activation alone takes milliseconds).
   static constexpr uint32_t DROPPED_BELOW_US = 500;
 
-  // True on a device whose panel the lab can drive: an X4 Pro whose controller has a scan backend, or an UltraChip one
-  // without, which gets the stock-path bench's menu instead of the scan screens (StockBenchGate.h).
+  // True on a device whose panel the lab can drive: an X4 Pro whose controller gets a lab menu (StockBenchGate.h's
+  // labMenuFor): one with a scan backend, or an UltraChip one without, which gets the stock-path bench's menu alone.
   static bool available();
 
   DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
@@ -82,11 +86,8 @@ class DisplayLabActivity final : public UiListActivity {
   static const char* outcomeText(Scan result);
 
  private:
-  enum class Row : uint8_t { FramePeriod, Polarity, TransitionTest, Tuning, SavePreset, Exit };
-  static constexpr size_t ROW_COUNT = 6;
-  // The UltraChip stock-path bench's menu (StockBenchGate.h): Transition timing, Gray ramp, Exit.
-  static constexpr size_t STOCK_ROW_COUNT = 3;
-  static_assert(STOCK_ROW_COUNT <= ROW_COUNT, "the stock bench's rows share rowItems");
+  // A row's actionValue is its GameDisplayLab::LabRow; each menu's rows come from GameDisplayLab::labMenuRows.
+  using Row = GameDisplayLab::LabRow;
 
   int listCount() const override;
   const char* headerTitle() const override;
@@ -102,10 +103,8 @@ class DisplayLabActivity final : public UiListActivity {
   // backend); false, having logged why, when one of them has no room.
   bool openSession(const GameDisplayLab::GrayPreset& loaded);
   void closeSession();
+  // The menu's rows (or the notice row) into rowItems and rowCount.
   void buildRows();
-  // The stock bench's menu rows and their activation (the end of the .cpp).
-  void buildStockRows();
-  void activateStock(int index);
   // A FULL_REFRESH through the backend, which also resets the cap count. The caller holds the render lock, and the
   // session has a backend (a scan reached the panel).
   void cleanPanel();
@@ -118,13 +117,15 @@ class DisplayLabActivity final : public UiListActivity {
   std::unique_ptr<ScanBackend> scanBackend;
   // Why the lab cannot run (the one row's label), or null when it can.
   const char* notice = nullptr;
-  // This session is the UltraChip stock-path bench (usesStockBench): no backend, no masks, its own menu.
-  bool stockBench = false;
+  // This session's menu (labMenuFor); LabMenu::StockBench has no backend and no masks.
+  GameDisplayLab::LabMenu menu = GameDisplayLab::LabMenu::None;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   GameDisplayLab::GrayPreset grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
   // The Save preset row's line after a save, or null before one.
   const char* saveStatus = nullptr;
-  freeink::ui::ListItem rowItems[ROW_COUNT] = {};
+  freeink::ui::ListItem rowItems[GameDisplayLab::LAB_ROW_COUNT] = {};
+  // The rows buildRows put in rowItems.
+  size_t rowCount = 0;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB
