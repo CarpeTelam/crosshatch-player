@@ -156,6 +156,14 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   tree's lab build failed on two `GameDisplayLab::Shade` enums (fixed on the epic branch, the stock bench takes the
   engine's). Merged tree: 2,181 host tests; x4pro lab build 6,249,086 B flash, 104,232 B RAM; pio check -e x4pro
   clean; flash gate with D6: games delta within budget, static RAM +784 B (240 B to spare). 2 deferrals carried.
+- dlab-a2 (lane B, experimental branch): built, commit `9a6f22a7` on `dlab-lane-b` after one stalled hand-back (the
+  implement subagent was still writing; resumed from `in-progress`); 4 lenses, 1 medium and 6 low patched, no
+  follow-up pass; 2,225 host tests; x4pro, default, sticky build; pio check -e x4pro clean. PLL list {0x06, 0x05,
+  0x07} (0x07 undocumented, brackets stock); rows "KW VDL" / "WK VDH"; D10 through a pure `labMenuFor` gate with a
+  host test. Plain x4pro image +1,168 B over `b8f86fa7`, RAM +0; flash gate with D6 +0 against the 9b2317f3 + D6
+  base (18,288 B to spare), static RAM 240 B to spare. Merged into the experimental branch; 1 deferral carried.
+  Hardware questions for the owner: which table darkens, whether a repeat-1 group runs once or twice, whether the
+  panel accepts PLL 0x07.
 
 ## Measurement (base)
 
