@@ -55,8 +55,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
-- SDK seam (owner option 1): `sdk-seam` in the fork `CarpeTelam/freeink-sdk`, branch `display-lab-seam`, proposed
-  upstream as a pull request; the experimental superproject branch points the submodule at it.
+- SDK seam (owner option 1): `sdk-seam` in the fork `CarpeTelam/freeink-sdk`, branch `display-lab-seam`, kept in the
+  CarpeTelam fork until the owner confirms it on hardware (no upstream pull request before that, owner decision
+  2026-10-16); the experimental superproject branch points the submodule at it.
 - Lane A, second story: `dlab-a2` the UC8179 lab backend over the seam; Lane B: `dlab-b2` the UC8279 lab backend over
   the seam. Both run in parallel on the experimental branch after the seam lands; they touch disjoint files (each
   backend is its own pair of files and its own test file).
@@ -73,6 +74,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - 2026-10-16: the experimental superproject branch is `claude/display-experimental-sdk-do-not-merge`, branched from the
   epic branch; it alone moves the submodule pointer to the fork's `display-lab-seam` and edits `.gitmodules`; it is
   never merged into `develop` or the epic branch; the seam-backed stories (`dlab-a2`, `dlab-b2`) land there.
+- 2026-10-16: no upstream pull request to Free-Ink until the owner has confirmed the seam on hardware; everything
+  stays in the CarpeTelam repositories (`CarpeTelam/freeink-sdk` branch `display-lab-seam`, the experimental
+  superproject branch) until then.
 - 2026-10-16: Part B ships with InkBoy's defaults (dose table, hold mask 0xc667, retarget 100 percent, routes) and
   every number editable on the device; no number is claimed calibrated until the owner measures it.
 
