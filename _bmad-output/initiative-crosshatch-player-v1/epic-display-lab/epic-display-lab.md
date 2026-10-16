@@ -110,6 +110,19 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   repaints with a FULL refresh (Part A's polarity rule).
 - D5. The gray engine's slot period is `max(measured scan time + 5 ms, 100 ms)` from the backend's last busy time;
   a board game needs a few scans per second, so whole-screen correctness beats windowed speed.
+- D7 (2026-10-16, dlab-b2 halt G1): a UC8279 phase byte holds at most 63 frames (6-bit count). A lab table spreads
+  `frames` over the single group's four phases at the same level (100 = 63 + 37; 252 is the ceiling) so the drive is
+  one continuous run of `frames` frames; a request above 252 is `Scan::Refused`. The UC8179's counts are 8-bit, so
+  dlab-a2 keeps D3's single phase.
+- D8 (2026-10-16, dlab-b2 halt G2, binds dlab-a2 too): the SDK seam forbids any other display call between the
+  waveform upload and `labEnd()`, and the lab's screens repaint through the renderer between runs, which would leave
+  a cached upload stale. An UltraChip backend's `scan()` is a self-contained session: upload the tables, set the
+  PLL, `labScan`, then `labEnd` every call (the upload's ~260 SPI bytes sit outside the timed DRF window). The
+  story's "upload once, then not again until a change" is withdrawn; D1 gains no end-of-run hook.
+- D9 (2026-10-16, dlab-b2 halt G3): D2's "WW and KK tables are all zero" meant their level, not their length. VCOM,
+  WW and KK carry the same frame counts as KW and WK (group 0, T1 = `frames`, split per D7 on the UC8279) at the
+  GND level, matching every stock UltraChip table in the driver, so the activation length follows TP and the
+  all-hold row of the matrix drives nothing.
 
 ## Story results
 
