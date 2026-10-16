@@ -48,7 +48,8 @@ class DisplayLabActivity final : public UiListActivity {
   // A facade call back sooner than this never reached the panel (a one-frame activation alone takes milliseconds).
   static constexpr uint32_t DROPPED_BELOW_US = 500;
 
-  // True on a device whose panel the lab can drive: an X4 Pro whose controller has a scan backend.
+  // True on a device whose panel the lab can drive: an X4 Pro whose controller has a scan backend, or an UltraChip one
+  // without, which gets the stock-path bench's menu instead of the scan screens (StockBenchGate.h).
   static bool available();
 
   DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
@@ -83,6 +84,9 @@ class DisplayLabActivity final : public UiListActivity {
  private:
   enum class Row : uint8_t { FramePeriod, Polarity, TransitionTest, Tuning, SavePreset, Exit };
   static constexpr size_t ROW_COUNT = 6;
+  // The UltraChip stock-path bench's menu (StockBenchGate.h): Transition timing, Gray ramp, Exit.
+  static constexpr size_t STOCK_ROW_COUNT = 3;
+  static_assert(STOCK_ROW_COUNT <= ROW_COUNT, "the stock bench's rows share rowItems");
 
   int listCount() const override;
   const char* headerTitle() const override;
@@ -99,6 +103,9 @@ class DisplayLabActivity final : public UiListActivity {
   bool openSession(const GameDisplayLab::GrayPreset& loaded);
   void closeSession();
   void buildRows();
+  // The stock bench's menu rows and their activation (the end of the .cpp).
+  void buildStockRows();
+  void activateStock(int index);
   // A FULL_REFRESH through the backend, which also resets the cap count. The caller holds the render lock, and the
   // session has a backend (a scan reached the panel).
   void cleanPanel();
@@ -111,6 +118,8 @@ class DisplayLabActivity final : public UiListActivity {
   std::unique_ptr<ScanBackend> scanBackend;
   // Why the lab cannot run (the one row's label), or null when it can.
   const char* notice = nullptr;
+  // This session is the UltraChip stock-path bench (usesStockBench): no backend, no masks, its own menu.
+  bool stockBench = false;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   GameDisplayLab::GrayPreset grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
   // The Save preset row's line after a save, or null before one.
