@@ -29,3 +29,9 @@ n	publisher	url	pub_date	supports
 28	Espressif esp_lcd_ssd1681 readme; dzarda7/esp_epaper	https://components.espressif.com/components/espressif/esp_lcd_ssd1681/versions/0.1.0/readme	unknown	power-on reloads OTP LUT; thin open-driver ecosystem
 29	uxjulia/CrossInk releases and tags	https://github.com/uxjulia/CrossInk/releases	2026-10-04	CrossInk versions; no 1.8.x; no fast-refresh notes
 30	GitHub profiles hellominecraft913-dev and thebitsworld; Free-Ink/freeink-sdk forks page	https://github.com/Free-Ink/freeink-sdk/forks	unknown	no public SDK fork carrying the Ink-boy driver
+31	Solomon Systech, SSD1677 datasheet Rev 1.0 (2018-11), Waveshare mirror	https://files.waveshare.com/upload/2/2a/SSD1677_1.0.pdf	2018-11	112-byte LUT layout, plane-keyed LUT0-3, TP/RP ranges, 0x22 sequences, 0x21, 0x37, no frame-rate table, 20 MHz SPI write max
+32	Waveshare e-Paper repository, EPD_4in26.c (V1.0 2023-12-19)	https://raw.githubusercontent.com/waveshareteam/e-Paper/master/RaspberryPi_JetsonNano/c/lib/e-Paper/EPD_4in26.c	2023-12-19	4-gray custom LUT via 0x32 activated with 0xC7; fast via 0x1A=0x5A + 0x91; partial via 0xFF
+33	Solomon Systech, SSD1675 datasheet Rev 0.11 (Adafruit mirror)	https://cdn-learn.adafruit.com/assets/assets/000/092/748/original/SSD1675_0.pdf	2016-08	same-family frame-rate range 15-200 Hz (not an SSD1677 figure)
+34	Waveshare, 4.26inch e-Paper product page and wiki	https://www.waveshare.com/wiki/4.26inch_e-Paper_HAT_Manual	unknown	vendor full 4 s / partial 0.7 s
+35	Waveshare e-Paper repository, EPD_1in54_V2.c (SSD1681)	https://raw.githubusercontent.com/waveshareteam/e-Paper/master/RaspberryPi_JetsonNano/c/lib/e-Paper/EPD_1in54_V2.c	unknown	SSD1681 LUT shape for comparison
+36	bigbag/papyrix-reader, SSD1677 driver notes	https://github.com/bigbag/papyrix-reader/blob/main/docs/ssd1677-driver.md	unknown	community 0x22 values and timings (unsourced)

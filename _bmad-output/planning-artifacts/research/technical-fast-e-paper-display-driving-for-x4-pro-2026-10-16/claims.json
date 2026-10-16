@@ -1,0 +1,107 @@
+[
+ {
+  "claim": "[1] InkBoy drives per-pixel through the SSD1681 by using the two RAM planes as a LUT row selector (00 hold, 10 bla",
+  "class": "code-fact",
+  "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[1] InkBoy stock SSD1681 partial ~360 ms; one-frame scan ~20 ms (dithered) / ~14 ms (gray); analog kept on saves ~",
+  "class": "timing-number",
+  "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[7] Ink-boy fast preset (pll 0x0F, DU 40% frames, 20 MHz, diff window) is gated to UC8279 variant 0x68 only; SSD16",
+  "class": "code-fact",
+  "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[7] Ink-boy preset refresh ~276 ms vs ~680 ms stock Fast on UC8279 0x68 (self-reported code comment, single unit)",
+  "class": "timing-number",
+  "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[10] GxEPD2 GDEQ0426T82 (SSD1677) loads no 0x32 LUT; its fast path forces 0x1A temperature before 0x22; measured 15",
+  "class": "design-pattern",
+  "pub_date": "2026-10-16"
+ },
+ {
+  "claim": "[15] DC-unbalanced fast waveforms may damage the EPD (backplane charge trapping); corroborated by E Ink patents [16",
+  "class": "risk",
+  "pub_date": "2021-08-01"
+ },
+ {
+  "claim": "[18] Temperature-forced fast mode under-drives blacks and varies by panel batch and temperature; full refresh every",
+  "class": "risk",
+  "pub_date": "2026-10-16"
+ },
+ {
+  "claim": "[19] 20 fps 4-gray on a bare 960x540 panel from an ESP32-S3 (author's own claim via Hackaday; parallel bus, not con",
+  "class": "timing-number",
+  "pub_date": "2026-07-01"
+ },
+ {
+  "claim": "[24] Derived SPI wire time 9.6 ms per 48 KB plane at 40 MHz; no measurement found",
+  "class": "timing-number",
+  "pub_date": "2026-10-16"
+ },
+ {
+  "claim": "[7] Ink-boy is a 2026-10-06 copy of CrossInk v1.6.1 (a CrossPoint fork), not an ancestor; its fast driver SDK comm",
+  "class": "code-fact",
+  "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[31] SSD1677 112-byte waveform set: 5 LUTs x 10 groups x 4 phases, TP/RP per group, 5 frame-rate bytes, voltages vi",
+  "class": "controller-fact",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[31] Per-pixel LUT row selected by (RED bit, BW bit) into LUT0-3; Waveshare 4-gray on the same panel uses all four ",
+  "class": "controller-fact",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[31] One-frame LUT (TP=1, rest 0) is within documented ranges; no stated minimum (legality by absence)",
+  "class": "controller-fact",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[31] 0x22 bit 4 loads the OTP LUT over a 0x32 LUT; 0xC7/0xCC run the loaded LUT (datasheet sequences re-read; consi",
+  "class": "controller-fact",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[31] SSD1677 Rev 1.0 datasheet gives no frame period or frame-rate byte encoding; 0x3A/0x3B reserved (lead grep of ",
+  "class": "risk",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[31] SSD1677 SPI write maximum 20 MHz; the fork's driver defaults to 40 MHz [9] (datasheet re-read)",
+  "class": "controller-fact",
+  "pub_date": "2018-11-01"
+ },
+ {
+  "claim": "[33] SSD1675 family frame rate 15-200 Hz; not an SSD1677 figure",
+  "class": "timing-number",
+  "pub_date": "2016-08-01"
+ },
+ {
+  "claim": "[32] Waveshare 4.26 fast = 0x1A=0x5A + 0x22=0x91 then 0xC7; partial = 0xFF; no custom LUT in either (re-read; same ",
+  "class": "design-pattern",
+  "pub_date": "2023-12-01"
+ },
+ {
+  "claim": "[12] Glider README: controller panels 100-300 ms BW partial, total latency 100 ms to several seconds (single publis",
+  "class": "timing-number",
+  "pub_date": "2026-10-16"
+ },
+ {
+  "claim": "[14] PaperBoy 30-60 fps on a bare 960x540 panel via raw row/column drive (secondary reporting)",
+  "class": "user-report",
+  "pub_date": "2026-07-01"
+ },
+ {
+  "claim": "[11] UC8179 register LUTs 0x20-0x24 keyed on old/new; GxEPD2 partial LUT zeroes WW/KK (single publisher, code)",
+  "class": "controller-fact",
+  "pub_date": "2026-10-16"
+ }
+]
