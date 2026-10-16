@@ -102,7 +102,7 @@ The gray engine is InkBoy's dither-free four-shade model (the research digest D2
 pixel has a modelled level (0 = black K, 64 = dark gray D, 128 = light gray L, 192 = white W), a target shade, and a
 count of doses left; a **dose** is one one-frame scan of that pixel toward its target (`frames = 1`). A pixel moving
 from shade A to shade B gets the dose-table entry for A>B; one between shades gets the two neighbouring shades' doses
-interpolated, rounded up; one interrupted mid-transition gets that scaled by the retarget percent (1..12). The model
+interpolated, rounded up; one interrupted mid-transition gets that scaled by the retarget percent (clamped to 1..12). The model
 advances only when a scan was delivered: `level += (target*64 - level) / remaining`, so the last dose lands on the
 target. One **slot** is a drive scan of every pixel with doses left, then a follow-up scan that drives again only the
 pixels whose transition's hold bit is off and that have two or more doses left (every other pixel holds, which ends
@@ -131,11 +131,14 @@ Controls while it runs (the Controls row says the same):
 
 - **Confirm**, or a tap over the screen's row area (where the Run, Speed and Controls rows were): pause; again to
   resume (the sweep clock stands still while paused). Swipes do nothing while the test view is up.
-- **Down** (NavNext): replay: clean to white and start the sweep from 0.
-- **Up** (NavPrevious): clean: a white panel, paused; resume redraws the bands.
+- **Next** (NavNext: side Down or front Right; Up or Left in inverted portrait and counter-clockwise landscape,
+  where the axis follows the screen): replay: clean to white and start the sweep from 0.
+- **Previous** (NavPrevious, the opposite keys): clean: a white panel, paused; resume redraws the bands.
 - **Back**: stop and return to the rows with a FULL refresh. The Run row says "Stopped", or how the sweep ended when a
   scan was not delivered ("Timed out", "Dropped", "Refused (see log)"), which stops it at once. The Speed row shows the
   last "N.N scans/s, N ms per scan".
+- Another screen over the test (the light panel's top-edge swipe) ends the view as Back does, once it closes: the rows
+  come back with a FULL refresh. A forced refresh (the power or home button's Refresh) does nothing while it runs.
 
 Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans to white just before
 it and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
@@ -166,9 +169,9 @@ log's `gray` line beside it.
 Display lab → Tuning lists every value of the session's preset, one row each: Dose K>D through Dose W>L (1..12), Hold
 K>D through Hold W>L (on or off), Retarget (50..150 %, steps of 25), Frame rate (the backend's rate labels), Swap
 polarity, and Save. A **tap** on a row steps it in place (+1, wrapping; a hold or the swap toggles). **Confirm** on a
-row enters edit mode for it ("editing" on its line): Down and Up then change it by one step (+1 / -1, clamped; a hold
-or the swap on / off), and Confirm or Back leaves edit mode. Outside edit mode Up and Down move the selection and Back
-closes the screen. Changes apply at once to the session (the next transition-test run uses them) and are logged as
+row enters edit mode for it ("editing" on its line): Next and Previous (NavNext and NavPrevious, as above) then change
+it by one step (+1 / -1, clamped; a hold or the swap on / off), and Confirm or Back leaves edit mode. Outside edit
+mode they move the selection and Back closes the screen. Changes apply at once to the session (the next transition-test run uses them) and are logged as
 `DLAB tune <row>=<value>`; nothing is written until **Save** (on this screen or the lab menu), so leaving the lab
 without saving discards them.
 

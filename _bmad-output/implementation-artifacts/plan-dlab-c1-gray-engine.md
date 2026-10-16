@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/story-dlab-c1-gray-engine.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/epic-display-lab.md'
@@ -127,6 +127,11 @@ deferred: []
   by `GrayPresetTuning.*`. The Memory row and the screens' input handling are device-only (`CROSSHATCH_DISPLAY_LAB`,
   x4pro only, no host harness), as dlab-0's backend-choice rows: their evidence is the x4pro, default and sticky builds
   and review.
+- Follow-up pass (2026-10-16): `TransitionTestActivity::loop()` stamps `lastLoopUs` at the end of each call; a gap
+  over `COVERED_GAP_US` (1 s) while the test view is up means a screen was pushed over it (no `onExit` on a push), so
+  the view is left as Back leaves it. `handleForcedRefresh()` returns true while the view is up. `turnOf` is a cast
+  pinned by four `static_assert`s. The help strings say Next/Previous, since the nav axis flips with the orientation
+  on a touch board.
 
 ## Plan Change Log
 
@@ -169,9 +174,44 @@ deferred: []
   - `[low]` `[reject]` (edge) skipNumber accepts malformed number tokens inside unknown keys' values. — Unknown keys are skipped by design; tightening the grammar adds code for hand-edited files nobody is likely to write that way.
   - `[low]` `[patch]` (edge) SD read under the render lock. — Grouped with the blind lock row.
 
+### 2026-10-16 — Review pass (follow-up)
+- lenses: blind-hunter, edge-case-hunter, verification-gap, intent-alignment, each a context-free subagent over `diff-followup.patch` (`git diff 9b2317f3..fe2f6cef`, 191,929 B, the plan excluded); the intent auditor read the story file as the verbatim intent.
+- verdicts: 29 findings — high 0, medium 5, low 15, false 9, maybe-false 0
+- findings:
+  - `[medium]` `[reject]` (blind) At D5's 100 ms slot floor the 5 s sweep moves a 12-px rectangle about 16 px a slot at 800 px (9.8 px at 480), so a pixel is under it for one slot or so (1-2 doses against W>K's 7) and never settles on the rectangle's shade. — Real by arithmetic, but the intent fixes the numbers: the story and R4 say 12-px rectangles crossing in 5 s (InkBoy's tuning.md, digest line 35, also reads "motion blur" and "build-up over passes"). A different speed needs an owner Decision; raised for the orchestrator under Residual risks.
+  - `[false]` `[reject]` (blind) The period ignores the slot's CPU time, so nearly every slot counts as skipped. — `SlotScheduler::slotDone` counts `whole = (now - (start + period)) / period`, which is 0 until the CPU time reaches period + 5 ms (>= 105 ms); below that the late slot runs at once and nothing is skipped. The unmeasured walk time is already a residual risk.
+  - `[low]` `[patch]` (blind) A weak pixel set in both masks cites "MaskPlanes, D1", but `ScanRequest` says D1 leaves a both-masks pixel undefined (the SSD1677 holds it). — The comments in `GrayModel.cpp`/`GrayModel.h` now say both masks are the weak row only of a backend whose `supportsWeakRow()` is true, and that D1 itself leaves it undefined. `ScanBackend.h` is fixed by the story; every backend returns false today.
+  - `[low]` `[reject]` (blind) "Saved" stays on after later edits; unsaved edits are dropped without a prompt. — carried: the row reports the last save's outcome; tracking unsaved changes is new state and a lab API the story does not ask for.
+  - `[false]` `[reject]` (blind) The gate's measurement changed but no base was re-measured, and the engine's size is reported nowhere. — Both are in this plan's Verification (the D6 base from a fresh archive tree, the engine's +18,576 B), where the story asks for them; the `game-icons.md` table columns predate the display lab, so none of them includes it.
+  - `[low]` `[reject]` (blind) The gate's "on" build overwrites the developer's `.pio/build`; `LAB_MACRO`/`LAB_UNFLAG` are not in `fork_common`. — carried for the build dir (developer cost only; the shared cache makes the rebuild back cheap). The constants are used by the gate alone, so `fork_common` has no second caller to share them with.
+  - `[medium]` `[patch]` (blind) Since D6, `objects` no longer reads the lab's screen sources. — carried: patched in the first pass (the docstring and display-lab.md say so); the coverage loss stays a residual risk. Not patched again.
+  - `[low]` `[reject]` (blind) The JSON reader takes non-JSON: loose number tokens in unknown keys, leading zeros, raw control characters, `\u` read literally. — carried for `skipNumber`; the rest are the same leniency on a hand-edited dev file: each yields a defined value or an unknown (skipped) key, never a wrong known value, and rejecting them adds parser branches.
+  - `[low]` `[reject]` (blind) A failed save leaves `/.crosshatch/display-lab.json.tmp` on the card. — Real but harmless: nothing reads the `.tmp`, and the next save truncates it on open; a failed save is rare on a dev bench.
+  - `[false]` `[reject]` (blind) The preset adds a new top-level `/.crosshatch` directory, unlisted in the formats docs. — The epic names `/.crosshatch/display-lab.json` (epic-display-lab.md:32); display-lab.md documents the file and its keys; `docs/crosshatch/formats.md` covers game byte formats only.
+  - `[low]` `[patch]` (blind) The help text names Up and Down, which are not always NavNext/NavPrevious. — On a touch board the nav axis flips in inverted portrait and counter-clockwise landscape (`MappedInputManager::isNavDirectionSwapped`), so "Down replays" was wrong there. `STR_GAMES_DLAB_TRANSITION_CONTROLS` and `STR_GAMES_DLAB_EDITING` now say Next and Previous; display-lab.md names the keys behind each and the flip.
+  - `[low]` `[patch]` (blind) `allocate` checks only the screen's area; `ToPanelEqualsTheRenderersRotation` compares against a hand copy of `rotateCoordinates`. — The area half is carried `false` (`getScreenWidth/Height` derive from the panel size by orientation, GfxRenderer.cpp:1926). The copy half is grouped with the verification-gap `turnOf` entry below.
+  - `[low]` `[reject]` (blind) The session-cap guard and `runSlot`'s clock and stats handling have no tests. — carried: device-only glue (x4pro dev env only, no host harness), as dlab-0's deferred items; read again in this pass with no defect found.
+  - `[low]` `[patch]` (blind) display-lab.md puts the budget's range "(1..12)" where the percent's belongs; `GrayModel.h` calls `source` "the shade its dose was read from". — The doc now says "(clamped to 1..12)"; the header says `source` is the shade nearest the level at the last retarget, which picks the hold bit (`followsUp`, GrayModel.cpp:162).
+  - `[medium]` `[patch]` (edge) The top-edge light-panel swipe pushes `FrontlightPanelActivity` over a running test view without `onExit`. — Traced: `ActivityManager::loop` (ActivityManager.cpp:132-135) pushes it before the activity's loop on any screen; the overlay draws over the drive, and after the pop `render()` returns early while `shownOnPanel`, so its remnants stay and the sweep resumes with a jumped clock over a desynced panel. Patched: `loop()` notes the end of each call, and a gap over `COVERED_GAP_US` (1 s) while the view is up leaves the view (the rows' FULL refresh cleans the overlay). The same root cause has a second path, the forced refresh (main.cpp `renderer.displayBuffer(HALF_REFRESH)` unless `handleForcedRefresh()`), which would send the white framebuffer over the drive: `handleForcedRefresh()` now returns true while the view is up.
+  - `[medium]` `[reject]` (edge) A rectangle step wider than `RECT_W` leaves gap columns that never get the lane's shade. — Same arithmetic as the blind sweep-speed row; the intent fixes 5 s and 12 px, so grouped with it and rejected there.
+  - `[low]` `[reject]` (edge) A UTF-8 BOM at the start of the preset makes it Malformed. — Loud, not silent: LOG_ERR "malformed" and InkBoy's defaults; editors rarely add a BOM to UTF-8 today, and stripping one adds a branch to the codec.
+  - `[medium]` `[patch]` (edge) Acceptance "no screen repaint reaches the panel until the test view is left" fails when the light panel is pushed. — Grouped with the light-panel row; the same patch.
+  - `[low]` `[patch]` (verification) `turnOf` is untested, and the scene's rotation is pinned against a frozen copy of `rotateCoordinates`. — `turnOf` is now a cast whose four `static_assert`s pin each `GfxRenderer::Orientation` to the same-named `PanelTurn`, so the x4pro build fails on a mismatch. The copy half stays: pinning the real function means exposing upstream's file-static `rotateCoordinates`, an upstream touch; residual risk on an upstream merge.
+  - `[low]` `[reject]` (verification other) The first pass's reason "no host Storage" is not quite right: `test/game_script/harness/stubs/HalStorage.h` is a fake card. — True, but the fake lacks `readFileToString` and `replaceFile`, and `GrayPresetFile` compiles only with the lab on, so the conclusion holds (the lens agrees); the fix would be an edit to this plan.
+  - `[low]` `[reject]` (intent) The screens, the Tuning buttons, the Memory row and `GrayPresetFile` are exercised by no test; the matrix rows live at the device surface. — carried: device-only glue with no host harness; the evidence is the builds and the owner's hardware run.
+  - `[false]` `[reject]` (intent) Tuning's NavNext moves the selection unless Confirm was pressed; a tap wraps 12 → 1. — carried, both rows (the modal reading and the tap wrap) with their recorded reasons.
+  - `[false]` `[reject]` (intent) The live speed line shows in the log during the sweep and on the row afterwards. — carried: D4 forbids repainting during the sweep.
+  - `[false]` `[reject]` (intent) The preset codec is a std-only JSON subset, not ArduinoJson/PersistableStore. — carried; now also the orchestrator's decision (Design Notes).
+  - `[low]` `[patch]` (intent) The weak row is encoded as both masks, which `ScanBackend.h` says D1 leaves undefined. — Grouped with the blind weak-contract row; the same comment patch.
+  - `[false]` `[reject]` (intent) A failed follow-up after a delivered drive scan still commits one dose. — That is the matrix's per-scan rule ("commit: scan delivered → each driven pixel advances; a Dropped/Refused/TimedOut scan commits nothing"), the auditor's reading E1; the sweep still stops on that outcome.
+  - `[false]` `[reject]` (intent) Behaviour not in the intent: the pre-emptive cap clean, the `outcomeText` move, `TransitionScene`, the launcher PNG. — The cap clean keeps the lab's own cap clean from landing between a slot's two scans (Design Notes); the move and the scene are carried from the first pass's extras row; the PNG is the screenshot the build brief requires the story to commit.
+  - `[low]` `[reject]` (intent) The owner's "every number editable on the device" against history, routes and weak being file-only. — carried: the story names Tuning's rows and makes history and weak optional and off.
+  - `[false]` `[reject]` (intent) Whether the D6 base and the engine's size were recorded is not established by the diff. — carried: both are in Verification.
+
 ## Design Notes
 
 - **Settled by sources:** D1 (shape), D4 (no drawing during a drive), D5 (slot = max(busy + 5 ms, 100 ms)), D6 (gate), the owner's 2026-10-16 defaults decision (InkBoy's numbers, all editable), digest Q1-Q6 (model, follow-up rule, commit, retarget, routes, weak eligibility, transition test). One slot = one drive scan plus one follow-up scan (InkBoy's default pair hold, digest Q5 "drive scan, follow scan, complete_pair"; checklist 6 "HOLD-ending scan after the last drive"); its busy time is the sum of both, which D5's period uses. Each scan has `frames = 1` (a dose is one one-frame activation).
+- **Orchestrator decision (2026-10-16, follow-up dispatch; not to revisit):** the preset codec stays std-only, not ArduinoJson as the story's Approach says, because the layer check (`scripts/check_layers.py`, the spine's layer table) forbids ArduinoJson in `lib/GameDisplayLab`.
 - **No ArduinoJson (deviation from the story's wording):** the spine's layer table (ARCHITECTURE-SPINE.md:34, :38, owner-amended) lets `lib/GameDisplayLab` include the standard library only and Screens nothing in `lib/Serialization`; `scripts/check_layers.py` enforces it in CI and is outside the epic's paths. R6 asks for a host test of "the preset codec", which ArduinoJson (absent from the host suite) would prevent. So the codec is a small std-only JSON subset (objects, arrays, integers, booleans; unknown keys skipped; nested values skipped) in `GrayPreset.cpp`, fully host-tested, and the file is still JSON at the story's path. Format (absent keys keep defaults; any present key of the wrong type or out of range, a parse error, or `version` ≠ 1 → Malformed):
   `{"version":1,"doses":[2,4,7,4,1,6,4,1,5,7,3,2],"hold":[true,true,false,false,true,false,false,true,false,false,false,true],"retarget_percent":100,"rate":0,"swap_polarity":false,"history":0,"return_delta":[-1,0,0,0,0,0],"reverse_percent":[150,0,0,0,0,0],"weak_white_to_light":false}`. Routes in order LKL, DKD, DWD, LWL, DLD, LDL; ranges: dose 1..12, retarget 50..150, rate 0..255 (checked against the backend at load), history 0..3, return delta -11..11, reverse 0..250 (0 = follow retarget).
 - **Model rules** (digest excerpts): `base = ceil((dose[low][t]*(64-f) + dose[high][t]*f) / 64)`, `low = level/64`, `f = level%64`, `high = low<3 ? low+1 : low`; base 0 only when level == t*64. Retarget: `budget = old.remaining && base ? clamp(ceil(base*pct/100), 1, 12) : base`; `source = min(3, (level+32)/64)`. History (when allocated and `historyMode` ≠ 0): route exists when origin ≠ none and origin == new target, via = old target; `steps` = blackSteps when via is darker than origin, else whiteSteps; completed return (`!old.remaining`, bit0, level == via*64, steps == dose[origin][via]) → `clamp(base + returnDelta, 1, 12)` when delta ≠ 0; reversal (`old.remaining && base`, bit1, reversePercent ≠ 0) → `clamp(ceil(base*rev/100), 1, 12)`; then origin = level/64 when (new target is K or W, or DLD/LDL is non-neutral) and the pixel was settled on a shade, else none; steps reset. Commit counts each dose into black/white steps (saturating). Weak: eligible when weak bitmap present, new target L, old target W, settled at 192; cleared by any other retarget; `buildMasks(weakRow=true)` sets an eligible darkening pixel in both masks. The ceil of the scaled budget is our choice (the digest does not show InkBoy's `scaled` table); at 100 % it is the identity.
@@ -200,7 +240,17 @@ deferred: []
 - Gate in the worktree after review: games on 6,217,232 B, off 5,959,040 B, **+258,192 B, 18,288 B to spare (+0 against the D6 base)**; RAM +784 B, 240 B to spare (+0); objects: 63 checked, no problems. Both images grew 1,792 B (the 20 new `STR_GAMES_DLAB_*` strings are in every build).
 - `sim.sh build x4pro`: SUCCESS. Screenshot `_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/story-gray-screenshots/launcher-no-lab-row.png`: Home → Games in the simulator, no Display lab row (the lab is compiled out there), as expected.
 - Fresh tree (CI-gate rule): a `git archive` tree of `f8a89c01` plus every submodule (recursive), the gate's four commands only: games on 6,217,232 B, off 5,959,040 B, **+258,192 B, 18,288 B to spare**; RAM +784 B, 240 B to spare; objects 63, no problems; rc 0. Equal to the worktree run. (The amend that recorded this changed only this plan, which the gate does not read.)
-- **Not run:** `pio run -e sticky` and `pio check` on `default`. The first sticky attempt died on a full disk (other lanes' builds share it), and the `pio check -e x4pro` that followed hit the disk-full mid-way through the platform's framework reinstall, leaving the shared `~/.platformio/packages/framework-arduinoespressif32-libs` half-installed (a 0-byte `package.json`; every env failed with `MissingPackageManifestError`). I repaired it under the build lock (removed the broken package and stale `~/.platformio/.cache/tmp/pkg-installing-*`, reinstalled through `pio run -e x4pro`: manifest valid, 2.1 GB, all chips). `sticky` and `default` use `custom_sdkconfig`, whose framework reinstall-and-compile needs about twice that package's size free; with the disk at 2-3 GB I did not start it again. CI builds all seven envs and runs cppcheck on `default` on the epic PR; the `default` build above already compiled every changed shared file.
+- **Not run in the first pass (run in the follow-up below):** `pio run -e sticky` and `pio check` on `default`. The first sticky attempt died on a full disk (other lanes' builds share it), and the `pio check -e x4pro` that followed hit the disk-full mid-way through the platform's framework reinstall, leaving the shared `~/.platformio/packages/framework-arduinoespressif32-libs` half-installed (a 0-byte `package.json`; every env failed with `MissingPackageManifestError`). I repaired it under the build lock (removed the broken package and stale `~/.platformio/.cache/tmp/pkg-installing-*`, reinstalled through `pio run -e x4pro`: manifest valid, 2.1 GB, all chips). `sticky` and `default` use `custom_sdkconfig`, whose framework reinstall-and-compile needs about twice that package's size free; with the disk at 2-3 GB I did not start it again. CI builds all seven envs and runs cppcheck on `default` on the epic PR; the `default` build above already compiled every changed shared file.
+
+**Results, follow-up pass (2026-10-16, after its patches; worktree, `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`, each step under `flock /tmp/crosshatch-build.lock`; logs in the orchestrator scratchpad `dlab-c1/fu-*.log`):**
+- Host: 2,159 of 2,159 pass. All `scripts/*_test.py` exit 0; `check_layers.py` passes; `check_upstream_touches.py` PASS; `./bin/clang-format-fix` twice, the second run changed nothing.
+- `pio run -e x4pro`: rc 0; firmware.bin **6,244,928 B** (+176 B over the first pass's 6,244,752 B, the follow-up's patches; +18,752 B over the base's 6,226,176 B, both plain builds); RAM 104,232 B, +0.
+- `pio run -e default`: rc 0.
+- `pio run -e sticky`: **rc 0** (the check the first pass could not run).
+- `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` (`default`): **PASSED, no defects** (the check the first pass could not run).
+- `pio check -e x4pro` with the same flags: PASSED, no defects.
+- Gate (`build on`, `build off`, `compare --limit-kib 270 --ram-limit-bytes 1024`, `objects`) in the worktree: games on 6,217,232 B, off 5,959,056 B, **+258,176 B, 18,304 B to spare** (-16 B against the first pass's +258,192 B: the shorter help strings are in both images and the off image's padding moved); RAM +784 B, 240 B to spare; objects 63, no problems. The follow-up changes no gate, so no fresh tree.
+- `sim.sh build x4pro`: SUCCESS (the lab is compiled out there; the committed launcher screenshot stands).
 
 ## Auto Run Result
 
@@ -254,3 +304,40 @@ deferred: []
 - **Choices to confirm on hardware:** the follow-up scan is always sent after a delivered drive scan, and the slot period uses the slot's summed busy time.
 - **Dev-only code outside AD-2's scan.** Since D6 the lab's screen code is outside `objects`' static scan; `lib/GameDisplayLab` is still read.
 - **Shared package was repaired.** The framework-libs package was reinstalled by this lane; any other lane whose build failed around 07:52 with `MissingPackageManifestError` should retry.
+
+### Follow-up review pass (2026-10-16)
+
+**Summary:** a fresh four-lens review of `9b2317f3..fe2f6cef` with the plan as intent: 29 findings (high 0, medium 5, low 15, false 9). It found one real gap in the transition screen's "no repaint during the sweep" contract (D4). It also found smaller comment, doc and help-text errors. All are patched in one follow-up commit. It also ran the two checks the first pass lost to the full disk: `sticky` builds and `pio check` on `default` passes.
+
+**Files:**
+- `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}`:
+  - a screen pushed over the running view (the light panel's top-edge swipe) now ends the view, whose FULL refresh cleans the overlay;
+  - a forced refresh is swallowed while the view is up;
+  - `turnOf` is a cast pinned by `static_assert`s.
+- `lib/GameDisplayLab/GrayModel.{h,cpp}`: comments (`source`'s meaning; the weak row is a convention only for a backend whose `supportsWeakRow()` is true, which D1 leaves undefined).
+- `lib/I18n/translations/english.yaml`: the transition controls and Tuning edit help say Next/Previous, not Up/Down.
+- `docs/crosshatch/display-lab.md`: the keys behind Next/Previous and their flip, the covered-view and forced-refresh behaviour, and "clamped to 1..12".
+
+**Review breakdown:**
+- **Patched (5 entries):** 1 medium (the light-panel overlay and forced refresh), 4 low (the weak-row comments, the help strings, the doc range and `source` comment, `turnOf`).
+- **Deferred:** none.
+- **Rejected:** the rest, each with its reason in the Review Triage Log:
+  - the sweep-speed arithmetic (the intent fixes 5 s and 12 px);
+  - `skipped` miscounting (false);
+  - the carried rows (Saved status, the gate's build dir, `objects` coverage, `skipNumber`, device glue, Tuning's mode and wrap, the live line, ArduinoJson, editability, D6 figures);
+  - the `.tmp` leftover;
+  - `/.crosshatch` (the epic names it);
+  - the BOM;
+  - the per-scan commit rule;
+  - the extras;
+  - the first pass's "no host Storage" wording.
+
+**Follow-up review recommendation:** `false`. No high was patched in this pass (1 medium, 4 low), so the work has converged.
+
+**Verification:** see Verification, "Results, follow-up pass". `sticky` rc 0; `pio check` on `default` PASSED with no defects; x4pro, default, `pio check -e x4pro`, the gate (+258,176 B, 18,304 B to spare; RAM 240 B to spare) and the sim build all pass.
+
+**Residual risks (added by this pass):**
+- **Sweep speed on this panel.** At D5's 100 ms slot floor, a 12-px rectangle crossing in 5 s moves about 9.8 px a slot in portrait and 16 px in landscape. A pixel under it gets one or two doses, against up to 7 for W>K. So the rectangles will likely never reach their shade on the X4 Pro, and gap columns appear in landscape. The story and R4 fix these numbers. If the owner's hardware run confirms the problem, a slower sweep or wider rectangles needs an epic Decision.
+- **Covered-view detection is a timing heuristic.** A screen pushed over the view and closed within 1 s goes unnoticed. The light panel cannot realistically open and close that fast.
+- **The scene's rotation is pinned against a copy of `rotateCoordinates`.** An upstream change to it would not fail the test.
+

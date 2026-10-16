@@ -26,7 +26,8 @@
 // what was delivered. While the test view is up the screen draws nothing (D4: the panel shows only what the scans
 // drive); Confirm or a tap over the rows' area pauses or resumes, a swipe does nothing, NavNext replays (clean, sweep
 // from 0), NavPrevious cleans (white panel, paused), Back leaves the view. A non-Done scan stops the sweep and leaves
-// the view with its outcome on the Run row. Leaving the view repaints the rows with a FULL refresh. Before a slot that
+// the view with its outcome on the Run row, and another screen covering it (the light panel) ends it once it closes;
+// a forced refresh is swallowed. Leaving the view repaints the rows with a FULL refresh. Before a slot that
 // would cross the session cap the screen cleans first (white panel, model reset, the scene reapplied; the sweep clock
 // stands still through it), so the lab's own cap clean never lands between a slot's two scans. Logs `DLAB gray
 // scans_s=N.N ms_per_scan=N skipped=N` (skipped: slot periods lost in that window) about every 2 s while running and
@@ -43,6 +44,8 @@ class TransitionTestActivity final : public UiListActivity {
   static constexpr uint32_t STATS_EVERY_US = 2000000;
   // Scans in one slot: the drive scan and the follow-up.
   static constexpr uint32_t SCANS_PER_SLOT = 2;
+  // A gap between two loop() calls this long while the test view is up means another screen covered it.
+  static constexpr uint32_t COVERED_GAP_US = 1000000;
 
   // `lab` is the menu under this screen on the stack, which outlives it.
   TransitionTestActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
@@ -50,6 +53,9 @@ class TransitionTestActivity final : public UiListActivity {
   void loop() override;
   bool skipLoopDelay() override { return running; }
   bool preventAutoSleep() override { return running; }
+  // A forced refresh (the power or home button's Refresh) would send the framebuffer over the drive: swallowed while
+  // the test view is up (D4).
+  bool handleForcedRefresh() override { return shownOnPanel.load(); }
 
  private:
   enum class Row : uint8_t { Run, Stats, Controls };
@@ -124,6 +130,8 @@ class TransitionTestActivity final : public UiListActivity {
   uint32_t clockUs = 0;
   uint32_t sceneMs = 0;
   uint32_t statsSinceUs = 0;
+  // micros() at the end of the last loop() call.
+  uint32_t lastLoopUs = 0;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB

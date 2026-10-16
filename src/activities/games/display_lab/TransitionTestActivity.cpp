@@ -25,20 +25,17 @@ using GameDisplayLab::Shade;
 
 namespace {
 
-// The renderer's orientation as the scene's panel turn (both name GfxRenderer's four orientations).
-PanelTurn turnOf(const GfxRenderer::Orientation orientation) {
-  switch (orientation) {
-    case GfxRenderer::Portrait:
-      return PanelTurn::Portrait;
-    case GfxRenderer::LandscapeClockwise:
-      return PanelTurn::LandscapeClockwise;
-    case GfxRenderer::PortraitInverted:
-      return PanelTurn::PortraitInverted;
-    case GfxRenderer::LandscapeCounterClockwise:
-      return PanelTurn::LandscapeCounterClockwise;
-  }
-  return PanelTurn::LandscapeCounterClockwise;
-}
+// GfxRenderer's four orientations and the scene's panel turns name the same rotations in the same order, so the
+// renderer's orientation is the scene's turn by value; the asserts pin each pair by name.
+static_assert(static_cast<int>(PanelTurn::Portrait) == GfxRenderer::Portrait, "PanelTurn follows GfxRenderer");
+static_assert(static_cast<int>(PanelTurn::LandscapeClockwise) == GfxRenderer::LandscapeClockwise,
+              "PanelTurn follows GfxRenderer");
+static_assert(static_cast<int>(PanelTurn::PortraitInverted) == GfxRenderer::PortraitInverted,
+              "PanelTurn follows GfxRenderer");
+static_assert(static_cast<int>(PanelTurn::LandscapeCounterClockwise) == GfxRenderer::LandscapeCounterClockwise,
+              "PanelTurn follows GfxRenderer");
+
+PanelTurn turnOf(const GfxRenderer::Orientation orientation) { return static_cast<PanelTurn>(orientation); }
 
 }  // namespace
 
@@ -242,10 +239,18 @@ void TransitionTestActivity::onBackButton() {
 }
 
 void TransitionTestActivity::loop() {
+  // Another screen pushed over this one (the light panel's top-edge swipe) gets no onExit here, stops this loop, and
+  // draws over the drive; a gap that long means it happened, and the view ends with the rows' FULL refresh.
+  if (shownOnPanel.load() && micros() - lastLoopUs > COVERED_GAP_US) {
+    LOG_INF("DLAB", "gray sweep: covered by another screen");
+    leaveView(tr(STR_GAMES_DLAB_STOPPED));
+  }
   UiListActivity::loop();
-  if (!running) return;
-  const uint32_t nowUs = micros();
-  if (scheduler.due(nowUs)) runSlot(nowUs);
+  if (running) {
+    const uint32_t nowUs = micros();
+    if (scheduler.due(nowUs)) runSlot(nowUs);
+  }
+  lastLoopUs = micros();
 }
 
 void TransitionTestActivity::cleanToWhite() {

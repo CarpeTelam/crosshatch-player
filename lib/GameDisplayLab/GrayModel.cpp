@@ -179,7 +179,8 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
       const bool lighten = targetOf(state) * LEVEL_STEP > pixels_[2 * i];
       const bool weak = weakRow && !lighten && weakBit(i);
       const bool again = followsUp(state, preset);
-      // A weak pixel is set in both masks: the backend's third (weak) row (MaskPlanes, D1).
+      // A weak pixel is set in both masks: the third (weak) row of a backend whose supportsWeakRow() is true. D1 itself
+      // leaves a both-masks pixel undefined (the SSD1677 holds it), so only `weakRow` sets one.
       if (weak || lighten) {
         drive.setPixel(MaskPlanes::Mask::White, x, y);
         if (again) follow.setPixel(MaskPlanes::Mask::White, x, y);

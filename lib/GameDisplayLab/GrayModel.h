@@ -11,10 +11,10 @@
 //
 // A non-owning view over caller buffers in panel coordinates (the masks' pixel order), each pixel two bytes: its
 // modelled level (0..192, shade * 64; K = 0, W = 192), then remaining | target << 4 | source << 6 (the doses still to
-// deliver, 0..12; the shade it moves to; the shade its dose was read from). Optional: a history array of three bytes
-// per pixel (origin shade, or ORIGIN_NONE; the doses delivered darker and lighter since the last retarget), and a
-// weak bitmap (one bit per pixel, row-major, most significant bit first: a W > L pixel that darkens through the weak
-// row). Without them (null) history routes and weak mode are off.
+// deliver, 0..12; the shade it moves to; the shade nearest its level at the last retarget, which picks the hold bit).
+// Optional: a history array of three bytes per pixel (origin shade, or ORIGIN_NONE; the doses delivered darker and
+// lighter since the last retarget), and a weak bitmap (one bit per pixel, row-major, most significant bit first: a W >
+// L pixel that darkens through the weak row). Without them (null) history routes and weak mode are off.
 //
 // One slot (GraySlot.h): buildMasks puts every pixel with doses left in the drive mask toward its target, and in the
 // follow-up mask too when its transition's hold bit is off and it has two or more doses left; commit then advances
@@ -70,9 +70,9 @@ class GrayModel {
   void retargetRect(int x, int y, int w, int h, Shade target, const GrayPreset& preset);
 
   // Clears both mask pairs and sets each pixel with doses left: in `drive`, white when it lightens (target * 64 >
-  // level), else black (both, the weak row, when `weakRow` and the pixel is weak-eligible); in `follow` the same when
-  // its hold bit is off and it has more than one dose left. Both pairs must match the model's size. Returns the
-  // pixels driven; 0 for a mismatched pair (nothing set).
+  // level), else black (both, the weak row of a backend that has one, when `weakRow` and the pixel is weak-eligible);
+  // in `follow` the same when its hold bit is off and it has more than one dose left. Both pairs must match the model's
+  // size. Returns the pixels driven; 0 for a mismatched pair (nothing set).
   size_t buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPreset& preset, bool weakRow) const;
   // Commits the slot buildMasks planned: nothing unless `driveDone`; one dose per driven pixel, and a second for a
   // follow-up pixel when `followDone`. History step counters count each dose (saturating at 255).
