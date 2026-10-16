@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "LabExperiments.h"  // FRAME_PERIOD_TPS and POLARITY_TP, which the experiments share with every backend
+
 // The SSD1677 one-frame scan waveform the display lab drives the X4 Pro's panel with (the spike plan
 // `plan-spike-ssd1677-grayscale-calibration.md`, Part A). Pure C++: no Arduino or SDK include, so the host suite
 // (test/game_display_lab) pins every byte.
@@ -40,10 +42,10 @@ constexpr size_t VOLTAGE_BYTES = 5;
 // VGH, VSH1, VSH2, VSL, VCOM: the X4's stock grayscale LUT tail (freeink-sdk `lut_grayscale`).
 inline constexpr uint8_t STOCK_VOLTAGES[VOLTAGE_BYTES] = {0x17, 0x41, 0xA8, 0x32, 0x30};
 
-// The frame-period experiment: every TP[0A] in FRAME_PERIOD_TPS against every frame-rate byte in FRAME_PERIOD_RATES,
-// in that nesting order (tp outer), all-hold masks. 0x22 is the frame-rate byte Waveshare's 4-gray LUT uses on this
-// panel; 0x11 and 0x44 bracket it. The byte's encoding is undocumented, so the three are an experiment, not a claim.
-inline constexpr uint8_t FRAME_PERIOD_TPS[] = {1, 10, 100};
+// The frame-period experiment: every TP[0A] in FRAME_PERIOD_TPS (LabExperiments.h) against every frame-rate byte in
+// FRAME_PERIOD_RATES, in that nesting order (tp outer), all-hold masks. 0x22 is the frame-rate byte Waveshare's 4-gray
+// LUT uses on this panel; 0x11 and 0x44 bracket it. The byte's encoding is undocumented, so the three are an
+// experiment, not a claim.
 inline constexpr uint8_t FRAME_PERIOD_RATES[] = {0x22, 0x11, 0x44};
 constexpr size_t FRAME_PERIOD_SCANS = 9;
 static_assert(sizeof(FRAME_PERIOD_TPS) * sizeof(FRAME_PERIOD_RATES) == FRAME_PERIOD_SCANS);
@@ -58,8 +60,7 @@ constexpr ScanParams framePeriodScan(const size_t i) {
   return {FRAME_PERIOD_TPS[i / rates], FRAME_PERIOD_RATES[i % rates]};
 }
 
-// The polarity experiment drives the panel for this many frames.
-constexpr uint8_t POLARITY_TP = 10;
+// The polarity experiment drives the panel for POLARITY_TP frames (LabExperiments.h).
 // InkBoy's SSD1681 convention, the default the polarity screen tries first: VSL on the BW-plane row (row 1) and VSH1
 // on the RED-plane row (row 2). The panel says which one darkens.
 constexpr VsCode POLARITY_ROW1 = VsCode::Vsl;

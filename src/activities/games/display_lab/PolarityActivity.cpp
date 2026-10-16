@@ -6,7 +6,6 @@
 #include <HalDisplay.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <Ssd1677ScanLut.h>
 
 #include <cstdio>
 #include <utility>
@@ -16,16 +15,7 @@
 
 namespace fui = freeink::ui;
 
-using GameDisplayLab::LutRow;
-using GameDisplayLab::PlaneFill;
-using GameDisplayLab::VsCode;
-
-namespace {
-
-constexpr LutRow LUT_ROWS[PolarityActivity::ROW_COUNT] = {LutRow::Row1, LutRow::Row2};
-constexpr VsCode VS_CODES[PolarityActivity::ROW_COUNT] = {GameDisplayLab::POLARITY_ROW1, GameDisplayLab::POLARITY_ROW2};
-
-}  // namespace
+using GameDisplayLab::MaskPlanes;
 
 PolarityActivity::PolarityActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab)
     : UiListActivity(NAME, renderer, mappedInput), lab(lab) {}
@@ -36,12 +26,18 @@ void PolarityActivity::onEnter() {
   UiListActivity::onEnter();
   // The render task may draw this screen while onEnter runs, and it reads the rows.
   RenderLock lock(*this);
-  // The labels name the code each row is driven with, from the one place that holds it (the log line does the same).
-  snprintf(labels[0], sizeof(labels[0]), tr(STR_GAMES_DLAB_ROW1), GameDisplayLab::vsName(VS_CODES[0]));
-  snprintf(labels[1], sizeof(labels[1]), tr(STR_GAMES_DLAB_ROW2), GameDisplayLab::vsName(VS_CODES[1]));
+  // The labels name what each row drives, from the backend that knows (the log line does the same).
+  snprintf(labels[0], sizeof(labels[0]), tr(STR_GAMES_DLAB_ROW1), rowLabelOf(0));
+  snprintf(labels[1], sizeof(labels[1]), tr(STR_GAMES_DLAB_ROW2), rowLabelOf(1));
   for (size_t i = 0; i < ROW_COUNT; ++i) snprintf(results[i], sizeof(results[i]), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
   shownOnPanel = false;
   buildRows();
+}
+
+const char* PolarityActivity::rowLabelOf(const size_t index) const {
+  const ScanBackend* backend = lab.backend();
+  const char* label = backend ? backend->rowLabel(static_cast<uint8_t>(index + 1)) : nullptr;
+  return label ? label : "?";
 }
 
 void PolarityActivity::buildRows() {
@@ -95,18 +91,23 @@ void PolarityActivity::activateIndex(const int index) {
 }
 
 void PolarityActivity::drive(const size_t index) {
-  uint8_t lut[GameDisplayLab::LUT_BYTES];
-  GameDisplayLab::buildOneFrameLut(lut, GameDisplayLab::POLARITY_TP, GameDisplayLab::FRAME_PERIOD_RATES[0],
-                                   GameDisplayLab::POLARITY_ROW1, GameDisplayLab::POLARITY_ROW2);
-  const PlaneFill fill = GameDisplayLab::planeFillFor(LUT_ROWS[index]);
+  MaskPlanes& masks = lab.masks();
+  masks.clear();
+  masks.fill(GameDisplayLab::POLARITY_ROW_MASKS[index]);
+  // Rate index 0 (0x22 on the SSD1677) and the backend's rows unswapped: the drive its rowLabel names.
+  const ScanRequest request{.blackMask = masks.black(),
+                            .whiteMask = masks.white(),
+                            .frames = GameDisplayLab::POLARITY_TP,
+                            .rate = 0,
+                            .swapPolarity = false};
   uint32_t busyUs = 0;
-  const DisplayLabActivity::Scan result = lab.scan(lut, fill.bw, fill.red, busyUs);
+  const DisplayLabActivity::Scan result = lab.scan(request, busyUs);
   const unsigned ms = static_cast<unsigned>(busyUs / 1000);
   const unsigned row = static_cast<unsigned>(index + 1);
   RenderLock lock(*this);  // the render task reads the rows
   switch (result) {
     case DisplayLabActivity::Scan::Done:
-      LOG_INF("DLAB", "polarity row=%u vs=%s ms=%u", row, GameDisplayLab::vsName(VS_CODES[index]), ms);
+      LOG_INF("DLAB", "polarity row=%u vs=%s ms=%u", row, rowLabelOf(index), ms);
       snprintf(results[index], sizeof(results[index]), tr(STR_GAMES_DLAB_DRIVEN), ms);
       // The panel keeps the drive until the next Confirm or tap; the repaint it brings cleans with a FULL refresh.
       renderer.promoteNextRefresh(HalDisplay::FULL_REFRESH);

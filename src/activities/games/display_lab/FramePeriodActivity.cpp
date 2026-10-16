@@ -14,9 +14,6 @@
 
 namespace fui = freeink::ui;
 
-using GameDisplayLab::LutRow;
-using GameDisplayLab::PlaneFill;
-
 namespace {
 
 // The Run row's status after a run that ended with `result`.
@@ -29,7 +26,7 @@ const char* outcomeText(const DisplayLabActivity::Scan result) {
     case DisplayLabActivity::Scan::Dropped:
       return tr(STR_GAMES_DLAB_DROPPED);
     case DisplayLabActivity::Scan::Refused:
-      return tr(STR_GAMES_DLAB_REFUSED);  // no planes, or an inverted display: the log line says which
+      return tr(STR_GAMES_DLAB_REFUSED);  // no session, an inverted display, or a bad request: the log says which
   }
   return "";
 }
@@ -46,14 +43,28 @@ void FramePeriodActivity::onEnter() {
   UiListActivity::onEnter();
   // The render task may draw this screen while onEnter runs, and it reads the rows.
   RenderLock lock(*this);
+  // The lab opens this screen only with a backend; without one there is nothing to run.
+  ScanBackend* backend = lab.backend();
+  uint8_t rates = backend ? backend->rateCount() : 0;
+  if (rates > MAX_RATES) {
+    LOG_ERR("DLAB", "backend has %u rates; the frame-period screen runs the first %u", static_cast<unsigned>(rates),
+            static_cast<unsigned>(MAX_RATES));
+    rates = MAX_RATES;
+  }
+  rateCount = rates;
+  scanCount = TP_COUNT * rateCount;
   status = tr(STR_GAMES_DLAB_NOT_RUN);
-  for (size_t i = 0; i < SCANS; ++i) {
-    const GameDisplayLab::ScanParams params = GameDisplayLab::framePeriodScan(i);
-    snprintf(labels[i], sizeof(labels[i]), "tp=%u fr=0x%02X", static_cast<unsigned>(params.tp),
-             static_cast<unsigned>(params.rate));
+  for (size_t i = 0; i < scanCount; ++i) {
+    snprintf(labels[i], sizeof(labels[i]), "tp=%u fr=%s", static_cast<unsigned>(tpOf(i)), rateLabelOf(i));
     snprintf(results[i], sizeof(results[i]), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
   }
   buildRows();
+}
+
+const char* FramePeriodActivity::rateLabelOf(const size_t i) const {
+  ScanBackend* backend = lab.backend();
+  const char* label = backend ? backend->rateLabel(rateOf(i)) : nullptr;
+  return label ? label : "?";
 }
 
 void FramePeriodActivity::buildRows() {
@@ -62,7 +73,7 @@ void FramePeriodActivity::buildRows() {
   runRow.subtitle = status;
   runRow.actionValue = 0;
   rowItems[0] = runRow;
-  for (size_t i = 0; i < SCANS; ++i) {
+  for (size_t i = 0; i < scanCount; ++i) {
     fui::ListItem item;
     item.label = labels[i];
     item.subtitle = results[i];
@@ -82,7 +93,7 @@ void FramePeriodActivity::buildScreen(UiScreen& screen) {
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   fui::ListProps props;
   props.items = rowItems;
-  props.count = static_cast<uint16_t>(ROW_COUNT);
+  props.count = static_cast<uint16_t>(listCount());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.subtitleText = screen.theme().smallText;
@@ -106,29 +117,27 @@ void FramePeriodActivity::run() {
     rowItems[0].subtitle = status;
     GUI.drawPopup(renderer, tr(STR_GAMES_DLAB_RUNNING));
   }
-  // The one LUT buffer, rebuilt per scan: 112 bytes on the stack.
-  uint8_t lut[GameDisplayLab::LUT_BYTES];
-  const PlaneFill hold = GameDisplayLab::planeFillFor(LutRow::Hold);
+  // All-hold scans: both masks clear, once per run, so every pixel holds and the screen stays.
+  GameDisplayLab::MaskPlanes& masks = lab.masks();
+  masks.clear();
+  ScanRequest request{
+      .blackMask = masks.black(), .whiteMask = masks.white(), .frames = 0, .rate = 0, .swapPolarity = false};
   const char* outcome = tr(STR_GAMES_DLAB_DONE);
-  for (size_t i = 0; i < SCANS; ++i) {
-    const GameDisplayLab::ScanParams params = GameDisplayLab::framePeriodScan(i);
-    const uint8_t tp = params.tp;
-    const uint8_t rate = params.rate;
-    // Rows 1 and 2 carry the polarity codes so the LUT is the same shape the polarity screen runs; with both planes
-    // zero every pixel selects LUT0 and holds.
-    GameDisplayLab::buildOneFrameLut(lut, tp, rate, GameDisplayLab::POLARITY_ROW1, GameDisplayLab::POLARITY_ROW2);
+  for (size_t i = 0; i < scanCount; ++i) {
+    const uint8_t tp = tpOf(i);
+    request.frames = tp;
+    request.rate = rateOf(i);
     uint32_t busyUs = 0;
-    const DisplayLabActivity::Scan result = lab.scan(lut, hold.bw, hold.red, busyUs);
+    const DisplayLabActivity::Scan result = lab.scan(request, busyUs);
     RenderLock lock(*this);  // the render task reads the rows
     if (result != DisplayLabActivity::Scan::Done) {
       // The lab logged why (a timeout, after which it cleaned the panel, a dropped call, or a refusal); the run ends
-      // here, and the
-      // scans not reached keep "Not run".
+      // here, and the scans not reached keep "Not run".
       outcome = outcomeText(result);
       snprintf(results[i], sizeof(results[i]), "%s", outcome);
       break;
     }
-    LOG_INF("DLAB", "tp=%u fr=0x%02x busy_us=%lu", static_cast<unsigned>(tp), static_cast<unsigned>(rate),
+    LOG_INF("DLAB", "tp=%u fr=%s busy_us=%lu", static_cast<unsigned>(tp), rateLabelOf(i),
             static_cast<unsigned long>(busyUs));
     snprintf(results[i], sizeof(results[i]), tr(STR_GAMES_DLAB_MICROSECONDS), static_cast<unsigned>(busyUs));
   }

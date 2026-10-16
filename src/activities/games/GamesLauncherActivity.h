@@ -34,9 +34,9 @@ struct Report;
 // repeat rows of the one before it. The launcher remembers the game it last opened (a fingerprint of its id), and the
 // next launcher, built by ActivityManager::goToGames(), selects that game's row and shows the whole page holding it: a
 // Confirm there opens the title screen, whose first row is Continue when the game has a save, so two Confirms resume.
-// On an X4 Pro whose panel probe said SSD1677 (DisplayLabActivity::available(), device games builds only), one more
-// row after the games, "Display lab", opens the SSD1677 bench behind an entry warning (ConfirmationActivity): Back or
-// Cancel there returns here and nothing reaches the panel. The row is absent on every other device and panel.
+// On an X4 Pro whose controller has a scan backend (DisplayLabActivity::available(), device games builds only), one
+// more row after the games, "Display lab", opens the display lab behind an entry warning (ConfirmationActivity): Back
+// or Cancel there returns here and nothing reaches the panel. The row is absent on every other device and panel.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
