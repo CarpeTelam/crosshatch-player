@@ -52,6 +52,8 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 
 - Lane 0 (serial, first): `dlab-0` the backend seam. Everything else branches from its merge.
 - Lane C: `dlab-c1` the grayscale engine and its two screens (after lane 0).
+- Lane C, second story: `dlab-c2` the transition test's sweep on its own FreeRTOS task (after dlab-c1 and the owner's
+  first hardware run; D11).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -128,6 +130,14 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   against the lab, an UltraChip controller with a scan backend gets the stock bench's two rows (Transition timing,
   Gray ramp) appended to the scan menu before Exit; an SSD1677 does not. The stock-bench-only menu stays for an
   UltraChip controller with no backend.
+- D11 (2026-10-16, after the owner's first UC8179 run): the transition test's controls were laggy to non-responsive
+  because its slots run inline in the main loop, which is the only place input is polled, and an UltraChip scan
+  blocks for hundreds of milliseconds. The sweep moves to a dedicated FreeRTOS task (story dlab-c2), as GameVM runs
+  scripts; the main loop keeps polling input and forwards the controls to the task between scans; the panel stays the
+  task's alone while the view is up (D4), every scan still goes through DisplayLabActivity::scan under RenderLock,
+  and the task is joined before onExit frees anything. Two smaller fixes landed first as an orchestrator `fix:`
+  commit (8598d3ad): the follow-up scan is skipped when its masks are empty (MaskPlanes::any), and the entry warning
+  was shortened to fit the dialog's three headline lines.
 
 ## Story results
 

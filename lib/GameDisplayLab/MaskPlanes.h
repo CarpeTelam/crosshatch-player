@@ -41,6 +41,8 @@ class MaskPlanes {
   void setPixel(Mask mask, int x, int y);
   // Whether the pixel is set in `mask`; false outside the mask.
   bool test(Mask mask, int x, int y) const;
+  // Whether any pixel is set in either mask (a scan of them would drive something); false when invalid.
+  bool any() const;
 
  private:
   uint8_t* plane(Mask mask) const;

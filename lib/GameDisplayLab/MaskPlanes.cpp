@@ -61,4 +61,13 @@ bool MaskPlanes::test(const Mask mask, const int x, const int y) const {
   return (byte & (0x80u >> (x & 7))) != 0;
 }
 
+bool MaskPlanes::any() const {
+  if (!valid()) return false;
+  const size_t n = bytes();
+  for (size_t i = 0; i < n; ++i) {
+    if ((black_[i] | white_[i]) != 0) return true;
+  }
+  return false;
+}
+
 }  // namespace GameDisplayLab

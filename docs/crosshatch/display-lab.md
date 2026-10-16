@@ -299,8 +299,8 @@ count of doses left; a **dose** is one one-frame scan of that pixel toward its t
 from shade A to shade B gets the dose-table entry for A>B; one between shades gets the two neighbouring shades' doses
 interpolated, rounded up; one interrupted mid-transition gets that scaled by the retarget percent (clamped to 1..12). The model
 advances only when a scan was delivered: `level += (target*64 - level) / remaining`, so the last dose lands on the
-target. One **slot** is a drive scan of every pixel with doses left, then a follow-up scan that drives again only the
-pixels whose transition's hold bit is off and that have two or more doses left (every other pixel holds, which ends
+target. One **slot** is a drive scan of every pixel with doses left, then, when any pixel needs it, a follow-up
+scan that drives again only the pixels whose transition's hold bit is off and that have two or more doses left (every other pixel holds, which ends
 the pulse); a slot repeats every max(the slot's busy time + 5 ms, 100 ms) (the epic's D5). Nothing is dithered.
 
 The preset starts as InkBoy's defaults, the author's numbers for an SSD1681, not this panel's: finding this panel's
