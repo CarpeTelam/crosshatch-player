@@ -135,6 +135,15 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   "about 150 s" stall claim corrected: the SDK's UC8279 BUSY wait has no bound); 2,129 host tests; x4pro, default,
   sticky build; pio check -e x4pro clean; flash +1,472 B (gate 6,016 B to spare before D6), static RAM unchanged.
   Merged into `claude/display-experimental-sdk-do-not-merge` as `7ea790b2`; 2 deferrals carried to deferred-work.md.
+- dlab-c1 (lane C): built, D6 as `1ca33864` and the engine as `fe2f6cef` on `dlab-lane-c`; follow-up pass `ef6e15a2`
+  (29 findings, 0 high, 5 medium; 1 medium patched: a light-panel swipe could cover the running transition test and
+  draw over the drive). 2,159 host tests on the merged tree; x4pro, default, sticky build; pio check clean on default
+  and x4pro; the preset codec is std-only (the layer check forbids ArduinoJson there). Flash: with D6 the gate measures
+  shipped firmware, base re-taken at `9b2317f3` + D6 as +258,192 B games delta (18,288 B to spare), the engine +0
+  against it; the plain x4pro image with the lab on grows +18,576 B; static RAM +0. Merged as `7e430902`; no
+  deferrals. Open for the hardware run: at D5's 100 ms slots a 12 px rectangle crossing in 5 s gives each pixel only
+  1-2 doses, so it may never reach its shade; the sweep speed or slot period is an epic Decision after the owner's
+  transition-test run, not a lane fix.
 
 ## Measurement (base)
 
