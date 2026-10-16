@@ -174,6 +174,14 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   base (18,288 B to spare), static RAM 240 B to spare. Merged into the experimental branch; 1 deferral carried.
   Hardware questions for the owner: which table darkens, whether a repeat-1 group runs once or twice, whether the
   panel accepts PLL 0x07.
+- dlab-c2 (lane C2, after the owner's first UC8179 run): built; the auto workflow's nested subagents were unavailable
+  in this session, so the orchestrator ran the implementation agent and the four lenses itself (orchestrated-epics
+  § 3's fallback): first pass 29 findings, 10 patched, 2 deferred (`1d873a0c`); follow-up pass 36 findings, 9 patched,
+  3 deferred, converged (`e7b071e5` on `dlab-lane-c2`); merged as `baf66c80`. 2,196 host tests; x4pro, default, sticky build; pio
+  check x4pro clean; plain x4pro +2,320 B flash over `8874e2ce`, RAM +0; flash gate +0 (240 B RAM to spare). The sweep
+  task: 8 KiB stack (SSD1677 chain measured at about 2.5 KB; the UltraChip session is a 2 KiB provision until the first
+  hardware `gray sweep task ended` line). 5 deferrals carried to deferred-work.md. Hardware check for the owner: a
+  short Confirm press pauses within a slot, Back stops at once, `ms_per_scan` unchanged from before.
 
 ## Measurement (base)
 
