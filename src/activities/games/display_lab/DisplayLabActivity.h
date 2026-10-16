@@ -1,48 +1,36 @@
 #pragma once
 
-// The display lab compiles only in the X4 Pro development games build (`x4pro`, which alone sets
-// FREEINK_CAP_DISPLAY_LAB=1 in platformio.ini): its scan primitive reaches the SDK facade through HalDisplay::eink()
-// (upstream touch ledger row 13), which the simulator's HAL stand-in does not have, the panel it measures is the X4
-// Pro's, and a bench has no place in a release image. Every display_lab file and the launcher's row sit behind this
-// one macro, so the C3 `default`, `sticky`, the `x4pro-gh_release*` and simulator envs compile none of it.
-// Tested by value, not defined(): BoardConfig.h defaults every FREEINK_DEVICE_* macro to 0.
-#ifndef FREEINK_CAP_DISPLAY_LAB
-#define FREEINK_CAP_DISPLAY_LAB 0
-#endif
-#if FREEINK_CAP_GAMES && FREEINK_DEVICE_X4PRO && FREEINK_CAP_DISPLAY_LAB && !defined(SIMULATOR)
-#define CROSSHATCH_DISPLAY_LAB 1
-#else
-#define CROSSHATCH_DISPLAY_LAB 0
-#endif
+#include "ScanBackend.h"  // CROSSHATCH_DISPLAY_LAB, the gate every display_lab file sits behind
 
 #if CROSSHATCH_DISPLAY_LAB
 
 #include <HalMemory.h>
+#include <MaskPlanes.h>
 #include <ScanBudget.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "activities/UiListActivity.h"
 
-// The display lab (Games → Display lab; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A): a bench
-// for the SSD1677 batch of the X4 Pro that answers two numbers only the panel can give, the frame period and the drive
-// polarity of the two LUT rows. Headed "Display lab", three rows: Frame period (FramePeriodActivity), Polarity
-// (PolarityActivity), Exit. The launcher shows its row only on an X4 Pro whose probe said SSD1677 (available()), and
-// pushes this screen only after the entry warning was confirmed, so Back on the warning sends nothing to the panel.
+// The display lab (Games → Display lab; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A, and the
+// display-lab epic's backend seam): a bench for the X4 Pro's panel that answers two numbers only the panel can give,
+// the frame period and the drive polarity of the two drive rows. Headed "Display lab", three rows: Frame period
+// (FramePeriodActivity), Polarity (PolarityActivity), Exit. The launcher shows its row only on an X4 Pro whose
+// controller has a scan backend (available(); SSD1677 only so far), and pushes this screen only after the entry
+// warning was confirmed, so Back on the warning sends nothing to the panel.
 //
-// It owns the scan primitive the two experiment screens call (scan()): both mask planes, 48,000 B each in PSRAM
-// (allocated in onEnter, freed in onExit; the lab shows one notice row and runs nothing when PSRAM has no room), the
-// caller's 112-byte LUT, and the facade's overlay-grayscale path: copyGrayscaleBuffers(bw, red) writes the raw masks
-// into RAM 0x24 and 0x26, and displayGrayBuffer(turnOff=false, lut, factoryMode=true) uploads the LUT (bytes 0-104 to
-// 0x32, the stock voltage tail to 0x03, 0x04 and 0x2C), activates with 0x22 = 0xCC and blocks on BUSY. The time of
-// that call is the scan's busy time. Safety: stock voltages only (the LUT builder writes them), never the OTP command,
-// a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP scans the panel gets a
-// FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a scan reached the panel
-// since the last clean, and logs the count. An inverted display is refused with a notice, and again at every scan
-// (the control-center panel can invert it after onEnter): the facade drops grayscale calls while inverted, so a scan
-// would measure nothing. A call the facade dropped for another reason returns in well under DROPPED_BELOW_US, so the
-// budget reports it as Dropped rather than a near-zero busy time.
+// It owns the session the two experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
+// masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
+// created in onEnter and freed in onExit (the lab shows one notice row and runs nothing when any of them has no room),
+// and scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the stock voltages and
+// never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP
+// scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a
+// scan reached the panel since the last clean, and logs the count. An inverted display is refused with a notice, and
+// again at every scan (the control-center panel can invert it after onEnter): the facade drops grayscale calls while
+// inverted, so a scan would measure nothing. A call the facade dropped for another reason returns in well under
+// DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
 class DisplayLabActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DisplayLab";
@@ -55,17 +43,23 @@ class DisplayLabActivity final : public UiListActivity {
   // A facade call back sooner than this never reached the panel (a one-frame activation alone takes milliseconds).
   static constexpr uint32_t DROPPED_BELOW_US = 500;
 
-  // True on a device whose panel the lab can drive: an X4 Pro whose probe said SSD1677.
+  // True on a device whose panel the lab can drive: an X4 Pro whose controller has a scan backend.
   static bool available();
 
   DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 
-  enum class Scan : uint8_t { Done, TimedOut, Dropped, Refused };
-  // One scan: fills the BW plane with `bwFill` and the RED plane with `redFill` (GameDisplayLab::PlaneFill), uploads
-  // both, and runs `lut` (GameDisplayLab::LUT_BYTES bytes). `busyUs` is the facade call's time in microseconds.
-  // Takes the render lock. Refused when the planes were not allocated or the display is inverted (nothing is sent);
-  // Dropped when the call came back under DROPPED_BELOW_US (the facade dropped it; counted, no clean).
-  Scan scan(const uint8_t* lut, uint8_t bwFill, uint8_t redFill, uint32_t& busyUs);
+  using Scan = ScanBackend::Scan;
+  // One scan through the backend: the screens fill masks() and pass masks().black() and masks().white() in `request`.
+  // `busyUs` is the backend's activation time in microseconds. Takes the render lock, and cleans first when the
+  // session cap is due. Refused when the session has no backend and masks, the display is inverted, the rate index is
+  // not below backend()->rateCount(), or the backend refused (nothing is sent); TimedOut when the call took over
+  // SCAN_TIMEOUT_MS (logged, the panel cleaned); Dropped when it came back under DROPPED_BELOW_US (the facade dropped
+  // it; counted, no clean).
+  Scan scan(const ScanRequest& request, uint32_t& busyUs);
+  // The session's two drive masks; valid() false when the lab shows a notice.
+  GameDisplayLab::MaskPlanes& masks() { return maskPlanes; }
+  // The session's backend; null when the lab shows a notice.
+  ScanBackend* backend() { return scanBackend.get(); }
 
  private:
   enum class Row : uint8_t { FramePeriod, Polarity, Exit };
@@ -74,22 +68,27 @@ class DisplayLabActivity final : public UiListActivity {
   int listCount() const override;
   const char* headerTitle() const override;
   void onEnter() override;
-  // Frees the planes and runs the cleaning FULL_REFRESH when a scan reached the panel since the last clean; the
-  // render mutex is already held by the caller.
+  // Runs the cleaning FULL_REFRESH when a scan reached the panel since the last clean, then frees the backend and the
+  // masks; the render mutex is already held by the caller.
   void onExit() override;
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   void onBackButton() override;
 
+  // The masks and the backend for this session; false, having logged why, when one of them has no room.
+  bool openSession();
+  void closeSession();
   void buildRows();
-  // A FULL_REFRESH of the framebuffer, which also resets the cap count. The caller holds the render lock.
+  // A FULL_REFRESH through the backend, which also resets the cap count. The caller holds the render lock, and the
+  // session has a backend (a scan reached the panel).
   void cleanPanel();
   template <typename T>
   void openScreen();
 
-  HalMemory::PsramBuffer bwPlane;
-  HalMemory::PsramBuffer redPlane;
-  size_t planeBytes = 0;
+  HalMemory::PsramBuffer blackMask;
+  HalMemory::PsramBuffer whiteMask;
+  GameDisplayLab::MaskPlanes maskPlanes;
+  std::unique_ptr<ScanBackend> scanBackend;
   // Why the lab cannot run (the one row's label), or null when it can.
   const char* notice = nullptr;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};

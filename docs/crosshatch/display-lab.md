@@ -3,7 +3,8 @@
 The display lab is a bench, not a product mode. It lives in `src/activities/games/display_lab/` and
 `lib/GameDisplayLab/`, compiles only under `FREEINK_CAP_DISPLAY_LAB`, which the `x4pro` development env alone sets, so
 no release build (`x4pro-gh_release*`) ever carries it (the simulator's HAL stand-in has no `HalDisplay::eink()`, so the
-row is absent there too), and shows its row only on an X4 Pro whose panel probe said SSD1677.
+row is absent there too), and shows its row only on an X4 Pro whose panel probe found a controller with a scan
+backend (SSD1677 so far).
 It answers the two numbers only a panel can give before Part B (the per-pixel grayscale engine, deferred in
 `_bmad-output/implementation-artifacts/deferred-work.md`) can be built:
 
@@ -19,7 +20,7 @@ OTP command is never sent, each scan goes through the SDK facade's overlay-grays
 call took over 15,000 ms ends its run and the panel is cleaned (a wait cannot be interrupted, and the SDK's own BUSY cap
 is 30 s, so a hung panel can stall the lab up to 30 s per scan), 2,400 scans since the last clean force a FULL refresh,
 and leaving the lab by any route (Back, Home, sleep) runs one FULL refresh when a scan reached the panel since the last
-clean, and frees the two PSRAM mask planes.
+clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
 
 ## Hardware checklist (the user's validation script)
 
@@ -78,7 +79,13 @@ clean, and frees the two PSRAM mask planes.
 ## Where Part B picks up
 
 Part B (deferred-work.md, "Display lab Part B") takes the measured frame period as the length of one dose and the
-polarity answer as the row-to-color mapping, and builds on the same scan primitive (`DisplayLabActivity::scan`): the
+polarity answer as the row-to-color mapping, and builds on the scan seam (the display-lab epic's D1): a `ScanRequest`
+of two full-screen drive masks (`GameDisplayLab::MaskPlanes`: black, white, a pixel in neither holds), a frame count, a
+rate index and a polarity swap, sent through `DisplayLabActivity::scan`, which wraps the controller's `ScanBackend`
+with the session cap, the timeout and the dropped-call floor. A new controller is one backend class plus its case in
+the one switch of `ScanBackends.cpp`, and the safety rules stay as they are; but the screens still carry SSD1677 facts
+from `Ssd1677ScanLut` (the polarity rows' labels and `vs=` log names, and the frame-period TPs), so an UltraChip
+backend needs a way to name its drive rows, which D1 does not have yet. On top of it come the
 per-pixel level and dose model, the transition-test screen with sweeping rectangles, the live tuning list, and the SD
 preset. Nothing in Part A is a product feature; the launcher row and the lab can be removed once Part B has its own
 entry.
@@ -86,11 +93,29 @@ entry.
 ## Code map
 
 - `lib/GameDisplayLab/Ssd1677ScanLut.{h,cpp}`: the 112-byte scan LUT builder (105 LUT bytes, five voltage bytes, two
-  reserved), the plane fills that select each row, and the experiment tables; pure C++, pinned byte for byte by
-  `test/game_display_lab/test_scan_lut.cpp`.
+  reserved) and the experiment tables; pure C++, pinned byte for byte by `test/game_display_lab/test_scan_lut.cpp`.
+  Its `planeFillFor` and `framePeriodScan` are no longer used by the screens: they are Part A's reference, which
+  `test_ssd1677_encoding.cpp` pins the seam against.
+- `lib/GameDisplayLab/LabExperiments.h`: the experiments' request layout, controller-neutral: the frame-period scan
+  order (`framePeriodTp`, `framePeriodRate`: tp outer, rate inner) and the polarity row to mask table
+  (`POLARITY_ROW_MASKS`: row 1 white, row 2 black); pinned against Part A by `test_ssd1677_encoding.cpp`.
+- `lib/GameDisplayLab/Ssd1677Encoding.{h,cpp}`: the SSD1677 backend's pure parts: its rate list (the three frame-rate
+  bytes, in order), the LUT for one request (`buildOneFrameLut` with the rate's byte and the row codes, swapped on
+  request), and the planes from the masks (white to BW, black to RED); pinned against Part A's bytes by
+  `test/game_display_lab/test_ssd1677_encoding.cpp`.
+- `lib/GameDisplayLab/MaskPlanes.{h,cpp}`: the two drive masks in the framebuffer's byte order (MSB first, row-major,
+  100 bytes per row at 800 px): clear, fill, clipped rectangles and pixels; pinned by
+  `test/game_display_lab/test_mask_planes.cpp`.
 - `lib/GameDisplayLab/ScanBudget.h`: the session cap, the timeout, and the dropped-call floor, pinned by
   `test/game_display_lab/test_scan_budget.cpp`.
-- `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}`: the menu, the gate, the PSRAM planes, the scan
-  primitive, the session cap, the timeout rule, and the exit refresh.
+- `src/activities/games/display_lab/ScanBackend.h`: the gate macro, `ScanRequest`, and the abstract `ScanBackend`
+  (the epic's D1).
+- `src/activities/games/display_lab/ScanBackends.{h,cpp}`: `hasScanBackend` and `makeScanBackend`, one case per
+  controller; only SSD1677 has a backend so far.
+- `src/activities/games/display_lab/Ssd1677ScanBackend.{h,cpp}`: the SSD1677 facade calls (its two PSRAM planes,
+  `copyGrayscaleBuffers`, the timed `displayGrayBuffer(false, lut, true)`) and the cleaning FULL refresh.
+- `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}`: the menu, the gate, the session (the backend and the
+  two PSRAM masks), the controller-neutral `scan()` wrapper (the inversion and rate checks, the session cap, the
+  timeout rule), and the exit refresh.
 - `src/activities/games/display_lab/FramePeriodActivity.{h,cpp}` and `PolarityActivity.{h,cpp}`: the two experiments.
 - `lib/hal/HalDisplay.h`: the one upstream touch, `EInkDisplay& eink()` under `FREEINK_CAP_GAMES` (ledger row 13).

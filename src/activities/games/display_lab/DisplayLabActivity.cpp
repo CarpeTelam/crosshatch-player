@@ -2,26 +2,23 @@
 
 #if CROSSHATCH_DISPLAY_LAB
 
-#include <Arduino.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <Ssd1677ScanLut.h>
-
-#include <cstring>
 
 #include "FramePeriodActivity.h"
 #include "MappedInputManager.h"
 #include "PolarityActivity.h"
+#include "ScanBackends.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
 
 bool DisplayLabActivity::available() {
   // BoardConfig comes with HalDisplay.h (HalDisplay::Controller is its DisplayController).
-  return BoardConfig::isX4Pro() && display.getController() == BoardConfig::DisplayController::SSD1677;
+  return BoardConfig::isX4Pro() && hasScanBackend(display.getController());
 }
 
 DisplayLabActivity::DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -39,25 +36,52 @@ void DisplayLabActivity::onEnter() {
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   if (!available()) {
     // The launcher never offers the row elsewhere; a scan on another panel is never sent.
-    LOG_ERR("DLAB", "Not an X4 Pro with an SSD1677; the lab runs nothing");
+    LOG_ERR("DLAB", "Not an X4 Pro with a scan backend for its controller; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_NOT_SSD1677);
   } else if (display.isInverted()) {
     LOG_ERR("DLAB", "Display inverted; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_INVERTED);
-  } else {
-    // Two panel-sized mask planes for the whole session: never per scan. PSRAM only, as the game arena (no internal
-    // RAM fallback, by allocatePsram's contract).
-    planeBytes = display.getBufferSize();
-    bwPlane = HalMemory::allocatePsram(planeBytes);
-    redPlane = HalMemory::allocatePsram(planeBytes);
-    if (!bwPlane || !redPlane) {
-      LOG_ERR("DLAB", "OOM: two %u byte PSRAM planes", static_cast<unsigned>(planeBytes));
-      bwPlane.reset();
-      redPlane.reset();
-      notice = tr(STR_GAMES_OUT_OF_MEMORY);
-    }
+  } else if (!openSession()) {
+    closeSession();
+    notice = tr(STR_GAMES_OUT_OF_MEMORY);
   }
   buildRows();
+}
+
+bool DisplayLabActivity::openSession() {
+  // A request's masks are full-screen bitmaps in the framebuffer's byte order, as many bytes as the framebuffer.
+  const size_t bytes = display.getBufferSize();
+  const uint16_t width = display.getDisplayWidth();
+  const uint16_t height = display.getDisplayHeight();
+  if (GameDisplayLab::MaskPlanes::bytesFor(width, height) != bytes) {
+    LOG_ERR("DLAB", "framebuffer of %u bytes is not %ux%u at 1 bpp", static_cast<unsigned>(bytes),
+            static_cast<unsigned>(width), static_cast<unsigned>(height));
+    return false;
+  }
+  // Two panel-sized masks for the whole session, shared by every screen: never per scan. PSRAM only, as the game
+  // arena (no internal RAM fallback, by allocatePsram's contract).
+  blackMask = HalMemory::allocatePsram(bytes);
+  whiteMask = HalMemory::allocatePsram(bytes);
+  if (!blackMask || !whiteMask) {
+    LOG_ERR("DLAB", "OOM: two %u byte PSRAM masks", static_cast<unsigned>(bytes));
+    return false;
+  }
+  scanBackend = makeScanBackend(display.getController(), renderer);
+  if (!scanBackend) {
+    LOG_ERR("DLAB", "OOM: scan backend");
+    return false;
+  }
+  if (!scanBackend->available()) return false;  // it logged what did not fit
+  maskPlanes = GameDisplayLab::MaskPlanes(blackMask.get(), whiteMask.get(), width, height);
+  maskPlanes.clear();
+  return true;
+}
+
+void DisplayLabActivity::closeSession() {
+  maskPlanes = GameDisplayLab::MaskPlanes();
+  scanBackend.reset();
+  blackMask.reset();
+  whiteMask.reset();
 }
 
 void DisplayLabActivity::onExit() {
@@ -66,13 +90,12 @@ void DisplayLabActivity::onExit() {
   // driven, and the driver flagged a gray clear); none from the notice paths or a visit that ran nothing.
   if (budget.sinceClean() > 0) cleanPanel();
   LOG_INF("DLAB", "exit: %lu scans this session", static_cast<unsigned long>(budget.total()));
-  bwPlane.reset();
-  redPlane.reset();
+  closeSession();
   Activity::onExit();
 }
 
 void DisplayLabActivity::cleanPanel() {
-  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  scanBackend->clean();
   budget.cleaned();
 }
 
@@ -150,38 +173,37 @@ void DisplayLabActivity::activateIndex(const int index) {
 
 void DisplayLabActivity::onBackButton() {
   app.clearTapFlash();
-  finish();  // onExit cleans the panel and frees the planes
+  finish();  // onExit cleans the panel and frees the backend and the masks
 }
 
-DisplayLabActivity::Scan DisplayLabActivity::scan(const uint8_t* lut, const uint8_t bwFill, const uint8_t redFill,
-                                                  uint32_t& busyUs) {
+DisplayLabActivity::Scan DisplayLabActivity::scan(const ScanRequest& request, uint32_t& busyUs) {
   busyUs = 0;
-  if (!bwPlane || !redPlane) {
+  // openSession gives the session its backend and both masks, or none of them.
+  if (!scanBackend || !maskPlanes.valid()) {
     LOG_ERR("DLAB", "scan refused: no mask planes");  // the lab shows its notice row instead of the experiments
     return Scan::Refused;
   }
   // Checked per scan, not only in onEnter: the control-center panel can invert the display while the lab is open, and
-  // the facade then drops both calls below without a word.
+  // the facade then drops the backend's calls without a word.
   if (display.isInverted()) {
     LOG_ERR("DLAB", "scan refused: display inverted");
     return Scan::Refused;
   }
-  // The render task must not push the framebuffer between the plane writes and the activation.
+  // Before the lock and a due cap clean, so a bad request sends nothing to the panel.
+  if (request.rate >= scanBackend->rateCount()) {
+    LOG_ERR("DLAB", "scan refused: rate index %u of %u", static_cast<unsigned>(request.rate),
+            static_cast<unsigned>(scanBackend->rateCount()));
+    return Scan::Refused;
+  }
+  // The render task must not push the framebuffer between the backend's plane writes and its activation.
   RenderLock lock(*this);
   if (budget.cleanDue()) {
     LOG_INF("DLAB", "session cap: %lu scans since the last clean", static_cast<unsigned long>(budget.sinceClean()));
     cleanPanel();
   }
-  memset(bwPlane.get(), bwFill, planeBytes);
-  memset(redPlane.get(), redFill, planeBytes);
-  EInkDisplay& eink = display.eink();
-  // Raw masks into both RAM planes (overlay mode writes them as given), then the caller's LUT, activation and the
-  // BUSY wait, timed as one call: the frame period is the slope of this time against TP, which cancels the fixed
-  // upload and activation overhead.
-  eink.copyGrayscaleBuffers(bwPlane.get(), redPlane.get());
-  const unsigned long began = micros();
-  eink.displayGrayBuffer(false, lut, true);
-  busyUs = static_cast<uint32_t>(micros() - began);
+  const Scan sent = scanBackend->scan(request, busyUs);
+  // Anything but Done is the backend's refusal (logged there): nothing reached the panel, so nothing is counted.
+  if (sent != Scan::Done) return sent;
   switch (budget.record(busyUs)) {
     case GameDisplayLab::ScanBudget::Outcome::Done:
       return Scan::Done;

@@ -16,13 +16,11 @@
 
 namespace fui = freeink::ui;
 
-using GameDisplayLab::LutRow;
-using GameDisplayLab::PlaneFill;
+using GameDisplayLab::MaskPlanes;
 using GameDisplayLab::VsCode;
 
 namespace {
 
-constexpr LutRow LUT_ROWS[PolarityActivity::ROW_COUNT] = {LutRow::Row1, LutRow::Row2};
 constexpr VsCode VS_CODES[PolarityActivity::ROW_COUNT] = {GameDisplayLab::POLARITY_ROW1, GameDisplayLab::POLARITY_ROW2};
 
 }  // namespace
@@ -95,12 +93,13 @@ void PolarityActivity::activateIndex(const int index) {
 }
 
 void PolarityActivity::drive(const size_t index) {
-  uint8_t lut[GameDisplayLab::LUT_BYTES];
-  GameDisplayLab::buildOneFrameLut(lut, GameDisplayLab::POLARITY_TP, GameDisplayLab::FRAME_PERIOD_RATES[0],
-                                   GameDisplayLab::POLARITY_ROW1, GameDisplayLab::POLARITY_ROW2);
-  const PlaneFill fill = GameDisplayLab::planeFillFor(LUT_ROWS[index]);
+  MaskPlanes& masks = lab.masks();
+  masks.clear();
+  masks.fill(GameDisplayLab::POLARITY_ROW_MASKS[index]);
+  // Rate index 0 (0x22 on the SSD1677) and the backend's rows unswapped: the codes VS_CODES names.
+  const ScanRequest request{masks.black(), masks.white(), GameDisplayLab::POLARITY_TP, 0, false};
   uint32_t busyUs = 0;
-  const DisplayLabActivity::Scan result = lab.scan(lut, fill.bw, fill.red, busyUs);
+  const DisplayLabActivity::Scan result = lab.scan(request, busyUs);
   const unsigned ms = static_cast<unsigned>(busyUs / 1000);
   const unsigned row = static_cast<unsigned>(index + 1);
   RenderLock lock(*this);  // the render task reads the rows

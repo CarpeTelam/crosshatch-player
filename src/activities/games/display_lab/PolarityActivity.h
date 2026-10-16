@@ -4,14 +4,17 @@
 
 #if CROSSHATCH_DISPLAY_LAB
 
+#include <LabExperiments.h>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 
-// The polarity screen (Display lab → Polarity): the second unknown. Headed "Polarity", two rows, one per LUT row: Row 1
-// (the BW-plane row, LUT1) and Row 2 (the RED-plane row, LUT2), each labelled with the code it is driven with, VSL and
-// VSH1 (GameDisplayLab::POLARITY_ROW1/2, InkBoy's SSD1681 convention as the first guess). Activating a row sets every
-// pixel's bits to select that LUT row (planeFillFor) and scans with TP[0A] = 10 through the lab's scan(), logged as
+// The polarity screen (Display lab → Polarity): the second unknown. Headed "Polarity", two rows, one per drive row:
+// Row 1 (the white mask; the BW-plane row, LUT1, on the SSD1677) and Row 2 (the black mask; the RED-plane row, LUT2),
+// each labelled with the code it is driven with, VSL and VSH1 (GameDisplayLab::POLARITY_ROW1/2, InkBoy's SSD1681
+// convention as the first guess). Activating a row sets every pixel of that mask, clears the other, and scans with
+// TP[0A] = 10 at rate index 0 through the lab's scan(), logged as
 // `DLAB polarity row=<n> vs=<code> ms=<ms>`; the panel then shows the drive (darker or lighter all over), and the
 // screen is not repainted until the next Confirm or tap, so the user can look: render() draws nothing while the drive
 // is shown (a routed tap requests a repaint on its own, which must not wipe the panel), and Up/Down move the selection
@@ -21,7 +24,7 @@
 class PolarityActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DlabPolarity";
-  static constexpr size_t ROW_COUNT = 2;
+  static constexpr size_t ROW_COUNT = GameDisplayLab::POLARITY_ROWS;
 
   // `lab` is the menu under this screen on the stack, which outlives it.
   PolarityActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
