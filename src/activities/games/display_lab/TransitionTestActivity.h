@@ -8,7 +8,10 @@
 #include <HalMemory.h>
 #include <MaskPlanes.h>
 #include <SlotScheduler.h>
+#include <SweepControl.h>
 #include <TransitionScene.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include <atomic>
 #include <cstddef>
@@ -18,25 +21,38 @@
 // gray engine on the whole panel. Headed "Transition test", three rows: Run (its line: "Not run", or how the last run
 // ended), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
 //
-// Run cleans the panel to white with a FULL refresh and starts the sweep (GameDisplayLab::TransitionScene): four shade
-// bands K, D, L, W top to bottom, three 12-px rectangles of the other shades per band crossing the screen in 5 s, a
-// 1 s pause, repeat, driven from white through the session's gray preset (DisplayLabActivity::preset()). One slot per
-// GameDisplayLab::SlotScheduler period: the scene moves the rectangles to the sweep clock, then
-// GameDisplayLab::runGraySlot sends the drive scan and the follow-up scan through DisplayLabActivity::scan and commits
-// what was delivered. While the test view is up the screen draws nothing (D4: the panel shows only what the scans
-// drive); Confirm or a tap over the rows' area pauses or resumes, a swipe does nothing, NavNext replays (clean, sweep
-// from 0), NavPrevious cleans (white panel, paused), Back leaves the view. A non-Done scan stops the sweep and leaves
-// the view with its outcome on the Run row, and another screen covering it (the light panel) ends it once it closes;
-// a forced refresh is swallowed. Leaving the view repaints the rows with a FULL refresh. Before a slot that
-// would cross the session cap the screen cleans first (white panel, model reset, the scene reapplied; the sweep clock
-// stands still through it), so the lab's own cap clean never lands between a slot's two scans. Logs `DLAB gray
-// scans_s=N.N ms_per_scan=N skipped=N` (skipped: slot periods lost in that window) about every 2 s while running and
-// on every stop.
+// Run starts the sweep (GameDisplayLab::TransitionScene) on its own FreeRTOS task, the sweep task (D11), which cleans
+// the panel to white with a FULL refresh and then drives four shade bands K, D, L, W top to bottom, three 12-px
+// rectangles of the other shades per band crossing the screen in 5 s, a 1 s pause, repeat, from white through the
+// session's gray preset (DisplayLabActivity::preset()). One slot per GameDisplayLab::SlotScheduler period: the scene
+// moves the rectangles to the sweep clock, then GameDisplayLab::runGraySlot sends the drive scan and the follow-up
+// scan through DisplayLabActivity::scan and commits what was delivered. The task owns the slot runner (the clock, the
+// scheduler, the stats, the scene, the model); the loop task keeps polling input, so the controls answer while a scan
+// runs, and talks to the task only through GameDisplayLab::SweepControl and a notification. While the test view is up
+// the screen draws nothing (D4: the panel shows only what the scans drive); Confirm or a tap over the rows' area
+// pauses or resumes, NavNext replays (clean, sweep from 0), NavPrevious cleans (white panel, paused), all three served
+// at the end of the slot in flight; Back ends the run after the scan or the clean in flight (a replay's,
+// NavPrevious's or the session cap's clean is one FULL refresh); a swipe does nothing. A non-Done scan
+// ends the run and the view with its outcome on the Run row. Another screen covering the view (the light panel) stops
+// loop(): the task refuses its next scan once loop() has not run for COVERED_GAP_US, and the view ends once the cover
+// closes; a forced refresh is swallowed. Leaving the view (only after the task has ended and been deleted) repaints the
+// rows with a FULL refresh. Before a slot that would cross the session cap the task cleans first (white panel, model
+// reset, the scene reapplied; the sweep clock stands still through it), so the lab's own cap clean never lands between
+// a slot's two scans. Logs `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` (skipped: slot periods lost in that
+// window) about every 2 s while running and on every stop, and the task's stack high-water mark once per run.
+//
+// Stopping the task: loop() (Back, a cover, the task's own end) and handleHomeGesture() run without the render mutex,
+// so they ask it to stop and join it (stopSweep). onExit() and prepareForSleep() run with the non-recursive render
+// mutex held, which DisplayLabActivity::scan takes, so they must not wait for a task blocked on it: endSweepLocked()
+// deletes the task when it is inside the panel and blocked (waiting for that mutex, holding nothing), and otherwise
+// waits for it to end on its own. The task never deletes itself: it parks after publishing sweepDone, and only this
+// screen deletes it, so a notification never reaches a freed task.
 //
 // Memory, all PSRAM, allocated in onEnter and freed in onExit: the model (2 B a pixel, 768,000 B at 800x480), the
 // follow-up masks (2 x 48,000 B), the history (3 B a pixel, 1,152,000 B) only when the preset's history mode is on,
 // and the weak bitmap (48,000 B) only when weak mode is on and the backend has a weak row. When any does not fit, the
-// screen shows one notice row and runs nothing.
+// screen shows one notice row and runs nothing. The task's stack (SWEEP_STACK_BYTES, internal RAM) exists only while
+// a run is up; when it cannot be created the Run row says so and nothing is sent.
 class TransitionTestActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DlabTransition";
@@ -44,15 +60,37 @@ class TransitionTestActivity final : public UiListActivity {
   static constexpr uint32_t STATS_EVERY_US = 2000000;
   // Scans in one slot: the drive scan and the follow-up.
   static constexpr uint32_t SCANS_PER_SLOT = 2;
-  // A gap between two loop() calls this long while the test view is up means another screen covered it.
-  static constexpr uint32_t COVERED_GAP_US = 1000000;
+  // A gap between two loop() calls this long while the test view is up means another screen covered it. loop() only
+  // polls input now (about 10 ms a pass), so a short gap bounds the scans that land under a covering screen.
+  static constexpr uint32_t COVERED_GAP_US = 300000;
+  // The sweep task's stack, internal RAM, only while a run is up (plan-dlab-c2-sweep-task.md, Implementation Notes):
+  // the measured SSD1677 peak, a log line inside the SDK's BUSY wait under a scan, about 2,464 B (newlib's printf
+  // core is 800 B of it); + 512 B for an interrupt's frame and the coprocessor area = 2,976 B; + 2,048 B for an
+  // UltraChip backend's per-scan session (two plane streams, the table, PLL and register writes, labEnd), not
+  // measured = 5,024 B; + 2,048 B margin = 7,072 B; + the 1,024 B under which the run logs an error
+  // (SWEEP_STACK_MARGIN_BYTES) = 8,096 B, rounded up to 8 KiB. The run's log line gives the high-water mark.
+  static constexpr uint32_t SWEEP_STACK_BYTES = 8192;
+  // Priority and core as GameVM's task. The core is the loop task's (Arduino's loop runs on core 1):
+  // endSweepLocked's check-then-delete relies on the sweep task not running while the loop task does.
+  static constexpr int SWEEP_PRIORITY = 1;
+  static constexpr int SWEEP_CORE = 1;
+  // How often stopSweep() polls for the task's end.
+  static constexpr uint32_t STOP_POLL_MS = 5;
+  // A run whose stack high-water mark leaves fewer free bytes than this logs an error.
+  static constexpr uint32_t SWEEP_STACK_MARGIN_BYTES = 1024;
 
   // `lab` is the menu under this screen on the stack, which outlives it.
   TransitionTestActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
 
   void loop() override;
-  bool skipLoopDelay() override { return running; }
-  bool preventAutoSleep() override { return running; }
+  // The loop runs no slots, so it keeps its delay (a spinning loop would share the sweep task's core and priority);
+  // preventAutoSleep keeps the clock up while the sweep advances (its task up and not asked to pause).
+  bool skipLoopDelay() override { return false; }
+  bool preventAutoSleep() override { return sweepTask && control.runRequested(); }
+  // Ends the sweep task (the render mutex is held: endSweepLocked).
+  void prepareForSleep() override;
+  // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
+  bool handleHomeGesture() override;
   // A forced refresh (the power or home button's Refresh) would send the framebuffer over the drive: swallowed while
   // the test view is up (D4).
   bool handleForcedRefresh() override { return shownOnPanel.load(); }
@@ -60,11 +98,13 @@ class TransitionTestActivity final : public UiListActivity {
  private:
   enum class Row : uint8_t { Run, Stats, Controls };
   static constexpr size_t ROW_COUNT = 3;
+  // How the sweep task's run ended.
+  enum class SweepEnd : uint8_t { Stopped, Covered, ScanFailed };
 
   int listCount() const override { return notice ? 1 : static_cast<int>(ROW_COUNT); }
   const char* headerTitle() const override;
   void onEnter() override;
-  // Frees every buffer; the render mutex is already held by the caller (no RenderLock here).
+  // Ends the sweep task and frees every buffer; the render mutex is already held by the caller (no RenderLock here).
   void onExit() override;
   // Draws nothing while the test view is up; the base otherwise.
   void render(RenderLock&& lock) override;
@@ -80,23 +120,48 @@ class TransitionTestActivity final : public UiListActivity {
   bool allocate();
   void release();
   void buildRows();
-  // Clean, reset, the scene from 0, running: Run and NavNext.
+
+  // ---- loop task --------------------------------------------------------------------------------------------------
+  // The Run row: the test view up and the sweep task created (it cleans and sweeps from 0). When the task cannot be
+  // created: logged, the Run row says so, the view not entered.
   void startRun();
-  // White framebuffer, the lab's cleaning FULL refresh, the model reset to white, the scene to reapply. The caller
-  // holds the render lock.
-  void cleanToWhite();
+  // Confirm or a tap: pause or resume, served at the end of the slot in flight.
   void togglePause();
-  // NavPrevious: a white panel, paused.
-  void cleanAndPause();
-  // Back to the rows with `outcome` on the Run row, repainted with a FULL refresh.
+  // Wakes the sweep task to read its requests.
+  void notifySweep();
+  // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (the scan or the clean in
+  // flight), and
+  // deletes it. The caller holds no render lock.
+  void stopSweep();
+  // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks the task to stop and waits for
+  // its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that mutex.
+  void endSweepLocked();
+  // The Run row's line for how the task's run ended.
+  const char* endText() const;
+  // Back to the rows with `outcome` on the Run row and the task's last speed on the Speed row, repainted with a FULL
+  // refresh. Only once the task is gone.
   void leaveView(const char* outcome);
-  // One slot at `nowUs`.
-  void runSlot(uint32_t nowUs);
-  // The sweep clock advanced to `nowUs` (it runs only while running).
+
+  // ---- sweep task -------------------------------------------------------------------------------------------------
+  static void sweepEntry(void* param);
+  // The task's run: serves the requests at each slot boundary and runs the slots until a stop, a cover or a failed
+  // scan; then logs the stack's high-water mark and publishes sweepDone.
+  void sweepRun();
+  // Serves one take()'s requests: a pause, a replay or a clean, a resume. False when a clean was refused (sweepEnd
+  // says why).
+  bool serve(const GameDisplayLab::SweepControl::Requests& requests);
+  // White framebuffer, the lab's cleaning FULL refresh under the render lock, the model reset to white, the scene to
+  // reapply; inside the panel gate. False (sweepEnd set) when the gate refused.
+  bool cleanToWhite();
+  // Records a refused gate in sweepEnd; true when `gate` let the task in.
+  bool admitted(GameDisplayLab::SweepControl::Gate gate);
+  // One slot at `nowUs`; false when the run ends (sweepEnd says why).
+  bool runSlot(uint32_t nowUs);
+  // The sweep clock advanced to `nowUs` (it runs only while sweeping).
   void advanceClock(uint32_t nowUs);
   // Logs the window's speed (`DLAB gray scans_s=...`).
   void logStats(uint32_t nowUs) const;
-  // Logs the speed and writes the Speed line (takes the render lock), then starts a new window.
+  // Logs the speed and keeps its figures for the Speed row, then starts a new window.
   void reportStats(uint32_t nowUs);
 
   DisplayLabActivity& lab;
@@ -105,10 +170,6 @@ class TransitionTestActivity final : public UiListActivity {
   HalMemory::PsramBuffer followWhite;
   HalMemory::PsramBuffer historyBuffer;
   HalMemory::PsramBuffer weakBuffer;
-  GameDisplayLab::GrayModel model;
-  GameDisplayLab::MaskPlanes follow;
-  GameDisplayLab::TransitionScene scene;
-  GameDisplayLab::SlotScheduler scheduler;
   // The weak row is in use: weak mode on and the backend has one (and its bitmap fitted).
   bool weakRow = false;
   // Why the screen cannot run (its one row), or null.
@@ -120,8 +181,27 @@ class TransitionTestActivity final : public UiListActivity {
   // The test view is up: the panel shows the drive and render() draws nothing. Written by the loop task, read by the
   // render task.
   std::atomic<bool> shownOnPanel{false};
-  // The sweep advances (the test view is up and not paused).
-  bool running = false;
+
+  // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: sweepDone (release), after which
+  // the loop task may read the task's fields below; the loop task alone creates and deletes the task.
+  GameDisplayLab::SweepControl control;
+  TaskHandle_t sweepTask = nullptr;
+  std::atomic<bool> sweepDone{false};
+
+  // ---- the sweep task's own, while it is up (read by the loop task only after sweepDone or once it is deleted) -----
+  GameDisplayLab::GrayModel model;
+  GameDisplayLab::MaskPlanes follow;
+  GameDisplayLab::TransitionScene scene;
+  GameDisplayLab::SlotScheduler scheduler;
+  // How the run ended, and the failing scan's outcome when it was ScanFailed.
+  SweepEnd sweepEnd = SweepEnd::Stopped;
+  DisplayLabActivity::Scan failedScan = DisplayLabActivity::Scan::Done;
+  // The last reported speed, for the Speed row once the view ends.
+  bool statsReported = false;
+  uint32_t reportedTenths = 0;
+  uint32_t reportedMsPerScan = 0;
+  // The sweep advances (served Run; the task's own view of the request).
+  bool sweeping = false;
   // The model must be retargeted to the whole scene before the next slot (after a clean).
   bool sceneStale = false;
   // The sweep clock, which stands still while paused, the micros() it was last advanced at, and the scene time the
@@ -130,8 +210,9 @@ class TransitionTestActivity final : public UiListActivity {
   uint32_t clockUs = 0;
   uint32_t sceneMs = 0;
   uint32_t statsSinceUs = 0;
-  // micros() at the end of the last loop() call.
-  uint32_t lastLoopUs = 0;
+  // The task's stack start (pxTaskGetStackStart), and the least room above it seen just before a scan.
+  uintptr_t stackFloor = 0;
+  uint32_t leastScanHeadroom = UINT32_MAX;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB
