@@ -18,6 +18,14 @@ full-screen masks through the backend. `DisplayLabActivity` chooses the backend 
 hidden for them, as now) and keeps the warning, session cap, timeout, dropped-scan floor and exit refresh, now in a
 controller-neutral `ScanBudget`-backed wrapper around `backend->scan()`. Behaviour on an SSD1677 unit is unchanged.
 
+## Amendment D1a (orchestrator, 2026-10-16, after the first review pass)
+
+`ScanBackend` also exposes `const char* rowLabel(uint8_t row) const` (rows 1 and 2): short text naming what that
+row drives on this controller (SSD1677: "LUT1 VSL" and "LUT2 VSH1", or the swapped codes when `swapPolarity`).
+`PolarityActivity` builds its two row labels from it and logs `vs=<rowLabel>` instead of a VsCode name; no
+SSD1677-specific string remains outside the SSD1677 backend. Apply this in the follow-up pass with the review's
+own fixes.
+
 ## Boundaries & Constraints
 
 **Always:** the public shape of `ScanBackend`/`ScanRequest` exactly as D1 (later lanes build on it; a change to it
