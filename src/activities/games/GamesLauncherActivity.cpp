@@ -19,6 +19,7 @@
 #if CROSSHATCH_DISPLAY_LAB
 // The entry warning, device builds only: the host harness that compiles this file has no OptionPopup.
 #include "activities/util/ConfirmationActivity.h"
+#include "display_lab/StockBenchGate.h"
 #endif
 
 namespace fui = freeink::ui;
@@ -33,6 +34,16 @@ constexpr int16_t ROW_PADDING = 8;
 // bytes of static RAM (AD-2 allows a mutable static up to 64 B, and this epic's share is 32 B); constinit, so it has
 // no initializer to run.
 constinit uint32_t lastOpened = 0;
+
+// The Display lab row's subtitle: which bench the lab opens on this panel (StockBenchGate.h). With the lab compiled
+// out (the host harness) the row is shown only on request, with the scan bench's text.
+const char* displayLabSubtitle() {
+#if CROSSHATCH_DISPLAY_LAB
+  return labRowSubtitle();
+#else
+  return tr(STR_GAMES_DLAB_ROW_DESC);
+#endif
+}
 
 uint32_t fingerprintOf(const char* id) {
   uint32_t hash = 2166136261u;
@@ -427,7 +438,7 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
   if (index >= self->listing.count) {
     // The Display lab row, after the games, under the Crosshatch mark.
     item.label = tr(STR_GAMES_DLAB_TITLE);
-    item.subtitle = tr(STR_GAMES_DLAB_ROW_DESC);
+    item.subtitle = displayLabSubtitle();
     item.actionValue = static_cast<int16_t>(index);
     GameRowIcon::renderMark(self->libraryIcon);
     item.icon.data = self->libraryIcon;

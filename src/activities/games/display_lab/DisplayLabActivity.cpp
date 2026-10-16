@@ -10,10 +10,13 @@
 
 #include "FramePeriodActivity.h"
 #include "GrayPresetFile.h"
+#include "GrayRampActivity.h"
 #include "MappedInputManager.h"
 #include "PolarityActivity.h"
 #include "ScanBackends.h"
+#include "StockBenchGate.h"
 #include "TransitionTestActivity.h"
+#include "TransitionTimingActivity.h"
 #include "TuningActivity.h"
 #include "components/UITheme.h"
 
@@ -21,13 +24,17 @@ namespace fui = freeink::ui;
 
 bool DisplayLabActivity::available() {
   // BoardConfig comes with HalDisplay.h (HalDisplay::Controller is its DisplayController).
-  return BoardConfig::isX4Pro() && hasScanBackend(display.getController());
+  const HalDisplay::Controller c = display.getController();
+  return BoardConfig::isX4Pro() && (hasScanBackend(c) || usesStockBench(c));
 }
 
 DisplayLabActivity::DisplayLabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : UiListActivity(NAME, renderer, mappedInput) {}
 
-int DisplayLabActivity::listCount() const { return notice ? 1 : static_cast<int>(ROW_COUNT); }
+int DisplayLabActivity::listCount() const {
+  if (notice) return 1;
+  return static_cast<int>(stockBench ? STOCK_ROW_COUNT : ROW_COUNT);
+}
 
 const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TITLE); }
 
@@ -43,14 +50,17 @@ void DisplayLabActivity::onEnter() {
   saveStatus = nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
-  if (!available()) {
+  const bool supported = available();
+  stockBench = supported && usesStockBench(display.getController());
+  if (stockBench) LOG_INF("DLAB", "UltraChip stock-path bench");
+  if (!supported) {
     // The launcher never offers the row elsewhere; a scan on another panel is never sent.
-    LOG_ERR("DLAB", "Not an X4 Pro with a scan backend for its controller; the lab runs nothing");
+    LOG_ERR("DLAB", "Not an X4 Pro with a scan backend or an UltraChip stock bench; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_NOT_SUPPORTED);
   } else if (display.isInverted()) {
     LOG_ERR("DLAB", "Display inverted; the lab runs nothing");
     notice = tr(STR_GAMES_DLAB_INVERTED);
-  } else if (!openSession(loaded)) {
+  } else if (!stockBench && !openSession(loaded)) {
     closeSession();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
   }
@@ -151,6 +161,10 @@ void DisplayLabActivity::buildRows() {
     rowItems[0] = item;
     return;
   }
+  if (stockBench) {
+    buildStockRows();
+    return;
+  }
   const auto set = [this](const Row row, const char* label, const char* subtitle) {
     fui::ListItem item;
     item.label = label;
@@ -203,6 +217,10 @@ void DisplayLabActivity::activateIndex(const int index) {
   app.clearTapFlash();  // every row but Save preset leaves this screen, which repaints its line
   if (notice) {
     finish();
+    return;
+  }
+  if (stockBench) {
+    activateStock(index);
     return;
   }
   switch (static_cast<Row>(index)) {
@@ -278,6 +296,39 @@ DisplayLabActivity::Scan DisplayLabActivity::scan(const ScanRequest& request, ui
       return Scan::Dropped;
   }
   return Scan::Done;
+}
+
+namespace {
+
+enum class StockRow : uint8_t { Transition, GrayRamp, Exit };
+
+}  // namespace
+
+void DisplayLabActivity::buildStockRows() {
+  const auto set = [this](const StockRow row, const char* label, const char* subtitle) {
+    fui::ListItem item;
+    item.label = label;
+    item.subtitle = subtitle;
+    item.actionValue = static_cast<int16_t>(row);
+    rowItems[static_cast<size_t>(row)] = item;
+  };
+  set(StockRow::Transition, tr(STR_GAMES_DLAB_TRANSITION), tr(STR_GAMES_DLAB_TRANSITION_DESC));
+  set(StockRow::GrayRamp, tr(STR_GAMES_DLAB_GRAY_RAMP), tr(STR_GAMES_DLAB_GRAY_RAMP_DESC));
+  set(StockRow::Exit, tr(STR_GAMES_DLAB_EXIT), nullptr);
+}
+
+void DisplayLabActivity::activateStock(const int index) {
+  switch (static_cast<StockRow>(index)) {
+    case StockRow::Transition:
+      openScreen<TransitionTimingActivity>();
+      return;
+    case StockRow::GrayRamp:
+      openScreen<GrayRampActivity>();
+      return;
+    case StockRow::Exit:
+      finish();
+      return;
+  }
 }
 
 #endif  // CROSSHATCH_DISPLAY_LAB

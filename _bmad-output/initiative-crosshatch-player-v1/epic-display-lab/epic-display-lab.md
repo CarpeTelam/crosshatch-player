@@ -144,6 +144,13 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   deferrals. Open for the hardware run: at D5's 100 ms slots a 12 px rectangle crossing in 5 s gives each pixel only
   1-2 doses, so it may never reach its shade; the sweep speed or slot period is an epic Decision after the owner's
   transition-test run, not a lane fix.
+- dlab-u1 (lane A): built, commit `9f8a8f6d` on `dlab-lane-a` (33 findings, 11 patched); halted once on a full disk
+  and a half-installed PlatformIO package (orchestrator fixed both); 2,128 host tests; x4pro, default, sticky build;
+  pio check clean on default and x4pro; its own flash gate ran before D6 and was 416 B over (the lab's cost), which
+  D6 resolves. Merged as `7e46ec7b` with the lab menu, strings, test list and doc combined with dlab-c1's; the merged
+  tree's lab build failed on two `GameDisplayLab::Shade` enums (fixed on the epic branch, the stock bench takes the
+  engine's). Merged tree: 2,181 host tests; x4pro lab build 6,249,086 B flash, 104,232 B RAM; pio check -e x4pro
+  clean; flash gate with D6: games delta within budget, static RAM +784 B (240 B to spare). 2 deferrals carried.
 
 ## Measurement (base)
 

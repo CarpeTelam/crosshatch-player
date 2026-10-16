@@ -1357,3 +1357,11 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-b2-uc8279-lab-backend.md`
   summary: A UC8279 BUSY that never releases hangs a lab scan with no bound, so the lab's 15 s timeout and clean never run.
   evidence: Uc8279X4Driver::busyPolarity() is UcIdleHigh; EpdBus::waitBusy's UcIdleHigh branch and waitRefreshComplete loop while BUSY_N is LOW with no millisecond cap. The same wait governs every ordinary UC8279 refresh, so the lab adds no new exposure; a bound (or a timed DRF wait for the lab) belongs in freeink-sdk, to propose to Free-Ink once the owner confirms the lab on hardware. docs/crosshatch/display-lab.md Safety states it. (location: freeink-sdk/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp:342; severity: low)
+
+## dlab-u1
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-u1-ultrachip-stock-bench.md`
+  summary: The transition screen's fell-back factor (2 x the stock FAST reference) is uncalibrated; if the armed transition itself takes 2 x a FAST DU or more, every armed flip is flagged.
+  evidence: The transition is a DTM2 stream, a 25-frame XTF_PRE_BW_MID activation and a DTM1 stream; the reference is an OTP FAST DU whose length is unknown. The owner's UC8179 timings (reference, flips, and the FULL repaint) settle it. (location: lib/GameDisplayLab/StockBench.h, FELL_BACK_FACTOR; severity: medium, unverified)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-u1-ultrachip-stock-bench.md`
+  summary: No test covers which bench a panel gets: DisplayLabActivity::available(), usesStockBench (a backend wins), labRowSubtitle and the stock menu dispatch.
+  evidence: No host harness compiles src/activities/games/display_lab (CROSSHATCH_DISPLAY_LAB is 0 off device), as with dlab-0's deferred guard-order item; dropping the stock-bench half of available() or the backend-wins check passes every test. Settled by the owner's launcher check on a UC8179 and an SSD1677, or a pure gate function with a test; the same pure controller-to-backend-kind mapping dlab-0 and dlab-b2 defer would carry it. (location: src/activities/games/display_lab/StockBenchGate.cpp, DisplayLabActivity.cpp; severity: medium, unverified)

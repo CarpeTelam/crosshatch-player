@@ -4,12 +4,16 @@ The display lab is a bench, not a product mode. It lives in `src/activities/game
 `lib/GameDisplayLab/`, compiles only under `FREEINK_CAP_DISPLAY_LAB`, which the `x4pro` development env alone sets, so
 no release build (`x4pro-gh_release*`) ever carries it (the simulator's HAL stand-in has no `HalDisplay::eink()`, so the
 row is absent there too), and shows its row only on an X4 Pro whose panel probe found a controller with a scan
-backend (SSD1677 and UC8279 so far). For the same reason the flash-budget gate (`scripts/check_flash_budget.py`)
-builds both of its images with `FREEINK_CAP_DISPLAY_LAB` unset (the display-lab epic, D6): it measures shipped firmware, so the lab's
-cost never counts against the games budget, and the gate refuses a build whose metadata still defines the lab. Its
+backend (SSD1677 and UC8279 so far) or an UltraChip controller without one (the UC8179, until its backend lands),
+which gets the [UltraChip stock-path bench](#ultrachip-stock-path-bench) instead of the scan screens. The row's
+subtitle says which: "Panel waveform bench" for the scan screens, "UltraChip stock-path bench" for the stock bench.
+For the same reason the flash-budget gate (`scripts/check_flash_budget.py`) builds both of its images with
+`FREEINK_CAP_DISPLAY_LAB` unset (the display-lab epic, D6): it measures shipped firmware, so the lab's cost never
+counts against the games budget, and the gate refuses a build whose metadata still defines the lab. Its
 static-object scan (`objects`) therefore no longer reads the lab's screen code, which compiles empty without the flag;
 it still reads `lib/GameDisplayLab`.
-Its menu has six rows: Frame period, Polarity, Transition test, Tuning, Save preset, Exit.
+The scan menu has six rows: Frame period, Polarity, Transition test, Tuning, Save preset, Exit; the stock bench's has
+three: Transition timing, Gray ramp, Exit.
 Part A answers the two numbers only a panel can give before the per-pixel grayscale engine (Part B, the transition
 test and tuning below) can be tuned:
 
@@ -75,8 +79,10 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
    the env's baud with `LOG_LEVEL` 1 or more (the `x4pro` development env prints `DLAB` lines at `LOG_INF`).
 2. If the display is inverted (Settings), turn that off first: the facade drops grayscale calls (on a UC8279, refuses
    lab calls) while inverted, and the lab shows "Turn off the inverted display first" instead of its menu.
-3. Home → Games. On an SSD1677 or UC8279 X4 Pro the last row is **Display lab**; on a UC8179 unit it is absent, which
-   is itself a check of the gate (`DisplayLabActivity::available()`).
+3. Home → Games. On an SSD1677 or UC8279 X4 Pro the last row is **Display lab** with the subtitle "Panel waveform
+   bench"; on a UC8179 unit it reads "UltraChip stock-path bench" and opens the stock bench's menu instead (Transition
+   timing, Gray ramp, Exit; follow [its own steps](#ultrachip-stock-path-bench) after the warning). Either subtitle is
+   itself a check of the gate (`DisplayLabActivity::available()`, `usesStockBench`).
 4. Confirm the entry warning. Back or Cancel there returns to the launcher and sends nothing to the panel.
 5. **Frame period**: select it, then Run. The lab shows "Running" and performs nine all-hold scans (no pixel is
    driven, so the screen stays): TP[0A] in {1, 10, 100} against the frame-rate bytes {0x22, 0x11, 0x44}, tp outer
@@ -134,6 +140,84 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   facade refused the call and the panel was not driven, usually because the display is inverted (the control-center
   panel can invert it while the lab is open; the lab also refuses outright, logged as `scan refused: display inverted`,
   when it sees the inversion first). Turn inversion off and run again; a dropped time is not a measurement.
+
+## UltraChip stock-path bench
+
+On the UC8179 and UC8279 batches no facade call reaches the waveform registers yet (the SDK lab seam is the epic's
+option 1), so the one-frame scan bench cannot run there. The stock-path bench (story dlab-u1) measures what the public
+facade already offers on those panels, with `HalDisplay` calls only: no custom LUT, no register write, no `eink()`. The
+gate (`usesStockBench`, `StockBenchGate.h`): an UltraChip controller with no scan backend; a controller with a scan
+backend always gets the scan screens. The lab opens no scan session for it (no backend, no masks), and keeps the entry
+warning, the inverted refusal (on entry and again per run), the 15,000 ms timeout per timed step (the reference, the arm's base and gray pass, each flip, the ramp's base and
+gray pass; a step over it ends the run before the next panel call), and one FULL refresh on
+every way out of a screen that drove the panel (Back promotes it onto the menu's repaint; Home and sleep run it in the
+screen's `onExit`).
+
+**Transition timing** times the stock non-flashing previous-to-current transition, the facade call behind a grayscale
+page's base: `displayGrayscaleBase(FAST_REFRESH)`. The bench calls `HalDisplay` with `turnOffScreen=false`; the reader
+goes through `GfxRenderer`, which passes the sunlight fading fix as `turnOffScreen`, so with that setting on the
+reader's transition also pays a power-off that these timings leave out. Run, blocking:
+
+1. A checker of 4 x 2 blocks into the framebuffer, then one plain `displayBuffer(FAST_REFRESH)`, timed: the reference
+   (`DLAB transition ref ms=`). It runs first because after a gray pass the drivers turn a plain FAST into the
+   transition (`_redriveAfterGray`).
+2. Arming. Per the drivers (`Uc8179Driver.cpp`, `Uc8279X4Driver.cpp`), `displayGrayscaleBase(FAST)` takes the
+   transition only when a gray pass has run since the controller was last initialized (`_grayRefreshedOnce`; begin,
+   wake and the UC8179 direct-gray setup clear it), the previous plane is valid, and no full clear is pending;
+   otherwise it falls back to `display(FAST)`, a FAST DU when the previous plane is valid and no clear is pending, a
+   flashing full GC otherwise. An ordinary refresh never arms it. So the run arms it with one overlay gray pass of
+   all-B/W masks (both planes zero) over the same checker: `displayGrayscaleBase(FAST)` timed as the base, then
+   `copyGrayscaleBuffers` + `displayGrayBuffer` timed as the gray pass, each checked against the timeout, then
+   `cleanupGrayscaleBuffers` (untimed); one line logs their sum (`DLAB arm ms=`). A panel that reports no overlay
+   grayscale (UC8279 variant 0x67) skips it (`DLAB arm skipped: no overlay grayscale`). The arm's base is a plain FAST
+   on the first run after boot or wake, but the transition itself on later runs and after a Gray ramp pass or a reader
+   AA page (a gray pass has already run), so `arm ms` is not comparable across those cases.
+3. Ten flips: the checker, inverted on odd flips, through `displayGrayscaleBase(FAST_REFRESH)`, each timed
+   (`DLAB transition n=<i> ms=<ms> flashed=<yes/no>`).
+
+The table shows the reference, the arm, each flip (marked "fell back" when flagged), and the flips' min, median and
+max (a flip over the timeout is left out of them); it is redrawn with a FULL refresh after every run. **The
+fell-back heuristic** (`transitionFellBack`): `flashed=yes` means the flip fell back to a plain refresh instead of the
+transition (the story's definition), not that the eye saw a flash. Unarmed, every flip is a plain refresh, so every
+flip is flagged, though a FAST DU (the fallback when the old plane is valid) does not visibly flash; armed, every fallback the drivers can still take is a full GC
+(a pending clear or no valid old plane), much slower than a FAST, so a flip taking 2 x the reference or more is
+flagged. The factor 2 (`FELL_BACK_FACTOR`) is a guess, not a measurement: the table shows raw milliseconds so the owner
+can judge, and the photo or eye tells a flash apart.
+
+**Gray ramp** paints the OEM four-level grayscale: four bands, black, dark gray, light gray, white, left to right as the
+device is held, through the overlay masks (`freeink-sdk/docs/grayscale-capabilities.md`: (LSB, MSB) dark (1, 1), light
+(0, 1), B/W (0, 0); the base is black under the three darker bands). Activation: `displayGrayscaleBase(FAST_REFRESH)`
+timed as the base, `copyGrayscaleBuffers` + `displayGrayBuffer` timed as the gray pass (what a caller pays for it),
+then `cleanupGrayscaleBuffers` (untimed); logged as `DLAB gray base_ms=<> gray_ms=<>`. As with the arm, the first
+activation's base after boot or wake is a plain FAST and later ones (or any after a Transition run or a reader AA page)
+take the transition, so `base_ms` is not comparable across those cases. The panel keeps the ramp until the next
+Confirm or tap, which only repaints the screen with a FULL refresh. A panel without overlay grayscale shows "This panel
+reports no overlay grayscale" and logs `DLAB gray unsupported`; no pass is sent. On a UC8279, a gray pass whose MSB
+plane covers over 25 % of the panel (this ramp's two gray bands cover half) runs the driver's four-tone quality bank.
+
+Hardware steps (after the checklist's steps 1-4, on a UC8179 or UC8279 unit; the log shows
+`DLAB UltraChip stock-path bench` on entry):
+
+1. **Transition timing** → Run. The panel shows the checker, a gray pass over it, then ten flips. Copy the lines:
+
+   ```
+   [DLAB] transition ref ms=...
+   [DLAB] arm ms=...
+   [DLAB] transition n=1 ms=... flashed=no
+   ...
+   [DLAB] transition n=10 ms=... flashed=no
+   ```
+
+   and photograph the table. Note by eye whether any flip flashed (black-white-black). An armed flip flagged
+   `flashed=yes` is the heuristic's guess at a full-GC fallback, which does flash; on an unarmed run every flip is
+   flagged and none need flash, so there the flag says nothing about what the eye sees.
+2. **Gray ramp** → activate the row. Photograph the four bands before pressing a key, and copy
+   `[DLAB] gray base_ms=... gray_ms=...`. The next Confirm or tap brings the screen back with a FULL refresh.
+3. Leave with Back: one FULL refresh.
+
+Nothing here is calibrated yet: an armed flip that took the transition should not flash and should log
+`flashed=no`; a flagged flip is the heuristic's guess at a fall-back, so report it with its time and what the eye saw.
+A `timeout: ...` line means a timed step ran over 15 s: the run stopped and the next repaint is a FULL refresh.
 
 ## The scan seam
 
@@ -312,4 +396,12 @@ If any does not fit the screen shows "Not enough memory" and runs nothing.
   `Storage`.
 - `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B
   screens; `DisplayLabActivity` owns the session's preset and the Save preset row.
+- `lib/GameDisplayLab/StockBench.{h,cpp}`: the stock-path bench's pure parts: the checker frame (`fillChecker`), the
+  gray ramp in the overlay encoding (`rampShadeAt`, `fillGrayRamp`), the timing summary (`summarizeTimings`) and the
+  fell-back heuristic (`transitionFellBack`); pinned by `test/game_display_lab/test_stock_bench.cpp`.
+- `src/activities/games/display_lab/StockBenchGate.{h,cpp}`: `usesStockBench` (an UltraChip without a scan backend)
+  and the launcher row's subtitle (`labRowSubtitle`).
+- `src/activities/games/display_lab/TransitionTimingActivity.{h,cpp}` and `GrayRampActivity.{h,cpp}`: the stock
+  bench's two screens; the lab menu (`DisplayLabActivity`, `buildStockRows`, `activateStock`) opens them in place of
+  the scan screens.
 - `lib/hal/HalDisplay.h`: the one upstream touch, `EInkDisplay& eink()` under `FREEINK_CAP_GAMES` (ledger row 13).
