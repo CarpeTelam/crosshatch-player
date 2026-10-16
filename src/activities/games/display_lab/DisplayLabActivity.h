@@ -4,6 +4,7 @@
 
 #if CROSSHATCH_DISPLAY_LAB
 
+#include <GrayPreset.h>
 #include <HalMemory.h>
 #include <MaskPlanes.h>
 #include <ScanBudget.h>
@@ -15,22 +16,26 @@
 #include "activities/UiListActivity.h"
 
 // The display lab (Games → Display lab; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A, and the
-// display-lab epic's backend seam): a bench for the X4 Pro's panel that answers two numbers only the panel can give,
-// the frame period and the drive polarity of the two drive rows. Headed "Display lab", three rows: Frame period
-// (FramePeriodActivity), Polarity (PolarityActivity), Exit. The launcher shows its row only on an X4 Pro whose
-// controller has a scan backend (available(); SSD1677 only so far), and pushes this screen only after the entry
-// warning was confirmed, so Back on the warning sends nothing to the panel.
+// display-lab epic's backend seam and its gray engine, dlab-c1): a bench for the X4 Pro's panel that answers the
+// numbers only the panel can give: the frame period, the drive polarity of the two drive rows, and the gray engine's
+// dose table. Headed "Display lab", six rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity),
+// Transition test (TransitionTestActivity), Tuning (TuningActivity), Save preset (writes the session's gray preset to
+// GrayPresetFile::PATH; its line then says whether that worked), Exit. The launcher shows its row only on an X4 Pro
+// whose controller has a scan backend (available(); SSD1677 and UC8279 so far), and pushes this screen only after the
+// entry warning was confirmed, so Back on the warning sends nothing to the panel.
 //
-// It owns the session the two experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
+// It owns the session the experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
 // masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
 // created in onEnter and freed in onExit (the lab shows one notice row and runs nothing when any of them has no room),
-// and scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the stock voltages and
-// never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP
-// scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a
-// scan reached the panel since the last clean, and logs the count. An inverted display is refused with a notice, and
-// again at every scan (the control-center panel can invert it after onEnter): the facade drops grayscale calls while
-// inverted, so a scan would measure nothing. A call the facade dropped for another reason returns in well under
-// DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
+// the gray preset (preset(), read from GrayPresetFile::PATH in onEnter, or InkBoy's defaults; the tuning screen edits
+// it and the transition test reads it), and scan(), the controller-neutral safety around backend()->scan(). Safety:
+// the backend keeps the stock voltages and never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and
+// cleans the panel, every SESSION_CAP scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home,
+// sleep) runs one FULL_REFRESH when a scan reached the panel since the last clean, and logs the count. An inverted
+// display is refused with a notice, and again at every scan (the control-center panel can invert it after onEnter):
+// the facade drops grayscale calls while inverted, so a scan would measure nothing. A call the facade dropped for
+// another reason returns in well under DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero
+// busy time.
 class DisplayLabActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DisplayLab";
@@ -60,10 +65,24 @@ class DisplayLabActivity final : public UiListActivity {
   GameDisplayLab::MaskPlanes& masks() { return maskPlanes; }
   // The session's backend; null when the lab shows a notice.
   ScanBackend* backend() { return scanBackend.get(); }
+  // The session's gray preset: the file's, or InkBoy's defaults; edited in place by the tuning screen.
+  GameDisplayLab::GrayPreset& preset() { return grayPreset; }
+  // Writes preset() to GrayPresetFile::PATH and sets the Save preset row's line ("Saved", or "Save failed, values
+  // kept"); false when the write failed (logged), the session's values unchanged either way.
+  bool savePreset();
+  // Scans left before scan() runs the session cap's cleaning refresh first (0 when it is due).
+  uint32_t scansBeforeClean() const {
+    return budget.sinceClean() < SESSION_CAP ? SESSION_CAP - budget.sinceClean() : 0;
+  }
+  // A cleaning FULL refresh of the framebuffer now, which restarts the cap count; nothing without a backend. The
+  // caller holds the render lock.
+  void cleanNow();
+  // The status text of a scan that ended with `result` ("Done", "Timed out", ...).
+  static const char* outcomeText(Scan result);
 
  private:
-  enum class Row : uint8_t { FramePeriod, Polarity, Exit };
-  static constexpr size_t ROW_COUNT = 3;
+  enum class Row : uint8_t { FramePeriod, Polarity, TransitionTest, Tuning, SavePreset, Exit };
+  static constexpr size_t ROW_COUNT = 6;
 
   int listCount() const override;
   const char* headerTitle() const override;
@@ -75,8 +94,9 @@ class DisplayLabActivity final : public UiListActivity {
   void activateIndex(int index) override;
   void onBackButton() override;
 
-  // The masks and the backend for this session; false, having logged why, when one of them has no room.
-  bool openSession();
+  // The masks and the backend for this session, and `loaded` as its gray preset (its rate index checked against the
+  // backend); false, having logged why, when one of them has no room.
+  bool openSession(const GameDisplayLab::GrayPreset& loaded);
   void closeSession();
   void buildRows();
   // A FULL_REFRESH through the backend, which also resets the cap count. The caller holds the render lock, and the
@@ -92,6 +112,9 @@ class DisplayLabActivity final : public UiListActivity {
   // Why the lab cannot run (the one row's label), or null when it can.
   const char* notice = nullptr;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
+  GameDisplayLab::GrayPreset grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
+  // The Save preset row's line after a save, or null before one.
+  const char* saveStatus = nullptr;
   freeink::ui::ListItem rowItems[ROW_COUNT] = {};
 };
 

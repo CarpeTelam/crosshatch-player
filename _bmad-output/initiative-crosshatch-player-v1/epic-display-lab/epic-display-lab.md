@@ -110,6 +110,19 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   repaints with a FULL refresh (Part A's polarity rule).
 - D5. The gray engine's slot period is `max(measured scan time + 5 ms, 100 ms)` from the backend's last busy time;
   a board game needs a few scans per second, so whole-screen correctness beats windowed speed.
+- D7 (2026-10-16, dlab-b2 halt G1): a UC8279 phase byte holds at most 63 frames (6-bit count). A lab table spreads
+  `frames` over the single group's four phases at the same level (100 = 63 + 37; 252 is the ceiling) so the drive is
+  one continuous run of `frames` frames; a request above 252 is `Scan::Refused`. The UC8179's counts are 8-bit, so
+  dlab-a2 keeps D3's single phase.
+- D8 (2026-10-16, dlab-b2 halt G2, binds dlab-a2 too): the SDK seam forbids any other display call between the
+  waveform upload and `labEnd()`, and the lab's screens repaint through the renderer between runs, which would leave
+  a cached upload stale. An UltraChip backend's `scan()` is a self-contained session: upload the tables, set the
+  PLL, `labScan`, then `labEnd` every call (the upload's ~260 SPI bytes sit outside the timed DRF window). The
+  story's "upload once, then not again until a change" is withdrawn; D1 gains no end-of-run hook.
+- D9 (2026-10-16, dlab-b2 halt G3): D2's "WW and KK tables are all zero" meant their level, not their length. VCOM,
+  WW and KK carry the same frame counts as KW and WK (group 0, T1 = `frames`, split per D7 on the UC8279) at the
+  GND level, matching every stock UltraChip table in the driver, so the activation length follows TP and the
+  all-hold row of the matrix drives nothing.
 
 ## Story results
 
@@ -117,6 +130,20 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   tests; x4pro, default, sticky build; pio check clean; flash +2,016 B, static RAM unchanged. Follow-up pass `03c0a06d`
   (D1a, 8 lows patched, 2 more deferrals, 2,106 tests, flash +2,160 B in total); merged as `9ee36396` plus the
   orchestrator's `rowLabel(row, swapped)` signature commit; 5 deferrals carried to deferred-work.md.
+- dlab-b2 (lane B, experimental branch): halted once on three intent gaps (plan `536a61b4`; D7-D9 decided them),
+  then built, commit `4bc3054e` on `dlab-lane-b`; follow-up pass `eef111b7` (29 findings, 0 high, 5 medium; the doc's
+  "about 150 s" stall claim corrected: the SDK's UC8279 BUSY wait has no bound); 2,129 host tests; x4pro, default,
+  sticky build; pio check -e x4pro clean; flash +1,472 B (gate 6,016 B to spare before D6), static RAM unchanged.
+  Merged into `claude/display-experimental-sdk-do-not-merge` as `7ea790b2`; 2 deferrals carried to deferred-work.md.
+- dlab-c1 (lane C): built, D6 as `1ca33864` and the engine as `fe2f6cef` on `dlab-lane-c`; follow-up pass `ef6e15a2`
+  (29 findings, 0 high, 5 medium; 1 medium patched: a light-panel swipe could cover the running transition test and
+  draw over the drive). 2,159 host tests on the merged tree; x4pro, default, sticky build; pio check clean on default
+  and x4pro; the preset codec is std-only (the layer check forbids ArduinoJson there). Flash: with D6 the gate measures
+  shipped firmware, base re-taken at `9b2317f3` + D6 as +258,192 B games delta (18,288 B to spare), the engine +0
+  against it; the plain x4pro image with the lab on grows +18,576 B; static RAM +0. Merged as `7e430902`; no
+  deferrals. Open for the hardware run: at D5's 100 ms slots a 12 px rectangle crossing in 5 s gives each pixel only
+  1-2 doses, so it may never reach its shade; the sweep speed or slot period is an epic Decision after the owner's
+  transition-test run, not a lane fix.
 
 ## Measurement (base)
 
