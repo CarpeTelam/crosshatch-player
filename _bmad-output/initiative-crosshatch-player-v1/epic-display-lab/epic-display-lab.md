@@ -123,6 +123,11 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   WW and KK carry the same frame counts as KW and WK (group 0, T1 = `frames`, split per D7 on the UC8279) at the
   GND level, matching every stock UltraChip table in the driver, so the activation length follows TP and the
   all-hold row of the matrix drives nothing.
+- D10 (2026-10-16, before dlab-a2): dlab-u1's gate gives the stock bench only to an UltraChip controller without a
+  scan backend, and a backend wins. So that the owner's UC8179 unit keeps the stock transition and OEM ramp to compare
+  against the lab, an UltraChip controller with a scan backend gets the stock bench's two rows (Transition timing,
+  Gray ramp) appended to the scan menu before Exit; an SSD1677 does not. The stock-bench-only menu stays for an
+  UltraChip controller with no backend.
 
 ## Story results
 

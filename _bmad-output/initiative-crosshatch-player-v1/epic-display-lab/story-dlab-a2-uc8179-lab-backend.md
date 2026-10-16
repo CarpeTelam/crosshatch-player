@@ -1,7 +1,8 @@
 # Story dlab-a2: the UC8179 lab backend over the SDK seam (lane A, experimental branch)
 
 Epic: `_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/epic-display-lab.md` (read it fully: R1, R2,
-R5, R6, Boundaries, Decisions D1-D3, the owner Decision on options 1 and 3). Ref: `dlab-a2`. Plan:
+R5, R6, Boundaries, Decisions D1-D3 and D7-D10, the owner Decision on options 1 and 3; D8 and D9 amend D2/D3 for
+UltraChip and this story follows them; D7 is UC8279-only). Ref: `dlab-a2`. Plan:
 `_bmad-output/implementation-artifacts/plan-dlab-a2-uc8179-lab-backend.md`. Builds on `dlab-0`
 (`ScanBackend`, `MaskPlanes`) and on the SDK seam (`FREEINK_CAP_DISPLAY_LAB` lab API in the submodule:
 `labSupported`, `labUploadWaveform`, `labSetFrameRate`, `labScan`, `labEnd` on `FreeInkDisplay`, reached
@@ -14,15 +15,18 @@ through `HalDisplay::eink()`; read `freeink-sdk/libs/display/FreeInkDisplay/incl
 
 **Approach:** Add `UC8179ScanBackend` (device side, `src/activities/games/display_lab/`) with its pure parts in
 `lib/GameDisplayLab/UC8179ScanLut.{h,cpp}` (host-tested): the five 43-byte register-prefixed one-frame tables
-(VCOM all zero; WW and KK all zero so an unchanged pixel holds; KW and WK with one group of one phase, `T1 = frames`,
-repeat 1, level codes per `swapPolarity`, D3), the PLL code list for the frame-rate index (the controller's
+(every table one group of one phase, `T1 = frames`, repeat 1, 8-bit counts so no D7 split; VCOM, WW and KK at the
+GND level for those frames so an unchanged pixel holds and the activation length follows TP (D9); KW and WK with
+level codes per `swapPolarity`, D3; `UC8279ScanLut` on this branch is the worked example), the PLL code list for the frame-rate index (the controller's
 documented PLL register values; cite the source in Design Notes; if none is documented, three values bracketing the
 driver's config value), and the plane encoding from the two masks per D2 (old plane and new plane: hold = equal and
-white, drive-to-white = old black / new white, drive-to-black = old white / new black). `scan()` calls
-`labUploadWaveform` when the tables changed, `labSetFrameRate` when the index changed, then `labScan(old, new,
-busyUs)`; `clean()` calls `labEnd` then a FULL refresh. The lab's gate adds this controller; on it the menu
-offers the scan screens (frame period, polarity) and, from `dlab-c1`, the transition test; the stock-path screens
-from `dlab-u1` stay available.
+white, drive-to-white = old black / new white, drive-to-black = old white / new black). `scan()` is a
+self-contained session every call (D8): `labUploadWaveform`, `labSetFrameRate`, `labScan(old, new, busyUs)`, then
+`labEnd`, as `UC8279ScanBackend` does; `clean()` is a FULL refresh through the renderer. The lab's gate adds this
+controller (`factoryFor`); a backend wins over the stock bench (`usesStockBench`), so on it the menu offers the scan
+screens (frame period, polarity), `dlab-c1`'s transition test, tuning and save preset, and, per D10, the stock
+bench's two rows (Transition timing, Gray ramp) before Exit, so the owner can compare the stock transition and the
+OEM ramp against the lab on the same unit.
 
 ## Boundaries & Constraints
 
@@ -38,10 +42,11 @@ gap: HALT and name it); no change to the SSD1677 backend.
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
 | Backend choice | controller UC8179 | `UC8179ScanBackend`; `labSupported()` true | `labSupported()` false (seam not compiled): no backend, row shows the stock bench only |
-| All-hold scan | both masks clear, frames n, rate i | old == new == white for every pixel; tables with T1 = n; PLL set to code i | — |
+| All-hold scan | both masks clear, frames n, rate i | old == new == white for every pixel; all five tables with T1 = n (D9); PLL set to code i | — |
 | Polarity scan | whiteMask all set | old black, new white for every pixel (KW table drives) ; swapPolarity swaps the KW/WK level codes | — |
-| Table upload | first scan after a table change | `labUploadWaveform` called once, then not again until a change | upload refused: scan returns Refused, logged |
-| Clean / exit | any | `labEnd` then FULL refresh | — |
+| Table upload | every scan (D8) | `labUploadWaveform`, PLL, `labScan`, `labEnd` in that order, each call | upload refused: scan returns Refused, logged, `labEnd` still runs |
+| Clean / exit | any | FULL refresh through the renderer (`labEnd` already ran inside the scan) | — |
+| Stock rows (D10) | controller UC8179 with the backend | the scan menu shows Transition timing and Gray ramp before Exit; on an SSD1677 it does not | — |
 
 ## Verification
 
