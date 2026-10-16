@@ -27,3 +27,5 @@ n	publisher	url	pub_date	supports
 26	Zephyr reel_board dts; NuttX ssd1680 driver; Solomon Systech SSD1677 page	https://www.solomon-systech.com/?p=5604	unknown	SSD168x LUT group structure, 0x32 command, SSD1677 programmable waveform
 27	Zephyr ultrachip,uc81xx-common binding	https://codex.ac6.fr/Zephyr/raw/Zephyr-latest/dts/bindings/display/ultrachip%2Cuc81xx-common.yaml	unknown	UC81xx register LUT override of OTP
 28	Espressif esp_lcd_ssd1681 readme; dzarda7/esp_epaper	https://components.espressif.com/components/espressif/esp_lcd_ssd1681/versions/0.1.0/readme	unknown	power-on reloads OTP LUT; thin open-driver ecosystem
+29	uxjulia/CrossInk releases and tags	https://github.com/uxjulia/CrossInk/releases	2026-10-04	CrossInk versions; no 1.8.x; no fast-refresh notes
+30	GitHub profiles hellominecraft913-dev and thebitsworld; Free-Ink/freeink-sdk forks page	https://github.com/Free-Ink/freeink-sdk/forks	unknown	no public SDK fork carrying the Ink-boy driver
