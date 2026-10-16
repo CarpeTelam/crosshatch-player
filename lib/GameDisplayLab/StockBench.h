@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "GrayPreset.h"
+
 // The UltraChip stock-path bench's pure parts (story dlab-u1): pure C++, pinned by
 // test/game_display_lab/test_stock_bench.cpp. Every frame and plane here is a full-screen 1-bpp bitmap in the
 // framebuffer's byte order (as GameDisplayLab::MaskPlanes: row-major, (width + 7) / 8 bytes per row, the leftmost pixel
@@ -15,13 +17,12 @@ namespace GameDisplayLab {
 // `inverted`. `frame` holds MaskPlanes::bytesFor(width, height) bytes ((width + 7) / 8 bytes per row).
 void fillChecker(uint8_t* frame, uint16_t width, uint16_t height, bool inverted);
 
-// The four overlay-grayscale shades of the gray ramp.
-enum class Shade : uint8_t { Black, DarkGray, LightGray, White };
+// The gray ramp's four bands are the gray engine's shades (GrayPreset.h: K, D, L, W, darkest first).
 // The panel axis the ramp's bands run along: X (bands are vertical stripes) or Y (horizontal stripes).
 enum class BandAxis : uint8_t { X, Y };
 
-// The shade at physical pixel (x, y) of the gray ramp: four equal bands Black, DarkGray, LightGray, White along `axis`,
-// starting at its origin (x = 0 or y = 0), or at its far end when `reversed`. The White band always takes the
+// The shade at physical pixel (x, y) of the gray ramp: four equal bands K, D, L, W along `axis`,
+// starting at its origin (x = 0 or y = 0), or at its far end when `reversed`. The W band always takes the
 // remainder: it lies at the far end of the axis, or at its origin when `reversed`. A coordinate past the panel counts
 // as its last pixel.
 Shade rampShadeAt(uint16_t x, uint16_t y, uint16_t width, uint16_t height, BandAxis axis, bool reversed);

@@ -90,29 +90,29 @@ TEST(StockBenchChecker, NullFrameIsIgnored) { fillChecker(nullptr, 800, 480, fal
 TEST(StockBenchRamp, FourEqualBandsAlongXWithTheRemainderInTheLast) {
   constexpr uint16_t W = 803;
   constexpr uint16_t H = 480;
-  EXPECT_EQ(rampShadeAt(0, 0, W, H, BandAxis::X, false), Shade::Black);
-  EXPECT_EQ(rampShadeAt(199, 479, W, H, BandAxis::X, false), Shade::Black);
-  EXPECT_EQ(rampShadeAt(200, 0, W, H, BandAxis::X, false), Shade::DarkGray);
-  EXPECT_EQ(rampShadeAt(399, 0, W, H, BandAxis::X, false), Shade::DarkGray);
-  EXPECT_EQ(rampShadeAt(400, 0, W, H, BandAxis::X, false), Shade::LightGray);
-  EXPECT_EQ(rampShadeAt(599, 0, W, H, BandAxis::X, false), Shade::LightGray);
-  EXPECT_EQ(rampShadeAt(600, 0, W, H, BandAxis::X, false), Shade::White);
-  EXPECT_EQ(rampShadeAt(802, 0, W, H, BandAxis::X, false), Shade::White);
+  EXPECT_EQ(rampShadeAt(0, 0, W, H, BandAxis::X, false), Shade::K);
+  EXPECT_EQ(rampShadeAt(199, 479, W, H, BandAxis::X, false), Shade::K);
+  EXPECT_EQ(rampShadeAt(200, 0, W, H, BandAxis::X, false), Shade::D);
+  EXPECT_EQ(rampShadeAt(399, 0, W, H, BandAxis::X, false), Shade::D);
+  EXPECT_EQ(rampShadeAt(400, 0, W, H, BandAxis::X, false), Shade::L);
+  EXPECT_EQ(rampShadeAt(599, 0, W, H, BandAxis::X, false), Shade::L);
+  EXPECT_EQ(rampShadeAt(600, 0, W, H, BandAxis::X, false), Shade::W);
+  EXPECT_EQ(rampShadeAt(802, 0, W, H, BandAxis::X, false), Shade::W);
   // Past the panel counts as its last pixel.
-  EXPECT_EQ(rampShadeAt(9999, 0, W, H, BandAxis::X, false), Shade::White);
+  EXPECT_EQ(rampShadeAt(9999, 0, W, H, BandAxis::X, false), Shade::W);
 }
 
 TEST(StockBenchRamp, ReversedMirrorsTheBands) {
   constexpr uint16_t W = 800;
   constexpr uint16_t H = 480;
-  EXPECT_EQ(rampShadeAt(799, 0, W, H, BandAxis::X, true), Shade::Black);
-  EXPECT_EQ(rampShadeAt(600, 0, W, H, BandAxis::X, true), Shade::Black);
-  EXPECT_EQ(rampShadeAt(599, 0, W, H, BandAxis::X, true), Shade::DarkGray);
-  EXPECT_EQ(rampShadeAt(400, 0, W, H, BandAxis::X, true), Shade::DarkGray);
-  EXPECT_EQ(rampShadeAt(399, 0, W, H, BandAxis::X, true), Shade::LightGray);
-  EXPECT_EQ(rampShadeAt(200, 0, W, H, BandAxis::X, true), Shade::LightGray);
-  EXPECT_EQ(rampShadeAt(199, 0, W, H, BandAxis::X, true), Shade::White);
-  EXPECT_EQ(rampShadeAt(0, 0, W, H, BandAxis::X, true), Shade::White);
+  EXPECT_EQ(rampShadeAt(799, 0, W, H, BandAxis::X, true), Shade::K);
+  EXPECT_EQ(rampShadeAt(600, 0, W, H, BandAxis::X, true), Shade::K);
+  EXPECT_EQ(rampShadeAt(599, 0, W, H, BandAxis::X, true), Shade::D);
+  EXPECT_EQ(rampShadeAt(400, 0, W, H, BandAxis::X, true), Shade::D);
+  EXPECT_EQ(rampShadeAt(399, 0, W, H, BandAxis::X, true), Shade::L);
+  EXPECT_EQ(rampShadeAt(200, 0, W, H, BandAxis::X, true), Shade::L);
+  EXPECT_EQ(rampShadeAt(199, 0, W, H, BandAxis::X, true), Shade::W);
+  EXPECT_EQ(rampShadeAt(0, 0, W, H, BandAxis::X, true), Shade::W);
   for (uint16_t x = 0; x < W; ++x) {
     ASSERT_EQ(rampShadeAt(x, 7, W, H, BandAxis::X, true), rampShadeAt(W - 1 - x, 7, W, H, BandAxis::X, false)) << x;
   }
@@ -122,26 +122,26 @@ TEST(StockBenchRamp, AlongYIgnoresX) {
   constexpr uint16_t W = 800;
   constexpr uint16_t H = 480;  // bands of 120
   for (const uint16_t x : {0, 333, 799}) {
-    EXPECT_EQ(rampShadeAt(x, 0, W, H, BandAxis::Y, false), Shade::Black);
-    EXPECT_EQ(rampShadeAt(x, 119, W, H, BandAxis::Y, false), Shade::Black);
-    EXPECT_EQ(rampShadeAt(x, 120, W, H, BandAxis::Y, false), Shade::DarkGray);
-    EXPECT_EQ(rampShadeAt(x, 240, W, H, BandAxis::Y, false), Shade::LightGray);
-    EXPECT_EQ(rampShadeAt(x, 360, W, H, BandAxis::Y, false), Shade::White);
-    EXPECT_EQ(rampShadeAt(x, 479, W, H, BandAxis::Y, false), Shade::White);
-    EXPECT_EQ(rampShadeAt(x, 479, W, H, BandAxis::Y, true), Shade::Black);
-    EXPECT_EQ(rampShadeAt(x, 360, W, H, BandAxis::Y, true), Shade::Black);
-    EXPECT_EQ(rampShadeAt(x, 359, W, H, BandAxis::Y, true), Shade::DarkGray);
-    EXPECT_EQ(rampShadeAt(x, 0, W, H, BandAxis::Y, true), Shade::White);
+    EXPECT_EQ(rampShadeAt(x, 0, W, H, BandAxis::Y, false), Shade::K);
+    EXPECT_EQ(rampShadeAt(x, 119, W, H, BandAxis::Y, false), Shade::K);
+    EXPECT_EQ(rampShadeAt(x, 120, W, H, BandAxis::Y, false), Shade::D);
+    EXPECT_EQ(rampShadeAt(x, 240, W, H, BandAxis::Y, false), Shade::L);
+    EXPECT_EQ(rampShadeAt(x, 360, W, H, BandAxis::Y, false), Shade::W);
+    EXPECT_EQ(rampShadeAt(x, 479, W, H, BandAxis::Y, false), Shade::W);
+    EXPECT_EQ(rampShadeAt(x, 479, W, H, BandAxis::Y, true), Shade::K);
+    EXPECT_EQ(rampShadeAt(x, 360, W, H, BandAxis::Y, true), Shade::K);
+    EXPECT_EQ(rampShadeAt(x, 359, W, H, BandAxis::Y, true), Shade::D);
+    EXPECT_EQ(rampShadeAt(x, 0, W, H, BandAxis::Y, true), Shade::W);
   }
 }
 
 TEST(StockBenchRamp, ShortAndEmptyAxes) {
   // Shorter than four bands: one pixel each, from Black.
-  EXPECT_EQ(rampShadeAt(0, 0, 3, 1, BandAxis::X, false), Shade::Black);
-  EXPECT_EQ(rampShadeAt(1, 0, 3, 1, BandAxis::X, false), Shade::DarkGray);
-  EXPECT_EQ(rampShadeAt(2, 0, 3, 1, BandAxis::X, false), Shade::LightGray);
-  EXPECT_EQ(rampShadeAt(0, 0, 0, 0, BandAxis::X, false), Shade::Black);
-  EXPECT_EQ(rampShadeAt(0, 0, 0, 0, BandAxis::Y, true), Shade::Black);
+  EXPECT_EQ(rampShadeAt(0, 0, 3, 1, BandAxis::X, false), Shade::K);
+  EXPECT_EQ(rampShadeAt(1, 0, 3, 1, BandAxis::X, false), Shade::D);
+  EXPECT_EQ(rampShadeAt(2, 0, 3, 1, BandAxis::X, false), Shade::L);
+  EXPECT_EQ(rampShadeAt(0, 0, 0, 0, BandAxis::X, false), Shade::K);
+  EXPECT_EQ(rampShadeAt(0, 0, 0, 0, BandAxis::Y, true), Shade::K);
 }
 
 // ---- fillGrayRamp ----
@@ -166,15 +166,15 @@ void expectOverlayEncoding(const Ramp& ramp, const uint16_t width, const uint16_
       bool lsb = false;
       bool msb = false;
       switch (rampShadeAt(x, y, width, height, axis, reversed)) {
-        case Shade::Black:
+        case Shade::K:
           break;
-        case Shade::DarkGray:
+        case Shade::D:
           lsb = msb = true;
           break;
-        case Shade::LightGray:
+        case Shade::L:
           msb = true;
           break;
-        case Shade::White:
+        case Shade::W:
           base = true;
           break;
       }

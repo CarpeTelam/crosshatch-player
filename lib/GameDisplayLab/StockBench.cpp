@@ -40,7 +40,7 @@ void fillChecker(uint8_t* frame, const uint16_t width, const uint16_t height, co
 Shade rampShadeAt(const uint16_t x, const uint16_t y, const uint16_t width, const uint16_t height, const BandAxis axis,
                   const bool reversed) {
   const uint16_t length = axis == BandAxis::X ? width : height;
-  if (length == 0) return Shade::Black;
+  if (length == 0) return Shade::K;
   uint16_t p = axis == BandAxis::X ? x : y;
   p = std::min<uint16_t>(p, static_cast<uint16_t>(length - 1));
   if (reversed) p = static_cast<uint16_t>(length - 1 - p);
@@ -59,16 +59,16 @@ void fillGrayRamp(uint8_t* base, uint8_t* lsb, uint8_t* msb, const uint16_t widt
     const size_t offset = static_cast<size_t>(y) * stride;
     for (uint16_t x = 0; x < width; ++x) {
       switch (rampShadeAt(x, y, width, height, axis, reversed)) {
-        case Shade::Black:
+        case Shade::K:
           break;  // base black, masks (0, 0)
-        case Shade::DarkGray:
+        case Shade::D:
           setBit(lsb + offset, x);
           setBit(msb + offset, x);
           break;
-        case Shade::LightGray:
+        case Shade::L:
           setBit(msb + offset, x);
           break;
-        case Shade::White:
+        case Shade::W:
           setBit(base + offset, x);
           break;
       }
