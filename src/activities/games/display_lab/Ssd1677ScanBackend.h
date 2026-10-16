@@ -34,7 +34,7 @@ class Ssd1677ScanBackend final : public ScanBackend {
   // This LUT drives rows 1 and 2 only; both-bits pixels select LUT3, which holds.
   bool supportsWeakRow() override;
   // The unswapped drive: ssd1677RowLabel(row, false). A swapped request drives the other row's code.
-  const char* rowLabel(uint8_t row) const override;
+  const char* rowLabel(uint8_t row, bool swapped) const override;
 
  private:
   // In this order: the constructor allocates the planes from planeBytes.

@@ -36,7 +36,7 @@ void PolarityActivity::onEnter() {
 
 const char* PolarityActivity::rowLabelOf(const size_t index) const {
   const ScanBackend* backend = lab.backend();
-  const char* label = backend ? backend->rowLabel(static_cast<uint8_t>(index + 1)) : nullptr;
+  const char* label = backend ? backend->rowLabel(static_cast<uint8_t>(index + 1), false) : nullptr;
   return label ? label : "?";
 }
 

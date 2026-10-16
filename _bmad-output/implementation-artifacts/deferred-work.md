@@ -1332,3 +1332,20 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-spike-ssd1677-grayscale-calibration.md`
   summary: The display lab's session-cap and timeout wiring in DisplayLabActivity::scan (clean before the 2,400th scan, clean after a timed-out scan) has no host test because the activity needs a display facade double the harness lacks.
   evidence: Verification-gap lens, review pass 1: ScanBudget's arithmetic is tested, but deleting the cleanDue() check or the post-timeout cleanPanel() passes every test and the hardware checklist never reaches 2,400 scans; settle when Part B gives the scan primitive a host-testable shape.
+
+## dlab-0
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
+  summary: Nothing checks the argument order of what Ssd1677ScanBackend::scan sends (encodeSsd1677Planes(black, white, bw, red), copyGrayscaleBuffers(bw, red)).
+  evidence: The host tests pin the pure encoder and LUT builder against Part A, not the device glue; swapping the two mask or plane arguments compiles and passes every test. Closing it needs a fake EInkDisplay host harness or a run on an SSD1677 unit (the owner has a UC8179). (location: src/activities/games/display_lab/Ssd1677ScanBackend.cpp; severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
+  summary: The lab wrapper's guard order (rate refusal before the cap clean, count only a Done scan) has no automated check.
+  evidence: DisplayLabActivity::scan compiles only in x4pro and has no host harness; ScanBudget alone is tested. Moving the rate check below cleanDue() or dropping the non-Done early return would pass every test. (location: src/activities/games/display_lab/DisplayLabActivity.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
+  summary: D1 has no hook for a backend to name its drive rows, so the polarity labels and the vs= log name stay SSD1677 facts (POLARITY_ROW1/2, vsName) on every backend.
+  evidence: PolarityActivity labels rows from Ssd1677ScanLut's codes; ScanBackend (D1, fixed shape) has no row-name member. Lanes dlab-a1 and dlab-b1 need an orchestrator decision (a D1 addition) before the polarity screen can label UltraChip rows truthfully. (location: src/activities/games/display_lab/PolarityActivity.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
+  summary: The controller-to-backend table (factoryFor in ScanBackends.cpp) has no test; a lane mapping UC8179 or UC8279 to the wrong backend would pass every test.
+  evidence: ScanBackends.cpp compiles only in x4pro with no host harness; nothing references hasScanBackend or makeScanBackend under test/. A wrong case would show the lab row on an UltraChip unit and send SSD1677 LUT and register writes to it. Lanes dlab-a1/b1 edit exactly these cases; a pure controller-to-backend-kind mapping in lib/GameDisplayLab would let a host test pin it. (location: src/activities/games/display_lab/ScanBackends.cpp; severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
+  summary: ScanBackend::rowLabel(row) const (Amendment D1a) has no swap argument, so a caller sending swapPolarity = true would log the unswapped code.
+  evidence: D1a's text mentions the swapped codes but fixes the signature without swap; Ssd1677ScanBackend::rowLabel returns ssd1677RowLabel(row, false). No caller swaps in this story (the polarity screen sends false); Part B's engine may, and needs an orchestrator decision (a swap argument, or labels documented as unswapped). (location: src/activities/games/display_lab/ScanBackend.h; severity: low)

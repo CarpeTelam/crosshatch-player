@@ -89,7 +89,7 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   uint8_t rate; bool swapPolarity;}` with masks as full-screen 1-bpp bitmaps in the framebuffer's byte order
   (set bit = drive that way). The pure parts of each backend (table bytes, plane encoding from the two masks) live in
   `lib/GameDisplayLab/` and are host-tested; only the facade calls live in `src/`.
-- D1a (2026-10-16, after dlab-0's review): `ScanBackend` also exposes `const char* rowLabel(uint8_t row) const` (row 1
+- D1a (2026-10-16, after dlab-0's review): `ScanBackend` also exposes `const char* rowLabel(uint8_t row, bool swapped) const` (the `swapped` argument added on the combined tree after dlab-0, 2026-10-16) (row 1
   and row 2, short text for the polarity screen and its `vs=` log token, e.g. "LUT1 VSL" on the SSD1677, "KW table"
   on UltraChip). The polarity screen and its log line use it; no backend-specific strings outside the backends.
 - D6 (2026-10-16): the flash-budget gate measures shipped firmware. The display lab is dev-env only, so
@@ -114,8 +114,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 ## Story results
 
 - dlab-0 (lane 0): built, commit `40a71c4d` on `dlab-lane-0`; 33 review findings, 8 patched, 3 deferred; 2,104 host
-  tests; x4pro, default, sticky build; pio check clean; flash +2,016 B, static RAM unchanged. Follow-up review pass
-  dispatched (three mediums patched after the lenses) together with D1a.
+  tests; x4pro, default, sticky build; pio check clean; flash +2,016 B, static RAM unchanged. Follow-up pass `03c0a06d`
+  (D1a, 8 lows patched, 2 more deferrals, 2,106 tests, flash +2,160 B in total); merged as `9ee36396` plus the
+  orchestrator's `rowLabel(row, swapped)` signature commit; 5 deferrals carried to deferred-work.md.
 
 ## Measurement (base)
 

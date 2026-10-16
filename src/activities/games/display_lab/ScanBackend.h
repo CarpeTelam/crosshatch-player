@@ -60,9 +60,10 @@ class ScanBackend {
   // Whether the backend can drive a third, weak row (the gray engine's weak mode).
   virtual bool supportsWeakRow() = 0;
   // Short text naming what drive row `row` (1: the white mask's, 2: the black mask's) drives on this controller,
-  // unswapped (SSD1677: "LUT1 VSL"); nullptr for any other row. The display-lab epic's Amendment D1a: the screens
-  // label and log rows with it, so no controller fact lives outside its backend.
-  virtual const char* rowLabel(uint8_t row) const = 0;
+  // with `swapped` matching ScanRequest::swapPolarity (SSD1677: "LUT1 VSL" unswapped, "LUT1 VSH1" swapped);
+  // nullptr for any other row. The display-lab epic's Amendment D1a: the screens label and log rows with it, so no
+  // controller fact lives outside its backend.
+  virtual const char* rowLabel(uint8_t row, bool swapped) const = 0;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB
