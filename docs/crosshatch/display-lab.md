@@ -206,12 +206,15 @@ neutral) are InkBoy's too. History and weak mode are off: this story's choice (I
 
 ### Transition test
 
-Display lab → Transition test → Run. The panel is cleaned to white with a FULL refresh, then the screen stops
+Display lab → Transition test → Run. The sweep runs on its own FreeRTOS task (the epic's D11), so the buttons and
+touch answer while a scan is in flight. The panel is cleaned to white with a FULL refresh, then the screen stops
 drawing: the panel shows only what the scans drive. Four shade bands, K, D, L, W from the top, each with three 12-px
 rectangles of the other three shades (in K, D, L, W order), sweep from left to right in 5 s, pause 1 s, and repeat,
 following the screen's orientation.
 
-Controls while it runs (the Controls row says the same):
+Controls while it runs (the Controls row says the same). Pause, resume, replay and clean take effect at the end of
+the slot in flight (a slot's drive scan and its follow-up stay together); Back takes effect after the scan in flight,
+or after the clean in flight (a replay's, Previous's or the session cap's clean is one FULL refresh).
 
 - **Confirm**, or a tap over the screen's row area (where the Run, Speed and Controls rows were): pause; again to
   resume (the sweep clock stands still while paused). Swipes do nothing while the test view is up.
@@ -221,13 +224,29 @@ Controls while it runs (the Controls row says the same):
 - **Back**: stop and return to the rows with a FULL refresh. The Run row says "Stopped", or how the sweep ended when a
   scan was not delivered ("Timed out", "Dropped", "Refused (see log)"), which stops it at once. The Speed row shows the
   last "N.N scans/s, N ms per scan".
-- Another screen over the test (the light panel's top-edge swipe) ends the view as Back does, once it closes: the rows
-  come back with a FULL refresh. A forced refresh (the power or home button's Refresh) does nothing while it runs.
+- Another screen over the test (the light panel's top-edge swipe) stops the sweep: once the screen's loop has not run
+  for 0.3 s the task sends no further scan, and when the other screen closes the view ends as Back does, with the rows'
+  FULL refresh and "Covered by another screen" on the Run row. The check cannot tell a cover from a stall: a main-loop
+  pass that takes over 0.3 s while the view is up ends the run the same way. A forced refresh (the power or home
+  button's Refresh) does nothing while it runs.
+- Home and sleep end the sweep task before the screen frees anything; a task that was waiting for the render lock
+  when sleep or a screen change took it is deleted where it waits.
 
 Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans to white just before
 it and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
 (`skipped` counts the slot periods lost to slow slots in that same window, about 2 s; they are dropped, never
-queued).
+queued), and at the end of every run `gray sweep task ended: stack N bytes, high-water N bytes free, least before a
+scan N bytes` (an error line follows when under 1,024 bytes were left; the same line is logged when sleep or a
+screen change deleted the task, by the screen's loop task). Other lines, by the task that logs them:
+
+- sweep task: `gray sweep: loop silent for over N ms, a screen covers the view; ending` (its cover check, before a
+  scan or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or
+  `...: rate index N of N` (the run ends "Refused (see log)"); the stats, pause, resume, clean and start lines.
+- loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after
+  the gap; a cover usually logs this line and the sweep task's); `gray sweep: task deleted while it waited for the
+  render lock` (sleep or a screen change ended the task inside a scan or a clean); `Cannot create the sweep task (N
+  byte stack)` (no internal RAM for its stack; the Run row says "Stopped: not enough memory"); `gray sweep stopped:
+  <outcome>` when the view ends.
 
 How to read it:
 
@@ -290,7 +309,9 @@ C++ standard library only (the spine's layer table, `scripts/check_layers.py`), 
 Memory, PSRAM only, while the transition test is open: the model (2 B a pixel, 768,000 B at 800x480) and the
 follow-up masks (2 x 48,000 B), plus the history (1,152,000 B) when `history` is on and the weak bitmap (48,000 B)
 when weak mode is on and the backend has a weak row; the lab's own masks and the backend's planes stay as in Part A.
-If any does not fit the screen shows "Not enough memory" and runs nothing.
+If any does not fit the screen shows "Not enough memory" and runs nothing. While a run is up the sweep task's stack
+(8 KiB) is in internal RAM; when it cannot be created the Run row says "Stopped: not enough memory" and nothing is
+sent to the panel.
 
 ## Code map
 
@@ -329,12 +350,17 @@ If any does not fit the screen shows "Not enough memory" and runs nothing.
   (drive scan, follow-up scan, commit) through a caller's scan function; both pinned by `test_gray_model.cpp`.
 - `lib/GameDisplayLab/SlotScheduler.h`: the slot period (D5), skipped slots, and the speed window; pinned by
   `test_slot_scheduler.cpp`.
+- `lib/GameDisplayLab/SweepControl.h`: the transition test's request word between the screen's loop and its sweep
+  task (Stop, Run, Replay, Clean, InPanel) and the loop's heartbeat for the covered check; pinned by
+  `test_sweep_control.cpp`.
 - `lib/GameDisplayLab/TransitionScene.{h,cpp}`: the bands and sweeping rectangles over the logical screen, mapped to
   the panel as `GfxRenderer::rotateCoordinates` maps a pixel; pinned by `test_transition_scene.cpp`.
 - `src/activities/games/display_lab/GrayPresetFile.{h,cpp}`: the preset file's path, its load and save through
   `Storage`.
 - `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B
-  screens; `DisplayLabActivity` owns the session's preset and the Save preset row.
+  screens; `DisplayLabActivity` owns the session's preset and the Save preset row. The transition test's sweep task,
+  its creation, its joined stop from the loop and its stop under the render lock are device-only; the simulator
+  compiles the lab out.
 - `lib/GameDisplayLab/StockBench.{h,cpp}`: the stock-path bench's pure parts: the checker frame (`fillChecker`), the
   gray ramp in the overlay encoding (`rampShadeAt`, `fillGrayRamp`), the timing summary (`summarizeTimings`) and the
   fell-back heuristic (`transitionFellBack`); pinned by `test/game_display_lab/test_stock_bench.cpp`.
