@@ -51,9 +51,9 @@ bool buildUc8279ScanTables(uint8_t* out, uint8_t frames, bool swap);
 // The two DTM planes for one scan, `bytes` each (D2; framebuffer bit 1 = white, and the lab's CDI equals the B/W
 // refresh's, so plane bits mean what they do in a B/W refresh): old = ~white, new = ~black. A pixel in neither mask is
 // (1, 1), WW, which holds; one in the white mask (0, 1), KW, drives to white; one in the black mask (1, 0), WK, drives
-// to black; one in both (0, 0), KK, which holds at GND too. The driver's own external-LUT path agrees: its quality
-// bank uploads with 0x22 and 0x23 exchanged (kQualityLutReg) and pairs that with inverted planes, the same selection as
-// this one. The polarity screen is what confirms on hardware which table darkens.
+// to black; one in both (0, 0), KK, which holds at GND too. The driver's quality bank (kQualityLutReg, 0x22 and 0x23
+// exchanged) streams inverted gray planes, not B/W old/new planes, so it is no direct evidence for this selection; the
+// polarity screen is what confirms on hardware which table darkens.
 void encodeUc8279Planes(const uint8_t* black, const uint8_t* white, uint8_t* oldPlane, uint8_t* newPlane, size_t bytes);
 
 }  // namespace GameDisplayLab

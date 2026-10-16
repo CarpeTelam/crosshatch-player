@@ -19,9 +19,10 @@ Safety: on an SSD1677 every LUT the lab sends carries the panel's stock voltages
 `factoryMode=true` (the upload of the 105 LUT bytes plus the voltage registers, command 0x22 = 0xCC, a timed BUSY
 wait); on a UC8279 the lab writes no voltage register and sends no OTP or MTP command (see its section below). On
 either, a scan whose timed wait took over 15,000 ms ends its run and the panel is cleaned. A wait cannot be
-interrupted and the SDK caps each BUSY wait at 30 s, so a hung panel can stall the lab up to 30 s per scan on an
-SSD1677 and about 150 s on a UC8279, whose scan has five BUSY waits (upload ready, labScan ready, PON, DRF, labEnd);
-only the DRF wait is timed there, which is enough for the 15 s timeout to fire. 2,400 scans since the last clean force
+interrupted. On an SSD1677 the SDK caps each BUSY wait at 30 s, so a hung panel stalls the lab up to 30 s per scan. On
+a UC8279 the SDK's BUSY waits have no time limit (`EpdBus::waitBusy`'s `UcIdleHigh` path, by design, the same wait
+every ordinary UC8279 refresh uses), so a panel whose BUSY never releases stalls the lab without bound, and the 15 s
+timeout fires only for a DRF wait that does end after more than 15 s. 2,400 scans since the last clean force
 a FULL refresh, and leaving the lab by any route (Back, Home, sleep) runs one FULL refresh when a scan reached the
 panel since the last clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
 
@@ -38,9 +39,9 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   sent.
 - **Planes.** DTM1 (old) is the inverted white mask and DTM2 (new) the inverted black mask: a pixel in neither mask
   selects WW and holds, the white mask selects KW (drive to white), the black mask WK (drive to black), and a pixel in
-  both KK, which holds too. This rests on the lab's CDI equalling the B/W refresh's, and the driver's own external-LUT
-  path agrees: its quality bank uploads with 0x22 and 0x23 exchanged (`kQualityLutReg`) and pairs that with inverted
-  planes, the same selection. The polarity screen is what confirms on hardware which table darkens.
+  both KK, which holds too. This rests on the lab's CDI equalling the B/W refresh's. The driver's quality bank
+  (`kQualityLutReg`, 0x22 and 0x23 exchanged) streams inverted gray planes, not B/W old/new planes, so it is no
+  direct evidence for this selection; the polarity screen is what confirms on hardware which table darkens.
 - **Rows.** The polarity screen labels Row 1 "KW VSL" and Row 2 "WK VSH"; swapped, "KW VSH" and "WK VSL". The names
   follow the UltraChip level-select convention (01 VDH/VSH, 10 VDL/VSL; `makeQualityBank` treats levels 1 and 2 as
   opposite rails).
@@ -52,19 +53,23 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   needs `labEnd()` first and drops the waveform. After `labEnd()` the driver treats the panel as unknown, so the
   screen's next repaint after a scan is a full refresh. The cleaning refresh calls `labEnd()` before its FULL refresh.
 - **Busy time.** `busy_us` is the driver's DRF-to-BUSY-release time only: not the table upload, the plane streaming,
-  PON or the PSR rewrite, where the SSD1677's covers its LUT upload, activation and BUSY wait. Frame-period slopes
-  compare across controllers; `tp=1` intercepts and the polarity screen's `ms=` do not.
-- **Refusals.** A refused scan reports Refused and logs `scan refused: no UC8279 planes` (the planes did not fit) or
-  `scan refused: UC8279 <reason> (rate index N, M frames)`, the reason being `request without masks`,
-  `rate index out of range` or `frames over 252` (before any lab call), or `lab unsupported`, `upload refused`,
-  `frame rate refused` or `scan refused` (a facade call returned false; the session still ends with `labEnd()`).
+  PON or the PSR rewrite, where the SSD1677's covers its LUT upload, activation and BUSY wait. The SDK's UC8279 BUSY
+  wait starts with a one-tick delay (1 ms), which `busy_us` includes, so it never falls under the lab's 500 us
+  dropped-call floor. Frame-period slopes compare across controllers; `tp=1` intercepts and the polarity screen's
+  `ms=` do not.
+- **Refusals.** A refused scan reports Refused and logs `scan refused: UC8279 <reason> (rate index N, M frames)`, the
+  reason being `request without masks`, `rate index out of range` or `frames over 252` (before any lab call), or
+  `lab unsupported`, `upload refused`, `frame rate refused` or `scan refused` (a facade call returned false; the session
+  still ends with `labEnd()`). The facade refuses every lab call while the display is inverted, so on a UC8279 an
+  inversion the lab did not catch first shows as `upload refused`, never as "Dropped". `scan refused: no UC8279 planes`
+  is a defensive guard: when the planes do not fit, the lab shows its out-of-memory notice before any scan.
 
 ## Hardware checklist (the user's validation script)
 
 1. Build and flash: `flock /tmp/crosshatch-build.lock sh -c 'pio run -e x4pro -t upload'`; open a serial monitor at
    the env's baud with `LOG_LEVEL` 1 or more (the `x4pro` development env prints `DLAB` lines at `LOG_INF`).
-2. If the display is inverted (Settings), turn that off first: the facade drops grayscale calls while inverted, and the
-   lab shows "Turn off the inverted display first" instead of its menu.
+2. If the display is inverted (Settings), turn that off first: the facade drops grayscale calls (on a UC8279, refuses
+   lab calls) while inverted, and the lab shows "Turn off the inverted display first" instead of its menu.
 3. Home → Games. On an SSD1677 or UC8279 X4 Pro the last row is **Display lab**; on a UC8179 unit it is absent, which
    is itself a check of the gate (`DisplayLabActivity::available()`).
 4. Confirm the entry warning. Back or Cancel there returns to the launcher and sends nothing to the panel.
@@ -114,13 +119,14 @@ instead of the overlay-grayscale path, with the same screens, safety wrapper and
   convention holds on this panel: white = VSL on the BW-plane row, black = VSH1 on the RED-plane row. If it is the other
   way round, Part B swaps the codes (`GameDisplayLab::POLARITY_ROW1/2`).
 - On a UC8279 the slope reads the same way, but `busy_us` there is the DRF activation and BUSY wait only, so the `tp=1`
-  intercept is the activation overhead alone, with no table upload in it. For polarity, Row 1 (KW at VSL) should
-  lighten and Row 2 (WK at VSH) darken; if Row 1 darkens instead, the levels or the table roles are the other way round
-  on this panel, and Part B swaps the polarity (`ScanRequest::swapPolarity`).
-- A "Dropped" status (log line `dropped: scan N came back in M us, under the 500 us floor`) means the facade refused the
-  call and the panel was not driven, usually because the display is inverted (the control-center panel can invert it
-  while the lab is open; the lab also refuses outright, logged as `scan refused: display inverted`, when it sees the
-  inversion first). Turn inversion off and run again; a dropped time is not a measurement.
+  intercept is the activation overhead alone (with the wait's 1 ms start tick), with no table upload in it. For
+  polarity, Row 1 (KW at VSL) should lighten and Row 2 (WK at VSH) darken; if Row 1 darkens instead, the levels or the
+  table roles are the other way round on this panel, and Part B swaps the polarity (`ScanRequest::swapPolarity`). The
+  "Dropped" status cannot occur there (see Busy time and Refusals in its section).
+- On an SSD1677, a "Dropped" status (log line `dropped: scan N came back in M us, under the 500 us floor`) means the
+  facade refused the call and the panel was not driven, usually because the display is inverted (the control-center
+  panel can invert it while the lab is open; the lab also refuses outright, logged as `scan refused: display inverted`,
+  when it sees the inversion first). Turn inversion off and run again; a dropped time is not a measurement.
 
 ## Where Part B picks up
 

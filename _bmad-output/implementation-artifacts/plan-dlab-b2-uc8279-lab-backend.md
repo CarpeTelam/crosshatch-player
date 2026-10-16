@@ -11,7 +11,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/freeink-sdk/docs/display-lab.md'
   - '{project-root}/.agents/skills/heap-discipline/SKILL.md'
@@ -27,6 +27,16 @@ deferred:
     location: >-
       src/activities/games/display_lab/ScanBackends.cpp:36
     severity: medium
+  - summary: >-
+      A UC8279 BUSY that never releases hangs a lab scan with no bound, so the lab's 15 s timeout and clean never run.
+    evidence: |-
+      Uc8279X4Driver::busyPolarity() is UcIdleHigh; EpdBus::waitBusy's UcIdleHigh branch and waitRefreshComplete loop
+      while BUSY_N is LOW with no millisecond cap ("deliberately no fixed millisecond timeout on this controller path").
+      The same wait governs every ordinary UC8279 refresh, so the lab adds no new exposure; a bound (or a timed DRF wait
+      for the lab) belongs in freeink-sdk and should be proposed upstream. docs/crosshatch/display-lab.md Safety states it.
+    location: >-
+      freeink-sdk/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp:342
+    severity: low
 ---
 
 <intent-contract>
@@ -143,6 +153,39 @@ deferred:
   - `[low]` `[reject]` IA: `supportsWeakRow()` false — D2 gives the UltraChip encoding two drive tables (KW, WK) and holds WW/KK; no third row exists to report.
   - `[low]` `[patch]` IA: "level 1 = VSH" is an inference — comment now cites the UltraChip level-select convention and the polarity screen as the check.
 
+### 2026-10-16 — Review pass (follow-up)
+- verdicts: 29 findings — high 0, medium 5, low 21, false 3, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` BH: the Safety paragraph's UC8279 stall bound is false (SDK "caps each BUSY wait at 30 s", "about 150 s", "five BUSY waits", the DRF wait "enough for the 15 s timeout to fire"), and the first pass's EC-stall row rested on the same premise — `Uc8279X4Driver::busyPolarity()` is `UcIdleHigh`, whose `EpdBus::waitBusy` branch (`EpdBus.cpp:342-357`, "deliberately no fixed millisecond timeout") and `waitRefreshComplete` have no cap, and PON is waited only when the panel is off. Safety now states the SSD1677's 30 s cap and the UC8279's unbounded wait, with the 15 s timeout firing only for a DRF wait that ends after 15 s.
+  - `[low]` `[patch]` BH: the "Dropped" guidance (checklist step 2, Expected ranges, Busy time) reads as covering the UC8279 — verified: `FreeInkDisplay::lab*` return false when `_inverted`, so an inversion shows as `upload refused` (Refused), and the `UcIdleHigh` wait's leading `delay(1)` keeps `busy_us` over the 500 us floor. Step 2 names the UC8279 refusal, the Dropped bullet is SSD1677-only, Busy time and the UC8279 Expected-ranges bullet name the 1 ms start tick, and Refusals says inversion shows as `upload refused`.
+  - `[low]` `[reject]` BH: ticked Execution items and the first Implementation Note describe code the verify-note refactor replaced — the fix edits this build's plan; the later Implementation Note records the refactor.
+  - `[low]` `[reject]` BH: the first pass's Auto Run Result tallies read "medium 2, low 11" where the log holds 3 medium and 10 low patches — the fix edits this build's plan; this pass's Auto Run Result states the corrected first-pass figures.
+  - `[low]` `[reject]` BH: the post-upload-Refused root cause is `[patch]` for BH/EC and `[reject]` for IA in the first-pass log — the fix edits this build's plan; the IA row's own evidence says it was patched by documentation.
+  - `[low]` `[patch]` BH: the `kQualityLutReg` evidence ("the same selection as this one") overreaches — the quality bank streams inverted gray planes (`Uc8279X4Driver.cpp:658-663`), not B/W old/new planes. The `UC8279ScanLut.h` comment and the doc's Planes bullet now say it is no direct evidence and leave the CDI equality and the polarity screen as the grounds.
+  - `[low]` `[reject]` BH: the frontmatter `context:` lacks the epic file and `warnings: [oversized]` is unexplained — the fix edits this build's plan.
+  - `[low]` `[reject]` BH: residual risks miss stale contracts in `ScanBackend.h`, `FramePeriodActivity.h:14`, `PolarityActivity.h:15`, `LabExperiments.h:26` — carried for `ScanBackend.h`'s "nothing sent" (the first pass's BH contract row, documented in `UC8279ScanBackend.h`) and `DisplayLabActivity.h:21`; the other three name the SSD1677 as qualified examples ("on the SSD1677 …") that stay true, and the screens are on the intent's Never list.
+  - `[false]` `[reject]` BH: the Safety text omits that the lab leaves panel power on (no POF) — the driver keeps analog power on between ordinary refreshes too (`displayFinish` and the AA path send POF only on an explicit turn-off, `Uc8279X4Driver.cpp:523-527, 687-692`), so the lab adds no exposure the paragraph should name.
+  - `[low]` `[reject]` BH: `runUc8279Request`/`runUc8279Scan`/`buildUc8279ScanTables` take `uint8_t*` with an implicit 215-byte length — both callers pass 215-byte buffers (the backend's member array, the tests' `std::array`); changing the signatures adds surface for no observed harm.
+  - `[low]` `[reject]` BH: three host cases missing (rate 3 with frames 253, inversion refusal in the fake, labSupported-false through the request path) — the first only changes the logged reason (both Refused, no lab call, each refusal pinned alone); inversion is refused by the wrapper and the facade, so the fake would restate a boolean; Unsupported writes only backend-owned buffers.
+  - `[low]` `[patch]` BH: the `UC8279` case in `ScanBackends.cpp` sits under the `// Not X4 Pro controllers.` group — a `// The X4 Pro's UC8279 batch.` comment now heads it; the case does not move, so lane A's UC8179 line stays untouched.
+  - `[low]` `[patch]` BH: the Refusals bullet lists `scan refused: no UC8279 planes` as a line a tester can see — `DisplayLabActivity::openSession` rejects a backend whose `available()` is false (`DisplayLabActivity.cpp:74`), so the lab shows its out-of-memory notice first; the bullet now calls the line a defensive guard.
+  - `[low]` `[defer]` EC: a UC8279 BUSY that never releases hangs `scan()` with no bound, so the wrapper's timeout and clean never run — real, but the unbounded `UcIdleHigh` wait is the SDK's by design and governs every ordinary UC8279 refresh; a bound belongs in `freeink-sdk` (barred here). Deferred; the doc now states it.
+  - `[medium]` `[patch]` EC: the doc's "SDK caps each BUSY wait at 30 s … ~150 s … the 15 s timeout fires" is false for the UC8279 — same root cause as BH's Safety finding; patched there.
+  - `[medium]` `[patch]` VG: the rewritten Safety paragraph is wrong for the UC8279 (no cap on `UcIdleHigh`; the first pass's EC row closed on a false premise) — same root cause as BH's Safety finding; patched there.
+  - `[low]` `[patch]` VG: the "Dropped" explanation does not hold on a UC8279 (an inversion yields `upload refused`, Refused, never Dropped) — same root cause as BH's Dropped finding; patched there.
+  - `[low]` `[reject]` IA: "Refused, busyUs 0, logged" and "Done with labScan's busyUs" live at the backend surface while the tests drive the templates — carried: the first pass's VG row "outcome-to-`Scan` mapping is untested" (a `!= Done` mapping over the tested `runUc8279Request`).
+  - `[low]` `[reject]` IA: `clean()`'s labEnd-before-FULL order has no test — each scan ends its own session and `Uc8279X4Driver::labEnd` returns early when `!_labActive`, so the order is not observable today; a harness for the backend class does not exist for either controller.
+  - `[medium]` `[defer]` IA: the launcher row on UC8279 units rests on an untested `factoryFor` case — carried: the first pass's VG `factoryFor` row, already in `deferred`.
+  - `[low]` `[reject]` IA: `RecordingLab`'s fidelity is checked only by a test of the fake — the fake's refusals were read against `Uc8279X4Driver.cpp:834-904` (the VG lens confirmed they match); the SDK driver needs its Arduino bus, which the host suite does not build.
+  - `[low]` `[patch]` IA: KW = VSL / WK = VSH are pinned as level bits, not rails — carried: the first pass's IA "level 1 = VSH is an inference" row (comment cites the UltraChip convention; the polarity screen is the check).
+  - `[low]` `[reject]` IA: polarity row 2 is driven through `runUc8279Request` only by row 1's test — row 2 differs only in the mask passed; `Uc8279Planes.PolarityRowsSelectKwThenWk` pins both rows' planes and the request path forwards masks unchanged.
+  - `[low]` `[reject]` IA: no backend-level check of the frames 253-255 refusal — `runUc8279Request` pins `TooManyFrames` with no lab call for 253 and 255, and the backend forwards the request unchanged.
+  - `[medium]` `[patch]` IA: the doc adds hardware claims no intent row states, among them the "about 150 s" stall — the stall claim is BH's Safety finding, patched there; "Row 1 should lighten" is stated as the expected reading with the swap instruction if it fails, and "next repaint is a full refresh" matches `labEnd` setting `_needFullClear`.
+  - `[false]` `[reject]` IA: frames 0 is accepted and would run a full session — no caller sends 0 (`FRAME_PERIOD_TPS` {1, 10, 100}, `POLARITY_TP` 10), and Design Notes record the choice (all phase bytes 0x00, as the SSD1677 builder accepts TP 0).
+  - `[low]` `[reject]` IA: Refused after a successful upload breaks D1's "nothing sent" — carried: the first pass's IA post-upload row (documented in `UC8279ScanBackend.h`; unreachable on an X4 Pro).
+  - `[low]` `[reject]` IA: `labSupported()` handled per scan, not at backend choice — carried: the first pass's IA row (unreachable on an X4 Pro UC8279).
+  - `[false]` `[reject]` IA: `UC8279ScanSession.h` also holds the request checks, wider than "its call sequence" — the intent's purpose is a template host tests drive with a fake, and the checks there make the matrix's "Bad request" and "frames 253-255" rows host-testable; no bad outcome follows.
+
 ## Design Notes
 
 - **D7** (orchestrator, 2026-10-16): "a UC8279 phase byte holds at most 63 frames. Spread `frames` over the single group's four phases at the same level (100 = 63 + 37; ceiling 252); above 252 return `Scan::Refused`. Host-test the split (1, 10, 63, 64, 100, 252, 253)."
@@ -218,3 +261,50 @@ lenses read the diff and no lens has read it.
   at merge.
 - `factoryFor` stays untested (deferred).
 
+### Follow-up review pass (2026-10-16)
+
+**Status: built.** A fresh four-lens pass (blind hunter, edge-case hunter, verification gap, intent alignment) over
+`git diff 536a61b4..4bc3054e`, the plan as intent, as the orchestrator asked because the first pass patched doc text
+no lens had read. It found that patched text wrong in two places, and fixed those plus three smaller ones; no code
+behaviour changed (one comment line in `ScanBackends.cpp`, one header comment).
+
+**Files**
+- `docs/crosshatch/display-lab.md`: Safety now says the UC8279's BUSY waits have no time limit (SDK `UcIdleHigh`, by
+  design), so a hung panel stalls without bound and the 15 s timeout fires only for a DRF wait that ends; the
+  "about 150 s" figure and the five-wait list are gone. "Dropped" is SSD1677-only: on a UC8279 an inversion shows as
+  `upload refused` and the 1 ms start tick keeps `busy_us` over the 500 us floor (checklist step 2, Busy time,
+  Refusals, Expected ranges). The `kQualityLutReg` evidence is narrowed, and `no UC8279 planes` is called a defensive
+  guard.
+- `lib/GameDisplayLab/UC8279ScanLut.h`: the plane comment no longer claims the quality bank makes the same selection.
+- `src/activities/games/display_lab/ScanBackends.cpp`: a `// The X4 Pro's UC8279 batch.` comment heads the UC8279
+  case, which sat under `// Not X4 Pro controllers.`; the UC8179 line (lane A) is untouched.
+
+**Review** (29 findings: high 0, medium 5, low 21, false 3): 5 entries patched (the Safety stall claim, medium,
+raised by BH, EC, VG and IA; the UC8279 "Dropped" guidance, low, BH and VG; the `kQualityLutReg` overreach, low; the
+`factoryFor` comment group, low; the unreachable planes refusal line, low). Patched entries by verdict: medium 1,
+low 4. 1 deferred: the SDK's unbounded UC8279 BUSY wait (`EpdBus.cpp:342`, low; the fix belongs upstream in
+freeink-sdk). Rejected, reasons in the Review Triage Log: five plan-only fixes (stale Execution items, first-pass
+tallies, a duplicate's disposition, frontmatter `context`/`warnings`; for the record, the first pass patched 3 medium
+and 10 low entries, not "medium 2, low 11"); stale contracts in other files (carried or qualified SSD1677 examples);
+POF omission (false: ordinary refreshes keep power on too); implicit 215-byte buffer length; three extra host cases;
+backend-surface glue untested (carried); `clean()` order unobservable; fake fidelity; row 2 and frames 253 at the
+request level; frames 0 (false); the session header's scope (false); post-upload Refused and per-scan labSupported
+(carried). Follow-up review recommended: false (no high patched on this follow-up pass).
+
+**Verification** (on the patched tree before the commit)
+- Host suite (Ninja, hosttest lock): 2,129 of 2,129 pass.
+- `check_upstream_touches.py`: FAIL on `.gitmodules` and the `freeink-sdk` pointer only (the orchestrator's touch on
+  this experimental branch); every file this pass touches is fork-only.
+- `./bin/clang-format-fix`: two runs, nothing new in `git status`; no formatting change outside this pass's paths.
+- Build lock, `PLATFORMIO_BUILD_CACHE_DIR=/home/user/crosshatch-player/.cache`, from an emptied `.pio`:
+  `check_flash_budget.py build on` (the `x4pro` build) and `build off` succeed; `compare --limit-kib 270
+  --ram-limit-bytes 1024` within budget (flash +270,464 B of 276,480; static RAM +784 B of 1,024); `objects` "No
+  problems"; `pio run -e default` and `-e sticky` succeed; `pio check -e x4pro` (low/medium/high) "No defects found".
+  x4pro `firmware.bin` 6,229,376 B; this pass changes only comments, so no size delta is claimed.
+
+**Residual risks**
+- A hung UC8279 panel hangs the lab, as it hangs any UC8279 refresh (deferred to the SDK).
+- Unchanged from the first pass: group framing, level names and KW/WK roles rest on stock tables, not a datasheet
+  (the polarity screen is the check); PLL codes 0x0D/0x0F are a bracket; `DisplayLabActivity.h:21` still says
+  "SSD1677 only so far" (lane A edits the same line); `ScanBackend.h`'s "Refused, with nothing sent" has the UC8279
+  post-upload exception documented only in `UC8279ScanBackend.h`; `factoryFor` stays untested (deferred).

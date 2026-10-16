@@ -33,6 +33,7 @@ Factory factoryFor(const Controller controller) {
     case Controller::IT8951:
     case Controller::UC8279C:
       return nullptr;
+    // The X4 Pro's UC8279 batch.
     case Controller::UC8279:
       return &make<UC8279ScanBackend>;
   }
