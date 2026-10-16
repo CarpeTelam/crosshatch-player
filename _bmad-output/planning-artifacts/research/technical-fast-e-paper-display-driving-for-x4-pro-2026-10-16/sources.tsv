@@ -35,3 +35,9 @@ n	publisher	url	pub_date	supports
 34	Waveshare, 4.26inch e-Paper product page and wiki	https://www.waveshare.com/wiki/4.26inch_e-Paper_HAT_Manual	unknown	vendor full 4 s / partial 0.7 s
 35	Waveshare e-Paper repository, EPD_1in54_V2.c (SSD1681)	https://raw.githubusercontent.com/waveshareteam/e-Paper/master/RaspberryPi_JetsonNano/c/lib/e-Paper/EPD_1in54_V2.c	unknown	SSD1681 LUT shape for comparison
 36	bigbag/papyrix-reader, SSD1677 driver notes	https://github.com/bigbag/papyrix-reader/blob/main/docs/ssd1677-driver.md	unknown	community 0x22 values and timings (unsourced)
+37	Seeed Studio wiki, reTerminal E1001 getting started and Arduino cookbook	https://wiki.seeedstudio.com/getting_started_with_reterminal_e1001/	unknown	E1001 is a 7.5" 800x480 UC8179 ESP32-S3 device, not the Sticky
+38	Seeed-Studio/Seeed_GFX @0dfdd713 (SSD1677 and UC8179 drivers, XIAO 3.97"/4.26" setups)	https://github.com/Seeed-Studio/Seeed_GFX	2026-09-04	one SSD1677 driver for 3.97" and 4.26" 800x480 panels; gray and partial macros; UC8179 host LUTs
+39	ESPHome pull requests 18931, 19213, 19365 and docs PR 7463	https://github.com/esphome/esphome/pull/19213	2026-10	Sticky is SSD1677; 4-gray is full-refresh only; partial updates drop gray
+40	CNX Software and Geeky Gadgets on the reTerminal Sticky	https://www.cnx-software.com/2026/07/31/reterminal-sticky-3-97-inch-magnetic-touch-epaper-display-is-supported-by-four-open-source-firmware-projects/	2026-07-31	Sticky hardware: 3.97" 800x480 touch, ESP32-S3R8, open firmware list
+41	Aftermath, reTerminal Sticky review	https://aftermath.site/reterminal-sticky-review-ereader-xteink/	2026-08-19	Sticky vs X4 size, pixel density, CrossPoint beta
+42	Notebookcheck, 9to5Google, Geeky Gadgets on the Boox Picco	https://www.notebookcheck.net/Boox-Picco-is-an-extremely-compact-4-inch-e-reader.1350763.0.html	2026-07-24	Picco: 3.97" grayscale, Linux-based, specs unannounced, closed
