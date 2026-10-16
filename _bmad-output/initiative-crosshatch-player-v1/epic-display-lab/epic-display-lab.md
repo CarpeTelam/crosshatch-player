@@ -70,6 +70,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - 2026-10-16: the owner forked `Free-Ink/freeink-sdk` to `CarpeTelam/freeink-sdk`; the UltraChip one-frame benches
   are built over a lab API added there (option 1) on an experimental branch that cannot merge into `develop` until
   upstream accepts the seam, and the stock-path UltraChip bench (option 3) is built now on the epic branch.
+- 2026-10-16: the experimental superproject branch is `claude/display-experimental-sdk-do-not-merge`, branched from the
+  epic branch; it alone moves the submodule pointer to the fork's `display-lab-seam` and edits `.gitmodules`; it is
+  never merged into `develop` or the epic branch; the seam-backed stories (`dlab-a2`, `dlab-b2`) land there.
 - 2026-10-16: Part B ships with InkBoy's defaults (dose table, hold mask 0xc667, retarget 100 percent, routes) and
   every number editable on the device; no number is claimed calibrated until the owner measures it.
 
