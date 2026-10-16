@@ -1365,3 +1365,8 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-u1-ultrachip-stock-bench.md`
   summary: No test covers which bench a panel gets: DisplayLabActivity::available(), usesStockBench (a backend wins), labRowSubtitle and the stock menu dispatch.
   evidence: No host harness compiles src/activities/games/display_lab (CROSSHATCH_DISPLAY_LAB is 0 off device), as with dlab-0's deferred guard-order item; dropping the stock-bench half of available() or the backend-wins check passes every test. Settled by the owner's launcher check on a UC8179 and an SSD1677, or a pure gate function with a test; the same pure controller-to-backend-kind mapping dlab-0 and dlab-b2 defer would carry it. (location: src/activities/games/display_lab/StockBenchGate.cpp, DisplayLabActivity.cpp; severity: medium, unverified)
+
+## dlab-a2
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-a2-uc8179-lab-backend.md`
+  summary: The UC8179 backend's device wiring (factoryFor's labSupported() gate, scan()'s plane argument order, clean()'s labEnd before the FULL refresh) is pinned by no test.
+  evidence: ScanBackends.cpp and UC8179ScanBackend.cpp compile only in x4pro with no host harness for display.eink(); the tests drive runUc8179Request with their own buffers. Inverting the labSupported() ternary, swapping oldPlane/newPlane in scan(), or dropping labEnd() from clean() passes every test. Same gap as dlab-0's and dlab-b2's carried factoryFor items; a facade fake or the owner's hardware checklist (steps 3 and 6) settles it. (location: src/activities/games/display_lab/ScanBackends.cpp, UC8179ScanBackend.cpp; severity: medium)
