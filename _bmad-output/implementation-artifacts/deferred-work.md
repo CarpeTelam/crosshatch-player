@@ -1370,3 +1370,20 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-a2-uc8179-lab-backend.md`
   summary: The UC8179 backend's device wiring (factoryFor's labSupported() gate, scan()'s plane argument order, clean()'s labEnd before the FULL refresh) is pinned by no test.
   evidence: ScanBackends.cpp and UC8179ScanBackend.cpp compile only in x4pro with no host harness for display.eink(); the tests drive runUc8179Request with their own buffers. Inverting the labSupported() ternary, swapping oldPlane/newPlane in scan(), or dropping labEnd() from clean() passes every test. Same gap as dlab-0's and dlab-b2's carried factoryFor items; a facade fake or the owner's hardware checklist (steps 3 and 6) settles it. (location: src/activities/games/display_lab/ScanBackends.cpp, UC8179ScanBackend.cpp; severity: medium)
+
+## dlab-c2
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
+  summary: serve()'s decision table (clean once, clock to 0 on any replay, run state from the latest press, pause before clean) has no host test.
+  evidence: It lives in device-only code (TransitionTestActivity::serve, compiled only under CROSSHATCH_DISPLAY_LAB); test_sweep_control.cpp pins the request word's bit protocol only. Extracting the decision into a pure helper in lib/GameDisplayLab would let the host suite cover replay+clean, clean+resume and pause-during-replay. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (serve); severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
+  summary: stopSweep() and endSweepLocked() wait for the task with no time limit, the latter while holding the render mutex.
+  evidence: A scan whose BUSY wait never ends (the SDK's UC8179/UC8279 wait is unbounded, dlab-b2's deferral) wedges the loop task or onExit/sleep for good. GameVM has a time-limited join with an abandon fallback and a LOG_ERR; the same here would make a wedged scan diagnosable. Settle with the SDK BUSY bound. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (stopSweep, endSweepLocked); severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
+  summary: Cover detection is a heartbeat timing: scans continue for up to COVERED_GAP_US plus the scan in flight under a covering screen, and a main-loop pass stalled over 300 ms ends the run as covered.
+  evidence: ActivityManager::loop knows when it pushes the light panel over this screen but nothing tells the screen; an onCovered hook in the push path, or an atomic top-activity generation checked in enterPanel, would make it deterministic. Design change outside this story; the doc states both effects. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (loop, the enterPanel gate); src/activities/ActivityManager.cpp; severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
+  summary: The delivered-scan count and busy sum the screen passes to SlotScheduler::record have no test.
+  evidence: Reverting to record(slot.scans, slot.busyUs) passes every host test; the screen is device-only. Closes with serve()'s deferred extraction (a SlotResult delivered-scans accessor pinned in test_gray_model.cpp). (location: src/activities/games/display_lab/TransitionTestActivity.cpp (runSlot); severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
+  summary: endSweepLocked can still delete a task blocked in DisplayLabActivity::scan's own inverted-display LOG_ERR when the display is inverted between the lambda's pre-check and scan's check.
+  evidence: Closing it needs a flag set inside DisplayLabActivity::scan right before its RenderLock, which the story forbids changing; the window is one register read wide and the lab is dev-only. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (endSweepLocked); DisplayLabActivity.cpp (scan); severity: low)
