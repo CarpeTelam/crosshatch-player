@@ -51,9 +51,15 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 ## Lanes
 
 - Lane 0 (serial, first): `dlab-0` the backend seam. Everything else branches from its merge.
-- Lane A: `dlab-a1` UC8179 backend. Lane B: `dlab-b1` UC8279 backend. Lane C: `dlab-c1` the grayscale engine and its
-  two screens. A, B and C run in parallel after lane 0; they touch disjoint files by design (each backend is its own
-  pair of files and its own test file; the engine adds files and touches only the lab menu's row list).
+- Lane C: `dlab-c1` the grayscale engine and its two screens (after lane 0).
+- Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
+  lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
+  through the facade's public paths; needs no SDK change.
+- SDK seam (owner option 1): `sdk-seam` in the fork `CarpeTelam/freeink-sdk`, branch `display-lab-seam`, proposed
+  upstream as a pull request; the experimental superproject branch points the submodule at it.
+- Lane A, second story: `dlab-a2` the UC8179 lab backend over the seam; Lane B: `dlab-b2` the UC8279 lab backend over
+  the seam. Both run in parallel on the experimental branch after the seam lands; they touch disjoint files (each
+  backend is its own pair of files and its own test file).
 
 ## Decisions (owner, dated)
 
@@ -61,6 +67,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - 2026-10-16: the bench is dev-env only: `FREEINK_CAP_DISPLAY_LAB=1` in the `x4pro` env alone (spike review).
 - 2026-10-16: scan timeout 15,000 ms (spike review).
 - 2026-10-16: build UltraChip benches for both UC8179 and UC8279, and Part B now, as parallel lanes (this epic).
+- 2026-10-16: the owner forked `Free-Ink/freeink-sdk` to `CarpeTelam/freeink-sdk`; the UltraChip one-frame benches
+  are built over a lab API added there (option 1) on an experimental branch that cannot merge into `develop` until
+  upstream accepts the seam, and the stock-path UltraChip bench (option 3) is built now on the epic branch.
 - 2026-10-16: Part B ships with InkBoy's defaults (dose table, hold mask 0xc667, retarget 100 percent, routes) and
   every number editable on the device; no number is claimed calibrated until the owner measures it.
 
