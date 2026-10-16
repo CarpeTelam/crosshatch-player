@@ -48,3 +48,7 @@ target_link_libraries(GameCoreTest PRIVATE
 )
 
 gtest_discover_tests(GameCoreTest)
+
+# The display lab's LUT builder suite (test/game_display_lab). Added here, not from test/CMakeLists.txt: the upstream
+# touch ledger (row 3) lets that file hold only the two game add_subdirectory lines.
+add_subdirectory(${REPO_ROOT}/test/game_display_lab ${CMAKE_BINARY_DIR}/game_display_lab)

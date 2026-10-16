@@ -1329,3 +1329,6 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-spike-ssd1677-grayscale-calibration.md`
   summary: Display lab Part B, the calibration instrument: the per-pixel level and dose model (lib/GameDisplayLab/GrayModel), InkBoy's transition-test screen with sweeping rectangles, the live tuning list, and the /.crosshatch/display-lab.json preset.
   evidence: Split at the plan's token gate (about 3,750 tokens); Part B's slot timing and default polarity depend on Part A's measured frame period and drive polarity, so it is built after the spike's hardware results exist.
+- source_plan: `_bmad-output/implementation-artifacts/plan-spike-ssd1677-grayscale-calibration.md`
+  summary: The display lab's session-cap and timeout wiring in DisplayLabActivity::scan (clean before the 2,400th scan, clean after a timed-out scan) has no host test because the activity needs a display facade double the harness lacks.
+  evidence: Verification-gap lens, review pass 1: ScanBudget's arithmetic is tested, but deleting the cleanDue() check or the post-timeout cleanPanel() passes every test and the hardware checklist never reaches 2,400 scans; settle when Part B gives the scan primitive a host-testable shape.

@@ -32,6 +32,9 @@ BASE = {
     'lib/GameCore/GameEvent.h': '#pragma once\n#include "Manifest.h"\n',
     'lib/GameIcons/GameIcons.h': '#pragma once\n#include <cstdint>\n',
     'lib/GameIcons/GameIcons.generated.h': '#pragma once\n#include <cstdint>\n',
+    # The display lab's LUT builder: pure C++ (the display-lab spike, 2026-10-16).
+    'lib/GameDisplayLab/Ssd1677ScanLut.h': '#pragma once\n#include <cstdint>\n',
+    'lib/GameDisplayLab/Ssd1677ScanLut.cpp': '#include "Ssd1677ScanLut.h"\n#include <cstring>\n',
     'lib/GameScript/StoreSlot.h': '#pragma once\n#include <mutex>\n',
     'lib/GameScript/Codec.h': '#pragma once\n#include <GameEvent.h>\n#include <Utf8.h>\n#include "StoreSlot.h"\n',
     'lib/GameScript/LuaGame.cpp': '#include <lua.hpp>\n#include <GameIcons.h>\n',

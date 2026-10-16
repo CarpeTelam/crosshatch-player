@@ -72,8 +72,9 @@ class ParseLedgerTest(unittest.TestCase):
 
     def test_committed_ledger(self):
         lists = cut.parse_ledger((HERE.parent / cut.LEDGER_PATH).read_text())
-        self.assertEqual(len(lists['Ledger']), 12)
+        self.assertEqual(len(lists['Ledger']), 13)
         self.assertIn('src/network/OtaUpdater.cpp', lists['Ledger'])
+        self.assertIn('lib/hal/HalDisplay.h', lists['Ledger'])  # row 13, the display lab's facade seam
         self.assertIn('src/activities/boot_sleep/BootActivity.cpp', lists['Ledger'])
         self.assertIn('src/activities/boot_sleep/SleepActivity.cpp', lists['Ledger'])
         self.assertEqual(

@@ -31,15 +31,18 @@ companions:
 | --- | --- | --- |
 | Domain | `lib/GameCore/` | C++ standard library, `lib/Memory`, `lib/JsonParser` |
 | Icon data | `lib/GameIcons/` | nothing (generated data, and `GameIcons.h`'s hand-written lookup over it) |
+| Display lab | `lib/GameDisplayLab/` | C++ standard library (`Ssd1677ScanLut.{h,cpp}` and `ScanBudget.h`, pinned by `test/game_display_lab/test_scan_lut.cpp` and `test_scan_budget.cpp`) |
 | Script adapter | `lib/GameScript/` | `GameCore`, `GameIcons` (names), `lib/lua`, `lib/Utf8` (`TextMetrics`) |
 | Engine (vendored) | `lib/lua/` | C standard library |
 | Device adapters | `src/games/` | `GameCore`, `GameScript`, `GameIcons`, HAL, `Storage`, `ZipFile`, `lib/miniz` (`mz_crc32`, for the installer's CRC check), `PngToBmpConverter`, ESP-NOW, mbedTLS; `lib/Utf8`; `lib/EpdFont` and `src/fontIds.h` (`FrameReplay`'s built-in fonts, AD-7); the SDK's `FreeInkUICore.h` (`GameTouch.h`'s touch types, AD-20); `SecureHttpClient` in `ForkReleaseProbe` only (AD-25) |
-| Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
+| Screens | `src/activities/games/` | `src/games/`, `GameCore`, `GameDisplayLab`, `GfxRenderer`, `UiListActivity` / `UiAppHost` |
 | Upstream hooks (AD-3 ledger rows) | `src/activities/ActivityManager.cpp` (row 5), `src/components/CoverGridHomeUi.cpp` (row 9), `src/network/OtaUpdater.cpp` (row 10) | row 5: `src/activities/games/` (the Games launcher and mode picker); row 9: `lib/GameIcons` (`GAME_CONTROLLER_32` for Home's cover-grid Games tab); row 10: `GameCore` (`ForkRelease.h`), `src/games/` (`ForkReleaseProbe.h`); never `GameScript` or `lib/lua`. No other upstream file includes game code. |
 
 **Amended 2026-09-28 (owner):** the `lib/Utf8` edges (`GameScript`'s `TextMetrics.h`, for UTF-8 decoding in `ch.text_width`, and `src/games/FrameReplay.cpp`), the `lib/EpdFont` / `src/fontIds.h` edge (`src/games/FrameReplay.cpp`), and the SDK `FreeInkUICore.h` edge (`src/games/GameTouch.h`) are as built and reviewed (epic-script-runtime retro A1); the diagram below shows them. The rule for Screens is unchanged: they reach `GameScript` only through `src/games` (retro AI-5 restores the code to it).
 
 **Amended 2026-09-29 (epic-install-and-launcher entry 6, as the entry's description states):** the `lib/miniz` edge for `src/games` (`mz_crc32`, the installer's CRC check over the streamed output, AD-15); `scripts/check_layers.py`'s `TABLE` and the diagram below carry it.
+
+**Amended 2026-10-16 (owner, display-lab spike):** the Display lab row, `lib/GameDisplayLab/`: the SSD1677 scan LUT builder (`Ssd1677ScanLut`) and the scan bookkeeping (`ScanBudget.h`), pure C++ with no Arduino or SDK include so `test/game_display_lab` (`test_scan_lut.cpp`, `test_scan_budget.cpp`) pins their rules, which Screens (the X4 Pro device build's `src/activities/games/display_lab/`) may include; `scripts/check_layers.py`'s `TABLE` carries both, `src/games/GamesBuildAnchor.cpp` includes its header (AD-2's anchor, `FILE_EDGES`), and the diagram below shows the edge.
 
 **Amended 2026-09-28 (owner):** the Upstream hooks row. Its `src/components/CoverGridHomeUi.cpp` → `lib/GameIcons` edge is new (epic icon-library R9: the cover-grid Home's Games tab draws `GAME_CONTROLLER_32` with `renderer.drawIcon`); the `ActivityManager.cpp` (row 5) and `OtaUpdater.cpp` (row 10) edges are as built in epic 2. `scripts/check_layers.py` holds the row as `UPSTREAM_EDGES` and fails any other upstream include of game code; the diagram below shows rows 9 and 10.
 
@@ -50,6 +53,8 @@ flowchart TD
   %% Amended 2026-09-28 (owner): the Games list, and the Utf8, EpdFont/fontIds.h, and FreeInkUICore.h edges (retro A1).
   ACT["src/activities/games<br/>(Games list / launcher, mode picker, lobby, GameMatchActivity)"] --> ADP["src/games<br/>(GameLink task, EspNowLink, NearbySession, installer, registry,<br/>GameSaveStore, FrameReplay, GameViewport, arena, GameAssets)"]
   ACT --> CORE["lib/GameCore<br/>(Roster, Session, Protocol, ReliableLink, Manifest, ports)"]
+  %% Amended 2026-10-16 (owner, display-lab spike): the SSD1677 scan LUT builder.
+  ACT --> DLAB["lib/GameDisplayLab<br/>(Ssd1677ScanLut)"]
   ADP --> SCR["lib/GameScript<br/>(VM host, sandbox, ch.* bindings, codec, frame buffers, LuaGame)"]
   ADP --> CORE
   ADP --> ICO["lib/GameIcons<br/>(GameIcons.generated.h)"]
@@ -90,7 +95,7 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
 
 - **Binds:** all
 - **Prevents:** the fork drifting back into CrossPlay's merge pain.
-- **Rule:** v1 changes only the upstream files in the ledger below. Row 10 used the 1 reserve slot (AD-25), so no reserve remains. Each change is `#if FREEINK_CAP_GAMES`-guarded where the language allows; unguardable changes are marked as such. The ledger lives in `docs/crosshatch/upstream-touches.md`. A fork-only CI job fails a PR when a path that exists in `upstream/develop` differs between `merge-base(HEAD, upstream/develop)` and `HEAD` and is in neither the ledger nor a baseline allowlist of pre-existing fork files (`AGENTS.md`, `.gitattributes`, `.gitignore`, `.github/PULL_REQUEST_TEMPLATE.md`, the removed `CLAUDE.md`); the job fetches `upstream/develop` with full history. Any further upstream file needs a spine update first.
+- **Rule:** v1 changes only the upstream files in the ledger below. Row 10 used the 1 reserve slot (AD-25), so no reserve remains; row 13 came by the amendment below, as any further row must. Each change is `#if FREEINK_CAP_GAMES`-guarded where the language allows; unguardable changes are marked as such. The ledger lives in `docs/crosshatch/upstream-touches.md`. A fork-only CI job fails a PR when a path that exists in `upstream/develop` differs between `merge-base(HEAD, upstream/develop)` and `HEAD` and is in neither the ledger nor a baseline allowlist of pre-existing fork files (`AGENTS.md`, `.gitattributes`, `.gitignore`, `.github/PULL_REQUEST_TEMPLATE.md`, the removed `CLAUDE.md`); the job fetches `upstream/develop` with full history. Any further upstream file needs a spine update first.
 
   | # | Upstream file | Change | Guarded |
   | --- | --- | --- | --- |
@@ -106,6 +111,9 @@ Arrows are the only allowed dependencies among fork code. Upstream code reaches 
   | 10 | `src/network/OtaUpdater.cpp` | calls into `ForkRelease.h` for the update URL, asset name, and build-number comparison, and into `games/ForkReleaseProbe.h` after a failed fetch (AD-25) | yes |
   | 11 | `src/activities/boot_sleep/BootActivity.cpp` | **amended 2026-10-03 (owner, brand swap):** the boot logo and title become the Crosshatch mark and `STR_GAMES_PRODUCT_NAME` in games builds | yes |
   | 12 | `src/activities/boot_sleep/SleepActivity.cpp` | **amended 2026-10-03 (owner, brand swap):** the same swap in `renderDefaultSleepScreen` | yes |
+  | 13 | `lib/hal/HalDisplay.h` | **amended 2026-10-16 (owner, display-lab spike):** an `EInkDisplay& eink()` accessor, the display lab's seam to the SDK facade | yes |
+
+  **Display-lab seam (2026-10-16, owner; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A):** row 13 is one guarded hunk in `lib/hal/HalDisplay.h`, `#if FREEINK_CAP_GAMES` / `EInkDisplay& eink() { return einkDisplay; }` / `#endif` with its comment, and nothing else in `lib/hal` changes. The display lab (`src/activities/games/display_lab/`, gated at runtime on an SSD1677 probe) compiles only under `FREEINK_CAP_DISPLAY_LAB`, which row 1 sets in the `x4pro` development env alone, so release builds never carry it. It drives caller-supplied one-frame waveforms through the facade's existing overlay-grayscale path, `copyGrayscaleBuffers(bw, red)` then `displayGrayBuffer(turnOff=false, lut, factoryMode=true)` (the upload of the 105 LUT bytes to 0x32 plus the five voltage bytes to their registers, then the activation), whose LUT argument `HalDisplay::displayGrayBuffer(bool)` drops; the accessor hands the lab the facade rather than widening the HAL's API for a bench. The lab makes no game include from the HAL, so the layer table's Upstream hooks row is unchanged; its own library, `lib/GameDisplayLab`, is the Display lab row of the layer table.
 
   **Brand swap (2026-10-03, owner):** rows 11 and 12 brand the boot and default sleep screens as Crosshatch in the games envs only (`FREEINK_CAP_GAMES`); the other envs keep the CrossPoint screens. The 120 px mark is the new `src/images/CrosshatchMark120.h`, so neither row includes game code and the layer table is unchanged; the title is the new `STR_GAMES_PRODUCT_NAME` key, inside row 2's prefix. The default game icon (the same mark at 64 and 128 px, `src/games/GameMarkBitmaps.h`) replaces the `game-controller` fallback in `GameRowIcon::choose`; it is a built-in bitmap, not an icon-library name (AD-24 stays Phosphor-only). `scripts/gen_crosshatch_mark.py` makes all three bitmaps from the UX spine's geometry and fails when a ring would fuse into the grid.
 

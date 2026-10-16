@@ -14,6 +14,7 @@
 #include <GameIcons.h>
 #include <LuaGame.h>
 #include <Session.h>
+#include <Ssd1677ScanLut.h>  // lib/GameDisplayLab, the display lab's LUT builder (pure C++)
 
 // <climits> comes before the Lua headers, and games rely on 64-bit Lua integers.
 // lua.hpp is Lua's own extern "C" wrapper for lua.h, lualib.h, and lauxlib.h.

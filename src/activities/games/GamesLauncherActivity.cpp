@@ -16,6 +16,10 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "games/GamePackageInstaller.h"
+#if CROSSHATCH_DISPLAY_LAB
+// The entry warning, device builds only: the host harness that compiles this file has no OptionPopup.
+#include "activities/util/ConfirmationActivity.h"
+#endif
 
 namespace fui = freeink::ui;
 
@@ -120,6 +124,9 @@ void GamesLauncherActivity::onEnter() {
   UiListActivity::onEnter();
   app.on(ACTION_REMOVE_CHOICE, &GamesLauncherActivity::onRemoveChoice, this);
   removeIndex = -1;
+#if CROSSHATCH_DISPLAY_LAB
+  labRow = DisplayLabActivity::available();
+#endif
   installInbox();
   loadGames();
   loadIcons();
@@ -231,8 +238,8 @@ void GamesLauncherActivity::onRowAction(const fui::ActionEvent& event) {
 }
 
 void GamesLauncherActivity::openRemoveDialog(const int row) {
-  // A blank padding row, an empty list, or the note over the list is not a game to ask about.
-  if (row < 0 || static_cast<size_t>(row) >= rowCount() || noteVisible) return;
+  // A blank padding row, the Display lab row, an empty list, or the note over the list is not a game to ask about.
+  if (row < 0 || static_cast<size_t>(row) >= listing.count || noteVisible) return;
   app.clearTapFlash();
   // Cancel first, so a stray Confirm keeps the game; then the index, released after it, so a render that sees the
   // question open draws Cancel focused.
@@ -417,6 +424,19 @@ void GamesLauncherActivity::provideRow(void* ctx, const uint16_t index, fui::Lis
     item.enabled = false;
     return;
   }
+  if (index >= self->listing.count) {
+    // The Display lab row, after the games, under the Crosshatch mark.
+    item.label = tr(STR_GAMES_DLAB_TITLE);
+    item.subtitle = tr(STR_GAMES_DLAB_ROW_DESC);
+    item.actionValue = static_cast<int16_t>(index);
+    GameRowIcon::renderMark(self->libraryIcon);
+    item.icon.data = self->libraryIcon;
+    item.icon.width = GameRowIcon::SIDE;
+    item.icon.height = GameRowIcon::SIDE;
+    item.icon.format = fui::BitmapFormat::Mask1;
+    item.icon.progmem = false;
+    return;
+  }
   const GameRegistry::Entry& game = self->listing.entries[index];
   item.label = game.manifest.name;
   item.actionValue = static_cast<int16_t>(index);
@@ -465,8 +485,11 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
     buildRemoveDialog(screen, removing);  // the list is not built under it, so none of its rows takes a touch
     return;
   }
-  if (listing.count == 0) {
-    screen.centeredText(listFailed ? tr(STR_GAMES_OUT_OF_MEMORY) : tr(STR_GAMES_EMPTY), screen.theme().bodyText);
+  if (listing.count == 0 && listFailed) {
+    // A load that ran out of memory says so in place of the list, Display lab row included: the games are not gone.
+    screen.centeredText(tr(STR_GAMES_OUT_OF_MEMORY), screen.theme().bodyText);
+  } else if (rowCount() == 0) {
+    screen.centeredText(tr(STR_GAMES_EMPTY), screen.theme().bodyText);
   } else {
     // Rows are formatted on demand from the listing (provideRow), so no per-row array exists.
     fui::ListProps props;
@@ -547,6 +570,14 @@ void GamesLauncherActivity::buildScreen(UiScreen& screen) {
 
 void GamesLauncherActivity::activateIndex(const int row) {
   if (row < 0 || static_cast<size_t>(row) >= rowCount()) return;
+  if (static_cast<size_t>(row) >= listing.count) {
+    // The Display lab row: never a listing index. Only the X4 Pro device build has a lab to open; elsewhere (the host
+    // harness, with the row forced on) the row does nothing.
+#if CROSSHATCH_DISPLAY_LAB
+    openDisplayLab();
+#endif
+    return;
+  }
   const GameRegistry::Entry& game = listing.entries[row];
   if (!game.check.ok()) {
     LOG_INF("GAME", "Not starting %s: %s", game.manifest.id, GameCore::describe(game.check.reason));
@@ -571,6 +602,30 @@ void GamesLauncherActivity::buildRemoveDialog(UiScreen& screen, const int index)
   confirm.build(screen, renderer, ACTION_REMOVE_CHOICE, tr(STR_GAMES_REMOVE_TITLE),
                 listing.entries[index].manifest.name, tr(STR_GAMES_REMOVE_KEPT), tr(STR_GAMES_REMOVE));
 }
+
+#if CROSSHATCH_DISPLAY_LAB
+void GamesLauncherActivity::openDisplayLab() {
+  app.clearTapFlash();  // the row leaves this screen
+  // The entry warning first; the lab is pushed only when it is confirmed, so Back or Cancel sends nothing to the
+  // panel. Cold path: ConfirmationActivity copies its two strings.
+  auto warning = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_GAMES_DLAB_TITLE),
+                                                         tr(STR_GAMES_DLAB_WARNING));
+  if (!warning) {
+    LOG_ERR("DLAB", "OOM: %u byte warning screen", static_cast<unsigned>(sizeof(ConfirmationActivity)));
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(std::move(warning), [this](const ActivityResult& result) {
+    if (result.isCancelled) return;  // the base repaints this list after the pop
+    auto lab = makeUniqueNoThrow<DisplayLabActivity>(renderer, mappedInput);
+    if (!lab) {
+      LOG_ERR("DLAB", "OOM: %u byte lab screen", static_cast<unsigned>(sizeof(DisplayLabActivity)));
+      return;
+    }
+    activityManager.pushActivity(std::move(lab));  // its Back pops to this list
+  });
+}
+#endif
 
 void GamesLauncherActivity::onBackButton() {
   app.clearTapFlash();

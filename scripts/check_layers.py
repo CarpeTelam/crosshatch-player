@@ -11,7 +11,7 @@ from TABLE's or UPSTREAM_EDGES's row, or when the row uses a term SPINE_TERMS do
 not terms: dropping one of two terms that name the same component (HAL / Storage, ESP-NOW / mbedTLS, UiListActivity /
 UiAppHost) changes nothing it can see. It does not compare the table's parenthetical file scopes, ONLY_FROM,
 FILE_EDGES, the Engine row, the diagram, or BEYOND_TABLE; those are reviewed by hand, each with its reason here.
-Every #include in lib/GameCore, lib/GameIcons, lib/GameScript, src/games,
+Every #include in lib/GameCore, lib/GameDisplayLab, lib/GameIcons, lib/GameScript, src/games,
 and src/activities/games is resolved to what it reaches:
   - a quoted include to the including file's folder, then to src/;
   - any include to a header under lib/<name>/ or lib/<name>/src/ (the component lib/<name>);
@@ -76,7 +76,7 @@ ADAPTERS = 'src/games'
 
 # The game components the check scans, most specific first (src/activities/games is not under src/games, but a
 # longer prefix must still win over a shorter one).
-COMPONENTS = (SCREENS, ADAPTERS, 'lib/GameCore', 'lib/GameIcons', 'lib/GameScript')
+COMPONENTS = (SCREENS, ADAPTERS, 'lib/GameCore', 'lib/GameDisplayLab', 'lib/GameIcons', 'lib/GameScript')
 # The vendored engine: not scanned, and no upstream source file may include it or lib/GameScript.
 UNSCANNED = ('lib/lua',)
 GAME_SCRIPT_OR_LUA = {'lib/GameScript', 'lib/lua'}
@@ -92,6 +92,7 @@ SPINE_TERMS = {
     'C++ standard library': STD,
     'nothing': None,  # the Icon data row: no edge at all
     'GameCore': 'lib/GameCore',
+    'GameDisplayLab': 'lib/GameDisplayLab',
     'GameScript': 'lib/GameScript',
     'GameIcons': 'lib/GameIcons',
     'HAL': 'lib/hal',
@@ -114,6 +115,8 @@ TABLE = {
     'lib/GameCore': {STD, 'lib/Memory', 'lib/JsonParser'},
     # Icon data: nothing (generated data only).
     'lib/GameIcons': set(),
+    # Display lab: the SSD1677 scan LUT builder, C++ standard library only (the display-lab spike, 2026-10-16).
+    'lib/GameDisplayLab': {STD},
     # Script adapter: GameCore, GameIcons (names), lib/lua, lib/Utf8 (TextMetrics).
     'lib/GameScript': {'lib/GameCore', 'lib/GameIcons', 'lib/lua', 'lib/Utf8'},
     # Device adapters: GameCore, GameScript, GameIcons, HAL and Storage (lib/hal), ZipFile, PngToBmpConverter, ESP-NOW
@@ -125,16 +128,17 @@ TABLE = {
         RADIO_CRYPTO, 'lib/miniz', 'lib/Utf8', 'lib/EpdFont', FONT_IDS, 'sdk:FreeInkUICore.h',
         'sdk:SecureHttpClient.h',
     },
-    # Screens: src/games, GameCore, GfxRenderer, UiListActivity / UiAppHost (upstream's screen infrastructure, src/
-    # outside the game folders). Never lib/GameScript or lib/lua: those only through src/games.
-    SCREENS: {ADAPTERS, 'lib/GameCore', 'lib/GfxRenderer', UPSTREAM_SRC},
+    # Screens: src/games, GameCore, GameDisplayLab (the display lab's LUT builder), GfxRenderer, UiListActivity /
+    # UiAppHost (upstream's screen infrastructure, src/ outside the game folders). Never lib/GameScript or lib/lua:
+    # those only through src/games.
+    SCREENS: {ADAPTERS, 'lib/GameCore', 'lib/GameDisplayLab', 'lib/GfxRenderer', UPSTREAM_SRC},
 }
 
 # Edges BEYOND_TABLE adds to the spine's table, each a convention rather than a design decision:
 #   - lib/Logging and lib/Memory for src/games and Screens: AGENTS.md makes device code log with LOG_* and allocate
 #     with makeUniqueNoThrow;
 #   - lib/I18n for Screens: AGENTS.md puts user-facing text through tr();
-#   - lua.hpp for src/games/GamesBuildAnchor.cpp only (FILE_EDGES): AD-2's build anchor.
+#   - lua.hpp and Ssd1677ScanLut.h for src/games/GamesBuildAnchor.cpp only (FILE_EDGES): AD-2's build anchor.
 CONVENTIONS = {'lib/Logging', 'lib/Memory'}
 
 # What each component may include beyond TABLE's row, with the reason for each.
@@ -172,9 +176,10 @@ UPSTREAM_EDGES = {
 }
 
 # Edges of one file that its component's row does not have. AD-2: GamesBuildAnchor.cpp includes a header of each game
-# library and lua.h, so every env compiles them.
+# library and lua.h, so every env compiles them (lib/GameDisplayLab is a Screens edge, not a src/games one).
 FILE_EDGES = {
     ('src/games/GamesBuildAnchor.cpp', 'lib/lua'),
+    ('src/games/GamesBuildAnchor.cpp', 'lib/GameDisplayLab'),
 }
 
 # Headers outside the repository. The C and C++ standard library headers the game code may use.

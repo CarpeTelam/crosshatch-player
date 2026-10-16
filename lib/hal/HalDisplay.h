@@ -126,6 +126,12 @@ class HalDisplay {
   uint16_t getDisplayWidthBytes() const;
   uint32_t getBufferSize() const;
 
+#if FREEINK_CAP_GAMES
+  // The facade itself, for the games build's display lab (a bench that drives caller-supplied waveforms through the
+  // overlay-grayscale path with its LUT argument, which displayGrayBuffer(bool) above drops).
+  EInkDisplay& eink() { return einkDisplay; }
+#endif
+
  private:
   EInkDisplay einkDisplay;
 };

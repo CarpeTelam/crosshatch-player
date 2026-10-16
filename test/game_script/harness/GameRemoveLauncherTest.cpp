@@ -95,6 +95,13 @@ class RemoveListTest : public match::ScreenTest {
     activity().onEnter();
     render();
   }
+  // The same with the Display lab row forced on (the seam; on the host no lab can open, the row does nothing).
+  void openWithLabRow() {
+    list = std::make_unique<GamesLauncherActivity>(*renderer, *input);
+    list->showDisplayLabRow(true);
+    activity().onEnter();
+    render();
+  }
   // A second launcher, as goToGames() builds one after a match ends or is left.
   void reopen() {
     match::letStartedMatchesGo([] { dropMatch(); }, match::Saves::Discard);
@@ -432,6 +439,30 @@ TEST_F(RemoveListTest, HoldingConfirmAsksAboutTheSelectedGame) {
   EXPECT_TRUE(ui().drewLine("Game 02"));
   EXPECT_EQ(activityManager.asks.replaced, 0) << "the hold does not open the game";
   EXPECT_EQ(activityManager.asks.pushed, 0);
+}
+
+// The Display lab row (the SSD1677 spike) is no game: neither way of asking to remove opens the confirmation on it.
+TEST_F(RemoveListTest, ALongPressOnTheDisplayLabRowAsksNothing) {
+  addGames(2);
+  openWithLabRow();
+  longPressText(tr(STR_GAMES_DLAB_TITLE));
+  EXPECT_FALSE(dialogUp()) << ui().joined();
+  EXPECT_TRUE(removescript::script().ids.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+}
+
+TEST_F(RemoveListTest, HoldingConfirmOnTheDisplayLabRowAsksNothing) {
+  addGames(2);
+  openWithLabRow();
+  key(Button::NavNext, 2);  // past Game 02, onto the lab row
+  input->holdLong(Button::Confirm);
+  frame();
+  EXPECT_FALSE(dialogUp()) << ui().joined();
+  EXPECT_TRUE(removescript::script().ids.empty());
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  const std::vector<std::string> all{"Game 01", "Game 02"};
+  EXPECT_EQ(shown(2), all);
 }
 
 TEST_F(RemoveListTest, TouchOutsideTheButtonsAndTheOtherKeysDoNothingWhileItIsOpen) {

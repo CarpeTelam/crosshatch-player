@@ -7,6 +7,7 @@
 
 #include "GameConfirmDialog.h"
 #include "activities/UiListActivity.h"
+#include "display_lab/DisplayLabActivity.h"  // CROSSHATCH_DISPLAY_LAB: the X4 Pro device build's display lab
 #include "games/GameRegistry.h"
 #include "games/GameRowIcon.h"
 
@@ -33,6 +34,9 @@ struct Report;
 // repeat rows of the one before it. The launcher remembers the game it last opened (a fingerprint of its id), and the
 // next launcher, built by ActivityManager::goToGames(), selects that game's row and shows the whole page holding it: a
 // Confirm there opens the title screen, whose first row is Continue when the game has a save, so two Confirms resume.
+// On an X4 Pro whose panel probe said SSD1677 (DisplayLabActivity::available(), device games builds only), one more
+// row after the games, "Display lab", opens the SSD1677 bench behind an entry warning (ConfirmationActivity): Back or
+// Cancel there returns here and nothing reaches the panel. The row is absent on every other device and panel.
 class GamesLauncherActivity final : public UiListActivity {
  public:
   // The activity's name, which ActivityManager::goHome maps to Home's Games row (ledger row 5): one constant, so the
@@ -49,6 +53,10 @@ class GamesLauncherActivity final : public UiListActivity {
   // Forgets the game the launcher last opened, so the next launcher opens on the top. A remove of that game and a
   // restart do the same; this is for a test that must start from a fresh boot.
   static void forgetOpenedGame();
+  // Shows or hides the Display lab row. A test seam, as forgetOpenedGame is: the row logic (rowCount, provideRow,
+  // activateIndex, the remove bound) compiles everywhere, while only the X4 Pro device build sets the row from
+  // DisplayLabActivity::available() in onEnter, which overrides this; call it before onEnter.
+  void showDisplayLabRow(const bool shown) { labRow = shown; }
 
  private:
   // The listing's count rounded up to a whole number of pages: the rows past the listing are blank and inert.
@@ -81,9 +89,14 @@ class GamesLauncherActivity final : public UiListActivity {
   static constexpr int16_t NO_SLOT = -1;
   static constexpr freeink::ui::ActionId ACTION_REMOVE_CHOICE = ACTION_USER;
 
-  // Rows with a game behind them: one for each game in the listing, row i being listing.entries[i].
-  size_t rowCount() const { return listing.count; }
+  // Rows with something behind them: one for each game in the listing, row i being listing.entries[i], then the
+  // Display lab row when this device offers it (labRow).
+  size_t rowCount() const { return listing.count + (labRow ? 1u : 0u); }
   size_t paddedCount() const;
+#if CROSSHATCH_DISPLAY_LAB
+  // The Display lab row: the entry warning, then the lab when it is confirmed.
+  void openDisplayLab();
+#endif
   // Selects the game the launcher last opened, when the listing still has it.
   void selectRemembered();
   // The remove confirmation: opened on a row, answered by Cancel (Back), or Remove.
@@ -101,6 +114,8 @@ class GamesLauncherActivity final : public UiListActivity {
   // Whether the last loadGames() ran out of memory (its listing is then empty): the list says so instead of "No games
   // found". Written by loadGames, read by buildScreen, as noteVisible.
   bool listFailed = false;
+  // Whether the Display lab row follows the games (set once, in onEnter).
+  bool labRow = false;
   // The bitmaps of the games that have an icon.bmp, GameRowIcon::BYTES each in slot order, and the slot of
   // each game (parallel to listing.entries; NO_SLOT for none). Both are read-only after onEnter().
   std::unique_ptr<uint8_t[]> packageIcons;

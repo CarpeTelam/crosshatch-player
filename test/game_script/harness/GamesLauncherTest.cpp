@@ -202,6 +202,13 @@ class ListTest : public match::ScreenTest {
     activity().onEnter();
     render();
   }
+  // The same with the Display lab row forced on (the seam; on the host no lab can open, the row does nothing).
+  void openWithLabRow() {
+    list = std::make_unique<GamesLauncherActivity>(*renderer, *input);
+    list->showDisplayLabRow(true);
+    activity().onEnter();
+    render();
+  }
   // A second visit: the list goes, the manager's record and the theme's start over, and the list opens again.
   // The script (InstallerScript.h) and the log are the test's to change before it calls this.
   void reopen() {
@@ -326,6 +333,57 @@ TEST_F(ListTest, AConfirmOrATapOnAnEmptyListDoesNothing) {
 // The registry sizes its Entry[] to the folders it found. Entry holds no member with a destructor, so new[] asks for
 // exactly count * sizeof(Entry) (no array cookie), which is the size the two cases below make fail.
 static_assert(std::is_trivially_destructible_v<GameRegistry::Entry>);
+
+// ---- the Display lab row (the SSD1677 spike): one row after the games, never a listing index ----
+
+TEST_F(ListTest, TheDisplayLabRowFollowsTheGamesAndIsNoGame) {
+  addGame("alpha", "Alpha");
+  addGame("bravo", "Bravo");
+  openWithLabRow();
+  const std::vector<std::string> expected{"Alpha", "Bravo", tr(STR_GAMES_DLAB_TITLE)};
+  EXPECT_EQ(rows(expected), expected) << ui().joined();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_DLAB_ROW_DESC)));
+  // The lab row is the last real row: every game is drawn above it (the padding rows after it draw nothing).
+  int labY = -1;
+  int lastGameY = -1;
+  for (const screen::DrawnText& drawn : ui().drawn) {
+    if (drawn.text == tr(STR_GAMES_DLAB_TITLE)) labY = drawn.rect.y;
+    if (drawn.text == "Alpha" || drawn.text == "Bravo") lastGameY = std::max(lastGameY, static_cast<int>(drawn.rect.y));
+  }
+  EXPECT_GT(labY, lastGameY);
+  // Activating it indexes no listing entry: on the host there is no lab to open, so a Confirm on it (the selection
+  // walked down to it) and then a tap on it do nothing.
+  input->click(Button::NavNext);
+  frame();
+  input->click(Button::NavNext);
+  frame();
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(activityManager.asks.pushed, 0) << "Confirm on the lab row";
+  tapRow(tr(STR_GAMES_DLAB_TITLE));
+  EXPECT_TRUE(activityManager.replacements.empty());
+  EXPECT_EQ(activityManager.asks.replaced, 0);
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+}
+
+TEST_F(ListTest, WithNoGamesTheDisplayLabRowStillShows) {
+  openWithLabRow();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_DLAB_TITLE))) << ui().joined();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_EMPTY)));
+  input->click(Button::Confirm);
+  frame();
+  EXPECT_EQ(activityManager.asks.pushed, 0);
+}
+
+TEST_F(ListTest, ALoadThatRunsOutOfMemoryIsReportedInPlaceOfTheDisplayLabRow) {
+  addGame("alpha", "Alpha");
+  addGame("bravo", "Bravo");
+  oom::failSize = 2 * sizeof(GameRegistry::Entry);
+  openWithLabRow();
+  EXPECT_TRUE(ui().drewLine(tr(STR_GAMES_OUT_OF_MEMORY))) << ui().joined();
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_DLAB_TITLE)));
+  EXPECT_FALSE(ui().drewLine(tr(STR_GAMES_EMPTY)));
+}
 
 // A load that runs out of memory lists nothing, as an empty card does, but says why: "No games found" would tell a
 // person whose games are on the card that they are gone. The registry logs the allocation that failed.
