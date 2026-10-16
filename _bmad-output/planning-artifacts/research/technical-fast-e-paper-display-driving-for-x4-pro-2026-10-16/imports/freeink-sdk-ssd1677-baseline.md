@@ -20,3 +20,13 @@ Claims:
 - `xteink-x4pro-support.md` lines 90-110: update sequence table, Full 0xF7 on all boards; Fast 0xFC on X4 Pro 7.4.4 and X4 default, 0xC7 on an earlier X4 Pro image, 0xFF on the Sticky. The X4 Pro GT911 touch controller self-loads its config "Like the Sticky board (same controller)".
 - `Ssd1677Driver.cpp` lines 73-102 (Sticky config): same SSD1677, resolution and RAM polarity as the X4; the one real difference is the waveform: the X4's 0x1C fast sequence runs the full OTP waveform (~1.7 s) on the Sticky panel, so the Sticky uses Seeed's 0xF7 full / 0xFF partial sequences, its own border values (0x01 full, 0x80 partial), its own copy of the grayscale LUT with a per-module voltage tail, and powers up before grayscale phases.
 - `waveshare-epaper-397-support.md` lines 36-40: the Waveshare 3.97" board is SSD1677-class with a bring-up byte-identical to the Sticky's (booster AE C7 C3 C0 80, sequences F7/FF/D7) and reuses the Sticky config and grayscale LUT.
+
+## Additional driver facts read by the lead during verification (added 2026-10-16 after the semantic citation check; same checkout, freeink-sdk 111fdcc7)
+
+- `Ssd1677Driver.cpp` line 169: `spiHz()` returns the board's `displaySpiHz` or, when unset, 40000000; the SSD1677 bus defaults to 40 MHz.
+- `Ssd1677Driver.cpp` lines 19-20 and 242-248: the driver defines and issues the RAM X/Y range commands 0x44 and 0x45; `displayWindow()` (line 495) refreshes a rectangle, so windowed RAM writes are an existing capability.
+- `Ssd1677Driver.cpp` lines 388-411: `display()`, `displayStart()` and `displayImpl()` take a `prev` buffer, described at line 394 as "its shadow", used for differential updates; a no-shadow flow exists for grayscale.
+- `Ssd1677Driver.cpp` line 57: the default X4/X4 Pro config sets 0x5A as the "HALF refresh temperature" written to register 0x1A before the half-refresh sequence (lines 299-301 write CMD_WRITE_TEMP for Half).
+- `Ssd1677Luts.h` lines 39, 84, 109: the X4 `lut_grayscale`, the Sticky copy and the factory-quality LUT all carry the voltage tail 0x17, 0x41, 0xA8, 0x32, 0x30 (VGH, VSH1, VSH2, VSL, VCOM) at this checkout; upstream commit e91e34e later changed the X4 VCOM byte (D1-r1 digest, source [8]).
+- `Uc8179Driver.cpp` line 96: `tssetFast` 0x5A is commented "REQUIRED: this is the frame-rate lever that makes the partial shorter".
+- `Uc8279X4Driver.cpp` lines 34 and 220: `CMD_PLL = 0x30` "PLL frame rate", set to 0x0E on the X4 Pro UC8279 batch.
