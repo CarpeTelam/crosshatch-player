@@ -5,12 +5,60 @@
 
 #include "GrayPreset.h"
 
-// The UltraChip stock-path bench's pure parts (story dlab-u1): pure C++, pinned by
+// The UltraChip stock-path bench's pure parts (story dlab-u1) and the lab's menu gate (D10): pure C++, pinned by
 // test/game_display_lab/test_stock_bench.cpp. Every frame and plane here is a full-screen 1-bpp bitmap in the
 // framebuffer's byte order (as GameDisplayLab::MaskPlanes: row-major, (width + 7) / 8 bytes per row, the leftmost pixel
 // of each byte in its most significant bit), in physical panel coordinates. Bits past the width in a row's last byte
 // are always written clear.
 namespace GameDisplayLab {
+
+// Which lab menu an X4 Pro gets (the display-lab epic, D10). A controller with a scan backend gets the scan menu (Frame
+// period, Polarity, Transition test, Tuning, Save preset, Exit); an UltraChip one (UC8179 or UC8279) with a backend
+// also gets the stock bench's two rows (Transition timing, Gray ramp) before Exit, so the stock transition and the OEM
+// ramp stay beside the lab to compare against; an UltraChip one without a backend gets the stock bench's menu alone
+// (Transition timing, Gray ramp, Exit); any other controller gets no lab.
+enum class LabMenu : uint8_t { None, Scan, ScanWithStockRows, StockBench };
+
+constexpr LabMenu labMenuFor(const bool ultraChip, const bool hasScanBackend) {
+  if (hasScanBackend) return ultraChip ? LabMenu::ScanWithStockRows : LabMenu::Scan;
+  return ultraChip ? LabMenu::StockBench : LabMenu::None;
+}
+
+// Every row any lab menu shows, in menu order.
+enum class LabRow : uint8_t {
+  FramePeriod,
+  Polarity,
+  TransitionTest,
+  Tuning,
+  SavePreset,
+  TransitionTiming,
+  GrayRamp,
+  Exit
+};
+constexpr size_t LAB_ROW_COUNT = static_cast<size_t>(LabRow::Exit) + 1;
+
+// The rows of `menu`, in order, into `out`; returns how many. Scan: Frame period, Polarity, Transition test, Tuning,
+// Save preset, Exit; ScanWithStockRows: those with Transition timing and Gray ramp before Exit; StockBench: Transition
+// timing, Gray ramp, Exit; None: none.
+constexpr size_t labMenuRows(const LabMenu menu, LabRow (&out)[LAB_ROW_COUNT]) {
+  size_t count = 0;
+  const bool scanRows = menu == LabMenu::Scan || menu == LabMenu::ScanWithStockRows;
+  const bool stockRows = menu == LabMenu::ScanWithStockRows || menu == LabMenu::StockBench;
+  if (scanRows) {
+    out[count++] = LabRow::FramePeriod;
+    out[count++] = LabRow::Polarity;
+    out[count++] = LabRow::TransitionTest;
+    out[count++] = LabRow::Tuning;
+    out[count++] = LabRow::SavePreset;
+  }
+  // D10: the stock bench's two rows, on an UltraChip controller with or without a scan backend.
+  if (stockRows) {
+    out[count++] = LabRow::TransitionTiming;
+    out[count++] = LabRow::GrayRamp;
+  }
+  if (menu != LabMenu::None) out[count++] = LabRow::Exit;
+  return count;
+}
 
 // The transition test frame: a checker of 4 x 2 blocks, each width / 4 by height / 2 (the last column and the last row
 // of blocks take the remainder). Block (c, r) is white (bit set) when (c + r) is even, the other way round when

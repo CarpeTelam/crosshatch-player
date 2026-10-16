@@ -5,6 +5,7 @@
 #include <Memory.h>
 
 #include "Ssd1677ScanBackend.h"
+#include "UC8179ScanBackend.h"
 #include "UC8279ScanBackend.h"
 
 using Controller = HalDisplay::Controller;
@@ -24,8 +25,11 @@ Factory factoryFor(const Controller controller) {
   switch (controller) {
     case Controller::SSD1677:
       return &make<Ssd1677ScanBackend>;
+    // The UC8179 batch. The check follows story dlab-a2's backend-choice row (no backend when the facade's driver
+    // reports no lab support); every build with the lab compiles the seam, whose Uc8179Driver reports it, so every
+    // UC8179 X4 Pro the lab builds for gets this backend and the scan menu.
     case Controller::UC8179:
-      return nullptr;
+      return display.eink().labSupported() ? &make<UC8179ScanBackend> : nullptr;
     // Not X4 Pro controllers.
     case Controller::UC8253:
     case Controller::ED2208:

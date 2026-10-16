@@ -1,6 +1,6 @@
 // The UltraChip stock-path bench's pure parts (lib/GameDisplayLab/StockBench): the checker test frame and its
-// inversion, the gray ramp's bands in the overlay encoding on both axes and mirrored, the timing summary, and the
-// fell-back heuristic.
+// inversion, the gray ramp's bands in the overlay encoding on both axes and mirrored, the timing summary, the
+// fell-back heuristic, and the lab's menu gate (labMenuFor, the display-lab epic's D10).
 
 #include <gtest/gtest.h>
 
@@ -345,6 +345,39 @@ TEST(StockBenchFellBack, NearUint32MaxDoesNotOverflow) {
   EXPECT_FALSE(transitionFellBack(TOP - 1, TOP, true));
   EXPECT_FALSE(transitionFellBack(TOP, TOP, true));
   EXPECT_TRUE(transitionFellBack(TOP, 1, true));
+}
+
+// ---- labMenuFor (D10) ----
+
+TEST(StockBenchLabMenu, EveryCase) {
+  // An UltraChip controller with a scan backend: the scan menu plus the stock bench's two rows.
+  EXPECT_EQ(labMenuFor(true, true), LabMenu::ScanWithStockRows);
+  // An SSD1677 (a backend, not UltraChip): the scan menu alone.
+  EXPECT_EQ(labMenuFor(false, true), LabMenu::Scan);
+  // An UltraChip controller with no backend: the stock bench alone.
+  EXPECT_EQ(labMenuFor(true, false), LabMenu::StockBench);
+  // Any other controller: no lab.
+  EXPECT_EQ(labMenuFor(false, false), LabMenu::None);
+  static_assert(labMenuFor(true, true) == LabMenu::ScanWithStockRows, "usable at compile time");
+}
+
+std::vector<LabRow> rowsOf(const LabMenu menu) {
+  LabRow out[LAB_ROW_COUNT] = {};
+  const size_t count = labMenuRows(menu, out);
+  EXPECT_LE(count, LAB_ROW_COUNT);
+  return std::vector<LabRow>(out, out + count);
+}
+
+TEST(StockBenchLabMenu, EachMenusRowsInOrder) {
+  using R = LabRow;
+  EXPECT_EQ(LAB_ROW_COUNT, 8u);
+  EXPECT_EQ(rowsOf(LabMenu::Scan),
+            (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::Tuning, R::SavePreset, R::Exit}));
+  EXPECT_EQ(rowsOf(LabMenu::ScanWithStockRows),
+            (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::Tuning, R::SavePreset,
+                            R::TransitionTiming, R::GrayRamp, R::Exit}));
+  EXPECT_EQ(rowsOf(LabMenu::StockBench), (std::vector<R>{R::TransitionTiming, R::GrayRamp, R::Exit}));
+  EXPECT_TRUE(rowsOf(LabMenu::None).empty());
 }
 
 }  // namespace

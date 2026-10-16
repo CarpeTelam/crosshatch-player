@@ -27,7 +27,8 @@ class TransitionTimingActivity final : public UiListActivity {
   static constexpr const char* NAME = "DlabTransition";
   static constexpr size_t FLIPS = 10;
 
-  // `lab` (the menu under this screen) is unused: the stock bench has no scan session.
+  // `lab` (the menu under this screen) is unused: the stock bench alone has no scan session, and on the scan menu
+  // (an UltraChip controller with a scan backend, the epic's D10) every scan has ended its own lab session.
   TransitionTimingActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
 
  private:
