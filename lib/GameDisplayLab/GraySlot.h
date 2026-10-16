@@ -37,7 +37,9 @@ SlotResult runGraySlot(GrayModel& model, MaskPlanes& drive, MaskPlanes& follow, 
   result.driveDone = scan(static_cast<const MaskPlanes&>(drive), busyUs);
   result.scans = 1;
   result.busyUs = busyUs;
-  if (result.driveDone) {
+  // The follow-up scan only when it would drive a pixel: a slot whose active transitions all hold sends one scan,
+  // which halves its cost on a controller where every scan streams the whole panel (dlab-c2).
+  if (result.driveDone && follow.any()) {
     busyUs = 0;
     result.followDone = scan(static_cast<const MaskPlanes&>(follow), busyUs);
     result.scans = 2;

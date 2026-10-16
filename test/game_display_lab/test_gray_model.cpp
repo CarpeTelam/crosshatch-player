@@ -377,6 +377,24 @@ TEST(GraySlot, FailedFollowUpCommitsOneDose) {
   EXPECT_EQ(b.model.remaining(0, 0), 6);
 }
 
+TEST(GraySlot, AllHoldTransitionsSendOneScan) {
+  Bench b;
+  const GrayPreset p = GrayPreset::inkBoyDefaults();
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, Shade::D, p);  // K>D 2, hold on: nothing for the follow-up to drive
+  FakeScan scan;
+  const SlotResult r = runGraySlot(b.model, b.drive, b.follow, p, false, scan);
+  EXPECT_EQ(r.driven, 1u);
+  EXPECT_EQ(r.scans, 1);
+  EXPECT_EQ(r.busyUs, 20000u);
+  EXPECT_TRUE(r.driveDone);
+  EXPECT_FALSE(r.followDone);
+  EXPECT_EQ(scan.calls, 1u);
+  EXPECT_FALSE(b.follow.any());
+  EXPECT_EQ(b.model.level(0, 0), 32);
+  EXPECT_EQ(b.model.remaining(0, 0), 1);
+}
+
 TEST(GraySlot, FailedDriveCommitsNothingAndSendsNoFollowUp) {
   Bench b;
   const GrayPreset p = GrayPreset::inkBoyDefaults();
