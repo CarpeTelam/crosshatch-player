@@ -1349,3 +1349,11 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-0-backend-seam.md`
   summary: ScanBackend::rowLabel(row) const (Amendment D1a) has no swap argument, so a caller sending swapPolarity = true would log the unswapped code.
   evidence: D1a's text mentions the swapped codes but fixes the signature without swap; Ssd1677ScanBackend::rowLabel returns ssd1677RowLabel(row, false). No caller swaps in this story (the polarity screen sends false); Part B's engine may, and needs an orchestrator decision (a swap argument, or labels documented as unswapped). (location: src/activities/games/display_lab/ScanBackend.h; severity: low)
+
+## dlab-b2
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-b2-uc8279-lab-backend.md`
+  summary: factoryFor's UC8279 case (and the whole controller-to-backend table) is pinned by no test.
+  evidence: ScanBackends.cpp compiles only in x4pro; nothing under test/ references hasScanBackend or makeScanBackend. Leaving the UC8279 case at nullptr or moving it to UC8279C passes every check. Same item as dlab-0's carried deferral; a pure controller-to-backend-kind mapping in lib/GameDisplayLab would let a host test pin it, best done once lanes A and B have both merged their cases. (location: src/activities/games/display_lab/ScanBackends.cpp:36; severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-b2-uc8279-lab-backend.md`
+  summary: A UC8279 BUSY that never releases hangs a lab scan with no bound, so the lab's 15 s timeout and clean never run.
+  evidence: Uc8279X4Driver::busyPolarity() is UcIdleHigh; EpdBus::waitBusy's UcIdleHigh branch and waitRefreshComplete loop while BUSY_N is LOW with no millisecond cap. The same wait governs every ordinary UC8279 refresh, so the lab adds no new exposure; a bound (or a timed DRF wait for the lab) belongs in freeink-sdk, to propose to Free-Ink once the owner confirms the lab on hardware. docs/crosshatch/display-lab.md Safety states it. (location: freeink-sdk/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp:342; severity: low)

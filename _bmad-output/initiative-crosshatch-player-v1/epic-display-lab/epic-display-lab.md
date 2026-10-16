@@ -130,6 +130,11 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   tests; x4pro, default, sticky build; pio check clean; flash +2,016 B, static RAM unchanged. Follow-up pass `03c0a06d`
   (D1a, 8 lows patched, 2 more deferrals, 2,106 tests, flash +2,160 B in total); merged as `9ee36396` plus the
   orchestrator's `rowLabel(row, swapped)` signature commit; 5 deferrals carried to deferred-work.md.
+- dlab-b2 (lane B, experimental branch): halted once on three intent gaps (plan `536a61b4`; D7-D9 decided them),
+  then built, commit `4bc3054e` on `dlab-lane-b`; follow-up pass `eef111b7` (29 findings, 0 high, 5 medium; the doc's
+  "about 150 s" stall claim corrected: the SDK's UC8279 BUSY wait has no bound); 2,129 host tests; x4pro, default,
+  sticky build; pio check -e x4pro clean; flash +1,472 B (gate 6,016 B to spare before D6), static RAM unchanged.
+  Merged into `claude/display-experimental-sdk-do-not-merge` as `7ea790b2`; 2 deferrals carried to deferred-work.md.
 
 ## Measurement (base)
 
