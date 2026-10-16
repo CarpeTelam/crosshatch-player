@@ -128,5 +128,15 @@
   "claim": "[1] InkBoy 4-shade model: 2-byte per-pixel state",
   "class": "design-pattern",
   "pub_date": "2026-10-01"
+ },
+ {
+  "claim": "[43] YACP no-flash maintenance: differential refresh with the OEM aa_pre_bw_mid bank whose WW/BB",
+  "class": "design-pattern",
+  "pub_date": "2026-09-01"
+ },
+ {
+  "claim": "[44] YACP reinforcement shipped without hardware validation per its release note",
+  "class": "user-report",
+  "pub_date": "2026-07-01"
  }
 ]

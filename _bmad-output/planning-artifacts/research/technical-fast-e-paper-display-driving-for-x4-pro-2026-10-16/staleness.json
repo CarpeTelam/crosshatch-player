@@ -1,190 +1,204 @@
 {
-  "today": "2026-10-16",
-  "claims": [
-    {
-      "claim": "[1] InkBoy drives per-pixel through the SSD1681 by using the two RAM planes as a LUT row selector",
-      "class": "code-fact",
-      "pub_date": "2026-10-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[1] InkBoy stock SSD1681 partial ~360 ms",
-      "class": "timing-number",
-      "pub_date": "2026-10-01",
-      "recheck": "2027-10-01",
-      "stale": false
-    },
-    {
-      "claim": "[7] Ink-boy fast preset",
-      "class": "code-fact",
-      "pub_date": "2026-10-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[7] Ink-boy preset refresh ~276 ms vs ~680 ms stock Fast on UC8279 0x68",
-      "class": "timing-number",
-      "pub_date": "2026-10-01",
-      "recheck": "2027-10-01",
-      "stale": false
-    },
-    {
-      "claim": "[10] GxEPD2 GDEQ0426T82",
-      "class": "design-pattern",
-      "pub_date": "2026-10-16",
-      "recheck": "2028-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[15] DC-unbalanced fast waveforms may damage the EPD",
-      "class": "risk",
-      "pub_date": "2021-08-01",
-      "recheck": "2023-08-01",
-      "stale": true
-    },
-    {
-      "claim": "[18] Temperature-forced fast mode under-drives blacks and varies by panel batch and temperature",
-      "class": "risk",
-      "pub_date": "2026-10-16",
-      "recheck": "2028-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[19] 20 fps 4-gray on a bare 960x540 panel from an ESP32-S3",
-      "class": "timing-number",
-      "pub_date": "2026-07-01",
-      "recheck": "2027-07-01",
-      "stale": false
-    },
-    {
-      "claim": "[24] Derived SPI wire time 9.6 ms per 48 KB plane at 40 MHz",
-      "class": "timing-number",
-      "pub_date": "2026-10-16",
-      "recheck": "2027-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[7] Ink-boy is a 2026-10-06 copy of CrossInk v1.6.1",
-      "class": "code-fact",
-      "pub_date": "2026-10-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[31] SSD1677 112-byte waveform set: 5 LUTs x 10 groups x 4 phases, TP/RP per group, 5 frame-rate",
-      "class": "controller-fact",
-      "pub_date": "2018-11-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[31] Per-pixel LUT row selected by",
-      "class": "controller-fact",
-      "pub_date": "2018-11-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[31] One-frame LUT",
-      "class": "controller-fact",
-      "pub_date": "2018-11-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[31] 0x22 bit 4 loads the OTP LUT over a 0x32 LUT",
-      "class": "controller-fact",
-      "pub_date": "2018-11-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[31] SSD1677 Rev 1.0 datasheet gives no frame period or frame-rate byte encoding",
-      "class": "risk",
-      "pub_date": "2018-11-01",
-      "recheck": "2020-11-01",
-      "stale": true
-    },
-    {
-      "claim": "[31] SSD1677 SPI write maximum 20 MHz",
-      "class": "controller-fact",
-      "pub_date": "2018-11-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[33] SSD1675 family frame rate 15-200 Hz",
-      "class": "timing-number",
-      "pub_date": "2016-08-01",
-      "recheck": "2017-08-01",
-      "stale": true
-    },
-    {
-      "claim": "[32] Waveshare 4.26 fast = 0x1A=0x5A + 0x22=0x91 then 0xC7",
-      "class": "design-pattern",
-      "pub_date": "2023-12-01",
-      "recheck": "2025-12-01",
-      "stale": true
-    },
-    {
-      "claim": "[12] Glider README: controller panels 100-300 ms BW partial, total latency 100 ms to several seconds",
-      "class": "timing-number",
-      "pub_date": "2026-10-16",
-      "recheck": "2027-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[14] PaperBoy 30-60 fps on a bare 960x540 panel via raw row/column drive",
-      "class": "user-report",
-      "pub_date": "2026-07-01",
-      "recheck": "2027-01-01",
-      "stale": false
-    },
-    {
-      "claim": "[11] UC8179 register LUTs 0x20-0x24 keyed on old/new",
-      "class": "controller-fact",
-      "pub_date": "2026-10-16",
-      "recheck": "2034-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[9] SDK SSD1677 driver defaults the bus to 40 MHz",
-      "class": "code-fact",
-      "pub_date": "2026-10-01",
-      "recheck": "2026-11-01",
-      "stale": false
-    },
-    {
-      "claim": "[10] GxEPD2 GDEQ0426T82 header: full 1567 ms, partial 500 ms, power-on 84 ms measured",
-      "class": "timing-number",
-      "pub_date": "2026-10-16",
-      "recheck": "2027-10-16",
-      "stale": false
-    },
-    {
-      "claim": "[39] Seeed reTerminal Sticky display controller is SSD1677 at 800x480",
-      "class": "controller-fact",
-      "pub_date": "2026-10-01",
-      "recheck": "2034-10-01",
-      "stale": false
-    },
-    {
-      "claim": "[42] Boox Picco: 3.97 inch grayscale, Linux-based, SoC/controller/resolution unannounced, no",
-      "class": "hardware-fact",
-      "pub_date": "2026-07-01",
-      "recheck": "2027-01-01",
-      "stale": false
-    },
-    {
-      "claim": "[1] InkBoy 4-shade model: 2-byte per-pixel state",
-      "class": "design-pattern",
-      "pub_date": "2026-10-01",
-      "recheck": "2028-10-01",
-      "stale": false
-    }
-  ],
-  "stale_count": 4,
-  "earliest_recheck": "2017-08-01",
-  "no_window_classes": []
+ "today": "2026-10-16",
+ "claims": [
+  {
+   "claim": "[1] InkBoy drives per-pixel through the SSD1681 by using the two RAM planes as a LUT row selector",
+   "class": "code-fact",
+   "pub_date": "2026-10-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[1] InkBoy stock SSD1681 partial ~360 ms",
+   "class": "timing-number",
+   "pub_date": "2026-10-01",
+   "recheck": "2027-10-01",
+   "stale": false
+  },
+  {
+   "claim": "[7] Ink-boy fast preset",
+   "class": "code-fact",
+   "pub_date": "2026-10-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[7] Ink-boy preset refresh ~276 ms vs ~680 ms stock Fast on UC8279 0x68",
+   "class": "timing-number",
+   "pub_date": "2026-10-01",
+   "recheck": "2027-10-01",
+   "stale": false
+  },
+  {
+   "claim": "[10] GxEPD2 GDEQ0426T82",
+   "class": "design-pattern",
+   "pub_date": "2026-10-16",
+   "recheck": "2028-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[15] DC-unbalanced fast waveforms may damage the EPD",
+   "class": "risk",
+   "pub_date": "2021-08-01",
+   "recheck": "2023-08-01",
+   "stale": true
+  },
+  {
+   "claim": "[18] Temperature-forced fast mode under-drives blacks and varies by panel batch and temperature",
+   "class": "risk",
+   "pub_date": "2026-10-16",
+   "recheck": "2028-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[19] 20 fps 4-gray on a bare 960x540 panel from an ESP32-S3",
+   "class": "timing-number",
+   "pub_date": "2026-07-01",
+   "recheck": "2027-07-01",
+   "stale": false
+  },
+  {
+   "claim": "[24] Derived SPI wire time 9.6 ms per 48 KB plane at 40 MHz",
+   "class": "timing-number",
+   "pub_date": "2026-10-16",
+   "recheck": "2027-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[7] Ink-boy is a 2026-10-06 copy of CrossInk v1.6.1",
+   "class": "code-fact",
+   "pub_date": "2026-10-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[31] SSD1677 112-byte waveform set: 5 LUTs x 10 groups x 4 phases, TP/RP per group, 5 frame-rate",
+   "class": "controller-fact",
+   "pub_date": "2018-11-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[31] Per-pixel LUT row selected by",
+   "class": "controller-fact",
+   "pub_date": "2018-11-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[31] One-frame LUT",
+   "class": "controller-fact",
+   "pub_date": "2018-11-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[31] 0x22 bit 4 loads the OTP LUT over a 0x32 LUT",
+   "class": "controller-fact",
+   "pub_date": "2018-11-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[31] SSD1677 Rev 1.0 datasheet gives no frame period or frame-rate byte encoding",
+   "class": "risk",
+   "pub_date": "2018-11-01",
+   "recheck": "2020-11-01",
+   "stale": true
+  },
+  {
+   "claim": "[31] SSD1677 SPI write maximum 20 MHz",
+   "class": "controller-fact",
+   "pub_date": "2018-11-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[33] SSD1675 family frame rate 15-200 Hz",
+   "class": "timing-number",
+   "pub_date": "2016-08-01",
+   "recheck": "2017-08-01",
+   "stale": true
+  },
+  {
+   "claim": "[32] Waveshare 4.26 fast = 0x1A=0x5A + 0x22=0x91 then 0xC7",
+   "class": "design-pattern",
+   "pub_date": "2023-12-01",
+   "recheck": "2025-12-01",
+   "stale": true
+  },
+  {
+   "claim": "[12] Glider README: controller panels 100-300 ms BW partial, total latency 100 ms to several seconds",
+   "class": "timing-number",
+   "pub_date": "2026-10-16",
+   "recheck": "2027-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[14] PaperBoy 30-60 fps on a bare 960x540 panel via raw row/column drive",
+   "class": "user-report",
+   "pub_date": "2026-07-01",
+   "recheck": "2027-01-01",
+   "stale": false
+  },
+  {
+   "claim": "[11] UC8179 register LUTs 0x20-0x24 keyed on old/new",
+   "class": "controller-fact",
+   "pub_date": "2026-10-16",
+   "recheck": "2034-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[9] SDK SSD1677 driver defaults the bus to 40 MHz",
+   "class": "code-fact",
+   "pub_date": "2026-10-01",
+   "recheck": "2026-11-01",
+   "stale": false
+  },
+  {
+   "claim": "[10] GxEPD2 GDEQ0426T82 header: full 1567 ms, partial 500 ms, power-on 84 ms measured",
+   "class": "timing-number",
+   "pub_date": "2026-10-16",
+   "recheck": "2027-10-16",
+   "stale": false
+  },
+  {
+   "claim": "[39] Seeed reTerminal Sticky display controller is SSD1677 at 800x480",
+   "class": "controller-fact",
+   "pub_date": "2026-10-01",
+   "recheck": "2034-10-01",
+   "stale": false
+  },
+  {
+   "claim": "[42] Boox Picco: 3.97 inch grayscale, Linux-based, SoC/controller/resolution unannounced, no",
+   "class": "hardware-fact",
+   "pub_date": "2026-07-01",
+   "recheck": "2027-01-01",
+   "stale": false
+  },
+  {
+   "claim": "[1] InkBoy 4-shade model: 2-byte per-pixel state",
+   "class": "design-pattern",
+   "pub_date": "2026-10-01",
+   "recheck": "2028-10-01",
+   "stale": false
+  },
+  {
+   "claim": "[43] YACP no-flash maintenance: differential refresh with the OEM aa_pre_bw_mid bank whose WW/BB",
+   "class": "design-pattern",
+   "pub_date": "2026-09-01",
+   "recheck": "2028-09-01",
+   "stale": false
+  },
+  {
+   "claim": "[44] YACP reinforcement shipped without hardware validation per its release note",
+   "class": "user-report",
+   "pub_date": "2026-07-01",
+   "recheck": "2027-01-01",
+   "stale": false
+  }
+ ],
+ "stale_count": 4,
+ "earliest_recheck": "2017-08-01",
+ "no_window_classes": []
 }
