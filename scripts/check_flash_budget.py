@@ -5,16 +5,23 @@ static initializer or large mutable static (ARCHITECTURE-SPINE AD-2).
 
 Builds the x4pro env twice on the same commit, as configured (FREEINK_CAP_GAMES=1) and with that define removed,
 and fails when the build with games is more than a limit larger than the build without. Both builds come from the
-same commit, so upstream growth never counts against the budget.
+same commit, so upstream growth never counts against the budget. The gate measures shipped firmware: the display lab
+(FREEINK_CAP_DISPLAY_LAB) is a development bench that only the x4pro env sets and no release image carries, so both
+builds leave it out (the display-lab epic, D6), and its cost never counts against the games budget. Its screen code
+(src/activities/games/display_lab) therefore compiles empty in both builds and is outside the `objects` scan; its
+pure library (lib/GameDisplayLab) still compiles and is read.
 
-  build on    `pio run -e x4pro`, the normal build in .pio/build
-  build off   the same with PLATFORMIO_BUILD_UNFLAGS=-DFREEINK_CAP_GAMES=1, built into .pio/build-games-off
+  build on    `pio run -e x4pro` with PLATFORMIO_BUILD_UNFLAGS=-DFREEINK_CAP_DISPLAY_LAB=1, built in .pio/build
+  build off   the same with PLATFORMIO_BUILD_UNFLAGS="-DFREEINK_CAP_GAMES=1 -DFREEINK_CAP_DISPLAY_LAB=1", built into
+              .pio/build-games-off
   compare     compare the two firmware.bin sizes against the flash limit, and the two ELFs' static internal RAM
               (.dram0.data + .dram0.bss + .noinit + every .iram0.* section, from the toolchain's `size -A`) against
               the RAM limit; IRAM counts because it shares internal SRAM with DRAM on the S3
   objects     read every object the games-on build compiled from lib/Game*, src/games, and src/activities/games,
               and fail on a static initializer (a .ctors, .init_array, or .preinit_array entry, or the guard
-              variable of a dynamically initialized local static) or a mutable static over 64 B
+              variable of a dynamically initialized local static) or a mutable static over 64 B; since D6 the
+              dev-only lab's screen sources (src/activities/games/display_lab, all behind CROSSHATCH_DISPLAY_LAB)
+              compile empty there, so their code is outside the scan, while lib/GameDisplayLab is still read
 
 The flash limit is in KiB (1 KiB = 1,024 bytes) because ESP32 flash and the app slot in partitions.csv are sized in
 binary units (the slot is 0x640000 bytes = 6,400 KiB). The default 270 KiB is 276,480 bytes. The RAM limit is
@@ -42,7 +49,9 @@ names it. Review holds those; `compare`'s RAM limit still counts any static they
 
 Each build first saves `pio project metadata` for itself. `compare` checks from it that the "on" build defines
 FREEINK_CAP_GAMES=1 and the "off" build does not define it at all: a misspelled unflag, or the flag dropped from
-the env, would make both builds the same and the check pass without measuring anything. The metadata also names
+the env, would make both builds the same and the check pass without measuring anything. `compare` and `objects` also
+refuse either build that still defines FREEINK_CAP_DISPLAY_LAB, so a misspelled lab unflag cannot put the bench back
+into the measurement. The metadata also names
 the ELF, the toolchain (`size` sits beside `cc_path`), and the build directory `objects` reads.
 
 Exit 0: within the limits. 1: over a limit, or a game object breaks a rule. 2: the check could not run (build
@@ -73,6 +82,10 @@ FLAG = fork_common.GAMES_MACRO
 # Written as the define appears in platformio.ini; compare checks the result, so an unflag that stops matching fails
 # the job instead of passing it.
 UNFLAG = fork_common.GAMES_BUILD_FLAG
+# The display lab, dev-env only (the display-lab epic, D6): both builds unflag it, spelled as in platformio.ini's
+# [env:x4pro]; check_flag fails a build whose metadata still defines it.
+LAB_MACRO = 'FREEINK_CAP_DISPLAY_LAB'
+LAB_UNFLAG = f'-D{LAB_MACRO}=1'
 KIB = 1024
 DEFAULT_LIMIT_KIB = 270
 DEFAULT_RAM_LIMIT_BYTES = 1 * KIB
@@ -103,12 +116,15 @@ Build = collections.namedtuple('Build', 'defines elf image cc_path')
 
 
 def build_environment(state, base=None):
-    """Process environment for one build. Both start without the two overrides so "on" is the plain env."""
+    """Process environment for one build. Both start without the two overrides; "on" is the plain env minus the
+    display lab (in .pio/build), "off" also unflags the games into its own build directory."""
     env = dict(os.environ if base is None else base)
     env.pop('PLATFORMIO_BUILD_UNFLAGS', None)
     env.pop('PLATFORMIO_BUILD_DIR', None)
+    if state == 'on':
+        env['PLATFORMIO_BUILD_UNFLAGS'] = LAB_UNFLAG
     if state == 'off':
-        env['PLATFORMIO_BUILD_UNFLAGS'] = UNFLAG
+        env['PLATFORMIO_BUILD_UNFLAGS'] = f'{UNFLAG} {LAB_UNFLAG}'
         env['PLATFORMIO_BUILD_DIR'] = str(OFF_BUILD_DIR)
     return env
 
@@ -131,8 +147,9 @@ def pio(args, env, quiet=False):
 
 def build(state, metadata_dir):
     env = build_environment(state)
-    if state == 'off':
-        print(f'Games off: PLATFORMIO_BUILD_UNFLAGS={UNFLAG} PLATFORMIO_BUILD_DIR={OFF_BUILD_DIR}', flush=True)
+    unflags = env['PLATFORMIO_BUILD_UNFLAGS']
+    build_dir = env.get('PLATFORMIO_BUILD_DIR', '.pio/build')
+    print(f'Games {state}: PLATFORMIO_BUILD_UNFLAGS="{unflags}" PLATFORMIO_BUILD_DIR={build_dir}', flush=True)
     target = metadata_path(metadata_dir, state)
     target.parent.mkdir(parents=True, exist_ok=True)
     # A stale file from an earlier run must never stand in for this build's metadata.
@@ -170,6 +187,12 @@ def check_flag(state, defines):
         raise SetupError(f'the games-on build must define exactly {FLAG}=1, found {ours or "none"}')
     if state == 'off' and ours:
         raise SetupError(f'the games-off build still defines {", ".join(ours)}; is the flag spelled {UNFLAG}?')
+    lab = [d for d in defines if d == LAB_MACRO or d.startswith(LAB_MACRO + '=')]
+    if lab:
+        raise SetupError(
+            f'the games-{state} build still defines {", ".join(lab)}; the gate measures shipped firmware without the '
+            f'display lab; is the unflag spelled {LAB_UNFLAG}?'
+        )
 
 
 def toolchain_tool(build_record, state, name):

@@ -1,12 +1,17 @@
-# Display lab: the panel scan bench (spike, Part A)
+# Display lab: the panel scan bench (Part A) and the gray engine (Part B)
 
 The display lab is a bench, not a product mode. It lives in `src/activities/games/display_lab/` and
 `lib/GameDisplayLab/`, compiles only under `FREEINK_CAP_DISPLAY_LAB`, which the `x4pro` development env alone sets, so
 no release build (`x4pro-gh_release*`) ever carries it (the simulator's HAL stand-in has no `HalDisplay::eink()`, so the
 row is absent there too), and shows its row only on an X4 Pro whose panel probe found a controller with a scan
-backend (SSD1677 so far).
-It answers the two numbers only a panel can give before Part B (the per-pixel grayscale engine, deferred in
-`_bmad-output/implementation-artifacts/deferred-work.md`) can be built:
+backend (SSD1677 so far). For the same reason the flash-budget gate (`scripts/check_flash_budget.py`) builds both of
+its images with `FREEINK_CAP_DISPLAY_LAB` unset (the display-lab epic, D6): it measures shipped firmware, so the lab's
+cost never counts against the games budget, and the gate refuses a build whose metadata still defines the lab. Its
+static-object scan (`objects`) therefore no longer reads the lab's screen code, which compiles empty without the flag;
+it still reads `lib/GameDisplayLab`.
+Its menu has six rows: Frame period, Polarity, Transition test, Tuning, Save preset, Exit.
+Part A answers the two numbers only a panel can give before the per-pixel grayscale engine (Part B, the transition
+test and tuning below) can be tuned:
 
 1. the **frame period**: how long one frame of a one-frame activation takes, from the slope of BUSY time against
    TP[0A];
@@ -71,26 +76,137 @@ clean, and frees the backend's two PSRAM planes and the lab's two PSRAM masks.
   byte's encoding does not reach this activation; if they differ, the ratio between them is the data Part B needs.
 - Exactly one of the two polarity rows darkens the panel. If Row 1 (VSL) lightens and Row 2 (VSH1) darkens, InkBoy's
   convention holds on this panel: white = VSL on the BW-plane row, black = VSH1 on the RED-plane row. If it is the other
-  way round, Part B swaps the codes (`GameDisplayLab::POLARITY_ROW1/2`).
+  way round, turn on Swap polarity in Tuning (the preset's `swap_polarity`), so the gray engine's scans swap the two
+  rows.
 - A "Dropped" status (log line `dropped: scan N came back in M us, under the 500 us floor`) means the facade refused the
   call and the panel was not driven, usually because the display is inverted (the control-center panel can invert it
   while the lab is open; the lab also refuses outright, logged as `scan refused: display inverted`, when it sees the
   inversion first). Turn inversion off and run again; a dropped time is not a measurement.
 
-## Where Part B picks up
+## The scan seam
 
-Part B (deferred-work.md, "Display lab Part B") takes the measured frame period as the length of one dose and the
-polarity answer as the row-to-color mapping, and builds on the scan seam (the display-lab epic's D1): a `ScanRequest`
-of two full-screen drive masks (`GameDisplayLab::MaskPlanes`: black, white, a pixel in neither holds), a frame count, a
-rate index and a polarity swap, sent through `DisplayLabActivity::scan`, which wraps the controller's `ScanBackend`
-with the session cap, the timeout and the dropped-call floor. A new controller is one backend class plus its case in
-the one switch of `ScanBackends.cpp`, and the screens and the safety rules stay as they are: the backend names its
-own drive rows (`ScanBackend::rowLabel`, the epic's Amendment D1a; on the SSD1677 "LUT1 VSL" and "LUT2 VSH1"), which
-the polarity screen shows and logs as `vs=`, and the frame-period screen runs the backend's own rate list. The
-frame-period TPs and the polarity TP are frame counts every backend takes. On top of it come the
-per-pixel level and dose model, the transition-test screen with sweeping rectangles, the live tuning list, and the SD
-preset. Nothing in Part A is a product feature; the launcher row and the lab can be removed once Part B has its own
-entry.
+Part B takes the measured frame period as the length of one dose and the polarity answer as the row-to-color mapping
+(a preset's polarity swap flips it), and builds on the scan seam (the display-lab epic's D1): a `ScanRequest` of two
+full-screen drive masks (`GameDisplayLab::MaskPlanes`: black, white, a pixel in neither holds), a frame count, a rate
+index and a polarity swap, sent through `DisplayLabActivity::scan`, which wraps the controller's `ScanBackend` with the
+session cap, the timeout and the dropped-call floor. A new controller is one backend class plus its case in the one
+switch of `ScanBackends.cpp`, and the screens and the safety rules stay as they are: the backend names its own drive
+rows (`ScanBackend::rowLabel`, the epic's Amendment D1a; on the SSD1677 "LUT1 VSL" and "LUT2 VSH1"), which the
+polarity screen shows and logs as `vs=`, and the frame-period screen runs the backend's own rate list. The
+frame-period TPs and the polarity TP are frame counts every backend takes. Nothing in the lab is a product feature;
+the launcher row and the lab can be removed once the engine has its own entry.
+
+## Transition test and tuning (Part B)
+
+The gray engine is InkBoy's dither-free four-shade model (the research digest D2 round 2) over the scan seam. Each
+pixel has a modelled level (0 = black K, 64 = dark gray D, 128 = light gray L, 192 = white W), a target shade, and a
+count of doses left; a **dose** is one one-frame scan of that pixel toward its target (`frames = 1`). A pixel moving
+from shade A to shade B gets the dose-table entry for A>B; one between shades gets the two neighbouring shades' doses
+interpolated, rounded up; one interrupted mid-transition gets that scaled by the retarget percent (clamped to 1..12). The model
+advances only when a scan was delivered: `level += (target*64 - level) / remaining`, so the last dose lands on the
+target. One **slot** is a drive scan of every pixel with doses left, then a follow-up scan that drives again only the
+pixels whose transition's hold bit is off and that have two or more doses left (every other pixel holds, which ends
+the pulse); a slot repeats every max(the slot's busy time + 5 ms, 100 ms) (the epic's D5). Nothing is dithered.
+
+The preset starts as InkBoy's defaults, the author's numbers for an SSD1681, not this panel's: finding this panel's
+values is the point of the two screens.
+
+| From > To | K>D | K>L | K>W | D>K | D>L | D>W | L>K | L>D | L>W | W>K | W>D | W>L |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dose | 2 | 4 | 7 | 4 | 1 | 6 | 4 | 1 | 5 | 7 | 3 | 2 |
+| Hold | on | on | off | off | on | off | off | on | off | off | off | on |
+
+Retarget 100 %, rate index 0, no polarity swap, and InkBoy's routes (L>K>L return -1 and reverse 150 %, the rest
+neutral) are InkBoy's too. History and weak mode are off: this story's choice (InkBoy ships history "both" and weak
+"normal"); the preset file turns them on.
+
+### Transition test
+
+Display lab → Transition test → Run. The panel is cleaned to white with a FULL refresh, then the screen stops
+drawing: the panel shows only what the scans drive. Four shade bands, K, D, L, W from the top, each with three 12-px
+rectangles of the other three shades (in K, D, L, W order), sweep from left to right in 5 s, pause 1 s, and repeat,
+following the screen's orientation.
+
+Controls while it runs (the Controls row says the same):
+
+- **Confirm**, or a tap over the screen's row area (where the Run, Speed and Controls rows were): pause; again to
+  resume (the sweep clock stands still while paused). Swipes do nothing while the test view is up.
+- **Next** (NavNext: side Down or front Right; Up or Left in inverted portrait and counter-clockwise landscape,
+  where the axis follows the screen): replay: clean to white and start the sweep from 0.
+- **Previous** (NavPrevious, the opposite keys): clean: a white panel, paused; resume redraws the bands.
+- **Back**: stop and return to the rows with a FULL refresh. The Run row says "Stopped", or how the sweep ended when a
+  scan was not delivered ("Timed out", "Dropped", "Refused (see log)"), which stops it at once. The Speed row shows the
+  last "N.N scans/s, N ms per scan".
+- Another screen over the test (the light panel's top-edge swipe) ends the view as Back does, once it closes: the rows
+  come back with a FULL refresh. A forced refresh (the power or home button's Refresh) does nothing while it runs.
+
+Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans to white just before
+it and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
+(`skipped` counts the slot periods lost to slow slots in that same window, about 2 s; they are dropped, never
+queued).
+
+How to read it:
+
+- **Rectangle shade against its band** is the dose: a rectangle meant to be L that looks like D on a W band has too
+  many W>L doses (or W>L should not hold); one that never gets dark enough has too few.
+- **The track behind a rectangle** is the return to the band shade (hold and history): a dark or light trail after the
+  rectangle passes means the return transition's dose or hold bit is off, or needs the history routes.
+- **Build-up over passes**: a band that drifts darker or lighter over several sweeps means a pair of opposite doses
+  (A>B and B>A) does not cancel.
+- **Endpoints**: the K and W bands and rectangles must reach full black and white; if they do not, raise K>W, W>K, or
+  the rows into K and W.
+
+Tuning order, one change per run: the **doses and hold bits** first, judged by the rectangles and their tracks; then
+the **retarget** percent, judged by rectangles that change direction mid-sweep (after a replay or a pause); then, only
+if trails remain, the **history** routes and the weak row, which the preset file turns on (no row on the device).
+
+What to photograph: the panel paused mid-sweep (Confirm) with the rectangles over each band, the panel during the 1 s
+pause (the tracks), and the panel after five or more full sweeps (build-up), each with the Tuning values and the
+log's `gray` line beside it.
+
+### Tuning
+
+Display lab → Tuning lists every value of the session's preset, one row each: Dose K>D through Dose W>L (1..12), Hold
+K>D through Hold W>L (on or off), Retarget (50..150 %, steps of 25), Frame rate (the backend's rate labels), Swap
+polarity, and Save. A **tap** on a row steps it in place (+1, wrapping; a hold or the swap toggles). **Confirm** on a
+row enters edit mode for it ("editing" on its line): Next and Previous (NavNext and NavPrevious, as above) then change
+it by one step (+1 / -1, clamped; a hold or the swap on / off), and Confirm or Back leaves edit mode. Outside edit
+mode they move the selection and Back closes the screen. Changes apply at once to the session (the next transition-test run uses them) and are logged as
+`DLAB tune <row>=<value>`; nothing is written until **Save** (on this screen or the lab menu), so leaving the lab
+without saving discards them.
+
+### The preset file
+
+`/.crosshatch/display-lab.json` on the SD card, read when the lab opens and written by Save. Missing: InkBoy's
+defaults (logged `no preset`). Unreadable or malformed: InkBoy's defaults, logged with `LOG_ERR`. A failed save keeps
+the values in memory and says "Save failed, values kept". Its text, InkBoy's defaults shown:
+
+```json
+{"version":1,"doses":[2,4,7,4,1,6,4,1,5,7,3,2],"hold":[true,true,false,false,true,false,false,true,false,false,false,true],"retarget_percent":100,"rate":0,"swap_polarity":false,"history":0,"return_delta":[-1,0,0,0,0,0],"reverse_percent":[150,0,0,0,0,0],"weak_white_to_light":false}
+```
+
+| Key | Meaning | Range |
+| --- | --- | --- |
+| `version` | the file format; required | 1 |
+| `doses` | the 12 doses in the table order K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W, W>K, W>D, W>L | 1..12 each |
+| `hold` | the 12 hold bits in the same order (on: the follow-up scan holds that transition) | `true` / `false` |
+| `retarget_percent` | the budget of a pixel retargeted mid-transition, percent of its base dose | 50..150 |
+| `rate` | the frame-rate index into the backend's list; past its end, rate 0 (logged) | 0..255 |
+| `swap_polarity` | swap the backend's two drive rows | `true` / `false` |
+| `history` | 1: completed returns, 2: reversals, 3: both (allocates 3 B a pixel of PSRAM) | 0..3 |
+| `return_delta` | per route LKL, DKD, DWD, LWL, DLD, LDL: doses added to a completed return (0 = none) | -11..11 |
+| `reverse_percent` | per route, the same order: a reversal's budget percent (0 = follow retarget) | 0..250 |
+| `weak_white_to_light` | W>L pixels settled on white darken through the backend's weak row, when it has one | `true` / `false` |
+
+Absent keys keep the defaults; unknown keys are skipped; a key of the wrong type or out of range, an array of the
+wrong length, a parse error, or a missing or different `version` makes the whole file malformed. The codec is a small
+standard-library JSON subset in `lib/GameDisplayLab/GrayPreset.cpp`, not ArduinoJson: the lab's library may use the
+C++ standard library only (the spine's layer table, `scripts/check_layers.py`), and the host suite tests it.
+
+Memory, PSRAM only, while the transition test is open: the model (2 B a pixel, 768,000 B at 800x480) and the
+follow-up masks (2 x 48,000 B), plus the history (1,152,000 B) when `history` is on and the weak bitmap (48,000 B)
+when weak mode is on and the backend has a weak row; the lab's own masks and the backend's planes stay as in Part A.
+If any does not fit the screen shows "Not enough memory" and runs nothing.
 
 ## Code map
 
@@ -122,4 +238,17 @@ entry.
   two PSRAM masks), the controller-neutral `scan()` wrapper (the inversion and rate checks, the session cap, the
   timeout rule), and the exit refresh.
 - `src/activities/games/display_lab/FramePeriodActivity.{h,cpp}` and `PolarityActivity.{h,cpp}`: the two experiments.
+- `lib/GameDisplayLab/GrayPreset.{h,cpp}`: the gray engine's tunable values (`Shade`, the transition order, InkBoy's
+  defaults, the tuning steps) and the preset file's codec; pinned by `test/game_display_lab/test_gray_preset.cpp`.
+- `lib/GameDisplayLab/GrayModel.{h,cpp}`: the per-pixel model (level, doses left, target, source; optional history and
+  weak bitmap): the dose lookup, retargets, the mask build, and the commit; `GraySlot.h`'s `runGraySlot` runs one slot
+  (drive scan, follow-up scan, commit) through a caller's scan function; both pinned by `test_gray_model.cpp`.
+- `lib/GameDisplayLab/SlotScheduler.h`: the slot period (D5), skipped slots, and the speed window; pinned by
+  `test_slot_scheduler.cpp`.
+- `lib/GameDisplayLab/TransitionScene.{h,cpp}`: the bands and sweeping rectangles over the logical screen, mapped to
+  the panel as `GfxRenderer::rotateCoordinates` maps a pixel; pinned by `test_transition_scene.cpp`.
+- `src/activities/games/display_lab/GrayPresetFile.{h,cpp}`: the preset file's path, its load and save through
+  `Storage`.
+- `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B
+  screens; `DisplayLabActivity` owns the session's preset and the Save preset row.
 - `lib/hal/HalDisplay.h`: the one upstream touch, `EInkDisplay& eink()` under `FREEINK_CAP_GAMES` (ledger row 13).
