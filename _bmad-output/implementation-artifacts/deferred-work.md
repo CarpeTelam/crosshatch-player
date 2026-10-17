@@ -1387,3 +1387,17 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c2-sweep-task.md`
   summary: endSweepLocked can still delete a task blocked in DisplayLabActivity::scan's own inverted-display LOG_ERR when the display is inverted between the lambda's pre-check and scan's check.
   evidence: Closing it needs a flag set inside DisplayLabActivity::scan right before its RenderLock, which the story forbids changing; the window is one register read wide and the lab is dev-only. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (endSweepLocked); DisplayLabActivity.cpp (scan); severity: low)
+
+## dlab-c3
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c3-hardware-calibration.md`
+  summary: The UltraChip starting preset is unreachable on the epic branch: an UltraChip controller has no scan backend there and gets the stock bench, so the lab loads and logs a preset nothing uses.
+  evidence: ScanBackends.cpp returns nullptr for UC8179 and UC8279 on this branch by design (the backends live on the experimental branch, claude/display-experimental-sdk-do-not-merge, where the merge makes the preset live). Settles when the backends come to the epic branch. (location: src/activities/games/display_lab/DisplayLabActivity.cpp (onEnter); severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c3-hardware-calibration.md`
+  summary: The controller-to-PresetBase choice in DisplayLabActivity::onEnter and the legacy-retarget log in GrayPresetFile::load have no test.
+  evidence: Inverting the ternary, or passing a different base to load than to the reset, passes every host test; the code is lab-only and uses a HAL type the host build cannot compile. A pure presetBaseFor(bool ultraChip) helper would pin the first; the owner's run on each controller family is the only check today. (location: src/activities/games/display_lab/DisplayLabActivity.cpp, GrayPresetFile.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c3-hardware-calibration.md`
+  summary: The live-view input order (Back before the swipe guard, NavPrevious stops, NavNext pauses) has only the owner's hardware check.
+  evidence: No harness compiles TransitionTestActivity (CROSSHATCH_DISPLAY_LAB is off on the host); putting the swipe guard back above the Back check would swallow the edge swipe again with no CI signal. Joins dlab-c2's deferred device-wiring family. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (handleCustomInput); severity: medium)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c3-hardware-calibration.md`
+  summary: No mode retargets a pixel mid-transition on purpose, so the split retarget percentages are exercised only by Fast's spaced stripes on a slow panel.
+  evidence: Static flips only settled pixels and Slow is sized so pixels settle under a rectangle; a deliberate mid-transition flip (a Static flip issued before the pattern settles) would give per-direction figures. Design addition outside this story. (location: lib/GameDisplayLab/TransitionScene.cpp (slotDone); severity: medium)

@@ -13,7 +13,10 @@
 // compare against the lab; an SSD1677 does not. An UltraChip controller with no scan backend gets the stock-path bench
 // alone (Transition timing, Gray ramp, Exit). Any other controller gets no lab.
 
-// The menu `controller` gets: GameDisplayLab::labMenuFor over (UC8179 or UC8279, hasScanBackend).
+// True for the X4 Pro's UltraChip controllers, UC8179 and UC8279 (the stock bench's gate and the UltraChip preset).
+bool isUltraChip(HalDisplay::Controller controller);
+
+// The menu `controller` gets: GameDisplayLab::labMenuFor over (isUltraChip, hasScanBackend).
 GameDisplayLab::LabMenu labMenuFor(HalDisplay::Controller controller);
 
 // True when `controller` gets the stock-path bench alone: UC8179 or UC8279, and no scan backend.

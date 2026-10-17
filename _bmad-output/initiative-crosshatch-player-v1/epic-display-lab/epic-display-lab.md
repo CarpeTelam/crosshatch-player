@@ -54,6 +54,8 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - Lane C: `dlab-c1` the grayscale engine and its two screens (after lane 0).
 - Lane C, second story: `dlab-c2` the transition test's sweep on its own FreeRTOS task (after dlab-c1 and the owner's
   first hardware run; D11).
+- Lane C, third story: `dlab-c3` side-button controls, Static and Slow modes, the retarget split, dose cap 24 and the
+  UltraChip starting preset (after dlab-c2 and the owner's calibration run; D12).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -138,6 +140,17 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   and the task is joined before onExit frees anything. Two smaller fixes landed first as an orchestrator `fix:`
   commit (8598d3ad): the follow-up scan is skipped when its masks are empty (MaskPlanes::any), and the entry warning
   was shortened to fit the dialog's three headline lines.
+- D12 (2026-10-17, the owner's first UC8179 calibration run, photos in the session): four flash-free shades form from
+  one-frame pulses on the UC8179 X4 Pro; the full white-to-black swing needs 12 pulses at PLL 0x06 (InkBoy's panel
+  needed 7), so the owner's scaled table `[3,7,12,7,2,10,7,2,9,12,5,3]` (K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W,
+  W>K, W>D, W>L) is the UltraChip starting preset and the dose cap rises to 24. The owner's Speed row reads 2.2 scans/s, 194 ms per scan (PLL 0x06,
+  1-frame doses), so a slot is about 0.45 s (first read off the sweep's column spacing), so the 5 s / 12 px sweep is a one-slot touch per pixel: the test gains a
+  Static mode (paint, settle, full flip, settle) and a Slow sweep sized from the measured slot, Fast stays for the
+  SSD1677. Retarget at 150 % overshot toward white while still falling short toward black: it splits into a
+  toward-dark and a toward-light percentage. The live controls were unreachable on the X4 Pro (Back is a swallowed
+  edge swipe, Confirm is a front button the device lacks, touch routing is dead while the view is up): the side
+  buttons take them (Down pause/resume, Up stop), Back is checked before the swipe guard, and Clean becomes a row.
+  Story dlab-c3. The sweep task itself (D11) behaved: the top-swipe cover ended runs and kept the results, as designed.
 
 ## Story results
 
@@ -182,6 +195,17 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   task: 8 KiB stack (SSD1677 chain measured at about 2.5 KB; the UltraChip session is a 2 KiB provision until the first
   hardware `gray sweep task ended` line). 5 deferrals carried to deferred-work.md. Hardware check for the owner: a
   short Confirm press pauses within a slot, Back stops at once, `ms_per_scan` unchanged from before.
+- dlab-c3 (lane C3, after the owner's calibration run, D12): built by the orchestrator's fallback (plan-and-implement
+  agent plus orchestrator-run lenses): first pass 36 findings, 15 patched, 3 deferred (`a19b54df`); follow-up pass
+  28 findings, 10 patched, 1 deferred, converged (`b75d58d8`). 2,208 host tests; x4pro, default, sticky build; pio check
+  x4pro clean; plain x4pro +7,328 B flash over `39903ffb`, RAM +0; flash gate +0 (240 B RAM to spare; its +16 B games
+  delta is image padding on the shared string table). Side buttons: Next or Confirm pauses and resumes, Previous or
+  Back stops (Back checked before the swipe guard); Clean and Mode rows (Static: paint, settle, flips through +1/+2/+3
+  covering all twelve transitions; Slow: rectangles wait for the paint to settle, crossing from the longest paint slot
+  and the preset's longest run; Fast: the 5 s sweep, the SSD1677's default); retarget split to-dark / to-light; dose
+  cap 24 (model 3 B a pixel); the owner's table as the UltraChip starting preset; the preset file's `base` key and a
+  Reset to defaults row. 4 deferrals carried. Hardware check for the owner on the experimental branch: side Down
+  pauses, side Up stops; Static settles and flips without a flash; the residue after each flip per band.
 
 ## Measurement (base)
 

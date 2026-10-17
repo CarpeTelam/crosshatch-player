@@ -9,9 +9,11 @@
 // The gray engine's per-pixel model (the display-lab epic, R3): InkBoy's design (the D2 round 2 digest, Q2-Q5) over
 // the lab's full-screen masks. Pure C++, pinned by test/game_display_lab/test_gray_model.cpp.
 //
-// A non-owning view over caller buffers in panel coordinates (the masks' pixel order), each pixel two bytes: its
-// modelled level (0..192, shade * 64; K = 0, W = 192), then remaining | target << 4 | source << 6 (the doses still to
-// deliver, 0..12; the shade it moves to; the shade nearest its level at the last retarget, which picks the hold bit).
+// A non-owning view over caller buffers in panel coordinates (the masks' pixel order), each pixel PIXEL_BYTES bytes:
+// its modelled level (0..192, shade * 64; K = 0, W = 192), the doses still to deliver (0..DOSE_MAX), then target |
+// source << 2 (the shade it moves to; the shade nearest its level at the last retarget, which picks the hold bit).
+// The doses-left count has a byte of its own since the cap rose to 24 (the epic's D12), past the four bits it shared
+// with the two shades.
 // Optional: a history array of three bytes per pixel (origin shade, or ORIGIN_NONE; the doses delivered darker and
 // lighter since the last retarget), and a weak bitmap (one bit per pixel, row-major, most significant bit first: a W >
 // L pixel that darkens through the weak row). Without them (null) history routes and weak mode are off.
@@ -27,12 +29,14 @@ class GrayModel {
  public:
   static constexpr uint8_t LEVEL_STEP = 64;
   static constexpr uint8_t ORIGIN_NONE = 4;
+  // Level, doses left, target | source << 2.
+  static constexpr size_t PIXEL_BYTES = 3;
 
   static constexpr size_t pixelCount(const uint16_t width, const uint16_t height) {
     return static_cast<size_t>(width) * height;
   }
   static constexpr size_t bytesFor(const uint16_t width, const uint16_t height) {
-    return pixelCount(width, height) * 2;
+    return pixelCount(width, height) * PIXEL_BYTES;
   }
   static constexpr size_t historyBytesFor(const uint16_t width, const uint16_t height) {
     return pixelCount(width, height) * 3;
@@ -62,9 +66,10 @@ class GrayModel {
 
   // Moves pixel (x, y) to `target` from its current level; nothing when its target is already `target` or it is
   // outside the model. Budget: the base dose, or for a pixel interrupted mid-transition the base scaled by the
-  // retarget percent (rounded up, 1..12). With history, a route back to the pixel's origin adjusts it (a completed
-  // return by the route's delta, a reversal by its percent), and the origin and step counters restart; with a weak
-  // bitmap, the pixel's weak eligibility is set (W > L from settled white) or cleared.
+  // retarget percent toward the target's side of its level (retargetDarkPercent when `target` lies below the level,
+  // retargetLightPercent when above), rounded up, DOSE_MIN..DOSE_MAX. With history, a route back to the pixel's origin
+  // adjusts it (a completed return by the route's delta, a reversal by its percent), and the origin and step counters
+  // restart; with a weak bitmap, the pixel's weak eligibility is set (W > L from settled white) or cleared.
   void retarget(int x, int y, Shade target, const GrayPreset& preset);
   // retarget() for every pixel of [x, x + w) x [y, y + h), clipped to the model.
   void retargetRect(int x, int y, int w, int h, Shade target, const GrayPreset& preset);
@@ -93,10 +98,11 @@ class GrayModel {
  private:
   bool inside(int x, int y) const { return x >= 0 && y >= 0 && x < width_ && y < height_; }
   size_t indexOf(int x, int y) const { return static_cast<size_t>(y) * width_ + static_cast<size_t>(x); }
+  uint8_t* pixelAt(size_t index) const { return pixels_ + PIXEL_BYTES * index; }
   bool weakBit(size_t index) const;
   void setWeakBit(size_t index, bool on);
-  // Whether the follow-up scan drives pixel `index` again (hold bit off, more than one dose left).
-  static bool followsUp(uint8_t state, const GrayPreset& preset);
+  // Whether the follow-up scan drives pixel `pixel` (its PIXEL_BYTES) again (hold bit off, more than one dose left).
+  static bool followsUp(const uint8_t* pixel, const GrayPreset& preset);
   // One dose for pixel `index`, counted into its history toward `lighten`.
   void deliverDose(size_t index, bool lighten);
 

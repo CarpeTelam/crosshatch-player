@@ -6,9 +6,12 @@
 
 #include "ScanBackends.h"
 
+bool isUltraChip(const HalDisplay::Controller controller) {
+  return controller == HalDisplay::Controller::UC8179 || controller == HalDisplay::Controller::UC8279;
+}
+
 GameDisplayLab::LabMenu labMenuFor(const HalDisplay::Controller controller) {
-  const bool ultraChip = controller == HalDisplay::Controller::UC8179 || controller == HalDisplay::Controller::UC8279;
-  return GameDisplayLab::labMenuFor(ultraChip, hasScanBackend(controller));
+  return GameDisplayLab::labMenuFor(isUltraChip(controller), hasScanBackend(controller));
 }
 
 bool usesStockBench(const HalDisplay::Controller controller) {
