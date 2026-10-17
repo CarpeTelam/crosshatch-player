@@ -54,6 +54,8 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - Lane C: `dlab-c1` the grayscale engine and its two screens (after lane 0).
 - Lane C, second story: `dlab-c2` the transition test's sweep on its own FreeRTOS task (after dlab-c1 and the owner's
   first hardware run; D11).
+- Lane C, third story: `dlab-c3` side-button controls, Static and Slow modes, the retarget split, dose cap 24 and the
+  UltraChip starting preset (after dlab-c2 and the owner's calibration run; D12).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -138,6 +140,17 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   and the task is joined before onExit frees anything. Two smaller fixes landed first as an orchestrator `fix:`
   commit (8598d3ad): the follow-up scan is skipped when its masks are empty (MaskPlanes::any), and the entry warning
   was shortened to fit the dialog's three headline lines.
+- D12 (2026-10-17, the owner's first UC8179 calibration run, photos in the session): four flash-free shades form from
+  one-frame pulses on the UC8179 X4 Pro; the full white-to-black swing needs 12 pulses at PLL 0x06 (InkBoy's panel
+  needed 7), so the owner's scaled table `[3,7,12,7,2,10,7,2,9,12,5,3]` (K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W,
+  W>K, W>D, W>L) is the UltraChip starting preset and the dose cap rises to 24. The slot on this panel is about 0.35 to
+  0.4 s (read off the sweep's column spacing), so the 5 s / 12 px sweep is a one-slot touch per pixel: the test gains a
+  Static mode (paint, settle, full flip, settle) and a Slow sweep sized from the measured slot, Fast stays for the
+  SSD1677. Retarget at 150 % overshot toward white while still falling short toward black: it splits into a
+  toward-dark and a toward-light percentage. The live controls were unreachable on the X4 Pro (Back is a swallowed
+  edge swipe, Confirm is a front button the device lacks, touch routing is dead while the view is up): the side
+  buttons take them (Down pause/resume, Up stop), Back is checked before the swipe guard, and Clean becomes a row.
+  Story dlab-c3. The sweep task itself (D11) behaved: the top-swipe cover ended runs and kept the results, as designed.
 
 ## Story results
 
