@@ -29,8 +29,9 @@ const char* TuningActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TUNIN
 
 TuningActivity::Kind TuningActivity::kindOf(const int row) {
   if (row < HOLD_FIRST) return Kind::Dose;
-  if (row < RETARGET_ROW) return Kind::Hold;
-  if (row == RETARGET_ROW) return Kind::Retarget;
+  if (row < RETARGET_DARK_ROW) return Kind::Hold;
+  if (row == RETARGET_DARK_ROW) return Kind::RetargetDark;
+  if (row == RETARGET_LIGHT_ROW) return Kind::RetargetLight;
   if (row == RATE_ROW) return Kind::Rate;
   if (row == SWAP_ROW) return Kind::Swap;
   return Kind::Save;
@@ -67,8 +68,11 @@ void TuningActivity::buildRows() {
       case Kind::Hold:
         item.label = labels[row];
         break;
-      case Kind::Retarget:
-        item.label = tr(STR_GAMES_DLAB_RETARGET);
+      case Kind::RetargetDark:
+        item.label = tr(STR_GAMES_DLAB_RETARGET_DARK);
+        break;
+      case Kind::RetargetLight:
+        item.label = tr(STR_GAMES_DLAB_RETARGET_LIGHT);
         break;
       case Kind::Rate:
         item.label = tr(STR_GAMES_DLAB_FRAME_RATE);
@@ -96,8 +100,11 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
     case Kind::Hold:
       snprintf(out, capacity, "%s", preset.holdAt(transitionOf(row)) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
       return true;
-    case Kind::Retarget:
-      snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(preset.retargetPercent));
+    case Kind::RetargetDark:
+      snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(preset.retargetDarkPercent));
+      return true;
+    case Kind::RetargetLight:
+      snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(preset.retargetLightPercent));
       return true;
     case Kind::Rate: {
       ScanBackend* backend = lab.backend();
@@ -172,8 +179,11 @@ void TuningActivity::tapStep(const int row) {
     case Kind::Hold:
       edit(row, [transition](GrayPreset& p) { p.toggleHold(transition); });
       return;
-    case Kind::Retarget:
-      edit(row, [](GrayPreset& p) { p.cycleRetarget(); });
+    case Kind::RetargetDark:
+      edit(row, [](GrayPreset& p) { p.cycleRetarget(GameDisplayLab::Toward::Dark); });
+      return;
+    case Kind::RetargetLight:
+      edit(row, [](GrayPreset& p) { p.cycleRetarget(GameDisplayLab::Toward::Light); });
       return;
     case Kind::Rate:
       edit(row, [rates](GrayPreset& p) { p.cycleRate(rates); });
@@ -197,8 +207,11 @@ void TuningActivity::adjust(const int row, const int direction) {
     case Kind::Hold:
       edit(row, [transition, direction](GrayPreset& p) { p.setHold(transition, direction > 0); });
       return;
-    case Kind::Retarget:
-      edit(row, [direction](GrayPreset& p) { p.stepRetarget(direction); });
+    case Kind::RetargetDark:
+      edit(row, [direction](GrayPreset& p) { p.stepRetarget(GameDisplayLab::Toward::Dark, direction); });
+      return;
+    case Kind::RetargetLight:
+      edit(row, [direction](GrayPreset& p) { p.stepRetarget(GameDisplayLab::Toward::Light, direction); });
       return;
     case Kind::Rate:
       edit(row, [direction, rates](GrayPreset& p) { p.stepRate(direction, rates); });

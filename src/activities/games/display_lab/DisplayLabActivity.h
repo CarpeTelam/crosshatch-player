@@ -27,15 +27,15 @@
 // It owns the session the experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
 // masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
 // created in onEnter and freed in onExit (the lab shows one notice row and runs nothing when any of them has no room),
-// the gray preset (preset(), read from GrayPresetFile::PATH in onEnter, or InkBoy's defaults; the tuning screen edits
-// it and the transition test reads it), and scan(), the controller-neutral safety around backend()->scan(). Safety:
-// the backend keeps the stock voltages and never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and
-// cleans the panel, every SESSION_CAP scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home,
-// sleep) runs one FULL_REFRESH when a scan reached the panel since the last clean, and logs the count. An inverted
-// display is refused with a notice, and again at every scan (the control-center panel can invert it after onEnter):
-// the facade drops grayscale calls while inverted, so a scan would measure nothing. A call the facade dropped for
-// another reason returns in well under DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero
-// busy time.
+// the gray preset (preset(), read from GrayPresetFile::PATH in onEnter over the controller's defaults: the UltraChip
+// preset on a UC8179 or UC8279, InkBoy's otherwise; the tuning screen edits it and the transition test reads it), and
+// scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the stock voltages and
+// never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP scans
+// the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a scan
+// reached the panel since the last clean, and logs the count. An inverted display is refused with a notice, and again
+// at every scan (the control-center panel can invert it after onEnter): the facade drops grayscale calls while
+// inverted, so a scan would measure nothing. A call the facade dropped for another reason returns in well under
+// DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
 class DisplayLabActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DisplayLab";
@@ -66,7 +66,7 @@ class DisplayLabActivity final : public UiListActivity {
   GameDisplayLab::MaskPlanes& masks() { return maskPlanes; }
   // The session's backend; null when the lab shows a notice.
   ScanBackend* backend() { return scanBackend.get(); }
-  // The session's gray preset: the file's, or InkBoy's defaults; edited in place by the tuning screen.
+  // The session's gray preset: the file's, or the controller's defaults; edited in place by the tuning screen.
   GameDisplayLab::GrayPreset& preset() { return grayPreset; }
   // Writes preset() to GrayPresetFile::PATH and sets the Save preset row's line ("Saved", or "Save failed, values
   // kept"); false when the write failed (logged), the session's values unchanged either way.
@@ -122,6 +122,8 @@ class DisplayLabActivity final : public UiListActivity {
   bool stockBench = false;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   GameDisplayLab::GrayPreset grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
+  // The defaults grayPreset started from (the controller's), written as the preset file's `base` on Save.
+  GameDisplayLab::PresetBase presetBase = GameDisplayLab::PresetBase::InkBoy;
   // The Save preset row's line after a save, or null before one.
   const char* saveStatus = nullptr;
   freeink::ui::ListItem rowItems[ROW_COUNT] = {};

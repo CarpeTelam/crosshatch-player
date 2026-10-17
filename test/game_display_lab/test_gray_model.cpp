@@ -42,7 +42,7 @@ struct Bench {
 uint8_t shadeOf(const Shade s) { return static_cast<uint8_t>(s); }
 
 TEST(GrayModel, SizesFollowThePlan) {
-  EXPECT_EQ(GrayModel::bytesFor(800, 480), 768000u);
+  EXPECT_EQ(GrayModel::bytesFor(800, 480), 1152000u);  // 3 B a pixel: level, doses left (0..24), target | source
   EXPECT_EQ(GrayModel::historyBytesFor(800, 480), 1152000u);
   EXPECT_EQ(GrayModel::weakBytesFor(800, 480), 48000u);
 }
@@ -125,9 +125,11 @@ TEST(GrayModel, RetargetMidTransitionKeepsTheLevelAndReplacesRemaining) {
   EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::K));
   EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::W));  // nearest shade to 160: (160 + 32) / 64 = 3
 
-  // Scaled by the retarget percent, rounded up, clamped 1..12.
+  // Scaled by the retarget percent toward the darker side (160 to K), rounded up, clamped 1..24; the light percent
+  // plays no part.
   const auto budgetAt = [&b](GrayPreset preset, const uint8_t percent, const Shade to) {
-    preset.retargetPercent = percent;
+    preset.retargetDarkPercent = percent;
+    preset.retargetLightPercent = 50;
     b.model.reset(Shade::W);
     b.model.retarget(0, 0, Shade::L, preset);
     b.model.commit(true, false, preset);  // 160, one dose left
@@ -139,17 +141,69 @@ TEST(GrayModel, RetargetMidTransitionKeepsTheLevelAndReplacesRemaining) {
   EXPECT_EQ(budgetAt(p, 75, Shade::K), 5);  // 4.5, up
   p.dose[3][0] = 12;
   p.dose[2][0] = 12;
-  EXPECT_EQ(budgetAt(p, 150, Shade::K), 12);  // 18 clamps to 12
+  EXPECT_EQ(budgetAt(p, 150, Shade::K), 18);  // under the cap of 24 since dlab-c3
+  p.dose[3][0] = 20;
+  p.dose[2][0] = 20;
+  EXPECT_EQ(budgetAt(p, 150, Shade::K), 24);  // 30 clamps to 24
   p = GrayPreset::inkBoyDefaults();
   p.dose[3][2] = 1;  // W>L 1, so the base from 150 to L is 1
   b.model.reset(Shade::W);
   b.model.retarget(0, 0, Shade::D, p);  // W>D 3
   b.model.commit(true, false, p);       // 192 + (64 - 192) / 3 = 150
   ASSERT_EQ(b.model.level(0, 0), 150);
-  p.retargetPercent = 50;
+  p.retargetDarkPercent = 50;
   b.model.retarget(0, 0, Shade::L, p);  // base ceil((0*42 + 1*22) / 64) = 1; 50 % of 1 is 0.5, up, at least 1
   EXPECT_EQ(b.model.remaining(0, 0), 1);
   EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::L));  // (150 + 32) / 64 = 2
+}
+
+TEST(GrayModel, RetargetScalesByThePercentOfItsDirection) {
+  Bench b;
+  GrayPreset p = GrayPreset::inkBoyDefaults();
+  p.retargetDarkPercent = 150;
+  p.retargetLightPercent = 50;
+  // Toward dark: 160 (W>L, one dose left) retargeted to K, base 6: 150 % is 9.
+  b.model.reset(Shade::W);
+  b.model.retarget(0, 0, Shade::L, p);
+  b.model.commit(true, false, p);
+  ASSERT_EQ(b.model.level(0, 0), 160);
+  b.model.retarget(0, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(0, 0), 9);
+  // Toward light: 32 (K>D, one dose left) retargeted to W, base ceil((7*32 + 6*32) / 64) = 7: 50 % is 3.5, up, 4.
+  b.model.reset(Shade::K);
+  b.model.retarget(1, 0, Shade::D, p);
+  b.model.commit(true, false, p);
+  ASSERT_EQ(b.model.level(1, 0), 32);
+  ASSERT_EQ(b.model.remaining(1, 0), 1);
+  b.model.retarget(1, 0, Shade::W, p);
+  EXPECT_EQ(b.model.remaining(1, 0), 4);
+  // The same pixel turned back toward dark (32 to K: K>K 0 and D>K 4 interpolated, 2) takes the dark percent: 3.
+  b.model.retarget(1, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(1, 0), 3);
+  // A settled pixel is not mid-transition: its base, whatever the percents.
+  b.model.reset(Shade::W);
+  b.model.retarget(2, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(2, 0), 7);
+}
+
+TEST(GrayModel, TwentyFourDosesLandOnTheTarget) {
+  Bench b;
+  GrayPreset p = GrayPreset::inkBoyDefaults();
+  p.dose[3][0] = DOSE_MAX;  // W>K 24, hold off
+  ASSERT_EQ(DOSE_MAX, 24);
+  ASSERT_TRUE(p.valid());
+  b.model.reset(Shade::W);
+  b.model.retarget(4, 2, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(4, 2), 24);
+  uint8_t previous = b.model.level(4, 2);
+  for (int dose = 0; dose < 24; ++dose) {
+    b.model.commit(true, false, p);  // one dose a slot
+    EXPECT_LE(b.model.level(4, 2), previous) << dose;
+    previous = b.model.level(4, 2);
+    EXPECT_EQ(b.model.remaining(4, 2), 23 - dose);
+  }
+  EXPECT_EQ(b.model.level(4, 2), 0);
+  EXPECT_EQ(b.model.activeCount(), 0u);
 }
 
 TEST(GrayModel, RetargetToTheSameTargetIsANoOp) {

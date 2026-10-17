@@ -11,6 +11,9 @@
 // backend always gets the scan screens, so an UltraChip that later gains a backend leaves the stock bench (which of
 // the two it should show then is the backend lanes' call).
 
+// True for the X4 Pro's UltraChip controllers, UC8179 and UC8279.
+bool isUltraChip(HalDisplay::Controller controller);
+
 // True when `controller` gets the stock-path bench: UC8179 or UC8279, and no scan backend.
 bool usesStockBench(HalDisplay::Controller controller);
 

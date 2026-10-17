@@ -11,8 +11,9 @@
 
 // The tuning screen (Display lab → Tuning; the display-lab epic, R4): the session's gray preset
 // (DisplayLabActivity::preset()), one value per row, each row its name over its current value: the 12 doses ("Dose
-// K>D", 1..12), the 12 hold bits ("Hold K>D", on or off), Retarget (50..150 %), Frame rate (the backend's rate
-// label), Swap polarity, and Save (writes the preset file; its line says whether that worked). Edits apply to the
+// K>D", 1..24), the 12 hold bits ("Hold K>D", on or off), Retarget to dark and Retarget to light (50..150 % each, the
+// budget of a pixel turned mid-transition toward a darker or a lighter shade), Frame rate (the backend's rate label),
+// Swap polarity, and Save (writes the preset file; its line says whether that worked). Edits apply to the
 // session at once, so the next transition-test sweep uses them; nothing is written until Save (here or on the lab
 // menu).
 //
@@ -24,11 +25,12 @@
 class TuningActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DlabTuning";
-  // 12 doses, 12 holds, Retarget, Frame rate, Swap polarity, Save.
+  // 12 doses, 12 holds, Retarget to dark, Retarget to light, Frame rate, Swap polarity, Save.
   static constexpr int DOSE_FIRST = 0;
   static constexpr int HOLD_FIRST = DOSE_FIRST + GameDisplayLab::TRANSITION_COUNT;
-  static constexpr int RETARGET_ROW = HOLD_FIRST + GameDisplayLab::TRANSITION_COUNT;
-  static constexpr int RATE_ROW = RETARGET_ROW + 1;
+  static constexpr int RETARGET_DARK_ROW = HOLD_FIRST + GameDisplayLab::TRANSITION_COUNT;
+  static constexpr int RETARGET_LIGHT_ROW = RETARGET_DARK_ROW + 1;
+  static constexpr int RATE_ROW = RETARGET_LIGHT_ROW + 1;
   static constexpr int SWAP_ROW = RATE_ROW + 1;
   static constexpr int SAVE_ROW = SWAP_ROW + 1;
   static constexpr size_t ROW_COUNT = SAVE_ROW + 1;
@@ -37,7 +39,7 @@ class TuningActivity final : public UiListActivity {
   TuningActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
 
  private:
-  enum class Kind : uint8_t { Dose, Hold, Retarget, Rate, Swap, Save };
+  enum class Kind : uint8_t { Dose, Hold, RetargetDark, RetargetLight, Rate, Swap, Save };
   static constexpr int NOT_EDITING = -1;
 
   int listCount() const override { return static_cast<int>(ROW_COUNT); }
