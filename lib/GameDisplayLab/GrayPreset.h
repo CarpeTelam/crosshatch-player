@@ -77,9 +77,11 @@ struct GrayPreset {
   // "both" and weak "normal"), so both stay opt-in through the preset file.
   static GrayPreset inkBoyDefaults();
   // The UltraChip starting preset (D12): the owner's UC8179 table [3,7,12,7,2,10,7,2,9,12,5,3] in the transition
-  // order, and everything else InkBoy's (holds included). Its 100 % retarget both ways is an uncalibrated
-  // placeholder: on the owner's run 150 % overshot toward white while still falling short toward black, so the two
-  // directions want different values that no run has measured yet.
+  // order, and everything else InkBoy's (holds included). Its rate index 0 is the rate the table was measured at: PLL
+  // 0x06 on the UC8179 backend (the experimental branch's list {0x06, 0x05, 0x07}). Its 100 % retarget both ways is an
+  // uncalibrated placeholder: on the owner's run 150 % overshot toward white, and the shortfall toward black came
+  // through the old 12-dose clamp, which the 24 cap lifts, so RETARGET_MAX stays 150 both ways until a run measures
+  // the two directions.
   static GrayPreset ultraChipDefaults();
 
   // Every value within its range: doses DOSE_MIN..DOSE_MAX off the diagonal and 0 on it, diagonal hold bits set, both
@@ -128,16 +130,19 @@ struct GrayPresetLoadInfo {
   // The directions the older `retarget_percent` key filled (those the text did not set with their own key).
   bool legacyDark = false;
   bool legacyLight = false;
-  // The file's `base`, when it has the key (files saved before it existed do not).
+  // The file's `base`, when it has the key with a value naming one (files saved before it existed have none).
   std::optional<PresetBase> base;
+  // The file has a `base` key whose value names no base: ignored (the caller logs it).
+  bool unknownBase = false;
 };
 
 // Reads `length` bytes of `text`, a std-only JSON subset (objects, arrays, integers, booleans, strings; unknown keys
 // and their values, null included, are skipped). Missing when `text` is null; Malformed on a parse error, a known key
-// of the wrong type or out of range (`base` other than "inkboy" or "ultrachip"), an array of the wrong length, or
+// of the wrong type or out of range, an array of the wrong length, or
 // `version` absent or not 1; absent keys keep `defaults`. The older single key `retarget_percent` (50..150) is still
 // read: each direction without its own key in the text takes its value, whatever the keys' order. `*info`, when
-// given, says which directions that filled and the file's base. `out` is the read preset when Loaded and `defaults`
+// given, says which directions that filled and the file's base (`base` is informational: a value other than "inkboy"
+// or "ultrachip" is skipped and reported as unknownBase). `out` is the read preset when Loaded and `defaults`
 // otherwise.
 GrayPresetLoad loadGrayPreset(const char* text, size_t length, const GrayPreset& defaults, GrayPreset& out,
                               GrayPresetLoadInfo* info = nullptr);

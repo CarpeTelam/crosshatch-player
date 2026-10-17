@@ -60,11 +60,12 @@ TransitionScene::TransitionScene(const PanelTurn turn, const int logicalW, const
                                  const int panelH)
     : turn_(turn), logicalW_(logicalW), logicalH_(logicalH), panelW_(panelW), panelH_(panelH) {}
 
-void TransitionScene::setMode(const SweepMode mode, const uint32_t slotPeriodUs, const uint32_t dwellSlots) {
+void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
   mode_ = mode;
   restartFlips();
   dwellSlots_ = dwellSlots > 0 ? dwellSlots : 1;
   slowMeasured_ = false;
+  slowPeriodUs_ = 0;
   slowStartMs_ = 0;
   sweepCapped_ = false;
   switch (mode) {
@@ -74,7 +75,7 @@ void TransitionScene::setMode(const SweepMode mode, const uint32_t slotPeriodUs,
       return;
     case SweepMode::Slow:
       rectW_ = RECT_W_SLOW;
-      sizeSlow(slotPeriodUs);
+      sweepMs_ = 0;  // sized by slotDone once the paint has settled; rectX holds the rectangles until then
       return;
     case SweepMode::Fast:
       rectW_ = RECT_W;
@@ -210,10 +211,18 @@ SceneStep TransitionScene::slotDone(const size_t driven, const bool driveDone, c
       step.reapply = true;
       return step;
     case SweepMode::Slow:
-      if (slowMeasured_ || !driveDone) return step;
+      if (slowMeasured_) return step;
+      if (driven > 0) {
+        // Still painting: the longest delivered slot is the period the crossing must hold (a two-scan slot, as the
+        // rectangles' will be, outlasts a one-scan one).
+        if (driveDone && periodUs > slowPeriodUs_) slowPeriodUs_ = periodUs;
+        return step;
+      }
+      // The paint has settled: size the crossing and start it from here.
+      if (slowPeriodUs_ == 0) slowPeriodUs_ = periodUs;
       slowMeasured_ = true;
       slowStartMs_ = elapsedMs;
-      sizeSlow(periodUs);
+      sizeSlow(slowPeriodUs_);
       step.measured = true;
       return step;
     case SweepMode::Fast:

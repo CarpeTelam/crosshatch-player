@@ -17,8 +17,8 @@
 //   then hidden for PAUSE_MS, and the cycle repeats (the SSD1677's sweep, dlab-c1).
 // - Slow: RECT_W_SLOW px wide, the same sweep and pause over a crossing time sized from the slot period and the
 //   preset's longest dose run in slots (slowSweepMs, GrayPreset::longestRunSlots), so a pixel stays under a rectangle
-//   until its transition can finish. The rectangles wait off-screen until the run's first delivered slot has measured
-//   the period, then start their crossing (slotDone).
+//   until its transition can finish. The rectangles wait off-screen while the bands paint from white; once the paint
+//   has settled the crossing is sized from the longest of the paint's slots and starts (slotDone).
 // - Static: a third of the width wide, centred, never moving. The pattern settles, then flips: every target moves on by
 //   the flip's offset, +1, +2, +3, +1, ... (flipOffset), so three flips take every pixel through all twelve
 //   transitions between them (slotDone).
@@ -60,7 +60,7 @@ struct SceneStep {
   bool reapply = false;
   // Static: the pattern that settled in this slot.
   std::optional<StaticSettled> settled;
-  // Slow: this slot measured the period, the crossing is sized from it and starts now.
+  // Slow: the paint settled in this slot; the crossing is sized from the paint's longest slot and starts now.
   bool measured = false;
 };
 
@@ -82,13 +82,18 @@ class TransitionScene {
   // A logical screen logicalW x logicalH shown on a panel panelW x panelH (the model's size) under `turn`; Fast.
   TransitionScene(PanelTurn turn, int logicalW, int logicalH, int panelW, int panelH);
 
-  // The mode's geometry. Slow sizes its crossing from `slotPeriodUs` and `dwellSlots` (the preset's
-  // longestRunSlots(); slowSweepMs), which the other modes ignore. Restarts Static's flips and Slow's measurement.
-  void setMode(SweepMode mode, uint32_t slotPeriodUs, uint32_t dwellSlots);
+  // The mode's geometry. Slow's crossing waits for its measurement (slotDone) and will hold a pixel under a rectangle
+  // for `dwellSlots` slots (the preset's longestRunSlots()), which the other modes ignore. Restarts Static's flips and
+  // Slow's measurement.
+  void setMode(SweepMode mode, uint32_t dwellSlots);
   SweepMode mode() const { return mode_; }
   int rectW() const { return rectW_; }
-  // The crossing time (Fast and Slow; Static's rectangles do not move).
+  // The crossing time (Fast, and Slow once measured; Static's rectangles do not move).
   uint32_t sweepMs() const { return sweepMs_; }
+  // Slow before its measurement: the crossing is not sized yet and the rectangles wait off-screen.
+  bool slowPending() const { return mode_ == SweepMode::Slow && !slowMeasured_; }
+  // The slot period Slow's crossing was sized from (0 before its measurement).
+  uint32_t slowPeriodUs() const { return slowMeasured_ ? slowPeriodUs_ : 0; }
   // Slow's crossing time for a slot period on a logical width `logicalW`: the rectangle covers a pixel for at least
   // `dwellSlots` periods, rounded up to a millisecond, at most SLOW_SWEEP_MAX_MS.
   static uint32_t slowSweepMs(uint32_t slotPeriodUs, int logicalW, uint32_t dwellSlots);
@@ -98,7 +103,7 @@ class TransitionScene {
   bool sweepCapped() const { return sweepCapped_; }
 
   // The rectangles' left edge at `elapsedMs` (all twelve share it); nothing during the pause. Slow holds them just off
-  // the left edge until a slot has measured the period, and starts the crossing at that slot's clock.
+  // the left edge until its measurement, and starts the crossing at that slot's clock.
   std::optional<int> rectX(uint32_t elapsedMs) const;
   // The shade logical pixel (lx, ly) shows at `elapsedMs`.
   Shade targetAt(int lx, int ly, uint32_t elapsedMs) const;
@@ -109,9 +114,10 @@ class TransitionScene {
   void update(GrayModel& model, uint32_t prevMs, uint32_t nowMs, const GrayPreset& preset) const;
 
   // After each slot that ran at the sweep clock `elapsedMs`: it drove `driven` pixels, its drive scan was `driveDone`,
-  // and the slot took `periodUs` (its measured period). Static: a slot that drove none means the pattern settled; the
-  // scene moves on to the next flip and asks for a reapply. Slow: the first slot since setMode whose drive scan was
-  // delivered sizes the crossing from `periodUs` and starts it at `elapsedMs` (the rectangles were off-screen, so
+  // and the slot took `periodUs` (its measured length). Static: a slot that drove none means the pattern settled; the
+  // scene moves on to the next flip and asks for a reapply. Slow, until measured: each slot whose drive scan was
+  // delivered offers its `periodUs`, and the first slot that drove none (the bands' paint from white has settled)
+  // sizes the crossing from the largest offered and starts it at `elapsedMs` (the rectangles were off-screen, so
   // nothing to reapply). Fast: nothing.
   SceneStep slotDone(size_t driven, bool driveDone, uint32_t periodUs, uint32_t elapsedMs);
   // The offset flip `flip` moves every shade by: 0 for the first paint, then +1, +2, +3, +1, ...
@@ -156,10 +162,12 @@ class TransitionScene {
   uint32_t flips_ = 0;
   uint8_t shift_ = 0;
   uint32_t settleSlots_ = 0;
-  // Slow: the dwell the crossing is sized for, whether a slot has measured the period since setMode, and the sweep
-  // clock at which the crossing started.
+  // Slow: the dwell the crossing is sized for, whether the paint has settled and sized it since setMode, the longest
+  // slot period seen while painting (then the one it was sized from), and the sweep clock at which the crossing
+  // started.
   uint32_t dwellSlots_ = 1;
   bool slowMeasured_ = false;
+  uint32_t slowPeriodUs_ = 0;
   uint32_t slowStartMs_ = 0;
 };
 

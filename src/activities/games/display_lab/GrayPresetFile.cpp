@@ -17,8 +17,10 @@ constexpr size_t ENCODE_BYTES = 512;
 
 }  // namespace
 
-GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameDisplayLab::GrayPreset& preset) {
+GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameDisplayLab::GrayPreset& preset,
+                                    GameDisplayLab::PresetBase& fileBase) {
   using GameDisplayLab::GrayPresetLoad;
+  fileBase = base;
   const GameDisplayLab::GrayPreset defaults = GameDisplayLab::presetDefaults(base);
   const char* defaultsName = GameDisplayLab::presetBaseName(base);
   if (!Storage.exists(PATH)) {
@@ -39,9 +41,17 @@ GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameD
     case GrayPresetLoad::Loaded:
       LOG_INF("DLAB", "preset loaded from %s over %s defaults", PATH, defaultsName);
       // Saved over another controller's defaults: its doses were tuned on another panel. Loaded all the same.
+      // The session keeps the file's base, so Save writes it back and this warning stays until the doses are retuned
+      // (Tuning's Reset to defaults takes the panel's).
+      if (info.base) fileBase = *info.base;
       if (info.base && *info.base != base) {
         LOG_ERR("DLAB", "preset %s was saved over %s defaults, this panel's are %s: loaded anyway", PATH,
                 GameDisplayLab::presetBaseName(*info.base), defaultsName);
+      }
+      if (info.unknownBase) LOG_ERR("DLAB", "preset %s: its base names no known defaults; ignored", PATH);
+      // A file saved before the base key (dlab-c1, dlab-c2) holds a whole dose table, most likely an SSD1677 one.
+      if (!info.base && base == GameDisplayLab::PresetBase::UltraChip) {
+        LOG_ERR("DLAB", "preset %s predates the base key: its doses override the UltraChip defaults", PATH);
       }
       // The file predates the retarget split (dlab-c3): its one value went to each direction it did not set.
       if (info.legacyDark) {
@@ -95,7 +105,8 @@ bool save(const GameDisplayLab::GrayPreset& preset, const GameDisplayLab::Preset
     LOG_ERR("DLAB", "cannot move %s over %s", TMP_PATH, PATH);
     return false;
   }
-  LOG_INF("DLAB", "preset saved to %s (%u bytes)", PATH, static_cast<unsigned>(length));
+  LOG_INF("DLAB", "preset saved to %s (%u bytes, %s base)", PATH, static_cast<unsigned>(length),
+          GameDisplayLab::presetBaseName(base));
   return true;
 }
 

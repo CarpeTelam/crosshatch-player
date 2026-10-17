@@ -68,6 +68,9 @@ class DisplayLabActivity final : public UiListActivity {
   ScanBackend* backend() { return scanBackend.get(); }
   // The session's gray preset: the file's, or the controller's defaults; edited in place by the tuning screen.
   GameDisplayLab::GrayPreset& preset() { return grayPreset; }
+  // The controller's defaults into preset() (their rate index, 0, is in every backend's list), and their base as the
+  // one Save writes; returns that base. The caller holds the render lock while the tuning screen shows the values.
+  GameDisplayLab::PresetBase resetPreset();
   // Writes preset() to GrayPresetFile::PATH and sets the Save preset row's line ("Saved", or "Save failed, values
   // kept"); false when the write failed (logged), the session's values unchanged either way.
   bool savePreset();
@@ -122,7 +125,9 @@ class DisplayLabActivity final : public UiListActivity {
   bool stockBench = false;
   GameDisplayLab::ScanBudget budget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   GameDisplayLab::GrayPreset grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
-  // The defaults grayPreset started from (the controller's), written as the preset file's `base` on Save.
+  // The controller's defaults (panelBase), and the defaults grayPreset's values carry (presetBase: a loaded file's own
+  // base when it had one, else the panel's), written as the preset file's `base` on Save.
+  GameDisplayLab::PresetBase panelBase = GameDisplayLab::PresetBase::InkBoy;
   GameDisplayLab::PresetBase presetBase = GameDisplayLab::PresetBase::InkBoy;
   // The Save preset row's line after a save, or null before one.
   const char* saveStatus = nullptr;

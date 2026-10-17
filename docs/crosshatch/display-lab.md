@@ -197,9 +197,10 @@ The preset starts as InkBoy's defaults on the SSD1677, the author's numbers for 
 this panel's values is the point of the two screens. On a UC8179 or UC8279 panel it starts as the UltraChip preset
 instead (the epic's D12, the owner's first UC8179 calibration run, where the full white-to-black swing took 12
 one-frame doses at PLL 0x06): the doses below with InkBoy's holds and everything else, logged as `no preset at ...:
-UltraChip defaults`. A dose is 1..24. Its retarget, 100 % both ways, is an uncalibrated placeholder: on that run 150 %
-overshot toward white while still falling short toward black, so the two directions want different values that no
-run has measured yet.
+UltraChip defaults`. A dose is 1..24. Its rate index 0 is the rate the table was measured at: PLL 0x06 on the UC8179
+backend (the experimental branch's list {0x06, 0x05, 0x07}). Its retarget, 100 % both ways, is an uncalibrated
+placeholder: on that run 150 % overshot toward white, and the shortfall toward black came through the old 12-dose
+clamp, which the 24 cap lifts, so the range stays 50..150 % for both directions until a run measures them.
 
 | From > To | K>D | K>L | K>W | D>K | D>L | D>W | L>K | L>D | L>W | W>K | W>D | W>L |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -219,7 +220,7 @@ neutral) are InkBoy's too. History and weak mode are off: this story's choice (I
 ### Transition test
 
 Display lab → Transition test. Five rows: **Run** (starts a run; its line says how the last one ended), **Mode**
-(a tap or Confirm steps Static, Slow, Fast; Static when the screen opens), **Clean** (one cleaning FULL refresh to
+(a tap or Confirm steps Static, Slow, Fast; it opens on Static on a UC8179 or UC8279 and on Fast on the SSD1677), **Clean** (one cleaning FULL refresh to
 white and the rows back, no run, the Run row unchanged), **Speed** (the last "N.N scans/s, N ms per scan") and
 **Controls**. Run is also the replay: every run cleans to white first and starts from 0.
 
@@ -229,25 +230,30 @@ shade bands, K, D, L, W from the top, each with three rectangles of the other th
 following the screen's orientation. The mode sets the rectangles (story dlab-c3, after the owner's UC8179 run, D12):
 
 - **Fast**: 12-px rectangles sweep from left to right in 5 s, pause 1 s, and repeat (the SSD1677's sweep). On a panel
-  whose slot is several hundred milliseconds every pixel gets one slot under a rectangle, so only partial transitions
-  show.
+  whose slot is several hundred milliseconds the rectangle moves about 60 px a slot (0.4 s) and retargets only its
+  12-px footprint at each, so it leaves spaced stripes of partial transitions rather than a solid track. It is the one
+  mode whose rectangles retarget pixels still mid-transition, so it is the one that exercises the retarget split.
 - **Slow**: 48-px rectangles, the same sweep and pause, over a crossing sized so that a pixel stays under a rectangle
   for the preset's longest dose run in slots: per transition its dose when its hold bit is on (one dose a slot), half
   of it rounded up when off (the follow-up scan gives a second), the largest of the twelve (4 for InkBoy's preset, 7
   for the UltraChip one). Crossing = those slots x slot period x (screen width + 48) / 48, at most 120 s. The
-  rectangles wait just off the left edge while the bands paint, until the run's first slot whose drive scan was
-  delivered has measured the slot period: its real length, the scans and the work over every pixel, at least the
-  scheduler's period. The crossing is sized from it and starts then, logged as `gray slow: slot period N ms, crossing
-  N ms, dwell N slots` (with `(capped at 120 s, ...)` when the cap left the dwell under the longest run; at 380 ms the
-  UltraChip preset crosses 800 px in 47 s). The screen keeps the measured period for its next Slow run's first size.
+  rectangles wait just off the left edge while the bands paint from white; each painting slot is measured (its real
+  length, the scans and the work over every pixel, at least the scheduler's period), and once the paint has settled (a
+  slot with nothing left to drive) the crossing is sized from the longest of them and starts, so no rectangle lands on
+  a band still painting. The run's start line says the crossing is pending; then `gray slow: slot period N ms,
+  crossing N ms, dwell N slots` (with `(capped at 120 s, ...)` when the cap left the dwell under the longest run; at
+  380 ms the UltraChip preset crosses 800 px in 47 s).
 - **Static**: rectangles a third of the width wide in the middle, standing still. Every pixel runs its whole dose;
-  once a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N (+K) settled after
-  M slots; next flip +J` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots that
-  drove pixels), and it flips: every pixel takes one full transition, with its table dose, to the shade the next
+  once a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M
+  slots (offset +K, next +J)` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots
+  that drove pixels), and it flips: every pixel takes one full transition, with its table dose, to the shade the next
   offset along (K, D, L, W, K, ...). The offsets run +1, +2, +3, +1, ..., so flips 1 to 3 take the pixels through all
   twelve transitions between them, and every later three again. The residue after a flip, per band, is the
   per-transition answer. The session cap's clean (every 2,400 scans) restarts the sequence at flip 0 from white
-  (`gray static: sequence restarted at flip 0 after the session-cap clean`).
+  (`gray static: sequence restarted at flip 0 after the session-cap clean`). With `history` on in the preset file, a
+  flip back to a pixel's origin is a completed return or a reversal, budgeted by that route's `return_delta` or
+  `reverse_percent` instead of the table dose, so those flips' residues include the history adjustments; a Static
+  run's start logs `gray static: history N is on, so the flips' residues include its route adjustments`.
 
 Controls while it runs (the Controls row says the same, by action: "Next or Confirm pauses and resumes; Previous or
 Back stops"). The X4 Pro has no front buttons and its touch routing is dead while the view is up (D12), so the side
@@ -281,8 +287,8 @@ screen change deleted the task, by the screen's loop task). Other lines, by the 
 
 - sweep task: `gray sweep: loop silent for over N ms, a screen covers the view; ending` (its cover check, before a
   scan or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or
-  `...: rate index N of N` (the run ends "Refused (see log)"); `gray static: flip N (+K) settled after M slots;
-  next flip +J`; `gray static: sequence restarted at flip 0 after the session-cap clean`; `gray slow: slot period N
+  `...: rate index N of N` (the run ends "Refused (see log)"); `gray static: flip N settled after M slots (offset
+  +K, next +J)`; `gray static: history N is on, ...`; `gray static: sequence restarted at flip 0 after the session-cap clean`; `gray slow: slot period N
   ms, crossing N ms, dwell N slots`; the stats, pause, resume, clean and start lines (the start line names the
   mode, the rectangle width, the crossing and both retarget percents).
 - loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after
@@ -304,9 +310,9 @@ How to read it:
   the rows into K and W.
 
 Tuning order, one change per run: the **doses and hold bits** first, judged by Static's settled pattern and its flips
-and by the rectangles and their tracks; then the two **retarget** percents, judged by rectangles that change direction
-mid-transition (Fast or Slow, where a rectangle passes before its pixels settle): toward dark for pixels turned back
-toward a darker shade, toward light for the others; then, only
+and by the rectangles and their tracks; then the two **retarget** percents, in **Fast** mode only (Static and Slow retarget settled pixels,
+which take their table dose; Fast's rectangles move on before their pixels settle, which is what a retarget scales):
+toward dark for pixels turned toward a darker shade than their level, toward light for the others; then, only
 if trails remain, the **history** routes and the weak row, which the preset file turns on (no row on the device).
 
 What to photograph: Static's pattern after each settle (the log's `settled` line), the panel paused mid-sweep (Next)
@@ -319,7 +325,9 @@ log's `gray` line beside it.
 Display lab → Tuning lists every value of the session's preset, one row each: Dose K>D through Dose W>L (1..24), Hold
 K>D through Hold W>L (on or off), Retarget to dark and Retarget to light (50..150 %, steps of 25: the budget of a pixel
 turned mid-transition toward a darker, or a lighter, shade than its level), Frame rate (the backend's rate labels),
-Swap polarity, and Save. A **tap** on a row steps it in place (+1, wrapping; a hold or the swap toggles). **Confirm** on a
+Swap polarity, Reset to defaults (the panel's starting values, the UltraChip preset or InkBoy's, into the session at
+once, logged as `DLAB tune reset: ... defaults`; the only way back to them on the device, and Save then writes them),
+and Save. A **tap** on a row steps it in place (+1, wrapping; a hold or the swap toggles). **Confirm** on a
 row enters edit mode for it ("editing" on its line): Next and Previous (NavNext and NavPrevious, as above) then change
 it by one step (+1 / -1, clamped; a hold or the swap on / off), and Confirm or Back leaves edit mode. Outside edit
 mode they move the selection and Back closes the screen. Changes apply at once to the session (the next transition-test run uses them) and are logged as
@@ -341,7 +349,7 @@ save keeps the values in memory and says "Save failed, values kept". Its text, I
 | Key | Meaning | Range |
 | --- | --- | --- |
 | `version` | the file format; required | 1 |
-| `base` | the defaults the session started from when it was saved: `inkboy` (SSD1677) or `ultrachip` (UC8179, UC8279). Optional (files saved before dlab-c3 have none). When it names other defaults than this panel's, the lab logs an error naming both (`preset ... was saved over InkBoy's defaults, this panel's are UltraChip: loaded anyway`) and loads the file all the same | `"inkboy"` / `"ultrachip"` |
+| `base` | the defaults the saved values carry: `inkboy` (SSD1677) or `ultrachip` (UC8179, UC8279). Informational and optional: files saved before dlab-c3 have none, and a value naming neither is logged and ignored. When it names other defaults than this panel's, the lab logs an error naming both (`preset ... was saved over InkBoy's defaults, this panel's are UltraChip: loaded anyway`), loads the file all the same, and keeps the file's base, so Save writes it back and the error stays until Tuning's Reset to defaults; Save's log names the base it wrote. On an UltraChip panel a file without the key logs an error that it predates the key and its doses override the UltraChip defaults | `"inkboy"` / `"ultrachip"` |
 | `doses` | the 12 doses in the table order K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W, W>K, W>D, W>L | 1..24 each |
 | `hold` | the 12 hold bits in the same order (on: the follow-up scan holds that transition) | `true` / `false` |
 | `retarget_dark_percent` | the budget of a pixel retargeted mid-transition toward a darker shade, percent of its base dose | 50..150 |

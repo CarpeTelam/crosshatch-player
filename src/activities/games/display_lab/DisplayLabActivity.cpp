@@ -46,8 +46,11 @@ void DisplayLabActivity::onEnter() {
   const GameDisplayLab::PresetBase base =
       isUltraChip(display.getController()) ? GameDisplayLab::PresetBase::UltraChip : GameDisplayLab::PresetBase::InkBoy;
   GameDisplayLab::GrayPreset loaded = GameDisplayLab::presetDefaults(base);
-  if (available()) GrayPresetFile::load(base, loaded);
-  presetBase = base;  // the loop task's alone; Save writes it as the file's base
+  // The loop task's alone: the panel's base, and the one the session's values carry (a loaded file's own, which Save
+  // writes back, so a file from another controller keeps saying so until Reset to defaults).
+  panelBase = base;
+  presetBase = base;
+  if (available()) GrayPresetFile::load(base, loaded, presetBase);
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
@@ -132,6 +135,12 @@ void DisplayLabActivity::cleanPanel() {
 
 void DisplayLabActivity::cleanNow() {
   if (scanBackend) cleanPanel();
+}
+
+GameDisplayLab::PresetBase DisplayLabActivity::resetPreset() {
+  grayPreset = GameDisplayLab::presetDefaults(panelBase);
+  presetBase = panelBase;
+  return panelBase;
 }
 
 bool DisplayLabActivity::savePreset() {

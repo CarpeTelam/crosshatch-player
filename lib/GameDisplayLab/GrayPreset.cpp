@@ -264,6 +264,7 @@ struct ReadState {
   bool sawLight = false;
   int legacyRetarget = -1;
   std::optional<PresetBase> base;
+  bool unknownBase = false;
 };
 
 // One known key's value into `preset`; an unknown key's value is skipped. False when the value is malformed.
@@ -274,16 +275,23 @@ bool readValue(Reader& reader, const char* key, GrayPreset& preset, ReadState& s
     return reader.integer(number) && number == FILE_VERSION;
   }
   if (strcmp(key, "base") == 0) {
+    // Informational: a value that names no base (or is no string) is reported and skipped, never fatal.
     char value[12];
     bool overlong = false;
-    if (!reader.string(value, sizeof(value), overlong) || overlong) return false;
+    if (!reader.string(value, sizeof(value), overlong)) {
+      state.unknownBase = true;
+      return reader.skipValue(1);  // not a string (an unterminated one fails here too: a parse error)
+    }
     for (const PresetBase base : {PresetBase::InkBoy, PresetBase::UltraChip}) {
-      if (strcmp(value, baseKeyOf(base)) == 0) {
+      if (!overlong && strcmp(value, baseKeyOf(base)) == 0) {
         state.base = base;
+        state.unknownBase = false;
         return true;
       }
     }
-    return false;
+    state.base.reset();
+    state.unknownBase = true;
+    return true;
   }
   if (strcmp(key, "doses") == 0) {
     int doses[TRANSITION_COUNT];
@@ -561,6 +569,7 @@ GrayPresetLoad loadGrayPreset(const char* text, const size_t length, const GrayP
     info->legacyDark = legacyDark;
     info->legacyLight = legacyLight;
     info->base = state.base;
+    info->unknownBase = state.unknownBase;
   }
   return GrayPresetLoad::Loaded;
 }

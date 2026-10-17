@@ -350,13 +350,25 @@ TEST(GrayPresetCodec, BaseKeyIsWrittenAndReadAndMayBeAbsent) {
   // A file saved before the key existed has none.
   EXPECT_EQ(load("{\"version\":1,\"rate\":1}", out, &info), GrayPresetLoad::Loaded);
   EXPECT_FALSE(info.base.has_value());
-  // Any other value, or another type, is malformed.
-  for (const char* text : {"{\"version\":1,\"base\":\"ssd1677\"}", "{\"version\":1,\"base\":\"inkboyx\"}",
-                           "{\"version\":1,\"base\":\"a_very_long_base_name\"}", "{\"version\":1,\"base\":1}",
-                           "{\"version\":1,\"base\":null}"}) {
-    EXPECT_EQ(load(text, out, &info), GrayPresetLoad::Malformed) << text;
+  // The key is informational: any other value, or another type, is ignored and reported, and the file still loads.
+  for (const char* text :
+       {"{\"version\":1,\"base\":\"ssd1677\",\"rate\":2}", "{\"version\":1,\"base\":\"inkboyx\",\"rate\":2}",
+        "{\"version\":1,\"base\":\"a_very_long_base_name\",\"rate\":2}", "{\"version\":1,\"base\":1,\"rate\":2}",
+        "{\"version\":1,\"base\":null,\"rate\":2}", "{\"version\":1,\"base\":[\"inkboy\"],\"rate\":2}"}) {
+    out = GrayPreset::inkBoyDefaults();
+    EXPECT_EQ(load(text, out, &info), GrayPresetLoad::Loaded) << text;
     EXPECT_FALSE(info.base.has_value()) << text;
+    EXPECT_TRUE(info.unknownBase) << text;
+    EXPECT_EQ(out.rateIndex, 2) << text;
   }
+  // A known value clears the report, and a later unknown one replaces a known one.
+  EXPECT_EQ(load("{\"version\":1,\"base\":\"inkboy\"}", out, &info), GrayPresetLoad::Loaded);
+  EXPECT_FALSE(info.unknownBase);
+  EXPECT_EQ(load("{\"version\":1,\"base\":\"ultrachip\",\"base\":\"x\"}", out, &info), GrayPresetLoad::Loaded);
+  EXPECT_FALSE(info.base.has_value());
+  EXPECT_TRUE(info.unknownBase);
+  // A broken string is still a parse error.
+  EXPECT_EQ(load("{\"version\":1,\"base\":\"inkboy}", out, &info), GrayPresetLoad::Malformed);
 }
 
 TEST(GrayPresetCodec, UnknownKeysAndNestedValuesAreSkipped) {

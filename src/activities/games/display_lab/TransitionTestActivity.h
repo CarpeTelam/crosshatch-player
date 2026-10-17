@@ -19,16 +19,17 @@
 
 // The transition test (Display lab → Transition test; the display-lab epic, R4; InkBoy's calibration screen): the
 // gray engine on the whole panel. Headed "Transition test", five rows: Run (its line: "Not run", or how the last run
-// ended), Mode (Static, Slow or Fast; a tap or Confirm steps it), Clean (one cleaning FULL refresh to white, no run),
-// Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
+// ended), Mode (Static, Slow or Fast; a tap or Confirm steps it; Static on an UltraChip panel, Fast on the SSD1677 to
+// start), Clean (one cleaning FULL refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls
+// (help text).
 //
 // Run starts the test (GameDisplayLab::TransitionScene in the Mode row's mode) on its own FreeRTOS task, the sweep task
 // (D11), which cleans the panel to white with a FULL refresh and then drives four shade bands K, D, L, W top to bottom
 // with three rectangles of the other shades per band, from white through the session's gray preset
 // (DisplayLabActivity::preset()). Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat. Slow: 48-px
 // rectangles whose crossing keeps a pixel under one for the preset's longest dose run in slots
-// (GrayPreset::longestRunSlots) at the slot's real length; they wait off-screen until the run's first delivered slot
-// has measured it, then cross. Static: rectangles a third of the width wide that stand still; once a slot finds no
+// (GrayPreset::longestRunSlots) at the longest real slot length of the bands' paint; they wait off-screen until that
+// paint has settled, then cross. Static: rectangles a third of the width wide that stand still; once a slot finds no
 // pixel to drive the pattern has settled (logged) and flips, every shade moved on by +1, +2, +3, +1, ... (three flips
 // take the pixels through all twelve transitions), until stopped (story dlab-c3, D12). One slot per
 // GameDisplayLab::SlotScheduler period: the scene moves the rectangles to the sweep clock, then
@@ -201,8 +202,9 @@ class TransitionTestActivity final : public UiListActivity {
   // The test view is up: the panel shows the drive and render() draws nothing. Written by the loop task, read by the
   // render task.
   std::atomic<bool> shownOnPanel{false};
-  // The Mode row's mode: the loop task's, set into the scene before the sweep task is created.
-  GameDisplayLab::SweepMode sweepMode = GameDisplayLab::SweepMode::Static;
+  // The Mode row's mode: the loop task's, set into the scene before the sweep task is created. onEnter starts it at
+  // Static on an UltraChip panel and Fast on the SSD1677 (D12).
+  GameDisplayLab::SweepMode sweepMode = GameDisplayLab::SweepMode::Fast;
 
   // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: sweepDone (release), after which
   // the loop task may read the task's fields below; the loop task alone creates and deletes the task.
@@ -235,8 +237,6 @@ class TransitionTestActivity final : public UiListActivity {
   // The task's stack start (pxTaskGetStackStart), and the least room above it seen just before a scan.
   uintptr_t stackFloor = 0;
   uint32_t leastScanHeadroom = UINT32_MAX;
-  // The slot period Slow mode last measured (0 before any), which the next Slow run starts from; kept for the visit.
-  uint32_t measuredPeriodUs = 0;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB

@@ -13,7 +13,9 @@
 // (DisplayLabActivity::preset()), one value per row, each row its name over its current value: the 12 doses ("Dose
 // K>D", 1..24), the 12 hold bits ("Hold K>D", on or off), Retarget to dark and Retarget to light (50..150 % each, the
 // budget of a pixel turned mid-transition toward a darker or a lighter shade), Frame rate (the backend's rate label),
-// Swap polarity, and Save (writes the preset file; its line says whether that worked). Edits apply to the
+// Swap polarity, Reset to defaults (the controller's defaults into the session at once, logged as `DLAB tune reset`;
+// the only on-device way back to them), and Save (writes the preset file; its line says whether that worked). Edits
+// apply to the
 // session at once, so the next transition-test sweep uses them; nothing is written until Save (here or on the lab
 // menu).
 //
@@ -32,14 +34,15 @@ class TuningActivity final : public UiListActivity {
   static constexpr int RETARGET_LIGHT_ROW = RETARGET_DARK_ROW + 1;
   static constexpr int RATE_ROW = RETARGET_LIGHT_ROW + 1;
   static constexpr int SWAP_ROW = RATE_ROW + 1;
-  static constexpr int SAVE_ROW = SWAP_ROW + 1;
+  static constexpr int RESET_ROW = SWAP_ROW + 1;
+  static constexpr int SAVE_ROW = RESET_ROW + 1;
   static constexpr size_t ROW_COUNT = SAVE_ROW + 1;
 
   // `lab` is the menu under this screen on the stack, which outlives it.
   TuningActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
 
  private:
-  enum class Kind : uint8_t { Dose, Hold, RetargetDark, RetargetLight, Rate, Swap, Save };
+  enum class Kind : uint8_t { Dose, Hold, RetargetDark, RetargetLight, Rate, Swap, Reset, Save };
   static constexpr int NOT_EDITING = -1;
 
   int listCount() const override { return static_cast<int>(ROW_COUNT); }
@@ -72,6 +75,8 @@ class TuningActivity final : public UiListActivity {
   void adjust(int row, int direction);
   void setEditing(int row);
   void save();
+  // The controller's defaults into the session preset (DisplayLabActivity::resetPreset), every row rewritten.
+  void reset();
   uint8_t rateCount() const;
 
   DisplayLabActivity& lab;

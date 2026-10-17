@@ -11,7 +11,7 @@ review: ''
 review_source: ''
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/story-dlab-c3-hardware-calibration.md'
   - '{project-root}/_bmad-output/initiative-crosshatch-player-v1/epic-display-lab/epic-display-lab.md'
@@ -39,6 +39,13 @@ deferred:
       No harness compiles TransitionTestActivity (CROSSHATCH_DISPLAY_LAB is off on the host); putting the swipe guard back above the Back check would swallow the edge swipe again with no CI signal. Joins dlab-c2's deferred device-wiring family.
     location: >-
       src/activities/games/display_lab/TransitionTestActivity.cpp (handleCustomInput)
+    severity: medium
+  - summary: >-
+      No mode retargets a pixel mid-transition on purpose, so the split retarget percentages are exercised only by Fast's spaced stripes on a slow panel.
+    evidence: |-
+      Static flips only settled pixels and Slow is sized so pixels settle under a rectangle; a deliberate mid-transition flip (a Static flip issued before the pattern settles) would give per-direction figures. Design addition outside this story.
+    location: >-
+      lib/GameDisplayLab/TransitionScene.cpp (slotDone)
     severity: medium
 ---
 
@@ -179,6 +186,20 @@ committed (the orchestrator runs the review lenses on the staged diff). Every ta
 - The intent contract's matrix rows for Static ("(shade + 2) mod 4") and Slow ("12 slots") are superseded by the
   above; the contract itself is left as written.
 
+### 2026-10-17 — orchestrator review fixes, round 2 (on a19b54df)
+- Mode opens on Fast on the SSD1677 and on Static on an UltraChip panel (D12).
+- Static's line is `gray static: flip N settled after M slots (offset +K, next +J)` (the story's grep target); a Static
+  run with history on logs that the flips' residues include the route adjustments.
+- Slow starts its crossing only once the bands' paint has settled (a slot that drove nothing) and sizes it from the
+  longest delivered painting slot (each the max of the scheduler's period and the slot's real length); the screen's
+  carried `measuredPeriodUs` and `setMode`'s period argument are gone, and the start line says the crossing is
+  pending. Avoids: rectangles landing on a band still painting, a one-scan sample.
+- The preset's `base` is informational (an unknown value is ignored and reported); the session keeps a loaded file's
+  base so Save writes it back; a pre-base file on an UltraChip panel logs an error; Save's log names the base.
+- Tuning gains Reset to defaults (the panel's defaults and base, logged `tune reset`), before Save.
+- Doc and comment wording: Fast's spaced stripes, Fast as the retarget-split mode, the old 12-dose clamp behind D12's
+  dark shortfall (RETARGET_MAX stays 150), the UltraChip table's rate index 0 = PLL 0x06.
+
 ## Review Triage Log
 
 ### 2026-10-17 — Review pass (orchestrator-run lenses, per orchestrated-epics.md § 3's fallback: the session's subagents cannot nest)
@@ -208,6 +229,25 @@ committed (the orchestrator runs the review lenses on the staged diff). Every ta
   - `[low]` `[reject]` (intent 2, 3, 4, 5, 7, 8, 9) Slow per the story's "i.e." clause (the literal formula was wrong), Static's rectangle a third of the width, "settled" as a slot that drove nothing, retarget direction by current level, legacy key as defaults-fill, controls as specified, the Clean row repainting the rows, the 3 B/pixel model — settled readings, recorded; no change.
   - `[low]` `[reject]` (intent 6) UltraChip defaults keyed on the probed controller and used for partial and malformed files too — the better reading (a UC panel's fallback is its own table); the base key patch above makes the file's origin explicit.
   - `[low]` `[reject]` (intent 10) the device-only surfaces (input, Clean row, afterSlot glue, tuning rows, onEnter selector, preset log) are untested — the story says so; the pure per-slot step patch above moves the largest piece into tests.
+
+### 2026-10-17 — Follow-up review pass (same four lenses, orchestrator-run, over commit a19b54df)
+- verdicts: 28 findings — high 0, medium 5, low 12, false 0, maybe-false 0, rejected-by-rule 11
+- findings:
+  - `[low]` `[patch]` (intent J1) Mode defaulted to Static on every controller where D12 keeps Fast as the SSD1677's sweep — Fast on the SSD1677, Static on an UltraChip controller.
+  - `[low]` `[patch]` (intent J2) the Static log line lost the story's `flip N settled after M slots` substring — restored, with the offsets in parentheses.
+  - `[medium]` `[patch]` (blind K2, edge 1 in part) Slow's crossing began after the first delivered slot while the bands were still painting, retargeting each lane's first pixels mid-paint — the rectangles wait until a slot drives nothing (the paint settled); pinned.
+  - `[medium]` `[patch]` (blind K10, edge 1) one sampled slot could be a one-scan slot where rectangle slots are two-scan — the period is the largest over the paint's delivered slots (scheduler period or real slot length); pinned.
+  - `[low]` `[patch]` (blind K11) `measuredPeriodUs` moved nothing and the start line printed a crossing the run never used — plumbing removed; the start line says the crossing is pending measurement.
+  - `[low]` `[patch]` (blind K5, edge 2) with history on, Static's later flips are completed returns and take the history adjustments — one LOG_INF at the run's start and a doc note (bypassing history is a design change; the default preset has it off).
+  - `[medium]` `[patch]` (blind K6, verification-gap other, edge 3) Save wrote the panel's base over a file loaded from the other base, so the mismatch warning showed once — the file's base is kept as the session's and written back; Save logs it.
+  - `[low]` `[patch]` (blind K7, edge 4) a pre-c3 file without `base` silently replaced the UltraChip table — LOG_ERR that it predates the key and overrides the defaults.
+  - `[low]` `[patch]` (blind K8) an unknown `base` rejected the whole file — log-and-ignore; test updated.
+  - `[medium]` `[patch]` (blind K9) no on-device way back to the controller's defaults — a Reset to defaults row in Tuning.
+  - `[low]` `[patch]` (blind K1, K3, K4, K12) the doc misdescribed Fast on a slow panel, pointed the retarget split's tuning at the wrong modes, left the 150 % dark ceiling unexplained, and the UltraChip table's rate index unstated — all four corrected (Fast leaves spaced stripes; only Fast exercises the split; the shortfall came through the old 12-dose clamp; index 0 is PLL 0x06).
+  - `[medium]` `[defer]` (blind K3, the remainder) no mode retargets mid-run on purpose, so the split is only exercised by Fast's stripes — a deliberate mid-transition flip is a design addition; deferred.
+  - `[low]` `[reject]` (edge claim, legacy log) two lines instead of the plan's one — wording; both carry the values.
+  - `[low]` `[reject]` (edge claim, orientation; intent J3) NavNext/NavPrevious follow the screen orientation, so the side keys swap in inverted portrait and counter-clockwise landscape — the firmware's convention; the doc says so.
+  - `[low]` `[reject]` (intent J4, J5, J6, J7, J8) the base key's meaning, the dwell from the preset's longest run, the UC8179 unreachable on this branch, the device-only surfaces, and `StockBenchGate`'s extraction — settled or by design; recorded.
 
 ## Design Notes
 
@@ -267,6 +307,16 @@ pure per-slot step), 3 deferred, 13 rejected with reasons in the triage log, 0 f
 39903ffb's 6,249,106 B), 104,232 B RAM (+0); `default` and `sticky` build; `pio check -e x4pro` no defects; flash
 gate (D6): within budget, static RAM 240 B to spare, `objects` clean; the gate's +16 B games delta is image padding
 on the shared string table (triage log). The simulator compiles the lab out, so no screenshot.
+
+**Follow-up pass (same four lenses over a19b54df).** 28 findings, 10 patched (the SSD1677 keeps Fast as its
+default; Slow waits for the paint to settle and takes the largest paint slot as its period; the dead measured-period
+plumbing removed; the Static log line's substring restored; a history-on warning; the preset's base kept from the
+loaded file, unknown values tolerated, pre-c3 files warned about; a Reset to defaults row; four doc corrections),
+1 more deferred (a deliberate mid-transition flip to exercise the retarget split), the rest rejected with reasons.
+No high finding was patched, so `followup_review_recommended` is false. Verification repeated on the follow-up tree:
+host suite 2,208/2,208; layer and ledger checks pass; x4pro 6,256,434 B flash (+7,328 B over 39903ffb), 104,232 B
+RAM (+0); default and sticky build; pio check x4pro clean; flash gate within budget, static RAM 240 B to spare,
+objects clean.
 
 **Residual risks.** Every live-control, Clean-row and mode behaviour is device-only and verified on the owner's
 UC8179 through the experimental branch; the UltraChip retarget defaults are placeholders until a Static run gives

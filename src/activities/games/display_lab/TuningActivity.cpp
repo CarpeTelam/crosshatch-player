@@ -34,6 +34,7 @@ TuningActivity::Kind TuningActivity::kindOf(const int row) {
   if (row == RETARGET_LIGHT_ROW) return Kind::RetargetLight;
   if (row == RATE_ROW) return Kind::Rate;
   if (row == SWAP_ROW) return Kind::Swap;
+  if (row == RESET_ROW) return Kind::Reset;
   return Kind::Save;
 }
 
@@ -80,6 +81,9 @@ void TuningActivity::buildRows() {
       case Kind::Swap:
         item.label = tr(STR_GAMES_DLAB_SWAP_POLARITY);
         break;
+      case Kind::Reset:
+        item.label = tr(STR_GAMES_DLAB_RESET_PRESET);
+        break;
       case Kind::Save:
         item.label = tr(STR_GAMES_DLAB_SAVE_PRESET);
         break;
@@ -115,6 +119,7 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
     case Kind::Swap:
       snprintf(out, capacity, "%s", preset.swapPolarity ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
       return true;
+    case Kind::Reset:
     case Kind::Save:
       return false;
   }
@@ -124,8 +129,11 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
 void TuningActivity::writeValue(const int row) {
   char plain[24];
   if (!plainValue(row, plain, sizeof(plain))) {
-    // The Save row keeps the line save() wrote; before a save it says what the row does.
-    if (values[row][0] == '\0') snprintf(values[row], sizeof(values[row]), "%s", tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
+    // The action rows say what they do; the Save row then keeps the line save() wrote.
+    if (values[row][0] == '\0') {
+      snprintf(values[row], sizeof(values[row]), "%s",
+               kindOf(row) == Kind::Reset ? tr(STR_GAMES_DLAB_RESET_PRESET_DESC) : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
+    }
     return;
   }
   if (row == editing) {
@@ -191,6 +199,9 @@ void TuningActivity::tapStep(const int row) {
     case Kind::Swap:
       edit(row, [](GrayPreset& p) { p.toggleSwap(); });
       return;
+    case Kind::Reset:
+      reset();
+      return;
     case Kind::Save:
       save();
       return;
@@ -219,6 +230,7 @@ void TuningActivity::adjust(const int row, const int direction) {
     case Kind::Swap:
       edit(row, [direction](GrayPreset& p) { p.swapPolarity = direction > 0; });
       return;
+    case Kind::Reset:
     case Kind::Save:
       return;  // never in edit mode
   }
@@ -242,6 +254,18 @@ void TuningActivity::save() {
     snprintf(values[SAVE_ROW], sizeof(values[SAVE_ROW]), "%s",
              saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED));
   }
+  requestUpdate();
+}
+
+void TuningActivity::reset() {
+  GameDisplayLab::PresetBase base = GameDisplayLab::PresetBase::InkBoy;
+  {
+    // The render task reads the preset's values through the rows' lines.
+    RenderLock lock(*this);
+    base = lab.resetPreset();
+    for (int row = 0; row < static_cast<int>(ROW_COUNT); ++row) writeValue(row);
+  }
+  LOG_INF("DLAB", "tune reset: %s defaults", GameDisplayLab::presetBaseName(base));
   requestUpdate();
 }
 
@@ -279,8 +303,11 @@ bool TuningActivity::handleButtons() {
     if (editing != NOT_EDITING) {
       setEditing(NOT_EDITING);
     } else if (selected >= 0 && selected < static_cast<int>(ROW_COUNT)) {
-      if (kindOf(selected) == Kind::Save) {
+      const Kind kind = kindOf(selected);
+      if (kind == Kind::Save) {
         save();
+      } else if (kind == Kind::Reset) {
+        reset();
       } else {
         setEditing(selected);
       }

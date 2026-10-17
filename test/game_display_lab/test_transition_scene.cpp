@@ -1,8 +1,8 @@
 // The transition test's picture (lib/GameDisplayLab/TransitionScene): toPanel against a copy of
 // GfxRenderer::rotateCoordinates for all four orientations, the bands and lanes, the sweep timing, update() touching
 // only the rectangles' old and new areas (the plan's Transition sweep row, its pure part), and dlab-c3's modes: Slow's
-// crossing from the slot period and the longest dose run, held off-screen until measured, Static's fixed rectangles
-// and its settle-and-flip sequence through all twelve transitions, both decided by slotDone.
+// crossing from the paint's longest slot and the longest dose run, held off-screen until the paint settles, Static's
+// fixed rectangles and its settle-and-flip sequence through all twelve transitions, both decided by slotDone.
 
 #include <gtest/gtest.h>
 
@@ -86,7 +86,7 @@ TEST(TransitionScene, RectangleSweepsThenPauses) {
     EXPECT_EQ(scene.rectX(5999), std::nullopt);
     EXPECT_EQ(scene.rectX(6000), -12);
     EXPECT_EQ(scene.rectX(6000 + 2500), -12 + 812 / 2);
-    scene.setMode(SweepMode::Fast, 380000, 12);  // the slot period and the dwell change nothing in Fast
+    scene.setMode(SweepMode::Fast, 12);  // the dwell changes nothing in Fast
   }
 }
 
@@ -270,6 +270,13 @@ TEST(TransitionScene, ModeRowCyclesStaticSlowFast) {
   EXPECT_EQ(nextMode(SweepMode::Fast), SweepMode::Static);
 }
 
+// Slow's measurement as a run makes it: one painting slot of `periodUs` whose drive scan was delivered, then a slot
+// with nothing to drive at `atMs`, which starts the crossing there.
+void paintAndSettle(TransitionScene& scene, const uint32_t periodUs, const uint32_t atMs) {
+  ASSERT_FALSE(scene.slotDone(1, true, periodUs, atMs).measured);
+  ASSERT_TRUE(scene.slotDone(0, true, 100000, atMs).measured);
+}
+
 TEST(TransitionScene, SlowCrossingKeepsAPixelUnderARectangleForTheLongestDoseRun) {
   // dwell slots x period x (width + 48) / 48, rounded up to a millisecond.
   EXPECT_EQ(TransitionScene::slowSweepMs(100000, 800, 12), 21200u);
@@ -285,8 +292,8 @@ TEST(TransitionScene, SlowCrossingKeepsAPixelUnderARectangleForTheLongestDoseRun
   for (const uint32_t periodUs : {100000u, 380000u}) {
     for (const uint32_t dwell : {4u, 7u, 12u}) {
       TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
-      scene.setMode(SweepMode::Slow, periodUs, dwell);
-      ASSERT_TRUE(scene.slotDone(1, true, periodUs, 0).measured);  // the crossing starts at clock 0
+      scene.setMode(SweepMode::Slow, dwell);
+      paintAndSettle(scene, periodUs, 0);  // the crossing starts at clock 0
       EXPECT_EQ(scene.rectW(), TransitionScene::RECT_W_SLOW);
       EXPECT_EQ(scene.sweepMs(), TransitionScene::slowSweepMs(periodUs, 800, dwell));
       EXPECT_FALSE(scene.sweepCapped());
@@ -303,58 +310,80 @@ TEST(TransitionScene, SlowCrossingKeepsAPixelUnderARectangleForTheLongestDoseRun
   }
   // Over the cap the dwell falls short, and the scene says so.
   TransitionScene capped(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
-  capped.setMode(SweepMode::Slow, 600000, 12);
+  capped.setMode(SweepMode::Slow, 12);
+  paintAndSettle(capped, 600000, 0);
   EXPECT_EQ(capped.sweepMs(), TransitionScene::SLOW_SWEEP_MAX_MS);
   EXPECT_TRUE(capped.sweepCapped());
   EXPECT_EQ(capped.dwellSlotsAt(600000), 11u);  // 48 x 120,000 / 848 = 6,792 ms of 600 ms slots
 }
 
-TEST(TransitionScene, SlowWaitsOffScreenUntilTheFirstDeliveredSlotThenCrosses) {
+TEST(TransitionScene, SlowWaitsOffScreenUntilThePaintSettlesThenCrossesAtItsLongestSlot) {
   constexpr int W = 800;
   constexpr int HH = 480;
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
-  scene.setMode(SweepMode::Slow, 100000, 7);
-  EXPECT_EQ(scene.sweepMs(), 12367u);
+  scene.setMode(SweepMode::Slow, 7);
+  EXPECT_TRUE(scene.slowPending());
+  EXPECT_EQ(scene.slowPeriodUs(), 0u);
   // Not measured yet: the rectangles stay just off the left edge whatever the clock says.
   for (const uint32_t ms : {0u, 400u, 5000u, 20000u}) EXPECT_EQ(scene.rectX(ms), -TransitionScene::RECT_W_SLOW) << ms;
   const int top = scene.rectTop(2, 0);
   EXPECT_EQ(scene.targetAt(0, top, 20000), Shade::L);  // no pixel under a rectangle
-  // A slot whose drive scan was not delivered measures nothing.
-  SceneStep step = scene.slotDone(500, false, 380000, 400);
-  EXPECT_FALSE(step.measured);
-  EXPECT_FALSE(step.reapply);
-  EXPECT_EQ(scene.rectX(400), -TransitionScene::RECT_W_SLOW);
-  // The first delivered slot sizes the crossing and starts it at its clock: nothing on screen moves, so no reapply.
-  step = scene.slotDone(500, true, 380000, 400);
-  EXPECT_TRUE(step.measured);
-  EXPECT_FALSE(step.reapply);
+  // The bands paint from white: every slot that drives pixels offers its period, the crossing waits.
+  const struct {
+    size_t driven;
+    bool driveDone;
+    uint32_t periodUs;
+  } paint[] = {
+      {384000, true, 380000},  // two scans
+      {200000, true, 450000},  // the longest delivered slot
+      {90000, false, 900000},  // not delivered: no measurement
+      {30000, true, 210000},   // one scan, near the end of the paint
+  };
+  uint32_t clockMs = 0;
+  for (const auto& slot : paint) {
+    clockMs += 400;
+    const SceneStep step = scene.slotDone(slot.driven, slot.driveDone, slot.periodUs, clockMs);
+    EXPECT_FALSE(step.measured) << clockMs;
+    EXPECT_FALSE(step.reapply) << clockMs;
+    EXPECT_TRUE(scene.slowPending());
+    EXPECT_EQ(scene.rectX(clockMs), -TransitionScene::RECT_W_SLOW) << clockMs;  // not entered while painting
+  }
+  // The first slot with nothing to drive: the paint has settled. The crossing is sized from the paint's longest
+  // delivered slot (not the first, nor this short empty one) and starts at this slot's clock; nothing on screen moves,
+  // so no reapply.
+  clockMs += 100;
+  const SceneStep settled = scene.slotDone(0, true, 100000, clockMs);
+  EXPECT_TRUE(settled.measured);
+  EXPECT_FALSE(settled.reapply);
+  EXPECT_FALSE(scene.slowPending());
+  EXPECT_EQ(scene.slowPeriodUs(), 450000u);
   const uint32_t sweep = scene.sweepMs();
-  EXPECT_EQ(sweep, TransitionScene::slowSweepMs(380000, W, 7));
-  EXPECT_EQ(scene.rectX(400), -TransitionScene::RECT_W_SLOW);
-  EXPECT_EQ(scene.rectX(400 + sweep / 2),
+  EXPECT_EQ(sweep, TransitionScene::slowSweepMs(450000, W, 7));
+  EXPECT_EQ(scene.rectX(clockMs), -TransitionScene::RECT_W_SLOW);
+  EXPECT_EQ(scene.rectX(clockMs + sweep / 2),
             -TransitionScene::RECT_W_SLOW + static_cast<int>(int64_t{W + 48} * (sweep / 2) / sweep));
   // Once per run.
-  EXPECT_FALSE(scene.slotDone(500, true, 400000, 800).measured);
+  EXPECT_FALSE(scene.slotDone(0, true, 900000, clockMs + 400).measured);
   EXPECT_EQ(scene.sweepMs(), sweep);
   // The model sees no jump: from the held position to the start of the crossing nothing is retargeted.
   {
     SceneBench b(96, HH);
     TransitionScene small(PanelTurn::LandscapeCounterClockwise, 96, HH, 96, HH);
-    small.setMode(SweepMode::Slow, 100000, 7);
+    small.setMode(SweepMode::Slow, 7);
     small.applyAll(b.model, 300, b.preset);
     while (b.model.activeCount() > 0) b.model.commit(true, true, b.preset);
-    const std::vector<uint8_t> settled = b.pixels;
-    ASSERT_TRUE(small.slotDone(1, true, 380000, 400).measured);
+    const std::vector<uint8_t> painted = b.pixels;
+    paintAndSettle(small, 380000, 400);
     small.update(b.model, 300, 400, b.preset);
-    EXPECT_EQ(b.pixels, settled);
+    EXPECT_EQ(b.pixels, painted);
   }
   // The next run starts held again and measures again; Fast never measures.
-  scene.setMode(SweepMode::Slow, 380000, 7);
+  scene.setMode(SweepMode::Slow, 7);
   EXPECT_EQ(scene.rectX(50000), -TransitionScene::RECT_W_SLOW);
-  EXPECT_TRUE(scene.slotDone(1, true, 400000, 0).measured);
+  paintAndSettle(scene, 400000, 0);
   EXPECT_EQ(scene.sweepMs(), TransitionScene::slowSweepMs(400000, W, 7));
-  scene.setMode(SweepMode::Fast, 400000, 7);
-  EXPECT_FALSE(scene.slotDone(1, true, 400000, 0).measured);
+  scene.setMode(SweepMode::Fast, 7);
+  EXPECT_FALSE(scene.slotDone(0, true, 400000, 0).measured);
   EXPECT_EQ(scene.sweepMs(), TransitionScene::SWEEP_MS);
 }
 
@@ -363,7 +392,7 @@ TEST(TransitionScene, StaticRectanglesStandStillInTheMiddleThird) {
   constexpr int HH = 480;
   SceneBench b(W, HH);
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
-  scene.setMode(SweepMode::Static, 380000, 4);
+  scene.setMode(SweepMode::Static, 4);
   EXPECT_EQ(scene.rectW(), 32);
   for (const uint32_t ms : {0u, 2500u, 5500u, 123456u}) EXPECT_EQ(scene.rectX(ms), 32) << ms;
   const int top = scene.rectTop(2, 1);  // band L, lane D
@@ -383,7 +412,7 @@ TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
   constexpr int HH = 480;
   SceneBench b(W, HH);
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
-  scene.setMode(SweepMode::Static, 100000, b.preset.longestRunSlots());
+  scene.setMode(SweepMode::Static, b.preset.longestRunSlots());
   // The flips' offsets: 0 for the first paint, then +1, +2, +3, +1, ...
   const uint8_t offsets[] = {0, 1, 2, 3, 1, 2, 3};
   for (uint32_t n = 0; n < 7; ++n) EXPECT_EQ(TransitionScene::flipOffset(n), offsets[n]) << n;
@@ -446,7 +475,7 @@ TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
   EXPECT_EQ(first.settled->slots, 0u);
   EXPECT_EQ(scene.shift(), 1);
   // Not Static: no sequence.
-  scene.setMode(SweepMode::Slow, 100000, 4);
+  scene.setMode(SweepMode::Slow, 4);
   EXPECT_EQ(scene.shift(), 0);
   EXPECT_FALSE(scene.slotDone(0, true, 100000, 0).settled.has_value());
   EXPECT_EQ(scene.shift(), 0);

@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "MappedInputManager.h"
+#include "StockBenchGate.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -81,6 +82,8 @@ void TransitionTestActivity::onEnter() {
   notice = nullptr;
   status = tr(STR_GAMES_DLAB_NOT_RUN);
   snprintf(statsText, sizeof(statsText), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
+  // D12: Static on an UltraChip panel, whose slot is too long for the sweep; Fast stays the SSD1677's sweep.
+  sweepMode = isUltraChip(display.getController()) ? SweepMode::Static : SweepMode::Fast;
   if (!allocate()) {
     release();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
@@ -328,10 +331,9 @@ void TransitionTestActivity::startRun() {
   elapsedUs = 0;
   sceneMs = 0;
   leastScanHeadroom = UINT32_MAX;
-  // The Mode row's mode; Slow sizes its crossing from the last measured slot period, or D5's minimum before one.
-  // Slow's dwell is the preset's longest dose run in slots.
-  scene.setMode(sweepMode, measuredPeriodUs != 0 ? measuredPeriodUs : GameDisplayLab::SlotScheduler::MIN_PERIOD_US,
-                lab.preset().longestRunSlots());
+  // The Mode row's mode. Slow's dwell is the preset's longest dose run in slots; its crossing waits for the run's own
+  // measurement (TransitionScene::slotDone).
+  scene.setMode(sweepMode, lab.preset().longestRunSlots());
   // A run that ends before a report over delivered scans keeps the Speed line as it was.
   statsReported = false;
   reportedTenths = 0;
@@ -525,14 +527,26 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     scene.restartFlips();
     scene.applyAll(model, 0, preset);
     sceneStale = false;
+    // Slow's crossing is sized once the paint has settled (`gray slow:` says it); Static's rectangles do not cross.
+    char crossing[24];
+    if (scene.slowPending()) {
+      snprintf(crossing, sizeof(crossing), "pending measurement");
+    } else {
+      snprintf(crossing, sizeof(crossing), "%lu ms", static_cast<unsigned long>(scene.sweepMs()));
+    }
     LOG_INF("DLAB",
-            "gray sweep: %u pixels to drive, mode %s, %d px, crossing %lu ms, rate %u, swap %u, retarget dark %u "
+            "gray sweep: %u pixels to drive, mode %s, %d px, crossing %s, rate %u, swap %u, retarget dark %u "
             "light %u, history %u, weak row %u",
-            static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), scene.rectW(),
-            static_cast<unsigned long>(scene.sweepMs()), static_cast<unsigned>(preset.rateIndex),
-            static_cast<unsigned>(preset.swapPolarity), static_cast<unsigned>(preset.retargetDarkPercent),
-            static_cast<unsigned>(preset.retargetLightPercent),
+            static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), scene.rectW(), crossing,
+            static_cast<unsigned>(preset.rateIndex), static_cast<unsigned>(preset.swapPolarity),
+            static_cast<unsigned>(preset.retargetDarkPercent), static_cast<unsigned>(preset.retargetLightPercent),
             static_cast<unsigned>(historyBuffer ? preset.historyMode : 0), static_cast<unsigned>(weakRow));
+    // With history on, a flip back to a pixel's origin is a completed return or a reversal, budgeted by the route's
+    // return_delta or reverse_percent rather than the table dose.
+    if (scene.mode() == SweepMode::Static && historyBuffer) {
+      LOG_INF("DLAB", "gray static: history %u is on, so the flips' residues include its route adjustments",
+              static_cast<unsigned>(preset.historyMode));
+    }
   } else if (requests.clean) {
     if (!cleanToWhite()) return false;  // the next slot reapplies the scene at the paused clock
     LOG_INF("DLAB", "gray sweep cleaned at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
@@ -697,16 +711,17 @@ void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
                                        const uint32_t elapsedMs) {
   const GameDisplayLab::SceneStep step = scene.slotDone(driven, driveDone, periodUs, elapsedMs);
   if (step.settled) {
-    LOG_INF("DLAB", "gray static: flip %lu (+%u) settled after %lu slots; next flip +%u",
-            static_cast<unsigned long>(step.settled->flip), static_cast<unsigned>(step.settled->offset),
-            static_cast<unsigned long>(step.settled->slots),
+    LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
+            static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
+            static_cast<unsigned>(step.settled->offset),
             static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
   }
   if (step.measured) {
-    measuredPeriodUs = periodUs;
+    // The paint's longest slot, which the crossing is sized from.
+    const uint32_t slowUs = scene.slowPeriodUs();
     LOG_INF("DLAB", "gray slow: slot period %lu ms, crossing %lu ms, dwell %lu slots%s",
-            static_cast<unsigned long>(periodUs / 1000), static_cast<unsigned long>(scene.sweepMs()),
-            static_cast<unsigned long>(scene.dwellSlotsAt(periodUs)),
+            static_cast<unsigned long>(slowUs / 1000), static_cast<unsigned long>(scene.sweepMs()),
+            static_cast<unsigned long>(scene.dwellSlotsAt(slowUs)),
             scene.sweepCapped() ? " (capped at 120 s, under the longest dose run)" : "");
   }
   // A Static flip retargets every pixel at the next slot.
