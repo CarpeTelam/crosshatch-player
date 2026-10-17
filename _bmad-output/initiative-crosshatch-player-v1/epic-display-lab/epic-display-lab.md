@@ -58,6 +58,10 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   UltraChip starting preset (after dlab-c2 and the owner's calibration run; D12).
 - Lane C, fourth story: `dlab-c4` hold for photos: the Hold row, the per-mode photo spots and the hold marker (after
   dlab-c3; D13).
+- Lane G, first story: `dlab-g1` the ladder scene: a Ladder mode that measures the panel's response to 1..24 pulses
+  from white and from black, and the return (after dlab-c4; D14).
+- Lane G, second story: `dlab-g2` eight shades: the model, preset (file version 2), defaults, transition test and
+  Tuning generalised to eight shades; the stock bench keeps four (after dlab-g1's photos; D14).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -166,6 +170,16 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   renderer cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
   orchestrator's baseline commit holds Static at every settle unconditionally; story dlab-c4 adds the row, the
   other modes' spots and the marker.
+- D14 (2026-10-17, owner: "let's shoot for 8"): the engine goes to eight shades. Why eight and not sixteen: the
+  panel's full swing is 12 one-frame pulses at PLL 0x06 and the dark end is coarse (K>D 2, D>K 7), so eight is what
+  the pulse resolution can separate; the faster frame (rate index 2, 0x07) is the fallback if the ladder shows fewer.
+  Why a ladder first: an 8×8 table has 56 doses, not tunable by eye from flips; the ladder scene (dlab-g1) photographs
+  the response to 1..24 pulses from each end and the return, and the eight levels and their doses are read off it
+  (the eight-shade UltraChip table is recorded here when the photos arrive). The engine story (dlab-g2) keeps every
+  mechanism and the 3 B/pixel model, moves the level step to 32, the table to 8×8 with a 64-bit hold mask, the
+  history routes to two directional ones, the file to version 2 with a version 1 expansion, the test to eight bands
+  with one lane each and seven rotating flips, Tuning to grouped rows with a Section jump; the stock bench stays at
+  four levels. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
 
 ## Story results
 
