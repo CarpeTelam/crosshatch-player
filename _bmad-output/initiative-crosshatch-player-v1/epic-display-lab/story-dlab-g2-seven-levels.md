@@ -38,7 +38,12 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
    the retargets, history mode, the two return deltas, the two reverse percents, rate and the rest; row text names
    levels by index (0 black, 3 the 50 % gray, 6 white). The row list is long, so the tuning screen gets a **Section** row at the top that jumps between
    Doses, Holds and Other (a lab preference, not saved).
-6. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
+6. **Transparent.** The 3-bit level field's value 7 is reserved as `Shade::TRANSPARENT` (D14, the owner's ask for
+   sprites): a level-coded bitmap pixel at 7 is not retargeted. `GrayModel::retargetBitmap(x, y, w, h, levels,
+   preset)` (one byte per pixel, 0..6 a level, 7 transparent) retargets the others and skips it, pinned by a test; the
+   preset codec rejects 7 anywhere in a table; the game engine's own sprite plumbing over the gray engine is a later
+   story and not this one.
+7. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
    behaviour and tests unchanged.
 
 ## Boundaries & Constraints
@@ -64,6 +69,7 @@ the stock bench's measurements; no change to the ladder's stages (dlab-g1).
 | Defaults | SSD1677 / UltraChip | the two pinned tables | — |
 | Static flips | Run with Mode = Static | offsets +1 .. +6, every band through all six other levels | — |
 | Tuning | Section row | Doses / Holds / Other; the rows below follow | — |
+| Transparent | retargetBitmap with a 7 | that pixel keeps its level and target; the others retarget | a value above 7: clamped to transparent, LOG_ERR once |
 | Stock bench | UltraChip without a lab backend | four levels, unchanged | — |
 
 ## Verification

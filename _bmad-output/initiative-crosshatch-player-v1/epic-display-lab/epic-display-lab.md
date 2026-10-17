@@ -182,7 +182,10 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   read off it (the seven-level UltraChip table is recorded here when the photos arrive). The engine story (dlab-g2)
   keeps every mechanism and the 3 B/pixel model, moves the table to 7×7 with a 64-bit hold mask, the history routes
   to two directional ones, the file to version 2 with a version 1 expansion, the test to seven bands with one lane
-  each and six rotating flips, Tuning to grouped rows with a Section jump; the stock bench stays at four levels. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
+  each and six rotating flips, Tuning to grouped rows with a Section jump; the stock bench stays at four levels.
+  The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
+  reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
+  engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
 
 ## Story results
 
