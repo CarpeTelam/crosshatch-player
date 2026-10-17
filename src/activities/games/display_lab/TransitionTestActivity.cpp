@@ -715,6 +715,16 @@ void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
             static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
             static_cast<unsigned>(step.settled->offset),
             static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
+    // Held for a photo: nothing is driven until Next (or Confirm) resumes, which then runs the flip, already
+    // scheduled below through `reapply`. The task clears Run itself so one press resumes.
+    const uint32_t nowUs = micros();
+    advanceClock(nowUs);
+    reportStats(nowUs);
+    sweeping = false;
+    scheduler.stop();
+    control.holdRun();
+    LOG_INF("DLAB", "gray static: holding the settled pattern; Next resumes with flip +%u",
+            static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
   }
   if (step.measured) {
     // The paint's longest slot, which the crossing is sized from.
