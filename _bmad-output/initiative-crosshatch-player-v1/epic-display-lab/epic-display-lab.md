@@ -56,6 +56,8 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   first hardware run; D11).
 - Lane C, third story: `dlab-c3` side-button controls, Static and Slow modes, the retarget split, dose cap 24 and the
   UltraChip starting preset (after dlab-c2 and the owner's calibration run; D12).
+- Lane C, fourth story: `dlab-c4` hold for photos: the Hold row, the per-mode photo spots and the hold marker (after
+  dlab-c3; D13).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -151,6 +153,14 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   edge swipe, Confirm is a front button the device lacks, touch routing is dead while the view is up): the side
   buttons take them (Down pause/resume, Up stop), Back is checked before the swipe guard, and Clean becomes a row.
   Story dlab-c3. The sweep task itself (D11) behaved: the top-swipe cover ended runs and kept the results, as designed.
+- D13 (2026-10-17, owner's ask during the calibration run): the test holds itself at the photo spots so data collection
+  does not depend on pressing pause within half a slot. A Hold row on the test screen (on by default, a lab preference,
+  not a preset value) makes the run hold at Static's settles, at Slow's painted bands, its rectangles after a full
+  dwell and the crossing's end, and at Fast's end-of-sweep pause; Next resumes. A hold shows an unobtrusive marker,
+  a 16 px square in the bottom-right corner driven by the engine's own scans to the band's opposite shade (the
+  renderer cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
+  orchestrator's baseline commit holds Static at every settle unconditionally; story dlab-c4 adds the row, the
+  other modes' spots and the marker.
 
 ## Story results
 
