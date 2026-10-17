@@ -66,6 +66,18 @@ TEST(SweepControl, TwoPausesBeforeTheTaskServesThemCancelOut) {
   EXPECT_FALSE(r.clean);
 }
 
+TEST(SweepControl, HoldRunClearsRunSoOnePressResumes) {
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  EXPECT_FALSE(c.runRequested());
+  EXPECT_FALSE(c.take().run);
+  c.requestRun(!c.runRequested());  // the screen's toggle: one press
+  EXPECT_TRUE(c.runRequested());
+  EXPECT_TRUE(c.take().run);
+}
+
 TEST(SweepControl, RequestRunFalsePausesAndTrueResumes) {
   SweepControl c;
   c.reset(0);

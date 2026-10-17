@@ -244,7 +244,9 @@ following the screen's orientation. The mode sets the rectangles (story dlab-c3,
   crossing N ms, dwell N slots` (with `(capped at 120 s, ...)` when the cap left the dwell under the longest run; at
   380 ms the UltraChip preset crosses 800 px in 47 s).
 - **Static**: rectangles a third of the width wide in the middle, standing still. Every pixel runs its whole dose;
-  once a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M
+  at every settle the task holds the pattern (nothing is driven; the log says `holding the settled pattern`) so it can
+  be photographed, and Next (or Confirm) resumes with the next flip.
+  Once a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M
   slots (offset +K, next +J)` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots
   that drove pixels), and it flips: every pixel takes one full transition, with its table dose, to the shade the next
   offset along (K, D, L, W, K, ...). The offsets run +1, +2, +3, +1, ..., so flips 1 to 3 take the pixels through all
