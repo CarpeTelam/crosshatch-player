@@ -196,15 +196,15 @@ the pulse); a slot repeats every max(the slot's busy time + 5 ms, 100 ms) (the e
 The preset starts as InkBoy's defaults on the SSD1677, the author's numbers for an SSD1681, not this panel's: finding
 this panel's values is the point of the two screens. On a UC8179 or UC8279 panel it starts as the UltraChip preset
 instead (the epic's D12, the owner's first UC8179 calibration run, where the full white-to-black swing took 12
-one-frame doses at PLL 0x06): the doses below with InkBoy's holds and everything else, logged as `no preset at ...:
-UltraChip defaults`. A dose is 1..24. Its rate index 0 is the rate the table was measured at: PLL 0x06 on the UC8179
+one-frame doses at PLL 0x06, then calibrated on Static runs): the doses below with InkBoy's holds and everything else,
+logged as `no preset at ...: UltraChip defaults`. A dose is 1..24. Its rate index 0 is the rate the table was measured at: PLL 0x06 on the UC8179
 backend (the experimental branch's list {0x06, 0x05, 0x07}). Its retarget, 100 % both ways, is an uncalibrated
 placeholder: on that run 150 % overshot toward white, and the shortfall toward black came through the old 12-dose
 clamp, which the 24 cap lifts, so the range stays 50..150 % for both directions until a run measures them.
 
 | From > To | K>D | K>L | K>W | D>K | D>L | D>W | L>K | L>D | L>W | W>K | W>D | W>L |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| UltraChip dose | 3 | 7 | 12 | 7 | 2 | 10 | 7 | 2 | 9 | 12 | 5 | 3 |
+| UltraChip dose | 2 | 7 | 12 | 7 | 2 | 10 | 7 | 6 | 9 | 12 | 5 | 3 |
 
 InkBoy's:
 

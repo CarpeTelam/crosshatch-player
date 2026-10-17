@@ -153,6 +153,11 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   edge swipe, Confirm is a front button the device lacks, touch routing is dead while the view is up): the side
   buttons take them (Down pause/resume, Up stop), Back is checked before the swipe guard, and Clean becomes a row.
   Story dlab-c3. The sweep task itself (D11) behaved: the top-swipe cover ended runs and kept the results, as designed.
+  Calibrated later the same day on Static runs with the self-hold (photos in the session, blacks judged uniform in
+  person): `[2,7,12,7,2,10,7,6,9,12,5,3]` (K>D 3 → 2: 1 did nothing, 3 slightly light, 5 far too light; L>D 2 → 6), the
+  rest of the starting table confirmed; baked into `ultraChipDefaults()` on the epic branch. Still open: route
+  dependence (a W reached from K differs from a clean W: history mode) and the previous screen ghosting through the
+  lightened bands after one clean (a double clean before a run), both for a follow-up story.
 - D13 (2026-10-17, owner's ask during the calibration run): the test holds itself at the photo spots so data collection
   does not depend on pressing pause within half a slot. A Hold row on the test screen (on by default, a lab preference,
   not a preset value) makes the run hold at Static's settles, at Slow's painted bands, its rectangles after a full
