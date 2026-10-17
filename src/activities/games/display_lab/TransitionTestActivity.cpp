@@ -53,6 +53,12 @@ const char* modeText(const SweepMode mode) {
   return "";
 }
 
+// A shade's letter in the log.
+char shadeLetter(const Shade shade) { return "KDLW"[static_cast<uint8_t>(shade) % GameDisplayLab::SHADE_COUNT]; }
+
+// The Hold row's line.
+const char* holdText(const bool on) { return on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF); }
+
 // The mode's name in the log.
 const char* modeName(const SweepMode mode) {
   switch (mode) {
@@ -84,6 +90,7 @@ void TransitionTestActivity::onEnter() {
   snprintf(statsText, sizeof(statsText), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
   // D12: Static on an UltraChip panel, whose slot is too long for the sweep; Fast stays the SSD1677's sweep.
   sweepMode = isUltraChip(display.getController()) ? SweepMode::Static : SweepMode::Fast;
+  holdOn = true;  // D13: on every visit, a lab preference never saved with the preset
   if (!allocate()) {
     release();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
@@ -203,6 +210,7 @@ void TransitionTestActivity::buildRows() {
   };
   set(Row::Run, tr(STR_GAMES_DLAB_RUN), status);
   set(Row::Mode, tr(STR_GAMES_DLAB_MODE), modeText(sweepMode));
+  set(Row::Hold, tr(STR_GAMES_DLAB_HOLD_PHOTOS), holdText(holdOn));
   set(Row::Clean, tr(STR_GAMES_DLAB_CLEAN), tr(STR_GAMES_DLAB_CLEAN_DESC));
   set(Row::Stats, tr(STR_GAMES_DLAB_SPEED), statsText);
   set(Row::Controls, tr(STR_GAMES_DLAB_CONTROLS), tr(STR_GAMES_DLAB_TRANSITION_CONTROLS));
@@ -250,6 +258,9 @@ void TransitionTestActivity::activateIndex(const int index) {
       return;
     case Row::Mode:
       stepMode();
+      return;
+    case Row::Hold:
+      toggleHold();
       return;
     case Row::Clean:
       cleanFromRows();
@@ -324,6 +335,7 @@ void TransitionTestActivity::startRun() {
   app.clearTapFlash();
   // The task's fields, written before it is created (its creation orders them before its first read).
   sweepDone.store(false);
+  heldForPhoto.store(false);
   sweepEnd = SweepEnd::Stopped;
   failedScan = DisplayLabActivity::Scan::Done;
   sweeping = false;
@@ -334,6 +346,7 @@ void TransitionTestActivity::startRun() {
   // The Mode row's mode. Slow's dwell is the preset's longest dose run in slots; its crossing waits for the run's own
   // measurement (TransitionScene::slotDone).
   scene.setMode(sweepMode, lab.preset().longestRunSlots());
+  scene.setHold(holdOn);
   // A run that ends before a report over delivered scans keeps the Speed line as it was.
   statsReported = false;
   reportedTenths = 0;
@@ -372,6 +385,17 @@ void TransitionTestActivity::stepMode() {
     rowItems[static_cast<size_t>(Row::Mode)].subtitle = modeText(sweepMode);
   }
   LOG_INF("DLAB", "transition test mode: %s", modeName(sweepMode));
+  requestUpdate();
+}
+
+void TransitionTestActivity::toggleHold() {
+  app.clearTapFlash();
+  {
+    RenderLock lock(*this);
+    holdOn = !holdOn;
+    rowItems[static_cast<size_t>(Row::Hold)].subtitle = holdText(holdOn);
+  }
+  LOG_INF("DLAB", "transition test hold: %s", holdOn ? "on" : "off");
   requestUpdate();
 }
 
@@ -503,6 +527,7 @@ void TransitionTestActivity::sweepRun() {
   }
   if (sweeping) reportStats(micros());
   sweeping = false;
+  heldForPhoto.store(false);
   scheduler.stop();
   logStackEnd(static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr)));
   sweepDone.store(true, std::memory_order_release);
@@ -535,11 +560,12 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
       snprintf(crossing, sizeof(crossing), "%lu ms", static_cast<unsigned long>(scene.sweepMs()));
     }
     LOG_INF("DLAB",
-            "gray sweep: %u pixels to drive, mode %s, %d px, crossing %s, rate %u, swap %u, retarget dark %u "
-            "light %u, history %u, weak row %u",
+            "gray sweep: %u pixels to drive, mode %s, %d px, crossing %s, hold %s, rate %u, swap %u, retarget dark "
+            "%u light %u, history %u, weak row %u",
             static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), scene.rectW(), crossing,
-            static_cast<unsigned>(preset.rateIndex), static_cast<unsigned>(preset.swapPolarity),
-            static_cast<unsigned>(preset.retargetDarkPercent), static_cast<unsigned>(preset.retargetLightPercent),
+            scene.holdOn() ? "on" : "off", static_cast<unsigned>(preset.rateIndex),
+            static_cast<unsigned>(preset.swapPolarity), static_cast<unsigned>(preset.retargetDarkPercent),
+            static_cast<unsigned>(preset.retargetLightPercent),
             static_cast<unsigned>(historyBuffer ? preset.historyMode : 0), static_cast<unsigned>(weakRow));
     // With history on, a flip back to a pixel's origin is a completed return or a reversal, budgeted by the route's
     // return_delta or reverse_percent rather than the table dose.
@@ -558,6 +584,12 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     scheduler.start(nowUs);
     sweeping = true;
     if (!requests.replay) LOG_INF("DLAB", "gray sweep resumed at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
+    // A run held at a photo spot: the marker goes back to its band's shade before anything else moves (the scene does
+    // nothing unless it holds).
+    if (scene.resumeHold(model, preset)) {
+      heldForPhoto.store(false);
+      LOG_INF("DLAB", "gray hold: resumed; marker back to %c", shadeLetter(scene.markerShade()));
+    }
   }
   return true;
 }
@@ -593,7 +625,7 @@ bool TransitionTestActivity::cleanToWhite() {
 }
 
 void TransitionTestActivity::advanceClock(const uint32_t nowUs) {
-  if (sweeping) elapsedUs += nowUs - clockUs;
+  if (sweeping && !scene.clockStill()) elapsedUs += nowUs - clockUs;
   clockUs = nowUs;
 }
 
@@ -607,6 +639,11 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
     if (!cleanToWhite()) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return false;
+    }
+    // A hold in progress is dropped: repainted from white, the marker would settle before the pattern it marks.
+    if (const std::optional<GameDisplayLab::HoldSpot> dropped = scene.cancelHold()) {
+      LOG_INF("DLAB", "gray hold: %s restarted after the session-cap clean; the next photo spot holds",
+              GameDisplayLab::holdSpotName(*dropped));
     }
     // Static repaints from white: the sequence starts again at flip 0, so no settle line counts the repaint.
     if (scene.mode() == SweepMode::Static) {
@@ -709,21 +746,11 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
 
 void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone, const uint32_t periodUs,
                                        const uint32_t elapsedMs) {
-  const GameDisplayLab::SceneStep step = scene.slotDone(driven, driveDone, periodUs, elapsedMs);
+  const GameDisplayLab::SceneStep step = scene.slotDone(model, lab.preset(), driven, driveDone, periodUs, elapsedMs);
   if (step.settled) {
     LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
             static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
             static_cast<unsigned>(step.settled->offset),
-            static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
-    // Held for a photo: nothing is driven until Next (or Confirm) resumes, which then runs the flip, already
-    // scheduled below through `reapply`. The task clears Run itself so one press resumes.
-    const uint32_t nowUs = micros();
-    advanceClock(nowUs);
-    reportStats(nowUs);
-    sweeping = false;
-    scheduler.stop();
-    control.holdRun();
-    LOG_INF("DLAB", "gray static: holding the settled pattern; Next resumes with flip +%u",
             static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
   }
   if (step.measured) {
@@ -733,6 +760,29 @@ void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
             static_cast<unsigned long>(slowUs / 1000), static_cast<unsigned long>(scene.sweepMs()),
             static_cast<unsigned long>(scene.dwellSlotsAt(slowUs)),
             scene.sweepCapped() ? " (capped at 120 s, under the longest dose run)" : "");
+  }
+  if (step.hold) {
+    // A photo spot: the scene put the marker out and stopped the sweep clock; the next slots drive the marker.
+    LOG_INF("DLAB", "gray hold: %s %lu, marker %c over %c", GameDisplayLab::holdSpotName(step.hold->spot),
+            static_cast<unsigned long>(step.hold->count), shadeLetter(scene.markerShade()),
+            shadeLetter(scene.markerBandShade()));
+  }
+  if (step.held) {
+    // Held for a photo: nothing is driven until Next (or Confirm) resumes, which drives the marker back first. The
+    // task clears Run itself so one press resumes.
+    const uint32_t nowUs = micros();
+    advanceClock(nowUs);
+    reportStats(nowUs);
+    sweeping = false;
+    scheduler.stop();
+    control.holdRun();
+    heldForPhoto.store(true);
+    LOG_INF("DLAB", "gray hold: marker settled after %lu slots; holding, Next resumes",
+            static_cast<unsigned long>(step.markerSlots));
+  }
+  if (step.resumed) {
+    LOG_INF("DLAB", "gray hold: marker back after %lu slots; the run goes on",
+            static_cast<unsigned long>(step.markerSlots));
   }
   // A Static flip retargets every pixel at the next slot.
   if (step.reapply) sceneStale = true;

@@ -18,10 +18,11 @@
 #include <cstdint>
 
 // The transition test (Display lab → Transition test; the display-lab epic, R4; InkBoy's calibration screen): the
-// gray engine on the whole panel. Headed "Transition test", five rows: Run (its line: "Not run", or how the last run
+// gray engine on the whole panel. Headed "Transition test", six rows: Run (its line: "Not run", or how the last run
 // ended), Mode (Static, Slow or Fast; a tap or Confirm steps it; Static on an UltraChip panel, Fast on the SSD1677 to
-// start), Clean (one cleaning FULL refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls
-// (help text).
+// start), Hold for photos (On or Off; a tap or Confirm toggles it; On on every visit, never saved; story dlab-c4, D13),
+// Clean (one cleaning FULL refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help
+// text).
 //
 // Run starts the test (GameDisplayLab::TransitionScene in the Mode row's mode) on its own FreeRTOS task, the sweep task
 // (D11), which cleans the panel to white with a FULL refresh and then drives four shade bands K, D, L, W top to bottom
@@ -31,7 +32,13 @@
 // (GrayPreset::longestRunSlots) at the longest real slot length of the bands' paint; they wait off-screen until that
 // paint has settled, then cross. Static: rectangles a third of the width wide that stand still; once a slot finds no
 // pixel to drive the pattern has settled (logged) and flips, every shade moved on by +1, +2, +3, +1, ... (three flips
-// take the pixels through all twelve transitions), until stopped (story dlab-c3, D12). One slot per
+// take the pixels through all twelve transitions), until stopped (story dlab-c3, D12). With Hold on the run holds
+// itself at each mode's photo spots (TransitionScene::slotDone decides: Static's settles, Slow's painted bands, its
+// rectangles after a full dwell and its crossing's end, Fast's pause): the scene shows a 32 px dash at the logical
+// bottom-right, in the bottom band's margin below its last lane's rectangle, in the opposite shade of its band and
+// stops the sweep clock, the task runs slots until the marker has settled, then clears Run itself
+// (SweepControl::holdRun); Next resumes, the marker is driven back and settles, and only then does the run go on
+// (Static's flip included). With Hold off nothing holds and Static flips at once. One slot per
 // GameDisplayLab::SlotScheduler period: the scene moves the rectangles to the sweep clock, then
 // GameDisplayLab::runGraySlot sends the drive scan and the follow-up scan through DisplayLabActivity::scan and commits
 // what was delivered. The task owns the slot runner (the clock, the scheduler, the stats, the scene, the model); the
@@ -93,9 +100,11 @@ class TransitionTestActivity final : public UiListActivity {
 
   void loop() override;
   // The loop runs no slots, so it keeps its delay (a spinning loop would share the sweep task's core and priority);
-  // preventAutoSleep keeps the clock up while the sweep advances (its task up and not asked to pause).
+  // preventAutoSleep keeps the clock up while the sweep advances (its task up and not asked to pause), and while the
+  // run holds for a photo (Run is cleared then, but auto-sleep's FULL refresh would end the hold); a pause the owner
+  // asked for lets it sleep.
   bool skipLoopDelay() override { return false; }
-  bool preventAutoSleep() override { return sweepTask && control.runRequested(); }
+  bool preventAutoSleep() override { return sweepTask && (control.runRequested() || heldForPhoto.load()); }
   // Ends the sweep task (the render mutex is held: endSweepLocked).
   void prepareForSleep() override;
   // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
@@ -105,8 +114,8 @@ class TransitionTestActivity final : public UiListActivity {
   bool handleForcedRefresh() override { return shownOnPanel.load(); }
 
  private:
-  enum class Row : uint8_t { Run, Mode, Clean, Stats, Controls };
-  static constexpr size_t ROW_COUNT = 5;
+  enum class Row : uint8_t { Run, Mode, Hold, Clean, Stats, Controls };
+  static constexpr size_t ROW_COUNT = 6;
   // How the sweep task's run ended.
   enum class SweepEnd : uint8_t { Stopped, Covered, ScanFailed };
 
@@ -134,10 +143,12 @@ class TransitionTestActivity final : public UiListActivity {
   // The Run row: the test view up and the sweep task created (it cleans and sweeps from 0). When the task cannot be
   // created: logged, the Run row says so, the view not entered.
   void startRun();
-  // NavNext, Confirm or a tap: pause or resume, served at the end of the slot in flight.
+  // NavNext, Confirm or a tap: pause or resume (a hold's resume too), served at the end of the slot in flight.
   void togglePause();
   // The Mode row: the next mode (Static, Slow, Fast), for the next run.
   void stepMode();
+  // The Hold row: holds at the photo spots on or off, for the next run.
+  void toggleHold();
   // The Clean row: white framebuffer and the lab's cleaning FULL refresh, under the render lock; the rows come back
   // after it. Only in the rows view, where no sweep task is up.
   void cleanFromRows();
@@ -172,10 +183,11 @@ class TransitionTestActivity final : public UiListActivity {
   // One slot at `nowUs`; false when the run ends (sweepEnd says why).
   bool runSlot(uint32_t nowUs);
   // After a slot at the sweep clock `elapsedMs` that drove `driven` pixels (`driveDone`: its drive scan was delivered)
-  // and took `periodUs`: TransitionScene::slotDone decides (Static's settle and flip, Slow's measured crossing); this
-  // logs it and marks the scene for reapplying when asked.
+  // and took `periodUs`: TransitionScene::slotDone decides (Static's settle and flip, Slow's measured crossing, a photo
+  // spot, the marker settled out or back); this logs it, holds the run once the marker is out, and marks the scene for
+  // reapplying when asked.
   void afterSlot(size_t driven, bool driveDone, uint32_t periodUs, uint32_t elapsedMs);
-  // The sweep clock advanced to `nowUs` (it runs only while sweeping).
+  // The sweep clock advanced to `nowUs` (it runs only while sweeping, and stands still through a hold's marker slots).
   void advanceClock(uint32_t nowUs);
   // Logs the window's speed (`DLAB gray scans_s=...`).
   void logStats(uint32_t nowUs) const;
@@ -205,12 +217,17 @@ class TransitionTestActivity final : public UiListActivity {
   // The Mode row's mode: the loop task's, set into the scene before the sweep task is created. onEnter starts it at
   // Static on an UltraChip panel and Fast on the SSD1677 (D12).
   GameDisplayLab::SweepMode sweepMode = GameDisplayLab::SweepMode::Fast;
+  // The Hold row: the loop task's, set into the scene before the sweep task is created; onEnter turns it on.
+  bool holdOn = true;
 
   // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: sweepDone (release), after which
   // the loop task may read the task's fields below; the loop task alone creates and deletes the task.
   GameDisplayLab::SweepControl control;
   TaskHandle_t sweepTask = nullptr;
   std::atomic<bool> sweepDone{false};
+  // The run holds for a photo: set by the sweep task when the marker has settled out, cleared when a resume drives it
+  // back, when a run starts, and when the task ends; read by preventAutoSleep.
+  std::atomic<bool> heldForPhoto{false};
 
   // ---- the sweep task's own, while it is up (read by the loop task only after sweepDone or once it is deleted) -----
   GameDisplayLab::GrayModel model;
