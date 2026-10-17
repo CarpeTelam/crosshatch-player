@@ -7,8 +7,8 @@ phases and marker, `SweepControl::holdRun`, the sweep task) and `dlab-c1` (`Gray
 
 ## Intent
 
-**Problem:** The owner wants eight shades (D14). The four-shade table was tuned by eye, twelve values, from
-photographs of Static flips. An eight-shade table has 56 doses and cannot be tuned that way. What is missing is the
+**Problem:** The owner wants seven levels, black, five grays and white (D14). The four-shade table was tuned by eye,
+twelve values, from photographs of Static flips. A seven-level table has 42 doses and cannot be tuned that way. What is missing is the
 panel's response curve: how dark n one-frame pulses from white leave a pixel, how light n pulses from black, for
 n = 1..24 at the preset's rate, and whether n pulses back restore the origin. With that curve the eight levels and
 their doses are read off a photo instead of guessed.
@@ -62,5 +62,5 @@ screens; no change to the Static, Slow and Fast modes' behaviour.
   geometry in both orientations, the stage sequence with Hold on and off, and the cap restart.
 - Firmware (after review, under the build lock, with `PLATFORMIO_BUILD_CACHE_DIR={main}/.cache`): `pio run -e x4pro`,
   `pio run -e default`, `pio run -e sticky`; `pio check -e x4pro`; the flash-budget gate with D6 (expect +0).
-- Hardware (owner, experimental branch): the two ladder photos at rate index 0; the orchestrator reads the eight
+- Hardware (owner, experimental branch): the two ladder photos at rate index 0; the orchestrator reads the seven
   levels and their pulse counts off them for dlab-g2's starting table.
