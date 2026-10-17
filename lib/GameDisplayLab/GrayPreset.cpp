@@ -16,6 +16,13 @@ constexpr uint8_t INKBOY_DOSE[SHADE_COUNT][SHADE_COUNT] = {
 };
 // InkBoy's HOLD mask (gray_config.h:48-49), bit source * 4 + target.
 constexpr uint16_t INKBOY_HOLD = 0xc667;
+// The owner's UC8179 table (D12, 2026-10-17), [3,7,12,7,2,10,7,2,9,12,5,3] in the transition order, dose[from][to].
+constexpr uint8_t ULTRACHIP_DOSE[SHADE_COUNT][SHADE_COUNT] = {
+    {0, 3, 7, 12},  // K > D, L, W
+    {7, 0, 2, 10},  // D > K, L, W
+    {7, 2, 0, 9},   // L > K, D, W
+    {12, 5, 3, 0},  // W > K, D, L
+};
 constexpr uint8_t INKBOY_RETARGET = 100;
 // Routes LKL, DKD, DWD, LWL, DLD, LDL: L>K>L returns one dose short and reverses at 150 %; the rest are neutral.
 constexpr int8_t INKBOY_RETURN_DELTA[ROUTE_COUNT] = {-1, 0, 0, 0, 0, 0};
@@ -32,6 +39,31 @@ uint8_t clampDose(const int value) {
   if (value > DOSE_MAX) return DOSE_MAX;
   return static_cast<uint8_t>(value);
 }
+
+// The retarget percent toward `toward`, for a const or a mutable preset (`auto&` keeps the constness).
+template <typename Preset>
+auto& retargetField(Preset& preset, const Toward toward) {
+  switch (toward) {
+    case Toward::Dark:
+      return preset.retargetDarkPercent;
+    case Toward::Light:
+      return preset.retargetLightPercent;
+  }
+  return preset.retargetDarkPercent;
+}
+
+// The `base` key's value in the preset file.
+const char* baseKeyOf(const PresetBase base) {
+  switch (base) {
+    case PresetBase::InkBoy:
+      return "inkboy";
+    case PresetBase::UltraChip:
+      return "ultrachip";
+  }
+  return "inkboy";
+}
+
+bool retargetInRange(const uint8_t percent) { return percent >= RETARGET_MIN && percent <= RETARGET_MAX; }
 
 // --- encoding ---------------------------------------------------------------------------------------------------
 
@@ -224,12 +256,42 @@ bool boolArray(Reader& reader, bool* out, const size_t count) {
   return reader.take(']');
 }
 
+// What loadGrayPreset learned besides the values: the version key, which retarget keys were present, and the older
+// single retarget key's value (-1: absent), applied after the whole object so the order of the keys does not matter.
+struct ReadState {
+  bool sawVersion = false;
+  bool sawDark = false;
+  bool sawLight = false;
+  int legacyRetarget = -1;
+  std::optional<PresetBase> base;
+  bool unknownBase = false;
+};
+
 // One known key's value into `preset`; an unknown key's value is skipped. False when the value is malformed.
-bool readValue(Reader& reader, const char* key, GrayPreset& preset, bool& sawVersion) {
+bool readValue(Reader& reader, const char* key, GrayPreset& preset, ReadState& state) {
   int number = 0;
   if (strcmp(key, "version") == 0) {
-    sawVersion = true;
+    state.sawVersion = true;
     return reader.integer(number) && number == FILE_VERSION;
+  }
+  if (strcmp(key, "base") == 0) {
+    // Informational: a value that names no base (or is no string) is reported and skipped, never fatal.
+    char value[12];
+    bool overlong = false;
+    if (!reader.string(value, sizeof(value), overlong)) {
+      state.unknownBase = true;
+      return reader.skipValue(1);  // not a string (an unterminated one fails here too: a parse error)
+    }
+    for (const PresetBase base : {PresetBase::InkBoy, PresetBase::UltraChip}) {
+      if (!overlong && strcmp(value, baseKeyOf(base)) == 0) {
+        state.base = base;
+        state.unknownBase = false;
+        return true;
+      }
+    }
+    state.base.reset();
+    state.unknownBase = true;
+    return true;
   }
   if (strcmp(key, "doses") == 0) {
     int doses[TRANSITION_COUNT];
@@ -246,9 +308,22 @@ bool readValue(Reader& reader, const char* key, GrayPreset& preset, bool& sawVer
     for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) preset.setHold(i, hold[i]);
     return true;
   }
-  if (strcmp(key, "retarget_percent") == 0) {
+  if (strcmp(key, "retarget_dark_percent") == 0) {
     if (!intInRange(reader, RETARGET_MIN, RETARGET_MAX, number)) return false;
-    preset.retargetPercent = static_cast<uint8_t>(number);
+    preset.retargetDarkPercent = static_cast<uint8_t>(number);
+    state.sawDark = true;
+    return true;
+  }
+  if (strcmp(key, "retarget_light_percent") == 0) {
+    if (!intInRange(reader, RETARGET_MIN, RETARGET_MAX, number)) return false;
+    preset.retargetLightPercent = static_cast<uint8_t>(number);
+    state.sawLight = true;
+    return true;
+  }
+  if (strcmp(key, "retarget_percent") == 0) {
+    // The file format before the split (dlab-c1, dlab-c2): one value for both directions.
+    if (!intInRange(reader, RETARGET_MIN, RETARGET_MAX, number)) return false;
+    state.legacyRetarget = number;
     return true;
   }
   if (strcmp(key, "rate") == 0) {
@@ -284,7 +359,8 @@ GrayPreset GrayPreset::inkBoyDefaults() {
   GrayPreset preset{};
   memcpy(preset.dose, INKBOY_DOSE, sizeof(preset.dose));
   preset.holdMask = INKBOY_HOLD;
-  preset.retargetPercent = INKBOY_RETARGET;
+  preset.retargetDarkPercent = INKBOY_RETARGET;
+  preset.retargetLightPercent = INKBOY_RETARGET;
   preset.rateIndex = 0;
   preset.swapPolarity = false;
   preset.historyMode = 0;
@@ -292,6 +368,32 @@ GrayPreset GrayPreset::inkBoyDefaults() {
   memcpy(preset.reversePercent, INKBOY_REVERSE_PERCENT, sizeof(preset.reversePercent));
   preset.weakWhiteToLight = false;
   return preset;
+}
+
+GrayPreset GrayPreset::ultraChipDefaults() {
+  GrayPreset preset = inkBoyDefaults();
+  memcpy(preset.dose, ULTRACHIP_DOSE, sizeof(preset.dose));
+  return preset;
+}
+
+GrayPreset presetDefaults(const PresetBase base) {
+  switch (base) {
+    case PresetBase::InkBoy:
+      return GrayPreset::inkBoyDefaults();
+    case PresetBase::UltraChip:
+      return GrayPreset::ultraChipDefaults();
+  }
+  return GrayPreset::inkBoyDefaults();
+}
+
+const char* presetBaseName(const PresetBase base) {
+  switch (base) {
+    case PresetBase::InkBoy:
+      return "InkBoy's";
+    case PresetBase::UltraChip:
+      return "UltraChip";
+  }
+  return "InkBoy's";
 }
 
 bool GrayPreset::valid() const {
@@ -302,7 +404,7 @@ bool GrayPreset::valid() const {
     }
   }
   if ((holdMask & HOLD_DIAGONAL) != HOLD_DIAGONAL) return false;
-  if (retargetPercent < RETARGET_MIN || retargetPercent > RETARGET_MAX) return false;
+  if (!retargetInRange(retargetDarkPercent) || !retargetInRange(retargetLightPercent)) return false;
   if (historyMode > HISTORY_MAX) return false;
   for (size_t i = 0; i < ROUTE_COUNT; ++i) {
     if (returnDelta[i] < -RETURN_DELTA_LIMIT || returnDelta[i] > RETURN_DELTA_LIMIT) return false;
@@ -315,6 +417,20 @@ uint8_t GrayPreset::doseAt(const uint8_t index) const { return dose[transitionFr
 
 bool GrayPreset::holdAt(const uint8_t index) const {
   return (holdMask & holdBit(transitionFrom(index), transitionTo(index))) != 0;
+}
+
+uint8_t GrayPreset::retargetPercent(const Toward toward) const { return retargetField(*this, toward); }
+
+uint8_t GrayPreset::longestRunSlots() const {
+  uint8_t longest = 0;
+  for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) {
+    // A held transition gets one dose a slot; one without its hold bit two (the follow-up scan) while more than one
+    // is left, so ceil(dose / 2).
+    const uint8_t d = doseAt(i);
+    const uint8_t slots = holdAt(i) ? d : static_cast<uint8_t>((d + 1) / 2);
+    if (slots > longest) longest = slots;
+  }
+  return longest;
 }
 
 void GrayPreset::stepDose(const uint8_t index, const int delta) {
@@ -334,21 +450,23 @@ void GrayPreset::setHold(const uint8_t index, const bool hold) {
 
 void GrayPreset::toggleHold(const uint8_t index) { setHold(index, !holdAt(index)); }
 
-void GrayPreset::stepRetarget(const int direction) {
+void GrayPreset::stepRetarget(const Toward toward, const int direction) {
+  uint8_t& percent = retargetField(*this, toward);
   const int step = direction > 0 ? RETARGET_STEP : (direction < 0 ? -RETARGET_STEP : 0);
-  const int next = retargetPercent + step;
+  const int next = percent + step;
   if (next < RETARGET_MIN) {
-    retargetPercent = RETARGET_MIN;
+    percent = RETARGET_MIN;
   } else if (next > RETARGET_MAX) {
-    retargetPercent = RETARGET_MAX;
+    percent = RETARGET_MAX;
   } else {
-    retargetPercent = static_cast<uint8_t>(next);
+    percent = static_cast<uint8_t>(next);
   }
 }
 
-void GrayPreset::cycleRetarget() {
-  const int next = retargetPercent + RETARGET_STEP;
-  retargetPercent = next > RETARGET_MAX ? RETARGET_MIN : static_cast<uint8_t>(next);
+void GrayPreset::cycleRetarget(const Toward toward) {
+  uint8_t& percent = retargetField(*this, toward);
+  const int next = percent + RETARGET_STEP;
+  percent = next > RETARGET_MAX ? RETARGET_MIN : static_cast<uint8_t>(next);
 }
 
 void GrayPreset::stepRate(const int delta, const uint8_t rateCount) {
@@ -370,12 +488,14 @@ void GrayPreset::cycleRate(const uint8_t rateCount) {
   rateIndex = rateCount == 0 || rateIndex + 1 >= rateCount ? 0 : static_cast<uint8_t>(rateIndex + 1);
 }
 
-size_t encodeGrayPreset(const GrayPreset& preset, char* out, const size_t capacity) {
+size_t encodeGrayPreset(const GrayPreset& preset, const PresetBase base, char* out, const size_t capacity) {
   if (out == nullptr || capacity == 0) return 0;
   Writer w{out, capacity};
   w.text("{\"version\":");
   w.number(FILE_VERSION);
-  w.text(",\"doses\":[");
+  w.text(",\"base\":\"");
+  w.text(baseKeyOf(base));
+  w.text("\",\"doses\":[");
   for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) {
     if (i > 0) w.text(",");
     w.number(preset.doseAt(i));
@@ -385,8 +505,10 @@ size_t encodeGrayPreset(const GrayPreset& preset, char* out, const size_t capaci
     if (i > 0) w.text(",");
     w.boolean(preset.holdAt(i));
   }
-  w.text("],\"retarget_percent\":");
-  w.number(preset.retargetPercent);
+  w.text("],\"retarget_dark_percent\":");
+  w.number(preset.retargetDarkPercent);
+  w.text(",\"retarget_light_percent\":");
+  w.number(preset.retargetLightPercent);
   w.text(",\"rate\":");
   w.number(preset.rateIndex);
   w.text(",\"swap_polarity\":");
@@ -413,26 +535,42 @@ size_t encodeGrayPreset(const GrayPreset& preset, char* out, const size_t capaci
   return w.length;
 }
 
-GrayPresetLoad loadGrayPreset(const char* text, const size_t length, GrayPreset& out) {
-  out = GrayPreset::inkBoyDefaults();
+GrayPresetLoad loadGrayPreset(const char* text, const size_t length, const GrayPreset& defaults, GrayPreset& out,
+                              GrayPresetLoadInfo* info) {
+  out = defaults;
+  if (info) *info = GrayPresetLoadInfo{};
   if (text == nullptr) return GrayPresetLoad::Missing;
-  GrayPreset read = GrayPreset::inkBoyDefaults();
+  GrayPreset read = defaults;
   Reader reader(text, length);
-  bool sawVersion = false;
+  ReadState state;
   if (!reader.take('{')) return GrayPresetLoad::Malformed;
   if (!reader.take('}')) {
     do {
+      // The longest known key, "retarget_light_percent", is 22 characters.
       char key[24];
       bool overlong = false;
       if (!reader.string(key, sizeof(key), overlong) || !reader.take(':')) return GrayPresetLoad::Malformed;
       // An overlong key is no known key: its value is skipped.
-      const bool ok = overlong ? reader.skipValue(1) : readValue(reader, key, read, sawVersion);
+      const bool ok = overlong ? reader.skipValue(1) : readValue(reader, key, read, state);
       if (!ok) return GrayPresetLoad::Malformed;
     } while (reader.take(','));
     if (!reader.take('}')) return GrayPresetLoad::Malformed;
   }
-  if (!reader.atEnd() || !sawVersion || !read.valid()) return GrayPresetLoad::Malformed;
+  if (!reader.atEnd() || !state.sawVersion) return GrayPresetLoad::Malformed;
+  // The older single retarget key fills each direction the text did not set itself (its range was checked).
+  const bool legacy = state.legacyRetarget >= 0;
+  const bool legacyDark = legacy && !state.sawDark;
+  const bool legacyLight = legacy && !state.sawLight;
+  if (legacyDark) read.retargetDarkPercent = static_cast<uint8_t>(state.legacyRetarget);
+  if (legacyLight) read.retargetLightPercent = static_cast<uint8_t>(state.legacyRetarget);
+  if (!read.valid()) return GrayPresetLoad::Malformed;
   out = read;
+  if (info) {
+    info->legacyDark = legacyDark;
+    info->legacyLight = legacyLight;
+    info->base = state.base;
+    info->unknownBase = state.unknownBase;
+  }
   return GrayPresetLoad::Loaded;
 }
 

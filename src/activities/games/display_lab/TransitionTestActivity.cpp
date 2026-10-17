@@ -10,9 +10,11 @@
 #include <Logging.h>
 
 #include <cstdio>
+#include <optional>
 #include <utility>
 
 #include "MappedInputManager.h"
+#include "StockBenchGate.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -22,6 +24,7 @@ using GameDisplayLab::GrayPreset;
 using GameDisplayLab::MaskPlanes;
 using GameDisplayLab::PanelTurn;
 using GameDisplayLab::Shade;
+using GameDisplayLab::SweepMode;
 
 namespace {
 
@@ -36,6 +39,32 @@ static_assert(static_cast<int>(PanelTurn::LandscapeCounterClockwise) == GfxRende
               "PanelTurn follows GfxRenderer");
 
 PanelTurn turnOf(const GfxRenderer::Orientation orientation) { return static_cast<PanelTurn>(orientation); }
+
+// The Mode row's line.
+const char* modeText(const SweepMode mode) {
+  switch (mode) {
+    case SweepMode::Static:
+      return tr(STR_GAMES_DLAB_MODE_STATIC);
+    case SweepMode::Slow:
+      return tr(STR_GAMES_DLAB_MODE_SLOW);
+    case SweepMode::Fast:
+      return tr(STR_GAMES_DLAB_MODE_FAST);
+  }
+  return "";
+}
+
+// The mode's name in the log.
+const char* modeName(const SweepMode mode) {
+  switch (mode) {
+    case SweepMode::Static:
+      return "static";
+    case SweepMode::Slow:
+      return "slow";
+    case SweepMode::Fast:
+      return "fast";
+  }
+  return "";
+}
 
 }  // namespace
 
@@ -53,6 +82,8 @@ void TransitionTestActivity::onEnter() {
   notice = nullptr;
   status = tr(STR_GAMES_DLAB_NOT_RUN);
   snprintf(statsText, sizeof(statsText), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
+  // D12: Static on an UltraChip panel, whose slot is too long for the sweep; Fast stays the SSD1677's sweep.
+  sweepMode = isUltraChip(display.getController()) ? SweepMode::Static : SweepMode::Fast;
   if (!allocate()) {
     release();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
@@ -77,7 +108,7 @@ bool TransitionTestActivity::allocate() {
             static_cast<unsigned>(height));
     return false;
   }
-  // The working set of one visit, never per slot: the model (2 B a pixel) and the follow-up mask pair, PSRAM only
+  // The working set of one visit, never per slot: the model (3 B a pixel) and the follow-up mask pair, PSRAM only
   // (allocatePsram never falls back to internal RAM).
   const size_t modelBytes = GrayModel::bytesFor(width, height);
   const size_t maskBytes = MaskPlanes::bytesFor(width, height);
@@ -171,6 +202,8 @@ void TransitionTestActivity::buildRows() {
     rowItems[static_cast<size_t>(row)] = item;
   };
   set(Row::Run, tr(STR_GAMES_DLAB_RUN), status);
+  set(Row::Mode, tr(STR_GAMES_DLAB_MODE), modeText(sweepMode));
+  set(Row::Clean, tr(STR_GAMES_DLAB_CLEAN), tr(STR_GAMES_DLAB_CLEAN_DESC));
   set(Row::Stats, tr(STR_GAMES_DLAB_SPEED), statsText);
   set(Row::Controls, tr(STR_GAMES_DLAB_CONTROLS), tr(STR_GAMES_DLAB_TRANSITION_CONTROLS));
 }
@@ -204,39 +237,50 @@ void TransitionTestActivity::buildScreen(UiScreen& screen) {
 
 void TransitionTestActivity::activateIndex(const int index) {
   if (shownOnPanel.load()) {
-    // A tap over the rows' area (the only taps the list routes) pauses or resumes.
+    // A tap over the rows' area (the only taps the list routes, where touch routes while the view is up) pauses or
+    // resumes.
     app.clearTapFlash();
     togglePause();
     return;
   }
-  if (notice || index != static_cast<int>(Row::Run)) return;
-  startRun();
+  if (notice) return;
+  switch (static_cast<Row>(index)) {
+    case Row::Run:
+      startRun();  // a replay: the task cleans first
+      return;
+    case Row::Mode:
+      stepMode();
+      return;
+    case Row::Clean:
+      cleanFromRows();
+      return;
+    case Row::Stats:
+    case Row::Controls:
+      return;  // text only
+  }
 }
 
 bool TransitionTestActivity::handleCustomInput() {
   if (!shownOnPanel.load()) return false;
-  // A swipe would scroll the hidden list: consumed while the test view is up.
-  if (mappedInput.wasSwipe() != MappedInputManager::SwipeDir::None) return true;
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  // The X4 Pro has no front buttons and its touch routing is dead while the view is up (D12), so the side buttons
+  // carry the controls. Back first: the left-edge swipe is Back (wasBackGesture), and the swipe guard below would
+  // swallow it. NavPrevious stops on its release, as Back does, so neither half of the press reaches the rows.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+      mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
     stopSweep();
     leaveView(endText());
     return true;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  // Any other swipe would scroll the hidden list: consumed while the test view is up.
+  if (mappedInput.wasSwipe() != MappedInputManager::SwipeDir::None) return true;
+  if (mappedInput.wasPressed(MappedInputManager::Button::NavNext) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     togglePause();
     return true;
   }
-  if (mappedInput.wasPressed(MappedInputManager::Button::NavNext)) {
-    control.requestReplay();
-    notifySweep();
-    return true;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::NavPrevious)) {
-    control.requestClean();
-    notifySweep();
-    return true;
-  }
-  return false;  // a tap over the rows' area reaches activateIndex through the base's touch routing
+  // A tap pauses only where touch routes while the view is up (it reaches activateIndex through the base's touch
+  // routing); the X4 Pro's does not (D12), so its side buttons are the controls there.
+  return false;
 }
 
 void TransitionTestActivity::navigateButtons() {
@@ -287,6 +331,9 @@ void TransitionTestActivity::startRun() {
   elapsedUs = 0;
   sceneMs = 0;
   leastScanHeadroom = UINT32_MAX;
+  // The Mode row's mode. Slow's dwell is the preset's longest dose run in slots; its crossing waits for the run's own
+  // measurement (TransitionScene::slotDone).
+  scene.setMode(sweepMode, lab.preset().longestRunSlots());
   // A run that ends before a report over delivered scans keeps the Speed line as it was.
   statsReported = false;
   reportedTenths = 0;
@@ -317,6 +364,32 @@ void TransitionTestActivity::togglePause() {
   notifySweep();
 }
 
+void TransitionTestActivity::stepMode() {
+  app.clearTapFlash();
+  {
+    RenderLock lock(*this);
+    sweepMode = GameDisplayLab::nextMode(sweepMode);
+    rowItems[static_cast<size_t>(Row::Mode)].subtitle = modeText(sweepMode);
+  }
+  LOG_INF("DLAB", "transition test mode: %s", modeName(sweepMode));
+  requestUpdate();
+}
+
+void TransitionTestActivity::cleanFromRows() {
+  // The rows view has no sweep task (startRun creates it with the view, and the view ends only after the join), so
+  // the panel is this task's.
+  if (sweepTask) return;
+  app.clearTapFlash();
+  {
+    // The lab's clean sends the framebuffer with a FULL refresh: white first. The rows' repaint follows it.
+    RenderLock lock(*this);
+    renderer.clearScreen(0xFF);
+    lab.cleanNow();
+  }
+  LOG_INF("DLAB", "transition test: panel cleaned to white");
+  requestUpdate();
+}
+
 void TransitionTestActivity::notifySweep() {
   // The task is deleted only by this screen, so a live handle is a live task (it may be parked after its end).
   if (sweepTask) xTaskNotifyGive(sweepTask);
@@ -326,9 +399,8 @@ void TransitionTestActivity::stopSweep() {
   if (!sweepTask) return;
   control.requestStop();
   notifySweep();
-  // Bounded by the scan or the clean in flight (a replay's, NavPrevious's or the session cap's clean is one FULL
-  // refresh; a scan is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it), as the
-  // inline scans were.
+  // Bounded by the scan or the clean in flight (the run's first clean or the session cap's is one FULL refresh; a scan
+  // is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it), as the inline scans were.
   while (!sweepDone.load(std::memory_order_acquire)) vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
   vTaskDelete(sweepTask);  // parked in vTaskSuspend
   sweepTask = nullptr;
@@ -452,12 +524,29 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     if (!cleanToWhite()) return false;
     elapsedUs = 0;
     sceneMs = 0;
+    scene.restartFlips();
     scene.applyAll(model, 0, preset);
     sceneStale = false;
-    LOG_INF("DLAB", "gray sweep: %u pixels to drive, rate %u, swap %u, retarget %u, history %u, weak row %u",
-            static_cast<unsigned>(model.activeCount()), static_cast<unsigned>(preset.rateIndex),
-            static_cast<unsigned>(preset.swapPolarity), static_cast<unsigned>(preset.retargetPercent),
+    // Slow's crossing is sized once the paint has settled (`gray slow:` says it); Static's rectangles do not cross.
+    char crossing[24];
+    if (scene.slowPending()) {
+      snprintf(crossing, sizeof(crossing), "pending measurement");
+    } else {
+      snprintf(crossing, sizeof(crossing), "%lu ms", static_cast<unsigned long>(scene.sweepMs()));
+    }
+    LOG_INF("DLAB",
+            "gray sweep: %u pixels to drive, mode %s, %d px, crossing %s, rate %u, swap %u, retarget dark %u "
+            "light %u, history %u, weak row %u",
+            static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), scene.rectW(), crossing,
+            static_cast<unsigned>(preset.rateIndex), static_cast<unsigned>(preset.swapPolarity),
+            static_cast<unsigned>(preset.retargetDarkPercent), static_cast<unsigned>(preset.retargetLightPercent),
             static_cast<unsigned>(historyBuffer ? preset.historyMode : 0), static_cast<unsigned>(weakRow));
+    // With history on, a flip back to a pixel's origin is a completed return or a reversal, budgeted by the route's
+    // return_delta or reverse_percent rather than the table dose.
+    if (scene.mode() == SweepMode::Static && historyBuffer) {
+      LOG_INF("DLAB", "gray static: history %u is on, so the flips' residues include its route adjustments",
+              static_cast<unsigned>(preset.historyMode));
+    }
   } else if (requests.clean) {
     if (!cleanToWhite()) return false;  // the next slot reapplies the scene at the paused clock
     LOG_INF("DLAB", "gray sweep cleaned at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
@@ -518,6 +607,11 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
     if (!cleanToWhite()) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return false;
+    }
+    // Static repaints from white: the sequence starts again at flip 0, so no settle line counts the repaint.
+    if (scene.mode() == SweepMode::Static) {
+      scene.restartFlips();
+      LOG_INF("DLAB", "gray static: sequence restarted at flip 0 after the session-cap clean");
     }
     // The clean's FULL refresh is a pause of the sweep: the clock, the slot and the speed window restart after it.
     slotStartUs = micros();
@@ -605,8 +699,33 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
     sweepEnd = SweepEnd::ScanFailed;
     return false;
   }
+  // The slot's real length, from before the scene update to after the commit: the scans plus the CPU work over every
+  // pixel, which the scheduler's period (busy time + MARGIN_US) leaves out.
+  const uint32_t periodUs = scheduler.periodUs() > endUs - slotStartUs ? scheduler.periodUs() : endUs - slotStartUs;
+  afterSlot(slot.driven, slot.driveDone, periodUs, ms);
   if (endUs - statsSinceUs >= STATS_EVERY_US) reportStats(endUs);
   return true;
+}
+
+void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone, const uint32_t periodUs,
+                                       const uint32_t elapsedMs) {
+  const GameDisplayLab::SceneStep step = scene.slotDone(driven, driveDone, periodUs, elapsedMs);
+  if (step.settled) {
+    LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
+            static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
+            static_cast<unsigned>(step.settled->offset),
+            static_cast<unsigned>(GameDisplayLab::TransitionScene::flipOffset(step.settled->flip + 1)));
+  }
+  if (step.measured) {
+    // The paint's longest slot, which the crossing is sized from.
+    const uint32_t slowUs = scene.slowPeriodUs();
+    LOG_INF("DLAB", "gray slow: slot period %lu ms, crossing %lu ms, dwell %lu slots%s",
+            static_cast<unsigned long>(slowUs / 1000), static_cast<unsigned long>(scene.sweepMs()),
+            static_cast<unsigned long>(scene.dwellSlotsAt(slowUs)),
+            scene.sweepCapped() ? " (capped at 120 s, under the longest dose run)" : "");
+  }
+  // A Static flip retargets every pixel at the next slot.
+  if (step.reapply) sceneStale = true;
 }
 
 void TransitionTestActivity::logStackEnd(const uint32_t freeBytes) const {

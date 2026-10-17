@@ -40,16 +40,23 @@ const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_T
 
 void DisplayLabActivity::onEnter() {
   UiListActivity::onEnter();
-  // The gray preset: the file's, or InkBoy's defaults (GrayPresetFile logs which). Read before the render lock, so the
-  // render task never waits on the SD card; openSession takes it.
-  GameDisplayLab::GrayPreset loaded = GameDisplayLab::GrayPreset::inkBoyDefaults();
-  if (available()) GrayPresetFile::load(loaded);
+  // The gray preset: the file's, over the controller's defaults (the epic's D12: the owner's UltraChip table on a
+  // UC8179 or UC8279, InkBoy's on the SSD1677), or those defaults alone (GrayPresetFile logs which). Read before the
+  // render lock, so the render task never waits on the SD card; openSession takes it.
+  const GameDisplayLab::PresetBase base =
+      isUltraChip(display.getController()) ? GameDisplayLab::PresetBase::UltraChip : GameDisplayLab::PresetBase::InkBoy;
+  GameDisplayLab::GrayPreset loaded = GameDisplayLab::presetDefaults(base);
+  // The loop task's alone: the panel's base, and the one the session's values carry (a loaded file's own, which Save
+  // writes back, so a file from another controller keeps saying so until Reset to defaults).
+  panelBase = base;
+  presetBase = base;
+  if (available()) GrayPresetFile::load(base, loaded, presetBase);
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
   saveStatus = nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
-  grayPreset = GameDisplayLab::GrayPreset::inkBoyDefaults();
+  grayPreset = GameDisplayLab::presetDefaults(base);
   const bool supported = available();
   stockBench = supported && usesStockBench(display.getController());
   if (stockBench) LOG_INF("DLAB", "UltraChip stock-path bench");
@@ -130,9 +137,15 @@ void DisplayLabActivity::cleanNow() {
   if (scanBackend) cleanPanel();
 }
 
+GameDisplayLab::PresetBase DisplayLabActivity::resetPreset() {
+  grayPreset = GameDisplayLab::presetDefaults(panelBase);
+  presetBase = panelBase;
+  return panelBase;
+}
+
 bool DisplayLabActivity::savePreset() {
   // The SD write runs outside the render lock; only the row's line is shared with the render task.
-  const bool saved = GrayPresetFile::save(grayPreset);
+  const bool saved = GrayPresetFile::save(grayPreset, presetBase);
   RenderLock lock(*this);
   saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
   if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = saveStatus;
