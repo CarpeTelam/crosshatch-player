@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <TransitionScene.h>
 
 #include <cstdio>
 
@@ -14,13 +15,7 @@
 namespace fui = freeink::ui;
 
 using GameDisplayLab::GrayPreset;
-
-namespace {
-
-// InkBoy's shade letters, darkest first: transition names such as "K>D" are its notation, not translated text.
-constexpr char SHADE_LETTERS[] = "KDLW";
-
-}  // namespace
+using GameDisplayLab::Shade;
 
 TuningActivity::TuningActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab)
     : UiListActivity(NAME, renderer, mappedInput), lab(lab) {}
@@ -53,8 +48,9 @@ void TuningActivity::onEnter() {
   RenderLock lock(*this);
   editing = NOT_EDITING;
   for (uint8_t i = 0; i < GameDisplayLab::TRANSITION_COUNT; ++i) {
-    const char name[4] = {SHADE_LETTERS[GameDisplayLab::transitionFrom(i)], '>',
-                          SHADE_LETTERS[GameDisplayLab::transitionTo(i)], '\0'};
+    // InkBoy's shade letters: transition names such as "K>D" are its notation, not translated text.
+    const char name[4] = {GameDisplayLab::shadeLetter(static_cast<Shade>(GameDisplayLab::transitionFrom(i))), '>',
+                          GameDisplayLab::shadeLetter(static_cast<Shade>(GameDisplayLab::transitionTo(i))), '\0'};
     snprintf(labels[DOSE_FIRST + i], sizeof(labels[0]), tr(STR_GAMES_DLAB_DOSE), name);
     snprintf(labels[HOLD_FIRST + i], sizeof(labels[0]), tr(STR_GAMES_DLAB_HOLD), name);
   }

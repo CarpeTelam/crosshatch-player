@@ -92,6 +92,10 @@ class TransitionTestActivity final : public UiListActivity {
   static constexpr int SWEEP_CORE = 1;
   // How often stopSweep() polls for the task's end.
   static constexpr uint32_t STOP_POLL_MS = 5;
+  // How long a hold for a photo keeps the device awake from its start: long enough to set up and take the photos, short
+  // enough that a forgotten hold does not keep the CPU up indefinitely (main.cpp resets the idle clock and turns power
+  // saving off on every pass while preventAutoSleep is true).
+  static constexpr uint32_t HOLD_AWAKE_MS = 10 * 60 * 1000;
   // A run whose stack high-water mark leaves fewer free bytes than this logs an error.
   static constexpr uint32_t SWEEP_STACK_MARGIN_BYTES = 1024;
 
@@ -101,10 +105,11 @@ class TransitionTestActivity final : public UiListActivity {
   void loop() override;
   // The loop runs no slots, so it keeps its delay (a spinning loop would share the sweep task's core and priority);
   // preventAutoSleep keeps the clock up while the sweep advances (its task up and not asked to pause), and while the
-  // run holds for a photo (Run is cleared then, but auto-sleep's FULL refresh would end the hold); a pause the owner
-  // asked for lets it sleep.
+  // run holds for a photo (Run is cleared then, but auto-sleep's FULL refresh would end the hold) for HOLD_AWAKE_MS
+  // from the hold's start; after that, and in a pause the owner asked for, the normal idle timeout applies and
+  // auto-sleep ends the run as any leave does.
   bool skipLoopDelay() override { return false; }
-  bool preventAutoSleep() override { return sweepTask && (control.runRequested() || heldForPhoto.load()); }
+  bool preventAutoSleep() override;
   // Ends the sweep task (the render mutex is held: endSweepLocked).
   void prepareForSleep() override;
   // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
@@ -225,9 +230,11 @@ class TransitionTestActivity final : public UiListActivity {
   GameDisplayLab::SweepControl control;
   TaskHandle_t sweepTask = nullptr;
   std::atomic<bool> sweepDone{false};
-  // The run holds for a photo: set by the sweep task when the marker has settled out, cleared when a resume drives it
-  // back, when a run starts, and when the task ends; read by preventAutoSleep.
+  // The run holds for a photo, and the millis() it began at: set by the sweep task when the marker has settled out
+  // (the start first), cleared when a resume drives it back, when a run starts, and when the task ends; read by
+  // preventAutoSleep.
   std::atomic<bool> heldForPhoto{false};
+  std::atomic<uint32_t> heldSinceMs{0};
 
   // ---- the sweep task's own, while it is up (read by the loop task only after sweepDone or once it is deleted) -----
   GameDisplayLab::GrayModel model;

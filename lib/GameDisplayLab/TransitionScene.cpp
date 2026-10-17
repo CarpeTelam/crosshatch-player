@@ -58,6 +58,42 @@ const char* holdSpotName(const HoldSpot spot) {
   return "";
 }
 
+char shadeLetter(const Shade shade) {
+  switch (shade) {
+    case Shade::K:
+      return 'K';
+    case Shade::D:
+      return 'D';
+    case Shade::L:
+      return 'L';
+    case Shade::W:
+      return 'W';
+  }
+  return '?';
+}
+
+const char* spotSkipName(const SpotSkip skip) {
+  switch (skip) {
+    case SpotSkip::RightEdge:
+      return "the rectangles reached the right edge first";
+    case SpotSkip::PauseOutrun:
+      return "no slot started in the pause";
+  }
+  return "";
+}
+
+const char* holdDropName(const HoldDrop drop) {
+  switch (drop) {
+    case HoldDrop::StaticAgainAtFlipZero:
+      return "holds again at flip 0";
+    case HoldDrop::SkippedThisCrossing:
+      return "skipped for this crossing";
+    case HoldDrop::WayBackCutOff:
+      return "photo taken, the marker's way back cut off";
+  }
+  return "";
+}
+
 ScreenRect toPanel(const PanelTurn turn, const ScreenRect& r, const int panelW, const int panelH) {
   int ax = 0;
   int ay = 0;
@@ -84,13 +120,8 @@ void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
   slowPeriodUs_ = 0;
   slowStartMs_ = 0;
   sweepCapped_ = false;
-  phase_ = HoldPhase::Running;
-  markerOut_ = false;
-  markerSlots_ = 0;
-  cycle_ = 0;
-  enteredSlots_ = 0;
-  dwellPassed_ = false;
-  crossPassed_ = false;
+  dropHold();
+  resetCrossingSpots(0);
   switch (mode) {
     case SweepMode::Static:
       rectW_ = logicalW_ / 3 > 0 ? logicalW_ / 3 : 1;
@@ -109,10 +140,22 @@ void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
 
 void TransitionScene::setHold(const bool on) {
   holdOn_ = on;
+  dropHold();
+}
+
+void TransitionScene::dropHold() {
   phase_ = HoldPhase::Running;
   markerOut_ = false;
   markerSlots_ = 0;
   flipPending_ = false;
+  spot_.reset();
+}
+
+void TransitionScene::resetCrossingSpots(const uint32_t cycle) {
+  cycle_ = cycle;
+  enteredSlots_ = 0;
+  dwellPassed_ = false;
+  crossPassed_ = false;
 }
 
 uint32_t TransitionScene::slowSweepMs(const uint32_t slotPeriodUs, const int logicalW, const uint32_t dwellSlots) {
@@ -284,7 +327,7 @@ std::optional<HoldStart> TransitionScene::patternStep(SceneStep& step, const siz
       }
       return HoldStart{HoldSpot::StaticSettle, step.settled->flip};
     case SweepMode::Slow:
-      if (slowMeasured_) return crossingSpot(elapsedMs);
+      if (slowMeasured_) return crossingSpot(step, elapsedMs);
       if (driven > 0) {
         // Still painting: the longest delivered slot is the period the crossing must hold (a two-scan slot, as the
         // rectangles' will be, outlasts a one-scan one).
@@ -299,7 +342,7 @@ std::optional<HoldStart> TransitionScene::patternStep(SceneStep& step, const siz
       step.measured = true;
       return HoldStart{HoldSpot::SlowPainted, 0};
     case SweepMode::Fast:
-      return crossingSpot(elapsedMs);
+      return crossingSpot(step, elapsedMs);
   }
   return std::nullopt;
 }
@@ -311,28 +354,31 @@ TransitionScene::CrossingTime TransitionScene::crossingAt(const uint32_t elapsed
   return CrossingTime{since / length, since % length};
 }
 
-std::optional<HoldStart> TransitionScene::crossingSpot(const uint32_t elapsedMs) {
+std::optional<HoldStart> TransitionScene::crossingSpot(SceneStep& step, const uint32_t elapsedMs) {
   const bool slow = mode_ == SweepMode::Slow;
+  const HoldSpot pauseSpot = slow ? HoldSpot::SlowCrossed : HoldSpot::FastPause;
   const uint32_t cycle = crossingAt(elapsedMs).cycle;
   if (cycle != cycle_) {
-    cycle_ = cycle;
-    enteredSlots_ = 0;
-    dwellPassed_ = false;
-    crossPassed_ = false;
+    // A crossing left without a slot in its pause: its pause spot was outrun.
+    if (!crossPassed_ && holdOn_) step.skipped = SkippedSpot{pauseSpot, cycle_ + 1, SpotSkip::PauseOutrun};
+    resetCrossingSpots(cycle);
   }
   const std::optional<int> x = rectX(elapsedMs);
   if (!x) {
     // The first slot of the pause: the rectangles have left the right edge, their trails behind them.
     if (crossPassed_) return std::nullopt;
     crossPassed_ = true;
-    return HoldStart{slow ? HoldSpot::SlowCrossed : HoldSpot::FastPause, cycle + 1};
+    return HoldStart{pauseSpot, cycle + 1};
   }
   // Slow: the dwell's slots count from the first slot with the rectangles' left (trailing) edge on-screen.
   if (!slow || dwellPassed_ || *x < 0) return std::nullopt;
   if (++enteredSlots_ < dwellSlots_) return std::nullopt;
   dwellPassed_ = true;
   // Its right edge already past the screen's: no fully on-screen, fully dwelt moment in this crossing.
-  if (*x + rectW_ > logicalW_) return std::nullopt;
+  if (*x + rectW_ > logicalW_) {
+    if (holdOn_) step.skipped = SkippedSpot{HoldSpot::SlowDwelt, cycle + 1, SpotSkip::RightEdge};
+    return std::nullopt;
+  }
   return HoldStart{HoldSpot::SlowDwelt, cycle + 1};
 }
 
@@ -359,13 +405,17 @@ bool TransitionScene::resumeHold(GrayModel& model, const GrayPreset& preset) {
   return true;
 }
 
-std::optional<HoldSpot> TransitionScene::cancelHold() {
-  if (phase_ == HoldPhase::Running) return std::nullopt;
-  phase_ = HoldPhase::Running;
-  markerOut_ = false;
-  markerSlots_ = 0;
-  flipPending_ = false;
-  return spot_;
+std::optional<DroppedHold> TransitionScene::cancelHold() {
+  if (phase_ == HoldPhase::Running || !spot_) return std::nullopt;
+  HoldDrop drop = HoldDrop::SkippedThisCrossing;
+  if (phase_ == HoldPhase::MarkerBack) {
+    drop = HoldDrop::WayBackCutOff;
+  } else if (*spot_ == HoldSpot::StaticSettle) {
+    drop = HoldDrop::StaticAgainAtFlipZero;
+  }
+  const DroppedHold dropped{*spot_, drop, markerSlots_};
+  dropHold();
+  return dropped;
 }
 
 ScreenRect TransitionScene::markerRect() const {

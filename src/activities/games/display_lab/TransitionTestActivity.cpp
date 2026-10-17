@@ -53,9 +53,6 @@ const char* modeText(const SweepMode mode) {
   return "";
 }
 
-// A shade's letter in the log.
-char shadeLetter(const Shade shade) { return "KDLW"[static_cast<uint8_t>(shade) % GameDisplayLab::SHADE_COUNT]; }
-
 // The Hold row's line.
 const char* holdText(const bool on) { return on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF); }
 
@@ -185,6 +182,14 @@ void TransitionTestActivity::onExit() {
 void TransitionTestActivity::prepareForSleep() {
   // ActivityManager::prepareForSleep holds the render mutex, for this screen as the current one or as a covered one.
   endSweepLocked();
+}
+
+bool TransitionTestActivity::preventAutoSleep() {
+  if (!sweepTask) return false;
+  if (control.runRequested()) return true;
+  // A hold keeps the device awake for HOLD_AWAKE_MS from its start, then the normal idle timeout applies (a forgotten
+  // hold must not keep the CPU up for good; auto-sleep then ends the run as any leave does).
+  return heldForPhoto.load() && millis() - heldSinceMs.load() < HOLD_AWAKE_MS;
 }
 
 bool TransitionTestActivity::handleHomeGesture() {
@@ -588,7 +593,7 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     // nothing unless it holds).
     if (scene.resumeHold(model, preset)) {
       heldForPhoto.store(false);
-      LOG_INF("DLAB", "gray hold: resumed; marker back to %c", shadeLetter(scene.markerShade()));
+      LOG_INF("DLAB", "gray hold: resumed; marker back to %c", GameDisplayLab::shadeLetter(scene.markerShade()));
     }
   }
   return true;
@@ -641,9 +646,10 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
       return false;
     }
     // A hold in progress is dropped: repainted from white, the marker would settle before the pattern it marks.
-    if (const std::optional<GameDisplayLab::HoldSpot> dropped = scene.cancelHold()) {
-      LOG_INF("DLAB", "gray hold: %s restarted after the session-cap clean; the next photo spot holds",
-              GameDisplayLab::holdSpotName(*dropped));
+    if (const std::optional<GameDisplayLab::DroppedHold> dropped = scene.cancelHold()) {
+      LOG_INF("DLAB", "gray hold: %s dropped by the session-cap clean after %lu marker slots: %s",
+              GameDisplayLab::holdSpotName(dropped->spot), static_cast<unsigned long>(dropped->markerSlots),
+              GameDisplayLab::holdDropName(dropped->drop));
     }
     // Static repaints from white: the sequence starts again at flip 0, so no settle line counts the repaint.
     if (scene.mode() == SweepMode::Static) {
@@ -761,22 +767,28 @@ void TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
             static_cast<unsigned long>(scene.dwellSlotsAt(slowUs)),
             scene.sweepCapped() ? " (capped at 120 s, under the longest dose run)" : "");
   }
+  if (step.skipped) {
+    LOG_INF("DLAB", "gray hold: %s %lu skipped (%s)", GameDisplayLab::holdSpotName(step.skipped->spot),
+            static_cast<unsigned long>(step.skipped->count), GameDisplayLab::spotSkipName(step.skipped->reason));
+  }
   if (step.hold) {
     // A photo spot: the scene put the marker out and stopped the sweep clock; the next slots drive the marker.
     LOG_INF("DLAB", "gray hold: %s %lu, marker %c over %c", GameDisplayLab::holdSpotName(step.hold->spot),
-            static_cast<unsigned long>(step.hold->count), shadeLetter(scene.markerShade()),
-            shadeLetter(scene.markerBandShade()));
+            static_cast<unsigned long>(step.hold->count), GameDisplayLab::shadeLetter(scene.markerShade()),
+            GameDisplayLab::shadeLetter(scene.markerBandShade()));
   }
   if (step.held) {
     // Held for a photo: nothing is driven until Next (or Confirm) resumes, which drives the marker back first. The
-    // task clears Run itself so one press resumes.
+    // task clears Run itself so one press resumes. heldForPhoto (and its start) first: preventAutoSleep reads Run, then
+    // the hold, so with Run cleared first it could see neither and let auto-sleep's FULL refresh end the hold.
     const uint32_t nowUs = micros();
     advanceClock(nowUs);
     reportStats(nowUs);
     sweeping = false;
     scheduler.stop();
-    control.holdRun();
+    heldSinceMs.store(millis());
     heldForPhoto.store(true);
+    control.holdRun();
     LOG_INF("DLAB", "gray hold: marker settled after %lu slots; holding, Next resumes",
             static_cast<unsigned long>(step.markerSlots));
   }

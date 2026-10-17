@@ -52,6 +52,20 @@ enum class HoldSpot : uint8_t { StaticSettle, SlowPainted, SlowDwelt, SlowCrosse
 // pause".
 const char* holdSpotName(HoldSpot spot);
 
+// A shade's letter, K, D, L or W (the log and the Tuning rows).
+char shadeLetter(Shade shade);
+
+// Why a crossing passed a photo spot without holding (Hold on).
+enum class SpotSkip : uint8_t {
+  // Slow's dwell spot: the rectangles' right edge was already off-screen by the dwell's last slot.
+  RightEdge,
+  // The pause's spot: no slot started inside the pause (a slot outlasted it).
+  PauseOutrun,
+};
+
+// The reason's text in the `gray hold: <spot> N skipped (<reason>)` log line.
+const char* spotSkipName(SpotSkip skip);
+
 // Where a run is with its hold.
 enum class HoldPhase : uint8_t {
   // No hold: the sweep clock runs and the marker shows its band's shade.
@@ -63,6 +77,19 @@ enum class HoldPhase : uint8_t {
   // Resumed: the marker is being driven back to its band's shade; the clock still stands still.
   MarkerBack,
 };
+
+// What dropping a hold in progress (the session cap's clean) cost.
+enum class HoldDrop : uint8_t {
+  // Static, the marker going out (or held): the sequence restarts at flip 0 and holds again at its settle.
+  StaticAgainAtFlipZero,
+  // Slow or Fast, the marker going out: that spot is skipped for this crossing; the next spot holds.
+  SkippedThisCrossing,
+  // Any mode, the marker on its way back: the photo was taken; the way back is cut off by the repaint.
+  WayBackCutOff,
+};
+
+// The drop's text in the session-cap clean's `gray hold:` log line.
+const char* holdDropName(HoldDrop drop);
 
 struct ScreenRect {
   int x;
@@ -89,6 +116,20 @@ struct HoldStart {
   uint32_t count;
 };
 
+// A spot a crossing passed without holding: which, its crossing (from 1), and why.
+struct SkippedSpot {
+  HoldSpot spot;
+  uint32_t count;
+  SpotSkip reason;
+};
+
+// A hold dropped by cancelHold: its spot, what the drop cost, and the marker's slots it had run in its phase.
+struct DroppedHold {
+  HoldSpot spot;
+  HoldDrop drop;
+  uint32_t markerSlots;
+};
+
 // What a slot left for the scene to do (TransitionScene::slotDone).
 struct SceneStep {
   // Retarget every pixel to the scene (applyAll) before the next slot: a Static flip.
@@ -105,6 +146,8 @@ struct SceneStep {
   bool resumed = false;
   // With `held` or `resumed`: the slots the marker took.
   uint32_t markerSlots = 0;
+  // Hold on: a spot this crossing passed without holding (Slow's dwell at the right edge, a pause no slot fell in).
+  std::optional<SkippedSpot> skipped;
 };
 
 class TransitionScene {
@@ -181,8 +224,9 @@ class TransitionScene {
   // true; in any other phase nothing, false.
   bool resumeHold(GrayModel& model, const GrayPreset& preset);
   // The session cap's clean repainted from white: a hold in progress is dropped (Running, the marker on its band's
-  // shade, a pending Static flip dropped) and its spot returned; nothing when Running.
-  std::optional<HoldSpot> cancelHold();
+  // shade, a pending Static flip dropped), and what it was and what the drop cost returned; nothing when Running. The
+  // crossing's passed spots stay passed, so Slow and Fast skip the dropped spot for that crossing.
+  std::optional<DroppedHold> cancelHold();
   // The marker's logical rectangle, at the bottom-right: MARKER_W wide, its rows those below the last lane's rectangle
   // (rectTop(BANDS - 1, LANES - 1) + rectHeight() to the bottom), at most MARKER_PX, so it never shares a row with a
   // rectangle; without lanes (rectHeight() <= 0) a MARKER_PX square. Clipped to a smaller screen.
@@ -233,8 +277,13 @@ class TransitionScene {
     uint32_t ms;
   };
   CrossingTime crossingAt(uint32_t elapsedMs) const;
-  // Slow (measured) and Fast: the crossing's spots at a Running slot at `elapsedMs`.
-  std::optional<HoldStart> crossingSpot(uint32_t elapsedMs);
+  // Slow (measured) and Fast: the crossing's spots at a Running slot at `elapsedMs`; a spot passed without holding
+  // goes into `step` (Hold on).
+  std::optional<HoldStart> crossingSpot(SceneStep& step, uint32_t elapsedMs);
+  // Back to Running with no hold: the marker on its band's shade, no marker slots, no pending flip, no spot.
+  void dropHold();
+  // A new crossing `cycle` (from 0): no slot counted toward the dwell, no spot passed.
+  void resetCrossingSpots(uint32_t cycle);
   // The marker's panel pixels retargeted to markerShade().
   void retargetMarker(GrayModel& model, const GrayPreset& preset) const;
   // A slot of the marker's (out or back): counted; true, with the count in `step`, once it has settled in `model`.
@@ -265,7 +314,7 @@ class TransitionScene {
   bool holdOn_ = false;
   HoldPhase phase_ = HoldPhase::Running;
   bool markerOut_ = false;
-  HoldSpot spot_ = HoldSpot::StaticSettle;
+  std::optional<HoldSpot> spot_;
   uint32_t markerSlots_ = 0;
   bool flipPending_ = false;
   // Slow (measured) and Fast: the crossing cycle the spots below belong to, the slots run with the rectangles' left

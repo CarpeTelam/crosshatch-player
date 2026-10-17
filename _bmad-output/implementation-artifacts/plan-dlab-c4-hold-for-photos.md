@@ -55,13 +55,13 @@ generated I18n files; the stock bench, frame-period, polarity and Tuning screens
 |----------|--------------|---------------------------|----------------|
 | Hold row | tap / Confirm on it | toggles On/Off, the row shows it; On on every visit; read at Run | — |
 | Static hold | Hold on, a settle | settle line; marker out; `gray hold: static settle N`; held once the marker settles; the flip waits | Hold off: flip at once, no marker |
-| Slow holds | Hold on | three per run's crossing: `slow painted` (the measured slot), `slow dwelt` (the `longestRunSlots`-th slot with the rectangles' left edge on-screen, right edge still on), `slow crossed` (first slot of the pause) | Hold off: none; a dwell spot whose rectangles reach the right edge is skipped |
-| Fast hold | Hold on | `fast pause N`, the first slot of each pause | Hold off: none |
+| Slow holds | Hold on | three per run's crossing: `slow painted` (the measured slot), `slow dwelt` (the `longestRunSlots`-th slot with the rectangles' left edge on-screen, right edge still on), `slow crossed` (first slot of the pause) | Hold off: none; a dwell spot whose rectangles reach the right edge is skipped, logged `gray hold: slow dwelt N skipped (...)` |
+| Fast hold | Hold on | `fast pause N`, the first slot of each pause | Hold off: none; a pause no slot starts in is logged `gray hold: fast pause N skipped (no slot started in the pause)` (Slow's crossing end likewise) |
 | Resume | Next or Confirm while held | marker back to its band's shade, settles at the still clock, then the run continues (the flip, the crossing, the pause) | Next during the marker's slots pauses as usual (`resumeHold` does nothing there); the next press resumes where it was |
 | Stop while holding | Previous or Back | the view ends with the FULL refresh, marker and all | — |
-| Auto-sleep while holding | the sleep timeout passes while held | no sleep: `preventAutoSleep` holds while the run holds for a photo | a pause asked for with Next may sleep, as before |
+| Auto-sleep while holding | the sleep timeout passes while held | no sleep for `HOLD_AWAKE_MS` (10 min) from the hold's start; after that the normal idle timeout applies and auto-sleep ends the run as any leave does | a pause asked for with Next may sleep, as before |
 | Marker | any orientation | a 32 px dash in the bottom margin: logical x W-32, rows from the last lane's rectangle's bottom to H, at most 16 (8 at 480 high, 10 at 800), so never on a rectangle's rows; a 16 px corner square when the bands have no lanes; mapped with `toPanel` | — |
-| Cap during marker slots | session cap | the cap clean runs as today; the hold is dropped (marker hidden, a pending flip dropped), logged `gray hold: <spot> restarted after the session-cap clean`; Static holds again at flip 0's settle; Slow and Fast skip the dropped spot for that crossing and hold at the next one, Slow repainting its bands without measuring again | — |
+| Cap during marker slots | session cap | the cap clean runs as today; the hold is dropped (marker hidden, a pending flip dropped), logged `gray hold: <spot> dropped by the session-cap clean after N marker slots: <case>`, the case `holds again at flip 0` (Static, marker out), `skipped for this crossing` (Slow or Fast, marker out: the next spot holds, Slow repainting its bands without measuring again) or `photo taken, the marker's way back cut off` (any mode, marker back) | — |
 
 </intent-contract>
 
@@ -165,6 +165,17 @@ committed (the orchestrator runs the review lenses on the staged diff). Every ta
   spot. Doc: the dwelt spot's ramp, the faint marker, the marker slots' two effects and the build-up photo with Hold off,
   the press during the marker's slots, the Controls string.
 
+### 2026-10-17 — orchestrator follow-up batches 2 and 3 (on fc64cf24)
+- `heldForPhoto` (and its start) stored before `holdRun`. Avoids: the loop reading Run cleared and no hold, and
+  auto-sleep ending the hold.
+- The hold keeps the device awake for `HOLD_AWAKE_MS` (10 min) from its start, then the idle timeout applies.
+  Avoids: a forgotten hold keeping the CPU up indefinitely.
+- Skipped spots are logged; dropped holds say which case and their marker slots; one `shadeLetter`; shared reset
+  helpers (`cancelHold` now clears the spot).
+- Tests: the marker's settle and slots in every turn (a mutant reading the logical rect as panel coordinates fails),
+  Static's settle counts against a Hold-off twin, the skip reasons, the drop cases. Doc: the Static bullet points to
+  the hold, the dwelt spot's wait (a finished trail, not the full run), the sleep bound, the drop cases, re-wrapped.
+
 ## Review Triage Log
 
 ### 2026-10-17 — Review pass (orchestrator-run lenses, per orchestrated-epics.md § 3's fallback: the session's subagents cannot nest)
@@ -191,6 +202,23 @@ committed (the orchestrator runs the review lenses on the staged diff). Every ta
   - `[low]` `[reject]` (intent 1–6) marker exclusion temporal not spatial, the shown shade after Static's shift, the dwelt spot operational (the parenthetical), in-flight pixels advancing during the marker's slots, the static Controls text, Fast's miss when a slot outlasts the pause, Hold's default in the activity — settled readings, all recorded in the doc; no change.
   - `[low]` `[reject]` (intent 7) the resume sequence is tested at the scene (`resumeHold`) rather than through `SweepControl` and `serve` — the story asks for host tests of the pure decisions; the task path is the deferred device wiring above.
 
+### 2026-10-17 — Follow-up review pass (same four lenses, orchestrator-run, over commit fc64cf24; two mediums were patched)
+- verdicts: 17 findings — high 0, medium 1, low 10, false 0, maybe-false 0, rejected-by-rule 6
+- findings:
+  - `[medium]` `[patch]` (follow-up blind 2) with Hold on by default and every mode holding, a forgotten hold kept the device awake at full CPU indefinitely (`preventAutoSleep` true while held; `main.cpp` resets the idle clock and disables power saving on every pass) — a hold keeps the device awake for `HOLD_AWAKE_MS` (10 min) from its start, then the idle timeout applies; doc and header say so.
+  - `[low]` `[patch]` (follow-up edge 1) `afterSlot` cleared Run before setting `heldForPhoto`, a window in which the loop reads both false and auto-sleep can end the hold — the hold is published first.
+  - `[low]` `[patch]` (follow-up verification-gap 1) `markerSettled`'s logical-to-panel mapping ran only in the identity turn (a mutant reading the logical rect as panel coordinates passed every test; in Portrait it would report held after one slot) — the every-turn test runs to held and resumed and checks the rotated panel pixels; the mutant fails it.
+  - `[low]` `[patch]` (follow-up blind 1) the doc credited the dwelt spot's extra wait with the full run, which the first fully on-screen slot already has — the wait adds a rectangle-wide trail whose oldest column has finished its return; reworded.
+  - `[low]` `[patch]` (follow-up blind 3, 11) the session-cap line said "restarted" for every dropped hold — `cancelHold` returns the spot, the case and the marker slots so far; the line names holds again at flip 0, skipped for this crossing, or photo taken and the way back cut off; pinned.
+  - `[low]` `[patch]` (follow-up blind 4) a missed spot left no log line while the doc calls `gray hold:` the reliable signal — the step carries a skipped spot and its reason (RightEdge, PauseOutrun), logged `gray hold: <spot> N skipped (<reason>)`; pinned, Hold off logs nothing.
+  - `[low]` `[patch]` (follow-up blind 6) `shadeLetter` repeated Tuning's `SHADE_LETTERS` — one `GameDisplayLab::shadeLetter`, host-tested, used by both.
+  - `[low]` `[patch]` (follow-up blind 7) four hand-written hold resets with differing field sets — `dropHold()` and `resetCrossingSpots()`; `spot_` is optional and cleared.
+  - `[low]` `[patch]` (follow-up blind 8) the doc's Static bullet said the settled pattern flips at once; lines past 120 columns — points to Holds for photos; re-wrapped.
+  - `[low]` `[patch]` (follow-up blind 10) the Static hold test asserted the preset's settle count (4) — compares against a Hold-off twin.
+  - `[low]` `[reject]` (follow-up blind 5, intent) the epic's D13 and the story still described the 16 px square — the story was amended in fc64cf24 by the orchestrator; D13 and the Story results entry are the merge commit's.
+  - `[low]` `[reject]` (follow-up blind 9) no simulator check of the six-row screen — the lab is absent in the simulator (no `HalDisplay::eink()`, dlab-c2); the row list scrolls.
+  - `[low]` `[reject]` (follow-up intent 1–5) the scene-level tests through TaskSim, the painted spot once per run (the matrix's "three per crossing" reads per-run for painted), the shown shade after Static's shift, the clock standing still, the additions beyond the story (auto-sleep, the pause during the marker's slots, the start log's hold state, the 16 px fallback without lanes) — settled readings, recorded here; no change.
+
 ## Design Notes
 
 **Phases (all in the scene).** `slotDone` by `phase_`: `MarkerOut` and `MarkerBack` count `markerSlots_` and, once
@@ -215,8 +243,10 @@ clipped on a smaller screen. Its band is the last (`markerBandShade()`, which th
 that moved on by 2. The clock stands still while it is out, so `update` never moves anything over it. A weak
 band-to-band+2 dose makes it faint; the `gray hold:` line is the reliable signal.
 
-**Sleep.** While held, Run is clear, so the activity keeps `heldForPhoto` (set on `held`, cleared on resume, at a
-run's start and at the task's end) and `preventAutoSleep` is `sweepTask && (runRequested || heldForPhoto)`.
+**Sleep.** While held, Run is clear, so the activity keeps `heldForPhoto` and `heldSinceMs` (set on `held` before
+`holdRun`, so the loop never sees Run cleared without the hold; cleared on resume, at a run's start and at the task's
+end). `preventAutoSleep`: the task up and Run requested, or held for under `HOLD_AWAKE_MS` (10 min) since the hold's
+start; after that the idle timeout applies, so a forgotten hold cannot keep the CPU up for good.
 
 **Clock.** `advanceClock` adds nothing while `scene.clockStill()`: the scene stays at the spot's clock through the
 marker's slots and the hold, and runs again after the resumed slot.
@@ -226,6 +256,14 @@ pattern and hold a half-painted panel. Static's sequence restarts (c3) and holds
 Fast keep the crossing's passed flags, so the dropped spot is skipped for that crossing (Slow does not re-measure).
 
 **Crossing time.** `crossingAt(elapsedMs)` (crossing number, time into it) serves both `rectX` and `crossingSpot`.
+
+**Skips and drops.** With Hold on, `crossingSpot` puts a passed spot in `SceneStep::skipped` (`SpotSkip::RightEdge` for
+the dwell, `SpotSkip::PauseOutrun` when a crossing ends with no slot in its pause); the activity logs `gray hold:
+<spot> N skipped (<reason>)`. `cancelHold` returns `DroppedHold {spot, drop, markerSlots}` with `HoldDrop`
+(`StaticAgainAtFlipZero`, `SkippedThisCrossing`, `WayBackCutOff`). `dropHold()` and `resetCrossingSpots(cycle)` are
+the only resets of the hold and crossing state (`setMode`, `setHold`, `cancelHold`, a new crossing).
+`GameDisplayLab::shadeLetter` replaces the two local K/D/L/W tables (the transition test's log and Tuning's row names,
+whose text is unchanged).
 
 **Marker slots' side effects.** They keep dosing pixels in flight at a still scene, so every Fast pause and Slow
 crossing end runs longer and its trails settle further: the build-up photo is taken with Hold off (documented).
