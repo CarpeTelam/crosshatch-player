@@ -143,8 +143,8 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - D12 (2026-10-17, the owner's first UC8179 calibration run, photos in the session): four flash-free shades form from
   one-frame pulses on the UC8179 X4 Pro; the full white-to-black swing needs 12 pulses at PLL 0x06 (InkBoy's panel
   needed 7), so the owner's scaled table `[3,7,12,7,2,10,7,2,9,12,5,3]` (K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W,
-  W>K, W>D, W>L) is the UltraChip starting preset and the dose cap rises to 24. The slot on this panel is about 0.35 to
-  0.4 s (read off the sweep's column spacing), so the 5 s / 12 px sweep is a one-slot touch per pixel: the test gains a
+  W>K, W>D, W>L) is the UltraChip starting preset and the dose cap rises to 24. The owner's Speed row reads 2.2 scans/s, 194 ms per scan (PLL 0x06,
+  1-frame doses), so a slot is about 0.45 s (first read off the sweep's column spacing), so the 5 s / 12 px sweep is a one-slot touch per pixel: the test gains a
   Static mode (paint, settle, full flip, settle) and a Slow sweep sized from the measured slot, Fast stays for the
   SSD1677. Retarget at 150 % overshot toward white while still falling short toward black: it splits into a
   toward-dark and a toward-light percentage. The live controls were unreachable on the X4 Pro (Back is a swallowed
