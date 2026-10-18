@@ -21,38 +21,40 @@
 // gray engine on the whole panel. Headed "Transition test", six rows: Run (its line: "Not run", or how the last run
 // ended), Mode (Static, Slow, Fast or Ladder; a tap or Confirm steps it; Static on an UltraChip panel, Fast on the
 // SSD1677 to start), Hold for photos (On or Off; a tap or Confirm toggles it; On on every visit, never saved; story
-// dlab-c4, D13), Clean (one cleaning FULL refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"),
-// Controls (help text).
+// dlab-c4, D13; "Always in Ladder" while Mode is Ladder, which holds whatever the row says), Clean (one cleaning FULL
+// refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
 //
 // Run starts the test (GameDisplayLab::TransitionScene in the Mode row's mode) on its own FreeRTOS task, the sweep task
 // (D11), which cleans the panel to white with a FULL refresh and then drives the mode's pattern from white through the
-// session's gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast four shade bands K, D, L, W top to
-// bottom with three rectangles of the other shades per band, in Ladder its columns. Fast: 12-px rectangles crossing the
-// screen in 5 s, a 1 s pause, repeat. Slow: 48-px rectangles whose crossing keeps a pixel under one for the preset's
-// longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of the bands' paint; they
-// wait off-screen until that paint has settled, then cross. Static: rectangles a third of the width wide that stand
-// still; once a slot finds no pixel to drive the pattern has settled (logged) and flips, every shade moved on by +1,
-// +2, +3, +1, ... (three flips take the pixels through all twelve transitions), until stopped (story dlab-c3, D12).
-// Ladder (story dlab-g1, D14): no bands but the panel's response to single pulses: the bottom half painted black (the
-// base), then 24 columns per half, column n getting n pulses toward the opposite shade, one a slot and one scan each
-// (TransitionScene::slotPreset, the preset with every hold bit set), end-aligned so every column's last pulse is in the
-// stage's last slot, then the same pulses back; each stage ends at a photo spot, which holds whatever the Hold row
-// says, and the run ends after the return ("Finished"). With Hold on the run holds itself at each mode's photo spots
-// (TransitionScene::slotDone decides: Static's settles, Slow's painted bands, its rectangles after a full dwell and its
-// crossing's end, Fast's pause): the scene shows a 32 px dash at the logical bottom-right, in the bottom band's margin
-// below its last lane's rectangle, in the opposite shade of its band and stops the sweep clock, the task runs slots
-// until the marker has settled, then clears Run itself (SweepControl::holdRun); Next resumes, the marker is driven back
-// and settles, and only then does the run go on (Static's flip included). With Hold off nothing holds and Static flips
-// at once. One slot per GameDisplayLab::SlotScheduler period: the scene moves the rectangles to the sweep clock, then
-// GameDisplayLab::runGraySlot sends the drive scan and the follow-up scan through DisplayLabActivity::scan and commits
-// what was delivered. The task owns the slot runner (the clock, the scheduler, the stats, the scene, the model); the
-// loop task keeps polling input, so the controls answer while a scan runs, and talks to the task only through
-// GameDisplayLab::SweepControl and a notification. While the test view is up the screen draws nothing (D4: the panel
-// shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows' area where touch routes while
-// the view is up (the X4 Pro's does not, D12: its side buttons are the controls there) pauses or resumes, served at the
-// end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe included, checked before the swipe
-// guard) ends the run after the scan or the clean in flight (the session cap's clean is one FULL refresh); any other
-// swipe does nothing. A non-Done scan ends the run and the view with its outcome on the Run row. Another screen
+// session's gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast four shade bands 0, 2, 4, 6 (black,
+// dark gray, light gray, white: D14's level numbers) top to bottom with three rectangles of the other shades per band,
+// in Ladder its columns. Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat, from the slot after
+// the bands' paint has settled (they wait off-screen until then). Slow: 48-px rectangles whose crossing keeps a pixel
+// under one for the preset's longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of
+// the bands' paint; they wait off-screen until that paint has settled, then cross. Static: rectangles a third of the
+// width wide that stand still; once a slot finds no pixel to drive the pattern has settled (logged) and flips, every
+// shade moved on by +1, +2, +3, +1, ... (three flips take the pixels through all twelve transitions), until stopped
+// (story dlab-c3, D12). Ladder (story dlab-g1, D14): no bands but the panel's response to single pulses: the bottom
+// half painted black (the base), then 24 columns per half, column n getting n pulses toward the opposite shade, one a
+// slot and one scan each (TransitionScene::slotPreset, the preset with every hold bit set), end-aligned so every
+// column's last pulse is in the stage's last slot, then the same pulses back; each stage ends at a photo spot, which
+// holds whatever the Hold row says, and the run ends after the return ("Finished"). With Hold on (and always in Ladder)
+// the run holds itself at each mode's photo spots (TransitionScene::slotDone decides: Static's settles, Slow's painted
+// bands, its rectangles after a full dwell and its crossing's end, Fast's painted bands and its pause, the Ladder's two
+// stage ends): the scene shows the hold marker, a pause symbol (two bars, TransitionScene::markerBars) in the logical
+// bottom-right corner, in the opposite shade of the band under it, and stops the sweep clock, the task runs slots until
+// the marker has settled, then clears Run itself (SweepControl::holdRun); Next resumes, the marker is driven back and
+// settles, and only then does the run go on (Static's flip included). With Hold off nothing holds but the Ladder, and
+// Static flips at once. One slot per GameDisplayLab::SlotScheduler period: the scene moves the rectangles to the sweep
+// clock, then GameDisplayLab::runGraySlot sends the drive scan and the follow-up scan through DisplayLabActivity::scan
+// and commits what was delivered. The task owns the slot runner (the clock, the scheduler, the stats, the scene, the
+// model); the loop task keeps polling input, so the controls answer while a scan runs, and talks to the task only
+// through GameDisplayLab::SweepControl and a notification. While the test view is up the screen draws nothing (D4: the
+// panel shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows' area where touch routes
+// while the view is up (the X4 Pro's does not, D12: its side buttons are the controls there) pauses or resumes, served
+// at the end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe included, checked before the
+// swipe guard) ends the run after the scan or the clean in flight (the session cap's clean is one FULL refresh); any
+// other swipe does nothing. A non-Done scan ends the run and the view with its outcome on the Run row. Another screen
 // covering the view (the light panel) stops loop(): the task refuses its next scan once loop() has not run for
 // COVERED_GAP_US, and the view ends once the cover closes; a forced refresh is swallowed. Leaving the view (only after
 // the task has ended and been deleted) repaints the rows with a FULL refresh. Before a slot that would cross the
@@ -196,10 +198,12 @@ class TransitionTestActivity final : public UiListActivity {
   // spot, the marker settled out or back, a Ladder stage); this logs it, holds the run once the marker is out, and
   // marks the scene for reapplying when asked. False when the run ends (a Ladder run finished: sweepEnd Finished).
   bool afterSlot(size_t driven, bool driveDone, uint32_t periodUs, uint32_t elapsedMs);
+  // The Ladder's per-stage figures cleared: at each stage's end, a run's start and the session cap's restart.
+  void resetLadderStage();
   // The Ladder's columns and rows at a run's start (`gray ladder:`), and the narrow-screen line when they are 1 px.
   void logLadderLayout() const;
   // A Ladder stage that settled: the base, or stage 1 or 2 with what the photo needs: the rate, the rhythm (and the
-  // pauses that broke it), the stage's longest slot, the base's W>K dose and the columns.
+  // pauses that broke it, and where), the stage's longest pulse interval and slot, the base's 6>0 dose and the columns.
   void logLadderSettled(const GameDisplayLab::LadderSettled& settled) const;
   // The sweep clock advanced to `nowUs` (it runs only while sweeping, and stands still through a hold's marker slots).
   void advanceClock(uint32_t nowUs);
@@ -250,10 +254,18 @@ class TransitionTestActivity final : public UiListActivity {
   GameDisplayLab::MaskPlanes follow;
   GameDisplayLab::TransitionScene scene;
   GameDisplayLab::SlotScheduler scheduler;
-  // Ladder: the current stage's manual pauses (each breaks the one-pulse-a-slot rhythm) and its longest pulse slot, for
-  // its settle line; cleared at each stage's end, a run's start and the session cap's restart.
+  // Ladder: the current stage's manual pauses between two of its pulse slots (TransitionScene::ladderMidStage; each
+  // breaks the one-pulse-a-slot rhythm) and its longest pulse slot, for its settle line; cleared by resetLadderStage.
   uint32_t ladderPauses = 0;
   uint32_t ladderSlotUs = 0;
+  // The stage slots (TransitionScene::ladderStageSlots) the first LADDER_PAUSES_NAMED pauses fell after, for the line.
+  static constexpr uint32_t LADDER_PAUSES_NAMED = 4;
+  uint8_t ladderPauseSlots[LADDER_PAUSES_NAMED] = {};
+  // The longest start-to-start interval between two of the stage's pulse slots (a skipped slot period or a pause shows
+  // here), and the last pulse slot's start (ladderPulsed: there was one in this stage).
+  uint32_t ladderIntervalUs = 0;
+  uint32_t ladderLastStartUs = 0;
+  bool ladderPulsed = false;
   // How the run ended, and the failing scan's outcome when it was ScanFailed.
   SweepEnd sweepEnd = SweepEnd::Stopped;
   DisplayLabActivity::Scan failedScan = DisplayLabActivity::Scan::Done;

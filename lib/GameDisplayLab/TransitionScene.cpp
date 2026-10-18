@@ -56,22 +56,25 @@ const char* holdSpotName(const HoldSpot spot) {
       return "slow crossed";
     case HoldSpot::FastPause:
       return "fast pause";
+    case HoldSpot::FastPainted:
+      return "fast painted";
     case HoldSpot::Ladder:
       return "ladder";
   }
   return "";
 }
 
-char shadeLetter(const Shade shade) {
+char shadeName(const Shade shade) {
+  // D14's seven-level numbers: the four shades sit on the even levels, so 1, 3 and 5 slot in without renaming.
   switch (shade) {
     case Shade::K:
-      return 'K';
+      return '0';
     case Shade::D:
-      return 'D';
+      return '2';
     case Shade::L:
-      return 'L';
+      return '4';
     case Shade::W:
-      return 'W';
+      return '6';
   }
   return '?';
 }
@@ -123,9 +126,10 @@ void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
   restartFlips();
   restartLadder();
   dwellSlots_ = dwellSlots > 0 ? dwellSlots : 1;
-  slowMeasured_ = false;
+  painted_ = false;
+  paintSlots_ = 0;
   slowPeriodUs_ = 0;
-  slowStartMs_ = 0;
+  crossStartMs_ = 0;
   sweepCapped_ = false;
   dropHold();
   resetCrossingSpots(0);
@@ -198,8 +202,9 @@ std::optional<int> TransitionScene::rectX(const uint32_t elapsedMs) const {
       return (logicalW_ - rectW_) / 2;
     case SweepMode::Slow:
     case SweepMode::Fast: {
-      // Slow waits just off the left edge until the period is measured, then crosses from that slot's clock.
-      if (mode_ == SweepMode::Slow && !slowMeasured_) return -rectW_;
+      // Slow and Fast wait just off the left edge until the bands' paint has settled, then cross from that slot's
+      // clock.
+      if (!painted_) return -rectW_;
       const uint32_t t = crossingAt(elapsedMs).ms;
       if (t >= sweepMs_) return std::nullopt;
       const int64_t travel = static_cast<int64_t>(logicalW_) + rectW_;
@@ -218,8 +223,10 @@ int TransitionScene::bandOf(const int ly) const {
 
 Shade TransitionScene::targetAt(const int lx, const int ly, const uint32_t elapsedMs) const {
   if (markerOut_) {
-    const ScreenRect m = markerRect();
-    if (lx >= m.x && lx < m.x + m.w && ly >= m.y && ly < m.y + m.h) return markerShade();
+    // The pause symbol's two bars; the gap between them keeps the band's shade.
+    for (const ScreenRect& bar : markerBars()) {
+      if (lx >= bar.x && lx < bar.x + bar.w && ly >= bar.y && ly < bar.y + bar.h) return markerShade();
+    }
   }
   // The Ladder's base: the top half white, the bottom half and the marker's rows below it black.
   if (mode_ == SweepMode::Ladder) return ly < ladderHeight() / 2 ? Shade::W : Shade::K;
@@ -349,7 +356,7 @@ std::optional<HoldStart> TransitionScene::patternStep(GrayModel& model, SceneSte
       }
       return HoldStart{HoldSpot::StaticSettle, step.settled->flip};
     case SweepMode::Slow:
-      if (slowMeasured_) return crossingSpot(step, elapsedMs);
+      if (painted_) return crossingSpot(step, elapsedMs);
       if (driven > 0) {
         // Still painting: the longest delivered slot is the period the crossing must hold (a two-scan slot, as the
         // rectangles' will be, outlasts a one-scan one).
@@ -358,13 +365,23 @@ std::optional<HoldStart> TransitionScene::patternStep(GrayModel& model, SceneSte
       }
       // The paint has settled: size the crossing and start it from here.
       if (slowPeriodUs_ == 0) slowPeriodUs_ = periodUs;
-      slowMeasured_ = true;
-      slowStartMs_ = elapsedMs;
+      painted_ = true;
+      crossStartMs_ = elapsedMs;
       sizeSlow(slowPeriodUs_);
       step.measured = true;
       return HoldStart{HoldSpot::SlowPainted, 0};
     case SweepMode::Fast:
-      return crossingSpot(step, elapsedMs);
+      if (painted_) return crossingSpot(step, elapsedMs);
+      if (driven > 0) {
+        // Still painting: the rectangles wait off-screen, so none lands on a band still filling from white.
+        ++paintSlots_;
+        return std::nullopt;
+      }
+      // The paint has settled: the sweep starts from here (from the resume, with a hold: the clock stands still).
+      painted_ = true;
+      crossStartMs_ = elapsedMs;
+      step.fastPainted = paintSlots_;
+      return HoldStart{HoldSpot::FastPainted, 0};
     case SweepMode::Ladder:
       return ladderStep(model, step, driven);
   }
@@ -487,8 +504,7 @@ bool TransitionScene::ladderCleaned(const std::optional<DroppedHold>& dropped) {
 }
 
 TransitionScene::CrossingTime TransitionScene::crossingAt(const uint32_t elapsedMs) const {
-  const uint32_t since =
-      mode_ == SweepMode::Slow ? (elapsedMs > slowStartMs_ ? elapsedMs - slowStartMs_ : 0) : elapsedMs;
+  const uint32_t since = elapsedMs > crossStartMs_ ? elapsedMs - crossStartMs_ : 0;
   const uint32_t length = sweepMs_ + PAUSE_MS;
   return CrossingTime{since / length, since % length};
 }
@@ -556,6 +572,7 @@ HoldDrop dropBeforeTheWayBack(const HoldSpot spot) {
     case HoldSpot::SlowPainted:
     case HoldSpot::SlowDwelt:
     case HoldSpot::SlowCrossed:
+    case HoldSpot::FastPainted:
     case HoldSpot::FastPause:
       return HoldDrop::SkippedThisCrossing;
   }
@@ -598,21 +615,32 @@ Shade TransitionScene::markerShade() const {
   return markerOut_ ? shifted(band, 2) : band;
 }
 
+std::array<ScreenRect, 2> TransitionScene::markerBars() const {
+  const ScreenRect m = markerRect();
+  const int bar = (m.w - MARKER_GAP) / 2;
+  // Too narrow for two bars and the gap: one bar, the whole rectangle.
+  if (bar < 1) return {m, ScreenRect{m.x + m.w, m.y, 0, m.h}};
+  return {ScreenRect{m.x, m.y, bar, m.h}, ScreenRect{m.x + m.w - bar, m.y, bar, m.h}};
+}
+
 bool TransitionScene::markerSettled(const GrayModel& model) const {
-  const ScreenRect logical = markerRect();
-  if (logical.w <= 0 || logical.h <= 0) return true;
-  const ScreenRect panel = toPanel(turn_, logical, panelW_, panelH_);
-  for (int y = panel.y; y < panel.y + panel.h; ++y) {
-    for (int x = panel.x; x < panel.x + panel.w; ++x) {
-      if (model.remaining(x, y) > 0) return false;
+  // The bars' pixels only: the gap is never driven.
+  for (const ScreenRect& logical : markerBars()) {
+    if (logical.w <= 0 || logical.h <= 0) continue;
+    const ScreenRect panel = toPanel(turn_, logical, panelW_, panelH_);
+    for (int y = panel.y; y < panel.y + panel.h; ++y) {
+      for (int x = panel.x; x < panel.x + panel.w; ++x) {
+        if (model.remaining(x, y) > 0) return false;
+      }
     }
   }
   return true;
 }
 
 void TransitionScene::retargetMarker(GrayModel& model, const GrayPreset& preset) const {
-  const ScreenRect m = markerRect();
-  retargetLogical(model, m.x, m.x + m.w, m.y, m.h, markerShade(), preset);
+  for (const ScreenRect& bar : markerBars()) {
+    retargetLogical(model, bar.x, bar.x + bar.w, bar.y, bar.h, markerShade(), preset);
+  }
 }
 
 void TransitionScene::restartFlips() {

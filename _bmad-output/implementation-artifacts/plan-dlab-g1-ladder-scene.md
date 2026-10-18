@@ -53,12 +53,15 @@ generated I18n files; the stock bench, frame-period, polarity screens; Static, S
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |---|---|---|---|
 | Ladder mode | Mode row stepped past Fast | "Ladder"; Run paints the base, then stage 1 | — |
-| Stage 1 | 24 slots after the base | column n has had n pulses (one per slot, one scan per slot), end-aligned: its pulses are the stage's last n slots, every column's last pulse in the same slot; settle; hold `ladder 1` | Hold off: holds too (the Ladder always holds; the start line says so); a manual pause mid-stage is counted in the stage's line |
+| Stage 1 | 24 slots after the base | column n has had n pulses (one per slot, one scan per slot), end-aligned: its pulses are the stage's last n slots, every column's last pulse in the same slot; settle; hold `ladder 1`; the line names the pulse interval, the longest slot and the base's 6>0 dose | Hold off: holds too (the Ladder always holds; the Hold row reads "Always in Ladder", the start line says so); a manual pause between two pulse slots is counted and the first four stage slots it fell after are named (a pause before the first pulse or after the last is not) |
 | Stage 2 | Next while holding | columns driven back n pulses, end-aligned; settle; hold `ladder 2` | Hold off: holds too |
 | End | Next while holding at stage 2 | marker back, the run ends, rows return with "Finished", Run replays | — |
 | Layout | logical width W ≥ 48 | 24 columns of W/24 − 1 px, each followed by a 1 px gutter of the half's origin (480: 19 px; 800: 32 px) | — |
 | Narrow screen | logical width < 48 | columns at least 1 px, as many as fit (min(width, 24)), no gutter, logged; a stage is still 24 slots | — |
-| Session cap mid-stage | cap reached | the cap clean runs; a hold in progress is dropped; the ladder restarts from the base, logged | the clean cuts off the marker's way back from `ladder 2`: both photos taken, the run ends as Finished |
+| Session cap mid-stage | cap reached | the cap clean runs; a hold in progress is dropped; the ladder restarts from the base and holds at `ladder 1` first again (during the base, mid stage 1 or 2, the marker going out at either hold, its way back from `ladder 1`), logged | the clean cuts off the marker's way back from `ladder 2`: both photos taken, the run ends as Finished |
+| Hold marker (every mode) | a photo spot | a pause symbol: two bars inside markerRect (each (w − 8) / 2 wide, an 8 px gap, full height: 12, 8, 12 at 32 px), driven to the band's opposite shade and back; the gap is never driven nor counted for the settle | a box too narrow for both bars and the gap: one bar, the whole box |
+| Fast paint (owner ask) | Fast run starts | the rectangles wait off-screen until a slot drives nothing (`gray fast: paint settled after N slots`); the sweep clock's crossing starts there; Hold on: a `fast painted 0` hold first | Hold off: the sweep starts the slot after the settle; a cap clean dropping the painted hold starts the crossing without its photo |
+| Shade names (owner ask) | Tuning rows, `gray` log lines, the doc | shades by D14's level numbers: K "0", D "2", L "4", W "6" (Dose 0>2, marker 4 over 0) | the preset file (no names) and the stock bench's labels unchanged |
 | driveRect | rect, Toward::Dark, 5 | every pixel in the rect: target K (W for Light), 5 doses left, level kept; each dose drives toward that end (black mask for K, white for W) even on a pixel already there | out-of-model clipped; doses 0 changes nothing, above DOSE_MAX clamps |
 
 </intent-contract>
@@ -100,8 +103,8 @@ generated I18n files; the stock bench, frame-period, polarity screens; Static, S
   rects and origins in all four turns at 800×480 (no column under the marker); stage sequence with Hold on and off
   (column n's doses per slot, 24 slots per stage, holds, finished); cap restart (running and in each hold phase);
   names; `heldRhythm`. `TaskSim` runs ladder pulses with `heldRhythm`.
-- [x] `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` -- Ladder in `modeText`/`modeName`; member
-  `pulsePreset` (`heldRhythm(lab.preset())` at replay) passed to `runGraySlot` when `scene.ladderPulsing()`; start
+- [x] `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` -- Ladder in `modeText`/`modeName`; the slot's
+  preset from `scene.slotPreset(lab.preset())` (the held rhythm while a ladder stage pulses) passed to `runGraySlot`; start
   line ("crossing none") and a `gray ladder:` layout line (and the narrow-screen line); cap clean restarts the ladder;
   `afterSlot` returns false on `finished` (`SweepEnd::Finished`, "Finished", `gray ladder: done`) and logs each stage
   settle with rate index and label, one pulse per slot, column width and gutter; class comment.
@@ -143,17 +146,39 @@ dispatch named are the intent and the plan, as for dlab-c4 (`ticket` = the story
 - Device-only code (`TransitionTestActivity`) is not compiled on the host: its firmware build is the orchestrator's.
 
 Review batch (2026-10-18, the orchestrator's four lenses, applied on top of the WIP commit 44a2ba65, staged, not
-committed): 1 `lightens` in `GrayModel` (W target lightens, K target darkens, whatever the level), pinned by a
+committed): 1 `lightens()` changed the direction rule `buildMasks` and `commit` share (a W target lightens and a K target
+darkens whatever the level; the same result for every state retarget leaves, since it never leaves doses on an
+on-target pixel), pinned by a
 Light-on-white pixel in `HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd` (white mask, never black); 2 end-aligned
 columns (`ladderStep` counts stage slots, `driveLadderColumn` per slot; `driveLadder` removed), tests check every
 pixel's doses before every stage slot (`expectStageSlot`), in all four turns on a small panel
 (`LadderStagesAreEndAlignedInEveryTurn`) and a narrow one (`NarrowLadderStillRunsTwentyFourSlotsAStage`); 3 a gutter at
 every width with room; 4 `holdsAtSpots()`, the hold test runs with Hold on and off; 5 and 6 `ladderPauses`,
 `ladderSlotUs`; 7 `ladderCleaned`, pinned in `SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBothPhotos`; 8
-`slotPreset` (the activity's `pulsePreset` member removed); 9 the header's Mode list and "four shade bands"; 10
+`slotPreset` (the slot's preset for the task and the sim); 9 the header's Mode list and "four shade bands"; 10
 `rectW_` 0 and "no rectangles" in the start line; 11 the Ladder's 32 x 16 marker and `ladderHeight() = H - 16`,
 tested in every turn at 800 x 480; 12 `none` for an empty half. Design Notes and the matrix updated; the doc's Ladder
 section, holds, cap and log lines rewritten.
+
+Follow-up batch (2026-10-18, on top of the story commit dce6f20f, staged, not committed): the orchestrator's items 1-10
+and the owner's asks 11-13. 1 comments say the Ladder always holds (`LadderStage::Done`, `afterSlot`, the activity's
+header, `setHold`, `SceneStep::hold`); 2 `ladderMidStage()` and `ladderStageSlots()`, pinned by
+`LadderMidStageIsBetweenAStagesFirstAndLastPulse`; 3 the settle line names the first four stage slots pauses fell
+after; 4 `ladderIntervalUs`, the longest start-to-start interval between a stage's pulse slots, tracked in `runSlot`
+from the slot start times; 5 the Hold row reads "Always in Ladder" (`STR_GAMES_DLAB_HOLD_LADDER`) while Mode is Ladder;
+6 `LadderFromBase`'s comment and the doc: the restart holds at `ladder 1` first; 7 three more cap cases (the marker
+going out at `ladder 2`, mid stage 2, during the base), and the mutation check: `ladderCleaned` reduced to `stage ==
+Return` fails `SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBothPhotos` (run, then restored); 8 the doc's
+reading guide (the base's black, temperature, rest before the first pulse, the pulse interval, pauses); 9 the doc's
+Ladder bullet in sub-bullets, two ragged lines fixed; 10 this plan's wording. 11 `markerBars()` (`MARKER_GAP` 8): the
+marker is a pause symbol inside the unchanged `markerRect()`; `retargetMarker`, `markerSettled` and `targetAt` use the
+bars; the marker tests check the bars and an untouched gap in every turn at both sizes (and the Ladder's). 12
+`shadeName` replaces `shadeLetter` (K "0", D "2", L "4", W "6"): Tuning's rows, the `gray hold:` lines, the stage line's
+`base 6>0 dose`; the doc's tables and text with a legend; `ShadeNamesAndLogNames` pins it. 13 Fast waits for the
+paint as Slow does (`painted_` and `crossStartMs_` are Slow's renamed state, shared; `paintSlots_`;
+`HoldSpot::FastPainted`, `SceneStep::fastPainted`, `paintPending()`; `gray fast: paint settled after N slots; the
+sweep starts`); the Fast geometry tests settle the paint first (`sweepingFast`), and
+`FastRectanglesWaitUntilThePaintSettles` and `FastHoldsAtThePaintThenOncePerSweepInItsPause` pin it.
 
 ## Plan Change Log
 
@@ -178,6 +203,24 @@ section, holds, cap and log lines rewritten.
   - `[low]` `[reject]` (intent 1–7) the pure layer tested through TaskSim with the activity glue device-only (the deferred family), the base painted through the preset's own W>K retarget (the story's stated exception), the details on a separate `gray ladder:` line, the halves split above the marker strip, the gutter rule by example, the model landing n pulses on the end shade (it models the stimulus, the photo measures the response) — settled readings, recorded; the story's stray "eight levels" is the orchestrator's wording, fixed at the merge.
   - `[low]` `[reject]` (verification-gap) no gaps filed; the activity's end path and log lines are the deferred device-wiring family.
 
+### 2026-10-18 — Follow-up review pass (same four lenses, orchestrator-run, over commit dce6f20f; two mediums were patched) and the owner's three asks (D15)
+- verdicts: 22 findings — high 0, medium 0, low 11, false 0, maybe-false 0, rejected-by-rule 11
+- findings:
+  - `[low]` `[patch]` (follow-up blind 1) comments still said the Ladder holds only with Hold on — the Ladder always holds; the activity header follows.
+  - `[low]` `[patch]` (follow-up blind 2, edge 1) `ladderPauses` counted a pause before a stage's first pulse or after its last — `ladderMidStage()` gates it; pinned.
+  - `[low]` `[patch]` (follow-up blind 3) the settled line did not say where a pause fell — the first four stage slots paused after, then "…".
+  - `[low]` `[patch]` (follow-up blind 4) a slot the scheduler skipped stretched the pulse interval unreported — the longest start-to-start interval between pulse slots is logged as the interval.
+  - `[low]` `[patch]` (follow-up blind 5) the Hold row misled in Ladder mode — it reads "Always in Ladder" there.
+  - `[low]` `[patch]` (follow-up blind 6, edge 2) `LadderFromBase`'s comment and the doc promised a hold "at that stage's end" after a drop at `ladder 2`; the restart holds at `ladder 1` first — reworded.
+  - `[low]` `[patch]` (follow-up blind 7, verification-gap 1, edge 6) `ladderCleaned`'s condition was pinned only by its true case (cutting it to `stage == Return` passed) — the marker going out at `ladder 2`, mid stage 2 and during the base are tested; the cut now fails.
+  - `[low]` `[patch]` (follow-up blind 8, 9, 11) the reading guide lacked the base's dependence on the 6>0 dose, the rest before the first pulse under end alignment, the pulse interval and pauses, and room temperature (the panel's sensor is a backend read, outside this story) — written; the Ladder bullet split into sub-bullets; two ragged lines fixed.
+  - `[low]` `[patch]` (follow-up edge 4, 5) the plan named a `pulsePreset` member that no longer exists and called the direction change "nothing else" — plan wording.
+  - `[low]` `[patch]` (owner, D15) the marker is a pause symbol: `markerBars()`, two bars with an 8 px gap inside `markerRect()`, the gap never driven; shades are named by their seven-level number (`shadeName`: 0, 2, 4, 6) in Tuning, the logs and the doc; Fast waits for the paint to settle before its rectangles enter, with a `fast painted` hold — all pinned.
+  - `[low]` `[reject]` (follow-up blind 10) `nearestShadeOf` duplicated in `retarget` — the story leaves `retarget` untouched; by rule.
+  - `[low]` `[reject]` (follow-up edge 3, intent) the Ladder ignores Hold off — the first pass's decision (nothing to photograph otherwise); the row says so.
+  - `[low]` `[reject]` (follow-up intent 1–6) the Ladder's departures from the story's wording (always holds, 19 + 1 px columns at 480, the halves above a 16-row strip, the second cap outcome, a stage of 24 pulse slots plus the settle slot, the direction rule shared by every mode) — review-pass decisions, recorded here; the story is amended at the merge.
+  - `[low]` `[reject]` (orchestrator's item 13 note) "no mode exercises the retarget split" — wrong as stated: Fast's trails are still retargeted mid-transition; the doc and Design Notes keep Fast as the mode that exercises it.
+
 ## Design Notes
 
 Sources: story dlab-g1 (Approach, Matrix), D13 (marker; amended to a dash in the bottom margin, never on a measured
@@ -198,7 +241,7 @@ row), D14 (why a ladder; rate 0, 0x07 the fallback), dlab-c4's result (phases, m
   8: `heldRhythm(preset)`, a copy with every hold bit set kept in the scene, while `ladderPulsing()`; the preset
   itself otherwise) to `runGraySlot`, so the follow-up mask is empty and `runGraySlot` sends one scan; `TaskSim` uses
   the same call. The base and
-  the marker run on the preset as is (the base is "the preset's full W>K dose", the transition Static paints; the
+  the marker run on the preset as is (the base is "the preset's full W>K dose" (6>0), the transition Static paints; the
   marker is dlab-c4's). `ladderPulsing()` is true only in Running with stage Ladder or Return, and a stage starts only
   after the previous phase settled, so no pixel ever spans the two presets.
 - **Layout** (story: a 1 px gutter where the width allows; < 48 → at least 1 px, as many as fit; review batch 3: a
@@ -239,6 +282,30 @@ row), D14 (why a ladder; rate 0, 0x07 the fallback), dlab-c4's result (phases, m
   `slotDone`, over the stage's slots that drove pixels: the settling slot drives none, so its period is the scheduler's
   floor) and the preset's W>K dose that painted the base; both counters clear at each stage's end, a run's start and
   the cap's restart.
+- **Follow-up batch (2026-10-18):** a pause counts only between two pulse slots of a stage (`ladderMidStage()`:
+  pulsing, 0 < stage slots < 24), since one before the first pulse or after the last leaves the rhythm whole; the
+  stage slot it fell after, s, marks columns n > 24 − s as carrying the gap. The pulse interval is the longest
+  start-to-start time between two pulse slots (the activity has the slot start times), which shows a skipped slot
+  period or a pause where the slot's own length does not; the doc names it the figure to read.
+- **Pause-symbol marker (owner ask 11):** `markerRect()` stays the marker's box in every mode (dlab-c4's dash, the
+  Ladder's 32 x 16); `markerBars()` puts two full-height bars of (w − 8) / 2 at its edges, and `retargetMarker`,
+  `markerSettled` and `targetAt` read only the bars, so the gap keeps the band's shade, is never driven and never
+  delays the hold. A box narrower than 10 px would leave no bar: then one bar fills it.
+- **Shade names (owner ask 12):** `shadeName` (was `shadeLetter`, smaller to rename than to add) returns D14's level
+  numbers, the even levels 0, 2, 4, 6, so dlab-g2's odd levels slot in without renaming. Only what the user sees
+  changes: Tuning's row labels (and so its `tune` log lines), the `gray hold:` lines, the stage line; code-level
+  notation (`GrayPreset.h`'s comments, enum names) and the preset file keep K, D, L, W; the stock bench keeps its own
+  labels.
+- **Fast waits for the paint (owner ask 13):** Slow's paint-settled state is now shared (`painted_`, `crossStartMs_`):
+  Fast's rectangles stay at −RECT_W until a slot drives nothing, which starts the crossing at that slot's clock (with
+  Hold on after the `fast painted` hold, the clock standing still through it), so `crossingAt` counts from the settle
+  in both modes; the 5 s sweep and 1 s pause are unchanged. A cap clean that drops the painted hold is
+  `SkippedThisCrossing` (the crossing starts without its photo), as Slow's painted spot. The retarget split: the
+  orchestrator's note says no mode exercises it now; as built, the paint's mid-transition retargets are gone (the
+  rectangles no longer land on bands still painting), but Fast's rectangles still move on before the pixels they
+  retargeted settle (about 60 px a slot against a 12 px rectangle on the UltraChip), so the trails behind them are
+  retargeted mid-transition and still exercise the split; the doc's "Fast is the one mode that exercises the retarget
+  split" stays. dlab-c3's deferral about a deliberate mid-transition flip stands either way.
 - **Rewritten guards:** `cancelHold`'s first line (`Running` or no spot → nothing) stays; its if-ladder on the spot
   becomes a switch. `afterSlot` keeps its held block order (heldForPhoto before `holdRun`, dlab-c4).
 
@@ -282,6 +349,16 @@ pending; no commit.
   cap (`SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBothPhotos`), driveRect's direction
   (`GrayModelDriveRect.HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd`), the marker and columns in every turn
   (`LadderColumnsAndMarkerInEveryTurnAtFullSize`).
+- After the follow-up batch (staged over dce6f20f): host suite 2,236 tests, all passed (172 in `test_scan_lut`);
+  `scripts/check_layers.py` passed; `scripts/check_upstream_touches.py` PASS; `./bin/clang-format-fix` twice, the
+  second changing nothing; no new warning in `test/game_display_lab` (the two `-Wdangling-else`, now at lines 792 and
+  797, are dlab-c4's). Matrix audit for the new rows: Hold marker (`HoldMarkerSitsInTheBottomRightCornerInEveryTurn`,
+  `MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn`, `LadderColumnsAndMarkerInEveryTurnAtFullSize`), Fast paint
+  (`FastRectanglesWaitUntilThePaintSettles`, `FastHoldsAtThePaintThenOncePerSweepInItsPause`,
+  `SessionCapCleanInSlowOrFastSkipsTheDroppedSpot`, `SetModeRestartsTheCrossingSpots`), Shade names
+  (`ShadeNamesAndLogNames`; Tuning's labels are device code), Session cap (the extended
+  `SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBothPhotos`), pauses (`LadderMidStageIsBetweenAStagesFirstAndLastPulse`;
+  the line itself is device code).
 - Matrix audit (first pass): Ladder mode (`ModeRowCyclesStaticSlowFastLadder`, `LadderColumnsInEveryTurnAtFullSize`), Stage 1 and
   Hold off (`LadderHoldsAfterEachStageAndEndsAfterTheReturn`, `LadderWithHoldOffRunsTheReturnAtOnceThenEnds`,
   `GrayModelDriveRect.HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd`), Stage 2 and End (the same two scene tests;

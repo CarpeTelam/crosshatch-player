@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -14,7 +15,8 @@
 // bottom in its lane. Pixels below the fourth band (a height not divisible by four) belong to the last band, and lane
 // leftovers to the band's shade. The mode (setMode) sets the rectangles' width and motion:
 // - Fast: RECT_W px wide, sweeping from just off the left edge (-width) to the right edge over SWEEP_MS, linearly,
-//   then hidden for PAUSE_MS, and the cycle repeats (the SSD1677's sweep, dlab-c1).
+//   then hidden for PAUSE_MS, and the cycle repeats (the SSD1677's sweep, dlab-c1). Like Slow's, the rectangles wait
+//   off-screen while the bands paint from white; the sweep clock's first crossing starts once the paint has settled.
 // - Slow: RECT_W_SLOW px wide, the same sweep and pause over a crossing time sized from the slot period and the
 //   preset's longest dose run in slots (slowSweepMs, GrayPreset::longestRunSlots), so a pixel stays under a rectangle
 //   until its transition can finish. The rectangles wait off-screen while the bands paint from white; once the paint
@@ -23,12 +25,13 @@
 //   the flip's offset, +1, +2, +3, +1, ... (flipOffset), so three flips take every pixel through all twelve
 //   transitions between them (slotDone).
 //
-// Holds for photos (story dlab-c4, the epic's D13), with setHold(true) (the Hold row; the Ladder holds whatever the row
-// says, holdsAtSpots): slotDone also decides when
-// a slot reaches a photo spot (HoldSpot): Static's every settle; Slow's painted bands (the slot that measured), its
-// rectangles after a full dwell, and the end of each crossing; Fast's end of each sweep. At a spot the scene shows the
-// hold marker, a MARKER_W px dash at the bottom-right of the logical screen in the bottom band's margin below its last
-// lane's rectangle (markerRect), in the opposite shade of its band, and retargets it; the sweep clock stands still
+// Holds for photos (story dlab-c4, the epic's D13), with setHold(true) (the Hold row), and always in Ladder
+// (holdsAtSpots): slotDone also decides when a slot reaches a photo spot (HoldSpot): Static's every settle; Slow's
+// painted bands (the slot that measured), its rectangles after a full dwell, and the end of each crossing; Fast's
+// painted bands and the end of each sweep; the Ladder's two stage ends. At a spot the scene shows the hold marker, a
+// pause symbol: two bars (markerBars) inside markerRect, a MARKER_W px wide box at the bottom-right of the logical
+// screen (in the bottom band's margin below its last lane's rectangle; in Ladder MARKER_PX high under the columns), in
+// the opposite shade of its band, the gap between them never driven; the sweep clock stands still
 // (clockStill) while the task runs slots until the marker settles, then the run holds (Held). resumeHold turns the
 // marker back to its band's shade; once it has settled the run goes on (Static's flip only then). The marker's slots
 // never reach the modes' decisions, so they never settle Static, count as its slots, or feed Slow's measurement.
@@ -61,14 +64,15 @@ enum class SweepMode : uint8_t { Static, Slow, Fast, Ladder };
 SweepMode nextMode(SweepMode mode);
 
 // The photo spots a run holds at (D13).
-enum class HoldSpot : uint8_t { StaticSettle, SlowPainted, SlowDwelt, SlowCrossed, FastPause, Ladder };
+enum class HoldSpot : uint8_t { StaticSettle, SlowPainted, SlowDwelt, SlowCrossed, FastPainted, FastPause, Ladder };
 
 // The spot's name in the `gray hold:` log line: "static settle", "slow painted", "slow dwelt", "slow crossed", "fast
-// pause", "ladder".
+// painted", "fast pause", "ladder".
 const char* holdSpotName(HoldSpot spot);
 
-// A shade's letter, K, D, L or W (the log and the Tuning rows).
-char shadeLetter(Shade shade);
+// A shade's name where the user sees it (the log and the Tuning rows): its seven-level number (D14), '0' black, '2'
+// dark gray, '4' light gray, '6' white; the odd levels 1, 3 and 5 arrive with dlab-g2.
+char shadeName(Shade shade);
 
 // Why a crossing passed a photo spot without holding (Hold on).
 enum class SpotSkip : uint8_t {
@@ -97,11 +101,13 @@ enum class HoldPhase : uint8_t {
 enum class HoldDrop : uint8_t {
   // Static, the marker going out (or held): the sequence restarts at flip 0 and holds again at its settle.
   StaticAgainAtFlipZero,
-  // Slow or Fast, the marker going out: that spot is skipped for this crossing; the next spot holds.
+  // Slow or Fast, the marker going out: that spot is skipped for this crossing (a painted spot: the crossing starts
+  // without its photo); the next spot holds.
   SkippedThisCrossing,
   // Any mode, the marker on its way back: the photo was taken; the way back is cut off by the repaint.
   WayBackCutOff,
-  // Ladder, the marker going out (or held): the ladder restarts from the base and holds again at that stage's end.
+  // Ladder, the marker going out (or held): the ladder restarts from the base, so it holds at `ladder 1` first again,
+  // whichever stage's hold was dropped.
   LadderFromBase,
 };
 
@@ -113,7 +119,7 @@ enum class LadderStage : uint8_t {
   Ladder,
   // Stage 2: column n's n pulses back toward its origin.
   Return,
-  // The return settled (and, with Hold on, held and resumed): the run is over.
+  // The return settled, held and resumed (the Ladder always holds): the run is over.
   Done,
 };
 
@@ -184,7 +190,10 @@ struct SceneStep {
   std::optional<StaticSettled> settled;
   // Slow: the paint settled in this slot; the crossing is sized from the paint's longest slot and starts now.
   bool measured = false;
-  // A photo spot (Hold on): the marker was retargeted to its hold shade and the clock stands still from here.
+  // Fast: the paint settled in this slot after this many slots that drove pixels; the sweep starts now.
+  std::optional<uint32_t> fastPainted;
+  // A photo spot that holds (holdsAtSpots: Hold on, or the Ladder): the marker was retargeted to its hold shade and
+  // the clock stands still from here.
   std::optional<HoldStart> hold;
   // The marker settled on its hold shade in this slot: the run holds until a resume.
   bool held = false;
@@ -214,10 +223,12 @@ class TransitionScene {
   static constexpr int RECT_INSET = 8;
   static constexpr int BANDS = 4;
   static constexpr int LANES = 3;
-  // The hold marker: MARKER_W px wide, at most MARKER_PX high (the bottom band's margin below its last lane's
-  // rectangle); a MARKER_PX square when the bands have no lanes (rectHeight() <= 0).
+  // The hold marker's box: MARKER_W px wide, at most MARKER_PX high (the bottom band's margin below its last lane's
+  // rectangle; in Ladder MARKER_PX); a MARKER_PX square when the bands have no lanes (rectHeight() <= 0). It shows a
+  // pause symbol: two bars MARKER_GAP px apart (12, 8, 12 at 32 wide).
   static constexpr int MARKER_W = 32;
   static constexpr int MARKER_PX = 16;
+  static constexpr int MARKER_GAP = 8;
   // Ladder: columns per half, column n getting n pulses; a pulse count is a dose count, so at most DOSE_MAX.
   static constexpr int LADDER_STEPS = 24;
   static_assert(LADDER_STEPS <= DOSE_MAX, "a ladder column's pulses are one driveRect's doses");
@@ -231,7 +242,8 @@ class TransitionScene {
   // the same slots. Restarts Static's flips, Slow's measurement, the Ladder (at its base) and the hold (Running);
   // keeps setHold's choice.
   void setMode(SweepMode mode, uint32_t dwellSlots);
-  // The Hold row: whether a run holds at its photo spots (off by default, dlab-c3's behaviour). Back to Running.
+  // The Hold row: whether a run holds at its photo spots (off by default, dlab-c3's behaviour); the Ladder holds either
+  // way (holdsAtSpots). Back to Running.
   void setHold(bool on);
   bool holdOn() const { return holdOn_; }
   HoldPhase holdPhase() const { return phase_; }
@@ -242,9 +254,11 @@ class TransitionScene {
   // The crossing time (Fast, and Slow once measured; Static's rectangles do not move; Ladder: 0, nothing crosses).
   uint32_t sweepMs() const { return sweepMs_; }
   // Slow before its measurement: the crossing is not sized yet and the rectangles wait off-screen.
-  bool slowPending() const { return mode_ == SweepMode::Slow && !slowMeasured_; }
-  // The slot period Slow's crossing was sized from (0 before its measurement).
-  uint32_t slowPeriodUs() const { return slowMeasured_ ? slowPeriodUs_ : 0; }
+  bool slowPending() const { return mode_ == SweepMode::Slow && !painted_; }
+  // Slow or Fast before the bands' paint has settled: the rectangles wait off-screen.
+  bool paintPending() const { return (mode_ == SweepMode::Slow || mode_ == SweepMode::Fast) && !painted_; }
+  // The slot period Slow's crossing was sized from (0 before its measurement; always 0 in Fast).
+  uint32_t slowPeriodUs() const { return painted_ ? slowPeriodUs_ : 0; }
   // Slow's crossing time for a slot period on a logical width `logicalW`: the rectangle covers a pixel for at least
   // `dwellSlots` periods, rounded up to a millisecond, at most SLOW_SWEEP_MAX_MS.
   static uint32_t slowSweepMs(uint32_t slotPeriodUs, int logicalW, uint32_t dwellSlots);
@@ -254,8 +268,8 @@ class TransitionScene {
   bool sweepCapped() const { return sweepCapped_; }
 
   // The rectangles' left edge at `elapsedMs` (all twelve share it); nothing during the pause, and nothing in Ladder,
-  // which has none. Slow holds them just off the left edge until its measurement, and starts the crossing at that
-  // slot's clock.
+  // which has none. Slow and Fast hold them just off the left edge until the paint has settled, and start the crossing
+  // at that slot's clock.
   std::optional<int> rectX(uint32_t elapsedMs) const;
   // The shade logical pixel (lx, ly) shows at `elapsedMs` (the marker's hold shade while it is out; in Ladder its
   // half's origin, which the base paints: the stages' pulses are driveRect's, not the scene's).
@@ -273,11 +287,12 @@ class TransitionScene {
   // reapply, or with Hold on, holds first and flips once resumed. Slow, until measured: each slot whose drive scan was
   // delivered offers its `periodUs`, and the first slot that drove none (the bands' paint from white has settled)
   // sizes the crossing from the largest offered and starts it at `elapsedMs` (the rectangles were off-screen, so
-  // nothing to reapply). Slow, measured, and Fast: the crossing's photo spots. Ladder: the base ends at its first slot
-  // that drove none, and stage 1 starts in `model`; in stage 1 and 2 each slot drives the next column in `model` (end-
-  // aligned), and the first slot that drove none after LADDER_STEPS is the stage's end (ladderSettled), a photo spot
-  // whose next stage (or the end) waits for the marker to be back. At a spot that holds (holdsAtSpots), the marker in
-  // `model` is retargeted to its hold shade with `preset`.
+  // nothing to reapply). Fast, until painted: the first slot that drove none starts the sweep at `elapsedMs`
+  // (fastPainted, the FastPainted spot). Slow, measured, and Fast, painted: the crossing's photo spots. Ladder: the
+  // base ends at its first slot that drove none, and stage 1 starts in `model`; in stage 1 and 2 each slot drives the
+  // next column in `model` (end- aligned), and the first slot that drove none after LADDER_STEPS is the stage's end
+  // (ladderSettled), a photo spot whose next stage (or the end) waits for the marker to be back. At a spot that holds
+  // (holdsAtSpots), the marker in `model` is retargeted to its hold shade with `preset`.
   SceneStep slotDone(GrayModel& model, const GrayPreset& preset, size_t driven, bool driveDone, uint32_t periodUs,
                      uint32_t elapsedMs);
   // The task resumed the run: from Held, the marker in `model` is retargeted back to its band's shade (MarkerBack) and
@@ -299,9 +314,13 @@ class TransitionScene {
   // The shade the bottom band shows now, which the marker sits on (and returns to); in Ladder the bottom half's origin,
   // black, which the marker's rows belong to.
   Shade markerBandShade() const { return mode_ == SweepMode::Ladder ? Shade::K : shown(bandShade(BANDS - 1)); }
+  // The pause symbol's two bars inside markerRect(), logical: each (w - MARKER_GAP) / 2 wide at its left and right
+  // edge, full height, the gap between them never driven; on a box too narrow for both and the gap, the whole box and
+  // an empty second bar.
+  std::array<ScreenRect, 2> markerBars() const;
   // The marker's shade now: markerBandShade() moved on by 2 while it is out, markerBandShade() otherwise.
   Shade markerShade() const;
-  // No pixel under the marker has a dose left in `model`.
+  // No pixel of the marker's bars has a dose left in `model`.
   bool markerSettled(const GrayModel& model) const;
   // The offset flip `flip` moves every shade by: 0 for the first paint, then +1, +2, +3, +1, ...
   static uint8_t flipOffset(uint32_t flip);
@@ -323,6 +342,14 @@ class TransitionScene {
   // Ladder: column `n`'s logical rectangle (1..ladderLayout's columns) in `half`; w or h 0 for no such column.
   ScreenRect ladderColumn(LadderHalf half, int n) const;
   LadderStage ladderStage() const { return ladderStage_; }
+  // Ladder: the current stage's slots run so far (0..LADDER_STEPS; the base's: those that drove pixels).
+  uint32_t ladderStageSlots() const { return ladderSlots_; }
+  // Ladder: between two pulse slots of a stage (pulsing, at least one stage slot run and at least one to come): a pause
+  // here puts a gap inside the stage's one-pulse-a-slot rhythm, after stage slot ladderStageSlots(), so columns n >
+  // LADDER_STEPS - ladderStageSlots() carry it; a pause before the first pulse or after the last does not.
+  bool ladderMidStage() const {
+    return ladderPulsing() && ladderSlots_ > 0 && ladderSlots_ < static_cast<uint32_t>(LADDER_STEPS);
+  }
   // Ladder: back to the base, no stage slots counted, no advance pending (setMode, a replay, the session cap's clean).
   void restartLadder();
   // The next slot delivers a ladder stage's pulses (Ladder, Running, stage 1 or 2): the task runs it with heldRhythm,
@@ -389,7 +416,7 @@ class TransitionScene {
   void dropHold();
   // A new crossing `cycle` (from 0): no slot counted toward the dwell, no spot passed.
   void resetCrossingSpots(uint32_t cycle);
-  // The marker's panel pixels retargeted to markerShade().
+  // The marker's bars' panel pixels retargeted to markerShade().
   void retargetMarker(GrayModel& model, const GrayPreset& preset) const;
   // A slot of the marker's (out or back): counted; true, with the count in `step`, once it has settled in `model`.
   bool markerArrived(const GrayModel& model, SceneStep& step);
@@ -407,13 +434,15 @@ class TransitionScene {
   uint32_t flips_ = 0;
   uint8_t shift_ = 0;
   uint32_t settleSlots_ = 0;
-  // Slow: the dwell the crossing is sized for, whether the paint has settled and sized it since setMode, the longest
-  // slot period seen while painting (then the one it was sized from), and the sweep clock at which the crossing
-  // started.
+  // Slow and Fast: the dwell Slow's crossing is sized for, whether the bands' paint has settled since setMode (Slow:
+  // and sized the crossing), Slow's longest slot period seen while painting (then the one it was sized from), and the
+  // sweep clock at which the first crossing started.
   uint32_t dwellSlots_ = 1;
-  bool slowMeasured_ = false;
+  bool painted_ = false;
   uint32_t slowPeriodUs_ = 0;
-  uint32_t slowStartMs_ = 0;
+  uint32_t crossStartMs_ = 0;
+  // Fast: the slots that drove pixels while the bands painted.
+  uint32_t paintSlots_ = 0;
   // Holds: the Hold row's choice, the phase, the marker out (its hold shade), the spot in progress, the marker's slots
   // so far, and Static's flip waiting for the resume.
   bool holdOn_ = false;

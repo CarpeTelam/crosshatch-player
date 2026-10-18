@@ -668,6 +668,7 @@ STR_GAMES_DLAB_MODE_SLOW: "Slow: 48 px rectangles, the longest dose run under ea
 STR_GAMES_DLAB_MODE_FAST: "Fast: 12 px rectangles crossing in 5 s"
 STR_GAMES_DLAB_MODE_LADDER: "Ladder: 1 to 24 pulses from white and from black, then back"
 STR_GAMES_DLAB_HOLD_PHOTOS: "Hold for photos"
+STR_GAMES_DLAB_HOLD_LADDER: "Always in Ladder"
 STR_GAMES_DLAB_CLEAN: "Clean"
 STR_GAMES_DLAB_CLEAN_DESC: "Clean the panel to white without a run"
 STR_GAMES_DLAB_STATS: "%u.%u scans/s, %u ms per scan"

@@ -55,8 +55,12 @@ const char* modeText(const SweepMode mode) {
   return "";
 }
 
-// The Hold row's line.
-const char* holdText(const bool on) { return on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF); }
+// The Hold row's line: On or Off, or that the Ladder always holds, whatever the row says (it keeps its value for the
+// other modes).
+const char* holdText(const bool on, const SweepMode mode) {
+  if (mode == SweepMode::Ladder) return tr(STR_GAMES_DLAB_HOLD_LADDER);
+  return on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+}
 
 // The mode's name in the log.
 const char* modeName(const SweepMode mode) {
@@ -219,7 +223,7 @@ void TransitionTestActivity::buildRows() {
   };
   set(Row::Run, tr(STR_GAMES_DLAB_RUN), status);
   set(Row::Mode, tr(STR_GAMES_DLAB_MODE), modeText(sweepMode));
-  set(Row::Hold, tr(STR_GAMES_DLAB_HOLD_PHOTOS), holdText(holdOn));
+  set(Row::Hold, tr(STR_GAMES_DLAB_HOLD_PHOTOS), holdText(holdOn, sweepMode));
   set(Row::Clean, tr(STR_GAMES_DLAB_CLEAN), tr(STR_GAMES_DLAB_CLEAN_DESC));
   set(Row::Stats, tr(STR_GAMES_DLAB_SPEED), statsText);
   set(Row::Controls, tr(STR_GAMES_DLAB_CONTROLS), tr(STR_GAMES_DLAB_TRANSITION_CONTROLS));
@@ -392,6 +396,7 @@ void TransitionTestActivity::stepMode() {
     RenderLock lock(*this);
     sweepMode = GameDisplayLab::nextMode(sweepMode);
     rowItems[static_cast<size_t>(Row::Mode)].subtitle = modeText(sweepMode);
+    rowItems[static_cast<size_t>(Row::Hold)].subtitle = holdText(holdOn, sweepMode);
   }
   LOG_INF("DLAB", "transition test mode: %s", modeName(sweepMode));
   requestUpdate();
@@ -402,7 +407,7 @@ void TransitionTestActivity::toggleHold() {
   {
     RenderLock lock(*this);
     holdOn = !holdOn;
-    rowItems[static_cast<size_t>(Row::Hold)].subtitle = holdText(holdOn);
+    rowItems[static_cast<size_t>(Row::Hold)].subtitle = holdText(holdOn, sweepMode);
   }
   LOG_INF("DLAB", "transition test hold: %s", holdOn ? "on" : "off");
   requestUpdate();
@@ -555,8 +560,14 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     scheduler.stop();
     if (!requests.run) {
       LOG_INF("DLAB", "gray sweep paused at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
-      // A pause mid-stage puts a gap in the Ladder's one-pulse-a-slot rhythm: its settle line counts them.
-      if (scene.ladderPulsing()) ++ladderPauses;
+      // A pause between two pulse slots of a Ladder stage puts a gap in its one-pulse-a-slot rhythm: its settle line
+      // counts them and names the first few stage slots they fell after.
+      if (scene.ladderMidStage()) {
+        if (ladderPauses < LADDER_PAUSES_NAMED) {
+          ladderPauseSlots[ladderPauses] = static_cast<uint8_t>(scene.ladderStageSlots());
+        }
+        ++ladderPauses;
+      }
     }
   }
   const GrayPreset& preset = lab.preset();
@@ -566,17 +577,18 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     sceneMs = 0;
     scene.restartFlips();
     scene.restartLadder();
-    ladderPauses = 0;
-    ladderSlotUs = 0;
+    resetLadderStage();
     scene.applyAll(model, 0, preset);
     sceneStale = false;
     // Slow's crossing is sized once the paint has settled (`gray slow:` says it); Static's rectangles do not cross,
     // and the Ladder has none (its layout line follows).
     const bool ladder = scene.mode() == SweepMode::Ladder;
-    char crossing[24];
+    char crossing[32];
     char rects[16];
     if (scene.slowPending()) {
       snprintf(crossing, sizeof(crossing), "pending measurement");
+    } else if (scene.paintPending()) {
+      snprintf(crossing, sizeof(crossing), "%lu ms after the paint", static_cast<unsigned long>(scene.sweepMs()));
     } else if (ladder) {
       snprintf(crossing, sizeof(crossing), "none");
     } else {
@@ -619,7 +631,7 @@ bool TransitionTestActivity::serve(const GameDisplayLab::SweepControl::Requests&
     // nothing unless it holds).
     if (scene.resumeHold(model, preset)) {
       heldForPhoto.store(false);
-      LOG_INF("DLAB", "gray hold: resumed; marker back to %c", GameDisplayLab::shadeLetter(scene.markerShade()));
+      LOG_INF("DLAB", "gray hold: resumed; marker back to %c", GameDisplayLab::shadeName(scene.markerShade()));
     }
   }
   return true;
@@ -687,8 +699,7 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
     // scene paints, unless the clean cut off the marker's way back from `ladder 2`: both photos are taken, and the run
     // ends as a finished one does.
     if (scene.mode() == SweepMode::Ladder) {
-      ladderPauses = 0;
-      ladderSlotUs = 0;
+      resetLadderStage();
       if (scene.ladderCleaned(dropped)) {
         LOG_INF("DLAB", "gray ladder: done (the session-cap clean came after both photos)");
         sweepEnd = SweepEnd::Finished;
@@ -789,6 +800,16 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
   // The slot's real length, from before the scene update to after the commit: the scans plus the CPU work over every
   // pixel, which the scheduler's period (busy time + MARGIN_US) leaves out.
   const uint32_t periodUs = scheduler.periodUs() > endUs - slotStartUs ? scheduler.periodUs() : endUs - slotStartUs;
+  // A Ladder stage's pulse slots, before slotDone moves the stage on: the longest slot, and the longest start-to-start
+  // interval between two of them (a skipped slot period or a pause shows there, not in the slot's own length).
+  if (scene.ladderPulsing() && slot.driven > 0) {
+    if (periodUs > ladderSlotUs) ladderSlotUs = periodUs;
+    if (ladderPulsed && slotStartUs - ladderLastStartUs > ladderIntervalUs) {
+      ladderIntervalUs = slotStartUs - ladderLastStartUs;
+    }
+    ladderPulsed = true;
+    ladderLastStartUs = slotStartUs;
+  }
   if (!afterSlot(slot.driven, slot.driveDone, periodUs, ms)) return false;
   if (endUs - statsSinceUs >= STATS_EVERY_US) reportStats(endUs);
   return true;
@@ -796,8 +817,6 @@ bool TransitionTestActivity::runSlot(const uint32_t nowUs) {
 
 bool TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone, const uint32_t periodUs,
                                        const uint32_t elapsedMs) {
-  // A Ladder stage's longest pulse slot, read before slotDone moves the stage on.
-  if (scene.ladderPulsing() && driven > 0 && periodUs > ladderSlotUs) ladderSlotUs = periodUs;
   const GameDisplayLab::SceneStep step = scene.slotDone(model, lab.preset(), driven, driveDone, periodUs, elapsedMs);
   if (step.settled) {
     LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
@@ -807,8 +826,11 @@ bool TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
   }
   if (step.ladderSettled) {
     logLadderSettled(*step.ladderSettled);
-    ladderPauses = 0;
-    ladderSlotUs = 0;
+    resetLadderStage();
+  }
+  if (step.fastPainted) {
+    LOG_INF("DLAB", "gray fast: paint settled after %lu slots; the sweep starts",
+            static_cast<unsigned long>(*step.fastPainted));
   }
   if (step.measured) {
     // The paint's longest slot, which the crossing is sized from.
@@ -825,8 +847,8 @@ bool TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
   if (step.hold) {
     // A photo spot: the scene put the marker out and stopped the sweep clock; the next slots drive the marker.
     LOG_INF("DLAB", "gray hold: %s %lu, marker %c over %c", GameDisplayLab::holdSpotName(step.hold->spot),
-            static_cast<unsigned long>(step.hold->count), GameDisplayLab::shadeLetter(scene.markerShade()),
-            GameDisplayLab::shadeLetter(scene.markerBandShade()));
+            static_cast<unsigned long>(step.hold->count), GameDisplayLab::shadeName(scene.markerShade()),
+            GameDisplayLab::shadeName(scene.markerBandShade()));
   }
   if (step.held) {
     // Held for a photo: nothing is driven until Next (or Confirm) resumes, which drives the marker back first. The
@@ -850,11 +872,19 @@ bool TransitionTestActivity::afterSlot(const size_t driven, const bool driveDone
   // A Static flip retargets every pixel at the next slot.
   if (step.reapply) sceneStale = true;
   if (!step.finished) return true;
-  // The Ladder's return settled (and was held and resumed with Hold on): the run ends as Finished, and the rows come
-  // back with their FULL refresh.
+  // The Ladder's return settled, was held (the Ladder always holds) and resumed: the run ends as Finished, and the rows
+  // come back with their FULL refresh.
   LOG_INF("DLAB", "gray ladder: done");
   sweepEnd = SweepEnd::Finished;
   return false;
+}
+
+void TransitionTestActivity::resetLadderStage() {
+  ladderPauses = 0;
+  ladderSlotUs = 0;
+  ladderIntervalUs = 0;
+  ladderLastStartUs = 0;
+  ladderPulsed = false;
 }
 
 void TransitionTestActivity::logLadderLayout() const {
@@ -898,17 +928,29 @@ void TransitionTestActivity::logLadderSettled(const GameDisplayLab::LadderSettle
       const char* rate = backend ? backend->rateLabel(preset.rateIndex) : nullptr;
       const GameDisplayLab::LadderLayout layout = scene.ladderLayout();
       const unsigned baseDose =
-          preset.dose[static_cast<size_t>(Shade::W)][static_cast<size_t>(Shade::K)];  // W>K, which painted the base
-      char paused[32] = "";
+          preset.dose[static_cast<size_t>(Shade::W)][static_cast<size_t>(Shade::K)];  // 6>0, which painted the base
+      // ", paused N times after stage slots a, b, c, d..." (columns n > 24 - slot carry each gap); nothing for none.
+      char paused[64] = "";
       if (ladderPauses > 0) {
-        snprintf(paused, sizeof(paused), ", paused %lu times", static_cast<unsigned long>(ladderPauses));
+        int used = snprintf(paused, sizeof(paused), ", paused %lu times after stage slots",
+                            static_cast<unsigned long>(ladderPauses));
+        const uint32_t named = ladderPauses < LADDER_PAUSES_NAMED ? ladderPauses : LADDER_PAUSES_NAMED;
+        for (uint32_t i = 0; i < named && used > 0 && static_cast<size_t>(used) < sizeof(paused); ++i) {
+          used += snprintf(paused + used, sizeof(paused) - static_cast<size_t>(used), "%s %u", i == 0 ? "" : ",",
+                           static_cast<unsigned>(ladderPauseSlots[i]));
+        }
+        if (ladderPauses > LADDER_PAUSES_NAMED && used > 0 && static_cast<size_t>(used) < sizeof(paused)) {
+          snprintf(paused + used, sizeof(paused) - static_cast<size_t>(used), ", ...");
+        }
       }
       LOG_INF("DLAB",
-              "gray ladder: stage %u settled after %lu slots: rate %u (%s), swap %u, one pulse per slot%s, slots up to "
-              "%lu ms, base W>K dose %u, column n %s n pulses (end-aligned), %d px columns, gutter %d px",
+              "gray ladder: stage %u settled after %lu slots: rate %u (%s), swap %u, one pulse per slot%s, pulse "
+              "interval up to %lu ms, slots up to %lu ms, base 6>0 dose %u, column n %s n pulses (end-aligned), %d px "
+              "columns, gutter %d px",
               settled.stage == GameDisplayLab::LadderStage::Ladder ? 1u : 2u, static_cast<unsigned long>(settled.slots),
               static_cast<unsigned>(preset.rateIndex), rate ? rate : "?", static_cast<unsigned>(preset.swapPolarity),
-              paused, static_cast<unsigned long>(ladderSlotUs / 1000), baseDose,
+              paused, static_cast<unsigned long>(ladderIntervalUs / 1000),
+              static_cast<unsigned long>(ladderSlotUs / 1000), baseDose,
               settled.stage == GameDisplayLab::LadderStage::Ladder ? "has had" : "has been driven back", layout.width,
               layout.gutter);
       return;

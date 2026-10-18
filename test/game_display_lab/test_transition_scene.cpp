@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -79,11 +80,33 @@ TEST(TransitionScene, ToPanelEqualsTheRenderersRotation) {
   }
 }
 
+// Fast's paint settled at sweep clock `atMs` (a slot that drove nothing, Hold off): the sweep starts there.
+void settleFastPaint(TransitionScene& scene, const uint32_t atMs = 0) {
+  GrayModel none;
+  const GrayPreset preset = GrayPreset::inkBoyDefaults();
+  const SceneStep step = scene.slotDone(none, preset, 0, true, 100000, atMs);
+  ASSERT_TRUE(step.fastPainted.has_value());
+}
+
+// A Fast scene whose paint settled at clock 0, so its sweep runs on the sweep clock as dlab-c1's did.
+TransitionScene sweepingFast(const PanelTurn turn, const int lw, const int lh, const int pw, const int ph) {
+  TransitionScene scene(turn, lw, lh, pw, ph);
+  settleFastPaint(scene);
+  return scene;
+}
+
 TEST(TransitionScene, RectangleSweepsThenPauses) {
-  // Fast, the default and today's sweep: 12 px over 5 s, then 1 s hidden.
+  // Fast, the default and today's sweep: 12 px over 5 s, then 1 s hidden, once the paint has settled.
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
   EXPECT_EQ(scene.mode(), SweepMode::Fast);
   for (int pass = 0; pass < 2; ++pass) {
+    // Before the paint settles the rectangles wait just off the left edge, whatever the clock.
+    EXPECT_TRUE(scene.paintPending());
+    EXPECT_EQ(scene.rectX(0), -12);
+    EXPECT_EQ(scene.rectX(2500), -12);
+    EXPECT_EQ(scene.rectX(5500), -12);
+    settleFastPaint(scene);
+    EXPECT_FALSE(scene.paintPending());
     EXPECT_EQ(scene.rectW(), 12);
     EXPECT_EQ(scene.sweepMs(), 5000u);
     EXPECT_EQ(scene.rectX(0), -12);
@@ -99,7 +122,7 @@ TEST(TransitionScene, RectangleSweepsThenPauses) {
 
 TEST(TransitionScene, BandsAndLanesHoldTheOtherShadesInOrder) {
   // 800 x 480: bands of 120, lanes of 40, rectangles 24 high from 8 px into each lane.
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
   EXPECT_EQ(scene.bandHeight(), 120);
   EXPECT_EQ(scene.laneHeight(), 40);
   EXPECT_EQ(scene.rectHeight(), 24);
@@ -152,7 +175,7 @@ TEST(TransitionScene, ApplyAllRetargetsEveryPixelToTheSceneInEveryTurn) {
     SceneBench b(PW, PH);
     const int lw = portrait(turn) ? PH : PW;
     const int lh = portrait(turn) ? PW : PH;
-    const TransitionScene scene(turn, lw, lh, PW, PH);
+    const TransitionScene scene = sweepingFast(turn, lw, lh, PW, PH);
     scene.applyAll(b.model, 1000, b.preset);
     for (int ly = 0; ly < lh; ++ly) {
       for (int lx = 0; lx < lw; ++lx) {
@@ -174,7 +197,7 @@ TEST(TransitionScene, UpdateMovesOnlyTheRectangles) {
     const int pw = portrait(turn) ? HH : W;
     const int ph = portrait(turn) ? W : HH;
     SceneBench b(pw, ph);
-    const TransitionScene scene(turn, W, HH, pw, ph);
+    const TransitionScene scene = sweepingFast(turn, W, HH, pw, ph);
     const uint32_t prev = 1000;  // x 9
     const uint32_t now = 1500;   // x 20: the new rectangle overlaps the old one by a pixel
     scene.applyAll(b.model, prev, b.preset);
@@ -207,7 +230,7 @@ TEST(TransitionScene, UpdateIntoThePauseClearsTheRectanglesAndBackStartsThem) {
   constexpr int W = 96;
   constexpr int HH = 480;
   SceneBench b(W, HH);
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
   scene.applyAll(b.model, 4990, b.preset);
   scene.update(b.model, 4990, 5200, b.preset);
   for (int y = 0; y < HH; ++y) {
@@ -236,7 +259,7 @@ void expectRectanglesMoved(const uint32_t prevMs, const uint32_t nowMs) {
   constexpr int W = 96;
   constexpr int HH = 480;
   SceneBench b(W, HH);
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
   scene.applyAll(b.model, prevMs, b.preset);
   while (b.model.activeCount() > 0) b.model.commit(true, true, b.preset);
   const std::vector<uint8_t> atPrev = b.pixels;
@@ -543,9 +566,31 @@ struct TaskSim {
   uint8_t target(const int x, const int y) const { return b.model.target(x, y); }
 };
 
+bool inRect(const ScreenRect& r, const int lx, const int ly) {
+  return lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h;
+}
+
+// A logical pixel of the pause symbol's two bars (never the gap between them).
 bool inMarker(const TransitionScene& scene, const int lx, const int ly) {
+  for (const ScreenRect& bar : scene.markerBars()) {
+    if (inRect(bar, lx, ly)) return true;
+  }
+  return false;
+}
+
+// The pause symbol inside markerRect: two full-height bars of (w - MARKER_GAP) / 2 at its left and right edges.
+void expectBars(const TransitionScene& scene, const char* what) {
   const ScreenRect m = scene.markerRect();
-  return lx >= m.x && lx < m.x + m.w && ly >= m.y && ly < m.y + m.h;
+  const std::array<ScreenRect, 2> bars = scene.markerBars();
+  const int bar = (m.w - TransitionScene::MARKER_GAP) / 2;
+  EXPECT_EQ(bars[0].x, m.x) << what;
+  EXPECT_EQ(bars[1].x + bars[1].w, m.x + m.w) << what;
+  for (const ScreenRect& b : bars) {
+    EXPECT_EQ(b.w, bar) << what;
+    EXPECT_EQ(b.y, m.y) << what;
+    EXPECT_EQ(b.h, m.h) << what;
+  }
+  EXPECT_EQ(bars[1].x - (bars[0].x + bars[0].w), m.w - 2 * bar) << what;  // the gap
 }
 
 TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
@@ -562,13 +607,16 @@ TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
     EXPECT_EQ(m.w, TransitionScene::MARKER_PX);
     EXPECT_EQ(m.h, TransitionScene::MARKER_PX);
     EXPECT_GE(m.y, 3 * sim.scene.bandHeight()) << int(turn);  // inside the bottom band
-    EXPECT_EQ(sim.scene.markerShade(), Shade::W);             // not out: its band's shade
+    expectBars(sim.scene, "square");                          // 16 wide: bars of 4, a gap of 8
+    EXPECT_EQ(sim.scene.markerBars()[0].w, 4);
+    EXPECT_EQ(sim.scene.markerShade(), Shade::W);  // not out: its band's shade
     // Paint, settle: the marker goes out to the opposite of the bottom band's W, D, and nowhere else.
     std::optional<HoldStart> hold;
     for (int n = 0; n < 50 && !hold; ++n) hold = sim.slot().hold;
     ASSERT_TRUE(hold.has_value()) << int(turn);
     EXPECT_EQ(sim.scene.markerShade(), Shade::D);
-    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square).
+    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square): the bars D,
+    // the gap between them and everything else W.
     for (int ly = std::max(lh - 24, 3 * sim.scene.bandHeight()); ly < lh; ++ly) {
       for (int lx = lw - 24; lx < lw; ++lx) {
         int px = 0;
@@ -822,17 +870,58 @@ TEST(TransitionScene, SlowHoldsAtThePaintAtTheFullDwellAndAtTheCrossingsEnd) {
   }
 }
 
-TEST(TransitionScene, FastHoldsOncePerSweepInItsPause) {
+TEST(TransitionScene, FastHoldsAtThePaintThenOncePerSweepInItsPause) {
   TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-  const std::vector<SpotSeen> seen = runToHolds(sim, 3);
-  ASSERT_EQ(seen.size(), 3u);
+  const std::vector<SpotSeen> seen = runToHolds(sim, 4);
+  ASSERT_EQ(seen.size(), 4u);
+  // The painted bands, before the first sweep: the rectangles still off the left edge.
+  EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);
+  EXPECT_EQ(seen[0].hold.count, 0u);
+  EXPECT_EQ(seen[0].x, -TransitionScene::RECT_W);
+  EXPECT_GT(seen[0].clockMs, 0u);  // the paint took slots, which the sweep does not count
+  // Every pause's spot counted from the settle, not from the run's start.
+  const uint32_t settleMs = seen[0].clockMs;
   const uint32_t cycle = TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS;
   for (uint32_t n = 0; n < 3; ++n) {
-    EXPECT_EQ(seen[n].hold.spot, HoldSpot::FastPause);
-    EXPECT_EQ(seen[n].hold.count, n + 1);
-    EXPECT_EQ(seen[n].clockMs, n * cycle + TransitionScene::SWEEP_MS);  // the pause's first 100 ms slot
-    EXPECT_FALSE(seen[n].x.has_value());
+    EXPECT_EQ(seen[n + 1].hold.spot, HoldSpot::FastPause);
+    EXPECT_EQ(seen[n + 1].hold.count, n + 1);
+    EXPECT_EQ(seen[n + 1].clockMs, settleMs + n * cycle + TransitionScene::SWEEP_MS);  // the pause's first slot
+    EXPECT_FALSE(seen[n + 1].x.has_value());
   }
+}
+
+// Fast waits for the bands' paint (story dlab-g1's batch, the owner's ask): no rectangle pixel is retargeted while the
+// bands fill from white; the slot that drives nothing starts the sweep (Hold off: no hold, the crossing from the next
+// slot's clock), and the settle's line has the paint's slots.
+TEST(TransitionScene, FastRectanglesWaitUntilThePaintSettles) {
+  constexpr int W = 96;
+  constexpr int HH = 480;
+  TaskSim sim(W, HH, SweepMode::Fast, 4, false);
+  SceneStep step;
+  uint32_t paintSlots = 0;
+  for (int n = 0; n < 50 && !step.fastPainted; ++n) {
+    EXPECT_TRUE(sim.scene.paintPending());
+    step = sim.slot();
+    if (!step.fastPainted) ++paintSlots;
+    // Every pixel's target is its band's, the settling slot's included: no rectangle has landed yet.
+    for (int y = 0; y < HH; ++y) {
+      for (int x = 0; x < W; ++x) {
+        const int band = std::min(y / sim.scene.bandHeight(), TransitionScene::BANDS - 1);
+        ASSERT_EQ(sim.target(x, y), static_cast<uint8_t>(TransitionScene::bandShade(band)))
+            << n << " at " << x << "," << y;
+      }
+    }
+  }
+  ASSERT_TRUE(step.fastPainted.has_value());
+  EXPECT_EQ(*step.fastPainted, paintSlots);
+  EXPECT_GT(paintSlots, 0u);
+  EXPECT_FALSE(step.hold.has_value());  // Hold off
+  EXPECT_FALSE(sim.scene.paintPending());
+  // The settle's clock is the crossing's 0: one slot later the rectangles have moved on by one tick's travel.
+  const uint32_t settleMs = sim.clockMs - TaskSim::TICK_MS;
+  EXPECT_EQ(sim.scene.rectX(settleMs), -TransitionScene::RECT_W);
+  EXPECT_EQ(sim.scene.rectX(settleMs + 2500), -12 + (W + 12) / 2);
+  EXPECT_FALSE(sim.scene.rectX(settleMs + TransitionScene::SWEEP_MS).has_value());
 }
 
 TEST(TransitionScene, SessionCapCleanDropsAHoldAndStaticHoldsAgainAtFlipZero) {
@@ -898,6 +987,8 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
     EXPECT_EQ(m.y + m.h, lh);
     EXPECT_GE(m.y, laneBottom) << int(turn);                            // strictly below the last lane's rectangle rows
     EXPECT_GE(m.y, (TransitionScene::BANDS - 1) * scene.bandHeight());  // inside the bottom band
+    expectBars(scene, "dash");
+    EXPECT_EQ(scene.markerBars()[0].w, 12);  // 12, a gap of 8, 12
     // The pattern painted and settled, then a settle with Hold on: the marker's pixels go out to D over the W band,
     // nothing around it moves, and it maps to the panel as every other pixel does.
     scene.applyAll(b.model, 0, b.preset);
@@ -920,7 +1011,7 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
         }
       }
     }
-    EXPECT_EQ(out, static_cast<uint32_t>(m.w * m.h)) << int(turn);
+    EXPECT_EQ(out, static_cast<uint32_t>(2 * 12 * m.h)) << int(turn);  // the bars only: the gap stays the band's
   }
 }
 
@@ -956,13 +1047,14 @@ void restartRun(TaskSim& sim, const SweepMode mode) {
 TEST(TransitionScene, SetModeRestartsTheCrossingSpots) {
   {
     TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-    ASSERT_EQ(runToHolds(sim, 1).size(), 1u);
+    ASSERT_EQ(runToHolds(sim, 2).back().hold.spot, HoldSpot::FastPause);
     restartRun(sim, SweepMode::Fast);
-    const std::vector<SpotSeen> seen = runToHolds(sim, 1);
-    ASSERT_EQ(seen.size(), 1u);
-    EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPause);
-    EXPECT_EQ(seen[0].hold.count, 1u);
-    EXPECT_EQ(seen[0].clockMs, TransitionScene::SWEEP_MS);
+    const std::vector<SpotSeen> seen = runToHolds(sim, 2);
+    ASSERT_EQ(seen.size(), 2u);
+    EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);  // the paint waited for again
+    EXPECT_EQ(seen[1].hold.spot, HoldSpot::FastPause);
+    EXPECT_EQ(seen[1].hold.count, 1u);
+    EXPECT_EQ(seen[1].clockMs, seen[0].clockMs + TransitionScene::SWEEP_MS);
   }
   {
     TaskSim sim(96, 480, SweepMode::Slow, 4, true);
@@ -999,7 +1091,10 @@ TEST(TransitionScene, SlowSkipsTheDwellSpotWhenTheRectanglesReachTheRightEdgeFir
 TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
   {
     TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-    ASSERT_EQ(runToHolds(sim, 1).size(), 1u);  // the first pause, the marker going out
+    const std::vector<SpotSeen> first = runToHolds(sim, 2);  // the paint, then the first pause, the marker going out
+    ASSERT_EQ(first.size(), 2u);
+    ASSERT_EQ(first[1].hold.spot, HoldSpot::FastPause);
+    const uint32_t settleMs = first[0].clockMs;
     sim.b.model.reset(Shade::W);
     const std::optional<DroppedHold> dropped = sim.scene.cancelHold();
     ASSERT_TRUE(dropped.has_value());
@@ -1010,7 +1105,8 @@ TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
     ASSERT_EQ(seen.size(), 1u);
     EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPause);
     EXPECT_EQ(seen[0].hold.count, 2u);  // this pause is not held again
-    EXPECT_EQ(seen[0].clockMs, 2 * TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS);
+    EXPECT_EQ(seen[0].clockMs, settleMs + 2 * TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS);
+    EXPECT_FALSE(sim.scene.paintPending());  // the repaint under the crossing does not wait again
   }
   {
     TaskSim sim(96, 480, SweepMode::Slow, 4, true);
@@ -1033,11 +1129,14 @@ TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
 }
 
 TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
-  // Fast with 1.5 s slots: 0, 1.5, 3, 4.5, then 6 s, the next crossing; no slot starts in the 5 to 6 s pause.
+  // Fast with 1.5 s slots: 0, 1.5, 3, 4.5, then 6 s from the paint's settle, the next crossing; no slot starts in the
+  // 5 to 6 s pause.
   TaskSim sim(96, 480, SweepMode::Fast, 4, true);
   sim.tickMs = 1500;
   std::vector<SkippedSpot> skipped;
-  EXPECT_TRUE(runToHolds(sim, 1, &skipped).empty());  // 2,000 slots, never a hold
+  const std::vector<SpotSeen> seen = runToHolds(sim, 2, &skipped);  // 2,000 slots: the painted hold, then never one
+  ASSERT_EQ(seen.size(), 1u);
+  EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);
   ASSERT_GE(skipped.size(), 3u);
   for (uint32_t n = 0; n < 3; ++n) {
     EXPECT_EQ(skipped[n].spot, HoldSpot::FastPause);
@@ -1050,11 +1149,12 @@ TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
   for (int n = 0; n < 20; ++n) EXPECT_FALSE(off.slot().skipped.has_value());
 }
 
-TEST(TransitionScene, ShadeLettersAndLogNames) {
-  EXPECT_EQ(shadeLetter(Shade::K), 'K');
-  EXPECT_EQ(shadeLetter(Shade::D), 'D');
-  EXPECT_EQ(shadeLetter(Shade::L), 'L');
-  EXPECT_EQ(shadeLetter(Shade::W), 'W');
+TEST(TransitionScene, ShadeNamesAndLogNames) {
+  // D14's seven-level numbers where the user sees a shade: black 0, dark gray 2, light gray 4, white 6.
+  EXPECT_EQ(shadeName(Shade::K), '0');
+  EXPECT_EQ(shadeName(Shade::D), '2');
+  EXPECT_EQ(shadeName(Shade::L), '4');
+  EXPECT_EQ(shadeName(Shade::W), '6');
   EXPECT_STREQ(spotSkipName(SpotSkip::RightEdge), "the rectangles reached the right edge first");
   EXPECT_STREQ(spotSkipName(SpotSkip::PauseOutrun), "no slot started in the pause");
   EXPECT_STREQ(holdDropName(HoldDrop::StaticAgainAtFlipZero), "holds again at flip 0");
@@ -1068,6 +1168,7 @@ TEST(TransitionScene, HoldSpotNamesForTheLog) {
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowPainted), "slow painted");
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowDwelt), "slow dwelt");
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowCrossed), "slow crossed");
+  EXPECT_STREQ(holdSpotName(HoldSpot::FastPainted), "fast painted");
   EXPECT_STREQ(holdSpotName(HoldSpot::FastPause), "fast pause");
   EXPECT_STREQ(holdSpotName(HoldSpot::Ladder), "ladder");
 }
@@ -1159,6 +1260,7 @@ TEST(TransitionScene, LadderColumnsAndMarkerInEveryTurnAtFullSize) {
     EXPECT_EQ(m.y, lh - TransitionScene::MARKER_PX) << int(turn);
     EXPECT_EQ(m.w, TransitionScene::MARKER_W) << int(turn);
     EXPECT_EQ(m.h, TransitionScene::MARKER_PX) << int(turn);
+    expectBars(sim.scene, "ladder");
     const int rows = lh - TransitionScene::MARKER_PX;
     ASSERT_EQ(sim.scene.ladderHeight(), rows) << int(turn);
     const int pitch = portrait(turn) ? 20 : 33;
@@ -1453,6 +1555,88 @@ TEST(TransitionScene, SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBo
   EXPECT_EQ(dropped->drop, HoldDrop::WayBackCutOff);
   EXPECT_TRUE(ended);
   EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Done);
+
+  // Every other clean restarts from the base, and the run holds at `ladder 1` first again: the base painted again,
+  // then stage 1 from its start.
+  const auto expectRestartsFromTheBase = [](TaskSim& again, const char* what) {
+    EXPECT_EQ(again.scene.ladderStage(), LadderStage::Base) << what;
+    EXPECT_EQ(again.scene.holdPhase(), HoldPhase::Running) << what;
+    paintBase(again);
+    const SceneStep held = runStage(again, LadderStage::Ladder, what);
+    ASSERT_TRUE(held.hold.has_value()) << what;
+    EXPECT_EQ(held.hold->count, 1u) << what;
+  };
+  // Into stage 2 (the return), with the marker back from `ladder 1`.
+  const auto toTheReturn = [](TaskSim& run) {
+    paintBase(run);
+    runStage(run, LadderStage::Ladder, "stage 1");
+    runMarker(run, true);
+    ASSERT_TRUE(run.scene.resumeHold(run.b.model, run.b.preset));
+    runMarker(run, false);
+    ASSERT_EQ(run.scene.ladderStage(), LadderStage::Return);
+  };
+  {
+    // The marker going out at `ladder 2`: the photo is not taken yet.
+    TaskSim out(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    toTheReturn(out);
+    const SceneStep spot = runStage(out, LadderStage::Return, "stage 2");
+    ASSERT_TRUE(spot.hold.has_value());
+    EXPECT_EQ(spot.hold->count, 2u);
+    out.slot();
+    ASSERT_EQ(out.scene.holdPhase(), HoldPhase::MarkerOut);
+    const std::optional<DroppedHold> drop = capClean(out, ended);
+    ASSERT_TRUE(drop.has_value());
+    EXPECT_EQ(drop->drop, HoldDrop::LadderFromBase);
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(out, "after a dropped ladder 2");
+  }
+  {
+    // Mid stage 2, no hold in progress.
+    TaskSim mid(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    toTheReturn(mid);
+    for (int n = 0; n < 7; ++n) mid.slot();
+    ASSERT_TRUE(mid.scene.ladderMidStage());
+    EXPECT_FALSE(capClean(mid, ended).has_value());
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(mid, "after a clean mid stage 2");
+  }
+  {
+    // During the base's paint.
+    TaskSim base(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    base.slot();
+    ASSERT_EQ(base.scene.ladderStage(), LadderStage::Base);
+    ASSERT_GT(base.b.model.activeCount(), 0u);
+    EXPECT_FALSE(capClean(base, ended).has_value());
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(base, "after a clean during the base");
+  }
+}
+
+// A pause breaks a stage's rhythm only between two of its pulse slots: not during the base, not before the first
+// pulse, not after the last, not in the marker's slots.
+TEST(TransitionScene, LadderMidStageIsBetweenAStagesFirstAndLastPulse) {
+  TaskSim sim(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+  EXPECT_FALSE(sim.scene.ladderMidStage());  // the base
+  sim.slot();
+  EXPECT_FALSE(sim.scene.ladderMidStage());
+  paintBase(sim);
+  for (const LadderStage stage : {LadderStage::Ladder, LadderStage::Return}) {
+    ASSERT_TRUE(sim.scene.ladderPulsing());
+    EXPECT_EQ(sim.scene.ladderStageSlots(), 0u);
+    EXPECT_FALSE(sim.scene.ladderMidStage());  // before the first pulse
+    for (uint32_t k = 1; k <= static_cast<uint32_t>(TransitionScene::LADDER_STEPS); ++k) {
+      sim.slot();
+      EXPECT_EQ(sim.scene.ladderStageSlots(), k);
+      EXPECT_EQ(sim.scene.ladderMidStage(), k < 24u) << int(stage) << " after slot " << k;
+    }
+    const SceneStep spot = sim.slot();  // the settle
+    ASSERT_TRUE(spot.hold.has_value());
+    EXPECT_FALSE(sim.scene.ladderMidStage());  // the marker's slots
+    runMarker(sim, true);
+    EXPECT_FALSE(sim.scene.ladderMidStage());
+    ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+    runMarker(sim, false);
+  }
 }
 
 }  // namespace

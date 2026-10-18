@@ -11,7 +11,8 @@
 
 // The tuning screen (Display lab → Tuning; the display-lab epic, R4): the session's gray preset
 // (DisplayLabActivity::preset()), one value per row, each row its name over its current value: the 12 doses ("Dose
-// K>D", 1..24), the 12 hold bits ("Hold K>D", on or off), Retarget to dark and Retarget to light (50..150 % each, the
+// 0>2", 1..24; shades by D14's level numbers, GameDisplayLab::shadeName), the 12 hold bits ("Hold 0>2", on or off),
+// Retarget to dark and Retarget to light (50..150 % each, the
 // budget of a pixel turned mid-transition toward a darker or a lighter shade), Frame rate (the backend's rate label),
 // Swap polarity, Reset to defaults (the controller's defaults into the session at once, logged as `DLAB tune reset`;
 // the only on-device way back to them), and Save (writes the preset file; its line says whether that worked). Edits
