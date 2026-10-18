@@ -10,7 +10,7 @@ phases and marker, `SweepControl::holdRun`, the sweep task) and `dlab-c1` (`Gray
 **Problem:** The owner wants seven levels, black, five grays and white (D14). The four-shade table was tuned by eye,
 twelve values, from photographs of Static flips. A seven-level table has 42 doses and cannot be tuned that way. What is missing is the
 panel's response curve: how dark n one-frame pulses from white leave a pixel, how light n pulses from black, for
-n = 1..24 at the preset's rate, and whether n pulses back restore the origin. With that curve the eight levels and
+n = 1..24 at the preset's rate, and whether n pulses back restore the origin. With that curve the seven levels and
 their doses are read off a photo instead of guessed.
 
 **Approach:** A fourth mode on the transition test's Mode row, **Ladder** (Static → Slow → Fast → Ladder), that paints
