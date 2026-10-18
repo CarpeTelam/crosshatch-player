@@ -167,10 +167,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   does not depend on pressing pause within half a slot. A Hold row on the test screen (on by default, a lab preference,
   not a preset value) makes the run hold at Static's settles, at Slow's painted bands, its rectangles after a full
   dwell and the crossing's end, and at Fast's end-of-sweep pause; Next resumes. A hold shows an unobtrusive marker,
-  a 16 px square in the bottom-right corner driven by the engine's own scans to the band's opposite shade (the
-  renderer cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
+  a dash in the bottom-right corner driven by the engine's own scans to the band's opposite shade (the renderer
+  cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
   orchestrator's baseline commit holds Static at every settle unconditionally; story dlab-c4 adds the row, the
-  other modes' spots and the marker.
+  other modes' spots and the marker. Amended at dlab-c4's review: the marker was a 16 px square, which shared rows
+  with the bottom lane's rectangle on every real screen; it is a 32 px dash in the bottom band's margin below its
+  last lane (8 rows at 480 high, 10 at 800), and a hold keeps the device awake for ten minutes, not forever.
 - D14 (2026-10-17, owner: "let's shoot for 8", then "5 shades of grey so there is a 50% grey"): the engine goes to
   seven levels, black, five grays and white. Why not sixteen: the panel's full swing is 12 one-frame pulses at PLL
   0x06 and the dark end is coarse (K>D 2, D>K 7), so about this many is what the pulse resolution can separate; the
