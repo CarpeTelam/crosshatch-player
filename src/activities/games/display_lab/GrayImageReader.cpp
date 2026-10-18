@@ -181,19 +181,50 @@ int pngDraw(PNGDRAW* pDraw) {
   // reads it.
   GameDisplayLab::pngRowToGray(pDraw->pPixels, ctx->current.get(), ctx->srcW, pDraw->iPixelType, pDraw->iBpp,
                                pDraw->pPalette, pDraw->iHasAlpha != 0, ctx->png->getTransparentColor());
+  // The block is this row; the row before it (a blend's tap.s0) is kept while the fit enlarges vertically.
+  GameDisplayLab::SourceBlock block{ctx->current.get(), ctx->srcW, 0, ctx->srcW, pDraw->y, pDraw->y + 1};
+  if (pDraw->y > 0 && f.ay.enlarges()) block.above = ctx->previous.get();
   for (int dy = rows.first; dy < rows.end; ++dy) {
     if (!f.keepGoing()) return 0;
-    const FitAxis::Tap tap = f.ay.tap(dy);
-    // tap.s1 is this row; tap.s0 this row or the one before.
-    const uint8_t* row0 = tap.s0 == pDraw->y ? ctx->current.get() : ctx->previous.get();
-    GameDisplayLab::sampleRow(row0, ctx->current.get(), tap.weight, f.ax, 0, ctx->srcW, 0, f.fit.w, f.out.get());
+    GameDisplayLab::sampleBlock(block, f.ax, f.ay.tap(dy), 0, f.fit.w, f.out.get());
     f.sink->row(f.fit.y + dy, f.fit.x, f.out.get(), f.fit.w);
   }
   std::swap(ctx->current, ctx->previous);
   return 1;
 }
 
+// The PNG's chunk layout against its size (GameDisplayLab::walkPngChunks), before PNGdec reads it: PNGdec 1.1.6's IDAT
+// loop spins without end when the file ends inside a chunk (its read returns nothing, inflate wants more, and the draw
+// callback, where the stop is checked, is never called), so a truncated or malformed file is refused here.
+ImageRead checkPngLayout(const char* path) {
+  HalFile file;
+  if (!Storage.openFileForRead("DLAB", path, file)) {
+    LOG_ERR("DLAB", "PNG cannot be opened: %s", path);
+    return ImageRead::Open;
+  }
+  const size_t size = file.size();
+  const auto readAt = [&file](const uint32_t offset, uint8_t* out, const size_t n) {
+    return file.seek(offset) && file.read(out, n) == static_cast<int>(n);
+  };
+  const GameDisplayLab::PngLayout layout =
+      GameDisplayLab::walkPngChunks(size > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(size), readAt);
+  file.close();
+  switch (layout) {
+    case GameDisplayLab::PngLayout::Complete:
+      return ImageRead::Done;
+    case GameDisplayLab::PngLayout::Truncated:
+      LOG_ERR("DLAB", "PNG truncated (a chunk runs past the file's %u bytes): %s", static_cast<unsigned>(size), path);
+      return ImageRead::Format;
+    case GameDisplayLab::PngLayout::Malformed:
+      LOG_ERR("DLAB", "PNG malformed (signature or chunk length): %s", path);
+      return ImageRead::Format;
+  }
+  return ImageRead::Format;
+}
+
 ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRowSink& sink, ImageReadInfo& info) {
+  const ImageRead layout = checkPngLayout(path);
+  if (layout != ImageRead::Done) return layout;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
     LOG_ERR("DLAB", "Not enough heap for the PNG decoder (%u free, need %u)", static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(MIN_FREE_HEAP_FOR_PNG));
@@ -271,9 +302,28 @@ ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRo
 
 // ---- JPEG ----------------------------------------------------------------------------------------------------------
 
+// JPEGDEC delivers a strip of MCU rows at a time, left to right in blocks (several MCUs each), strips top to bottom.
+// A blend needs the source row above a strip and the column left of a block: the previous strip's last row (`above`,
+// the whole scaled width) and the previous block's last column in this strip (`edge`) are kept, so blends cross the
+// seams; the strip being decoded fills `current` with its last row, which becomes `above` at the next strip.
+struct JpegContext {
+  Fitted fitted;
+  int scaledW = 0;
+  // Kept only when the fit enlarges vertically (a blend reaches the row above); null otherwise.
+  std::unique_ptr<uint8_t[]> above;
+  std::unique_ptr<uint8_t[]> current;
+  bool haveAbove = false;
+  int stripY = -1;
+  // The previous block's last column in this strip, and where that block ended (-1: no block yet in this strip).
+  static constexpr int EDGE_ROWS = 16;  // an MCU row is at most 16 pixels high (8 x 2 vertical subsampling)
+  uint8_t edge[EDGE_ROWS] = {};
+  int edgeEndX = -1;
+};
+
 int jpegDraw(JPEGDRAW* pDraw) {
-  Fitted* f = reinterpret_cast<Fitted*>(pDraw->pUser);
-  if (!f) return 0;
+  JpegContext* ctx = reinterpret_cast<JpegContext*>(pDraw->pUser);
+  if (!ctx) return 0;
+  Fitted* f = &ctx->fitted;
   yieldDuringDecode(f->lastYieldMs);
   if (!f->keepGoing()) return 0;
   // EIGHT_BIT_GRAYSCALE: one byte a pixel, rows `iWidth` apart, `iWidthUsed` of them valid, in JPEGDEC's scaled
@@ -285,26 +335,47 @@ int jpegDraw(JPEGDRAW* pDraw) {
   if (stride <= 0 || validW <= 0 || blockH <= 0) return 1;
   const int bx = pDraw->x;
   const int by = pDraw->y;
-  // The output pixels whose nearest source pixel is in this block (none when shrinking skips it); a blend's
-  // neighbours are clamped inside the block, as the JPEG converter clamps them.
-  const GameDisplayLab::Span cols = GameDisplayLab::outputSpan(f->ax, bx, bx + validW);
-  const GameDisplayLab::Span rows = GameDisplayLab::outputSpan(f->ay, by, by + blockH);
-  if (cols.empty() || rows.empty()) return 1;
-  // A source row's pixels, clamped into the block (the name `local` is zlib's macro, which PNGdec.h brings in).
-  const auto rowAt = [pixels, stride, by, blockH](const int s) {
-    const int inBlock = s < by ? 0 : (s - by < blockH ? s - by : blockH - 1);
-    return pixels + static_cast<size_t>(inBlock) * static_cast<size_t>(stride);
-  };
-  for (int dy = rows.first; dy < rows.end; ++dy) {
-    if (!f->keepGoing()) return 0;
-    const FitAxis::Tap tap = f->ay.tap(dy);
-    GameDisplayLab::sampleRow(rowAt(tap.s0), rowAt(tap.s1), tap.weight, f->ax, bx, bx + validW, cols.first, cols.end,
-                              f->out.get());
-    f->sink->row(f->fit.y + dy, f->fit.x + cols.first, f->out.get(), cols.end - cols.first);
+  if (by != ctx->stripY) {
+    // A new strip: the one before it is complete, and its last row is the row above this one.
+    if (ctx->stripY >= 0 && ctx->current) {
+      std::swap(ctx->above, ctx->current);
+      ctx->haveAbove = true;
+    }
+    ctx->stripY = by;
+    ctx->edgeEndX = -1;
+  }
+  GameDisplayLab::SourceBlock block{pixels, stride, bx, bx + validW, by, by + blockH};
+  if (ctx->haveAbove) block.above = ctx->above.get();
+  if (f->ax.enlarges() && ctx->edgeEndX == bx && blockH <= JpegContext::EDGE_ROWS) block.left = ctx->edge;
+  // The output pixels whose last needed source pixel is in this block (none when shrinking skips it); the pixels
+  // before it come from `above` and `left`.
+  const GameDisplayLab::Span cols = GameDisplayLab::outputsEndingIn(f->ax, bx, bx + validW);
+  const GameDisplayLab::Span rows = GameDisplayLab::outputsEndingIn(f->ay, by, by + blockH);
+  if (!cols.empty()) {
+    for (int dy = rows.first; dy < rows.end; ++dy) {
+      if (!f->keepGoing()) return 0;
+      GameDisplayLab::sampleBlock(block, f->ax, f->ay.tap(dy), cols.first, cols.end, f->out.get());
+      f->sink->row(f->fit.y + dy, f->fit.x + cols.first, f->out.get(), cols.end - cols.first);
+    }
+  }
+  // Keep this block's last row (for the next strip) and last column (for the next block).
+  if (ctx->current) {
+    const int end = bx + validW < ctx->scaledW ? bx + validW : ctx->scaledW;
+    const uint8_t* last = pixels + static_cast<size_t>(blockH - 1) * static_cast<size_t>(stride);
+    for (int x = bx; x < end; ++x) ctx->current[static_cast<size_t>(x)] = last[x - bx];
+  }
+  if (blockH <= JpegContext::EDGE_ROWS) {
+    for (int row = 0; row < blockH; ++row) {
+      ctx->edge[row] = pixels[static_cast<size_t>(row) * static_cast<size_t>(stride) + static_cast<size_t>(validW - 1)];
+    }
+    ctx->edgeEndX = bx + validW;
   }
   return 1;
 }
 
+// No layout check for a JPEG: JPEGDEC's decode walks every MCU of the frame in bounded loops whatever data arrives
+// (JPEGGetMoreData reads nothing past the end and DecodeJPEG goes on over what it has), calling back each strip, so a
+// truncated JPEG decodes to garbage or a decode error and the stop is still seen per row.
 ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayRowSink& sink, ImageReadInfo& info) {
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_JPEG) {
     LOG_ERR("DLAB", "Not enough heap for the JPEG decoder (%u free, need %u)", static_cast<unsigned>(ESP.getFreeHeap()),
@@ -345,15 +416,24 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
   const GameDisplayLab::JpegScale scale =
       GameDisplayLab::jpegScaleFor(info.width, info.height, info.fit.w, info.fit.h, info.progressive);
   info.jpegScale = scale.denominator;
-  Fitted fitted;
-  if (!fitted.begin(sink, info.fit, scale.scaledW, scale.scaledH)) return ImageRead::Memory;
+  JpegContext ctx;
+  if (!ctx.fitted.begin(sink, info.fit, scale.scaledW, scale.scaledH)) return ImageRead::Memory;
+  ctx.scaledW = scale.scaledW;
+  if (ctx.fitted.ay.enlarges()) {
+    ctx.above = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(scale.scaledW));
+    ctx.current = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(scale.scaledW));
+    if (!ctx.above || !ctx.current) {
+      LOG_ERR("DLAB", "OOM: two %d byte JPEG strip rows", scale.scaledW);
+      return ImageRead::Memory;
+    }
+  }
   // After open(), as the converter sets them.
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
-  jpeg->setUserPointer(&fitted);
+  jpeg->setUserPointer(&ctx);
   const uint32_t start = millis();
   const int decoded = jpeg->decode(0, 0, scale.option);
   info.ms = millis() - start;
-  if (fitted.stopped) return ImageRead::Stopped;
+  if (ctx.fitted.stopped) return ImageRead::Stopped;
   if (decoded != 1) {
     LOG_ERR("DLAB", "JPEG decode failed (rc=%d, error %d): %s", decoded, jpeg->getLastError(), path);
     return ImageRead::Decode;

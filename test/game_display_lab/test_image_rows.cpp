@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -410,8 +411,8 @@ TEST(ImageRows, TapsAreNearestWhenShrinkingAndBlendWhenEnlarging) {
 }
 
 TEST(ImageRows, BlockSpansPartitionTheOutput) {
-  // JPEG MCU blocks of 8 or 16 source pixels: their spans tile the output, each pixel once, empty when shrinking skips
-  // a block.
+  // JPEG MCU blocks of 8 or 16 source pixels: the output pixels whose last needed source pixel is in a block tile the
+  // output, each pixel once, empty when shrinking skips a block.
   for (const int src : {8, 50, 100, 480, 1000}) {
     for (const int dst : {7, 48, 100, 480, 800}) {
       const FitAxis axis{src, dst};
@@ -419,20 +420,22 @@ TEST(ImageRows, BlockSpansPartitionTheOutput) {
         int next = 0;
         for (int start = 0; start < src; start += block) {
           const int end = start + block < src ? start + block : src;
-          const Span span = outputSpan(axis, start, end);
+          const Span span = outputsEndingIn(axis, start, end);
           ASSERT_EQ(span.first, next) << src << "->" << dst;
           for (int d = span.first; d < span.end; ++d) {
-            ASSERT_GE(axis.srcOf(d), start);
-            ASSERT_LT(axis.srcOf(d), end);
+            ASSERT_GE(axis.tap(d).s1, start);
+            ASSERT_LT(axis.tap(d).s1, end);
+            // Its first source pixel is in the block or the one just before it (kept as above or left).
+            ASSERT_GE(axis.tap(d).s0, start - 1);
           }
-          next = span.end > next ? span.end : next;
+          next = span.end;
         }
         ASSERT_EQ(next, dst);
       }
     }
   }
   // A block past the source's edge (an MCU's padding) adds nothing.
-  EXPECT_TRUE(outputSpan(FitAxis{20, 40}, 20, 24).empty());
+  EXPECT_TRUE(outputsEndingIn(FitAxis{20, 40}, 20, 24).empty());
 }
 
 TEST(ImageRows, RowsReadyAtPartitionTheOutputOnceTheirRowsHaveArrived) {
@@ -455,34 +458,172 @@ TEST(ImageRows, RowsReadyAtPartitionTheOutputOnceTheirRowsHaveArrived) {
   }
 }
 
-TEST(ImageRows, SampleRowIsNearestWhenShrinking) {
+TEST(ImageRows, SampleBlockIsNearestWhenShrinking) {
   const uint8_t row[] = {0, 10, 20, 30, 40, 50, 60, 70};
   const FitAxis half{8, 4};
+  const FitAxis one{1, 1};
+  const SourceBlock block{row, 8, 0, 8, 0, 1};
   uint8_t out[4] = {};
-  sampleRow(row, row, 0, half, 0, 8, 0, 4, out);
+  sampleBlock(block, half, one.tap(0), 0, 4, out);
   EXPECT_EQ((std::vector<uint8_t>(out, out + 4)), (std::vector<uint8_t>{10, 30, 50, 70}));
   // A segment of it: output columns 1..2.
   uint8_t seg[2] = {};
-  sampleRow(row, row, 0, half, 0, 8, 1, 3, seg);
+  sampleBlock(block, half, one.tap(0), 1, 3, seg);
   EXPECT_EQ(seg[0], 30);
   EXPECT_EQ(seg[1], 50);
 }
 
-TEST(ImageRows, SampleRowIsBilinearWhenEnlarging) {
-  // Doubling 0, 100, 200: 0 (clamped), 25, 75, 125, 175, 200 (clamped), as the converter's 16.16 blend.
+TEST(ImageRows, SampleBlockIsBilinearWhenEnlarging) {
+  // Doubling 0, 100, 200 (centre-aligned taps): 0 (clamped), 25, 75, 125, 175, 200 (clamped), each step the 16.16 blend
+  // (a * (65536 - w) + b * w) >> 16.
   const uint8_t row[] = {0, 100, 200};
   const FitAxis twice{3, 6};
+  const FitAxis one{1, 1};
   uint8_t out[6] = {};
-  sampleRow(row, row, 0, twice, 0, 3, 0, 6, out);
+  sampleBlock(SourceBlock{row, 3, 0, 3, 0, 1}, twice, one.tap(0), 0, 6, out);
   EXPECT_EQ((std::vector<uint8_t>(out, out + 6)), (std::vector<uint8_t>{0, 25, 75, 125, 175, 200}));
-  // Vertically: halfway between a black row and a white one.
+  // Vertically: halfway between a black row and a white one (the white row is the block, the black one above it).
   const uint8_t black[] = {0, 0, 0};
   const uint8_t white[] = {255, 255, 255};
-  sampleRow(black, white, 32768, twice, 0, 3, 0, 6, out);
+  SourceBlock below{white, 3, 0, 3, 1, 2};
+  below.above = black;
+  sampleBlock(below, twice, FitAxis::Tap{0, 1, 32768}, 0, 6, out);
   for (const uint8_t v : out) EXPECT_EQ(v, 127);
-  // Neighbours are clamped into the window (a decoded block's columns): a window of column 1 alone repeats it.
-  sampleRow(row + 1, row + 1, 0, twice, 1, 2, 0, 6, out);
-  for (const uint8_t v : out) EXPECT_EQ(v, 100);
+  // Without the row above, the blend repeats the block's edge.
+  sampleBlock(SourceBlock{white, 3, 0, 3, 1, 2}, twice, FitAxis::Tap{0, 1, 32768}, 0, 6, out);
+  for (const uint8_t v : out) EXPECT_EQ(v, 255);
+}
+
+// A source image as decoded strips and blocks, sampled block by block with the row above and the column left kept as
+// the reader keeps them, against the same image sampled as one block: the seams leave no trace.
+std::vector<uint8_t> sampledByBlocks(const std::vector<uint8_t>& image, const int w, const int h, const int dstW,
+                                     const int dstH, const int blockW, const int blockH, const bool keepSeams = true) {
+  const FitAxis ax{w, dstW};
+  const FitAxis ay{h, dstH};
+  std::vector<uint8_t> out(static_cast<size_t>(dstW * dstH), 0);
+  std::vector<uint8_t> above(static_cast<size_t>(w));
+  std::vector<uint8_t> left(static_cast<size_t>(blockH));
+  std::vector<uint8_t> row(static_cast<size_t>(dstW));
+  for (int by = 0; by < h; by += blockH) {
+    const int bh = by + blockH < h ? blockH : h - by;
+    for (int bx = 0; bx < w; bx += blockW) {
+      const int bw = bx + blockW < w ? blockW : w - bx;
+      // The block's own pixels, as JPEGDEC hands them (rows `bw` apart here).
+      std::vector<uint8_t> pixels(static_cast<size_t>(bw * bh));
+      for (int y = 0; y < bh; ++y) {
+        for (int x = 0; x < bw; ++x)
+          pixels[static_cast<size_t>(y * bw + x)] = image[static_cast<size_t>((by + y) * w + bx + x)];
+      }
+      SourceBlock block{pixels.data(), bw, bx, bx + bw, by, by + bh};
+      if (keepSeams && by > 0) block.above = above.data();
+      if (keepSeams && bx > 0) block.left = left.data();
+      const Span cols = outputsEndingIn(ax, bx, bx + bw);
+      const Span rows = outputsEndingIn(ay, by, by + bh);
+      for (int dy = rows.first; dy < rows.end && !cols.empty(); ++dy) {
+        sampleBlock(block, ax, ay.tap(dy), cols.first, cols.end, row.data());
+        for (int dx = cols.first; dx < cols.end; ++dx)
+          out[static_cast<size_t>(dy * dstW + dx)] = row[static_cast<size_t>(dx - cols.first)];
+      }
+      for (int y = 0; y < bh; ++y) left[static_cast<size_t>(y)] = pixels[static_cast<size_t>(y * bw + bw - 1)];
+    }
+    // The strip is done: its last row is the row above the next one.
+    for (int x = 0; x < w; ++x) above[static_cast<size_t>(x)] = image[static_cast<size_t>((by + bh - 1) * w + x)];
+  }
+  return out;
+}
+
+TEST(ImageRows, BlendsCrossStripAndBlockSeams) {
+  // A 1/8-scale progressive JPEG enlarges by about 8: two strips of 2 rows, blocks of 3 columns, 6 x 4 up to 48 x 32.
+  std::vector<uint8_t> image(6 * 4);
+  for (size_t i = 0; i < image.size(); ++i) image[i] = static_cast<uint8_t>((i * 37) % 256);
+  const std::vector<uint8_t> whole = sampledByBlocks(image, 6, 4, 48, 32, 6, 4);
+  const std::vector<uint8_t> strips = sampledByBlocks(image, 6, 4, 48, 32, 3, 2);
+  EXPECT_EQ(strips, whole);
+  // Every output pixel was made exactly once (none left at the fill value where the image has no zero).
+  std::vector<uint8_t> bright(6 * 4, 200);
+  bright[0] = 10;
+  const std::vector<uint8_t> once = sampledByBlocks(bright, 6, 4, 48, 32, 3, 2);
+  for (const uint8_t v : once) EXPECT_GE(v, 10);
+  // Without the kept row and column, the same blocks would clamp at the seams and differ from the whole.
+  std::vector<uint8_t> ramp(6 * 4);
+  for (int y = 0; y < 4; ++y) {
+    for (int x = 0; x < 6; ++x) ramp[static_cast<size_t>(y * 6 + x)] = static_cast<uint8_t>(40 * y + 5 * x);
+  }
+  EXPECT_EQ(sampledByBlocks(ramp, 6, 4, 48, 32, 3, 2), sampledByBlocks(ramp, 6, 4, 48, 32, 6, 4));
+  EXPECT_NE(sampledByBlocks(ramp, 6, 4, 48, 32, 3, 2, false), sampledByBlocks(ramp, 6, 4, 48, 32, 6, 4));
+  // Shrinking (nearest) through blocks equals shrinking the whole.
+  std::vector<uint8_t> big(40 * 24);
+  for (size_t i = 0; i < big.size(); ++i) big[i] = static_cast<uint8_t>((i * 13) % 251);
+  EXPECT_EQ(sampledByBlocks(big, 40, 24, 15, 9, 16, 8), sampledByBlocks(big, 40, 24, 15, 9, 40, 24));
+}
+
+// ---- the PNG chunk walk -----------------------------------------------------------------------------------------
+
+std::vector<uint8_t> pngChunk(const char* type, const uint32_t length) {
+  std::vector<uint8_t> c = {static_cast<uint8_t>(length >> 24), static_cast<uint8_t>(length >> 16),
+                            static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length)};
+  for (int i = 0; i < 4; ++i) c.push_back(static_cast<uint8_t>(type[i]));
+  c.resize(c.size() + length + 4, 0);  // data and CRC
+  return c;
+}
+
+std::vector<uint8_t> pngFile(const std::vector<std::vector<uint8_t>>& chunks) {
+  std::vector<uint8_t> f = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+  for (const auto& c : chunks) f.insert(f.end(), c.begin(), c.end());
+  return f;
+}
+
+PngLayout walk(const std::vector<uint8_t>& file, size_t size = SIZE_MAX) {
+  if (size == SIZE_MAX) size = file.size();
+  int reads = 0;
+  const PngLayout layout =
+      walkPngChunks(static_cast<uint32_t>(size), [&](const uint32_t offset, uint8_t* out, const size_t n) {
+        ++reads;
+        if (offset + n > size) return false;
+        std::copy(file.begin() + offset, file.begin() + offset + static_cast<long>(n), out);
+        return true;
+      });
+  EXPECT_LE(reads, 64);
+  return layout;
+}
+
+TEST(PngChunks, ACompleteFileWalksThroughIend) {
+  const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 5000), pngChunk("IDAT", 300), pngChunk("IEND", 0)});
+  EXPECT_EQ(walk(file), PngLayout::Complete);
+  // Bytes after IEND are ignored.
+  auto padded = file;
+  padded.resize(file.size() + 10, 0);
+  EXPECT_EQ(walk(padded), PngLayout::Complete);
+}
+
+TEST(PngChunks, ATruncatedFileIsRefused) {
+  const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 5000), pngChunk("IEND", 0)});
+  // Cut inside the IDAT data, inside its CRC, inside IEND, inside a chunk header, after the signature: all truncated.
+  for (const size_t cut : {size_t{8}, size_t{8 + 25 + 4}, size_t{8 + 25 + 100}, file.size() - 12, file.size() - 1}) {
+    EXPECT_EQ(walk(file, cut), PngLayout::Truncated) << cut;
+  }
+  // No IEND at all.
+  EXPECT_EQ(walk(pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 10)})), PngLayout::Truncated);
+  // Shorter than a signature.
+  EXPECT_EQ(walk(file, 4), PngLayout::Truncated);
+}
+
+TEST(PngChunks, AMalformedFileIsRefused) {
+  auto notPng = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
+  notPng[1] = 'J';
+  EXPECT_EQ(walk(notPng), PngLayout::Malformed);
+  auto huge = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
+  huge[8] = 0x80;  // IHDR's length over 2^31 - 1
+  EXPECT_EQ(walk(huge), PngLayout::Malformed);
+}
+
+TEST(ImageRows, PngColourTypesThatDoNotExistAreRefused) {
+  // The converter lets an 8-bit file of colour type 1, 5 or 7 through, to paint flat gray; the viewer refuses it.
+  for (const int type : {1, 5, 7, 8}) {
+    EXPECT_FALSE(pngDepthSupported(type, 8)) << type;
+    EXPECT_FALSE(pngDepthSupported(type, 4)) << type;
+  }
+  for (const int type : {0, 2, 3, 4, 6}) EXPECT_TRUE(pngDepthSupported(type, 8)) << type;
 }
 
 }  // namespace

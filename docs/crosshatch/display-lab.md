@@ -502,11 +502,16 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
        gray included, alpha composited on white; a JPEG as 8-bit gray at JPEGDEC's 1/2, 1/4 or 1/8 scale when the
        picture shrinks that much, and a progressive one at 1/8).
      - The picture is scaled to fit the screen, up or down, with its aspect kept, centred on a white letterbox:
-       bilinear along an axis it enlarges (as the JPEG converter enlarges, a JPEG's blend clamped inside its decoded
-       block), nearest at pixel centres along one it shrinks.
+       bilinear along an axis it enlarges (centre-aligned taps per axis; only the 16.16 blend arithmetic is the JPEG
+       converter's), with the previous PNG row, the previous JPEG strip's last row and the previous block's last
+       column kept so a blend crosses those seams (a 1/8-scale progressive JPEG enlarges smoothly, not in 8 px
+       bands), nearest at pixel centres along one it shrinks.
      - The converters' limits apply: each side up to 32,767 px, 8 MP, and a PNG row within the firmware's PNG buffer
        (about 2,000 px of colour with alpha; the expanded gray row is capped at 8,208 px).
-     - Not decoded: interlaced or 16-bit PNGs, extended or lossless JPEGs ("format or size not supported").
+     - Not decoded ("format or size not supported"): interlaced or 16-bit PNGs, a PNG colour type that does not
+       exist, a PNG whose chunks run past the end of the file or whose header is not a PNG's (checked before PNGdec
+       reads it: PNGdec 1.1.6 spins without end on a truncated file), extended or lossless JPEGs. A truncated JPEG
+       needs no check: JPEGDEC's decode is bounded and decodes it to garbage or a decode error.
      - A JPEG's EXIF orientation is ignored, as the firmware's converters ignore it: a picture is shown as its pixels
        are stored, so a camera's portrait photo may appear on its side.
    - Each row is quantised with the Dither row, and each run of equal shades in a row is one retarget.
@@ -520,32 +525,40 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
 Controls while the view is up:
 
 - **Next** (side Down) or **Confirm**, or a tap where touch routes:
-  - while it paints (or drives the marker out), pause and resume, as in the transition test;
+  - while the run's first picture, or a next one, is being cleaned and read: ignored, so a double press cannot skip a
+    picture or pause the one being painted;
+  - while it paints its slots (or drives the marker out), pause and resume, as in the transition test;
   - while it holds, paint the next entry (clean first; after the last file, the chart). The Image row then shows it.
-    Further presses are ignored until that picture is painted, so a double press cannot skip one;
-  - a pause press that lands just as the hold begins finds nothing to resume: the run holds again (logged
-    `gray viewer: still held; Next paints the next picture`), with its ten-minute bound counted from the first hold.
+  Each press is one step on the sweep's request word, which decides by what the word holds at that moment whether
+  it is a next picture or a pause or resume, so a press racing the hold is never lost; a hold ends only when the task
+  serves the resume or the next picture, so a resume and a pause before it does leave the hold (and its ten-minute
+  bound) in place. A resume that ever reaches a held picture holds again (logged `gray viewer: still held; Next paints
+  the next picture`).
 - **Previous** (side Up) or **Back**: stop; the rows come back with a FULL refresh.
 - Another screen covering it, Home and sleep end it as they end the transition test.
 
 A file that cannot be read ends the run with the reason on the Status row: it could not be opened (a missing or
 unreadable file, or a header the library rejects as corrupt), its format or size is not supported (the limits above),
 there is not enough memory, or it did not decode. The log names the file. The Image row still steps
-and the chart still works. The session cap's clean drops a hold in progress and paints the entry again (a file is
-decoded again).
+and the chart still works. A stop during the read is no error (logged `gray viewer: <name>: read stopped`, the Status
+row says "Stopped"). The session cap's clean drops a hold in progress and paints the entry again (a file is decoded
+again), before the slot clock and the speed window restart, so a repaint's seconds are neither skipped periods nor
+part of a slot's length.
 
 The log, besides the runner's lines (speed, pause and resume, the stack line, the cover):
 
 - `gray viewer: N pictures in /.crosshatch/display-lab/images` when the screen opens;
 - `gray viewer: run, <name>, dither plain|ordered`;
 - `gray viewer: <name>, dither ..., N pixels to drive` for the chart, or for a file `gray viewer: <name> WxH at X,Y
-  WxH (jpeg scale 1/N[, progressive]), decoded in N ms, dither ..., N pixels to drive`;
+  WxH[ (jpeg scale 1/N[, progressive])], read and painted in N ms, dither ..., N pixels to drive` (the scale for a
+  JPEG only);
 - `gray viewer: <name> painted after N slots, pixels per level [0:N 2:N 4:N 6:N]; marker 0|6`;
 - `gray hold: marker settled after N slots; holding, Next paints the next picture`;
 - `gray viewer: next, <name>`, and `gray viewer: still held; Next paints the next picture` (above);
 - `gray viewer: session-cap clean, the marker dropped; painting <name> again`;
 - `gray viewer: <name>: cannot open|unsupported format|out of memory|decode failed` (after the reader's own error
-  line);
+  line, such as `PNG truncated (a chunk runs past the file's N bytes)`), or `gray viewer: <name>: read stopped`;
+- `gray viewer: name of 64 bytes or more, skipped: <name>` when the screen opens;
 - `gray viewer stopped: <outcome>`.
 
 Memory, beside the runner's working set (as the transition test's):
@@ -555,10 +568,15 @@ Memory, beside the runner's working set (as the transition test's):
   heap) and its row buffers (two source rows for a PNG, one output row). The free-heap floor before each is the
   decoder's own size plus 16 KB, as the converters' rule, but with the real size (the PNG converter's 44 KiB figure
   predates the firmware's larger PNG buffer);
-- a stop (Back, Home, sleep) during a decode waits for at most one output row's decode and SD read; the reader checks
-  it before every row;
-- the sweep task's stack, 12 KiB: the transition test's 8 KiB plus 4 KiB for the decode chain. This is an estimate;
-  the run's `gray sweep task ended` line measures it.
+- a stop (Back, Home, sleep) during a decode normally waits for one output row's decode and SD read (the reader
+  checks it before every row). The runner's unlocked stop waits at most 20 s for any task: past that it logs
+  `<screen>: the sweep task did not end within 20000 ms of the stop; left running, not deleted` (deleting it could
+  leave the SD card's mutex held), keeps the task, which can scan nothing more, and joins it once it ends; no new
+  run starts meanwhile. The locked stop (leaving the screen, sleep) cannot give up, since the task's buffers are freed
+  next: it logs `... has not ended 20000 ms after the stop; still waiting` once and waits;
+- the sweep task's stack, 12 KiB, provisional: the decode chain and the scan chain (the transition test's 8 KiB
+  provision) never nest, so the need is the larger of the two; the run's `gray sweep task ended` line measures it,
+  and the story's Verification asks for the marks of a PNG, a baseline and a progressive JPEG.
 
 ### Tuning
 
@@ -657,8 +675,9 @@ memory" and nothing is sent to the panel.
 - `lib/GameDisplayLab/SlotScheduler.h`: the slot period (D5), skipped slots, and the speed window; pinned by
   `test_slot_scheduler.cpp`.
 - `lib/GameDisplayLab/SweepControl.h`: the sweep runner's request word between a screen's loop and its sweep task
-  (Stop, Run, Replay, Clean, InPanel, and since dlab-g3 Held and Replaying: the hold and its end, and the gray viewer's
-  next picture, each one step) and the loop's heartbeat for the covered check; pinned by `test_sweep_control.cpp`.
+  (Stop, Run, Replay, Clean, InPanel, and since dlab-g3 Held and Replaying: the hold, the screens' presses (`press`:
+  a pause or resume, or the gray viewer's next picture, decided in one compare-exchange), the task ending the hold
+  when it serves a resume) and the loop's heartbeat for the covered check; pinned by `test_sweep_control.cpp`.
 - `lib/GameDisplayLab/PanelGeometry.{h,cpp}`: the logical screen over the panel model, shared by the transition test
   and the gray viewer: the four orientations (`PanelTurn`), a logical rectangle mapped to the panel as
   `GfxRenderer::rotateCoordinates` maps a pixel (`toPanel`) and retargeted (`retargetLogicalRect`), and the hold
@@ -689,8 +708,9 @@ memory" and nothing is sent to the panel.
 - `lib/GameDisplayLab/ImageRows.{h,cpp}`: the gray viewer's decode arithmetic: the files it lists (`imageKindOf`,
   `nameLess`, `ImageList`: the first 32 by name), the converters' size limits and PNG checks, a PNG row to gray as the
   converter converts it (`pngRowToGray`), JPEGDEC's coarse scale and option (`jpegScaleFor`), the fit (`fitToScreen`,
-  `FitAxis` and its taps), the output pixels a decoded row or block makes (`rowsReadyAt`, `outputSpan`) and their
-  sampling (`sampleRow`: bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`.
+  `FitAxis` and its taps), a PNG's chunk walk against its size (`walkPngChunks`), the output pixels a decoded row or
+  block makes (`rowsReadyAt`, `outputsEndingIn`) and their sampling across seams (`SourceBlock`, `sampleBlock`:
+  bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`.
 - `src/activities/games/display_lab/GrayImageReader.{h,cpp}`: the gray viewer's reader, PNGdec and JPEGDEC driven
   directly into 8-bit gray rows (the one file the layer check lets include them); and `GrayViewerActivity.{h,cpp}`,
   the screen.

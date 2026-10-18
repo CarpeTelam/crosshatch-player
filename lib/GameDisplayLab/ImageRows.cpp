@@ -103,6 +103,16 @@ bool imageSizeAccepted(const int64_t width, const int64_t height) {
 }
 
 bool pngDepthSupported(const int pixelType, const int bitsPerSample) {
+  switch (pixelType) {
+    case static_cast<int>(PngPixel::Grayscale):
+    case static_cast<int>(PngPixel::Truecolor):
+    case static_cast<int>(PngPixel::Indexed):
+    case static_cast<int>(PngPixel::GrayAlpha):
+    case static_cast<int>(PngPixel::TruecolorAlpha):
+      break;
+    default:
+      return false;  // no such colour type: refused rather than painted flat gray
+  }
   if (bitsPerSample == 8) return true;
   if (bitsPerSample != 1 && bitsPerSample != 2 && bitsPerSample != 4) return false;
   return pixelType == static_cast<int>(PngPixel::Grayscale) || pixelType == static_cast<int>(PngPixel::Indexed);
@@ -243,12 +253,8 @@ FitAxis::Tap FitAxis::tap(const int d) const {
   return Tap{s0, s0 + 1, static_cast<uint32_t>(position & 0xFFFF)};
 }
 
-Span outputSpan(const FitAxis& axis, const int srcStart, const int srcEnd) {
-  return Span{axis.firstDst(srcStart), axis.firstDst(srcEnd)};
-}
-
-Span rowsReadyAt(const FitAxis& axis, const int s) {
-  // tap(d).s1 is non-decreasing in d: the first d whose s1 reaches `s`, and the first whose s1 passes it.
+Span outputsEndingIn(const FitAxis& axis, const int srcStart, const int srcEnd) {
+  // tap(d).s1 is non-decreasing in d: the first d whose s1 reaches a source pixel, by binary search.
   const auto firstReaching = [&axis](const int target) {
     int lo = 0;
     int hi = axis.dst;
@@ -262,25 +268,34 @@ Span rowsReadyAt(const FitAxis& axis, const int s) {
     }
     return lo;
   };
-  return Span{firstReaching(s), firstReaching(s + 1)};
+  return Span{firstReaching(srcStart), firstReaching(srcEnd)};
 }
 
-void sampleRow(const uint8_t* row0, const uint8_t* row1, const uint32_t rowWeight, const FitAxis& ax,
-               const int winStart, const int winEnd, const int dxFirst, const int dxEnd, uint8_t* out) {
-  const auto clampColumn = [winStart, winEnd](const int s) {
-    if (s < winStart) return 0;
-    return (s < winEnd ? s : winEnd - 1) - winStart;
-  };
+Span rowsReadyAt(const FitAxis& axis, const int s) { return outputsEndingIn(axis, s, s + 1); }
+
+uint8_t SourceBlock::at(int sx, int sy) const {
+  const int xLow = left != nullptr ? x0 - 1 : x0;
+  const int yLow = above != nullptr ? y0 - 1 : y0;
+  if (sx < xLow) sx = xLow;
+  if (sx > x1 - 1) sx = x1 - 1;
+  if (sy < yLow) sy = yLow;
+  if (sy > y1 - 1) sy = y1 - 1;
+  // The row above spans the whole width, so it also holds the corner above the left column.
+  if (sy < y0) return above[sx];
+  if (sx < x0) return left[sy - y0];
+  return pixels[static_cast<size_t>(sy - y0) * static_cast<size_t>(stride) + static_cast<size_t>(sx - x0)];
+}
+
+void sampleBlock(const SourceBlock& block, const FitAxis& ax, const FitAxis::Tap& rowTap, const int dxFirst,
+                 const int dxEnd, uint8_t* out) {
   const auto blend = [](const uint32_t a, const uint32_t b, const uint32_t w) {
     return (a * (65536u - w) + b * w) >> 16;
   };
   for (int dx = dxFirst; dx < dxEnd; ++dx) {
     const FitAxis::Tap t = ax.tap(dx);
-    const int c0 = clampColumn(t.s0);
-    const int c1 = clampColumn(t.s1);
-    const uint32_t top = blend(row0[c0], row0[c1], t.weight);
-    const uint32_t bottom = blend(row1[c0], row1[c1], t.weight);
-    out[dx - dxFirst] = static_cast<uint8_t>(blend(top, bottom, rowWeight));
+    const uint32_t top = blend(block.at(t.s0, rowTap.s0), block.at(t.s1, rowTap.s0), t.weight);
+    const uint32_t bottom = blend(block.at(t.s0, rowTap.s1), block.at(t.s1, rowTap.s1), t.weight);
+    out[dx - dxFirst] = static_cast<uint8_t>(blend(top, bottom, rowTap.weight));
   }
 }
 

@@ -8,10 +8,12 @@
 // JPEGDEC directly, because the firmware's converters cut gray to 2 bits before they write; everything it computes
 // is here: which files it reads, the converters' size limits and PNG checks, a PNG row to 8-bit gray as the converters
 // convert one (lib/Epub/Epub/converters/PngToFramebufferConverter.cpp, convertLineToGray with no alpha line: alpha
-// composited on white), JPEGDEC's coarse scale and option as the JPEG converter picks them, the fit to the logical
-// screen, which output pixels a decoded row or block makes, and their sampling: bilinear along an axis the fit
-// enlarges, as the JPEG converter enlarges (neighbours clamped inside the decoded block), nearest at pixel centres
-// along one it shrinks or keeps.
+// composited on white), a PNG's chunk layout checked against its file size before PNGdec reads it, JPEGDEC's coarse
+// scale and option as the JPEG converter picks them, the fit to the logical screen, which output pixels a decoded row
+// or block makes, and their sampling: bilinear along an axis the fit enlarges (centre-aligned per axis; only the 16.16
+// blend arithmetic is the JPEG converter's, which aligns corners and blends only when both axes enlarge), with the row
+// above and the column left of a decoded block kept so blends cross block and strip seams, and nearest at pixel
+// centres along an axis the fit shrinks or keeps.
 namespace GameDisplayLab {
 
 // The files the viewer lists: PNG (.png) and JPEG (.jpg, .jpeg), any case.
@@ -72,8 +74,45 @@ bool imageSizeAccepted(int64_t width, int64_t height);
 
 // PNGdec's pixel types (the PNG colour types), by value; GrayImageReader.cpp static_asserts each against PNGdec.h.
 enum class PngPixel : uint8_t { Grayscale = 0, Truecolor = 2, Indexed = 3, GrayAlpha = 4, TruecolorAlpha = 6 };
-// The converter's isSupportedBitDepth: 8 bits for any type, 1, 2 or 4 for gray and indexed only.
+// The converter's isSupportedBitDepth, and a PNG colour type that exists (0, 2, 3, 4, 6; the converter lets an 8-bit
+// file of type 1, 5 or 7 through to paint flat gray): 8 bits for any of them, 1, 2 or 4 for gray and indexed only.
 bool pngDepthSupported(int pixelType, int bitsPerSample);
+
+// A PNG file's chunk layout against its size, before PNGdec reads it: PNGdec 1.1.6 spins without end on a chunk that
+// runs past the end of the file (its IDAT loop asks for more data, gets none, and never calls back), so a truncated
+// or malformed file is refused first.
+enum class PngLayout : uint8_t {
+  // The signature, then chunks of length + 12 bytes each, through IEND, all inside the file.
+  Complete,
+  // A chunk (or IEND) past the end of the file, or a read that failed.
+  Truncated,
+  // Not a PNG signature, or a chunk length over 2^31 - 1.
+  Malformed,
+};
+// Walks the chunk headers of a `fileSize`-byte PNG through `readAt(uint32_t offset, uint8_t* out, size_t n) -> bool`
+// (n bytes at offset; false when they could not be read): one 8-byte read per chunk, the data skipped.
+template <typename ReadAt>
+PngLayout walkPngChunks(const uint32_t fileSize, ReadAt&& readAt) {
+  static constexpr uint8_t SIGNATURE[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+  uint8_t head[8];
+  if (fileSize < 8 || !readAt(0, head, 8)) return PngLayout::Truncated;
+  for (size_t i = 0; i < 8; ++i) {
+    if (head[i] != SIGNATURE[i]) return PngLayout::Malformed;
+  }
+  uint64_t offset = 8;
+  while (true) {
+    // Each chunk: 4-byte length, 4-byte type, the data, 4-byte CRC.
+    if (offset + 12 > fileSize) return PngLayout::Truncated;
+    if (!readAt(static_cast<uint32_t>(offset), head, 8)) return PngLayout::Truncated;
+    const uint32_t length = (static_cast<uint32_t>(head[0]) << 24) | (static_cast<uint32_t>(head[1]) << 16) |
+                            (static_cast<uint32_t>(head[2]) << 8) | head[3];
+    if (length > 0x7FFFFFFFu) return PngLayout::Malformed;
+    const uint64_t end = offset + 12 + length;
+    if (end > fileSize) return PngLayout::Truncated;
+    if (head[4] == 'I' && head[5] == 'E' && head[6] == 'N' && head[7] == 'D') return PngLayout::Complete;
+    offset = end;
+  }
+}
 // The converter's requiredPngInternalBufferBytes: PNGdec keeps two scanlines with their filter bytes, plus 32.
 int pngInternalBufferBytes(int width, int pixelType, int bitsPerSample);
 // One PNG row (`pixels` as PNGdec delivers it) to `width` 8-bit gray values in `gray`, as the converter's
@@ -141,18 +180,36 @@ struct Span {
   int end;
   bool empty() const { return first >= end; }
 };
-// The output pixels whose nearest source pixel lies in source pixels [srcStart, srcEnd): the ones a decoded block
-// covering them makes (a JPEG MCU block; an empty span when shrinking skips it). Spans of adjacent blocks partition
-// the output.
-Span outputSpan(const FitAxis& axis, int srcStart, int srcEnd);
-// The output rows whose last needed source row (tap(d).s1) is `s`: the ones a row-by-row decoder (PNGdec, top to
-// bottom) can make once row `s` and the row before it have arrived. Spans for s = 0, 1, ... partition the output.
+// The output pixels whose last needed source pixel (tap(d).s1) lies in source pixels [srcStart, srcEnd): the ones a
+// decoded block covering them makes, once the source pixel before it is kept too (SourceBlock's above or left). Spans
+// of adjacent blocks partition the output; when the fit shrinks, a block may make none.
+Span outputsEndingIn(const FitAxis& axis, int srcStart, int srcEnd);
+// The output rows a row-by-row decoder (PNGdec, top to bottom) can make once row `s` and the row before it have
+// arrived: outputsEndingIn(axis, s, s + 1). Spans for s = 0, 1, ... partition the output.
 Span rowsReadyAt(const FitAxis& axis, int s);
-// Output columns [dxFirst, dxEnd) of one output row, blended from source rows `row0` and `row1` (indexed from source
-// column `winStart`; the same row twice when the row is not blended) with `row1`'s weight `rowWeight` (1/65536):
-// along x by `ax`'s taps, each source column clamped into [winStart, winEnd) (a decoded block's columns, or the whole
-// row). Bilinear as the JPEG converter's: horizontal first, each step `(a * (65536 - w) + b * w) >> 16`.
-void sampleRow(const uint8_t* row0, const uint8_t* row1, uint32_t rowWeight, const FitAxis& ax, int winStart,
-               int winEnd, int dxFirst, int dxEnd, uint8_t* out);
+
+// A decoded block of source pixels and what borders it: its rows [y0, y1) and columns [x0, x1) (`pixels`, rows
+// `stride` apart), the source row just above it (`above`, indexed by source column across the whole width: the
+// previous JPEG strip's last row, or the previous PNG row; null at the top, or when the fit does not enlarge
+// vertically), and the column just left of it (`left`, indexed by row - y0: the previous block's last column in the
+// same strip; null at the left edge, or when not kept). at() clamps a source position into what is there, so a blend
+// past an edge repeats the edge pixel.
+struct SourceBlock {
+  const uint8_t* pixels;
+  int stride;
+  int x0;
+  int x1;
+  int y0;
+  int y1;
+  const uint8_t* above = nullptr;
+  const uint8_t* left = nullptr;
+  uint8_t at(int sx, int sy) const;
+};
+// Output columns [dxFirst, dxEnd) of the output row whose tap is `rowTap`, from `block`: the four source pixels of the
+// column's and the row's taps blended, horizontally then vertically, each step `(a * (65536 - w) + b * w) >> 16` (the
+// JPEG converter's 16.16 arithmetic); along an axis that does not enlarge its tap is one pixel with weight 0, so that
+// axis samples the nearest pixel at centres.
+void sampleBlock(const SourceBlock& block, const FitAxis& ax, const FitAxis::Tap& rowTap, int dxFirst, int dxEnd,
+                 uint8_t* out);
 
 }  // namespace GameDisplayLab

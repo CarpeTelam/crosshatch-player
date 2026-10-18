@@ -134,7 +134,7 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   // A pause between two pulse slots of a Ladder stage is counted for its settle line.
   void onPaused() override;
   // A run held at a photo spot: the marker goes back to its band's shade before anything else moves.
-  bool onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  void onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
   // The session cap's clean: a hold in progress dropped, Static from flip 0, the Ladder from its base (false: the
   // Ladder's second photo was taken, the run is over).
   bool onCapClean() override;

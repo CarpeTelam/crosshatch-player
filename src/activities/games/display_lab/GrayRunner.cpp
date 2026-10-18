@@ -93,7 +93,7 @@ void GrayRunner::release() {
 
 // ---- loop task ------------------------------------------------------------------------------------------------------
 
-void GrayRunner::prepare() {
+void GrayRunner::prepare(const bool pressesWaitForFirstPaint) {
   // The old startRun's guard (one task at a time): the fields below are the live task's while it is up.
   if (sweepTask) {
     LOG_ERR("DLAB", "%s: prepare refused, the sweep task is up", who);
@@ -114,7 +114,7 @@ void GrayRunner::prepare() {
   reportedTenths_ = 0;
   reportedMsPerScan_ = 0;
   scheduler.stop();
-  control.reset(micros());
+  control.reset(micros(), pressesWaitForFirstPaint);
 }
 
 bool GrayRunner::launch() {
@@ -130,19 +130,21 @@ bool GrayRunner::launch() {
   return false;
 }
 
-void GrayRunner::togglePause() {
-  if (!sweepTask) return;
-  control.requestRun(!control.runRequested());
-  notifySweep();
+GrayRunner::Press GrayRunner::press(const bool nextFromHold) {
+  if (!sweepTask) return Press::Ignored;
+  // One compare-exchange on the request word (SweepControl::press): a hold landing meanwhile cannot drop the press.
+  const Press pressed = control.press(nextFromHold);
+  if (pressed != Press::Ignored) notifySweep();
+  return pressed;
 }
 
-bool GrayRunner::replayFromHold() {
-  if (!sweepTask) return false;
-  // One step on the request word: only while the task holds (SweepControl::replayFromHold), so a press racing the hold
-  // either finds it (and the replay runs) or does not (and the caller pauses or resumes instead).
-  if (!control.replayFromHold()) return false;
-  notifySweep();
-  return true;
+void GrayRunner::reap() {
+  // A task that outlived stop()'s bound and has since ended: joined now (it is parked, holding nothing).
+  if (sweepTask && sweepDone.load(std::memory_order_acquire)) {
+    vTaskDelete(sweepTask);
+    sweepTask = nullptr;
+    LOG_INF("DLAB", "%s: the late sweep task ended and was joined", who);
+  }
 }
 
 bool GrayRunner::preventAutoSleep() const {
@@ -179,10 +181,21 @@ void GrayRunner::stop() {
   if (!sweepTask) return;
   control.requestStop();
   notifySweep();
-  // Bounded by the scan, the clean or the client's paint in flight (the run's first clean or the session cap's is one
-  // FULL refresh; a scan is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it; a
-  // decode checks stopRequested), as the inline scans were.
-  while (!sweepDone.load(std::memory_order_acquire)) vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
+  // Normally ends after the scan, the clean or the client's paint in flight (the run's first clean or the session cap's
+  // is one FULL refresh; a scan is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it;
+  // a decode checks stopRequested before every output row). Waited for at most STOP_WAIT_MS: a task still running
+  // then (a decoder that never returns to its callback) is not deleted, since it may hold the Storage mutex, and stays
+  // the runner's (running() true, so no new run starts; it refuses any further scan, the stop being sticky) until it
+  // ends and reap() or a later stop joins it.
+  const uint32_t startMs = millis();
+  while (!sweepDone.load(std::memory_order_acquire)) {
+    if (millis() - startMs >= STOP_WAIT_MS) {
+      LOG_ERR("DLAB", "%s: the sweep task did not end within %lu ms of the stop; left running, not deleted", who,
+              static_cast<unsigned long>(STOP_WAIT_MS));
+      return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
+  }
   vTaskDelete(sweepTask);  // parked in vTaskSuspend
   sweepTask = nullptr;
 }
@@ -191,7 +204,15 @@ void GrayRunner::endLocked() {
   if (!sweepTask) return;
   control.requestStop();
   notifySweep();
+  // Unlike stop(), this cannot give up: the caller frees the task's buffers next. It logs once past STOP_WAIT_MS.
+  const uint32_t startMs = millis();
+  bool late = false;
   while (!sweepDone.load(std::memory_order_acquire)) {
+    if (!late && millis() - startMs >= STOP_WAIT_MS) {
+      late = true;
+      LOG_ERR("DLAB", "%s: the sweep task has not ended %lu ms after the stop; still waiting", who,
+              static_cast<unsigned long>(STOP_WAIT_MS));
+    }
     // Inside the panel the task blocks without the render mutex only while taking it (in DisplayLabActivity::scan or
     // cleanToWhite): blocked there, it waits for the mutex this caller holds and holds nothing, so it is deleted
     // where it waits (GameVM::abandon deletes a task it has seen safe the same way). The scan lambda checks
@@ -278,14 +299,10 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     }
   }
   const GrayPreset& preset = lab.preset();
-  // A next picture asked from a hold runs once painted, whatever Run says by now: the loop ignores presses while it
-  // is pending, so Run can only be clear here if a hold landed between the press and this take, and Run is set again
-  // (the word agreeing) rather than leave a painted picture unswept.
-  bool run = requests.run;
-  if (requests.replay && requests.replaying && !run) {
-    control.requestRun(true);
-    run = true;
-  }
+  // A replay with presses waiting always comes with Run: SweepControl::press sets it in the same exchange (and reset()
+  // with it), and no press can clear it before this take (presses are ignored while it is pending), so the picture is
+  // swept once painted.
+  const bool run = requests.run;
   if (requests.replay) {
     if (!cleanToWhite()) return false;
     // A replay from a hold (the viewer's next picture) ends the hold: the panel is white again.
@@ -299,9 +316,20 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     sceneStale = false;
   } else if (requests.clean) {
     if (!cleanToWhite()) return false;  // the next slot reapplies the picture at the paused clock
+    // The panel is white again: a hold the clean met is over (requestClean has no caller today).
+    control.releaseHold();
     LOG_INF("DLAB", "gray sweep cleaned at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
   }
   if (run && !sweeping) {
+    // A client whose picture stays held (the gray viewer's finished picture, which a press cannot resume) is asked
+    // first: the run holds again, with no resume line, no slot clock started, and the hold's start (and its
+    // HOLD_AWAKE_MS bound) unchanged.
+    if (client.keepHolding()) {
+      control.holdRun();
+      return true;
+    }
+    // The task, not the press, ends a hold: a resume then a pause before this take kept it.
+    control.releaseHold();
     const uint32_t nowUs = micros();
     clockUs = nowUs;
     statsSinceUs = nowUs;
@@ -310,7 +338,7 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     if (!requests.replay) LOG_INF("DLAB", "gray sweep resumed at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
     // A run held at a photo spot: the client drives its marker back before anything else moves (it does nothing
     // unless it holds).
-    if (client.onResume(model_, preset)) control.releaseHold();
+    client.onResume(model_, preset);
   }
   return true;
 }
@@ -366,14 +394,6 @@ void GrayRunner::holdForPhoto() {
   control.holdRun();
 }
 
-void GrayRunner::rehold() {
-  // A resume found the picture still held (the gray viewer's finished picture): back to holding without a new start,
-  // so the HOLD_AWAKE_MS bound still counts from the first hold, and without a speed report (the window is empty).
-  sweeping = false;
-  scheduler.stop();
-  control.holdRun();
-}
-
 bool GrayRunner::runSlot(const uint32_t nowUs) {
   advanceClock(nowUs);
   uint32_t slotStartUs = nowUs;
@@ -390,6 +410,16 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return false;
     }
+    // The repaint after the clean (the transition test's reapply, the gray viewer's decode, seconds for a file) belongs
+    // to the clean, not to the slot: done here, before the clock, the slot and the speed window restart, so it is
+    // neither counted as skipped periods nor in the slot's measured length.
+    const uint32_t cleanMs = static_cast<uint32_t>(elapsedUs / 1000);
+    if (!client.prepareSlot(model_, sceneMs, cleanMs, true, lab.preset())) {
+      sweeping = false;  // reported already: sweepRun must not report the empty window after it
+      return paintFailed();
+    }
+    sceneStale = false;
+    sceneMs = cleanMs;
     // The clean's FULL refresh is a pause of the sweep: the clock, the slot and the speed window restart after it.
     slotStartUs = micros();
     clockUs = slotStartUs;

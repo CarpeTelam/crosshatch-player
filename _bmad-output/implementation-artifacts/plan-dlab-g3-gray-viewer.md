@@ -82,12 +82,13 @@ gray engine:
 | No folder | images folder absent or empty | Image row offers the chart only (`1/1`) | logged at onEnter |
 | Files present | PNG/JPEG plus other files, dot files, folders | files listed after the chart, sorted case-insensitively by name; others ignored; at most `MAX_IMAGES`, the first by name whatever the directory order | names over `NAME_BYTES - 1` skipped, logged; files past the cap logged |
 | Run | Run row | clean, paint (chart or decode), settle, marker out (0 or 6, whichever is farther from the mean level under the bars), hold; logs `gray viewer: <name> painted after N slots, M pixels per level [...]` | a non-Done scan ends the run as in the transition test |
-| Next/Confirm while painting | the paint or the marker in flight | pause or resume (the runner's toggle); a pause press landing as the hold begins finds a finished picture and the run holds again, its awake bound unchanged | — |
-| Next/Confirm while holding | held | the next entry: clean, paint, settle, hold; after the last entry, the chart; the hold's end and the replay are one step on the request word, and further presses are ignored until that picture is painted | a press racing the hold either finds it (replay, running) or does not (pause/resume) |
+| Next/Confirm while painting | the slots or the marker in flight | pause or resume (`SweepControl::press`, one compare-exchange); ignored while the run's first picture or a next one is being cleaned and read; a resume then a pause before the task serves them keeps a hold (the task, not the press, ends it) | a press racing the hold is never lost |
+| Next/Confirm while holding | held | the next entry: clean, paint, settle, hold; after the last entry, the chart; decided in the same compare-exchange as the press (Held cleared; Replay, Run and Replaying set), further presses ignored until that picture is painted | a resume that ever reaches a held picture holds again |
 | Previous/Back | view up | stop, rows back with a FULL refresh, Status "Stopped" | — |
-| Unreadable file | open (missing, unreadable, a corrupt header), format (limits, depth, an interlaced or 16-bit PNG, an extended or lossless JPEG), memory or decode error | run ends; Status row names the reason; logged; the file handle closed on every path | the Image row still steps; the chart still works |
+| Unreadable file | open (missing, unreadable, a corrupt header), format (limits, depth, a colour type that does not exist, an interlaced or 16-bit PNG, an extended or lossless JPEG), memory or decode error | run ends; Status row names the reason; logged; the file handle closed on every path | the Image row still steps; the chart still works; a stop during the read is no error (Stopped) |
+| Truncated or malformed PNG | a chunk running past the end of the file, no IEND, a bad signature or chunk length | refused before PNGdec reads it (`walkPngChunks`), "format or size not supported" | PNGdec 1.1.6 would spin without end; a stop that still finds a task running after 20 s is logged and the task left undeleted (`GrayRunner::stop`); a truncated JPEG needs no check (JPEGDEC's decode is bounded) |
 | Dither | Dither row | Plain ↔ Ordered for the next Run | — |
-| Fit | any size or aspect | scaled to fit, aspect kept, centred, white letterbox; bilinear along an axis it enlarges (a JPEG's blend clamped inside its block), nearest at pixel centres along one it shrinks; a JPEG's EXIF orientation ignored, as the converters ignore it | dimensions outside the converters' limits: format error |
+| Fit | any size or aspect | scaled to fit, aspect kept, centred, white letterbox; bilinear along an axis it enlarges (the previous PNG row, the previous JPEG strip's last row and the previous block's last column kept, so blends cross seams), nearest at pixel centres along one it shrinks; a JPEG's EXIF orientation ignored, as the converters ignore it | dimensions outside the converters' limits: format error |
 | Levels | any engine | readout `N levels: 0, 2, 4, 6` from `SHADE_COUNT`/`shadeName` | — |
 | Session cap mid-paint | cap reached | the runner's cap clean; the hold in progress dropped; the picture repainted (file decoded again); logged | repaint failure ends the run as above |
 | Cover, sleep, Home | as the transition test | identical (the shared runner) | — |
@@ -181,7 +182,8 @@ gray engine:
   - At onEnter: the file list (heap, `MAX_IMAGES` 32 × `NAME_BYTES` 64), the runner allocation and the two row
     scratches (logical width each).
   - Implements the runner's `Client`. The current entry is an atomic index the loop task advances.
-  - Input: Next or Confirm while holding goes to the next entry (`requestReplay`), and toggles pause otherwise;
+  - Input: Next or Confirm is one `GrayRunner::press(true)`: while holding the next entry (`SweepControl::press`'s
+    Next, a replay from the hold), ignored while a replay is pending, and a pause or resume otherwise;
     Previous or Back stops.
 - [ ] `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}`: the menu row.
 - [ ] `lib/I18n/translations/english.yaml`:
@@ -241,28 +243,48 @@ gray engine:
   16 px in the left half; diagonal 45° strokes of weight 1, 2, 4 and 8 px in the right half.
 - **Decode on the sweep task, straight into the model, after the clean:** this needs no second picture buffer. A
   session-cap clean repaints by decoding again.
-- **Reader stack:** the decoders run on the stock 8 KiB loop stack on non-vector-font boards. The viewer's task gets
-  12 KiB: the transition test's 8 KiB scan provision plus 4 KiB for the decode chain, an unmeasured estimate. The
-  run's stack log line measures it.
-- **Scaling (revised at review):** bilinear along an axis the fit enlarges, as the JPEG converter enlarges (16.16,
-  horizontal then vertical), so a progressive JPEG decoded at an eighth is not blocky; nearest at pixel centres
-  (`srcOf(d) = ⌊(2d+1)·S/(2D)⌋`) along an axis it shrinks, so line art stays crisp. Which output pixels a decoded unit
-  makes: a JPEG block makes those whose nearest source pixel is in it (`outputSpan`), its blend's neighbours clamped
-  inside the block, as the converter clamps them; a PNG row makes those whose last needed row is it (`rowsReadyAt`),
-  the reader keeping the row before. The fit is computed from the original dimensions; for JPEG the axes map onto
+- **Reader stack:** the decoders run on the stock 8 KiB loop stack on non-vector-font boards. The decode chain and
+  the scan chain never nest, so the need is the larger of the two (the transition test's 8 KiB scan provision, or
+  the decode chain), not their sum; the viewer's task gets 12 KiB, provisional until the measured high-water marks
+  (a PNG, a baseline and a progressive JPEG) the story's Verification asks for.
+- **Scaling (revised at review and follow-up):** bilinear along an axis the fit enlarges (centre-aligned taps per
+  axis; only the 16.16 blend arithmetic, horizontal then vertical, is the JPEG converter's, which aligns corners and
+  blends only when both axes enlarge), so a progressive JPEG decoded at an eighth is not blocky; nearest at pixel
+  centres (`srcOf(d) = ⌊(2d+1)·S/(2D)⌋`) along an axis it shrinks, so line art stays crisp. Which output pixels a
+  decoded unit makes: those whose last needed source pixel is in it (`outputsEndingIn`; a PNG row, `rowsReadyAt`),
+  with the source pixel before it kept (`SourceBlock`'s `above`: the previous PNG row, or the previous JPEG strip's
+  last row across the whole scaled width; `left`: the previous block's last column in the same strip), so blends
+  cross strip and block seams exactly as over the whole image (pinned by `BlendsCrossStripAndBlockSeams`). A JPEG
+  output row is painted per block segment (one sink call per block and row). The fit is computed from the original dimensions; for JPEG the axes map onto
   JPEGDEC's scaled source (`jpegScaleFor`: `⌈src/denom⌉`). EXIF orientation is ignored, as the converters ignore it:
   honouring it means a transposed paint path through the reader and the sink, more than this story's scope.
-- **The hold handshake (review):** the hold, its resume and the viewer's next picture are each one step on
-  `SweepControl`'s word. `holdRun` sets Held and clears Run together. `requestRun(true)` ends a hold. `replayFromHold`
-  acts only while Held: it clears Held and sets Replay, Run and Replaying together. So a Next racing the hold either
-  finds it (a replay, running) or not (the viewer pauses or resumes instead), and the task cannot hold again before it
-  serves that replay, since it runs no slot while held. The runner's replay path also sets Run itself when a hold
-  replay arrives without it. Replaying stays set until the task has painted that picture; the viewer ignores presses
-  meanwhile, so a double press cannot skip a picture. The viewer writes the entry (`requested`) before asking: the
-  task reads it only when serving a replay. A resume that finds the viewer's picture held re-holds (`rehold`: no new
-  start, so the ten-minute awake bound still counts from the first hold).
+- **The hold handshake (review, revised at follow-up):** `holdRun` sets Held and clears Run in one step. Every owner
+  press is `SweepControl::press(nextFromHold)`, one compare-exchange that decides on the word it changes: Ignored
+  while Replaying (a replay with presses waiting: the viewer's first paint, via `reset(.., true)`, or a next
+  picture); with `nextFromHold` (the viewer) while Held and no stop, Next (Held cleared; Replay, Run and Replaying
+  set); otherwise Toggled (Run flipped), so a hold landing between a look and a write can no longer drop a press.
+  The press never clears Held: the task does (`releaseHold`) when it serves a resume, a replay or a clean, so a resume
+  then a pause before it serves them keeps the hold and preventAutoSleep's bound. Replay's Run is set in the same
+  exchange and no press can clear it while Replaying, so serve needs no Run repair. The viewer writes the next entry
+  (`requested`) before pressing and puts it back unless the press was Next; the task reads it only when it serves a
+  replay, and none is pending (the viewer checks `replayPending` first, and only it asks). A resume that ever reaches
+  a held picture is answered before the resume line and the slot clock (`Client::keepHolding`): Run cleared again,
+  the hold's start unchanged.
+- **What the extraction changed in the transition test, all intended:** the hold is the word's Held bit (no
+  `heldForPhoto` atomic) and preventAutoSleep reads Run and Held from one snapshot; its pause press is
+  `press(false)`, one compare-exchange (the old read-then-write could vanish into a hold landing between them);
+  Held is released when the task serves the resume (as `heldForPhoto` was); a speed report after a slot needs
+  `sweeping` and a signed difference, so no empty `gray scans_s=0.0` follows a hold; the session cap's clean
+  repaints before the slot clock and the window restart (the reapply's CPU time no longer inflates that slot);
+  `serve` releases Held on a replay or a clean; `prepare`, `launch` and `release` refuse while a task is up.
+- **A bounded stop (follow-up):** `GrayRunner::stop` waits at most `STOP_WAIT_MS` (20 s, past the longest scan) and
+  then logs and leaves the task undeleted (it may hold the Storage mutex); `running()` stays true, so no new run
+  starts, the sticky stop refuses its scans, and `reap()` joins it from the rows view once it ends. `endLocked`
+  cannot give up (the buffers are freed next): it logs once past 20 s and waits. The known unbounded case, a
+  truncated PNG spinning inside PNGdec, is refused before decoding (`walkPngChunks`).
 - **The decode window (review):** a stop during a decode waits for the task outside the panel. The reader checks the
-  sink's stop before every output row, so the wait is at most one row's decode and SD read. `endLocked` spins holding
+  sink's stop before every output row, so the wait is normally one row's decode and SD read (bounded at 20 s in
+  `stop`, above). `endLocked` spins holding
   the render mutex meanwhile. It cannot deadlock: the decode takes the Storage mutex inside the decoder but never the
   render mutex, and no Storage-mutex holder waits on the render mutex.
 
@@ -283,7 +305,10 @@ gray engine:
   `gray ladder: done`, their log lines against a pre-extraction run (no empty `gray scans_s=0.0` after a hold is the
   one intended difference), and one run across a session-cap clean;
 - the viewer task's `gray sweep task ended` high-water mark for a PNG, a baseline JPEG and a progressive JPEG,
-  against the 12 KiB provision.
+  against the 12 KiB provision;
+- the viewer's presses: Next while held paints the next picture; a double Next during that picture's clean and decode
+  advances one picture; a pause press at the moment the hold lands leaves the run held or paused, never lost;
+- a truncated PNG (a copy cut short) shows "format or size not supported" at once, and Back works.
 
 ## Implementation Notes
 
@@ -378,6 +403,43 @@ All 16 items were patched. Every change is staged; nothing was committed, and no
 A surprise along the way: PNGdec's `zutil.h` defines `local` as `static`, so a variable named `local` in the reader
 broke the device compile. It was renamed and the reason noted.
 
+### Follow-up batch (2026-10-18, on top of the story commit `26bc6699`)
+
+All 13 items were patched. Every change is staged; nothing was committed, and no `pio` was run.
+
+1. **(high) Truncated PNG:**
+   - (a) `walkPngChunks` walks the chunk headers (length + 12 each, through IEND) against the file size, through the
+     reader's `checkPngLayout`, before PNGdec reads anything. A truncated or malformed file is `Format`; tests
+     `PngChunks.*`.
+   - JPEG needs no such check: JPEGDEC's DecodeJPEG loops are bounded per MCU and call back each strip (comment in
+     the reader).
+   - (b) `stop()` waits at most 20 s and then logs, without deleting. `reap()` joins the task later from both
+     screens' rows view. `endLocked` logs once at 20 s and keeps waiting.
+2. **Press:** `SweepControl::press(nextFromHold)` returns Ignored, Next or Toggled. `requestRun(true)` no longer
+   clears Held; the task's serve releases Held on a resume, a replay and a clean. `reset(now, pressesWait)` lets the
+   viewer ignore presses until its first paint. `replayFromHold`, `togglePause` and `rehold` are gone. Five handshake
+   tests replace the earlier ones, among them the old read-then-write losing a press, which `press()` does not.
+3. **Seams:** `SourceBlock`, `sampleBlock` and `outputsEndingIn` replace `sampleRow` and `outputSpan`. The JPEG
+   reader keeps the previous strip's last row (the scaled width, allocated only when the fit enlarges vertically) and
+   the previous block's last column. `BlendsCrossStripAndBlockSeams` pins the blocks against one whole block, and
+   that dropping the kept seams would differ.
+4. **Cap repaint timing:** after a session-cap clean the repaint (`prepareSlot` with stale) runs before the clock,
+   the slot and the window restart.
+5. **Wording:** only the 16.16 blend arithmetic is the converter's (header, ImageRows, doc, tests).
+6. **Serve:** the `replaying && !run` branch is removed, with the reason Run is always set there.
+7. **Clean releases Held:** the clean path releases Held, pinned on the word by
+   `ACleanDoesNotTouchTheHoldTheTaskReleasesIt`.
+8. **Stack comment:** the decode and scan chains never nest, so the need is the larger of the two; 12 KiB is
+   provisional.
+9. **Quiet stop:** a read the stop ended logs at INF with no paint error, and the run ends Stopped.
+10. **Log lines:** the JPEG scale is printed for JPEGs only; "read and painted in"; the name limit is in bytes.
+11. **Keep holding:** `Client::keepHolding()` is asked before the resume line and the scheduler start, and holds again
+    without either.
+12. **Colour types:** a colour type that does not exist (1, 5, 7) is refused as `Format`, pinned by
+    `PngColourTypesThatDoNotExistAreRefused`.
+13. **Plan wording:** the extraction's intended changes are listed in Design Notes; the press, the JPEG per-block
+    segments and the device checks are named.
+
 ## Plan Change Log
 
 ## Review Triage Log
@@ -446,9 +508,9 @@ What was built:
 
 Host verification (this commit's staged tree):
 
-- **Host suite:** `ctest` 2290 of 2290 passed after the review batch (2278 before it; dlab-g1's merge had 2,236). The
-  display lab binary has 226 tests, including the 172 earlier ones unchanged; the SweepControl suite gained the
-  handshake tests beside its unchanged ones.
+- **Host suite:** `ctest` 2298 of 2298 passed after the follow-up batch (2290 after the review batch, 2278 before
+  it; dlab-g1's merge had 2,236). The display lab binary has 234 tests, including the 172 earlier ones unchanged; the
+  SweepControl suite's own earlier tests are unchanged beside the new press tests.
 - **Fast checks:**
   - `scripts/check_layers.py`: passed, 876 edges.
   - `check_layers_test.py`: 54 tests OK, the new decoder-edge test included.
@@ -465,11 +527,12 @@ Matrix test audit:
 | Files present | `ImageList.FilesAreListedByNameAfterTheChart`, `AFullListKeepsTheFirstNamesByName`, `ImageRows.KindsByExtensionAnyCase`, `ImageRows.OtherFilesAreIgnored` |
 | Run | `GrayPictureHold.PaintSettlesThenTheMarkerGoesOutThenHolds`, `GrayPaint.TheChartIsTheQuantisedChart` |
 | Next while painting | `SweepControl.RequestRunFalsePausesAndTrueResumes` (existing) |
-| Next while holding | `SweepControl.NextWhileHeldReplaysRunning`, `NextWithoutAHoldAsksNothing`, `AHoldAfterTheNextPressCannotLoseRun`, `AResumeEndsTheHold`, the wrap in `ImageList.FilesAreListedByNameAfterTheChart` |
+| Next while painting / holding | `SweepControl.APressWhileHeldIsTheNextPicture`, `APressWhileAReplayIsPendingIsIgnored`, `TheViewersFirstReplayMakesPressesWait`, `APressWithoutAHoldToggles`, `AResumeThenAPauseBeforeTheTaskServesKeepsTheHold`, `AHoldBetweenTheOwnersLookAndItsWriteCannotDropAPress`, the wrap in `ImageList.FilesAreListedByNameAfterTheChart` |
+| Truncated or malformed PNG | `PngChunks.ACompleteFileWalksThroughIend`, `ATruncatedFileIsRefused`, `AMalformedFileIsRefused`; the bounded stop is device-only |
 | Previous/Back | `SweepControl.StopIsStickyAndGatesEntry` (existing) |
-| Unreadable file | `ImageRows.SizeLimitsAreTheConverters`, `PngDepthsAreTheConverters`, `PngBufferNeedIsTheConverters` (the reader's Format checks); the Status text is device-only |
+| Unreadable file | `ImageRows.SizeLimitsAreTheConverters`, `PngDepthsAreTheConverters`, `PngColourTypesThatDoNotExistAreRefused`, `PngBufferNeedIsTheConverters` (the reader's Format checks); the Status text is device-only |
 | Dither | the `GrayQuantiser.*` tests at 4 and 7 levels |
-| Fit | `ImageRows.FitKeepsTheAspectAndCentres`, `FitAlwaysInsideTheScreen`, `FitAxis*`, `TapsAreNearestWhenShrinkingAndBlendWhenEnlarging`, `BlockSpansPartitionTheOutput`, `RowsReadyAtPartitionTheOutputOnceTheirRowsHaveArrived`, `SampleRowIs*`, `JpegScaleAndOptionForAFit` |
+| Fit | `ImageRows.FitKeepsTheAspectAndCentres`, `FitAlwaysInsideTheScreen`, `FitAxis*`, `TapsAreNearestWhenShrinkingAndBlendWhenEnlarging`, `BlockSpansPartitionTheOutput`, `RowsReadyAtPartitionTheOutputOnceTheirRowsHaveArrived`, `SampleBlockIs*`, `BlendsCrossStripAndBlockSeams`, `JpegScaleAndOptionForAFit` |
 | Levels | `GrayLevels.TheReadoutNamesTheEnginesLevels`, `GrayQuantiser.TheEnginesLevelCountIsUsed` |
 | Session cap mid-paint | `GrayPictureHold.ASessionCapCleanMidMarkerPaintsAgain` |
 | Cover, sleep, Home | the shared runner, so the transition test's existing `SweepControl` tests apply |
@@ -484,8 +547,8 @@ Residual risks:
 
 - The viewer task's 12 KiB stack is an unmeasured estimate for the decode chain on the sweep task. The run's
   `gray sweep task ended` line measures it.
-- A multi-second decode runs on the sweep task: a stop waits for at most one output row, and the cover check only
-  ends the run at the next scan.
+- A multi-second decode runs on the sweep task: a stop normally waits for one output row (at most 20 s, then logged
+  and the task left undeleted), and the cover check only ends the run at the next scan.
 - `PNGdec` is about 59 KB with the firmware's 16 KB row buffer; the free-heap floor is now its real size plus
   16 KiB (about 75 KB), stricter than the converters' 60 KB.
 - The decoder libraries are exercised only on hardware.

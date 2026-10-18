@@ -188,7 +188,7 @@ void TransitionTestActivity::activateIndex(const int index) {
     // A tap over the rows' area (the only taps the list routes, where touch routes while the view is up) pauses or
     // resumes.
     app.clearTapFlash();
-    runner.togglePause();
+    runner.press(false);
     return;
   }
   if (notice) return;
@@ -226,7 +226,7 @@ bool TransitionTestActivity::handleCustomInput() {
   if (mappedInput.wasSwipe() != MappedInputManager::SwipeDir::None) return true;
   if (mappedInput.wasPressed(MappedInputManager::Button::NavNext) ||
       mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    runner.togglePause();
+    runner.press(false);
     return true;
   }
   // A tap pauses only where touch routes while the view is up (it reaches activateIndex through the base's touch
@@ -257,6 +257,8 @@ void TransitionTestActivity::loop() {
     runner.heartbeat(micros());
     return;
   }
+  // A task a stop left running past its bound (logged) is joined once it ends.
+  if (!shownOnPanel.load()) runner.reap();
   UiListActivity::loop();
   // The sweep task refuses its next scan once this is older than GrayRunner::COVERED_GAP_US.
   runner.heartbeat(micros());
@@ -416,12 +418,11 @@ void TransitionTestActivity::onPaused() {
   }
 }
 
-bool TransitionTestActivity::onResume(GrayModel& model, const GrayPreset& preset) {
+void TransitionTestActivity::onResume(GrayModel& model, const GrayPreset& preset) {
   // A run held at a photo spot: the marker goes back to its band's shade before anything else moves (the scene does
   // nothing unless it holds).
-  if (!scene.resumeHold(model, preset)) return false;
+  if (!scene.resumeHold(model, preset)) return;
   LOG_INF("DLAB", "gray hold: resumed; marker back to %c", GameDisplayLab::shadeName(scene.markerShade()));
-  return true;
 }
 
 bool TransitionTestActivity::onCapClean() {

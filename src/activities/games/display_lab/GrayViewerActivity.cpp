@@ -98,7 +98,7 @@ void GrayViewerActivity::listImages() {
       case GameDisplayLab::ImageList::Add::Ignored:
         break;
       case GameDisplayLab::ImageList::Add::TooLong:
-        LOG_ERR("DLAB", "gray viewer: name over %u characters, skipped: %s", static_cast<unsigned>(NAME_BYTES - 1),
+        LOG_ERR("DLAB", "gray viewer: name of %u bytes or more, skipped: %s", static_cast<unsigned>(NAME_BYTES),
                 name.get());
         break;
       case GameDisplayLab::ImageList::Add::Full:
@@ -296,6 +296,8 @@ void GrayViewerActivity::loop() {
     runner.heartbeat(micros());
     return;
   }
+  // A task a stop left running past its bound (logged) is joined once it ends.
+  if (!shownOnPanel.load()) runner.reap();
   UiListActivity::loop();
   runner.heartbeat(micros());
 }
@@ -303,7 +305,8 @@ void GrayViewerActivity::loop() {
 void GrayViewerActivity::startRun() {
   if (runner.running()) return;
   app.clearTapFlash();
-  runner.prepare();
+  // Presses wait for the first paint: they write the entry the task reads at a replay.
+  runner.prepare(true);
   paintError = ImageRead::Done;
   {
     RenderLock lock(*this);
@@ -322,23 +325,20 @@ void GrayViewerActivity::startRun() {
 
 void GrayViewerActivity::nextOrPause() {
   if (!runner.running()) return;
-  // A next picture asked and not yet painted (its clean and decode take seconds): further presses are ignored, so a
-  // second press can neither skip a picture nor pause the one being painted.
+  // A replay with presses waiting (the run's first picture, or a next one, whose clean and decode take seconds) is
+  // pending: the press is ignored, so a second press can neither skip a picture nor pause the one being painted.
   if (runner.replayPending()) return;
-  if (runner.heldForPhoto()) {
-    // Held: the next entry, after the last the chart. The task reads `requested` only when it serves a replay, and the
-    // run's first one was served before this hold, so the entry is written first and the replay asked after; the
-    // replay is asked in one step on the request word only while the task still holds.
-    const uint16_t current = requested.load();
-    const auto next = static_cast<uint16_t>(GameDisplayLab::ImageList::nextEntry(current, images.entries()));
-    requested.store(next);
-    if (runner.replayFromHold()) {
-      LOG_INF("DLAB", "gray viewer: next, %s", entryName(next));
-      return;
-    }
-    requested.store(current);  // the hold ended meanwhile (a resume): no replay was asked
+  // The task reads `requested` only when it serves a replay, and none is pending (the check above; only this task asks
+  // for one), so the next entry is written first and the press decides, in one step on the request word, whether it is
+  // the next picture (the task holds) or a pause or resume (it does not), which puts the entry back.
+  const uint16_t current = requested.load();
+  const auto next = static_cast<uint16_t>(GameDisplayLab::ImageList::nextEntry(current, images.entries()));
+  requested.store(next);
+  if (runner.press(true) == GrayRunner::Press::Next) {
+    LOG_INF("DLAB", "gray viewer: next, %s", entryName(next));
+    return;
   }
-  runner.togglePause();
+  requested.store(current);
 }
 
 void GrayViewerActivity::stepImage() {
@@ -431,17 +431,24 @@ bool GrayViewerActivity::paintEntry(GrayModel& model, const GrayPreset& preset) 
   ImageReadInfo info;
   const ImageRead read = readGrayImage(path, GameDisplayLab::imageKindOf(name), picture.screen().logicalW,
                                        picture.screen().logicalH, sink, info);
+  if (read == ImageRead::Stopped) {
+    // The owner's stop (Back, Home, sleep) ended the read: no paint error; the run ends as Stopped.
+    LOG_INF("DLAB", "gray viewer: %s: read stopped", name);
+    return false;
+  }
   if (read != ImageRead::Done) {
     paintError = read;
     LOG_ERR("DLAB", "gray viewer: %s: %s", name, imageReadName(read));
     return false;
   }
-  LOG_INF("DLAB",
-          "gray viewer: %s %dx%d at %d,%d %dx%d (jpeg scale 1/%d%s), decoded in %lu ms, dither %s, %u pixels "
-          "to drive",
-          name, info.width, info.height, info.fit.x, info.fit.y, info.fit.w, info.fit.h, info.jpegScale,
-          info.progressive ? ", progressive" : "", static_cast<unsigned long>(info.ms), ditherName(dither),
-          static_cast<unsigned>(model.activeCount()));
+  // JPEGDEC's scale, for a JPEG only.
+  char scale[32] = "";
+  if (GameDisplayLab::imageKindOf(name) == ImageKind::Jpeg) {
+    snprintf(scale, sizeof(scale), " (jpeg scale 1/%d%s)", info.jpegScale, info.progressive ? ", progressive" : "");
+  }
+  LOG_INF("DLAB", "gray viewer: %s %dx%d at %d,%d %dx%d%s, read and painted in %lu ms, dither %s, %u pixels to drive",
+          name, info.width, info.height, info.fit.x, info.fit.y, info.fit.w, info.fit.h, scale,
+          static_cast<unsigned long>(info.ms), ditherName(dither), static_cast<unsigned>(model.activeCount()));
   return true;
 }
 
@@ -452,16 +459,14 @@ bool GrayViewerActivity::onReplay(GrayModel& model, const GrayPreset& preset) {
   return paintEntry(model, preset);
 }
 
-bool GrayViewerActivity::onResume(GrayModel& model, const GrayPreset& preset) {
-  (void)model;
-  (void)preset;
-  // A pause press that landed as the hold began (Run set again) finds a finished picture: nothing to resume, so the run
-  // holds again, its hold's ten-minute bound unchanged; Next is the way on.
-  if (picture.phase() == GameDisplayLab::PicturePhase::Held) {
-    runner.rehold();
-    LOG_INF("DLAB", "gray viewer: still held; Next paints the next picture");
-  }
-  return false;
+bool GrayViewerActivity::keepHolding() {
+  // Defensive: the viewer's press while the task holds is the next picture (SweepControl::press decides on the word),
+  // so a resume reaches a held picture only if a toggle and a hold ever cross in a way the word does not show. A
+  // finished picture has nothing to resume: the run holds again, its hold's ten-minute bound unchanged; Next is the way
+  // on.
+  if (picture.phase() != GameDisplayLab::PicturePhase::Held) return false;
+  LOG_INF("DLAB", "gray viewer: still held; Next paints the next picture");
+  return true;
 }
 
 bool GrayViewerActivity::onCapClean() {

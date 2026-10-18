@@ -34,9 +34,9 @@ class GfxRenderer;
 // GameDisplayLab::SlotScheduler period: the client moves its picture (prepareSlot), GameDisplayLab::runGraySlot sends
 // the drive scan and the follow-up scan through DisplayLabActivity::scan and commits what was delivered, and the
 // client decides what the slot means (afterSlot: a settle, a photo spot, the run's end). The loop task keeps polling
-// input and talks to the task only through GameDisplayLab::SweepControl and a notification: togglePause (a pause or a
-// resume, served at the end of the slot in flight), replayFromHold (clean and paint again: the viewer's next picture,
-// only while the task holds), stop. A hold for a photo (holdForPhoto, which the client calls from afterSlot once its
+// input and talks to the task only through GameDisplayLab::SweepControl and a notification: press (a pause or a
+// resume, served at the end of the slot in flight, or, in the gray viewer while the task holds, the next picture: one
+// step on the word), stop. A hold for a photo (holdForPhoto, which the client calls from afterSlot once its
 // marker has settled) stops the clock and the slots and clears Run, so one press resumes; preventAutoSleep keeps the
 // device awake through it for HOLD_AWAKE_MS. A non-Done scan ends the run (End::ScanFailed with its outcome). Another
 // screen covering the view stops the loop: the task refuses its next scan once the heartbeat is older than
@@ -67,6 +67,9 @@ class GrayRunner {
   static constexpr int SWEEP_CORE = 1;
   // How often stop() polls for the task's end.
   static constexpr uint32_t STOP_POLL_MS = 5;
+  // The longest stop() waits for the task: past the longest scan (SCAN_TIMEOUT_MS) and a decode's row, short enough
+  // that Back, Home or sleep never hangs on a task that does not return (logged, the task left undeleted).
+  static constexpr uint32_t STOP_WAIT_MS = 20000;
   // How long a hold for a photo keeps the device awake from its start: long enough to set up and take the photos,
   // short enough that a forgotten hold does not keep the CPU up indefinitely (main.cpp resets the idle clock and turns
   // power saving off on every pass while preventAutoSleep is true).
@@ -94,11 +97,14 @@ class GrayRunner {
     virtual bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) = 0;
     // The owner paused the run (not a hold), between two slots.
     virtual void onPaused() {}
-    // The run resumes (after a pause or a hold): true when the client resumed a hold (the runner clears its hold).
-    virtual bool onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) {
+    // A resume arrived: true keeps the run holding instead (a picture that is finished and held, which a press does
+    // not resume; the client logs it). Asked before the resume line and the slot clock.
+    virtual bool keepHolding() { return false; }
+    // The run resumes (after a pause or a hold), the hold already released: a client holding at a photo spot drives
+    // its marker back.
+    virtual void onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) {
       (void)model;
       (void)preset;
-      return false;
     }
     // The session cap's clean repainted the panel white and reset the model: false when the run is over (Finished).
     virtual bool onCapClean() = 0;
@@ -129,21 +135,26 @@ class GrayRunner {
   bool allocate(int logicalW, int logicalH);
   void release();
   // A new run's state: no task alive (running() false). The client is configured after this and before launch().
-  void prepare();
+  // With `pressesWaitForFirstPaint`, presses are ignored until the run's first paint is served (the gray viewer, whose
+  // presses write the entry the task reads at a replay).
+  void prepare(bool pressesWaitForFirstPaint = false);
   // Creates the sweep task, which cleans and paints from the start; false (logged) when it cannot be created.
   bool launch();
   // The task is up (it may have ended and be parked until a stop joins it).
   bool running() const { return sweepTask != nullptr; }
-  // NavNext, Confirm or a tap: pause or resume (a hold's resume too), served at the end of the slot in flight.
-  void togglePause();
-  // The gray viewer's next picture: while the task holds, the hold ended and a clean and paint from the start asked,
-  // running, in one step on the request word; false (nothing asked) when the task does not hold.
-  bool replayFromHold();
-  // A next picture was asked and the task has not painted it yet: further presses are ignored meanwhile.
+  using Press = GameDisplayLab::SweepControl::Press;
+  // NavNext, Confirm or a tap, in one step on the request word (SweepControl::press): Ignored while a replay with
+  // presses waiting is pending; with `nextFromHold` (the gray viewer) and the task holding, the next picture (Next);
+  // otherwise a pause or a resume (Toggled), served at the end of the slot in flight. Ignored without a task.
+  Press press(bool nextFromHold);
+  // A replay with presses waiting is pending (the gray viewer reads it before it writes the next entry).
   bool replayPending() const { return control.replayPending(); }
   // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (after the scan, the clean
-  // or the decode in flight), and deletes it. The caller holds no render lock.
+  // or the decode row in flight) at most STOP_WAIT_MS, and deletes it; past that, logged and left running (running()
+  // stays true until reap() joins it). The caller holds no render lock.
   void stop();
+  // From the rows view's loop: joins a task stop() left running once it has ended.
+  void reap();
   // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks the task to stop and waits for
   // its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that mutex.
   void endLocked();
@@ -154,7 +165,8 @@ class GrayRunner {
   // Once per loop() pass: the task refuses its next scan once this is older than COVERED_GAP_US.
   void heartbeat(uint32_t nowUs) { control.heartbeat(nowUs); }
   bool preventAutoSleep() const;
-  // The run holds for a photo (the marker settled; cleared by a resume, a replay, a run's start and its end).
+  // The run holds for a photo (the marker settled; cleared when the task serves a resume, a replay or a clean, and at
+  // a run's start and end).
   bool heldForPhoto() const { return control.held(); }
   // How the last run ended, and the failing scan's outcome when it was ScanFailed; read once the task is gone.
   End end() const { return sweepEnd; }
@@ -176,9 +188,6 @@ class GrayRunner {
   // resumes: SweepControl::holdRun sets Held and clears Run in one step, after the hold's start is stored, so
   // preventAutoSleep (one load of both) always sees the run or the hold.
   void holdForPhoto();
-  // From Client::onResume: the resume found nothing to resume (the gray viewer's held picture), so the run holds
-  // again, its hold's start (and HOLD_AWAKE_MS bound) unchanged.
-  void rehold();
   GameDisplayLab::GrayModel& model() { return model_; }
 
  private:

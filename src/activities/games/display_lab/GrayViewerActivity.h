@@ -38,8 +38,8 @@
 // picture under it) is driven out, and once it has settled the run holds. While it paints, NavNext (side Down),
 // Confirm, or a tap where touch routes while the view is up pauses or resumes, as in the transition test; while it
 // holds they paint the next entry (clean first; after the last file, the chart), which the Image row then shows, and
-// further presses are ignored until it is painted (GrayRunner::replayFromHold, one step on the request word); a pause
-// press that lands as the hold begins finds nothing to resume and the run holds again (onResume). NavPrevious (side Up)
+// further presses are ignored until it is painted, as during the run's first paint (GrayRunner::press, one step on the
+// request word); a resume that ever reaches a held picture holds again (keepHolding). NavPrevious (side Up)
 // or Back stops; the rows come back with a FULL refresh. A file that cannot be read ends the run with the reason on the
 // Status row (logged with the file's name); the Image row still steps, and the chart still works. The session cap's
 // clean drops the hold in progress and paints the entry again (the file decoded again).
@@ -57,10 +57,12 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   // NUL; a longer name is skipped (logged).
   static constexpr size_t MAX_IMAGES = 32;
   static constexpr size_t NAME_BYTES = GameDisplayLab::IMAGE_NAME_BYTES;
-  // The sweep task's stack: the transition test's 8 KiB scan provision (TransitionTestActivity::SWEEP_STACK_BYTES)
-  // plus 4 KiB for the decode chain (PNGdec's inflate or JPEGDEC's MCU decode, the row callback, the quantiser and a
-  // retarget), which the converters run on the stock 8 KiB loop stack. An estimate, not measured: the run's
-  // `gray sweep task ended` line gives the high-water mark.
+  // The sweep task's stack, provisional. The decode chain (PNGdec's inflate or JPEGDEC's MCU decode, the row callback,
+  // the quantiser and a retarget) and the scan chain (the transition test's measured 8 KiB provision,
+  // TransitionTestActivity::SWEEP_STACK_BYTES) never nest, so the need is the larger of the two, not their sum; the
+  // converters run the decode chain on the stock 8 KiB loop stack beneath an activity's own frames. 12 KiB leaves room
+  // over either until the measured high-water marks the story's Verification asks for (a PNG, a baseline and a
+  // progressive JPEG, the run's `gray sweep task ended` line) set it.
   static constexpr uint32_t VIEWER_STACK_BYTES = 12288;
 
   // `lab` is the menu under this screen on the stack, which outlives it.
@@ -140,8 +142,8 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   // ---- sweep task: the runner's client --------------------------------------------------------------------------
   // A run's start or the next picture: the picture from Painting, painted from the entry.
   bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
-  // A resume that finds the picture held (a pause press as the hold began): the run holds again (GrayRunner::rehold).
-  bool onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  // A resume that finds the picture held: the run holds again (defensive; see the definition).
+  bool keepHolding() override;
   // The session cap's clean: the hold in progress dropped; the next slot paints the entry again.
   bool onCapClean() override;
   // Nothing moves; after a clean (`stale`) the entry is painted again.
