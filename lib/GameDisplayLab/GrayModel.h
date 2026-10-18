@@ -73,10 +73,19 @@ class GrayModel {
   void retarget(int x, int y, Shade target, const GrayPreset& preset);
   // retarget() for every pixel of [x, x + w) x [y, y + h), clipped to the model.
   void retargetRect(int x, int y, int w, int h, Shade target, const GrayPreset& preset);
+  // The ladder's pulses (story dlab-g1): every pixel of [x, x + w) x [y, y + h), clipped to the model, gets exactly
+  // `doses` doses (at most DOSE_MAX) toward black (Toward::Dark: target K) or white (Toward::Light: target W), set
+  // directly, without the dose table, the retarget percents or the history routes; even a pixel already moving to
+  // that target, or already on it (each dose then leaves its level where it is), takes the new count. The bookkeeping
+  // is a retarget's, so buildMasks, commit and settle detection work unchanged: the level is kept, the source is the
+  // shade nearest the level (which picks the hold bit); the history origin is cleared with its step counters (a driven
+  // pixel has no route), and the weak bit (a pulse is the plain one-frame drive). `doses` 0 changes nothing.
+  void driveRect(int x, int y, int w, int h, Toward toward, uint8_t doses);
 
-  // Clears both mask pairs and sets each pixel with doses left: in `drive`, white when it lightens (target * 64 >
-  // level), else black (both, the weak row of a backend that has one, when `weakRow` and the pixel is weak-eligible);
-  // in `follow` the same when its hold bit is off and it has more than one dose left. Both pairs must match the model's
+  // Clears both mask pairs and sets each pixel with doses left: in `drive`, white when it lightens (a W target, or a
+  // middle target above its level; a pixel driveRect drives toward the end it is already on keeps that direction),
+  // else black (both, the weak row of a backend that has one, when `weakRow` and the pixel is weak-eligible); in
+  // `follow` the same when its hold bit is off and it has more than one dose left. Both pairs must match the model's
   // size. Returns the pixels driven; 0 for a mismatched pair (nothing set).
   size_t buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPreset& preset, bool weakRow) const;
   // Commits the slot buildMasks planned: nothing unless `driveDone`; one dose per driven pixel, and a second for a
