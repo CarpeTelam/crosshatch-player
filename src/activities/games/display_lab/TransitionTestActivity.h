@@ -127,6 +127,8 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   const char* endText() const;
   // After a stop: endText() when the task was joined, "Still stopping" when it was left running past the bound.
   const char* stopText(bool joined) const;
+  // The runner's working set and the scene over it; false (logged, the runner's buffers released) when one has no room.
+  bool allocateWorkingSet();
   // Why no run starts while a sweep task is still ending: a restart when one was detached, else "Still stopping".
   const char* blockedText() const;
   // The task's last speed into the Speed line (kept as it was when there was none); only once the task is joined.
@@ -173,6 +175,8 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   DisplayLabActivity& lab;
   // Why the screen cannot run (its one row), or null.
   const char* notice = nullptr;
+  // The working set was not allocated at onEnter, a detached task still holding its own: Run allocates it.
+  bool deferred = false;
   // The Run row's line and the speed line.
   const char* status = nullptr;
   char statsText[48] = {};

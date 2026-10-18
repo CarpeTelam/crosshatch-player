@@ -209,17 +209,53 @@ int32_t fillPngRead(uint8_t* buf, const int32_t requested, const int32_t got) {
 
 uint32_t decoderReadCap(const uint32_t walkedSize) { return 2 * (walkedSize / JPEG_PARSE_BUFFER) + 64; }
 
-int32_t fillJpegRead(uint8_t* buf, const int32_t requested, const int32_t got, const bool decoding) {
+uint32_t jpegHeaderReadCap(const uint32_t windowMoves) { return windowMoves + 4; }
+
+int32_t answerJpegHeaderRead(uint8_t* buf, const int32_t requested, const int32_t got, const bool dropped) {
+  if (requested <= 0) return 0;
+  if (dropped) {
+    // The span is the parse buffer's tail: its start is (JPEG_PARSE_BUFFER - requested) bytes before it.
+    const int32_t before =
+        requested < static_cast<int32_t>(JPEG_PARSE_BUFFER) ? static_cast<int32_t>(JPEG_PARSE_BUFFER) - requested : 0;
+    uint8_t* const start = buf - before;
+    for (int32_t i = 0; i < before + requested; ++i) start[i] = 0;
+    return 0;
+  }
+  const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);
+  for (int32_t i = kept; i < requested; ++i) buf[i] = 0;
+  return kept;
+}
+
+int32_t jpegFilteredLength(const uint8_t* buf, const int32_t n) {
+  int32_t kept = 0;
+  int32_t i = 0;
+  while (i < n - 1) {
+    if (buf[i] != 0xFF) {
+      ++kept;
+      ++i;
+    } else if (buf[i + 1] == 0) {
+      ++kept;  // a stuffed 0xFF stays, its 0 goes
+      i += 2;
+    } else {
+      i += 2;  // a marker goes whole
+    }
+  }
+  // The last byte, when the loop did not take it: kept unless a 0xFF, which waits for the next read.
+  if (i == n - 1 && buf[i] != 0xFF) ++kept;
+  return kept;
+}
+
+int32_t answerJpegDecodeRead(uint8_t* buf, const int32_t requested, const int32_t got) {
   if (requested <= 0) return 0;
   const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);
   for (int32_t i = kept; i < requested; ++i) buf[i] = 0;
-  return decoding ? requested : kept;
-}
-
-int32_t jpegKeptBytes(const int32_t allowed, const int32_t got, const bool decoding) {
-  if (got <= 0) return 0;
-  if (decoding) return got;
-  return got >= allowed ? allowed : 0;
+  const int32_t base = static_cast<int32_t>(JPEG_PARSE_BUFFER) - requested;
+  if (base + jpegFilteredLength(buf, requested) < JPEG_FILE_HIGHWATER + JPEG_MCU_MARGIN) {
+    for (int32_t i = 0; i < requested; ++i) {
+      if (buf[i] == 0xFF) buf[i] = 0;
+    }
+  }
+  return requested;
 }
 
 int32_t jpegPositionAfterRead(const uint32_t position, const uint32_t size) {

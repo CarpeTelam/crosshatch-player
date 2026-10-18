@@ -62,11 +62,16 @@ void GrayViewerActivity::onEnter() {
   RenderLock lock(*this);
   shownOnPanel = false;
   notice = nullptr;
-  // A task a closed screen detached may never end: say so from the start.
-  status = GrayRunner::detachedTasks() > 0 ? tr(STR_GAMES_DLAB_RESTART_DEVICE) : tr(STR_GAMES_DLAB_NOT_RUN);
+  status = tr(STR_GAMES_DLAB_NOT_RUN);
   dither = Dither::Plain;
   requested.store(0);
-  if (!allocate()) {
+  deferred = false;
+  if (GrayRunner::detachedTasks() > 0) {
+    // A task a closed screen detached may never end, and keeps its own model meanwhile: this screen's working set
+    // waits until it has ended (allocated at Run), and the Status row says so (cleared by loop() if it ends).
+    status = tr(STR_GAMES_DLAB_RESTART_DEVICE);
+    deferred = true;
+  } else if (!allocate()) {
     release();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
   }
@@ -311,6 +316,15 @@ void GrayViewerActivity::loop() {
     }
     requestUpdate();
   }
+  // The restart notice clears once no detached task is left: it ended after all.
+  if (!shownOnPanel.load() && status == tr(STR_GAMES_DLAB_RESTART_DEVICE) && GrayRunner::detachedTasks() == 0) {
+    {
+      RenderLock lock(*this);
+      status = tr(STR_GAMES_DLAB_NOT_RUN);
+      rowItems[static_cast<size_t>(Row::Status)].subtitle = status;
+    }
+    requestUpdate();
+  }
   UiListActivity::loop();
   if (runner) runner->heartbeat(micros());
 }
@@ -329,6 +343,24 @@ void GrayViewerActivity::startRun() {
     }
     requestUpdate();
     return;
+  }
+  if (deferred) {
+    // The working set onEnter left for a detached task's end, which has come.
+    bool allocated = false;
+    {
+      RenderLock lock(*this);
+      allocated = allocate();
+      if (!allocated) {
+        release();
+        notice = tr(STR_GAMES_OUT_OF_MEMORY);
+        buildRows();
+      }
+    }
+    if (!allocated) {
+      requestUpdate();
+      return;
+    }
+    deferred = false;
   }
   // Presses wait for the first paint: they write the entry the task reads at a replay.
   runner->prepare(true);

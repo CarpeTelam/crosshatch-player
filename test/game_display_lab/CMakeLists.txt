@@ -1,8 +1,7 @@
 # The display lab's pure parts (lib/GameDisplayLab): the SSD1677 scan LUT builder and encoding, the drive masks, the
 # experiments' request layout, the scan budget, the gray engine (model, slot, preset and its codec, slot scheduler,
-# transition scene, the sweep task's request word, the panel geometry), the gray viewer's picture and decode
-# arithmetic, and the UltraChip stock-path bench; pure C++ with no Arduino
-# include. Added from test/game_core/CMakeLists.txt: the upstream touch ledger (row 3) lets test/CMakeLists.txt hold
+# transition scene, the sweep task's request word and its end against its owner's give-up, the panel geometry), the
+# gray viewer's picture and decode arithmetic, and the UltraChip stock-path bench; pure C++ with no Arduino include. Added from test/game_core/CMakeLists.txt: the upstream touch ledger (row 3) lets test/CMakeLists.txt hold
 # only the two game add_subdirectory lines.
 add_executable(test_scan_lut
   test_scan_lut.cpp
@@ -17,6 +16,7 @@ add_executable(test_scan_lut
   test_transition_scene.cpp
   test_gray_picture.cpp
   test_image_rows.cpp
+  test_task_handoff.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/GrayModel.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/GrayPicture.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/GrayPreset.cpp
@@ -34,12 +34,13 @@ gtest_discover_tests(test_scan_lut)
 
 # The gray viewer's reads against the real decoders (test_image_decoders.cpp): PNGdec and JPEGDEC at the firmware's
 # pinned versions, built for the host as their own Linux build (__LINUX__) with the firmware's PNG buffer size, read
-# from platformio.ini's build flag (its one source), and JPEGDEC with the firmware's patches (scripts/jpegdec_patches,
-# applied here when they are not, as scripts/patch_jpegdec.py applies them for a firmware build). Built with
-# AddressSanitizer and UndefinedBehaviorSanitizer, the decoders too, so a read past their buffers fails the test.
-# Only when their sources are there: PlatformIO's library folder by default, which a checkout that has never run a
-# firmware build does not have; the fork's CI (crosshatch-ci.yml's Display lab decoders job) fetches both and points the
-# two paths at them.
+# from platformio.ini's build flag (its one source), and JPEGDEC as the device builds it (a 32-bit bit reader, no SSE:
+# jpegdec_as_device.h) with the firmware's patches (scripts/jpegdec_patches), applied to a copy of its sources in this
+# build tree, never to PlatformIO's library folder (the firmware build patches that one, scripts/patch_jpegdec.py).
+# Built with AddressSanitizer and UndefinedBehaviorSanitizer, the decoders too, so a read past their objects fails the
+# test (test_image_decoders.cpp's canaries watch inside them). Only when their sources are there: PlatformIO's library
+# folder by default, which a checkout that has never run a firmware build does not have; the fork's CI
+# (crosshatch-ci.yml's Display lab decoders job) fetches both and points the two paths at them.
 set(CROSSHATCH_PNGDEC_DIR "${REPO_ROOT}/.pio/libdeps/x4pro/PNGdec/src" CACHE PATH "PNGdec's src folder")
 set(CROSSHATCH_JPEGDEC_DIR "${REPO_ROOT}/.pio/libdeps/x4pro/JPEGDEC/src" CACHE PATH "JPEGDEC's src folder")
 if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC_DIR}/JPEGDEC.cpp")
@@ -50,21 +51,32 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
   endif()
   set(DISPLAY_LAB_PNG_MAX_BUFFERED_PIXELS ${CMAKE_MATCH_1})
 
-  # The firmware's JPEGDEC patches: each already applied (it reverses cleanly), else applied now, else a stop.
-  get_filename_component(DISPLAY_LAB_JPEGDEC_ROOT "${CROSSHATCH_JPEGDEC_DIR}" DIRECTORY)
+  # JPEGDEC's sources copied here on every configure, then the firmware's patches: each already in the sources (it
+  # reverses cleanly: PlatformIO's folder after a firmware build) is left, else applied to the copy, else a stop. git
+  # applies them as a plain patch tool: GIT_CEILING_DIRECTORIES keeps it from taking this build tree's repository.
+  set(DISPLAY_LAB_JPEGDEC_ROOT "${CMAKE_CURRENT_BINARY_DIR}/jpegdec")
+  file(REMOVE_RECURSE "${DISPLAY_LAB_JPEGDEC_ROOT}")
+  file(COPY "${CROSSHATCH_JPEGDEC_DIR}" DESTINATION "${DISPLAY_LAB_JPEGDEC_ROOT}")
+  get_filename_component(DISPLAY_LAB_JPEGDEC_SRC_NAME "${CROSSHATCH_JPEGDEC_DIR}" NAME)
+  if(NOT DISPLAY_LAB_JPEGDEC_SRC_NAME STREQUAL "src")
+    file(RENAME "${DISPLAY_LAB_JPEGDEC_ROOT}/${DISPLAY_LAB_JPEGDEC_SRC_NAME}" "${DISPLAY_LAB_JPEGDEC_ROOT}/src")
+  endif()
+  set(DISPLAY_LAB_JPEGDEC_SRC "${DISPLAY_LAB_JPEGDEC_ROOT}/src")
   file(GLOB DISPLAY_LAB_JPEGDEC_PATCHES "${REPO_ROOT}/scripts/jpegdec_patches/*.patch")
   list(SORT DISPLAY_LAB_JPEGDEC_PATCHES)
   find_program(DISPLAY_LAB_GIT git REQUIRED)
+  set(DISPLAY_LAB_GIT_APPLY ${CMAKE_COMMAND} -E env "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}"
+                            ${DISPLAY_LAB_GIT} apply)
   foreach(patch IN LISTS DISPLAY_LAB_JPEGDEC_PATCHES)
-    execute_process(COMMAND ${DISPLAY_LAB_GIT} apply --check --reverse "${patch}"
+    execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
                     WORKING_DIRECTORY "${DISPLAY_LAB_JPEGDEC_ROOT}" RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
     if(NOT applied EQUAL 0)
-      execute_process(COMMAND ${DISPLAY_LAB_GIT} apply "${patch}"
+      execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} "${patch}"
                       WORKING_DIRECTORY "${DISPLAY_LAB_JPEGDEC_ROOT}" RESULT_VARIABLE patched)
       if(NOT patched EQUAL 0)
-        message(FATAL_ERROR "JPEGDEC patch ${patch} neither applied nor applies at ${DISPLAY_LAB_JPEGDEC_ROOT}")
+        message(FATAL_ERROR "JPEGDEC patch ${patch} neither in ${CROSSHATCH_JPEGDEC_DIR} nor applies to it")
       endif()
-      message(STATUS "Applied JPEGDEC patch ${patch}")
+      message(STATUS "Applied JPEGDEC patch ${patch} to the build tree's copy")
     endif()
   endforeach()
 
@@ -72,15 +84,23 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
   file(GLOB DISPLAY_LAB_ZLIB_SOURCES "${CROSSHATCH_PNGDEC_DIR}/*.c")
   add_library(display_lab_decoders STATIC
     ${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp
-    ${CROSSHATCH_JPEGDEC_DIR}/JPEGDEC.cpp
+    jpegdec_as_device.cpp
     ${DISPLAY_LAB_ZLIB_SOURCES}
   )
   target_compile_definitions(display_lab_decoders PUBLIC
     __LINUX__ PNG_MAX_BUFFERED_PIXELS=${DISPLAY_LAB_PNG_MAX_BUFFERED_PIXELS})
-  target_include_directories(display_lab_decoders SYSTEM PUBLIC ${CROSSHATCH_PNGDEC_DIR} ${CROSSHATCH_JPEGDEC_DIR})
-  # The decoders load and store words at unaligned addresses by design (their Linux build allows it, as x86 does):
-  # that one UBSan check is off for their sources.
-  target_compile_options(display_lab_decoders PRIVATE -w ${DISPLAY_LAB_SANITIZE} -fno-sanitize=alignment,shift)
+  target_include_directories(display_lab_decoders SYSTEM PUBLIC ${CROSSHATCH_PNGDEC_DIR} ${DISPLAY_LAB_JPEGDEC_SRC})
+  # Two UBSan checks are off for the decoders' own sources, each for what they do by design, as on the device:
+  # - alignment: both load and store whole words at unaligned addresses (zlib's inflate.c 1324 in PNGdec; JPEGDEC with
+  #   ALLOWS_UNALIGNED, which the ESP32 build sets), which the S3 and x86 allow;
+  # - shift, JPEGDEC only: JPEGMakeHuffTables shifts a code right by (bit length - 5), negative for codes of under 5
+  #   bits (jpeg.inl 1115), every JPEG's; the result is never used for them. GCC reports a negative exponent even with
+  #   only shift-exponent turned off, so the shift group goes, for this one source.
+  # - signed-integer-overflow, JPEGDEC only: its IDCT multiplies coefficients by quantisation values in 32-bit ints
+  #   (jpeg.inl 2673 and on), which a corrupt table or scan overflows; it wraps on the device, a wrong pixel, no more.
+  # Every other UBSan check, and all of AddressSanitizer, stays on, and the test's own sources keep them all.
+  target_compile_options(display_lab_decoders PRIVATE -w ${DISPLAY_LAB_SANITIZE} -fno-sanitize=alignment)
+  set_source_files_properties(jpegdec_as_device.cpp PROPERTIES COMPILE_OPTIONS "-fno-sanitize=shift,signed-integer-overflow")
   add_executable(test_image_decoders
     test_image_decoders.cpp
     ${REPO_ROOT}/lib/GameDisplayLab/ImageRows.cpp

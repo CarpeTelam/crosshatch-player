@@ -93,23 +93,34 @@ void TransitionTestActivity::onEnter() {
   RenderLock lock(*this);
   shownOnPanel = false;
   notice = nullptr;
-  // A task a closed screen detached may never end: say so from the start.
-  status = GrayRunner::detachedTasks() > 0 ? tr(STR_GAMES_DLAB_RESTART_DEVICE) : tr(STR_GAMES_DLAB_NOT_RUN);
+  status = tr(STR_GAMES_DLAB_NOT_RUN);
   snprintf(statsText, sizeof(statsText), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
   // D12: Static on an UltraChip panel, whose slot is too long for the sweep; Fast stays the SSD1677's sweep.
   sweepMode = isUltraChip(display.getController()) ? SweepMode::Static : SweepMode::Fast;
   holdOn = true;  // D13: on every visit, a lab preference never saved with the preset
+  deferred = false;
+  if (GrayRunner::detachedTasks() > 0) {
+    // A task a closed screen detached may never end, and keeps its own model meanwhile: this screen's working set
+    // waits until it has ended (allocated at Run), and the Run row says so (cleared by loop() if it ends).
+    status = tr(STR_GAMES_DLAB_RESTART_DEVICE);
+    deferred = true;
+  } else if (!allocateWorkingSet()) {
+    notice = tr(STR_GAMES_OUT_OF_MEMORY);
+  }
+  buildRows();
+}
+
+bool TransitionTestActivity::allocateWorkingSet() {
   const int logicalW = renderer.getScreenWidth();
   const int logicalH = renderer.getScreenHeight();
   if (runner && runner->allocate(logicalW, logicalH)) {
     const GameDisplayLab::MaskPlanes& drive = lab.masks();
     scene = GameDisplayLab::TransitionScene(turnOf(renderer.getOrientation()), logicalW, logicalH, drive.width(),
                                             drive.height());
-  } else {
-    if (runner) runner->release();
-    notice = tr(STR_GAMES_OUT_OF_MEMORY);
+    return true;
   }
-  buildRows();
+  if (runner) runner->release();
+  return false;
 }
 
 void TransitionTestActivity::onExit() {
@@ -272,6 +283,15 @@ void TransitionTestActivity::loop() {
     }
     requestUpdate();
   }
+  // The restart notice clears once no detached task is left: it ended after all.
+  if (!shownOnPanel.load() && status == tr(STR_GAMES_DLAB_RESTART_DEVICE) && GrayRunner::detachedTasks() == 0) {
+    {
+      RenderLock lock(*this);
+      status = tr(STR_GAMES_DLAB_NOT_RUN);
+      rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
+    }
+    requestUpdate();
+  }
   UiListActivity::loop();
   // The sweep task refuses its next scan once this is older than GrayRunner::COVERED_GAP_US.
   if (runner) runner->heartbeat(micros());
@@ -291,6 +311,23 @@ void TransitionTestActivity::startRun() {
     }
     requestUpdate();
     return;
+  }
+  if (deferred) {
+    // The working set onEnter left for a detached task's end, which has come.
+    bool allocated = false;
+    {
+      RenderLock lock(*this);
+      allocated = allocateWorkingSet();
+      if (!allocated) {
+        notice = tr(STR_GAMES_OUT_OF_MEMORY);
+        buildRows();
+      }
+    }
+    if (!allocated) {
+      requestUpdate();
+      return;
+    }
+    deferred = false;
   }
   // The task's fields, written before it is created (its creation orders them before its first read).
   runner->prepare();

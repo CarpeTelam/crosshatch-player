@@ -133,10 +133,8 @@ void GrayRunner::prepare(const bool pressesWaitForFirstPaint) {
   }
   // The task's fields, written before it is created (its creation orders them before its first read). reset() also
   // clears the hold (Held) and a pending next picture (Replaying).
-  taskState.store(TASK_RUNNING);
-  stopAsked_ = false;
-  leftRunning_ = false;
-  coveredPending_ = false;
+  taskState.store(GameDisplayLab::TaskState::Running);
+  stops.reset();
   sweepEnd = End::Stopped;
   failedScan_ = DisplayLabActivity::Scan::Done;
   sweeping = false;
@@ -185,18 +183,13 @@ void GrayRunner::join() {
   vTaskDelete(sweepTask);  // parked in vTaskSuspend
   sweepTask = nullptr;
   // A cover the view saw while the task was still stopping: its end is read only now.
-  if (coveredPending_ && sweepEnd == End::Stopped) sweepEnd = End::Covered;
-  coveredPending_ = false;
-  leftRunning_ = false;
+  if (stops.joined() && sweepEnd == End::Stopped) sweepEnd = End::Covered;
 }
 
 void GrayRunner::askStop() {
   control.requestStop();
   notifySweep();
-  if (!stopAsked_) {
-    stopAsked_ = true;
-    stopAskedMs_ = millis();
-  }
+  stops.ask(millis());
 }
 
 bool GrayRunner::preventAutoSleep() const {
@@ -217,10 +210,7 @@ bool GrayRunner::viewEnds(const uint32_t nowUs) {
   const bool joined = stop();
   // A cover the loop saw first (the task paused, or ended by the stop above) reads as one too; while the task is still
   // stopping its end is its own, so the cover waits for join().
-  if (covered) {
-    if (joined && sweepEnd == End::Stopped) sweepEnd = End::Covered;
-    if (!joined) coveredPending_ = true;
-  }
+  if (covered && stops.coverSeen(joined) && sweepEnd == End::Stopped) sweepEnd = End::Covered;
   return true;
 }
 
@@ -240,9 +230,8 @@ bool GrayRunner::stop() {
   // callback) is not deleted, since it may hold the Storage mutex, and stays the runner's (running() true, so no new
   // run starts; it refuses any further scan, the stop being sticky) until it ends and reap() or a later stop joins it.
   while (!taskEnded()) {
-    if (millis() - stopAskedMs_ >= STOP_WAIT_MS) {
-      if (!leftRunning_) {
-        leftRunning_ = true;
+    if (stops.expired(millis(), STOP_WAIT_MS)) {
+      if (stops.giveUp()) {
         LOG_ERR("DLAB", "%s: the sweep task did not end within %lu ms of the stop; left running, not deleted", who,
                 static_cast<unsigned long>(STOP_WAIT_MS));
       }
@@ -290,7 +279,7 @@ void GrayRunner::endLockedOrDetach(std::unique_ptr<GrayRunner>& owned) {
     // mutex, for at most one row's decode and SD read. No deadlock: the task takes the Storage mutex but never the
     // render mutex while it decodes, and no holder of the Storage mutex waits on the render mutex (lock order: render,
     // then Storage, never the reverse).
-    if (millis() - stopAskedMs_ >= STOP_WAIT_MS) {
+    if (stops.expired(millis(), STOP_WAIT_MS)) {
       if (detach(owned)) return;  // nothing of this runner from here: the task may free it at any moment
       break;                      // it ended just now: joined below
     }
@@ -303,17 +292,9 @@ bool GrayRunner::detach(std::unique_ptr<GrayRunner>& owned) {
   // Everything the detach needs is taken or set before the exchange: once it succeeds the task owns the runner and may
   // free it at once, so the log below names the screen from a local.
   const char* const name = who;
-  Client* const screen = client_.load();
-  // The inert client first: a hook the task calls from here on (it is stopping) answers without the screen.
-  client_.store(&detachedClient);
-  detachedRunners.fetch_add(1);
-  uint8_t expected = TASK_RUNNING;
-  if (!taskState.compare_exchange_strong(expected, TASK_DETACHED, std::memory_order_acq_rel)) {
-    // Its own end won: it has published Done and calls no hook again; the screen keeps its runner and joins it.
-    detachedRunners.fetch_sub(1);
-    client_.store(screen);
-    return false;
-  }
+  // The inert client and the registry first, then the exchange (GameDisplayLab::detachTask). Lost: its own end won,
+  // it calls no hook again, both are undone, and the screen keeps its runner and joins it.
+  if (!GameDisplayLab::detachTask<Client>(taskState, detachedRunners, client_, &detachedClient)) return false;
   (void)owned.release();
   LOG_ERR("DLAB",
           "%s: the sweep task did not end within %lu ms of the stop; detached. It frees its runner's buffers when it "
@@ -331,8 +312,7 @@ void GrayRunner::sweepEntry(void* param) {
   // from here, so touch nothing of it and wait to be deleted (a task that deleted itself could be notified after it
   // was freed). Detached: the screen gave the runner up and will neither notify nor delete this task, so the task
   // frees the runner (every buffer it could touch) and deletes itself.
-  uint8_t expected = TASK_RUNNING;
-  if (self->taskState.compare_exchange_strong(expected, TASK_DONE, std::memory_order_acq_rel)) {
+  if (GameDisplayLab::finishTask(self->taskState)) {
     for (;;) vTaskSuspend(nullptr);
   }
   LOG_INF("DLAB", "%s: the detached sweep task ended; its buffers freed", self->who);

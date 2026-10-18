@@ -15,14 +15,15 @@
 // to gray as the PNG converter converts one (GameDisplayLab::pngRowToGray: every pixel type and depth it accepts, alpha
 // composited on white), a JPEG is decoded as 8-bit gray at JPEGDEC's coarse scale as the JPEG converter picks it (a
 // progressive one at an eighth, its DC-only decode; GameDisplayLab::jpegScaleFor), with the converters' size limits and
-// free-heap floors (taken from the decoders' real sizes). Against a decoder that never returns there are three layers:
-// the file's layout is walked against its size first (walkPngChunks through a PNG's IEND, walkJpegSegments from a
-// JPEG's SOI to SOS as JPEGDEC parses it, with its last two bytes EOI: PNGdec spins on a truncated file); every read is
-// answered so it cannot stall the decoder (readAllowance, decoderReadCap, fillPngRead, fillJpegRead, jpegKeptBytes:
-// nothing past the walked size, which is the size the decoder is given, nothing once stopped but in JPEGDEC's header
-// parse, PNGdec's span filled with 0xFF, JPEGDEC's with zeros); and the sweep task's owner waits for a stop only so
-// long (GrayRunner::endLocked detaches). One case is left, a read that fails during JPEGDEC's header parse at a refill
-// that splits a DQT across it (GameDisplayLab::fillJpegRead).
+// free-heap floors (taken from the decoders' real sizes). Against a decoder that never returns or writes past its
+// object there are four layers: the file's layout is walked against its size first (walkPngChunks through a PNG's
+// IEND, walkJpegSegments from a JPEG's SOI to SOS as JPEGDEC parses it, then its EOI), and the walked size ends there;
+// every read is answered so it cannot stall the decoder (readAllowance, fillPngRead, answerJpegHeaderRead,
+// answerJpegDecodeRead, the read caps: nothing past the walked size, which is the size the decoder is given, nothing
+// once stopped, PNGdec's span filled with 0xFF, JPEGDEC's with zeros, a dropped JPEG header read zeroing its whole
+// parse buffer); the sweep task's owner waits for a stop only so long (GrayRunner::endLocked detaches); and the task
+// watchdog, which the sweep task joins for a decode and feeds at every row, resets the device when a decoder spins
+// where no read or row reaches it.
 // Rows are scaled to GameDisplayLab::fitToScreen's rectangle: bilinear along an axis the fit enlarges (only the 16.16
 // blend arithmetic is the JPEG converter's), nearest at pixel centres along one it shrinks (FitAxis::tap, sampleBlock);
 // a PNG row completes the output rows rowsReadyAt names, a JPEG block the ones outputsEndingIn names, with the row

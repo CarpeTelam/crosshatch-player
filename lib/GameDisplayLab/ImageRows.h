@@ -84,19 +84,18 @@ bool pngDepthSupported(int pixelType, int bitsPerSample);
 // none and never calls back), and copies PLTE and tRNS into a 1,024-byte palette unbounded (png.inl 850, 868);
 // JPEGDEC parses its header up to SOS (jpeg.inl 1611) from a 2 KiB buffer, copying tables out of it unchecked.
 enum class FileLayout : uint8_t {
-  // Whole: a PNG's chunks through IEND (what follows IEND is never read as image data: PNGdec stops there, and the
-  // reads past the walked size are filler); a JPEG's marker segments from SOI through SOS, and EOI as the file's last
-  // two bytes.
+  // Whole: a PNG's chunks through IEND; a JPEG's marker segments from SOI through SOS, then an EOI. The walked size
+  // (WalkExtent::end) stops there: the decoder is given nothing after it.
   Complete,
   // Under a PNG signature (8 bytes), or a JPEG's SOI and one marker (4).
   TooShort,
   // A chunk or segment running past the end of the file.
   Truncated,
-  // Whole chunks or segments that end without IEND (PNG); no SOS, or a file that does not end in EOI (JPEG).
+  // Whole chunks or segments that end without IEND (PNG); no SOS, or no EOI after it (JPEG).
   NoEnd,
   // Not the format's signature, a chunk length over 2^31 - 1, a PLTE over 768 bytes or not a multiple of 3, a tRNS
-  // over 256, a segment length under 2, a table segment JPEGDEC would read past (walkJpegSegments), or past
-  // MAX_LAYOUT_CHUNKS chunks or segments.
+  // over 256, a segment length under 2, a table, Exif IFD or SOS JPEGDEC would read past, an over-subscribed Huffman
+  // table (walkJpegSegments), past MAX_LAYOUT_CHUNKS chunks or segments, or past MAX_JPEG_WINDOW_MOVES buffer moves.
   Malformed,
   // A read of the file failed.
   ReadFailed,
@@ -105,11 +104,24 @@ enum class FileLayout : uint8_t {
 };
 constexpr uint32_t MAX_LAYOUT_CHUNKS = 65536;
 
+// What a Complete walk found.
+struct WalkExtent {
+  // The walked size, the bytes the decoder is given: a PNG through IEND's CRC (PNGdec has no IEND case: chunks after
+  // it, a PLTE among them, would be parsed); a JPEG through its EOI (the whole file when its last two bytes are FF D9,
+  // else the first EOI after SOS).
+  uint32_t end = 0;
+  // A JPEG's header end, the SOS segment's: a read from there on is the decode's (GrayImageReader.cpp).
+  uint32_t headerEnd = 0;
+  // How often JPEGParseInfo moves its buffer on over the header: a read each, the bound of its header reads.
+  uint32_t windowMoves = 0;
+};
+
 // Walks a `fileSize`-byte PNG's chunk headers through IEND through `readAt(uint32_t offset, uint8_t* out, size_t n)
 // -> bool` (n bytes at offset; false when they could not be read): one 8-byte read per chunk, the data skipped;
-// `stopped() -> bool` is asked before each chunk. Complete at a whole IEND, whatever follows it.
+// `stopped() -> bool` is asked before each chunk. Complete at a whole IEND, with `extent->end` its end: what follows
+// IEND is never given to PNGdec (its reads there are filler, which reads as an invalid chunk length).
 template <typename ReadAt, typename Stopped>
-FileLayout walkPngChunks(const uint32_t fileSize, ReadAt&& readAt, Stopped&& stopped) {
+FileLayout walkPngChunks(const uint32_t fileSize, ReadAt&& readAt, Stopped&& stopped, WalkExtent* extent = nullptr) {
   static constexpr uint8_t SIGNATURE[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
   uint8_t head[8];
   if (fileSize < 8) return FileLayout::TooShort;
@@ -136,7 +148,10 @@ FileLayout walkPngChunks(const uint32_t fileSize, ReadAt&& readAt, Stopped&& sto
     };
     if (is("PLTE") && (length > 768 || length % 3 != 0)) return FileLayout::Malformed;
     if (is("tRNS") && length > 256) return FileLayout::Malformed;
-    if (is("IEND")) return FileLayout::Complete;
+    if (is("IEND")) {
+      if (extent) extent->end = static_cast<uint32_t>(end);
+      return FileLayout::Complete;
+    }
     offset = end;
   }
 }
@@ -144,6 +159,9 @@ FileLayout walkPngChunks(const uint32_t fileSize, ReadAt&& readAt, Stopped&& sto
 // JPEGParseInfo's file buffer (JPEG_FILE_BUF_SIZE, 2 KiB): it parses every header segment from it, and moves it on
 // (a move down, or a seek and a read, jpeg.inl 1613-1636) whenever the parse offset is half of it or more.
 constexpr uint32_t JPEG_PARSE_BUFFER = 2048;
+// The most buffer moves a JPEG header may take (each is one read of JPEGParseInfo's): a camera's APP1, APP2 ICC
+// profile and maker notes take a few dozen; more is refused.
+constexpr uint32_t MAX_JPEG_WINDOW_MOVES = 256;
 
 // Walks a `fileSize`-byte JPEG's header from SOI to SOS through `readAt` (as walkPngChunks'), asking `stopped()`
 // before each marker, at the offsets JPEGDEC's header parse (JPEGParseInfo, jpeg.inl 1611-1762) visits, and with its
@@ -152,18 +170,22 @@ constexpr uint32_t JPEG_PARSE_BUFFER = 2048;
 //   JPEGParseInfo: a value under 0xFFC0, or 0xFFFF (a fill byte), is no marker and is stepped over with the byte after
 //   it, three bytes in all (jpeg.inl 1642-1646), so fill bytes are walked as JPEGDEC walks them; SOI, RSTn and any
 //   other marker from 0xFFC0 up are read with a length (its default, jpeg.inl 1762). An EOI before SOS is NoEnd.
-// - the segments JPEGDEC reads out of its buffer lie wholly in it (its buffer start is tracked as it moves it):
-//   SOF0 or SOF2 of 1 to 4 components and length 8 + 3 per component (a 4-entry component table, jpeg.inl 1679-1712);
-//   DQT of whole 65- or 129-byte tables (its 16-bit count wraps otherwise, jpeg.inl 1728-1759); DHT of whole tables,
-//   each a class 0 or 1 and index 0 to 3 byte (any other never shortens its loop's count, jpeg.inl 844-870) and
-//   sixteen counts summing to at most 256; SOS (jpeg.inl 1764-1768). An APP1 JPEGDEC takes for Exif ('E', 'x' and a
-//   byte order 'M' or 'I' where it looks, jpeg.inl 1654-1677) must hold, inside the segment and the buffer, the IFD
-//   offset and tag count it reads, each IFD's count and its 12-byte entries (GetTIFFInfo, jpeg.inl 1346-1376), and the
-//   next IFD's offset when it follows it.
-// Malformed otherwise. After SOS the file must end in EOI (its last two bytes FF D9), else NoEnd: a scan cut short
-// would leave JPEGDEC decoding past the data it has.
+// - the segments JPEGDEC reads out of its buffer lie wholly in it (its buffer start is tracked as it moves it, at most
+//   MAX_JPEG_WINDOW_MOVES times): SOF0 or SOF2 of 1 to 4 components and length 8 + 3 per component (a 4-entry
+//   component table, jpeg.inl 1679-1712); DQT of whole 65- or 129-byte tables (its 16-bit count wraps otherwise,
+//   jpeg.inl 1732-1757); DHT of whole tables, each a class 0 or 1 and index 0 to 3 byte (any other never shortens its
+//   loop's count, jpeg.inl 844-870), sixteen counts summing to at most 256, and code lengths within the Kraft bound
+//   (an over-subscribed table makes JPEGMakeHuffTables write past its tables, jpeg.inl 1066-1275); SOS
+//   (jpeg.inl 1764-1768). An APP1 JPEGDEC takes for Exif ('E', 'x' and a byte order 'M' or 'I' where it looks,
+//   jpeg.inl 1654-1677) must hold, inside the segment and the buffer, the IFD offset and tag count it reads, each
+//   IFD's count and its 12-byte entries (GetTIFFInfo, jpeg.inl 1346-1376), and the next IFD's offset when it follows
+//   it, its sum with the buffer offset taken as JPEGDEC's int takes it.
+// Malformed otherwise. After SOS an EOI must follow: the file's last two bytes, or else the first FF D9 the scan data
+// holds (a motion photo's video, a second picture or padding after it are not the decoder's), read forward once in
+// 256-byte reads; NoEnd when there is none (a scan cut short would leave JPEGDEC decoding past the data it has).
+// `extent` gets the walked size (EOI's end), the header's end (SOS's end) and the buffer moves.
 template <typename ReadAt, typename Stopped>
-FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& stopped) {
+FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& stopped, WalkExtent* extent = nullptr) {
   uint8_t b[17];
   if (fileSize < 4) return FileLayout::TooShort;
   if (!readAt(0, b, 2)) return FileLayout::ReadFailed;
@@ -178,12 +200,16 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
                           (static_cast<uint32_t>(q[1]) << 8) | q[0];
   };
   uint64_t bufStart = 0;
+  uint32_t moves = 0;
   uint64_t offset = 2;
   for (uint32_t segments = 0;; ++segments) {
     if (stopped()) return FileLayout::Stopped;
     if (segments >= MAX_LAYOUT_CHUNKS) return FileLayout::Malformed;
     if (offset >= fileSize) return FileLayout::NoEnd;
-    if (offset - bufStart >= JPEG_PARSE_BUFFER / 2) bufStart = offset;
+    if (offset - bufStart >= JPEG_PARSE_BUFFER / 2) {
+      bufStart = offset;
+      if (++moves > MAX_JPEG_WINDOW_MOVES) return FileLayout::Malformed;
+    }
     if (offset + 2 > fileSize) return FileLayout::Truncated;
     if (!readAt(static_cast<uint32_t>(offset), b, 2)) return FileLayout::ReadFailed;
     const uint32_t marker = u16(b);
@@ -203,9 +229,36 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
     const auto held = [&](const uint64_t from, const uint64_t to) { return from <= to && to <= end && to <= bufEnd; };
     if (marker == 0xFFDA) {
       if (end > bufEnd) return FileLayout::Malformed;
-      if (fileSize < end + 2 || !readAt(fileSize - 2, b, 2))
-        return fileSize < end + 2 ? FileLayout::NoEnd : FileLayout::ReadFailed;
-      return b[0] == 0xFF && b[1] == 0xD9 ? FileLayout::Complete : FileLayout::NoEnd;
+      // The EOI: the file's last two bytes (after the SOS segment), else the first FF D9 after it.
+      uint64_t eoiEnd = 0;
+      if (fileSize >= end + 2) {
+        if (!readAt(fileSize - 2, b, 2)) return FileLayout::ReadFailed;
+        if (b[0] == 0xFF && b[1] == 0xD9) eoiEnd = fileSize;
+      }
+      if (eoiEnd == 0) {
+        uint8_t chunk[256];
+        bool lastFF = false;
+        for (uint64_t at = end; at < fileSize && eoiEnd == 0;) {
+          if (stopped()) return FileLayout::Stopped;
+          const size_t n = fileSize - at < sizeof(chunk) ? static_cast<size_t>(fileSize - at) : sizeof(chunk);
+          if (!readAt(static_cast<uint32_t>(at), chunk, n)) return FileLayout::ReadFailed;
+          for (size_t i = 0; i < n; ++i) {
+            if (lastFF && chunk[i] == 0xD9) {
+              eoiEnd = at + i + 1;
+              break;
+            }
+            lastFF = chunk[i] == 0xFF;
+          }
+          at += n;
+        }
+        if (eoiEnd == 0) return FileLayout::NoEnd;
+      }
+      if (extent) {
+        extent->end = static_cast<uint32_t>(eoiEnd);
+        extent->headerEnd = static_cast<uint32_t>(end);
+        extent->windowMoves = moves;
+      }
+      return FileLayout::Complete;
     }
     if (marker == 0xFFC0 || marker == 0xFFC2) {
       // Precision, height, width, then the component count.
@@ -227,8 +280,15 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
         if (table + 17 > end) return FileLayout::Malformed;
         if (!readAt(static_cast<uint32_t>(table), b, 17)) return FileLayout::ReadFailed;
         if ((b[0] >> 4) > 1 || (b[0] & 0x0F) > 3) return FileLayout::Malformed;
+        // The codes of each length, canonical: after length i they may fill at most the 2^i codes of i bits.
         uint32_t codes = 0;
-        for (int i = 1; i <= 16; ++i) codes += b[i];
+        uint32_t code = 0;
+        for (int i = 1; i <= 16; ++i) {
+          codes += b[i];
+          code += b[i];
+          if (code > (1u << i)) return FileLayout::Malformed;
+          code <<= 1;
+        }
         if (codes > 256) return FileLayout::Malformed;
         table += 17 + codes;
       }
@@ -243,6 +303,8 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
         if (exif) {
           const bool motorola = b[8] == 'M';
           const uint64_t tiff = at + 8;
+          // The TIFF header's buffer offset, as JPEGDEC adds it to an IFD offset in its int (iOffset + 8).
+          const uint32_t tiffInBuffer = static_cast<uint32_t>(tiff - bufStart);
           // The first IFD's offset (TIFF +4) and the tag count it takes from TIFF +8.
           if (!held(at, at + 18)) return FileLayout::Malformed;
           if (!readAt(static_cast<uint32_t>(at + 12), b, 6)) return FileLayout::ReadFailed;
@@ -259,7 +321,8 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
             return true;
           };
           FileLayout why = FileLayout::Complete;
-          if (ifd > 0x7FFFFFFFu || !ifdHeld(tiff + ifd, why)) {
+          // GetTIFFInfo is always called on IFD0 (its offset in JPEGDEC's int with the buffer offset).
+          if (ifd > 0x7FFFFFFFu - tiffInBuffer || !ifdHeld(tiff + ifd, why)) {
             return why == FileLayout::Complete ? FileLayout::Malformed : why;
           }
           if (firstCount >= 1 && firstCount < 32) {
@@ -267,11 +330,11 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
             if (!held(next, next + 4)) return FileLayout::Malformed;
             if (!readAt(static_cast<uint32_t>(next), b, 4)) return FileLayout::ReadFailed;
             const uint32_t second = u32(b, motorola);
-            // JPEGDEC follows it when it is not 0 and lands under its buffer's end, as a signed offset.
-            const int64_t secondAt =
-                static_cast<int64_t>(static_cast<int32_t>(second)) + static_cast<int64_t>(tiff - bufStart);
-            if (second != 0 && secondAt < static_cast<int64_t>(JPEG_PARSE_BUFFER)) {
-              if (second > 0x7FFFFFFFu || !ifdHeld(tiff + second, why)) {
+            // JPEGDEC follows it when it is not 0 and its sum with the buffer offset, in its int, is under the
+            // buffer's end: a sum past INT32_MAX wraps negative and is followed too.
+            const auto secondAt = static_cast<int32_t>(second + tiffInBuffer);
+            if (second != 0 && secondAt < static_cast<int32_t>(JPEG_PARSE_BUFFER)) {
+              if (second > 0x7FFFFFFFu - tiffInBuffer || !ifdHeld(tiff + second, why)) {
                 return why == FileLayout::Complete ? FileLayout::Malformed : why;
               }
             }
@@ -287,41 +350,53 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
 // `requested`-byte read at `position` may come from the file: none once the read starts at or past `walkedSize` (the
 // size the walk checked, which is also the size the decoder is given) or `stopped`, else up to the walked end.
 int32_t readAllowance(uint32_t position, int32_t requested, uint32_t walkedSize, bool stopped);
-// How many reads one open() or one decode() of a `walkedSize`-byte file is answered from the file: 2 per 2 KiB of it
-// and 64 more (a whole header parse or a whole decode reads about one per 1 KiB at most); past that, every read gives
-// nothing of the file.
+// How many reads one decode() of a `walkedSize`-byte file is answered from the file: 2 per 2 KiB of it and 64 more (a
+// whole decode reads about one per 1.5 KiB); past that, every read gives nothing of the file.
 uint32_t decoderReadCap(uint32_t walkedSize);
+// How many reads JPEGDEC's header parse (open() up to the header's end) is answered from the file: its first read, one
+// per buffer move the walk counted (WalkExtent::windowMoves), and a few more; past that, nothing.
+uint32_t jpegHeaderReadCap(uint32_t windowMoves);
 // PNGdec's read answer: the file gave `got` bytes of `requested` (negative: an error, taken as 0); the rest are filled
 // with 0xFF and `requested` is returned, so PNGdec never sees a short read. Its IDAT loop then always moves on
 // (png.inl 885-904 subtracts what was read from the chunk length), an all-0xFF chunk length is invalid
 // (png.inl 828: negative), and inflate meets bad data (png.inl 953: Z_DATA_ERROR ends the loop) or makes rows, whose
 // draw callback sees the stop.
 int32_t fillPngRead(uint8_t* buf, int32_t requested, int32_t got);
-// JPEGDEC's read answer: the reader kept `got` bytes of `requested` from the file (negative: none; jpegKeptBytes); the
-// rest of the span is zero-filled, never left as what the buffer held before. Not 0xFF filler: JPEGParseInfo's marker
-// loop (jpeg.inl 1611) compares a buffer offset, kept under half its 2 KiB buffer by each refill, with the file size,
-// so endless 0xFF keeps it reading (0xFFFF is stepped over, jpeg.inl 1642). Not the stale buffer either: after a
-// segment sends its offset past the buffer it seeks and reads at the start of it (jpeg.inl 1615-1636), and an empty
-// read there leaves the header's first bytes, SOI then the APP1 marker read as a length, which send it round again
-// without end.
-// - While it parses the header (`decoding` false), `got` is returned: zeros are no marker and are stepped over three
-//   bytes at a time (jpeg.inl 1642-1646) until its offset passes the bytes read (jpeg.inl 1623, a decode error). A
-//   segment whose fields fall in the zeros is safe but for one: a DQT whose length or tables are zeros wraps its
-//   16-bit count and reads on past the object (jpeg.inl 1732-1757); a zero Exif IFD offset, DHT or SOF only errs. So
-//   the header parse never meets zeros where the walk found a header: it is not stopped (the stop applies from the
-//   decode on; the parse reads the walked header, a few reads, under decoderReadCap), and a read that comes up short
-//   there is a failure whose partial bytes are dropped (jpegKeptBytes), so the zeros start at a refill's start, not
-//   inside a segment it began. What is left is a failed read (a card pulled out) at a refill that splits a DQT of
-//   16-bit tables, or a DQT's marker from its length, across the refill (GrayImageReader.h).
-// - While it decodes (`decoding`), `requested` is returned, zeros past the file's bytes: JPEGGetMoreData (jpeg.inl
-//   1544-1566) then always tops its buffer up and moves its data down once a MCU ends past FILE_HIGHWATER (1536,
-//   jpeg.inl 5367), so its bit pointer stays inside ucFileBuf (a MCU of zeros is a few dozen bytes); a short read would
-//   let the pointer pass the data it has, where it returns without moving it (jpeg.inl 1549-1550), so it would run on
-//   past the buffer for every MCU left. The decode's MCU loops end on their own (jpeg.inl 5119, 5138).
-int32_t fillJpegRead(uint8_t* buf, int32_t requested, int32_t got, bool decoding);
-// The bytes JPEGDEC keeps of a read the file gave `got` of the `allowed` it should have (readAllowance): while it
-// parses its header (`decoding` false) all or none, a short read being a failure; while it decodes, what it gave.
-int32_t jpegKeptBytes(int32_t allowed, int32_t got, bool decoding);
+// JPEGDEC's read answers, both zero-filling what the file did not give, never 0xFF (JPEGParseInfo's marker loop,
+// jpeg.inl 1611, compares a buffer offset kept under half its 2 KiB buffer with the file size, so endless 0xFF keeps it
+// reading; 0xFFFF is stepped over, jpeg.inl 1642) and never the buffer as it was (after a segment sends its offset past
+// the buffer it seeks and reads at the start of it, jpeg.inl 1615-1636, and an empty read there leaves the header's
+// first bytes, SOI then the APP1 marker read as a length, which send it round again without end). A read starting
+// before the walked header's end is the header parse's, from there on the decode's (WalkExtent::headerEnd), so the
+// header parse's last top-up (JPEGGetMoreData at jpeg.inl 1780) is already answered as the decode.
+//
+// The header parse's answer: `got` bytes into `buf` of a `requested`-byte read into JPEGParseInfo's buffer (always the
+// buffer's tail: s + 2 KiB - requested, jpeg.inl 1597, 1634). Kept, the rest of the span is zeroed and `got` returned.
+// `dropped` (a stop, a short or failed read, a seek the file refused, past the read cap; the reader then gives the
+// header nothing more), the whole 2 KiB buffer is zeroed, the bytes already in it too, and 0 returned: the parse
+// then steps over zeros three bytes at a time until its offset passes the bytes read (jpeg.inl 1623, a decode error),
+// so no segment it began meets zeros (a DQT whose length or tables did would wrap its 16-bit count and read past its
+// object, jpeg.inl 1732-1757).
+int32_t answerJpegHeaderRead(uint8_t* buf, int32_t requested, int32_t got, bool dropped);
+// The length JPEGFilter (jpeg.inl 1431-1538) leaves of `n` bytes with no 0xFF carried in: a 0xFF and the byte after it
+// go (a marker) unless that byte is 0, which goes alone (a stuffed 0xFF stays); a final 0xFF waits for the next read.
+int32_t jpegFilteredLength(const uint8_t* buf, int32_t n);
+// JPEGGetMoreData's high-water mark (FILE_HIGHWATER, JPEGDEC.h) and the room past it a MCU of real data needs (a
+// gray block of maximum-length codes is about 213 bytes; real ones are far shorter).
+constexpr int32_t JPEG_FILE_HIGHWATER = 1536;
+constexpr int32_t JPEG_MCU_MARGIN = 256;
+// The decode's answer: `got` bytes of a `requested`-byte read into JPEGDEC's VLC buffer (its tail again: ucFileBuf +
+// iVLCSize, iVLCSize = 2 KiB - requested, jpeg.inl 1562), the rest zeroed, and `requested` returned. JPEGGetMoreData
+// (jpeg.inl 1544-1566) then tops its buffer up and moves its data down once a MCU ends past FILE_HIGHWATER
+// (jpeg.inl 5367), so its bit pointer stays inside ucFileBuf (a MCU of zeros is a few dozen bytes); a short read
+// would let the pointer pass the data it has, where it returns without moving it (jpeg.inl 1549-1550), and it would
+// run on past the buffer for every MCU left. The same holds against what JPEGFilter drops: a run of 0xFF (an erased
+// sector) filters to nothing, and pairs of 0xFF 00 to half, so when this refill would leave the filtered buffer under
+// FILE_HIGHWATER + JPEG_MCU_MARGIN (jpegFilteredLength), every 0xFF in it is replaced by 0 and it filters whole. Real
+// scan data loses a few bytes a refill (stuffed 0xFF, a restart marker) and is never touched; data that would starve
+// the decoder decodes to garbage instead of running it off its buffer. The decode's MCU loops end on their own
+// (jpeg.inl 5119, 5138).
+int32_t answerJpegDecodeRead(uint8_t* buf, int32_t requested, int32_t got);
 // The position JPEGDEC is told after a read (JPEGFILE.iPos, which only JPEGGetMoreData reads, comparing it with the
 // size, jpeg.inl 1558): the file's `position`, held under `size`, so it keeps asking (above) from the first refill
 // its header parse makes (jpeg.inl 1780) to the decode's last MCU. The reads themselves go by the file's position.

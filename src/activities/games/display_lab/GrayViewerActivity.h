@@ -181,6 +181,8 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   char imageText[NAME_BYTES + 24] = {};
   char levelsText[48] = {};
   freeink::ui::ListItem rowItems[ROW_COUNT] = {};
+  // The working set was not allocated at onEnter, a detached task still holding its own: Run allocates it.
+  bool deferred = false;
   // The view is up: the panel shows the drive and render() draws nothing. Written by the loop task, read by the render
   // task.
   std::atomic<bool> shownOnPanel{false};

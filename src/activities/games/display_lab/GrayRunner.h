@@ -11,6 +11,7 @@
 #include <MaskPlanes.h>
 #include <SlotScheduler.h>
 #include <SweepControl.h>
+#include <TaskHandoff.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -254,7 +255,7 @@ class GrayRunner {
   // The current client (an inert one once detached).
   Client& client() { return *client_.load(); }
   // The task published its end (and was not detached).
-  bool taskEnded() const { return taskState.load(std::memory_order_acquire) == TASK_DONE; }
+  bool taskEnded() const { return taskState.load(std::memory_order_acquire) == GameDisplayLab::TaskState::Done; }
   // The task's run: serves the requests at each slot boundary and runs the slots until a stop, a cover, a failed scan
   // or the client's end; then logs the stack's high-water mark (sweepEntry publishes the end).
   void sweepRun();
@@ -300,23 +301,16 @@ class GrayRunner {
   // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: taskState Done (release), after
   // which the loop task may read the task's fields below; the loop task alone creates and deletes the task, except a
   // detached one, which deletes itself (sweepEntry). Running becomes Done (the task's end) or Detached (endLocked's
-  // give-up) in one exchange, so the two can never both happen.
-  static constexpr uint8_t TASK_RUNNING = 0;
-  static constexpr uint8_t TASK_DONE = 1;
-  static constexpr uint8_t TASK_DETACHED = 2;
+  // give-up) in one exchange, so the two can never both happen (GameDisplayLab::finishTask, detachTask).
   GameDisplayLab::SweepControl control;
   TaskHandle_t sweepTask = nullptr;
-  std::atomic<uint8_t> taskState{TASK_RUNNING};
+  std::atomic<GameDisplayLab::TaskState> taskState{GameDisplayLab::TaskState::Running};
   std::atomic<uint8_t> clientCode_{0};
   // The millis() the run's hold for a photo began at (the hold itself is the request word's Held), written by the
   // sweep task before it holds; read by preventAutoSleep.
   std::atomic<uint32_t> heldSinceMs{0};
-  // The loop task's: a stop was asked at stopAskedMs_ (the shared deadline's start); stop() gave up and logged it; the
-  // view saw a cover while the task was still stopping (applied by join()).
-  bool stopAsked_ = false;
-  uint32_t stopAskedMs_ = 0;
-  bool leftRunning_ = false;
-  bool coveredPending_ = false;
+  // The loop task's stop bookkeeping: the shared deadline, stop()'s give-up, a cover seen while still stopping.
+  GameDisplayLab::StopTracker stops;
   char clientText_[CLIENT_TEXT_BYTES] = {};
 
   // ---- the sweep task's own, while it is up (read by the loop task only once it has ended or been deleted) ---------
