@@ -7,6 +7,7 @@
 #include <HalDisplay.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdio>
 #include <optional>
@@ -81,7 +82,8 @@ TransitionTestActivity::TransitionTestActivity(GfxRenderer& renderer, MappedInpu
                                                DisplayLabActivity& lab)
     : UiListActivity(NAME, renderer, mappedInput),
       lab(lab),
-      runner(renderer, lab, *this, "transition test", SWEEP_STACK_BYTES) {}
+      runner(makeUniqueNoThrow<GrayRunner>(renderer, lab, static_cast<GrayRunner::Client&>(*this), "transition test",
+                                           SWEEP_STACK_BYTES)) {}
 
 const char* TransitionTestActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TRANSITION_TEST); }
 
@@ -98,12 +100,12 @@ void TransitionTestActivity::onEnter() {
   holdOn = true;  // D13: on every visit, a lab preference never saved with the preset
   const int logicalW = renderer.getScreenWidth();
   const int logicalH = renderer.getScreenHeight();
-  if (runner.allocate(logicalW, logicalH)) {
+  if (runner && runner->allocate(logicalW, logicalH)) {
     const GameDisplayLab::MaskPlanes& drive = lab.masks();
     scene = GameDisplayLab::TransitionScene(turnOf(renderer.getOrientation()), logicalW, logicalH, drive.width(),
                                             drive.height());
   } else {
-    runner.release();
+    if (runner) runner->release();
     notice = tr(STR_GAMES_OUT_OF_MEMORY);
   }
   buildRows();
@@ -112,24 +114,25 @@ void TransitionTestActivity::onEnter() {
 void TransitionTestActivity::onExit() {
   // ActivityManager holds the render mutex here (a pop, or a Replace by Home or sleep, which also drains a covered
   // screen from the stack): take no RenderLock (12cc816), and end the task without waiting on that mutex.
-  runner.endLocked();
+  GrayRunner::endLocked(runner);
   if (shownOnPanel.load()) {
     // The next screen's first frame cleans the panel; the lab's own exit cleans it too when it is left.
     renderer.promoteNextRefresh(HalDisplay::FULL_REFRESH);
     shownOnPanel = false;
   }
-  runner.release();
+  // Null once endLocked detached it: its buffers are the task's then, freed when it ends.
+  if (runner) runner->release();
   Activity::onExit();
 }
 
 void TransitionTestActivity::prepareForSleep() {
   // ActivityManager::prepareForSleep holds the render mutex, for this screen as the current one or as a covered one.
-  runner.endLocked();
+  GrayRunner::endLocked(runner);
 }
 
 bool TransitionTestActivity::handleHomeGesture() {
   // Called from ActivityManager::loop without the render mutex, before goHome's Replace runs onExit.
-  runner.stop();
+  if (runner) runner->stop();
   return false;
 }
 
@@ -188,7 +191,7 @@ void TransitionTestActivity::activateIndex(const int index) {
     // A tap over the rows' area (the only taps the list routes, where touch routes while the view is up) pauses or
     // resumes.
     app.clearTapFlash();
-    runner.press(false);
+    if (runner) runner->press(false);
     return;
   }
   if (notice) return;
@@ -218,15 +221,14 @@ bool TransitionTestActivity::handleCustomInput() {
   // swallow it. NavPrevious stops on its release, as Back does, so neither half of the press reaches the rows.
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
       mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
-    runner.stop();
-    leaveView(endText());
+    leaveView(stopText(runner->stop()));
     return true;
   }
   // Any other swipe would scroll the hidden list: consumed while the test view is up.
   if (mappedInput.wasSwipe() != MappedInputManager::SwipeDir::None) return true;
   if (mappedInput.wasPressed(MappedInputManager::Button::NavNext) ||
       mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    runner.press(false);
+    runner->press(false);
     return true;
   }
   // A tap pauses only where touch routes while the view is up (it reaches activateIndex through the base's touch
@@ -250,25 +252,45 @@ void TransitionTestActivity::loop() {
   // While the test view is up the view ends when another screen covered it (the light panel's top-edge swipe: no
   // onExit here, the runner sees the silent loop), or when the task ended on its own (a failed scan, the cover, a
   // Ladder's end) or was ended by prepareForSleep; the rows come back with their FULL refresh.
-  if (shownOnPanel.load() && runner.viewEnds(micros())) {
-    leaveView(endText());
+  if (shownOnPanel.load() && runner && runner->viewEnds(micros())) {
+    leaveView(stopText(!runner->stillStopping()));
     // This pass's input belonged to the test view: a Back or Confirm release here must not pop the screen or start a
     // run. The next pass serves the rows.
-    runner.heartbeat(micros());
+    runner->heartbeat(micros());
     return;
   }
-  // A task a stop left running past its bound (logged) is joined once it ends.
-  if (!shownOnPanel.load()) runner.reap();
+  // A task a stop left running past its bound (logged, "Still stopping" on the Run row) is joined once it ends, and
+  // only then does the row say how the run ended.
+  if (!shownOnPanel.load() && runner && runner->reap()) {
+    {
+      RenderLock lock(*this);
+      status = endText();
+      rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
+    }
+    requestUpdate();
+  }
   UiListActivity::loop();
   // The sweep task refuses its next scan once this is older than GrayRunner::COVERED_GAP_US.
-  runner.heartbeat(micros());
+  if (runner) runner->heartbeat(micros());
 }
 
 void TransitionTestActivity::startRun() {
-  if (runner.running()) return;
+  if (!runner) return;
   app.clearTapFlash();
+  // A task still ending (this screen's, past a stop's bound, or one a closed screen detached) may still be inside the
+  // SD card or its decoder: no new run until it has ended.
+  if (runner->running() || GrayRunner::detachedTasks() > 0) {
+    LOG_INF("DLAB", "transition test: a sweep task is still stopping; no run");
+    {
+      RenderLock lock(*this);
+      status = tr(STR_GAMES_DLAB_STILL_STOPPING);
+      rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
+    }
+    requestUpdate();
+    return;
+  }
   // The task's fields, written before it is created (its creation orders them before its first read).
-  runner.prepare();
+  runner->prepare();
   // The Mode row's mode. Slow's dwell is the preset's longest dose run in slots; its crossing waits for the run's own
   // measurement (TransitionScene::slotDone).
   scene.setMode(sweepMode, lab.preset().longestRunSlots());
@@ -277,7 +299,7 @@ void TransitionTestActivity::startRun() {
     RenderLock lock(*this);
     shownOnPanel = true;  // from here the render task draws nothing; no task is alive yet
   }
-  if (runner.launch()) return;
+  if (runner->launch()) return;
   {
     RenderLock lock(*this);
     shownOnPanel = false;  // nothing was sent: the rows stay as they are, with the reason
@@ -313,7 +335,7 @@ void TransitionTestActivity::toggleHold() {
 void TransitionTestActivity::cleanFromRows() {
   // The rows view has no sweep task (startRun creates it with the view, and the view ends only after the join), so
   // the panel is this task's.
-  if (runner.running()) return;
+  if (runner && runner->running()) return;
   app.clearTapFlash();
   {
     // The lab's clean sends the framebuffer with a FULL refresh: white first. The rows' repaint follows it.
@@ -325,15 +347,20 @@ void TransitionTestActivity::cleanFromRows() {
   requestUpdate();
 }
 
+const char* TransitionTestActivity::stopText(const bool joined) const {
+  // A task a stop left running has not said how it ended: its end is read only once it is joined.
+  return joined ? endText() : tr(STR_GAMES_DLAB_STILL_STOPPING);
+}
+
 const char* TransitionTestActivity::endText() const {
-  switch (runner.end()) {
+  switch (runner->end()) {
     case GrayRunner::End::Stopped:
     case GrayRunner::End::PaintFailed:  // never: the scene always paints
       return tr(STR_GAMES_DLAB_STOPPED);
     case GrayRunner::End::Covered:
       return tr(STR_GAMES_DLAB_COVERED);
     case GrayRunner::End::ScanFailed:
-      return DisplayLabActivity::outcomeText(runner.failedScan());
+      return DisplayLabActivity::outcomeText(runner->failedScan());
     case GrayRunner::End::Finished:
       return tr(STR_GAMES_DLAB_FINISHED);
   }
@@ -344,10 +371,10 @@ void TransitionTestActivity::leaveView(const char* outcome) {
   app.clearTapFlash();
   {
     RenderLock lock(*this);
-    if (runner.statsReported()) {
-      snprintf(statsText, sizeof(statsText), tr(STR_GAMES_DLAB_STATS),
-               static_cast<unsigned>(runner.reportedTenths() / 10), static_cast<unsigned>(runner.reportedTenths() % 10),
-               static_cast<unsigned>(runner.reportedMsPerScan()));
+    if (runner->statsReported()) {
+      snprintf(
+          statsText, sizeof(statsText), tr(STR_GAMES_DLAB_STATS), static_cast<unsigned>(runner->reportedTenths() / 10),
+          static_cast<unsigned>(runner->reportedTenths() % 10), static_cast<unsigned>(runner->reportedMsPerScan()));
     }
     status = outcome;
     rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
@@ -396,10 +423,11 @@ bool TransitionTestActivity::onReplay(GrayModel& model, const GrayPreset& preset
           static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), rects, crossing, hold,
           static_cast<unsigned>(preset.rateIndex), static_cast<unsigned>(preset.swapPolarity),
           static_cast<unsigned>(preset.retargetDarkPercent), static_cast<unsigned>(preset.retargetLightPercent),
-          static_cast<unsigned>(runner.hasHistory() ? preset.historyMode : 0), static_cast<unsigned>(runner.weakRow()));
+          static_cast<unsigned>(runner->hasHistory() ? preset.historyMode : 0),
+          static_cast<unsigned>(runner->weakRow()));
   // With history on, a flip back to a pixel's origin is a completed return or a reversal, budgeted by the route's
   // return_delta or reverse_percent rather than the table dose.
-  if (scene.mode() == SweepMode::Static && runner.hasHistory()) {
+  if (scene.mode() == SweepMode::Static && runner->hasHistory()) {
     LOG_INF("DLAB", "gray static: history %u is on, so the flips' residues include its route adjustments",
             static_cast<unsigned>(preset.historyMode));
   }
@@ -476,7 +504,7 @@ GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(const GameDisp
     ladderLastStartUs = slotStartUs;
   }
   const GameDisplayLab::SceneStep step =
-      scene.slotDone(runner.model(), lab.preset(), slot.driven, slot.driveDone, periodUs, elapsedMs);
+      scene.slotDone(runner->model(), lab.preset(), slot.driven, slot.driveDone, periodUs, elapsedMs);
   if (step.settled) {
     LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
             static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
@@ -511,7 +539,7 @@ GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(const GameDisp
   }
   if (step.held) {
     // Held for a photo: nothing is driven until Next (or Confirm) resumes, which drives the marker back first.
-    runner.holdForPhoto();
+    runner->holdForPhoto();
     LOG_INF("DLAB", "gray hold: marker settled after %lu slots; holding, Next resumes",
             static_cast<unsigned long>(step.markerSlots));
   }

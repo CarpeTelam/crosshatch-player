@@ -9,8 +9,9 @@
 // (Replaying); a second holds the owner's heartbeat, the micros() of its last loop() pass. Pure and
 // std-only, pinned by test_sweep_control.cpp. Times are a free-running microsecond clock; ages are wrap-safe.
 //
-// Owner: reset() before the task starts, then the controls (press, requestRun, requestReplay, requestClean,
-// requestStop), heartbeat() once per loop() pass. Task: take() at each slot boundary, which hands over the requests and
+// Owner: reset() before the task starts, then the controls (press, requestStop; requestReplay and requestClean are
+// the protocol's, private, reached only by the host tests through SweepControlTestAccess), heartbeat() once per loop()
+// pass. Task: take() at each slot boundary, which hands over the requests and
 // clears the one-shot ones (Replay, Clean); Run is a state, not a one-shot, so two presses before the task serves them
 // cancel out. Around every scan and clean the task calls enterPanel(), and leavePanel() after: the owner reads
 // insidePanel() after requestStop() to know whether the task may be waiting for the render lock. Every change to the
@@ -65,7 +66,6 @@ class SweepControl {
     const int32_t age = static_cast<int32_t>(nowUs - heartbeat_.load());
     return age > 0 ? static_cast<uint32_t>(age) : 0;
   }
-  void requestRun(const bool run) { change(run ? RUN : 0, run ? 0 : RUN); }
   // What a press did.
   enum class Press : uint8_t {
     // A replay from a hold is pending (Replaying): nothing changed.
@@ -90,14 +90,8 @@ class SweepControl {
   }
   // A replay with presses waiting (a next picture, or the gray viewer's first) has not been served yet.
   bool replayPending() const { return (word_.load() & REPLAYING) != 0; }
-  // The task holds for a photo.
-  bool held() const { return (word_.load() & HELD) != 0; }
   // The whole word, for a reader that needs two bits from one moment (preventAutoSleep: Run and Held).
   uint32_t snapshot() const { return word_.load(); }
-  // Clean, the sweep from 0, running.
-  void requestReplay() { change(REPLAY | RUN, 0); }
-  // Clean, paused: Clean set and Run cleared in one step.
-  void requestClean() { change(CLEAN, RUN); }
   // Sticky: nothing clears it but reset().
   void requestStop() { change(STOP, 0); }
   bool runRequested() const { return (word_.load() & RUN) != 0; }
@@ -137,6 +131,14 @@ class SweepControl {
   void leavePanel() { change(0, IN_PANEL); }
 
  private:
+  // The protocol's other owner requests, with no firmware caller since press() (a run's replay is reset()'s; the
+  // viewer's next picture is press()'s): kept for the host tests of take()'s coalescing.
+  friend class SweepControlTestAccess;
+  // Clean, the sweep from 0, running.
+  void requestReplay() { change(REPLAY | RUN, 0); }
+  // Clean, paused: Clean set and Run cleared in one step.
+  void requestClean() { change(CLEAN, RUN); }
+
   // Sets `set` and clears `clear` in one compare-exchange; returns the word before.
   uint32_t change(const uint32_t set, const uint32_t clear) {
     uint32_t word = word_.load();

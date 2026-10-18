@@ -194,6 +194,21 @@ int jpegScaleDenominator(const uint32_t targetPermille) {
   return 1;
 }
 
+int32_t readAllowance(const uint32_t position, const int32_t requested, const uint32_t walkedSize, const bool stopped) {
+  if (stopped || requested <= 0 || position >= walkedSize) return 0;
+  const uint32_t left = walkedSize - position;
+  return static_cast<uint32_t>(requested) < left ? requested : static_cast<int32_t>(left);
+}
+
+int32_t fillPngRead(uint8_t* buf, const int32_t requested, const int32_t got) {
+  if (requested <= 0) return 0;
+  const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);
+  for (int32_t i = kept; i < requested; ++i) buf[i] = 0xFF;
+  return requested;
+}
+
+int32_t clampJpegRead(const int32_t got) { return got < 0 ? 0 : got; }
+
 JpegScale jpegScaleFor(const int srcW, const int srcH, const int fitW, const int fitH, const bool progressive) {
   JpegScale scale{1, 0, srcW, srcH};
   if (srcW <= 0 || srcH <= 0) return scale;
@@ -299,4 +314,52 @@ void sampleBlock(const SourceBlock& block, const FitAxis& ax, const FitAxis::Tap
   }
 }
 
+void SeamKeeper::reset(const int width, uint8_t* rowA, uint8_t* rowB, const bool keepLeft) {
+  width_ = width;
+  above_ = rowA != nullptr && rowB != nullptr ? rowA : nullptr;
+  current_ = above_ != nullptr ? rowB : nullptr;
+  haveAbove_ = false;
+  keepLeft_ = keepLeft;
+  stripY_ = -1;
+  edgeEndX_ = -1;
+}
+
+SourceBlock SeamKeeper::begin(const uint8_t* pixels, const int x, const int y, const int widthUsed, const int height,
+                              const int stride) {
+  if (y != stripY_) {
+    // A new strip: the one before it is complete, and its last row is the row above this one.
+    if (stripY_ >= 0 && current_ != nullptr) {
+      uint8_t* const done = current_;
+      current_ = above_;
+      above_ = done;
+      haveAbove_ = true;
+    }
+    stripY_ = y;
+    edgeEndX_ = -1;
+  }
+  SourceBlock block{pixels, stride, x, x + widthUsed, y, y + height};
+  if (haveAbove_) block.above = above_;
+  if (edgeEndX_ >= 0 && edgeEndX_ == x && height <= EDGE_ROWS) block.left = edge_;
+  return block;
+}
+
+void SeamKeeper::end(const SourceBlock& block) {
+  const int height = block.y1 - block.y0;
+  const int used = block.x1 - block.x0;
+  if (height <= 0 || used <= 0) return;
+  if (current_ != nullptr) {
+    const int end = block.x1 < width_ ? block.x1 : width_;
+    const uint8_t* last = block.pixels + static_cast<size_t>(height - 1) * static_cast<size_t>(block.stride);
+    for (int x = block.x0 < 0 ? 0 : block.x0; x < end; ++x) current_[x] = last[x - block.x0];
+  }
+  if (keepLeft_ && height <= EDGE_ROWS) {
+    for (int row = 0; row < height; ++row) {
+      edge_[row] =
+          block.pixels[static_cast<size_t>(row) * static_cast<size_t>(block.stride) + static_cast<size_t>(used - 1)];
+    }
+    edgeEndX_ = block.x1;
+  } else {
+    edgeEndX_ = -1;
+  }
+}
 }  // namespace GameDisplayLab

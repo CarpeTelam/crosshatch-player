@@ -72,7 +72,7 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   // As the transition test: the loop keeps its delay; the runner keeps the device awake while it paints and for
   // GrayRunner::HOLD_AWAKE_MS of a hold.
   bool skipLoopDelay() override { return false; }
-  bool preventAutoSleep() override { return runner.preventAutoSleep(); }
+  bool preventAutoSleep() override { return runner && runner->preventAutoSleep(); }
   // Ends the sweep task (the render mutex is held: GrayRunner::endLocked).
   void prepareForSleep() override;
   // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
@@ -84,16 +84,23 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   enum class Row : uint8_t { Image, Dither, Run, Levels, Controls, Status };
   static constexpr size_t ROW_COUNT = 6;
 
-  // The reader's rows, painted into the model on the sweep task.
+  // The reader's rows, painted into the model on the sweep task. It holds the runner (a heap object a detached task
+  // keeps) for its stop check, never the screen: a stop is checked before every row, so a task returning after the
+  // screen is gone asks only the runner; the picture, the shade row and the model are touched only by rows, which a
+  // stop ends.
   class RowSink final : public GrayRowSink {
    public:
-    RowSink(GrayViewerActivity& viewer, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset)
-        : viewer(viewer), model(model), preset(preset) {}
+    RowSink(GrayRunner& runner, const GameDisplayLab::GrayPicture& picture, GameDisplayLab::Dither dither,
+            uint8_t* shades, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset)
+        : runner(runner), picture(picture), dither(dither), shades(shades), model(model), preset(preset) {}
     void row(int y, int x0, const uint8_t* gray, int count) override;
-    bool stopped() const override { return viewer.runner.stopRequested(); }
+    bool stopped() const override { return runner.stopRequested(); }
 
    private:
-    GrayViewerActivity& viewer;
+    GrayRunner& runner;
+    const GameDisplayLab::GrayPicture& picture;
+    GameDisplayLab::Dither dither;
+    uint8_t* shades;
     GameDisplayLab::GrayModel& model;
     const GameDisplayLab::GrayPreset& preset;
   };
@@ -134,6 +141,8 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   void toggleDither();
   // The Status row's line for how the task's run ended.
   const char* endText() const;
+  // After a stop: endText() when the task was joined, "Still stopping" when it was left running past the bound.
+  const char* stopText(bool joined) const;
   // Back to the rows with `outcome` on the Status row, repainted with a FULL refresh. Only once the task is gone.
   void leaveView(const char* outcome);
   // Entry `index`'s name: the chart's, or the file's.
@@ -154,7 +163,7 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   SlotVerdict afterSlot(const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs, uint32_t periodUs,
                         uint32_t elapsedMs) override;
   // The current entry into the model: the chart, or the file read through readGrayImage; false when the file could
-  // not be read (paintError says why) or the read was stopped.
+  // not be read (the runner's client code says why) or the read was stopped.
   bool paintEntry(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset);
 
   DisplayLabActivity& lab;
@@ -181,14 +190,13 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   std::unique_ptr<uint8_t[]> shadeRow;
 
   // The sweep task and its working set; this screen is its client.
-  GrayRunner runner;
+  // Null when it had no room (the notice row), or once endLocked detached it.
+  std::unique_ptr<GrayRunner> runner;
 
   // ---- the sweep task's own, while it is up (read by the loop task only once it is deleted) ------------------------
   GameDisplayLab::GrayPicture picture;
   // The entry the task is painting (requested, read at each replay).
   uint16_t painted = 0;
-  // Why the last paint failed (Done when it did not).
-  ImageRead paintError = ImageRead::Done;
 };
 
 #endif  // CROSSHATCH_DISPLAY_LAB

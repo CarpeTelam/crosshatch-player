@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "GrayRunner.h"
 
@@ -81,7 +82,7 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   // GrayRunner::HOLD_AWAKE_MS from the hold's start; after that, and in a pause the owner asked for, the normal idle
   // timeout applies and auto-sleep ends the run as any leave does.
   bool skipLoopDelay() override { return false; }
-  bool preventAutoSleep() override { return runner.preventAutoSleep(); }
+  bool preventAutoSleep() override { return runner && runner->preventAutoSleep(); }
   // Ends the sweep task (the render mutex is held: GrayRunner::endLocked).
   void prepareForSleep() override;
   // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
@@ -124,6 +125,8 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   void cleanFromRows();
   // The Run row's line for how the task's run ended.
   const char* endText() const;
+  // After a stop: endText() when the task was joined, "Still stopping" when it was left running past the bound.
+  const char* stopText(bool joined) const;
   // Back to the rows with `outcome` on the Run row and the task's last speed on the Speed row, repainted with a FULL
   // refresh. Only once the task is gone.
   void leaveView(const char* outcome);
@@ -175,7 +178,8 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   bool holdOn = true;
 
   // The sweep task and its working set; this screen is its client.
-  GrayRunner runner;
+  // Null when it had no room (the notice row), or once endLocked detached it.
+  std::unique_ptr<GrayRunner> runner;
 
   // ---- the sweep task's own, while it is up (read by the loop task only once it is deleted) ------------------------
   GameDisplayLab::TransitionScene scene;

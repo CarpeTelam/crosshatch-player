@@ -46,7 +46,8 @@ const char* ditherName(const Dither dither) { return dither == Dither::Plain ? "
 GrayViewerActivity::GrayViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab)
     : UiListActivity(NAME, renderer, mappedInput),
       lab(lab),
-      runner(renderer, lab, *this, "gray viewer", VIEWER_STACK_BYTES) {}
+      runner(makeUniqueNoThrow<GrayRunner>(renderer, lab, static_cast<GrayRunner::Client&>(*this), "gray viewer",
+                                           VIEWER_STACK_BYTES)) {}
 
 const char* GrayViewerActivity::headerTitle() const { return tr(STR_GAMES_DLAB_GRAY_VIEWER); }
 
@@ -118,7 +119,7 @@ void GrayViewerActivity::listImages() {
 bool GrayViewerActivity::allocate() {
   const int logicalW = renderer.getScreenWidth();
   const int logicalH = renderer.getScreenHeight();
-  if (!runner.allocate(logicalW, logicalH)) return false;
+  if (!runner || !runner->allocate(logicalW, logicalH)) return false;
   grayRow = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(logicalW));
   shadeRow = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(logicalW));
   if (!grayRow || !shadeRow) {
@@ -133,7 +134,8 @@ bool GrayViewerActivity::allocate() {
 }
 
 void GrayViewerActivity::release() {
-  runner.release();
+  // Null once endLocked detached it: its buffers are the task's then, freed when it ends.
+  if (runner) runner->release();
   grayRow.reset();
   shadeRow.reset();
 }
@@ -141,7 +143,7 @@ void GrayViewerActivity::release() {
 void GrayViewerActivity::onExit() {
   // ActivityManager holds the render mutex here (a pop, or a Replace by Home or sleep, which also drains a covered
   // screen from the stack): take no RenderLock (12cc816), and end the task without waiting on that mutex.
-  runner.endLocked();
+  GrayRunner::endLocked(runner);
   if (shownOnPanel.load()) {
     // The next screen's first frame cleans the panel; the lab's own exit cleans it too when it is left.
     renderer.promoteNextRefresh(HalDisplay::FULL_REFRESH);
@@ -155,12 +157,12 @@ void GrayViewerActivity::onExit() {
 
 void GrayViewerActivity::prepareForSleep() {
   // ActivityManager::prepareForSleep holds the render mutex, for this screen as the current one or as a covered one.
-  runner.endLocked();
+  GrayRunner::endLocked(runner);
 }
 
 bool GrayViewerActivity::handleHomeGesture() {
   // Called from ActivityManager::loop without the render mutex, before goHome's Replace runs onExit.
-  runner.stop();
+  if (runner) runner->stop();
   return false;
 }
 
@@ -261,8 +263,7 @@ bool GrayViewerActivity::handleCustomInput() {
   // swipe guard below would swallow it); NavPrevious stops on its release, as Back does.
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
       mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
-    runner.stop();
-    leaveView(endText());
+    leaveView(stopText(runner->stop()));
     return true;
   }
   // Any other swipe would scroll the hidden list: consumed while the view is up.
@@ -290,30 +291,50 @@ void GrayViewerActivity::onBackButton() {
 void GrayViewerActivity::loop() {
   // While the view is up it ends when another screen covered it, or when the task ended on its own (a failed scan or
   // read, the cover) or was ended by prepareForSleep; the rows come back with their FULL refresh.
-  if (shownOnPanel.load() && runner.viewEnds(micros())) {
-    leaveView(endText());
+  if (shownOnPanel.load() && runner && runner->viewEnds(micros())) {
+    leaveView(stopText(!runner->stillStopping()));
     // This pass's input belonged to the view: a Back or Confirm release here must not pop the screen or start a run.
-    runner.heartbeat(micros());
+    runner->heartbeat(micros());
     return;
   }
-  // A task a stop left running past its bound (logged) is joined once it ends.
-  if (!shownOnPanel.load()) runner.reap();
+  // A task a stop left running past its bound (logged, "Still stopping" on the Status row) is joined once it ends, and
+  // only then does the row say how the run ended.
+  if (!shownOnPanel.load() && runner && runner->reap()) {
+    {
+      RenderLock lock(*this);
+      status = endText();
+      rowItems[static_cast<size_t>(Row::Status)].subtitle = status;
+    }
+    requestUpdate();
+  }
   UiListActivity::loop();
-  runner.heartbeat(micros());
+  if (runner) runner->heartbeat(micros());
 }
 
 void GrayViewerActivity::startRun() {
-  if (runner.running()) return;
+  if (!runner) return;
   app.clearTapFlash();
+  // A task still ending (this screen's, past a stop's bound, or one a closed screen detached) may still be inside the
+  // SD card or its decoder: no new run until it has ended.
+  if (runner->running() || GrayRunner::detachedTasks() > 0) {
+    LOG_INF("DLAB", "gray viewer: a sweep task is still stopping; no run");
+    {
+      RenderLock lock(*this);
+      status = tr(STR_GAMES_DLAB_STILL_STOPPING);
+      rowItems[static_cast<size_t>(Row::Status)].subtitle = status;
+    }
+    requestUpdate();
+    return;
+  }
   // Presses wait for the first paint: they write the entry the task reads at a replay.
-  runner.prepare(true);
-  paintError = ImageRead::Done;
+  runner->prepare(true);
+  runner->setClientCode(static_cast<uint8_t>(ImageRead::Done));
   {
     RenderLock lock(*this);
     shownOnPanel = true;  // from here the render task draws nothing; no task is alive yet
   }
   LOG_INF("DLAB", "gray viewer: run, %s, dither %s", entryName(requested.load()), ditherName(dither));
-  if (runner.launch()) return;
+  if (runner->launch()) return;
   {
     RenderLock lock(*this);
     shownOnPanel = false;  // nothing was sent: the rows stay as they are, with the reason
@@ -324,17 +345,17 @@ void GrayViewerActivity::startRun() {
 }
 
 void GrayViewerActivity::nextOrPause() {
-  if (!runner.running()) return;
+  if (!runner || !runner->running()) return;
   // A replay with presses waiting (the run's first picture, or a next one, whose clean and decode take seconds) is
   // pending: the press is ignored, so a second press can neither skip a picture nor pause the one being painted.
-  if (runner.replayPending()) return;
+  if (runner->replayPending()) return;
   // The task reads `requested` only when it serves a replay, and none is pending (the check above; only this task asks
   // for one), so the next entry is written first and the press decides, in one step on the request word, whether it is
   // the next picture (the task holds) or a pause or resume (it does not), which puts the entry back.
   const uint16_t current = requested.load();
   const auto next = static_cast<uint16_t>(GameDisplayLab::ImageList::nextEntry(current, images.entries()));
   requested.store(next);
-  if (runner.press(true) == GrayRunner::Press::Next) {
+  if (runner->press(true) == GrayRunner::Press::Next) {
     LOG_INF("DLAB", "gray viewer: next, %s", entryName(next));
     return;
   }
@@ -363,20 +384,25 @@ void GrayViewerActivity::toggleDither() {
   requestUpdate();
 }
 
+const char* GrayViewerActivity::stopText(const bool joined) const {
+  // A task a stop left running has not said how it ended: its end is read only once it is joined.
+  return joined ? endText() : tr(STR_GAMES_DLAB_STILL_STOPPING);
+}
+
 const char* GrayViewerActivity::endText() const {
-  switch (runner.end()) {
+  switch (runner->end()) {
     case GrayRunner::End::Stopped:
       return tr(STR_GAMES_DLAB_STOPPED);
     case GrayRunner::End::Covered:
       return tr(STR_GAMES_DLAB_COVERED);
     case GrayRunner::End::ScanFailed:
-      return DisplayLabActivity::outcomeText(runner.failedScan());
+      return DisplayLabActivity::outcomeText(runner->failedScan());
     case GrayRunner::End::Finished:
       return tr(STR_GAMES_DLAB_FINISHED);  // never: a picture holds until stopped
     case GrayRunner::End::PaintFailed:
       break;
   }
-  switch (paintError) {
+  switch (static_cast<ImageRead>(runner->clientCode())) {
     case ImageRead::Open:
       return tr(STR_GAMES_DLAB_IMAGE_OPEN_FAILED);
     case ImageRead::Format:
@@ -385,6 +411,10 @@ const char* GrayViewerActivity::endText() const {
       return tr(STR_GAMES_DLAB_IMAGE_NO_MEMORY);
     case ImageRead::Decode:
       return tr(STR_GAMES_DLAB_IMAGE_DECODE_FAILED);
+    case ImageRead::Short:
+      return tr(STR_GAMES_DLAB_IMAGE_TOO_SHORT);
+    case ImageRead::NoEnd:
+      return tr(STR_GAMES_DLAB_IMAGE_NO_END);
     case ImageRead::Done:
     case ImageRead::Stopped:
       break;
@@ -413,7 +443,7 @@ void GrayViewerActivity::leaveView(const char* outcome) {
 // ---- sweep task: the runner's client --------------------------------------------------------------------------------
 
 void GrayViewerActivity::RowSink::row(const int y, const int x0, const uint8_t* gray, const int count) {
-  viewer.picture.paintGrayRow(model, preset, y, x0, gray, count, viewer.dither, viewer.shadeRow.get());
+  picture.paintGrayRow(model, preset, y, x0, gray, count, dither, shades);
 }
 
 bool GrayViewerActivity::paintEntry(GrayModel& model, const GrayPreset& preset) {
@@ -425,30 +455,37 @@ bool GrayViewerActivity::paintEntry(GrayModel& model, const GrayPreset& preset) 
             static_cast<unsigned>(model.activeCount()));
     return true;
   }
+  // Everything the code after the read uses is copied here first: if the read outlasts endLocked's bound, the screen is
+  // gone when it returns, and only these locals, the runner (`r`, a heap object the detached task keeps) and the model
+  // (the runner's) are touched from then on.
+  GrayRunner* const r = runner.get();
+  char localName[NAME_BYTES];
+  snprintf(localName, sizeof(localName), "%s", name);
+  const Dither localDither = dither;
   char path[sizeof(IMAGES_DIR) + NAME_BYTES + 1];
-  snprintf(path, sizeof(path), "%s/%s", IMAGES_DIR, name);
-  RowSink sink(*this, model, preset);
+  snprintf(path, sizeof(path), "%s/%s", IMAGES_DIR, localName);
+  RowSink sink(*r, picture, localDither, shadeRow.get(), model, preset);
   ImageReadInfo info;
-  const ImageRead read = readGrayImage(path, GameDisplayLab::imageKindOf(name), picture.screen().logicalW,
+  const ImageRead read = readGrayImage(path, GameDisplayLab::imageKindOf(localName), picture.screen().logicalW,
                                        picture.screen().logicalH, sink, info);
   if (read == ImageRead::Stopped) {
     // The owner's stop (Back, Home, sleep) ended the read: no paint error; the run ends as Stopped.
-    LOG_INF("DLAB", "gray viewer: %s: read stopped", name);
+    LOG_INF("DLAB", "gray viewer: %s: read stopped", localName);
     return false;
   }
   if (read != ImageRead::Done) {
-    paintError = read;
-    LOG_ERR("DLAB", "gray viewer: %s: %s", name, imageReadName(read));
+    r->setClientCode(static_cast<uint8_t>(read));
+    LOG_ERR("DLAB", "gray viewer: %s: %s", localName, imageReadName(read));
     return false;
   }
   // JPEGDEC's scale, for a JPEG only.
   char scale[32] = "";
-  if (GameDisplayLab::imageKindOf(name) == ImageKind::Jpeg) {
+  if (GameDisplayLab::imageKindOf(localName) == ImageKind::Jpeg) {
     snprintf(scale, sizeof(scale), " (jpeg scale 1/%d%s)", info.jpegScale, info.progressive ? ", progressive" : "");
   }
   LOG_INF("DLAB", "gray viewer: %s %dx%d at %d,%d %dx%d%s, read and painted in %lu ms, dither %s, %u pixels to drive",
-          name, info.width, info.height, info.fit.x, info.fit.y, info.fit.w, info.fit.h, scale,
-          static_cast<unsigned long>(info.ms), ditherName(dither), static_cast<unsigned>(model.activeCount()));
+          localName, info.width, info.height, info.fit.x, info.fit.y, info.fit.w, info.fit.h, scale,
+          static_cast<unsigned long>(info.ms), ditherName(localDither), static_cast<unsigned>(model.activeCount()));
   return true;
 }
 
@@ -491,7 +528,7 @@ GrayRunner::Client::SlotVerdict GrayViewerActivity::afterSlot(const GameDisplayL
   (void)slotStartUs;
   (void)periodUs;
   (void)elapsedMs;
-  GrayModel& model = runner.model();
+  GrayModel& model = runner->model();
   const GameDisplayLab::PictureStep step = picture.slotDone(model, lab.preset(), slot.driven);
   if (step.painted) {
     // The pixels each level holds, by the levels' names: "[0:N 2:N 4:N 6:N]".
@@ -508,7 +545,7 @@ GrayRunner::Client::SlotVerdict GrayViewerActivity::afterSlot(const GameDisplayL
   }
   if (step.held) {
     // Held for the photo: nothing is driven until Next paints the next picture (or a stop).
-    runner.holdForPhoto();
+    runner->holdForPhoto();
     LOG_INF("DLAB", "gray hold: marker settled after %lu slots; holding, Next paints the next picture",
             static_cast<unsigned long>(step.markerSlots));
   }

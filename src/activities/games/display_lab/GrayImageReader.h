@@ -15,15 +15,19 @@
 // to gray as the PNG converter converts one (GameDisplayLab::pngRowToGray: every pixel type and depth it accepts, alpha
 // composited on white), a JPEG is decoded as 8-bit gray at JPEGDEC's coarse scale as the JPEG converter picks it (a
 // progressive one at an eighth, its DC-only decode; GameDisplayLab::jpegScaleFor), with the converters' size limits and
-// free-heap floors (taken from the decoders' real sizes); a PNG's chunk layout is checked against its size first
-// (walkPngChunks: PNGdec spins on a truncated file). Rows are scaled to GameDisplayLab::fitToScreen's rectangle:
-// bilinear along an axis the fit enlarges (only the 16.16 blend arithmetic is the JPEG converter's), nearest at pixel
-// centres along one it shrinks (FitAxis::tap, sampleBlock); a PNG row completes the output rows rowsReadyAt names, a
-// JPEG block the ones outputsEndingIn names, with the row above (the previous PNG row, the previous JPEG strip's last
-// row) and the previous block's last column kept so blends cross seams. All of that arithmetic is pure and pinned by
-// test_image_rows.cpp; only the library calls and the callbacks' glue here are device-only. A JPEG's EXIF orientation
-// is ignored (as the converters ignore it): a picture is shown as its pixels are stored. The renderer's framebuffer is
-// not touched. Only GrayImageReader.cpp includes PNGdec.h and JPEGDEC.h (scripts/check_layers.py's FILE_EDGES, D16).
+// free-heap floors (taken from the decoders' real sizes). Against a decoder that never returns there are three layers:
+// the file's layout is walked against its size first (walkPngChunks to the end of a PNG, walkJpegSegments from a
+// JPEG's SOI to SOS: PNGdec spins on a truncated file); every read is answered so it cannot stall the decoder
+// (readAllowance, fillPngRead, clampJpegRead: nothing past the walked size, which is the size the decoder is given, and
+// nothing once stopped); and the sweep task's owner waits for a stop only so long (GrayRunner::endLocked detaches).
+// Rows are scaled to GameDisplayLab::fitToScreen's rectangle: bilinear along an axis the fit enlarges (only the 16.16
+// blend arithmetic is the JPEG converter's), nearest at pixel centres along one it shrinks (FitAxis::tap, sampleBlock);
+// a PNG row completes the output rows rowsReadyAt names, a JPEG block the ones outputsEndingIn names, with the row
+// above (the previous PNG row, the previous JPEG strip's last row) and the previous block's last column kept so blends
+// cross seams (SeamKeeper). All of that arithmetic is pure and pinned by test_image_rows.cpp; only the library calls
+// and the callbacks' glue here are device-only. A JPEG's EXIF orientation is ignored (as the converters ignore it): a
+// picture is shown as its pixels are stored. The renderer's framebuffer is not touched. Only GrayImageReader.cpp
+// includes PNGdec.h and JPEGDEC.h (scripts/check_layers.py's FILE_EDGES, D16).
 //
 // It runs on the caller's task (the gray viewer's sweep task): it yields one tick every YIELD_MS so a long decode keeps
 // the idle task fed, as the converters do, and checks the sink's stopped() before every output row, so a stop waits
@@ -45,11 +49,16 @@ class GrayRowSink {
 // How a read ended.
 enum class ImageRead : uint8_t {
   Done,
-  // The file would not open, or the library rejected its header as corrupt.
+  // The file would not open, a read of it failed, or the library rejected its header as corrupt.
   Open,
   // A size, depth, colour type or width outside what the converters accept, a feature the library does not decode
-  // (an interlaced or 16-bit PNG, an extended or lossless JPEG), or a truncated or malformed PNG.
+  // (an interlaced or 16-bit PNG, an extended or lossless JPEG), or a truncated or malformed file (a chunk or segment
+  // past its end, a bad signature or length, an oversized PLTE or tRNS, too many chunks or segments).
   Format,
+  // Under a signature's worth of bytes (8 for a PNG, 4 for a JPEG).
+  Short,
+  // Whole chunks or segments without the end the decoder needs: no IEND (a PNG), no SOS (a JPEG).
+  NoEnd,
   // The decoder or a row buffer did not fit (the converters' free-heap floor included).
   Memory,
   // The decode itself failed.

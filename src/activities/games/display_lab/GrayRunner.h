@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 class GfxRenderer;
 
@@ -50,8 +51,10 @@ class GfxRenderer;
 // so they ask it to stop and join it (stop). onExit() and prepareForSleep() run with the non-recursive render mutex
 // held, which DisplayLabActivity::scan takes, so they must not wait for a task blocked on it: endLocked() deletes the
 // task when it is inside the panel and blocked (waiting for that mutex, holding nothing), and otherwise waits for it to
-// end on its own. The task never deletes itself: it parks after publishing its end, and only the screen (through the
-// runner) deletes it, so a notification never reaches a freed task.
+// end on its own. Both waits are bounded (STOP_WAIT_MS): stop() then leaves the task running and the screen joins it
+// later (reap); endLocked() detaches the runner, which the task frees itself when it ends. A task that was not
+// detached never deletes itself: it parks after publishing its end, and only the screen (through the runner) deletes
+// it, so a notification never reaches a freed task; a detached one is notified by no one.
 class GrayRunner {
  public:
   // How often the running sweep logs and keeps its speed.
@@ -67,8 +70,10 @@ class GrayRunner {
   static constexpr int SWEEP_CORE = 1;
   // How often stop() polls for the task's end.
   static constexpr uint32_t STOP_POLL_MS = 5;
-  // The longest stop() waits for the task: past the longest scan (SCAN_TIMEOUT_MS) and a decode's row, short enough
-  // that Back, Home or sleep never hangs on a task that does not return (logged, the task left undeleted).
+  // The longest stop() and endLocked() wait for the task: past SCAN_TIMEOUT_MS and a decode's row (the SDK's own BUSY
+  // wait can run to 30 s, so a scan stuck there outlasts it: stop() then shows "Still stopping" until it returns).
+  // Past it, stop() leaves the task running undeleted and endLocked() detaches it, so Back, Home and sleep wait at
+  // most this long for a task that does not return.
   static constexpr uint32_t STOP_WAIT_MS = 20000;
   // How long a hold for a photo keeps the device awake from its start: long enough to set up and take the photos,
   // short enough that a forgotten hold does not keep the CPU up indefinitely (main.cpp resets the idle clock and turns
@@ -150,14 +155,22 @@ class GrayRunner {
   // A replay with presses waiting is pending (the gray viewer reads it before it writes the next entry).
   bool replayPending() const { return control.replayPending(); }
   // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (after the scan, the clean
-  // or the decode row in flight) at most STOP_WAIT_MS, and deletes it; past that, logged and left running (running()
-  // stays true until reap() joins it). The caller holds no render lock.
-  void stop();
-  // From the rows view's loop: joins a task stop() left running once it has ended.
-  void reap();
-  // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks the task to stop and waits for
-  // its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that mutex.
-  void endLocked();
+  // or the decode row in flight) at most STOP_WAIT_MS, and deletes it: true. Past that, logged and left running, false
+  // (stillStopping() until reap() joins it; the screen shows "Still stopping" and reads no end until then). The caller
+  // holds no render lock.
+  bool stop();
+  // A stop left the task running past STOP_WAIT_MS and it has not been joined yet.
+  bool stillStopping() const { return sweepTask != nullptr && control.stopRequested(); }
+  // From the rows view's loop: joins a task stop() left running once it has ended; true when it joined one.
+  bool reap();
+  // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks `owned`'s task to stop and waits
+  // for its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that
+  // mutex. Waits at most STOP_WAIT_MS: past that the runner is detached (logged once, naming the screen), `owned`
+  // released to the task, which frees it (the model, the masks, every buffer it can touch) when it ends; `owned` is
+  // then null and the caller frees nothing of it.
+  static void endLocked(std::unique_ptr<GrayRunner>& owned);
+  // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any.
+  static int detachedTasks();
   // The view must end now (a pass of loop() while the view is up at `nowUs`): another screen covered it (a heartbeat
   // older than COVERED_GAP_US, logged), or the task ended on its own or was ended; the task has then been joined. The
   // caller leaves the view and heartbeats.
@@ -165,10 +178,8 @@ class GrayRunner {
   // Once per loop() pass: the task refuses its next scan once this is older than COVERED_GAP_US.
   void heartbeat(uint32_t nowUs) { control.heartbeat(nowUs); }
   bool preventAutoSleep() const;
-  // The run holds for a photo (the marker settled; cleared when the task serves a resume, a replay or a clean, and at
-  // a run's start and end).
-  bool heldForPhoto() const { return control.held(); }
-  // How the last run ended, and the failing scan's outcome when it was ScanFailed; read once the task is gone.
+  // How the last run ended, and the failing scan's outcome when it was ScanFailed; read once the task is gone (never
+  // while stillStopping()).
   End end() const { return sweepEnd; }
   DisplayLabActivity::Scan failedScan() const { return failedScan_; }
   // The last reported speed (statsReported: there was one), for the Speed row once the view ends.
@@ -180,6 +191,10 @@ class GrayRunner {
   // ---- either side --------------------------------------------------------------------------------------------------
   // A stop was asked for (the client's long work, a decode, checks it to end early).
   bool stopRequested() const { return control.stopRequested(); }
+  // A result code the client keeps in the runner rather than in itself (the gray viewer's read error), so a task
+  // returning after the screen is gone writes nothing of the screen; read once the task is gone.
+  void setClientCode(const uint8_t code) { clientCode_.store(code); }
+  uint8_t clientCode() const { return clientCode_.load(); }
   bool hasHistory() const { return historyBuffer.get() != nullptr; }
   bool weakRow() const { return weakRow_; }
 
@@ -192,8 +207,14 @@ class GrayRunner {
 
  private:
   static void sweepEntry(void* param);
+  // endLocked's body, on the runner `owned` holds.
+  void endLockedOrDetach(std::unique_ptr<GrayRunner>& owned);
+  // The current client (an inert one once detached).
+  Client& client() { return *client_.load(); }
+  // The task published its end (and was not detached).
+  bool taskEnded() const { return taskState.load(std::memory_order_acquire) == TASK_DONE; }
   // The task's run: serves the requests at each slot boundary and runs the slots until a stop, a cover, a failed scan
-  // or the client's end; then logs the stack's high-water mark and publishes sweepDone.
+  // or the client's end; then logs the stack's high-water mark (sweepEntry publishes the end).
   void sweepRun();
   // Serves one take()'s requests: a pause, a replay or a clean, a resume. False when a clean was refused or the paint
   // failed (sweepEnd says why). The screens send Replay to start a run (and the viewer for its next picture) and Clean
@@ -221,7 +242,8 @@ class GrayRunner {
 
   GfxRenderer& renderer;
   DisplayLabActivity& lab;
-  Client& client;
+  // The screen, or, once detached, an inert client the task can ask anything.
+  std::atomic<Client*> client_;
   const char* who;
   uint32_t stackBytes_;
 
@@ -233,16 +255,22 @@ class GrayRunner {
   // The weak row is in use: weak mode on and the backend has one (and its bitmap fitted).
   bool weakRow_ = false;
 
-  // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: sweepDone (release), after which
-  // the loop task may read the task's fields below; the loop task alone creates and deletes the task.
+  // Loop task to sweep task: the requests and the heartbeat. Sweep task to loop task: taskState Done (release), after
+  // which the loop task may read the task's fields below; the loop task alone creates and deletes the task, except a
+  // detached one, which deletes itself (sweepEntry). Running becomes Done (the task's end) or Detached (endLocked's
+  // give-up) in one exchange, so the two can never both happen.
+  static constexpr uint8_t TASK_RUNNING = 0;
+  static constexpr uint8_t TASK_DONE = 1;
+  static constexpr uint8_t TASK_DETACHED = 2;
   GameDisplayLab::SweepControl control;
   TaskHandle_t sweepTask = nullptr;
-  std::atomic<bool> sweepDone{false};
+  std::atomic<uint8_t> taskState{TASK_RUNNING};
+  std::atomic<uint8_t> clientCode_{0};
   // The millis() the run's hold for a photo began at (the hold itself is the request word's Held), written by the
   // sweep task before it holds; read by preventAutoSleep.
   std::atomic<uint32_t> heldSinceMs{0};
 
-  // ---- the sweep task's own, while it is up (read by the loop task only after sweepDone or once it is deleted) -----
+  // ---- the sweep task's own, while it is up (read by the loop task only once it has ended or been deleted) ---------
   GameDisplayLab::GrayModel model_;
   GameDisplayLab::MaskPlanes follow;
   GameDisplayLab::SlotScheduler scheduler;

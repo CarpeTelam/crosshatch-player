@@ -1,6 +1,7 @@
 // The gray viewer's decode arithmetic (lib/GameDisplayLab/ImageRows, story dlab-g3): which files the Image row lists
 // and their order, the converters' size limits and PNG checks, a PNG row to 8-bit gray as the converter converts one
-// (alpha on white), JPEGDEC's coarse scale, and the fit to the logical screen (the fit and the I/O matrix's Fit row).
+// (alpha on white), JPEGDEC's coarse scale, the fit to the logical screen (the fit and the I/O matrix's Fit row), the
+// seams between decoder blocks, the PNG and JPEG layout walks, and the answers the reader gives a decoder's reads.
 
 #include <gtest/gtest.h>
 
@@ -9,9 +10,11 @@
 #include <climits>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ImageRows.h"
+#include "image_fixtures.h"
 
 namespace {
 
@@ -494,40 +497,43 @@ TEST(ImageRows, SampleBlockIsBilinearWhenEnlarging) {
   for (const uint8_t v : out) EXPECT_EQ(v, 255);
 }
 
-// A source image as decoded strips and blocks, sampled block by block with the row above and the column left kept as
-// the reader keeps them, against the same image sampled as one block: the seams leave no trace.
+// A source image as JPEGDEC hands it to the draw callback, sampled block by block through the readers' SeamKeeper,
+// against the same image sampled as one block: the seams leave no trace. Strips of `blockH` rows, the last one trimmed
+// (jpeg.inl 5335: iHeight cut to the image); blocks `blockW` wide, rows `blockW` apart, the right-edge one with only
+// `iWidthUsed` valid columns (jpeg.inl 5329) and the rest of its pitch garbage. blockH 1 and blockW w are PNGdec's
+// rows.
 std::vector<uint8_t> sampledByBlocks(const std::vector<uint8_t>& image, const int w, const int h, const int dstW,
                                      const int dstH, const int blockW, const int blockH, const bool keepSeams = true) {
   const FitAxis ax{w, dstW};
   const FitAxis ay{h, dstH};
   std::vector<uint8_t> out(static_cast<size_t>(dstW * dstH), 0);
-  std::vector<uint8_t> above(static_cast<size_t>(w));
-  std::vector<uint8_t> left(static_cast<size_t>(blockH));
+  std::vector<uint8_t> rowA(static_cast<size_t>(w));
+  std::vector<uint8_t> rowB(static_cast<size_t>(w));
   std::vector<uint8_t> row(static_cast<size_t>(dstW));
+  SeamKeeper seams;
+  // As the readers: strip rows only when a blend reaches the row above, a left column only when one reaches left.
+  const bool rows = keepSeams && ay.enlarges();
+  seams.reset(w, rows ? rowA.data() : nullptr, rows ? rowB.data() : nullptr, keepSeams && ax.enlarges());
   for (int by = 0; by < h; by += blockH) {
     const int bh = by + blockH < h ? blockH : h - by;
     for (int bx = 0; bx < w; bx += blockW) {
-      const int bw = bx + blockW < w ? blockW : w - bx;
-      // The block's own pixels, as JPEGDEC hands them (rows `bw` apart here).
-      std::vector<uint8_t> pixels(static_cast<size_t>(bw * bh));
+      const int used = bx + blockW < w ? blockW : w - bx;
+      // The block's pixels, `blockW` apart; the columns past `used` are garbage, as past JPEGDEC's iWidthUsed.
+      std::vector<uint8_t> pixels(static_cast<size_t>(blockW * bh), 0xA5);
       for (int y = 0; y < bh; ++y) {
-        for (int x = 0; x < bw; ++x)
-          pixels[static_cast<size_t>(y * bw + x)] = image[static_cast<size_t>((by + y) * w + bx + x)];
+        for (int x = 0; x < used; ++x)
+          pixels[static_cast<size_t>(y * blockW + x)] = image[static_cast<size_t>((by + y) * w + bx + x)];
       }
-      SourceBlock block{pixels.data(), bw, bx, bx + bw, by, by + bh};
-      if (keepSeams && by > 0) block.above = above.data();
-      if (keepSeams && bx > 0) block.left = left.data();
-      const Span cols = outputsEndingIn(ax, bx, bx + bw);
-      const Span rows = outputsEndingIn(ay, by, by + bh);
-      for (int dy = rows.first; dy < rows.end && !cols.empty(); ++dy) {
+      const SourceBlock block = seams.begin(pixels.data(), bx, by, used, bh, blockW);
+      const Span cols = outputsEndingIn(ax, block.x0, block.x1);
+      const Span outRows = outputsEndingIn(ay, block.y0, block.y1);
+      for (int dy = outRows.first; dy < outRows.end && !cols.empty(); ++dy) {
         sampleBlock(block, ax, ay.tap(dy), cols.first, cols.end, row.data());
         for (int dx = cols.first; dx < cols.end; ++dx)
           out[static_cast<size_t>(dy * dstW + dx)] = row[static_cast<size_t>(dx - cols.first)];
       }
-      for (int y = 0; y < bh; ++y) left[static_cast<size_t>(y)] = pixels[static_cast<size_t>(y * bw + bw - 1)];
+      seams.end(block);
     }
-    // The strip is done: its last row is the row above the next one.
-    for (int x = 0; x < w; ++x) above[static_cast<size_t>(x)] = image[static_cast<size_t>((by + bh - 1) * w + x)];
   }
   return out;
 }
@@ -557,7 +563,57 @@ TEST(ImageRows, BlendsCrossStripAndBlockSeams) {
   EXPECT_EQ(sampledByBlocks(big, 40, 24, 15, 9, 16, 8), sampledByBlocks(big, 40, 24, 15, 9, 40, 24));
 }
 
-// ---- the PNG chunk walk -----------------------------------------------------------------------------------------
+TEST(ImageRows, SeamsHoldForJpegdecShapedBlocks) {
+  // 7 x 5 in strips of 2 (the last trimmed to 1) and blocks pitched 4 (the right-edge one 3 used of 4), enlarged on
+  // both axes, on one, and shrunk: the same as the whole.
+  std::vector<uint8_t> image(7 * 5);
+  for (size_t i = 0; i < image.size(); ++i) image[i] = static_cast<uint8_t>((i * 53 + 17) % 256);
+  for (const auto& [dstW, dstH] : {std::pair{50, 37}, std::pair{50, 4}, std::pair{5, 37}, std::pair{4, 3}}) {
+    EXPECT_EQ(sampledByBlocks(image, 7, 5, dstW, dstH, 4, 2), sampledByBlocks(image, 7, 5, dstW, dstH, 7, 5))
+        << dstW << "x" << dstH;
+  }
+  // PNGdec's shape: one-row strips of one block.
+  EXPECT_EQ(sampledByBlocks(image, 7, 5, 50, 37, 7, 1), sampledByBlocks(image, 7, 5, 50, 37, 7, 5));
+}
+
+TEST(ImageRows, SeamKeeperHandsOutTheRowAboveAndTheColumnLeft) {
+  std::array<uint8_t, 4> rowA{};
+  std::array<uint8_t, 4> rowB{};
+  SeamKeeper seams;
+  seams.reset(4, rowA.data(), rowB.data(), true);
+  // Strip 0: blocks [0, 2) and [2, 4), pitch 2, two rows each.
+  const uint8_t a[] = {1, 2, 5, 6};
+  const uint8_t b[] = {3, 4, 7, 8};
+  SourceBlock first = seams.begin(a, 0, 0, 2, 2, 2);
+  EXPECT_EQ(first.above, nullptr);
+  EXPECT_EQ(first.left, nullptr);
+  seams.end(first);
+  SourceBlock second = seams.begin(b, 2, 0, 2, 2, 2);
+  EXPECT_EQ(second.above, nullptr);
+  ASSERT_NE(second.left, nullptr);
+  EXPECT_EQ(second.left[0], 2);
+  EXPECT_EQ(second.left[1], 6);
+  EXPECT_EQ(second.at(1, 1), 6);  // the column left, through at()
+  seams.end(second);
+  // Strip 1: the row above is strip 0's last row, whole; a new strip has no column left yet.
+  const uint8_t c[] = {9, 9};
+  SourceBlock third = seams.begin(c, 0, 2, 2, 1, 2);
+  ASSERT_NE(third.above, nullptr);
+  EXPECT_EQ(third.left, nullptr);
+  for (int x = 0; x < 4; ++x) EXPECT_EQ(third.above[x], (std::array<uint8_t, 4>{5, 6, 7, 8})[static_cast<size_t>(x)]);
+  seams.end(third);
+  // A block that does not start where the last one ended gets no column left.
+  SourceBlock gap = seams.begin(c, 3, 2, 1, 1, 2);
+  EXPECT_EQ(gap.left, nullptr);
+  // Without strip rows (no vertical blend) there is never a row above.
+  seams.reset(4, nullptr, nullptr, false);
+  seams.end(seams.begin(a, 0, 0, 2, 2, 2));
+  const SourceBlock below = seams.begin(c, 0, 2, 2, 1, 2);
+  EXPECT_EQ(below.above, nullptr);
+  EXPECT_EQ(below.left, nullptr);
+}
+
+// ---- the layout walks ---------------------------------------------------------------------------------------------
 
 std::vector<uint8_t> pngChunk(const char* type, const uint32_t length) {
   std::vector<uint8_t> c = {static_cast<uint8_t>(length >> 24), static_cast<uint8_t>(length >> 16),
@@ -573,48 +629,282 @@ std::vector<uint8_t> pngFile(const std::vector<std::vector<uint8_t>>& chunks) {
   return f;
 }
 
-PngLayout walk(const std::vector<uint8_t>& file, size_t size = SIZE_MAX) {
-  if (size == SIZE_MAX) size = file.size();
+// How a walk is fed: the first `size` bytes of the file (all by default), read `failOnRead` failing (1-based; 0
+// never), the stop asked after `stopAfter` questions (-1 never), and the walk's reads counted against `maxReads`.
+struct Feed {
+  size_t size = SIZE_MAX;
+  int failOnRead = 0;
+  int stopAfter = -1;
+  int maxReads = 64;
+};
+
+template <typename Walk>
+FileLayout walkWith(Walk&& walkFile, const std::vector<uint8_t>& file, Feed feed) {
+  if (feed.size == SIZE_MAX) feed.size = file.size();
   int reads = 0;
-  const PngLayout layout =
-      walkPngChunks(static_cast<uint32_t>(size), [&](const uint32_t offset, uint8_t* out, const size_t n) {
-        ++reads;
-        if (offset + n > size) return false;
-        std::copy(file.begin() + offset, file.begin() + offset + static_cast<long>(n), out);
-        return true;
-      });
-  EXPECT_LE(reads, 64);
+  int asked = 0;
+  const auto readAt = [&](const uint32_t offset, uint8_t* out, const size_t n) {
+    ++reads;
+    if (reads == feed.failOnRead) return false;
+    if (offset + n > feed.size) return false;
+    std::copy(file.begin() + offset, file.begin() + offset + static_cast<long>(n), out);
+    return true;
+  };
+  const auto stopped = [&] { return feed.stopAfter >= 0 && asked++ >= feed.stopAfter; };
+  const FileLayout layout = walkFile(static_cast<uint32_t>(feed.size), readAt, stopped);
+  EXPECT_LE(reads, feed.maxReads);
   return layout;
 }
 
-TEST(PngChunks, ACompleteFileWalksThroughIend) {
+FileLayout walkPng(const std::vector<uint8_t>& file, const Feed& feed = {}) {
+  return walkWith([](uint32_t size, auto& readAt, auto& stopped) { return walkPngChunks(size, readAt, stopped); }, file,
+                  feed);
+}
+
+FileLayout walkJpeg(const std::vector<uint8_t>& file, const Feed& feed = {}) {
+  return walkWith([](uint32_t size, auto& readAt, auto& stopped) { return walkJpegSegments(size, readAt, stopped); },
+                  file, feed);
+}
+
+template <size_t N>
+std::vector<uint8_t> bytes(const uint8_t (&a)[N]) {
+  return std::vector<uint8_t>(a, a + N);
+}
+
+TEST(PngChunks, ACompleteFileWalksThroughIendToTheEnd) {
   const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 5000), pngChunk("IDAT", 300), pngChunk("IEND", 0)});
-  EXPECT_EQ(walk(file), PngLayout::Complete);
-  // Bytes after IEND are ignored.
+  EXPECT_EQ(walkPng(file), FileLayout::Complete);
+  EXPECT_EQ(walkPng(bytes(PNG_GRAY)), FileLayout::Complete);
+  EXPECT_EQ(walkPng(bytes(PNG_PALETTE)), FileLayout::Complete);
+  // A zero-length IDAT is a whole chunk.
+  EXPECT_EQ(walkPng(pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 0), pngChunk("IEND", 0)})), FileLayout::Complete);
+  // Fewer than 8 bytes after IEND are tolerated.
   auto padded = file;
-  padded.resize(file.size() + 10, 0);
-  EXPECT_EQ(walk(padded), PngLayout::Complete);
+  padded.resize(file.size() + 7, 0);
+  EXPECT_EQ(walkPng(padded), FileLayout::Complete);
+  // Whole chunks after IEND are walked too, and pass.
+  auto after = file;
+  const auto extra = pngChunk("tEXt", 20);
+  after.insert(after.end(), extra.begin(), extra.end());
+  EXPECT_EQ(walkPng(after), FileLayout::Complete);
+  // An IDAT holding a short zlib stream with bytes after it is whole as a layout (what the bytes mean is PNGdec's).
+  auto shortStream = pngChunk("IDAT", 12);
+  const uint8_t stream[] = {0x78, 0xDA, 0x63, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xEE, 0xEE, 0xEE};
+  std::copy(std::begin(stream), std::end(stream), shortStream.begin() + 8);
+  EXPECT_EQ(walkPng(pngFile({pngChunk("IHDR", 13), shortStream, pngChunk("IEND", 0)})), FileLayout::Complete);
 }
 
 TEST(PngChunks, ATruncatedFileIsRefused) {
   const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 5000), pngChunk("IEND", 0)});
-  // Cut inside the IDAT data, inside its CRC, inside IEND, inside a chunk header, after the signature: all truncated.
-  for (const size_t cut : {size_t{8}, size_t{8 + 25 + 4}, size_t{8 + 25 + 100}, file.size() - 12, file.size() - 1}) {
-    EXPECT_EQ(walk(file, cut), PngLayout::Truncated) << cut;
+  // IHDR is bytes [8, 33), IDAT [33, 5045) (its CRC [5041, 5045)), IEND [5045, 5057). Cut inside IDAT's header, its
+  // data and its CRC, and inside IEND's header and its CRC: each leaves a chunk running past the end.
+  for (const size_t cut : {size_t{33 + 4}, size_t{33 + 100}, size_t{5041 + 2}, size_t{5045 + 4}, file.size() - 1}) {
+    EXPECT_EQ(walkPng(file, {.size = cut}), FileLayout::Truncated) << cut;
   }
-  // No IEND at all.
-  EXPECT_EQ(walk(pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 10)})), PngLayout::Truncated);
-  // Shorter than a signature.
-  EXPECT_EQ(walk(file, 4), PngLayout::Truncated);
+  // A partial chunk after IEND (8 bytes or more, not whole) is a cut too.
+  auto after = file;
+  const auto extra = pngChunk("tEXt", 20);
+  after.insert(after.end(), extra.begin(), extra.begin() + 10);
+  EXPECT_EQ(walkPng(after), FileLayout::Truncated);
+  auto zeros = file;
+  zeros.resize(file.size() + 10, 0);  // read as a zero-length chunk's header with no CRC
+  EXPECT_EQ(walkPng(zeros), FileLayout::Truncated);
+  // Every cut of the sample files is refused one way or another.
+  for (const auto& sample : {bytes(PNG_GRAY), bytes(PNG_PALETTE)}) {
+    for (size_t cut = 0; cut < sample.size(); ++cut) {
+      EXPECT_NE(walkPng(sample, {.size = cut}), FileLayout::Complete) << cut;
+    }
+  }
+}
+
+TEST(PngChunks, AShortFileOrNoIendIsSaidSo) {
+  const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
+  for (const size_t cut : {size_t{0}, size_t{4}, size_t{7}}) {
+    EXPECT_EQ(walkPng(file, {.size = cut}), FileLayout::TooShort) << cut;
+  }
+  // Whole chunks that end without IEND: the signature alone, or a cut between chunks.
+  EXPECT_EQ(walkPng(file, {.size = 8}), FileLayout::NoEnd);
+  EXPECT_EQ(walkPng(file, {.size = 33}), FileLayout::NoEnd);
+  EXPECT_EQ(walkPng(pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 10)})), FileLayout::NoEnd);
 }
 
 TEST(PngChunks, AMalformedFileIsRefused) {
   auto notPng = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
   notPng[1] = 'J';
-  EXPECT_EQ(walk(notPng), PngLayout::Malformed);
+  EXPECT_EQ(walkPng(notPng), FileLayout::Malformed);
   auto huge = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
   huge[8] = 0x80;  // IHDR's length over 2^31 - 1
-  EXPECT_EQ(walk(huge), PngLayout::Malformed);
+  EXPECT_EQ(walkPng(huge), FileLayout::Malformed);
+}
+
+TEST(PngChunks, PaletteAndTransparencyAreBounded) {
+  // PNGdec copies PLTE and tRNS into its palette without a bound (png.inl 850, 868): 768 and 256 bytes at most.
+  const auto with = [](const char* type, const uint32_t length) {
+    return walkPng(pngFile({pngChunk("IHDR", 13), pngChunk(type, length), pngChunk("IEND", 0)}));
+  };
+  EXPECT_EQ(with("PLTE", 768), FileLayout::Complete);
+  EXPECT_EQ(with("PLTE", 771), FileLayout::Malformed);
+  EXPECT_EQ(with("PLTE", 10), FileLayout::Malformed);  // not whole RGB triples
+  EXPECT_EQ(with("PLTE", 0), FileLayout::Complete);
+  EXPECT_EQ(with("tRNS", 256), FileLayout::Complete);
+  EXPECT_EQ(with("tRNS", 257), FileLayout::Malformed);
+  // After IEND too.
+  auto after = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
+  const auto big = pngChunk("tRNS", 300);
+  after.insert(after.end(), big.begin(), big.end());
+  EXPECT_EQ(walkPng(after), FileLayout::Malformed);
+}
+
+TEST(PngChunks, AFailedReadIsSaidSo) {
+  const auto file = bytes(PNG_GRAY);
+  EXPECT_EQ(walkPng(file, {.failOnRead = 1}), FileLayout::ReadFailed);  // the signature
+  EXPECT_EQ(walkPng(file, {.failOnRead = 2}), FileLayout::ReadFailed);  // the first chunk header
+}
+
+TEST(PngChunks, TheChunkCountIsCapped) {
+  // MAX_LAYOUT_CHUNKS chunks, IEND the last, pass; one more is refused.
+  std::vector<std::vector<uint8_t>> chunks(MAX_LAYOUT_CHUNKS - 1, pngChunk("tEXt", 0));
+  chunks.push_back(pngChunk("IEND", 0));
+  const auto atCap = pngFile(chunks);
+  const Feed many{.maxReads = static_cast<int>(MAX_LAYOUT_CHUNKS) + 2};
+  EXPECT_EQ(walkPng(atCap, many), FileLayout::Complete);
+  chunks.insert(chunks.begin(), pngChunk("tEXt", 0));
+  EXPECT_EQ(walkPng(pngFile(chunks), many), FileLayout::Malformed);
+}
+
+TEST(PngChunks, TheWalkStopsWhenAsked) {
+  const auto file = bytes(PNG_PALETTE);
+  EXPECT_EQ(walkPng(file, {.stopAfter = 0}), FileLayout::Stopped);
+  EXPECT_EQ(walkPng(file, {.stopAfter = 2}), FileLayout::Stopped);
+  EXPECT_EQ(walkPng(file, {.stopAfter = 100}), FileLayout::Complete);
+}
+
+TEST(JpegSegments, ACompleteHeaderWalksToSos) {
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE)), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE)), FileLayout::Complete);
+  // The scan data after SOS is the decoder's: cut inside it, the header is still whole (JPEGDEC's decode is bounded).
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.size = 400}), FileLayout::Complete);
+}
+
+TEST(JpegSegments, FillBytesAndStandaloneMarkersAreWalkedAsJpegdecWalksThem) {
+  // JPEGParseInfo steps over a fill byte (0xFFFF) or anything under 0xFFC0 three bytes at a time (jpeg.inl 1642), so
+  // the walk does: a fill byte and the byte after it, then APP0, then SOS.
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xFF, 0x00, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xDA, 0x00, 0x02}),
+            FileLayout::Complete);
+  // TEM (0xFF01) is under 0xFFC0: three bytes.
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0x01, 0x00, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Complete);
+  // A fill byte straight before a marker takes the marker's first byte with it, as JPEGDEC's parse does: the walk
+  // lands inside APP0's length and goes on from there.
+  EXPECT_NE(walkJpeg({0xFF, 0xD8, 0xFF, 0xFF, 0xFF, 0xE0, 0x00, 0x30, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Truncated);
+  // RSTn and a second SOI are read with a length, as JPEGDEC reads one (its default case, jpeg.inl 1762).
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xD0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xD8, 0x00, 0x40, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Truncated);
+}
+
+TEST(JpegSegments, TheTablesJpegdecCopiesAreBounded) {
+  const auto withSegment = [](const std::vector<uint8_t>& segment) {
+    std::vector<uint8_t> file = {0xFF, 0xD8};
+    file.insert(file.end(), segment.begin(), segment.end());
+    file.insert(file.end(), {0xFF, 0xDA, 0x00, 0x02});
+    return walkJpeg(file);
+  };
+  // SOF0 / SOF2: 1 to 4 components, length 8 + 3 each.
+  const auto sof = [](const uint8_t type, const uint8_t count, const uint16_t length) {
+    std::vector<uint8_t> seg = {0xFF, type, static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length), 8, 0, 8, 0,
+                                8,    count};
+    seg.resize(2 + static_cast<size_t>(length < 8 ? 8 : length), 0x11);
+    return seg;
+  };
+  EXPECT_EQ(withSegment(sof(0xC0, 1, 11)), FileLayout::Complete);
+  EXPECT_EQ(withSegment(sof(0xC2, 3, 17)), FileLayout::Complete);
+  EXPECT_EQ(withSegment(sof(0xC0, 5, 23)), FileLayout::Malformed);  // past JPEGDEC's 4-entry table
+  EXPECT_EQ(withSegment(sof(0xC0, 0, 8)), FileLayout::Malformed);
+  EXPECT_EQ(withSegment(sof(0xC0, 3, 11)), FileLayout::Malformed);  // shorter than its components
+  EXPECT_EQ(withSegment(sof(0xC2, 1, 14)), FileLayout::Malformed);  // longer than them
+  // DQT: whole tables of 1 + 64 (8-bit) or 1 + 128 (16-bit) bytes.
+  const auto dqt = [](const std::vector<uint8_t>& precisions, const int extra) {
+    std::vector<uint8_t> body;
+    for (const uint8_t p : precisions) {
+      body.push_back(p);
+      body.resize(body.size() + (p != 0 ? 128 : 64), 1);
+    }
+    body.resize(static_cast<size_t>(static_cast<int>(body.size()) + extra), 1);
+    const size_t length = body.size() + 2;
+    std::vector<uint8_t> seg = {0xFF, 0xDB, static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length)};
+    seg.insert(seg.end(), body.begin(), body.end());
+    return seg;
+  };
+  EXPECT_EQ(withSegment(dqt({0x00}, 0)), FileLayout::Complete);
+  EXPECT_EQ(withSegment(dqt({0x00, 0x11}, 0)), FileLayout::Complete);
+  EXPECT_EQ(withSegment(dqt({0x00}, 1)), FileLayout::Malformed);
+  EXPECT_EQ(withSegment(dqt({0x00}, -1)), FileLayout::Malformed);
+  EXPECT_EQ(withSegment(dqt({}, 0)), FileLayout::Complete);  // an empty DQT copies nothing
+}
+
+TEST(JpegSegments, ACutHeaderIsRefused) {
+  const auto file = bytes(JPEG_BASELINE);
+  // APP0 is bytes [2, 20), SOF0 [89, 102), SOS's length at [320, 322).
+  for (const size_t cut : {size_t{3}, size_t{5}, size_t{12}, size_t{19}}) {
+    EXPECT_EQ(walkJpeg(file, {.size = cut}), cut < 4 ? FileLayout::TooShort : FileLayout::Truncated) << cut;
+  }
+  for (const size_t cut : {size_t{90}, size_t{92}, size_t{95}, size_t{101}, size_t{321}}) {
+    EXPECT_EQ(walkJpeg(file, {.size = cut}), FileLayout::Truncated) << cut;
+  }
+  // Every cut before the SOS segment's end is refused.
+  for (const auto& sample : {bytes(JPEG_BASELINE), bytes(JPEG_PROGRESSIVE)}) {
+    for (size_t cut = 0; cut < 100; ++cut) EXPECT_NE(walkJpeg(sample, {.size = cut}), FileLayout::Complete) << cut;
+  }
+}
+
+TEST(JpegSegments, NoSosIsSaidSo) {
+  // A cut between segments, or an EOI, before any SOS.
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.size = 89}), FileLayout::NoEnd);
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9}), FileLayout::NoEnd);
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF}), FileLayout::TooShort);
+}
+
+TEST(JpegSegments, AMalformedHeaderIsRefused) {
+  EXPECT_EQ(walkJpeg({0xFF, 0xD9, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Malformed);              // not SOI
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01, 0xFF, 0xDA}), FileLayout::Malformed);  // length under 2
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.failOnRead = 1}), FileLayout::ReadFailed);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.failOnRead = 3}), FileLayout::ReadFailed);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.stopAfter = 1}), FileLayout::Stopped);
+  // The segment count is capped as the chunk count is.
+  std::vector<uint8_t> many = {0xFF, 0xD8};
+  for (uint32_t i = 0; i < MAX_LAYOUT_CHUNKS; ++i) many.insert(many.end(), {0xFF, 0xE1, 0x00, 0x02});
+  many.insert(many.end(), {0xFF, 0xDA, 0x00, 0x02});
+  EXPECT_EQ(walkJpeg(many, {.maxReads = 3 * static_cast<int>(MAX_LAYOUT_CHUNKS)}), FileLayout::Malformed);
+}
+
+// ---- the reads' answers -------------------------------------------------------------------------------------------
+
+TEST(DecoderReads, TheFileGivesNothingPastTheWalkedSizeOrOnceStopped) {
+  EXPECT_EQ(readAllowance(0, 100, 1000, false), 100);
+  EXPECT_EQ(readAllowance(950, 100, 1000, false), 50);
+  EXPECT_EQ(readAllowance(1000, 100, 1000, false), 0);
+  EXPECT_EQ(readAllowance(5000, 100, 1000, false), 0);
+  EXPECT_EQ(readAllowance(0, 100, 1000, true), 0);
+  EXPECT_EQ(readAllowance(0, 0, 1000, false), 0);
+  EXPECT_EQ(readAllowance(0, -5, 1000, false), 0);
+}
+
+TEST(DecoderReads, PngdecAlwaysGetsWhatItAskedFor) {
+  std::array<uint8_t, 8> buf{1, 2, 3, 4, 5, 6, 7, 8};
+  EXPECT_EQ(fillPngRead(buf.data(), 8, 3), 8);
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{1, 2, 3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+  buf.fill(7);
+  EXPECT_EQ(fillPngRead(buf.data(), 8, -1), 8);  // a read error: all filler
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+  buf.fill(7);
+  EXPECT_EQ(fillPngRead(buf.data(), 8, 8), 8);
+  EXPECT_EQ(buf[7], 7);
+  EXPECT_EQ(fillPngRead(buf.data(), 0, 0), 0);
+}
+
+TEST(DecoderReads, JpegdecGetsWhatTheFileGaveNeverLessThanNothing) {
+  EXPECT_EQ(clampJpegRead(-1), 0);
+  EXPECT_EQ(clampJpegRead(0), 0);
+  EXPECT_EQ(clampJpegRead(37), 37);
 }
 
 TEST(ImageRows, PngColourTypesThatDoNotExistAreRefused) {

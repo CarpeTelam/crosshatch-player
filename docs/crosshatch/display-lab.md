@@ -504,14 +504,27 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
      - The picture is scaled to fit the screen, up or down, with its aspect kept, centred on a white letterbox:
        bilinear along an axis it enlarges (centre-aligned taps per axis; only the 16.16 blend arithmetic is the JPEG
        converter's), with the previous PNG row, the previous JPEG strip's last row and the previous block's last
-       column kept so a blend crosses those seams (a 1/8-scale progressive JPEG enlarges smoothly, not in 8 px
+       column kept (`SeamKeeper`, the same for both decoders) so a blend crosses those seams (a 1/8-scale progressive JPEG enlarges smoothly, not in 8 px
        bands), nearest at pixel centres along one it shrinks.
      - The converters' limits apply: each side up to 32,767 px, 8 MP, and a PNG row within the firmware's PNG buffer
        (about 2,000 px of colour with alpha; the expanded gray row is capped at 8,208 px).
      - Not decoded ("format or size not supported"): interlaced or 16-bit PNGs, a PNG colour type that does not
-       exist, a PNG whose chunks run past the end of the file or whose header is not a PNG's (checked before PNGdec
-       reads it: PNGdec 1.1.6 spins without end on a truncated file), extended or lossless JPEGs. A truncated JPEG
-       needs no check: JPEGDEC's decode is bounded and decodes it to garbage or a decode error.
+       exist, extended or lossless JPEGs, and a file whose layout is cut or malformed. Against a decoder that never
+       returns (PNGdec 1.1.6 spins without end on a truncated file) the reader has three layers:
+       - **The walk.** Before a decoder reads anything, the file's layout is walked against its size. A PNG's chunks
+         to the end of the file: every chunk inside the file, IEND among them, and any 8 bytes or more after IEND
+         whole chunks too; a PLTE of at most 768 bytes in whole triples, a tRNS of at most 256; at most 65,536 chunks.
+         A JPEG's header from SOI to SOS, at the offsets JPEGDEC's own header parse visits (it steps over a fill byte,
+         or anything under 0xFFC0, three bytes at a time, and reads a length after every other marker, SOI and RSTn
+         included): every marker and segment inside the file, a SOF0 or SOF2 of 1 to 4 components, a DQT of whole
+         tables (JPEGDEC copies both into fixed tables). The scan data after SOS is not walked: JPEGDEC's decode is
+         bounded whatever it holds. A file without IEND (a PNG) or SOS (a JPEG) is refused as "The picture file has
+         no end", one under a signature's worth of bytes as "too short", a read that fails as "could not open".
+       - **The reads.** The decoder is told the walked size, and no read gives it a byte of the file past that size
+         or once a stop is asked. PNGdec always gets the length it asked for, the rest 0xFF (its IDAT loop moves on
+         and the data ends in an error); JPEGDEC gets what the file gave, possibly nothing (0xFF filler would keep
+         its header parse reading; an empty read ends it).
+       - **The exit.** A stop waits for the task at most 20 s (below).
      - A JPEG's EXIF orientation is ignored, as the firmware's converters ignore it: a picture is shown as its pixels
        are stored, so a camera's portrait photo may appear on its side.
    - Each row is quantised with the Dither row, and each run of equal shades in a row is one retarget.
@@ -538,8 +551,9 @@ Controls while the view is up:
 - Another screen covering it, Home and sleep end it as they end the transition test.
 
 A file that cannot be read ends the run with the reason on the Status row: it could not be opened (a missing or
-unreadable file, or a header the library rejects as corrupt), its format or size is not supported (the limits above),
-there is not enough memory, or it did not decode. The log names the file. The Image row still steps
+unreadable file, a read that failed, or a header the library rejects as corrupt), its format or size is not supported
+(the limits above, a cut or malformed layout), it has no end (no IEND or SOS), it is too short to be a picture, there
+is not enough memory, or it did not decode. The log names the file. The Image row still steps
 and the chart still works. A stop during the read is no error (logged `gray viewer: <name>: read stopped`, the Status
 row says "Stopped"). The session cap's clean drops a hold in progress and paints the entry again (a file is decoded
 again), before the slot clock and the speed window restart, so a repaint's seconds are neither skipped periods nor
@@ -556,8 +570,10 @@ The log, besides the runner's lines (speed, pause and resume, the stack line, th
 - `gray hold: marker settled after N slots; holding, Next paints the next picture`;
 - `gray viewer: next, <name>`, and `gray viewer: still held; Next paints the next picture` (above);
 - `gray viewer: session-cap clean, the marker dropped; painting <name> again`;
-- `gray viewer: <name>: cannot open|unsupported format|out of memory|decode failed` (after the reader's own error
-  line, such as `PNG truncated (a chunk runs past the file's N bytes)`), or `gray viewer: <name>: read stopped`;
+- `gray viewer: <name>: cannot open|unsupported format|file too short|file has no end|out of memory|decode failed`
+  (after the reader's own error line, such as `PNG truncated (a chunk or segment runs past the file's N bytes)`, `JPEG
+  has no end (no SOS marker before the file's end)` or `PNG read failed during the layout walk`), or
+  `gray viewer: <name>: read stopped`;
 - `gray viewer: name of 64 bytes or more, skipped: <name>` when the screen opens;
 - `gray viewer stopped: <outcome>`.
 
@@ -565,15 +581,25 @@ Memory, beside the runner's working set (as the transition test's):
 
 - two logical rows of scratch and the file list (32 names of 64 B), both in internal RAM;
 - while a file decodes, the decoder (PNGdec about 59 KB with the firmware's 16 KB row buffer, JPEGDEC about 20 KB,
-  heap) and its row buffers (two source rows for a PNG, one output row). The free-heap floor before each is the
+  heap) and its row buffers: one output row; for a PNG one gray source row, and two more when the fit enlarges it
+  vertically (the row above for the blend); for a JPEG two strip rows of the scaled width when the fit enlarges it
+  vertically (the previous strip's last row and the one being built), and a 16-byte column. The free-heap floor before each is the
   decoder's own size plus 16 KB, as the converters' rule, but with the real size (the PNG converter's 44 KiB figure
   predates the firmware's larger PNG buffer);
 - a stop (Back, Home, sleep) during a decode normally waits for one output row's decode and SD read (the reader
-  checks it before every row). The runner's unlocked stop waits at most 20 s for any task: past that it logs
-  `<screen>: the sweep task did not end within 20000 ms of the stop; left running, not deleted` (deleting it could
-  leave the SD card's mutex held), keeps the task, which can scan nothing more, and joins it once it ends; no new
-  run starts meanwhile. The locked stop (leaving the screen, sleep) cannot give up, since the task's buffers are freed
-  next: it logs `... has not ended 20000 ms after the stop; still waiting` once and waits;
+  checks it before every row, and every read gives nothing once it is asked). Either stop waits at most 20 s for
+  the task, so no exit hangs (the SDK's own BUSY wait can run to 30 s, so a scan stuck there outlasts it too):
+  - Back (the rows view's stop) then logs `<screen>: the sweep task did not end within 20000 ms of the stop; left
+    running, not deleted` (deleting it could leave the SD card's mutex held) and keeps the task, which can scan
+    nothing more; the Status row (the transition test's Run row) says "Still stopping: the last run has not ended
+    yet" and Run shows the same instead of starting, until the screen joins the task once it ends, then shows the
+    run's end as usual. Auto-sleep is not held off by a stopped run.
+  - Leaving the screen and sleep, which free the screen next, detach the task instead: `<screen>: the sweep task did
+    not end within 20000 ms of the stop; detached, its buffers kept until it ends`. The runner (the model, the
+    follow-up masks, every buffer the task can touch) is handed to the task, which answers to an inert client from
+    then on, touches neither the lab's masks nor the screen (the stop is sticky and checked first), frees the runner
+    when it returns (`<screen>: the detached sweep task ended; its buffers freed`) and deletes itself. Both screens
+    show "Still stopping" on Run while a detached task has not ended;
 - the sweep task's stack, 12 KiB, provisional: the decode chain and the scan chain (the transition test's 8 KiB
   provision) never nest, so the need is the larger of the two; the run's `gray sweep task ended` line measures it,
   and the story's Verification asks for the marks of a PNG, a baseline and a progressive JPEG.
@@ -708,9 +734,12 @@ memory" and nothing is sent to the panel.
 - `lib/GameDisplayLab/ImageRows.{h,cpp}`: the gray viewer's decode arithmetic: the files it lists (`imageKindOf`,
   `nameLess`, `ImageList`: the first 32 by name), the converters' size limits and PNG checks, a PNG row to gray as the
   converter converts it (`pngRowToGray`), JPEGDEC's coarse scale and option (`jpegScaleFor`), the fit (`fitToScreen`,
-  `FitAxis` and its taps), a PNG's chunk walk against its size (`walkPngChunks`), the output pixels a decoded row or
-  block makes (`rowsReadyAt`, `outputsEndingIn`) and their sampling across seams (`SourceBlock`, `sampleBlock`:
-  bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`.
+  `FitAxis` and its taps), the layout walks against a file's size (`walkPngChunks`, `walkJpegSegments`, `FileLayout`),
+  the answers to a decoder's reads (`readAllowance`, `fillPngRead`, `clampJpegRead`), the output pixels a decoded
+  row or block makes (`rowsReadyAt`, `outputsEndingIn`), the seams between blocks (`SeamKeeper`) and the sampling
+  across them (`SourceBlock`, `sampleBlock`: bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`,
+  and the reads against the real PNGdec and JPEGDEC (every cut and a few appends of small sample pictures, each
+  decode bounded) by `test_image_decoders.cpp`, built only where PlatformIO's library folder has their sources.
 - `src/activities/games/display_lab/GrayImageReader.{h,cpp}`: the gray viewer's reader, PNGdec and JPEGDEC driven
   directly into 8-bit gray rows (the one file the layer check lets include them); and `GrayViewerActivity.{h,cpp}`,
   the screen.
