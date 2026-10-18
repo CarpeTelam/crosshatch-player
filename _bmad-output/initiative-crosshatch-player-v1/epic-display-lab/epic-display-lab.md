@@ -200,6 +200,13 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   black to dark gray, so that direction needs a smaller unit: shorter frames (a ladder at rate index 2 decides) or
   two pulses per slot for the toward-white transitions only (the hold bit, 12 for the full swing in the Static
   calibration).
+  Measured off a front-lit photo (2026-10-18, rate index 0, held pulses; tones against the white columns and the
+  deep-black plateau, 1 white, 0 black): from white 1.05, 0.86, 0.68, 0.52, 0.40, 0.31, 0.24, 0.15, 0.11, 0.07,
+  0.05, 0.02 for 1..12 pulses; from black 0.44, 0.72, 0.85, 0.92, 0.95, 0.98, 0.98, 1.00 for 1..8. Toward black the
+  five grays sit at about 2, 3, 4, 6 and 8 pulses from white (level 5 to 1), black at 12. Toward white one pulse
+  already passes level 2 (levels 1 and 2 would need about 0.4 and 0.75 of a pulse), so that direction needs the
+  sub-pulse unit the rate-2 ladder tests. The base black painted with the preset's 6>0 dose (12 at two per slot)
+  measured about tone 0.14, lighter than nine single pulses: the full swings should be one pulse per slot.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
