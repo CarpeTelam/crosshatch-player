@@ -12,8 +12,8 @@ For the same reason the flash-budget gate (`scripts/check_flash_budget.py`) buil
 counts against the games budget, and the gate refuses a build whose metadata still defines the lab. Its
 static-object scan (`objects`) therefore no longer reads the lab's screen code, which compiles empty without the flag;
 it still reads `lib/GameDisplayLab`.
-The scan menu has six rows: Frame period, Polarity, Transition test, Tuning, Save preset, Exit; the stock bench's has
-three: Transition timing, Gray ramp, Exit.
+The scan menu has seven rows: Frame period, Polarity, Transition test, Gray viewer, Tuning, Save preset, Exit; the
+stock bench's has three: Transition timing, Gray ramp, Exit.
 Part A answers the two numbers only a panel can give before the per-pixel grayscale engine (Part B, the transition
 test and tuning below) can be tuned:
 
@@ -466,6 +466,100 @@ Before reading either photo, check its line:
 - **Rest**: end alignment gives every column the same rest after its last pulse, but not before its first: column 1
   rests longer than column 24 between the base (the top half: the clean) and its first pulse.
 
+### Gray viewer
+
+Display lab → Gray viewer (story dlab-g3, the epic's D16) paints a picture through the gray engine, to see how its
+shades look on real artwork, line art first. Six rows:
+
+- **Image**: the entry the next run paints, as "name (n of N)". A tap or Confirm steps it: the test chart first, then
+  the PNG and JPEG files (`.png`, `.jpg`, `.jpeg`, any case) of `/.crosshatch/display-lab/images/` sorted by name
+  (case-insensitive), then the chart again.
+  - Hidden files (a leading dot, as macOS's `._` files), folders and other files are ignored.
+  - At most 32 files are listed: the first 32 by name, whatever order the card's directory holds them in (the rest
+    are logged as not listed). A name of 64 bytes or more is skipped (logged).
+  - Without the folder there is only the chart.
+  - The repo's `docs/crosshatch/display-lab-images/` holds four 480 x 800 test PNGs to copy there (its README says
+    what each shows).
+- **Dither**: Plain or Ordered; a tap or Confirm toggles it.
+  - Plain is the nearest level.
+  - Ordered is the 4x4 Bayer matrix scaled to the level count: line art and text keep their edges with Plain, and
+    gradients are Ordered's case.
+- **Run**: clean, paint, settle, hold.
+- **Levels**: the engine's level count and names ("4 levels: 0, 2, 4, 6"). They come from the engine, so dlab-g2's
+  seven levels appear here and in every picture with no change to the viewer.
+- **Controls**: help text.
+- **Status**: how the last run ended: "Not run", "Stopped", a scan's outcome, or why the picture could not be read.
+
+A run runs on the transition test's sweep runner: the same task, slots, stops, cover and session cap.
+
+1. It cleans the panel to white with a FULL refresh, then paints the entry into the model:
+   - The **test chart**, the same pixels on every device, top to bottom in fifths: the engine's levels as equal steps;
+     a continuous gradient; hatching at pitches 3, 6 and 12 px in thirds; then concentric 2 px rings every 16 px in
+     the left half and 45-degree strokes 1, 2, 4 and 8 px wide in the right.
+   - A **file**: read by the viewer's own reader (`GrayImageReader`). The firmware's image converters cut gray to two
+     bits before they write the 1 bpp framebuffer, so the reader drives PNGdec and JPEGDEC directly (D16's amendment).
+     - Rows are converted to 8-bit gray as the converters convert them (every PNG pixel type, indexed and 1/2/4-bit
+       gray included, alpha composited on white; a JPEG as 8-bit gray at JPEGDEC's 1/2, 1/4 or 1/8 scale when the
+       picture shrinks that much, and a progressive one at 1/8).
+     - The picture is scaled to fit the screen, up or down, with its aspect kept, centred on a white letterbox:
+       bilinear along an axis it enlarges (as the JPEG converter enlarges, a JPEG's blend clamped inside its decoded
+       block), nearest at pixel centres along one it shrinks.
+     - The converters' limits apply: each side up to 32,767 px, 8 MP, and a PNG row within the firmware's PNG buffer
+       (about 2,000 px of colour with alpha; the expanded gray row is capped at 8,208 px).
+     - Not decoded: interlaced or 16-bit PNGs, extended or lossless JPEGs ("format or size not supported").
+     - A JPEG's EXIF orientation is ignored, as the firmware's converters ignore it: a picture is shown as its pixels
+       are stored, so a camera's portrait photo may appear on its side.
+   - Each row is quantised with the Dither row, and each run of equal shades in a row is one retarget.
+2. The renderer's framebuffer is never drawn while the view is up (the clean's white fill is the lab's own clean).
+3. Slots run until one drives no pixel: the paint has settled.
+4. The hold marker (a pause symbol, 32 x 16 px at the bottom-right) is driven to 0 or 6, whichever is farther from the
+   picture under it. Once it has settled the run holds; the device stays awake for ten minutes of a hold, as the
+   transition test's.
+5. The marker is never driven back: the next picture cleans first.
+
+Controls while the view is up:
+
+- **Next** (side Down) or **Confirm**, or a tap where touch routes:
+  - while it paints (or drives the marker out), pause and resume, as in the transition test;
+  - while it holds, paint the next entry (clean first; after the last file, the chart). The Image row then shows it.
+    Further presses are ignored until that picture is painted, so a double press cannot skip one;
+  - a pause press that lands just as the hold begins finds nothing to resume: the run holds again (logged
+    `gray viewer: still held; Next paints the next picture`), with its ten-minute bound counted from the first hold.
+- **Previous** (side Up) or **Back**: stop; the rows come back with a FULL refresh.
+- Another screen covering it, Home and sleep end it as they end the transition test.
+
+A file that cannot be read ends the run with the reason on the Status row: it could not be opened (a missing or
+unreadable file, or a header the library rejects as corrupt), its format or size is not supported (the limits above),
+there is not enough memory, or it did not decode. The log names the file. The Image row still steps
+and the chart still works. The session cap's clean drops a hold in progress and paints the entry again (a file is
+decoded again).
+
+The log, besides the runner's lines (speed, pause and resume, the stack line, the cover):
+
+- `gray viewer: N pictures in /.crosshatch/display-lab/images` when the screen opens;
+- `gray viewer: run, <name>, dither plain|ordered`;
+- `gray viewer: <name>, dither ..., N pixels to drive` for the chart, or for a file `gray viewer: <name> WxH at X,Y
+  WxH (jpeg scale 1/N[, progressive]), decoded in N ms, dither ..., N pixels to drive`;
+- `gray viewer: <name> painted after N slots, pixels per level [0:N 2:N 4:N 6:N]; marker 0|6`;
+- `gray hold: marker settled after N slots; holding, Next paints the next picture`;
+- `gray viewer: next, <name>`, and `gray viewer: still held; Next paints the next picture` (above);
+- `gray viewer: session-cap clean, the marker dropped; painting <name> again`;
+- `gray viewer: <name>: cannot open|unsupported format|out of memory|decode failed` (after the reader's own error
+  line);
+- `gray viewer stopped: <outcome>`.
+
+Memory, beside the runner's working set (as the transition test's):
+
+- two logical rows of scratch and the file list (32 names of 64 B), both in internal RAM;
+- while a file decodes, the decoder (PNGdec about 59 KB with the firmware's 16 KB row buffer, JPEGDEC about 20 KB,
+  heap) and its row buffers (two source rows for a PNG, one output row). The free-heap floor before each is the
+  decoder's own size plus 16 KB, as the converters' rule, but with the real size (the PNG converter's 44 KiB figure
+  predates the firmware's larger PNG buffer);
+- a stop (Back, Home, sleep) during a decode waits for at most one output row's decode and SD read; the reader checks
+  it before every row;
+- the sweep task's stack, 12 KiB: the transition test's 8 KiB plus 4 KiB for the decode chain. This is an estimate;
+  the run's `gray sweep task ended` line measures it.
+
 ### Tuning
 
 Display lab → Tuning lists every value of the session's preset, one row each: Dose 0>2 through Dose 6>4 (1..24), Hold
@@ -520,8 +614,8 @@ the doses left, which need a byte since the cap rose to 24, and the target and s
 follow-up masks (2 x 48,000 B), plus the history (1,152,000 B) when `history` is on and the weak bitmap (48,000 B)
 when weak mode is on and the backend has a weak row; the lab's own masks and the backend's planes stay as in Part A.
 If any does not fit the screen shows "Not enough memory" and runs nothing. While a run is up the sweep task's stack
-(8 KiB) is in internal RAM; when it cannot be created the Run row says "Stopped: not enough memory" and nothing is
-sent to the panel.
+(8 KiB; the gray viewer's 12 KiB) is in internal RAM; when it cannot be created the Run row says "Stopped: not enough
+memory" and nothing is sent to the panel.
 
 ## Code map
 
@@ -562,11 +656,16 @@ sent to the panel.
   function; both pinned by `test_gray_model.cpp`.
 - `lib/GameDisplayLab/SlotScheduler.h`: the slot period (D5), skipped slots, and the speed window; pinned by
   `test_slot_scheduler.cpp`.
-- `lib/GameDisplayLab/SweepControl.h`: the transition test's request word between the screen's loop and its sweep
-  task (Stop, Run, Replay, Clean, InPanel) and the loop's heartbeat for the covered check; pinned by
-  `test_sweep_control.cpp`.
+- `lib/GameDisplayLab/SweepControl.h`: the sweep runner's request word between a screen's loop and its sweep task
+  (Stop, Run, Replay, Clean, InPanel, and since dlab-g3 Held and Replaying: the hold and its end, and the gray viewer's
+  next picture, each one step) and the loop's heartbeat for the covered check; pinned by `test_sweep_control.cpp`.
+- `lib/GameDisplayLab/PanelGeometry.{h,cpp}`: the logical screen over the panel model, shared by the transition test
+  and the gray viewer: the four orientations (`PanelTurn`), a logical rectangle mapped to the panel as
+  `GfxRenderer::rotateCoordinates` maps a pixel (`toPanel`) and retargeted (`retargetLogicalRect`), and the hold
+  marker's pause symbol (`pauseBars`) and its settle check (`barsSettled`); pinned by `test_transition_scene.cpp` and
+  `test_gray_picture.cpp`.
 - `lib/GameDisplayLab/TransitionScene.{h,cpp}`: the bands and rectangles over the logical screen, mapped to the panel
-  as `GfxRenderer::rotateCoordinates` maps a pixel, and the modes (`SweepMode`): Fast's and Slow's sweeps (both
+  through `PanelGeometry`, and the modes (`SweepMode`): Fast's and Slow's sweeps (both
   waiting for the bands' paint), Slow's crossing from the slot period and the preset's longest dose run
   (`slowSweepMs`), Static's still rectangles and its settle-and-flip sequence, and the Ladder (its column layout and
   rectangles, the base and the two stages driven through `GrayModel::driveRect`, `slotPreset`'s held rhythm for one
@@ -576,10 +675,25 @@ sent to the panel.
   drop); the shades' names (`shadeName`, D14's level numbers); pinned by `test_transition_scene.cpp`.
 - `src/activities/games/display_lab/GrayPresetFile.{h,cpp}`: the preset file's path, its load and save through
   `Storage`.
+- `src/activities/games/display_lab/GrayRunner.{h,cpp}`: the sweep runner the transition test and the gray viewer share
+  (extracted from the transition test by dlab-g3): the PSRAM working set, the sweep task (its creation, its joined stop
+  from the loop and its stop under the render lock), the request word, the cover check, the slot loop (the session
+  cap's clean, the scan with its refusal checks, `runGraySlot`, the scheduler), the stats, the hold for a photo; each
+  screen is its `Client` (what it paints and decides per slot). Device-only; the simulator compiles the lab out.
 - `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B
-  screens; `DisplayLabActivity` owns the session's preset and the Save preset row. The transition test's sweep task,
-  its creation, its joined stop from the loop and its stop under the render lock are device-only; the simulator
-  compiles the lab out.
+  screens; `DisplayLabActivity` owns the session's preset and the Save preset row.
+- `lib/GameDisplayLab/GrayPicture.{h,cpp}`: the gray viewer's picture: the quantiser (`quantise`, Plain and Ordered at
+  the engine's level count), the test chart (`testChartGray`), the run splitting (`forEachRun`), the painted rows
+  (`paintGrayRow`, `paintChart`), the per-level counts, and the hold (paint settled, marker out to the farther
+  extreme, held); pinned by `test_gray_picture.cpp`.
+- `lib/GameDisplayLab/ImageRows.{h,cpp}`: the gray viewer's decode arithmetic: the files it lists (`imageKindOf`,
+  `nameLess`, `ImageList`: the first 32 by name), the converters' size limits and PNG checks, a PNG row to gray as the
+  converter converts it (`pngRowToGray`), JPEGDEC's coarse scale and option (`jpegScaleFor`), the fit (`fitToScreen`,
+  `FitAxis` and its taps), the output pixels a decoded row or block makes (`rowsReadyAt`, `outputSpan`) and their
+  sampling (`sampleRow`: bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`.
+- `src/activities/games/display_lab/GrayImageReader.{h,cpp}`: the gray viewer's reader, PNGdec and JPEGDEC driven
+  directly into 8-bit gray rows (the one file the layer check lets include them); and `GrayViewerActivity.{h,cpp}`,
+  the screen.
 - `lib/GameDisplayLab/StockBench.{h,cpp}`: the stock-path bench's pure parts: the checker frame (`fillChecker`), the
   gray ramp in the overlay encoding (`rampShadeAt`, `fillGrayRamp`), the timing summary (`summarizeTimings`) and the
   fell-back heuristic (`transitionFellBack`); pinned by `test/game_display_lab/test_stock_bench.cpp`.

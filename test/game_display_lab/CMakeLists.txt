@@ -1,6 +1,7 @@
 # The display lab's pure parts (lib/GameDisplayLab): the SSD1677 scan LUT builder and encoding, the drive masks, the
 # experiments' request layout, the scan budget, the gray engine (model, slot, preset and its codec, slot scheduler,
-# transition scene, the sweep task's request word), and the UltraChip stock-path bench; pure C++ with no Arduino
+# transition scene, the sweep task's request word, the panel geometry), the gray viewer's picture and decode
+# arithmetic, and the UltraChip stock-path bench; pure C++ with no Arduino
 # include. Added from test/game_core/CMakeLists.txt: the upstream touch ledger (row 3) lets test/CMakeLists.txt hold
 # only the two game add_subdirectory lines.
 add_executable(test_scan_lut
@@ -14,9 +15,14 @@ add_executable(test_scan_lut
   test_stock_bench.cpp
   test_sweep_control.cpp
   test_transition_scene.cpp
+  test_gray_picture.cpp
+  test_image_rows.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/GrayModel.cpp
+  ${REPO_ROOT}/lib/GameDisplayLab/GrayPicture.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/GrayPreset.cpp
+  ${REPO_ROOT}/lib/GameDisplayLab/ImageRows.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/MaskPlanes.cpp
+  ${REPO_ROOT}/lib/GameDisplayLab/PanelGeometry.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/Ssd1677Encoding.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/Ssd1677ScanLut.cpp
   ${REPO_ROOT}/lib/GameDisplayLab/StockBench.cpp

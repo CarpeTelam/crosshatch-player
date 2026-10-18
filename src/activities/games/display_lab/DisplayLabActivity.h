@@ -18,24 +18,25 @@
 // The display lab (Games → Display lab; the spike plan `plan-spike-ssd1677-grayscale-calibration.md`, Part A, and the
 // display-lab epic's backend seam and its gray engine, dlab-c1): a bench for the X4 Pro's panel that answers the
 // numbers only the panel can give: the frame period, the drive polarity of the two drive rows, and the gray engine's
-// dose table. Headed "Display lab", six rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity),
-// Transition test (TransitionTestActivity), Tuning (TuningActivity), Save preset (writes the session's gray preset to
-// GrayPresetFile::PATH; its line then says whether that worked), Exit. The launcher shows its row only on an X4 Pro
-// whose controller has a scan backend (available(); SSD1677 only so far), and pushes this screen only after the entry
-// warning was confirmed, so Back on the warning sends nothing to the panel.
+// dose table. Headed "Display lab", seven rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity),
+// Transition test (TransitionTestActivity), Gray viewer (GrayViewerActivity, story dlab-g3), Tuning (TuningActivity),
+// Save preset (writes the session's gray preset to GrayPresetFile::PATH; its line then says whether that worked), Exit.
+// The launcher shows its row only on an X4 Pro whose controller has a scan backend (available(); SSD1677 only so far),
+// and pushes this screen only after the entry warning was confirmed, so Back on the warning sends nothing to the
+// panel.
 //
 // It owns the session the experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
 // masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
 // created in onEnter and freed in onExit (the lab shows one notice row and runs nothing when any of them has no room),
 // the gray preset (preset(), read from GrayPresetFile::PATH in onEnter over the controller's defaults: the UltraChip
-// preset on a UC8179 or UC8279, InkBoy's otherwise; the tuning screen edits it and the transition test reads it), and
-// scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the stock voltages and
-// never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP scans
-// the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a scan
-// reached the panel since the last clean, and logs the count. An inverted display is refused with a notice, and again
-// at every scan (the control-center panel can invert it after onEnter): the facade drops grayscale calls while
-// inverted, so a scan would measure nothing. A call the facade dropped for another reason returns in well under
-// DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
+// preset on a UC8179 or UC8279, InkBoy's otherwise; the tuning screen edits it, the transition test and the gray
+// viewer read it), and scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the
+// stock voltages and never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every
+// SESSION_CAP scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one
+// FULL_REFRESH when a scan reached the panel since the last clean, and logs the count. An inverted display is refused
+// with a notice, and again at every scan (the control-center panel can invert it after onEnter): the facade drops
+// grayscale calls while inverted, so a scan would measure nothing. A call the facade dropped for another reason returns
+// in well under DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
 class DisplayLabActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DisplayLab";
@@ -85,8 +86,8 @@ class DisplayLabActivity final : public UiListActivity {
   static const char* outcomeText(Scan result);
 
  private:
-  enum class Row : uint8_t { FramePeriod, Polarity, TransitionTest, Tuning, SavePreset, Exit };
-  static constexpr size_t ROW_COUNT = 6;
+  enum class Row : uint8_t { FramePeriod, Polarity, TransitionTest, GrayViewer, Tuning, SavePreset, Exit };
+  static constexpr size_t ROW_COUNT = 7;
   // The UltraChip stock-path bench's menu (StockBenchGate.h): Transition timing, Gray ramp, Exit.
   static constexpr size_t STOCK_ROW_COUNT = 3;
   static_assert(STOCK_ROW_COUNT <= ROW_COUNT, "the stock bench's rows share rowItems");

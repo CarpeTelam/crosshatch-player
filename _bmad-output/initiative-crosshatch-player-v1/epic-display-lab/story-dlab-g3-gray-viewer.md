@@ -22,11 +22,14 @@ bands and rectangles. Nothing in the lab paints a picture.
    The repo's `docs/crosshatch/display-lab-images/` holds four generated 480 × 800 PNGs (ink line art, hatch pitches
    and weights, gradients and halftone, text) as the fixed set the owner copies to the folder; they are not compiled
    into the firmware.
-2. **Decode.** A file decodes through the existing decoder into the renderer's grayscale framebuffer (as a cover
-   does, `useGrayscale`), which is never shown (the view owns the panel, D4); the framebuffer's gray is read back
-   into the model's targets through a pure `Quantiser`: **plain** (nearest level) or **ordered** (the 4×4 Bayer
-   matrix, scaled to the level count) per the **Dither** row; the framebuffer is cleared afterwards. The chart is
-   written into the targets directly.
+2. **Decode.** A file decodes through a fork-side gray-row reader beside the decoders (D16's amendment: the
+   renderer's framebuffer is 1 bpp and the firmware's converters cut gray to 2 bits before writing, so reading it
+   back could never give more than four levels). The reader drives PNGdec and JPEGDEC directly (the libraries the
+   converters use, at the same pinned versions), converts each row to 8-bit gray as the converters do (PNG pixel
+   types, alpha against white, JPEG's 8-bit gray MCU walk), scales to fit, and hands rows to a pure `Quantiser`:
+   **plain** (nearest level) or **ordered** (the 4×4 Bayer matrix, scaled to the level count) per the **Dither**
+   row, which writes the model's targets. The chart is written into the targets directly. `scripts/check_layers.py`
+   gains a FILE_EDGES entry for the reader's file citing D16.
 3. **Paint.** Run cleans the panel to white, paints every pixel's target through `GrayModel::retargetRect` (one
    retarget per run of equal targets per row), lets the run settle (no pixel active for a slot) and holds with the
    pause marker (dlab-c4's mechanics; the viewer always holds, as the Ladder does). Logs `gray viewer: <name> painted
@@ -42,7 +45,7 @@ and why. The quantiser, the chart generator, the fit-to-screen scaling and the p
 ## Boundaries & Constraints
 
 **Always:** every scan still goes through `DisplayLabActivity::scan` on the sweep task; D4 and D5 unchanged; no
-drawing through the renderer while the view is up (the framebuffer is a decode target only); the preset file,
+drawing through the renderer while the view is up (the renderer's framebuffer is not used at all); the preset file,
 `GrayPreset`, the Tuning screen and the other lab screens unchanged; the level count read from the engine
 (`SHADE_COUNT`), never hard-coded, so dlab-g2 changes nothing here; the model's 3 B/pixel budget unchanged (no
 second full-screen buffer beyond the renderer's own); locals under 256 B; `tr(STR_…)` keys in `english.yaml` only;
@@ -50,8 +53,7 @@ C3 `default` and `sticky` still build; the flash-budget gate (D6) unchanged; a d
 Status row's reason, the chart still works.
 
 **Never:** no change to `ScanBackend.h`, the backends, `DisplayLabActivity::scan`, the SDK seam or `freeink-sdk/`; no
-change to the decoders or `DitherUtils.h` beyond what reading the framebuffer back needs (prefer none; a new helper
-beside them is fine); no new ledger row; no edit of generated I18n files; no change to the stock bench or the
+change to the decoders or `DitherUtils.h` (the reader is a new file beside them); no new ledger row; no edit of generated I18n files; no change to the stock bench or the
 frame-period and polarity screens; no change to the transition test's behaviour (the shared extraction is
 behaviour-preserving and its tests still pass).
 
@@ -77,3 +79,10 @@ behaviour-preserving and its tests still pass).
   `pio run -e default`, `pio run -e sticky`; `pio check -e x4pro`; the flash-budget gate with D6 (expect +0).
 - Hardware (owner, experimental branch): the chart paints and holds; a line-art PNG from the SD card paints plain and
   ordered; photos of both for the record.
+- Hardware, the transition test through the extracted runner (owner, experimental branch; added at dlab-g3's review):
+  Static with Hold on and with Hold off, Slow, Fast, and Ladder through to `gray ladder: done` each still behave as
+  before the extraction, their log lines matching a pre-extraction run's (the one intended difference: no empty
+  `gray scans_s=0.0` line after a hold); and one run across a session-cap clean (its `session cap near` line and the
+  mode's restart line).
+- Hardware, the viewer's sweep task stack (added at dlab-g3's review): the `gray sweep task ended` line's high-water
+  mark for a PNG, a baseline JPEG and a progressive JPEG, against the 12 KiB provision.

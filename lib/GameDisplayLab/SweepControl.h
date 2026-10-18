@@ -3,9 +3,10 @@
 #include <atomic>
 #include <cstdint>
 
-// The transition test's request word (the display-lab epic, D11; story dlab-c2): how the screen's loop task (the
-// owner) talks to the sweep task that runs the slots. One atomic word holds the requests (Stop, Run, Replay, Clean)
-// and the task's InPanel state; a second holds the owner's heartbeat, the micros() of its last loop() pass. Pure and
+// The sweep runner's request word (the display-lab epic, D11; story dlab-c2; GrayRunner since dlab-g3): how a screen's
+// loop task (the owner) talks to the sweep task that runs the slots. One atomic word holds the requests (Stop, Run,
+// Replay, Clean), the task's InPanel state, the hold for a photo (Held) and a replay the owner asked for from a hold
+// (Replaying); a second holds the owner's heartbeat, the micros() of its last loop() pass. Pure and
 // std-only, pinned by test_sweep_control.cpp. Times are a free-running microsecond clock; ages are wrap-safe.
 //
 // Owner: reset() before the task starts, then the controls (requestRun, requestReplay, requestClean, requestStop),
@@ -17,6 +18,13 @@
 // (and the owner sees InPanel), or its compare-exchange fails and it sees Stop. Compare-exchange rather than
 // fetch_or/fetch_and: on the ESP32-S3 those are library calls the toolchain places in IRAM, and the image already
 // links the compare-exchange one.
+//
+// The hold (story dlab-c4; the handshake made one word by dlab-g3's review): the task holds with holdRun(), which sets
+// Held and clears Run in one step, so the owner never sees a hold whose Run is still set, or Run cleared without the
+// hold. The owner ends it either way in one step: a resume (requestRun(true), which clears Held), or the gray viewer's
+// next picture (replayFromHold(): only while Held, Held cleared and Replay, Run and Replaying set together, so a hold
+// that lands just after the owner looked cannot leave a replay without Run). Replaying stays set until the task has
+// served that replay (replayServed()); the owner ignores further presses while it is (replayPending()).
 namespace GameDisplayLab {
 
 class SweepControl {
@@ -29,6 +37,8 @@ class SweepControl {
     bool run = false;
     bool replay = false;
     bool clean = false;
+    // The replay is a next picture asked from a hold (replayFromHold), not yet served.
+    bool replaying = false;
   };
 
   static constexpr uint32_t STOP = 1u << 0;
@@ -36,6 +46,8 @@ class SweepControl {
   static constexpr uint32_t REPLAY = 1u << 2;
   static constexpr uint32_t CLEAN = 1u << 3;
   static constexpr uint32_t IN_PANEL = 1u << 4;
+  static constexpr uint32_t HELD = 1u << 5;
+  static constexpr uint32_t REPLAYING = 1u << 6;
 
   // --- owner (the loop task) ---------------------------------------------------------------------------------------
   // A new run: running from a replay (clean, sweep from 0), the heartbeat at `nowUs`.
@@ -50,7 +62,23 @@ class SweepControl {
     const int32_t age = static_cast<int32_t>(nowUs - heartbeat_.load());
     return age > 0 ? static_cast<uint32_t>(age) : 0;
   }
-  void requestRun(const bool run) { change(run ? RUN : 0, run ? 0 : RUN); }
+  // Run on (a resume, which ends a hold: Held cleared) or off (a pause).
+  void requestRun(const bool run) { change(run ? RUN : 0, run ? HELD : RUN); }
+  // The gray viewer's next picture: only while the task holds; Held cleared and Replay, Run and Replaying set in one
+  // step. False (nothing changed) when the task does not hold, or a stop was asked.
+  bool replayFromHold() {
+    uint32_t word = word_.load();
+    while (true) {
+      if ((word & HELD) == 0 || (word & STOP) != 0) return false;
+      if (word_.compare_exchange_weak(word, (word | REPLAY | RUN | REPLAYING) & ~HELD)) return true;
+    }
+  }
+  // A replay from a hold has not been served yet.
+  bool replayPending() const { return (word_.load() & REPLAYING) != 0; }
+  // The task holds for a photo.
+  bool held() const { return (word_.load() & HELD) != 0; }
+  // The whole word, for a reader that needs two bits from one moment (preventAutoSleep: Run and Held).
+  uint32_t snapshot() const { return word_.load(); }
   // Clean, the sweep from 0, running.
   void requestReplay() { change(REPLAY | RUN, 0); }
   // Clean, paused: Clean set and Run cleared in one step.
@@ -63,9 +91,13 @@ class SweepControl {
   bool insidePanel() const { return (word_.load() & IN_PANEL) != 0; }
 
   // --- task --------------------------------------------------------------------------------------------------------
-  // The task holds itself (a photo spot of any mode, once its marker has settled): Run cleared, so the owner's next
-  // requestRun(!runRequested()) resumes with one press; nothing else changes.
-  void holdRun() { change(0, RUN); }
+  // The task holds itself (a photo spot of any mode, once its marker has settled): Held set and Run cleared in one
+  // step, so the owner's next requestRun(!runRequested()) resumes with one press; nothing else changes.
+  void holdRun() { change(HELD, RUN); }
+  // The task's run ended, or a replay cleaned the panel: no hold.
+  void releaseHold() { change(0, HELD); }
+  // The task has served the replay replayFromHold() asked for (painted, or failed to).
+  void replayServed() { change(0, REPLAYING); }
   // The requests, with Replay and Clean cleared in the same step.
   Requests take() {
     const uint32_t word = change(0, REPLAY | CLEAN);
@@ -74,6 +106,7 @@ class SweepControl {
     requests.run = (word & RUN) != 0;
     requests.replay = (word & REPLAY) != 0;
     requests.clean = (word & CLEAN) != 0;
+    requests.replaying = (word & REPLAYING) != 0;
     return requests;
   }
   // Before a scan or a clean at `nowUs`: Stop when a stop was asked, Covered when the owner's heartbeat is older than

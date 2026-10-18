@@ -1,0 +1,192 @@
+#pragma once
+
+#include "DisplayLabActivity.h"
+
+#if CROSSHATCH_DISPLAY_LAB
+
+#include <GrayModel.h>
+#include <GrayPicture.h>
+#include <GrayPreset.h>
+#include <GraySlot.h>
+#include <ImageRows.h>
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+
+#include "GrayImageReader.h"
+#include "GrayRunner.h"
+
+// The gray viewer (Display lab → Gray viewer; story dlab-g3, the epic's D16 and its amendment): a picture painted
+// through the gray engine, to see how its shades look on real artwork, line art first. Headed "Gray viewer", six rows:
+// Image (the entry the next run paints, "name (n of N)"; a tap or Confirm steps it: the test chart first, then the
+// PNG and JPEG files of IMAGES_DIR sorted by name, then the chart again), Dither (Plain, the nearest level, or Ordered,
+// the 4x4 Bayer matrix scaled to the level count; a tap or Confirm toggles it), Run (paints the entry), Levels (the
+// engine's level count and names, GameDisplayLab::SHADE_COUNT and shadeName: four today, seven after dlab-g2 with no
+// change here), Controls (help text), Status (how the last run ended: "Not run", "Stopped", a scan's outcome, or why
+// the picture could not be read).
+//
+// Run starts the shared sweep runner (GrayRunner, the transition test's: its task, slots, stops, cover and session
+// cap). Its task cleans the panel to white with a FULL refresh, then paints the entry into the model: the chart
+// (GameDisplayLab::testChartGray, the same pixels on every device) or the file, decoded on the task by readGrayImage
+// (PNGdec or JPEGDEC directly, 8-bit gray rows fitted to the logical screen, white letterbox), each row quantised with
+// the Dither row (GameDisplayLab::GrayPicture::paintGrayRow: one GrayModel::retargetRect per run of equal targets).
+// The renderer's framebuffer is never drawn (D4; the clean's white fill is the lab's own clean). Slots then run until
+// one drives no pixel (the paint settled: `gray viewer: <name> painted after N slots, pixels per level [...]`), the
+// hold marker (a pause symbol at the logical bottom-right, driven to black or white, whichever is farther from the
+// picture under it) is driven out, and once it has settled the run holds. While it paints, NavNext (side Down),
+// Confirm, or a tap where touch routes while the view is up pauses or resumes, as in the transition test; while it
+// holds they paint the next entry (clean first; after the last file, the chart), which the Image row then shows, and
+// further presses are ignored until it is painted (GrayRunner::replayFromHold, one step on the request word); a pause
+// press that lands as the hold begins finds nothing to resume and the run holds again (onResume). NavPrevious (side Up)
+// or Back stops; the rows come back with a FULL refresh. A file that cannot be read ends the run with the reason on the
+// Status row (logged with the file's name); the Image row still steps, and the chart still works. The session cap's
+// clean drops the hold in progress and paints the entry again (the file decoded again).
+//
+// Memory, allocated in onEnter and freed in onExit: the runner's working set (PSRAM), two logical rows of scratch and
+// the file list (MAX_IMAGES names of NAME_BYTES, the first by name; internal RAM, small). A decode adds the decoder
+// (PNGdec about 59 KB with the firmware's PNG row buffer, JPEGDEC about 20 KB, heap, as the converters allocate them)
+// and its row buffers (two source rows for a PNG) while it runs. The task's stack (VIEWER_STACK_BYTES, internal RAM)
+// exists only while a run is up.
+class GrayViewerActivity final : public UiListActivity, private GrayRunner::Client {
+ public:
+  static constexpr const char* NAME = "DlabGrayViewer";
+  static constexpr char IMAGES_DIR[] = "/.crosshatch/display-lab/images";
+  // The files the Image row lists (the first, by name, when there are more) and the longest name it keeps, with its
+  // NUL; a longer name is skipped (logged).
+  static constexpr size_t MAX_IMAGES = 32;
+  static constexpr size_t NAME_BYTES = GameDisplayLab::IMAGE_NAME_BYTES;
+  // The sweep task's stack: the transition test's 8 KiB scan provision (TransitionTestActivity::SWEEP_STACK_BYTES)
+  // plus 4 KiB for the decode chain (PNGdec's inflate or JPEGDEC's MCU decode, the row callback, the quantiser and a
+  // retarget), which the converters run on the stock 8 KiB loop stack. An estimate, not measured: the run's
+  // `gray sweep task ended` line gives the high-water mark.
+  static constexpr uint32_t VIEWER_STACK_BYTES = 12288;
+
+  // `lab` is the menu under this screen on the stack, which outlives it.
+  GrayViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, DisplayLabActivity& lab);
+
+  void loop() override;
+  // As the transition test: the loop keeps its delay; the runner keeps the device awake while it paints and for
+  // GrayRunner::HOLD_AWAKE_MS of a hold.
+  bool skipLoopDelay() override { return false; }
+  bool preventAutoSleep() override { return runner.preventAutoSleep(); }
+  // Ends the sweep task (the render mutex is held: GrayRunner::endLocked).
+  void prepareForSleep() override;
+  // Stops and joins the sweep task; false, so Home goes on (onExit promotes the FULL refresh).
+  bool handleHomeGesture() override;
+  // A forced refresh would send the framebuffer over the drive: swallowed while the view is up (D4).
+  bool handleForcedRefresh() override { return shownOnPanel.load(); }
+
+ private:
+  enum class Row : uint8_t { Image, Dither, Run, Levels, Controls, Status };
+  static constexpr size_t ROW_COUNT = 6;
+
+  // The reader's rows, painted into the model on the sweep task.
+  class RowSink final : public GrayRowSink {
+   public:
+    RowSink(GrayViewerActivity& viewer, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset)
+        : viewer(viewer), model(model), preset(preset) {}
+    void row(int y, int x0, const uint8_t* gray, int count) override;
+    bool stopped() const override { return viewer.runner.stopRequested(); }
+
+   private:
+    GrayViewerActivity& viewer;
+    GameDisplayLab::GrayModel& model;
+    const GameDisplayLab::GrayPreset& preset;
+  };
+
+  int listCount() const override { return notice ? 1 : static_cast<int>(ROW_COUNT); }
+  const char* headerTitle() const override;
+  void onEnter() override;
+  // Ends the sweep task and frees every buffer; the render mutex is already held by the caller (no RenderLock here).
+  void onExit() override;
+  // Draws nothing while the view is up; the base otherwise.
+  void render(RenderLock&& lock) override;
+  void buildScreen(UiScreen& screen) override;
+  void activateIndex(int index) override;
+  // The view's buttons: NavNext and Confirm pause, resume or go to the next picture; NavPrevious and Back stop.
+  bool handleCustomInput() override;
+  // No selection moves while the view is up.
+  void navigateButtons() override;
+  void onBackButton() override;
+
+  // ---- loop task --------------------------------------------------------------------------------------------------
+  // The files of IMAGES_DIR into `images` (GameDisplayLab::ImageList: sorted, at most MAX_IMAGES), before the render
+  // lock; none when the folder is absent or empty, or the list had no room (logged).
+  void listImages();
+  // The scratch rows and the runner's working set; false (logged) when one has no room.
+  bool allocate();
+  void release();
+  void buildRows();
+  // The Image row's line for the current entry.
+  void formatImageText();
+  // The run's view up and the task created (it cleans and paints the entry).
+  void startRun();
+  // NavNext, Confirm or a tap while the view is up: the next picture while held (ignored while one is being painted),
+  // otherwise pause or resume.
+  void nextOrPause();
+  // The Image row: the next entry, after the last the chart.
+  void stepImage();
+  // The Dither row: Plain and Ordered.
+  void toggleDither();
+  // The Status row's line for how the task's run ended.
+  const char* endText() const;
+  // Back to the rows with `outcome` on the Status row, repainted with a FULL refresh. Only once the task is gone.
+  void leaveView(const char* outcome);
+  // Entry `index`'s name: the chart's, or the file's.
+  const char* entryName(size_t index) const;
+
+  // ---- sweep task: the runner's client --------------------------------------------------------------------------
+  // A run's start or the next picture: the picture from Painting, painted from the entry.
+  bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  // A resume that finds the picture held (a pause press as the hold began): the run holds again (GrayRunner::rehold).
+  bool onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  // The session cap's clean: the hold in progress dropped; the next slot paints the entry again.
+  bool onCapClean() override;
+  // Nothing moves; after a clean (`stale`) the entry is painted again.
+  bool prepareSlot(GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
+                   const GameDisplayLab::GrayPreset& preset) override;
+  // GrayPicture::slotDone decides: the paint settled (logged with the per-level counts, the marker out), the marker
+  // settled (the run holds).
+  SlotVerdict afterSlot(const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs, uint32_t periodUs,
+                        uint32_t elapsedMs) override;
+  // The current entry into the model: the chart, or the file read through readGrayImage; false when the file could
+  // not be read (paintError says why) or the read was stopped.
+  bool paintEntry(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset);
+
+  DisplayLabActivity& lab;
+  // Why the screen cannot run (its one row), or null.
+  const char* notice = nullptr;
+  // The Status row's line.
+  const char* status = nullptr;
+  char imageText[NAME_BYTES + 24] = {};
+  char levelsText[48] = {};
+  freeink::ui::ListItem rowItems[ROW_COUNT] = {};
+  // The view is up: the panel shows the drive and render() draws nothing. Written by the loop task, read by the render
+  // task.
+  std::atomic<bool> shownOnPanel{false};
+  // The Dither row: the loop task's, read by the sweep task (only written while no task is up).
+  GameDisplayLab::Dither dither = GameDisplayLab::Dither::Plain;
+  // The listed files, sorted, over their names' heap array.
+  std::unique_ptr<GameDisplayLab::ImageName[]> imageNames;
+  GameDisplayLab::ImageList images;
+  // The entry the next paint shows (0: the chart; i: the file i - 1): the loop task's, read by the sweep task only when
+  // it serves a replay (a run's start, or Next from a hold), so the loop writes it before it asks for one.
+  std::atomic<uint16_t> requested{0};
+  // Two logical rows: the chart's grays, and the quantised shades of a row being painted (the sweep task's).
+  std::unique_ptr<uint8_t[]> grayRow;
+  std::unique_ptr<uint8_t[]> shadeRow;
+
+  // The sweep task and its working set; this screen is its client.
+  GrayRunner runner;
+
+  // ---- the sweep task's own, while it is up (read by the loop task only once it is deleted) ------------------------
+  GameDisplayLab::GrayPicture picture;
+  // The entry the task is painting (requested, read at each replay).
+  uint16_t painted = 0;
+  // Why the last paint failed (Done when it did not).
+  ImageRead paintError = ImageRead::Done;
+};
+
+#endif  // CROSSHATCH_DISPLAY_LAB
