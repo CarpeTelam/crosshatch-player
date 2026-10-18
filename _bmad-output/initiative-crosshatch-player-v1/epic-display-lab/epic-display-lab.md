@@ -223,6 +223,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   reached from black is lighter and grainier than the one reached from white (K>D 2 overshoots: one pulse from
   black is level 2 on the ladder, so the seven-level 0>2 is one pulse); the intermediate shades are grainy where
   black and white are smooth, the panel's own partial-state variation.
+  Slow run (four photos: painted, dwelt, crossed, the next dwelt): the trails behind the rectangles read the table's
+  errors lane by lane and agree with the ladder: K>D 2 lands light (level 3 to 4), L>D 6 lands near black, K>L 7
+  lands white, L>K 7 slightly short; the full swings are near right. The ladder's prediction for the four-shade
+  table, all holds on (one pulse per slot, the measured rhythm), in Tuning order 0>2, 0>4, 0>6, 2>0, 2>4, 2>6, 4>0,
+  4>2, 4>6, 6>0, 6>2, 6>4: 1, 2, 9, 7, 1, 8, 9, 2, 7, 12, 5, 3 (the gray-to-gray entries interpolated between the
+  two curves); the Slow trails are its test.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
