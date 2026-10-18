@@ -18,8 +18,8 @@ the project's. Idempotent, as scripts/patch_jpegdec.py is:
   * `git apply --check`            succeeds  -> apply
   * neither succeeds                          -> abort the build, naming the library folder to delete (PlatformIO
                                                  installs it again, unpatched, on the next build)
-A missing patch folder, or a missing library folder in an env whose libdeps exist, aborts the build too; a `clean`, or
-an env with no libdeps yet, returns at once. The same patches are applied to copies in the host test's build tree by
+A missing patch folder, or a missing library folder in an env whose libdeps exist, aborts the build too; a `clean`
+returns at once, and an env with no libdeps yet returns with a line saying the patches were not applied. The same patches are applied to copies in the host test's build tree by
 test/game_display_lab/CMakeLists.txt.
 """
 
@@ -40,6 +40,7 @@ def patch_lab_decoders(env):
         return
     libdeps_dir = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps", env["PIOENV"])
     if not os.path.isdir(libdeps_dir):
+        print("Lab decoder patches not applied: %s does not exist yet (lib_deps not installed)" % libdeps_dir)
         return
     for folder, library in LIBRARIES:
         lib_dir = os.path.join(libdeps_dir, library)

@@ -89,6 +89,9 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
     # of the copy first; one that cannot be is a stop naming the folder to delete.
     file(GLOB retired "${REPO_ROOT}/scripts/lab_decoder_patches/retired/${name}/*.patch")
     list(SORT retired)
+    if(retired)
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${retired})
+    endif()
     foreach(patch IN LISTS retired)
       execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
                       WORKING_DIRECTORY "${root}" RESULT_VARIABLE carried OUTPUT_QUIET ERROR_QUIET)

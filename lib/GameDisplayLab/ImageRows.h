@@ -100,6 +100,9 @@ enum class FileLayout : uint8_t {
   Malformed,
   // A read of the file failed.
   ReadFailed,
+  // Valid but not decodable here: a JPEG baseline scan that covers only some of the frame's components (a
+  // non-interleaved, several-scan sequential file; JPEGDEC decodes one scan).
+  Unsupported,
   // The stop predicate said stop.
   Stopped,
 };
@@ -179,18 +182,19 @@ constexpr size_t JPEG_EOI_SEARCH_BYTES = 4096;
 //   past 7 never shortens its loop's count, jpeg.inl 844-870; JPEGDEC keeps two DC and two AC tables, and builds a DC
 //   table of index 2 or 3 past its two into the AC tables, jpeg.inl 1093-1100), sixteen counts summing to at most
 //   256, code lengths within the Kraft bound (an over-subscribed table makes JPEGMakeHuffTables write past its
-//   tables, jpeg.inl 1066-1275), and values within the legal maxima (a DC category at most 11, an AC size at most
-//   10: the lab's JPEGDEC patch's block margin rests on them); SOS
-//   (jpeg.inl 1764-1768). An APP1 JPEGDEC takes for Exif ('E', 'x' and a byte order 'M' or 'I' where it looks,
-//   jpeg.inl 1654-1677) must hold, inside the segment and the buffer, the IFD offset and tag count it reads, each
-//   IFD's count and its 12-byte entries (GetTIFFInfo, jpeg.inl 1346-1376), and the next IFD's offset when it follows
-//   it, its sum with the buffer offset taken as JPEGDEC's int takes it.
+//   tables, jpeg.inl 1066-1275), and its values inside the segment (any values: JPEGDEC masks a code's size to 4
+//   bits, jpeg.inl's ucHuff &= 0xf and usHuff &= 0xf, and the lab JPEGDEC patch's block margin covers the longest
+//   block those make); SOS (jpeg.inl 1764-1768). An APP1 JPEGDEC takes for Exif ('E', 'x' and a byte order 'M' or 'I'
+//   where it looks, jpeg.inl 1654-1677) must hold, inside the segment and the buffer, the IFD offset and tag count it
+//   reads, each IFD's count and its 12-byte entries (GetTIFFInfo, jpeg.inl 1346-1376), and the next IFD's offset when
+//   it follows it, its sum with the buffer offset taken as JPEGDEC's int takes it.
 // - SOS, after a SOF0 or SOF2, lies in the buffer and is what JPEGGetSOS takes whole (1 to 4 components, length
 //   6 + 2 per component, the length checked before the count is read): each component one of the frame's, once, its
 //   DC and AC table index 0 or 1 (a higher index makes JPEGDEC decode from tables that are not there, an AC index of 3
-//   about 20 KB past its object); a baseline scan the whole frame (every component, both tables defined by an earlier
-//   DHT, Ss 0, Se 63, Ah and Al 0); a progressive file's first scan, the one JPEGDEC decodes, DC only and first (Ss and
-//   Se 0, Ah 0, its DC tables defined).
+//   about 20 KB past its object); a baseline scan both tables of each component defined by an earlier DHT, Ss 0, Se 63,
+//   Ah and Al 0, and the whole frame (every component: one of only some is a valid non-interleaved file JPEGDEC cannot
+//   decode, Unsupported); a progressive file's first scan, the one JPEGDEC decodes, DC only and first (Ss and Se 0, Ah
+//   0, its DC tables defined).
 // Malformed otherwise. After SOS the picture must end: a baseline file's last two bytes when they are FF D9 and no MPF
 // APP2 says more pictures follow, else its first FF D9 after SOS (a motion photo's video, a second picture such as an
 // MPF preview, or padding after it are not the decoder's); a progressive file's first marker after its first scan
@@ -271,7 +275,7 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
       const uint32_t al = b[2 * count + 2] & 0x0F;
       if (progressive) {
         if (ss != 0 || se != 0 || ah != 0) return FileLayout::Malformed;
-      } else if (ss != 0 || se != 63 || ah != 0 || al != 0 || count != components) {
+      } else if (ss != 0 || se != 63 || ah != 0 || al != 0) {
         return FileLayout::Malformed;
       }
       uint32_t seen = 0;
@@ -287,6 +291,8 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
         if ((dcDefined & (1u << dc)) == 0) return FileLayout::Malformed;
         if (!progressive && (acDefined & (1u << ac)) == 0) return FileLayout::Malformed;
       }
+      // A valid baseline scan of some of the frame's components: the file's other scans hold the rest.
+      if (!progressive && count != components) return FileLayout::Unsupported;
       uint64_t eoiEnd = 0;
       // A baseline file ending in FF D9 with no MPF APP2 (no second picture) ends there.
       if (!progressive && !mpf && fileSize >= end + 2) {
@@ -364,21 +370,9 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
           if (code > (1u << i)) return FileLayout::Malformed;
           code <<= 1;
         }
-        if (codes > 256) return FileLayout::Malformed;
-        // The values: a DC category at most 11, an AC coefficient size (the low nibble) at most 10, the legal maxima
-        // (JPEG_BLOCK_MARGIN in the lab's JPEGDEC patch rests on them: a block of 209 bytes at most). In reads of the
-        // caller's buffer, or of the walk's own 17 bytes.
-        const bool dcTable = (b[0] >> 4) == 0;
-        uint8_t* const values = search != nullptr && searchBytes >= sizeof(b) ? search : b;
-        const uint32_t valuesBytes = values == b ? sizeof(b) : static_cast<uint32_t>(searchBytes);
-        for (uint32_t at = 0; at < codes;) {
-          const uint32_t n = codes - at < valuesBytes ? codes - at : valuesBytes;
-          if (!readAt(static_cast<uint32_t>(table + 17 + at), values, n)) return FileLayout::ReadFailed;
-          for (uint32_t i = 0; i < n; ++i) {
-            if (dcTable ? values[i] > 11 : (values[i] & 0x0F) > 10) return FileLayout::Malformed;
-          }
-          at += n;
-        }
+        // The values follow, one a code, inside the segment (its values are not read: JPEGDEC takes any byte, a code's
+        // size masked to 4 bits, which the lab patch's block margin covers).
+        if (codes > 256 || table + 17 + codes > end) return FileLayout::Malformed;
         table += 17 + codes;
       }
       if (table != end) return FileLayout::Malformed;

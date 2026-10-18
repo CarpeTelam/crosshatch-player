@@ -1,5 +1,5 @@
 From: crosshatch-player <dlab-g3@local>
-Subject: [PATCH] Refill between a MCU's blocks, and stop a bit pointer past the data (v3)
+Subject: [PATCH] Refill between a MCU's blocks, and stop a bit pointer past the data (v4)
 
 The display lab's JPEGDEC patch (the x4pro env only, applied after upstream's
 scripts/jpegdec_patches by scripts/patch_lab_decoders.py; the host decoder
@@ -8,15 +8,17 @@ tests apply it too, test/game_display_lab/CMakeLists.txt).
 JPEGDEC moves its VLC data down and refills only after a whole MCU that ends
 past FILE_HIGHWATER (1536), which keeps 512 bytes past that mark. A colour MCU
 can be longer (six blocks at 4:2:0; valid quality-100 colour with noise-like
-detail runs 510 to 600 bytes, a block of the longest codes about 210), and
+detail runs 510 to 600 bytes, a block of the longest codes about 250), and
 when it outran the data JPEGGetMoreData returned for good (iDelta < 0), every
 later MCU reading further past ucFileBuf. This:
 - refills before each block (JPEGDecodeMCU, JPEGDecodeMCU_P) whenever the data
-  left is under JPEG_BLOCK_MARGIN (256: the longest block the legal tables code
-  is 209 bytes) or the offset is past the mark: the bit reader's state is in
-  pJPEG->bb between blocks as between MCUs, and its window is loaded again
-  after the refill (bytes past the data it held may have been stale), so
-  valid pictures decode whole;
+  left is under JPEG_BLOCK_MARGIN (320: a block of the longest codes any table
+  makes, a code's size masked to 4 bits, needs 264 bytes at most with the bit
+  offset carried in and the window's read-ahead) or the offset is past the
+  mark: the bit reader's state is in pJPEG->bb between blocks as between MCUs;
+- loads the bit window again at the end of JPEGGetMoreData, after any move or
+  refill (bytes it held past the data were stale, and the refill has put the
+  file's there), for the block refills and DecodeJPEG's own;
 - in JPEGGetMoreData, when the bits used (the pointer plus the whole bytes of
   the bit offset) are past the data, puts the pointer at the data's end and
   sets JPEG_DECODE_ERROR; the block decoders return -1 on it and DecodeJPEG's
@@ -27,22 +29,25 @@ later MCU reading further past ucFileBuf. This:
 - moves the data down with memmove (a block refill can move data that
   overlaps where it goes).
 
+The fix is offered as a suggestion for upstream.
+
 ---
 --- a/src/jpeg.inl
 +++ b/src/jpeg.inl
-@@ -63,6 +63,11 @@ int16_t i16_Consts[8] = {0x80, 113, 90, 22, 46, 1,32,2048};
+@@ -63,6 +63,12 @@
  static int JPEGInit(JPEGIMAGE *pJPEG);
  static int JPEGParseInfo(JPEGIMAGE *pPage, int bExtractThumb);
  static void JPEGGetMoreData(JPEGIMAGE *pPage);
 +// CrossPoint lab patch: the data a block decoder wants in the buffer before it starts (JPEGDecodeMCU, _P). The
-+// longest block the legal tables code: a 16-bit DC code and 11 bits, then 63 AC coefficients of a 16-bit code and 10
-+// bits, 27 + 1,638 = 1,665 bits, 209 bytes; with the 4 bytes the bit window reads ahead, 213, under 256 with 43 to
-+// spare (the gray viewer's walk refuses tables with larger sizes).
-+#define JPEG_BLOCK_MARGIN 256
++// longest block any table codes (a code's size is masked to 4 bits, ucHuff &= 0xf, usHuff &= 0xf): a 16-bit code and
++// 15 bits for the DC and for each of 63 AC coefficients, 64 x 31 = 1,984 bits; with up to 31 bits of the bit offset
++// carried in (63 with a 64-bit bit reader) the bits used reach 2,015 (2,047), 252 (256) bytes, and the bit window
++// reads 4 (8) bytes past them: 256 (264) bytes, under 320 with 64 (56) to spare.
++#define JPEG_BLOCK_MARGIN 320
  static int DecodeJPEG(JPEGIMAGE *pImage);
  static int32_t readRAM(JPEGFILE *pFile, uint8_t *pBuf, int32_t iLen);
  static int32_t seekMem(JPEGFILE *pFile, int32_t iPosition);
-@@ -1545,12 +1550,25 @@ static void JPEGGetMoreData(JPEGIMAGE *pPage)
+@@ -1545,12 +1551,25 @@
  {
      int iDelta = pPage->iVLCSize - pPage->iVLCOff;
  //    printf("Getting more data...size=%d, off=%d\n", pPage->iVLCSize, pPage->iVLCOff);
@@ -70,47 +75,53 @@ later MCU reading further past ucFileBuf. This:
          pPage->iVLCSize -= pPage->iVLCOff;
          pPage->iVLCOff = 0;
          pPage->bb.pBuf = pPage->ucFileBuf; // reset VLC source pointer too
-@@ -1832,6 +1850,19 @@ static int JPEGDecodeMCU_P(JPEGIMAGE *pJPEG, int iMCU, int *iDCPredictor)
+@@ -1563,6 +1582,11 @@
+         // Filter out the markers
+         pPage->iVLCSize += JPEGFilter(&pPage->ucFileBuf[pPage->iVLCSize], &pPage->ucFileBuf[pPage->iVLCSize], i, &pPage->ucFF);
+     }
++    // CrossPoint lab patch: the bit window holds the bytes at the pointer as they were before the move and the refill;
++    // bytes it held past the data were stale, and the refill has put the file's there: load it again (every caller,
++    // the block refills and DecodeJPEG's; the header parse's call comes before the decode sets a pointer).
++    if (pPage->bb.pBuf != NULL)
++        pPage->bb.ulBits = MOTOLONG(pPage->bb.pBuf);
+ } /* JPEGGetMoreData() */
+ 
+ //
+@@ -1832,6 +1856,16 @@
      my_ulong ulCode, ulBits, ulTemp; // local copies to allow compiler to use register vars
      uint8_t *pBuf;
  
 +    // CrossPoint lab patch: refill between the blocks of a MCU, whenever the data left in the buffer is under
-+    // JPEG_BLOCK_MARGIN (a block of the longest legal codes is 209 bytes): as released the refill came only after a
++    // JPEG_BLOCK_MARGIN (a block of the longest codes needs 264 bytes at most): as released the refill came only after a
 +    // whole MCU (up to six blocks), past FILE_HIGHWATER, and a colour MCU of long codes outran the 512 bytes kept past
-+    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs.
++    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs (JPEGGetMoreData loads its window again).
 +    if (pJPEG->iVLCOff >= FILE_HIGHWATER || pJPEG->iVLCSize - pJPEG->iVLCOff < JPEG_BLOCK_MARGIN)
 +    {
 +        JPEGGetMoreData(pJPEG);
 +        if (pJPEG->iError == JPEG_DECODE_ERROR)
 +            return -1;
-+        // The bit window holds the bytes at the pointer as they were before the refill; bytes past the data then were
-+        // stale, and the refill has put the file's there: load it again.
-+        pJPEG->bb.ulBits = MOTOLONG(pJPEG->bb.pBuf);
 +    }
      ulBitOff = pJPEG->bb.ulBitOff;
      ulBits = pJPEG->bb.ulBits;
      pBuf = pJPEG->bb.pBuf;
-@@ -2113,6 +2144,19 @@ static int JPEGDecodeMCU(JPEGIMAGE *pJPEG, int iMCU, int *iDCPredictor)
+@@ -2113,6 +2147,16 @@
      
      #define MIN_DCT_THRESHOLD 8
          
 +    // CrossPoint lab patch: refill between the blocks of a MCU, whenever the data left in the buffer is under
-+    // JPEG_BLOCK_MARGIN (a block of the longest legal codes is 209 bytes): as released the refill came only after a
++    // JPEG_BLOCK_MARGIN (a block of the longest codes needs 264 bytes at most): as released the refill came only after a
 +    // whole MCU (up to six blocks), past FILE_HIGHWATER, and a colour MCU of long codes outran the 512 bytes kept past
-+    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs.
++    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs (JPEGGetMoreData loads its window again).
 +    if (pJPEG->iVLCOff >= FILE_HIGHWATER || pJPEG->iVLCSize - pJPEG->iVLCOff < JPEG_BLOCK_MARGIN)
 +    {
 +        JPEGGetMoreData(pJPEG);
 +        if (pJPEG->iError == JPEG_DECODE_ERROR)
 +            return -1;
-+        // The bit window holds the bytes at the pointer as they were before the refill; bytes past the data then were
-+        // stale, and the refill has put the file's there: load it again.
-+        pJPEG->bb.ulBits = MOTOLONG(pJPEG->bb.pBuf);
 +    }
      ulBitOff = pJPEG->bb.ulBitOff;
      ulBits = pJPEG->bb.ulBits;
      pBuf = pJPEG->bb.pBuf;
-@@ -4970,6 +5014,10 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+@@ -4970,6 +5014,10 @@
      JPEGDRAW jd;
      int iMaxFill = 16, iScaleShift = 0;
  
@@ -121,7 +132,7 @@ later MCU reading further past ucFileBuf. This:
      // Requested the Exif thumbnail
      if (pJPEG->ucMode == 0xc2) { // progressive mode - we only decode the first scan (DC values)
          pJPEG->iOptions |= JPEG_SCALE_EIGHTH; // return 1/8 sized image
-@@ -5365,9 +5413,17 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+@@ -5365,9 +5413,17 @@
              } // if there is a restart interval
              // See if we need to feed it more data
              if (pJPEG->iVLCOff >= FILE_HIGHWATER)

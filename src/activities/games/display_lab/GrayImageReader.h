@@ -55,14 +55,14 @@ class GrayRowSink {
 // How a read ended.
 enum class ImageRead : uint8_t {
   Done,
-  // The file would not open, a read of it failed (in the walk, or a JPEG header read the reader dropped), or the
-  // library rejected its header as corrupt.
+  // The file would not open, a read of it failed twice (in the walk, a JPEG header read the reader dropped, or a read
+  // or seek during the decode, which then stops drawing), or the library rejected its header as corrupt.
   Open,
   // A size, depth, colour type or width outside what the converters accept, a file over 2 GiB, a feature the library
   // does not decode (an interlaced or 16-bit PNG, an extended or lossless JPEG), or a truncated or malformed file
   // (GameDisplayLab::FileLayout Truncated and Malformed: a chunk or segment past its end, a bad signature or length, an
   // oversized PLTE or tRNS, a JPEG table, SOF, SOS or Exif IFD JPEGDEC would read past or build past its tables, too
-  // many chunks, segments or buffer moves).
+  // many chunks, segments or buffer moves), or a valid JPEG of several baseline scans (FileLayout::Unsupported).
   Format,
   // Under a signature's worth of bytes (8 for a PNG, 4 for a JPEG).
   Short,
@@ -70,7 +70,7 @@ enum class ImageRead : uint8_t {
   NoEnd,
   // The decoder or a row buffer did not fit (the converters' free-heap floor included).
   Memory,
-  // The decode itself failed.
+  // The decode itself failed (a JPEG scan of restart markers past the read-on bound included).
   Decode,
   // The sink asked to stop.
   Stopped,

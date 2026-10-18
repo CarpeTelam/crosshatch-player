@@ -69,8 +69,13 @@ struct FakeFile {
   int stopAtRead = -1;
   int stopAtDraw = -1;
   int reads_ = 0;
-  // Decode answers short of the span JPEGDEC asked for.
+  // Decode answers short of the span JPEGDEC asked for (the reader gives none).
   int shortAnswers = 0;
+  // The file's own reads (FakeAccess::read calls); from the `failFrom`th on, `failCount` of them fail (an SD card's
+  // error: once is transient, the retry then works; twice is a read that fails).
+  int fileReads = 0;
+  int failFrom = -1;
+  int failCount = 0;
   int progress = 0;
   int draws = 0;
   // PNG: rows drawn; JPEG: the bottom of the lowest block drawn.
@@ -93,6 +98,10 @@ struct FakeAccess {
 
   bool isOpen() const { return true; }
   int32_t read(uint8_t* buf, const int32_t n) {
+    if (++f.fileReads >= f.failFrom && f.failFrom >= 0 && f.failCount > 0) {
+      --f.failCount;
+      return -1;
+    }
     int32_t got = 0;
     while (got < n && f.pos < f.size) buf[got++] = (*f.source)[f.pos++];
     return got;
@@ -145,6 +154,7 @@ int32_t pngSeek(PNGFILE* pFile, const int32_t pos) {
 int pngDraw(PNGDRAW* pDraw) {
   FakeFile& f = *static_cast<FakeFile*>(pDraw->pUser);
   if (++f.draws > MAX_DRAWS) throw Spun{};
+  if (f.reads.failed()) return 0;  // as the reader: a read that failed stops the drawing
   if (f.draws == f.stopAtDraw) f.stopped = true;
   if (f.pixels) {
     std::vector<uint8_t> gray(static_cast<size_t>(pDraw->iWidth));
@@ -163,10 +173,11 @@ int32_t jpegRead(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
   FakeAccess file{f};
   const bool decoding = !f.reads.jpegOpening;  // decode()'s reads (open's past the header end end in 0 by design)
   const int32_t answer = answerJpegRead(file, f.reads, buf, len, pFile->iSize, pFile->iPos);
-  // A decode answer short of the span (the restart top-ups ran out with the file going on); never 0.
-  if (decoding && answer < len && answer > 0) ++f.shortAnswers;
+  // A decode answer is the whole span, and never nothing to JPEGFilter (a final 0xFF alone, or 0 bytes, filter to
+  // none).
+  if (decoding && answer < len) ++f.shortAnswers;
   if (decoding && len > 0) {
-    EXPECT_GT(answer, 0) << "a decode answer of 0 bytes";
+    EXPECT_GT(jpegFilteredLength(buf, answer), 0) << "a decode answer with no data";
   }
   return answer;
 }
@@ -197,6 +208,31 @@ int32_t jpegReadStale(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
   const int32_t got = readUnderAllowance(file, f.reads, buf, len, f.stopped, allowed);
   pFile->iPos = static_cast<int32_t>(f.pos);
   return got;
+}
+
+// Nor this: the eighth batch's decode answers, restart markers dropped and the span topped up at most 16 times, then
+// told short with the file going on (JPEGDEC takes a read shorter than it asked; its own file read gives one at the
+// file's end): a block can then start with a few bytes in the buffer, its bit window loaded past them.
+int32_t jpegReadShort(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
+  FakeFile& f = *static_cast<FakeFile*>(pFile->fHandle);
+  if (f.reads.jpegOpening) return jpegRead(pFile, buf, len);
+  countRead(f);
+  FakeAccess file{f};
+  int32_t allowed = 0;
+  int32_t got = jpegDropRestartMarkers(buf, readUnderAllowance(file, f.reads, buf, len, f.stopped, allowed));
+  bool unfilled = false;
+  for (int more = 0; got < len; ++more) {
+    if (more >= 16 && got > 0) {
+      unfilled = true;
+      break;
+    }
+    const int32_t extra = readUnderAllowance(file, f.reads, buf + got, len - got, f.stopped, allowed);
+    if (extra <= 0) break;
+    got = jpegDropRestartMarkers(buf, got + extra);
+  }
+  pFile->iPos = jpegPositionAfterRead(f.reads.position, static_cast<uint32_t>(pFile->iSize));
+  if (unfilled) ++f.shortAnswers;
+  return unfilled ? got : answerJpegDecodeRead(buf, len, got);
 }
 
 // Nor this: the reader's answers with the decode's refills only zero-filled, never tamed; `tameable` counts the
@@ -230,6 +266,7 @@ bool pointerInside(const JPEGDEC& jpeg) {
 int jpegDraw(JPEGDRAW* pDraw) {
   FakeFile& f = *static_cast<FakeFile*>(pDraw->pUser);
   if (++f.draws > MAX_DRAWS) throw Spun{};
+  if (f.reads.failed()) return 0;  // as the reader: a read that failed, or a flooded scan, stops the drawing
   if (f.jpeg && f.watchStrips && !pointerInside(*f.jpeg)) f.pointerLeft = true;
   if (f.draws == f.stopAtDraw) f.stopped = true;
   if (pDraw->y + pDraw->iHeight > f.rows) f.rows = pDraw->y + pDraw->iHeight;
@@ -252,6 +289,10 @@ int jpegDraw(JPEGDRAW* pDraw) {
 constexpr size_t PNG_CANARY_FROM = 256;
 constexpr uint8_t CANARY = 0xA5;
 
+// The result the harness gives a picture whose read failed twice (the reader's ImageRead::Open), whatever the decoder
+// returned.
+constexpr int READ_FAILED = -3;
+
 // The reads' state for a new open() of `f` (its walk's extent kept).
 void restartReads(FakeFile& f) {
   f.reads.start(WalkExtent{f.reads.walkedSize, f.reads.headerEnd, f.reads.windowMoves});
@@ -267,10 +308,12 @@ bool decodePng(FakeFile& f, int& result, bool* canaryHeld = nullptr) {
   bool held = true;
   try {
     result = png->open("fake.png", openFake, closeFake, pngRead, pngSeek, pngDraw);
+    if (f.reads.readFailed) result = READ_FAILED;
     if (result == PNG_SUCCESS) {
       uint8_t* const pixels = png->_png.ucPixels;
       std::memset(pixels + PNG_CANARY_FROM, CANARY, sizeof(png->_png.ucPixels) - PNG_CANARY_FROM - 512);
       result = png->decode(&f, 0);
+      if (f.reads.readFailed) result = READ_FAILED;  // as the reader: the file's failure, never Done
       for (size_t i = PNG_CANARY_FROM; i < sizeof(png->_png.ucPixels) - 512; ++i) held = held && pixels[i] == CANARY;
     }
   } catch (const Spun&) {
@@ -302,6 +345,7 @@ bool decodeJpeg(FakeFile& f, const int option, int& result, JPEG_READ_CALLBACK* 
     // As the reader: a dropped header read is a failed open whatever open() made of the zeros; a size outside the
     // converters' limits is refused before decode() (a corrupt SOF can claim 65,535 rows).
     if (f.reads.headerFailed) result = -2;
+    if (f.reads.readFailed) result = READ_FAILED;
     if (result == 1 && !imageSizeAccepted(jpeg->getWidth(), jpeg->getHeight())) result = -1;
     if (result == 1) {
       if (opened) *opened = true;
@@ -312,6 +356,8 @@ bool decodeJpeg(FakeFile& f, const int option, int& result, JPEG_READ_CALLBACK* 
       std::memcpy(tables.data() + sizeof(jpeg->_jpeg.ucHuffDC), jpeg->_jpeg.usHuffAC, sizeof(jpeg->_jpeg.usHuffAC));
       f.reads.startDecode();
       result = jpeg->decode(0, 0, option);
+      if (f.reads.readFailed) result = READ_FAILED;        // as the reader: the file's failure, never Done
+      if (f.reads.scanFlooded && result == 1) result = 0;  // as the reader: a decode failure
       if (!pointerInside(*jpeg)) f.pointerLeft = true;
       EXPECT_EQ(std::memcmp(tables.data(), jpeg->_jpeg.ucHuffDC, sizeof(jpeg->_jpeg.ucHuffDC)), 0)
           << "JPEGDEC's decode wrote past its buffer into its DC tables";
@@ -852,18 +898,15 @@ TEST(ImageDecoders, AScanOfMostlyRestartMarkersDecodesWhole) {
 }
 
 TEST(ImageDecoders, LongRunsOfRestartMarkersDecodeAsWithout) {
-  // 15 and 16 restart markers after every byte of a scan (JPEGFilter drops them all; JPEGDEC counts restarts by its
-  // interval): the reader drops them from each refill and tops it up, at most 16 times, so refills come back short of
-  // the span with the file going on, and never empty. Through the reader's answers and through answers that neither
-  // drop nor tame, each decodes to the pixels of the file without the markers, at every scale, and every stop returns.
-  // One run of 40,000 markers (80,000 bytes, over twice the 34,816 of a 2 KiB refill and its 16 top-ups) gives some
-  // refill and all its top-ups markers alone: the reader reads on until it has data (never an answer of 0, which
-  // JPEGFilter mishandles after a held 0xFF); answers that do not drop the markers end that decode early.
+  // 15 and 16 restart markers after every byte of a scan, and one run of 40,000 (80,000 bytes) halfway (JPEGFilter
+  // drops them all; JPEGDEC counts restarts by its interval): the reader drops them from each refill and tops it up
+  // until the span is full, so no answer is ever short of its span or empty. Through the reader's answers each decodes
+  // to the pixels of the file without the markers, at every scale, and every stop returns; through answers that
+  // neither drop nor tame (the differential) the short runs do too, and the long run ends that decode early.
   for (const auto& base : {bytes(JPEG_BASELINE), bytes(JPEG_NOISE_BASELINE)}) {
     const bool noise = base.size() > 1000;
     for (const int run : {15, 16, 40000}) {
       const std::vector<uint8_t> marked = fixtures::withRestartRuns(base, run, run > 16 ? 0 : 1);
-      int shortAnswers = 0;
       for (const int option : JPEG_OPTIONS) {
         const int scale = option == 0 ? 1 : option;
         const int width = (noise ? 128 : 40) / scale;
@@ -892,11 +935,40 @@ TEST(ImageDecoders, LongRunsOfRestartMarkersDecodeAsWithout) {
           EXPECT_EQ(result, 1) << run << " option " << option;
           EXPECT_EQ(f.rows, height) << run << " option " << option;
           EXPECT_EQ(pixels, expected) << run << " option " << option;
-          shortAnswers += f.shortAnswers;
+          EXPECT_EQ(f.shortAnswers, 0) << run << " option " << option;
         }
       }
-      if (noise && run <= 16) {
-        EXPECT_GT(shortAnswers, 0) << run;  // the unfilled answer reached JPEGDEC
+    }
+  }
+  // The crafted long-code colour files (blocks of about 206 bytes) with a run of 18,000 markers after a scan byte,
+  // where the eighth batch's answers (16 top-ups, then what there was) left a block fewer bytes than it needed and the
+  // decode ended in an error: whole, at every scale.
+  struct Case {
+    std::vector<uint8_t> base;
+    int w;
+    int h;
+  };
+  for (const Case& c : {Case{fixtures::longCodeColourJpeg(false, 32, 24), 32, 24},
+                        Case{fixtures::longCodeColourJpeg(true, 48, 32), 48, 32}}) {
+    for (const size_t after : {size_t{2327}, size_t{5676}, size_t{7685}}) {
+      ASSERT_NE(c.base[after], 0xFF);
+      const std::vector<uint8_t> marked = fixtures::withRestartRunAfter(c.base, after, 18000);
+      for (const int option : JPEG_OPTIONS) {
+        const int scale = option == 0 ? 1 : option;
+        std::vector<uint8_t> expected(static_cast<size_t>((c.w / scale) * (c.h / scale)), 0);
+        std::vector<uint8_t> pixels = expected;
+        FakeFile plain = whole(c.base);
+        plain.pixels = &expected;
+        plain.width = c.w / scale;
+        FakeFile f = whole(marked);
+        f.pixels = &pixels;
+        f.width = c.w / scale;
+        int result = 0;
+        ASSERT_TRUE(decodeJpeg(plain, option, result));
+        ASSERT_TRUE(decodeJpeg(f, option, result)) << after << " option " << option;
+        EXPECT_EQ(result, 1) << after << " option " << option;
+        EXPECT_EQ(f.rows, c.h / scale) << after << " option " << option;
+        EXPECT_EQ(pixels, expected) << after << " w" << c.w << " option " << option;
       }
     }
   }
@@ -906,15 +978,249 @@ TEST(ImageDecoders, LongRunsOfRestartMarkersDecodeAsWithout) {
   });
 }
 
+TEST(ImageDecoders, ARunOfRestartMarkersPastTheReadOnBoundEndsTheDecode) {
+  // 70,000 markers in a row (140,000 bytes, past JPEG_RESTART_READ_ON beyond any span): a crafted or damaged scan. The
+  // answer stops reading there and the decode ends in an error (as the reader: "did not decode"), its reads bounded.
+  const std::vector<uint8_t> marked = fixtures::withRestartRuns(bytes(JPEG_NOISE_BASELINE), 70000, 0);
+  for (const int option : JPEG_OPTIONS) {
+    FakeFile f = whole(marked);
+    int result = 0;
+    ASSERT_TRUE(decodeJpeg(f, option, result)) << option;
+    EXPECT_NE(result, 1) << option;
+    EXPECT_TRUE(f.reads.scanFlooded) << option;
+    EXPECT_LT(f.rows, 128 / (option == 0 ? 1 : option)) << option;
+    EXPECT_LT(f.reads.position, marked.size()) << option;
+  }
+}
+
+TEST(ImageDecoders, ABlockAfterARefillReadsTheRefilledBytesNotItsStaleWindow) {
+  // The crafted long-code colour files with a run of 18,000 restart markers after one scan byte, read through answers
+  // that may be short (jpegReadShort: the eighth batch's, 16 top-ups then what there is): a block then starts with a
+  // few bytes left, its bit window loaded past them. The lab patch loads the window again in JPEGGetMoreData after
+  // every refill; without that these decode whole to other pixels (two of the positions a sweep of every scan byte
+  // found; the run after 2,327 gives these answers no short one).
+  // Through the reader's own answers (whole spans) they decode to the unmarked file's pixels too.
+  struct Case {
+    std::vector<uint8_t> base;
+    int w;
+    int h;
+    size_t after;
+  };
+  for (const Case& c : {Case{fixtures::longCodeColourJpeg(false, 32, 24), 32, 24, 5676},
+                        Case{fixtures::longCodeColourJpeg(true, 48, 32), 48, 32, 5676},
+                        Case{fixtures::longCodeColourJpeg(false, 32, 24), 32, 24, 7685},
+                        Case{fixtures::longCodeColourJpeg(true, 48, 32), 48, 32, 7685}}) {
+    std::vector<uint8_t> expected(static_cast<size_t>(c.w * c.h), 0);
+    FakeFile plain = whole(c.base);
+    plain.pixels = &expected;
+    plain.width = c.w;
+    int result = 0;
+    ASSERT_TRUE(decodeJpeg(plain, 0, result));
+    ASSERT_EQ(result, 1);
+    ASSERT_NE(c.base[c.after], 0xFF);
+    const std::vector<uint8_t> marked = fixtures::withRestartRunAfter(c.base, c.after, 18000);
+    for (JPEG_READ_CALLBACK* read : {jpegReadShort, jpegRead}) {
+      std::vector<uint8_t> pixels(expected.size(), 0);
+      FakeFile f = whole(marked);
+      ASSERT_EQ(f.reads.walkedSize, marked.size());
+      f.pixels = &pixels;
+      f.width = c.w;
+      ASSERT_TRUE(decodeJpeg(f, 0, result, read)) << c.after;
+      EXPECT_EQ(result, 1) << c.after;
+      EXPECT_EQ(f.rows, c.h) << c.after;
+      EXPECT_EQ(pixels, expected) << c.after << " w" << c.w << (read == jpegRead ? " reader" : " short answers");
+      if (read == jpegReadShort) {
+        EXPECT_GT(f.shortAnswers, 0) << c.after << " w" << c.w;
+      }
+    }
+  }
+}
+
+TEST(ImageDecoders, AReadThatFailsTwiceDuringTheDecodeIsTheFilesFailure) {
+  // An SD card read that fails during the decode (the noise samples' last file read, inside the IDAT or the scan,
+  // past the decoders' 2 KiB buffers): once, the retry from a seek back works and the picture decodes whole to the
+  // same pixels; twice, the read is the file's failure (the reader's "could not open", never Done), the drawing stops
+  // there and no row after it is drawn.
+  {
+    FakeFile clean = whole(bytes(PNG_NOISE));
+    std::vector<uint8_t> expected;
+    clean.pixels = &expected;
+    int result = 0;
+    ASSERT_TRUE(decodePng(clean, result));
+    ASSERT_EQ(result, PNG_SUCCESS);
+    ASSERT_GE(clean.fileReads, 2);
+    for (const int failures : {1, 2}) {
+      FakeFile f = whole(bytes(PNG_NOISE));
+      std::vector<uint8_t> pixels;
+      f.pixels = &pixels;
+      f.failFrom = clean.fileReads;
+      f.failCount = failures;
+      ASSERT_TRUE(decodePng(f, result)) << failures;
+      if (failures == 1) {
+        EXPECT_EQ(result, PNG_SUCCESS);
+        EXPECT_FALSE(f.reads.readFailed);
+        EXPECT_EQ(pixels, expected);
+      } else {
+        EXPECT_EQ(result, READ_FAILED);
+        EXPECT_TRUE(f.reads.readFailed);
+        EXPECT_LT(f.rows, 48);
+      }
+    }
+  }
+  for (const auto& sample : {bytes(JPEG_NOISE_BASELINE), bytes(JPEG_NOISE_420)}) {
+    const int side = sample.size() == sizeof(JPEG_NOISE_BASELINE) ? 128 : 48;
+    std::vector<uint8_t> expected(static_cast<size_t>(side * side), 0);
+    FakeFile clean = whole(sample);
+    clean.pixels = &expected;
+    clean.width = side;
+    int result = 0;
+    ASSERT_TRUE(decodeJpeg(clean, 0, result));
+    ASSERT_EQ(result, 1);
+    ASSERT_GT(clean.reads.decodeReads, 0u);
+    for (const int failures : {1, 2}) {
+      std::vector<uint8_t> pixels(expected.size(), 0);
+      FakeFile f = whole(sample);
+      f.pixels = &pixels;
+      f.width = side;
+      f.failFrom = clean.fileReads;
+      f.failCount = failures;
+      ASSERT_TRUE(decodeJpeg(f, 0, result)) << failures;
+      if (failures == 1) {
+        EXPECT_EQ(result, 1);
+        EXPECT_FALSE(f.reads.readFailed);
+        EXPECT_EQ(pixels, expected);
+      } else {
+        EXPECT_EQ(result, READ_FAILED);
+        EXPECT_TRUE(f.reads.readFailed);
+        EXPECT_LT(f.rows, side);
+      }
+    }
+  }
+}
+
+TEST(ImageDecoders, TablesWithCodesOfSize15DecodeWhole) {
+  // Pillow's files with each DC table given codes for categories 12 to 15 (libjpeg's generic tables have them; the walk
+  // takes any values, JPEGDEC masks a code's size to 4 bits): through the reader's answers and through converter-style
+  // reads (the file's bytes only, no walk) at every scale, the same pixels.
+  for (const auto& [sample, w, h] :
+       {std::tuple{bytes(JPEG_GRAY_TABLE_15), 64, 48}, std::tuple{bytes(JPEG_COLOUR_TABLE_15), 48, 32}}) {
+    for (const int option : JPEG_OPTIONS) {
+      const int scale = option == 0 ? 1 : option;
+      std::vector<uint8_t> walked(static_cast<size_t>((w / scale) * (h / scale)), 0);
+      std::vector<uint8_t> converter = walked;
+      FakeFile f = whole(sample);
+      ASSERT_EQ(f.reads.walkedSize, sample.size());
+      f.pixels = &walked;
+      f.width = w / scale;
+      int result = 0;
+      ASSERT_TRUE(decodeJpeg(f, option, result));
+      EXPECT_EQ(result, 1) << option;
+      EXPECT_EQ(f.rows, h / scale) << option;
+      FakeFile c = whole(sample);
+      c.pixels = &converter;
+      c.width = w / scale;
+      ASSERT_TRUE(decodeJpeg(c, option, result, jpegReadStale));
+      EXPECT_EQ(result, 1) << option;
+      EXPECT_EQ(converter, walked) << option;
+    }
+  }
+}
+
+TEST(ImageDecoders, DcCodesOverTwelveBitsAreRefusedAtOpen) {
+  // A valid file whose DC table has codes of 16 bits (unused by its scan): JPEGDEC builds DC codes of at most 12 bits
+  // and refuses it at open() (the reader's "could not open"), through the reader's reads and the converters', within
+  // the sanitizers; libjpeg decodes it.
+  const std::vector<uint8_t> sample = bytes(JPEG_GRAY_DC_CODES_16_BITS);
+  for (JPEG_READ_CALLBACK* read : {jpegRead, jpegReadStale}) {
+    for (const int option : JPEG_OPTIONS) {
+      FakeFile f = whole(sample);
+      ASSERT_EQ(f.reads.walkedSize, sample.size());
+      int result = 0;
+      bool opened = false;
+      ASSERT_TRUE(decodeJpeg(f, option, result, read, &opened)) << option;
+      EXPECT_FALSE(opened) << option;
+      EXPECT_NE(result, 1) << option;
+    }
+  }
+}
+
+TEST(ImageDecoders, AProgressiveFileWithRestartsDecodesAsTheSamePictureWithout) {
+  // JPEG_PROGRESSIVE_RESTARTS and the same picture encoded without a restart interval: the same pixels, each through
+  // its walked extent (JPEGDEC decodes the first scan, at an eighth unless a half or a quarter is asked, which the
+  // reader never asks of a progressive file).
+  for (const int option : {0, JPEG_SCALE_EIGHTH}) {
+    std::vector<uint8_t> restarts(48 * 48, 0);
+    std::vector<uint8_t> plain = restarts;
+    FakeFile a = whole(bytes(JPEG_PROGRESSIVE_RESTARTS));
+    a.pixels = &restarts;
+    a.width = 48;
+    FakeFile b = whole(bytes(JPEG_PROGRESSIVE_NO_RESTARTS));
+    b.pixels = &plain;
+    b.width = 48;
+    int result = 0;
+    ASSERT_TRUE(decodeJpeg(a, option, result));
+    EXPECT_EQ(result, 1) << option;
+    ASSERT_TRUE(decodeJpeg(b, option, result));
+    EXPECT_EQ(result, 1) << option;
+    EXPECT_EQ(a.rows, 48) << option;
+    EXPECT_EQ(restarts, plain) << option;
+    EXPECT_NE(std::count(plain.begin(), plain.end(), plain[0]), static_cast<long>(plain.size()));
+  }
+}
+
+TEST(ImageDecoders, ValidFilesDecodeAlikeThroughTheConvertersReads) {
+  // The x4pro converters share the lab's patched libraries and read files whole, the file's bytes only (no walk, no
+  // restart markers dropped, no tame): valid gray, 4:2:0 colour at quality 100, progressive, restart-marker and
+  // size-15-table files decode through such reads to the pixels of the reader's walked decode, at every scale.
+  struct Sample {
+    std::vector<uint8_t> file;
+    int w;
+    int h;
+    bool progressive;
+  };
+  for (const Sample& s :
+       {Sample{bytes(JPEG_NOISE_BASELINE), 128, 128, false}, Sample{bytes(JPEG_NOISE_420), 48, 48, false},
+        Sample{bytes(JPEG_NOISE_444), 32, 32, false}, Sample{bytes(JPEG_LINE_ART_RESTARTS), 256, 192, false},
+        Sample{bytes(JPEG_FLAT_RESTARTS), 384, 288, false}, Sample{bytes(JPEG_PROGRESSIVE_512), 64, 64, true},
+        Sample{bytes(JPEG_PROGRESSIVE_RESTARTS), 48, 48, true}, Sample{bytes(JPEG_GRAY_TABLE_15), 64, 48, false},
+        Sample{bytes(JPEG_COLOUR_TABLE_15), 48, 32, false}}) {
+    for (const int option : JPEG_OPTIONS) {
+      if (s.progressive && option != 0) continue;  // decoded at an eighth whatever is asked
+      const int scale = option == 0 || s.progressive ? 1 : option;
+      const int w = s.w / scale;
+      const int h = s.h / scale;
+      std::vector<uint8_t> walked(static_cast<size_t>(w * h), 0);
+      std::vector<uint8_t> converter = walked;
+      FakeFile f = whole(s.file);
+      f.pixels = &walked;
+      f.width = w;
+      int result = 0;
+      ASSERT_TRUE(decodeJpeg(f, option, result));
+      EXPECT_EQ(result, 1) << s.file.size() << " option " << option;
+      FakeFile c = whole(s.file);
+      c.reads.walkedSize = static_cast<uint32_t>(s.file.size());  // the whole file, as the converter opens it
+      c.pixels = &converter;
+      c.width = w;
+      ASSERT_TRUE(decodeJpeg(c, option, result, jpegReadStale));
+      EXPECT_EQ(result, 1) << s.file.size() << " option " << option;
+      EXPECT_EQ(c.rows, h) << s.file.size() << " option " << option;
+      EXPECT_EQ(converter, walked) << s.file.size() << " option " << option;
+    }
+  }
+}
+
 TEST(ImageDecoders, ColourMcusLongerThanTheMarginDecodeWhole) {
   // JPEGDEC as released refills only after a whole MCU that ends past FILE_HIGHWATER, keeping 512 bytes past the mark,
   // and a colour MCU can be longer: valid 4:2:0 colour noise at quality 100 (510 to 600 bytes a MCU,
   // JPEG_NOISE_420_OUTRUN one that starts just under the mark and outruns the data) and a crafted file of the longest
   // codes the standard tables have (a block of about 206 bytes, a 4:2:0 MCU about 1.24 KB). As released the pointer
-  // then ran past the data for good. The lab patch refills before every block whose data left is under 256 bytes: each
-  // decodes whole at every scale, under the strip canary (the bit offset within the data) and the poisoned guard.
-  for (const auto& sample : {bytes(JPEG_NOISE_420), bytes(JPEG_NOISE_444), bytes(JPEG_NOISE_420_OUTRUN),
-                             fixtures::longCodeColourJpeg(true, 48, 32), fixtures::longCodeColourJpeg(false, 32, 24)}) {
+  // then ran past the data for good. The lab patch refills before every block whose data left is under 320 bytes: each
+  // decodes whole at every scale, under the strip canary (the bit offset within the data) and the poisoned guard, and
+  // so do crafted files of the longest blocks any table makes for JPEGDEC (size-15 codes, 248 bytes a block).
+  for (const auto& sample :
+       {bytes(JPEG_NOISE_420), bytes(JPEG_NOISE_444), bytes(JPEG_NOISE_420_OUTRUN),
+        fixtures::longCodeColourJpeg(true, 48, 32), fixtures::longCodeColourJpeg(false, 32, 24),
+        fixtures::longestCodeColourJpeg(true, 48, 32), fixtures::longestCodeColourJpeg(false, 32, 24)}) {
     for (const int option : JPEG_OPTIONS) {
       FakeFile f = whole(sample);
       ASSERT_EQ(f.reads.walkedSize, sample.size());

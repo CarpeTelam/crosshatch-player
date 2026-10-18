@@ -26,9 +26,11 @@ namespace GameDisplayLab {
 // How many of open()'s reads from the walked header's end on are answered as the decode's: JPEGParseInfo makes one, its
 // top-up after SOS (jpeg.inl 1780); a parse that went on past the header the walk found gets nothing after these.
 constexpr uint32_t JPEG_OPEN_TOP_UPS = 4;
-// How many more file reads one decode answer makes to fill the span its restart markers left (jpegDropRestartMarkers):
-// each fills the room the last one's markers left, so a scan of up to 15/16 markers fills a 2 KiB span.
-constexpr int JPEG_RESTART_TOP_UPS = 16;
+// How many bytes past the span asked for one decode answer reads at most to fill the room its restart markers left
+// (jpegDropRestartMarkers): a valid scan has a byte of data at least for every restart marker (each restart interval
+// starts on a byte of its own), so it fills any span long before this; a run of markers past it (crafted, or a damaged
+// file) ends the decode in an error (DecoderReads::scanFlooded) rather than reading on through the file.
+constexpr uint32_t JPEG_RESTART_READ_ON = 128 * 1024;
 
 // One image's reads: what its walk found (WalkExtent) and what the reads have done. Set by the reader before each
 // decoder's open() (start) and decode() (startDecode).
@@ -54,6 +56,15 @@ struct DecoderReads {
   // A header read was dropped: every later header read is too (the parse buffer is zeroed and the file's position no
   // longer JPEGDEC's), and once open() returns the reader gives up (ImageRead::Open) whatever open() said.
   bool headerFailed = false;
+  // A read of the file failed twice (it is tried once more), or a seek inside the walked size was refused twice: the
+  // picture is the file's failure (ImageRead::Open), never Done; the reader stops drawing and logs it once.
+  bool readFailed = false;
+  // A decode answer read JPEG_RESTART_READ_ON bytes past its span and still found it all restart markers: the decode
+  // ends in an error (ImageRead::Decode); the reader stops drawing.
+  bool scanFlooded = false;
+
+  // The read can no longer give the picture: the reader stops drawing.
+  bool failed() const { return readFailed || scanFlooded; }
 
   void start(const WalkExtent& extent) {
     *this = DecoderReads{};
@@ -70,18 +81,21 @@ struct DecoderReads {
 
 // The file's own read at `reads.position` under the reader's allowance (readAllowance: nothing past the walked size,
 // after a refused seek or, when `stopped`, once the stop is asked; then no file call is made): what the file gives,
-// the position moved by it. A read that fails is tried once more from a seek back to the position (an SD card's
-// transient error); failing again it gives nothing and loses the position (as a refused seek). `allowed` is what the
-// file should have given. A read that gave file bytes is progress.
+// the position moved by it. A read that fails or comes up short of the allowance (which already ends at the walked
+// size) is tried once more from a seek back to the position (an SD card's transient error), as the walk's reads are;
+// failing again it gives nothing, loses the position (as a refused seek) and marks the read failed
+// (DecoderReads::readFailed); short again, it gives what it got (a file that shrank since its walk). `allowed` is what
+// the file should have given. A read that gave file bytes is progress.
 template <typename File>
 int32_t readUnderAllowance(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const bool stopped,
                            int32_t& allowed) {
   allowed = reads.seekFailed ? 0 : readAllowance(reads.position, len, reads.walkedSize, stopped);
   if (allowed <= 0) return 0;
   int32_t got = file.read(buf, allowed);
-  if (got < 0 && file.seek(reads.position)) got = file.read(buf, allowed);
+  if (got != allowed && file.seek(reads.position)) got = file.read(buf, allowed);
   if (got < 0) {
     reads.seekFailed = true;
+    reads.readFailed = true;
     return 0;
   }
   if (got == 0) return 0;
@@ -101,6 +115,12 @@ bool readExactlyAt(File& file, const uint32_t offset, uint8_t* out, const size_t
   return false;
 }
 
+// A call tried once more when it fails (an SD card's transient error): an open, a seek. True when either try worked.
+template <typename Call>
+bool tryTwice(Call&& call) {
+  return call() || call();
+}
+
 // PNGdec's read: the length it asked for always, the rest 0xFF (fillPngRead).
 template <typename File>
 int32_t answerPngRead(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len) {
@@ -109,12 +129,14 @@ int32_t answerPngRead(File& file, DecoderReads& reads, uint8_t* buf, const int32
   return fillPngRead(buf, len, got);
 }
 
-// Either decoder's seek: the position, or -1 when the file refused it (the reads then give nothing until a seek
-// succeeds).
+// Either decoder's seek: the position, or -1 when the file refused it, twice (it is tried once more; the reads then
+// give nothing until a seek succeeds). A refused seek inside the walked size is the file's failure
+// (DecoderReads::readFailed); past it, the decoder's own (the file may be shorter).
 template <typename File>
 int32_t answerSeek(File& file, DecoderReads& reads, const int32_t position) {
   if (!file.isOpen()) return -1;
-  reads.seekFailed = position < 0 || !file.seek(static_cast<uint32_t>(position));
+  reads.seekFailed = position < 0 || !tryTwice([&] { return file.seek(static_cast<uint32_t>(position)); });
+  if (reads.seekFailed && position >= 0 && static_cast<uint32_t>(position) < reads.walkedSize) reads.readFailed = true;
   if (reads.seekFailed) return -1;
   reads.position = static_cast<uint32_t>(position);
   return position;
@@ -124,10 +146,11 @@ int32_t answerSeek(File& file, DecoderReads& reads, const int32_t position) {
 // or dropped (answerJpegHeaderRead): dropped at a stop, a short or failed read, a refused seek, past
 // jpegHeaderReadCap header reads, or once one was (the latch). Every other read is the decode's, never latched: the
 // file's bytes for decoderReadCap reads, their restart markers dropped (jpegDropRestartMarkers: JPEGDEC counts
-// restarts by its interval, and its filter would drop them anyway) and the span topped up from the file in up to
-// JPEG_RESTART_TOP_UPS more reads (still unfilled with the file going on, the bytes there are told: never zeros inside
-// the scan, and never none: with no byte yet it reads on until one comes or the file ends), then answerJpegDecodeRead
-// (the rest zeroed, the whole span told, runs of 0xFF tamed); open()'s top-up at the header's end is one (past
+// restarts by its interval, and its filter would drop them anyway) and the span topped up from the file until it is
+// full, the file gives no more (the walked size, a stop, a failure), or JPEG_RESTART_READ_ON bytes past the span were
+// read (DecoderReads::scanFlooded: the decode ends in an error), then answerJpegDecodeRead (the rest zeroed, the whole
+// span told, runs of 0xFF tamed): a decode answer is never short of its span, so no block starts on fewer bytes than
+// the lab patch's refill keeps; open()'s top-up at the header's end is one (past
 // JPEG_OPEN_TOP_UPS of them in open(), a read gets a zeroed span and 0, so a parse that ran past the walked header
 // ends). Without a handle (the open callback failed) a read is taken as at the walked size. `size` is JPEGFILE.iSize
 // (the walked size, or the file's when it shrank) and `iPos` JPEGFILE.iPos, which JPEGDEC tracks itself
@@ -155,25 +178,24 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
     answer = answerJpegHeaderRead(buf, len, 0, false);
   } else {
     int32_t got = 0;
-    bool unfilled = false;
     if (file.isOpen() && ++reads.decodeReads <= decoderReadCap(reads.walkedSize)) {
       int32_t allowed = 0;
-      got = jpegDropRestartMarkers(buf, readUnderAllowance(file, reads, buf, len, file.stopped(), allowed));
-      for (int more = 0; got < len; ++more) {
-        // Never 0 while the file has scan data: JPEGFilter given nothing reads the byte after a 0xFF it holds.
-        if (more >= JPEG_RESTART_TOP_UPS && got > 0) {
-          unfilled = true;
+      const int32_t first = readUnderAllowance(file, reads, buf, len, file.stopped(), allowed);
+      uint32_t read = first > 0 ? static_cast<uint32_t>(first) : 0;
+      got = jpegDropRestartMarkers(buf, first);
+      while (got < len) {
+        if (read >= static_cast<uint32_t>(len) + JPEG_RESTART_READ_ON) {
+          reads.scanFlooded = true;
           break;
         }
         const int32_t extra = readUnderAllowance(file, reads, buf + got, len - got, file.stopped(), allowed);
         if (extra <= 0) break;
+        read += static_cast<uint32_t>(extra);
         // Over the whole span again: a 0xFF that ended the last read pairs with this one's first byte.
         got = jpegDropRestartMarkers(buf, got + extra);
       }
     }
-    // Still room after every top-up, the file going on (a scan almost all markers): told what there is, never zeros in
-    // the middle of the scan (the lab patch refills again before the next block); otherwise the whole span.
-    answer = unfilled ? got : answerJpegDecodeRead(buf, len, got);
+    answer = answerJpegDecodeRead(buf, len, got);
   }
   iPos = jpegPositionAfterRead(file.isOpen() ? reads.position : reads.walkedSize,
                                static_cast<uint32_t>(size < 0 ? 0 : size));
@@ -193,9 +215,9 @@ int32_t answerJpegSeek(File& file, DecoderReads& reads, const int32_t position, 
 // file call (a wait on the card's mutex can be long and legitimate), and leaving and rejoining feed the watchdog's
 // timer (ESP-IDF's task_wdt.c resets it whenever every other watched task has reset), so a decoder that spins making
 // reads but no progress would never trip it: once the quiet time reaches the limit (the watchdog's timeout), or the
-// wall time twice the limit, less the time in calls that succeeded (slow failing reads with a loop between them; a long
-// wait on the card's mutex before a call that works is no reset), the task stops leaving, and the next file call is
-// watched like the rest.
+// wall time twice the limit, less the time in reads that returned bytes (slow failing reads with a loop between them
+// count; a long wait on the card's mutex before a read that gives bytes is no reset; a seek's or an open's wait counts,
+// as they return none), the task stops leaving, and the next file call is watched like the rest.
 class WatchdogQuiet {
  public:
   explicit WatchdogQuiet(const uint32_t limitMs, const uint32_t nowMs)
@@ -213,11 +235,11 @@ class WatchdogQuiet {
     callMs_ = nowMs;
     return quietMs_ < limitMs_ && nowMs - progressMs_ < 2 * limitMs_;
   }
-  // After the file call: its time is not quiet time; when it succeeded (a wait on the card's mutex, however long,
-  // before a read, a seek, an open or a close that worked) not wall time either, so a valid read is never reset for
-  // another task's use of the card; a call that failed counts.
-  void back(const uint32_t nowMs, const bool succeeded = true) {
-    if (succeeded) progressMs_ += nowMs - callMs_;
+  // After the file call: its time is not quiet time; when it returned bytes (a read: a wait on the card's mutex,
+  // however long, before it) not wall time either, so a valid read is never reset for another task's use of the card;
+  // any other call (a failed or short read, a seek, an open, a close) counts.
+  void back(const uint32_t nowMs, const bool gaveBytes = false) {
+    if (gaveBytes) progressMs_ += nowMs - callMs_;
     sinceMs_ = nowMs;
   }
   uint32_t quietMs() const { return quietMs_; }
@@ -287,18 +309,18 @@ class TaskWatchdog {
       left_ = dog_ != nullptr && dog_->quiet_.mayLeave(dog_->dog_.nowMs()) && dog_->owned_ && dog_->dog_.remove() == 0;
     }
     ~Gap() {
-      if (dog_ != nullptr) dog_->endGap(left_, succeeded_);
+      if (dog_ != nullptr) dog_->endGap(left_, gaveBytes_);
     }
     Gap(const Gap&) = delete;
     Gap& operator=(const Gap&) = delete;
     bool left() const { return left_; }
-    // The call failed (a read error, a refused seek, an open that did not open): its time counts as wall time.
-    void failed() { succeeded_ = false; }
+    // The call was a read that returned the bytes asked: its time is not wall time (any other call's is).
+    void gaveBytes() { gaveBytes_ = true; }
 
    private:
     TaskWatchdog* dog_;
     bool left_ = false;
-    bool succeeded_ = true;
+    bool gaveBytes_ = false;
   };
 
  private:
@@ -306,8 +328,8 @@ class TaskWatchdog {
     const int first = dog_.add();
     return first == 0 ? 0 : dog_.add();
   }
-  void endGap(const bool left, const bool succeeded) {
-    quiet_.back(dog_.nowMs(), succeeded);
+  void endGap(const bool left, const bool gaveBytes) {
+    quiet_.back(dog_.nowMs(), gaveBytes);
     if (!left) return;
     const int error = addTwice();
     if (error == 0) return;
