@@ -234,6 +234,13 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   marks strong in the dark and gray bands, dark marks faint on white, the black band's returns falling short after a
   brief lightening). With Static, Slow and the Ladder this is the complete pre-extraction reference for dlab-g3's
   hardware check of the shared runner.
+  Slow run with the ladder-predicted table (owner, 2026-10-18, four photos): the trails behind the rectangles are
+  down to faint tints (band 2's near-white and near-black stripes, band 3's white stripe, all gone or slight), so
+  the ladder replaces by-eye tuning as the calibration method. Residuals: K>D at 1 pulse lands a touch light (one
+  pulse is the smallest unit; the via route in dlab-g2 covers it); K>L at 2 slightly light where the curve said
+  slightly dark (route hysteresis, the history routes' job); the Tuning screen's text ghosts through the painted
+  bands after one clean (pixels that were black text arrive at a different gray), so dlab-g2's run cleans white,
+  black, white.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.

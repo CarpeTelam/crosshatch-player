@@ -44,12 +44,16 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
    retarget bookkeeping (a pixel mid-leg keeps its remaining doses and its next target); the file carries `via` in
    version 2; Tuning shows a Via row per transition only in the Other section's "routes" group. Pinned by a test
    that a 0>1 retarget delivers the 0>2 leg then the 2>1 leg.
-7. **Transparent.** The 3-bit level field's value 7 is reserved as `Shade::TRANSPARENT` (D14, the owner's ask for
+7. **Double clean.** A run's clean before the paint is white, then black, then white (three FULL refreshes through
+   the lab's clean), because the previous screen's text ghosts through the painted bands after one (D14, the owner's
+   Slow run with the ladder table); the Clean row does the same; the ladder's base and the viewer inherit it through
+   the shared runner. Logged once per run.
+8. **Transparent.** The 3-bit level field's value 7 is reserved as `Shade::TRANSPARENT` (D14, the owner's ask for
    sprites): a level-coded bitmap pixel at 7 is not retargeted. `GrayModel::retargetBitmap(x, y, w, h, levels,
    preset)` (one byte per pixel, 0..6 a level, 7 transparent) retargets the others and skips it, pinned by a test; the
    preset codec rejects 7 anywhere in a table; the game engine's own sprite plumbing over the gray engine is a later
    story and not this one.
-8. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
+9. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
    behaviour and tests unchanged.
 
 ## Boundaries & Constraints
