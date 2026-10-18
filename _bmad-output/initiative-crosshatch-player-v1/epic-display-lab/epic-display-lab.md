@@ -217,6 +217,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   count read off the 0x06 curve: from white 6>5 2, 6>4 3, 6>3 4, 6>2 5, 6>1 7, 6>0 12; from black 0>2 1, 0>3 2,
   0>4 2 to 3, 0>5 4, 0>6 8 (the intermediate-to-intermediate entries interpolate on the same curves until a ladder
   from a gray measures them).
+  Static run on the dlab-g1 firmware (owner, 2026-10-18, five photos: the settle and four flips, the pre-extraction
+  reference for dlab-g3's hardware check): the flips are cumulative shifts (1, 3, 2, 3) and every hold shows the
+  pause symbol; a faint lighter stripe where the previous rectangles sat shows small route dependence; the dark gray
+  reached from black is lighter and grainier than the one reached from white (K>D 2 overshoots: one pulse from
+  black is level 2 on the ladder, so the seven-level 0>2 is one pulse); the intermediate shades are grainy where
+  black and white are smooth, the panel's own partial-state variation.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
