@@ -15,15 +15,18 @@ their doses are read off a photo instead of guessed.
 
 **Approach:** A fourth mode on the transition test's Mode row, **Ladder** (Static → Slow → Fast → Ladder), that paints
 a measurement pattern instead of bands and rectangles, in two stages, each ending in a hold (dlab-c4's mechanics,
-marker included, Hold row honoured):
-1. **Stage 1, the ladder.** The logical screen splits into a top half starting from white and a bottom half starting
+the pause marker included; the Ladder holds regardless of the Hold row, since without the holds there is nothing to
+photograph; amended at review):
+1. **Stage 1, the ladder.** The rows above the marker's 16-row strip split into a top half starting from white and a bottom half starting
    from black (the clean leaves the panel white, so the bottom half is first driven to black with the preset's full
    W>K dose and settled before the stage starts, logged `gray ladder: base painted`). Each half is 24 columns, column
    n (1..24, left to right) receives exactly n one-frame pulses toward the opposite shade, one per slot (the held
-   rhythm, so each pulse is a scan), through a new pure entry point `GrayModel::driveRect(x, y, w, h, Toward, doses)`
+   rhythm, so each pulse is a scan), end-aligned so every column's last pulse lands in the stage's last slot and
+   every column rests the same before the photo (amended at review), through a new pure entry point `GrayModel::driveRect(x, y, w, h, Toward, doses)`
    that sets the doses directly without the table (level and target bookkeeping as a retarget's, so settle detection
-   and the masks work unchanged). A 1-column gutter of the half's origin shade separates columns where the width
-   allows (480 wide: 20 px columns, no gutter; 800 wide: 32 px columns with a 1 px gutter). After the longest column
+   and the masks work unchanged). A 1 px gutter of the half's origin shade separates columns at every width with
+   room (480 wide: 19 px columns; 800 wide: 32 px), so columns are countable against an untouched reference
+   (amended at review). After the longest column
    settles (24 slots), the scene holds: `gray hold: ladder 1`.
 2. **Stage 2, the return.** Next resumes: each column is driven back toward its origin with the same n pulses, settles,
    holds: `gray hold: ladder 2`. A column that is not back at its origin shows the asymmetry of that direction.
@@ -49,11 +52,11 @@ screens; no change to the Static, Slow and Fast modes' behaviour.
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
 | Ladder mode | Mode row stepped past Fast | "Ladder"; Run paints the base, then stage 1 | — |
-| Stage 1 | 24 slots after the base | column n has had n pulses; settle; hold `ladder 1` | Hold off: stage 2 follows at once |
-| Stage 2 | Next while holding | columns driven back n pulses; settle; hold `ladder 2` | Hold off: the run ends |
+| Stage 1 | 24 slots after the base | column n has had n pulses; settle; hold `ladder 1` | the Hold row is ignored: the Ladder always holds |
+| Stage 2 | Next while holding | columns driven back n pulses; settle; hold `ladder 2` | — |
 | End | Next while holding at stage 2 | the run ends, rows return with "Finished", Run replays | — |
 | Narrow screen | logical width < 48 | columns at least 1 px, as many as fit, logged | — |
-| Session cap mid-stage | cap reached | the cap clean runs; the ladder restarts from the base, logged | — |
+| Session cap mid-stage | cap reached | the cap clean runs; the ladder restarts from the base, logged; a cap that cuts off the marker's way back after `ladder 2` finishes the run (the photo is taken) | practically unreachable: the run's clean resets the budget |
 | driveRect | rect, Toward::Dark, 5 | every pixel in the rect: target K (or W for Light), 5 doses left, level kept | out-of-model clipped |
 
 ## Verification
