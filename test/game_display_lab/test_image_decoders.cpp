@@ -33,6 +33,9 @@
 #include "ImageRows.h"
 #include "image_fixtures.h"
 
+// The lab JPEGDEC patch's block margin, a variable in this build (CMakeLists.txt, jpegdec_as_device.cpp).
+extern int crosshatchJpegBlockMargin;
+
 // The decoders' objects' fields, open to the canaries (the headers' own types and declarations are unchanged).
 #define private public
 // As GrayImageReader.cpp: the two headers' byte-order macros differ, so JPEGDEC's are dropped before PNGdec.h.
@@ -86,6 +89,10 @@ struct FakeFile {
   bool poisonGuard = true;
   bool watchStrips = true;
   bool pointerLeft = false;
+  // Whether the decode's end is checked against the canary (the margin test records it instead).
+  bool expectPointerInside = true;
+  // JPEGDEC's last error after open() (getLastError), for the reasons the reader gives.
+  int lastError = 0;
   // When set, the pixels drawn (PNG: each row as gray; JPEG: the 8-bit blocks), `width` a row.
   std::vector<uint8_t>* pixels = nullptr;
   int width = 0;
@@ -342,6 +349,7 @@ bool decodeJpeg(FakeFile& f, const int option, int& result, JPEG_READ_CALLBACK* 
   try {
     f.reads.startJpegOpen();
     result = jpeg->open("fake.jpg", openFake, closeFake, read, jpegSeek, jpegDraw);
+    f.lastError = jpeg->getLastError();
     // As the reader: a dropped header read is a failed open whatever open() made of the zeros; a size outside the
     // converters' limits is refused before decode() (a corrupt SOF can claim 65,535 rows).
     if (f.reads.headerFailed) result = -2;
@@ -372,7 +380,9 @@ bool decodeJpeg(FakeFile& f, const int option, int& result, JPEG_READ_CALLBACK* 
   jpeg->close();
   ASAN_UNPOISON_MEMORY_REGION(jpeg->_jpeg.ucGuard, sizeof(jpeg->_jpeg.ucGuard));
   f.jpeg = nullptr;
-  EXPECT_FALSE(f.pointerLeft) << "JPEGDEC's bit pointer left the data in its buffer";
+  if (f.expectPointerInside) {
+    EXPECT_FALSE(f.pointerLeft) << "JPEGDEC's bit pointer left the data in its buffer";
+  }
   return !spun;
 }
 
@@ -1098,6 +1108,23 @@ TEST(ImageDecoders, AReadThatFailsTwiceDuringTheDecodeIsTheFilesFailure) {
   }
 }
 
+TEST(ImageDecoders, AReadShortTwiceInsideTheWalkedSizeIsTheFilesFailure) {
+  // The file cut after its walk (rewritten meanwhile, or a card answering short): the reader refuses its open when it
+  // is already shorter (shrankSinceWalk); cut after the open, its reads come up short, twice, inside the walked size:
+  // the file's failure ("could not open"), never zeros decoded as done.
+  for (const auto& sample : {bytes(JPEG_NOISE_BASELINE), bytes(PNG_NOISE)}) {
+    const bool png = sample[0] == 0x89;
+    FakeFile f = whole(sample);
+    ASSERT_TRUE(shrankSinceWalk(f.reads, sample.size() * 3 / 4));
+    f.size = sample.size() * 3 / 4;  // the walk saw it whole
+    int result = 0;
+    ASSERT_TRUE(png ? decodePng(f, result) : decodeJpeg(f, 0, result));
+    EXPECT_EQ(result, READ_FAILED) << sample.size();
+    EXPECT_TRUE(f.reads.readFailed);
+    EXPECT_GE(f.reads.failedAt, static_cast<uint32_t>(sample.size() / 2));
+  }
+}
+
 TEST(ImageDecoders, TablesWithCodesOfSize15DecodeWhole) {
   // Pillow's files with each DC table given codes for categories 12 to 15 (libjpeg's generic tables have them; the walk
   // takes any values, JPEGDEC masks a code's size to 4 bits): through the reader's answers and through converter-style
@@ -1128,8 +1155,8 @@ TEST(ImageDecoders, TablesWithCodesOfSize15DecodeWhole) {
 
 TEST(ImageDecoders, DcCodesOverTwelveBitsAreRefusedAtOpen) {
   // A valid file whose DC table has codes of 16 bits (unused by its scan): JPEGDEC builds DC codes of at most 12 bits
-  // and refuses it at open() (the reader's "could not open"), through the reader's reads and the converters', within
-  // the sanitizers; libjpeg decodes it.
+  // and refuses it at open() with JPEG_UNSUPPORTED_FEATURE (the reader's "format or size not supported"), through the
+  // reader's reads and the converters', within the sanitizers; libjpeg decodes it.
   const std::vector<uint8_t> sample = bytes(JPEG_GRAY_DC_CODES_16_BITS);
   for (JPEG_READ_CALLBACK* read : {jpegRead, jpegReadStale}) {
     for (const int option : JPEG_OPTIONS) {
@@ -1140,6 +1167,142 @@ TEST(ImageDecoders, DcCodesOverTwelveBitsAreRefusedAtOpen) {
       ASSERT_TRUE(decodeJpeg(f, option, result, read, &opened)) << option;
       EXPECT_FALSE(opened) << option;
       EXPECT_NE(result, 1) << option;
+      EXPECT_EQ(f.lastError, JPEG_UNSUPPORTED_FEATURE) << option;
+    }
+  }
+}
+
+// The reader's answers, each decode answer `phase` bytes shorter than asked, `phase` stepping through 0 to 299 by 37
+// from `start`: the data left in JPEGDEC's buffer before each refill takes many values.
+int phase = 0;
+int32_t jpegReadPhased(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
+  FakeFile& f = *static_cast<FakeFile*>(pFile->fHandle);
+  if (f.reads.jpegOpening || len <= 300) return jpegRead(pFile, buf, len);
+  phase = (phase + 37) % 300;
+  return jpegRead(pFile, buf, len - phase);
+}
+
+TEST(ImageDecoders, TheBlockMarginsDerivedMinimumHolds) {
+  // The margin's derivation, for the device's 32-bit bit reader (which this build runs, jpegdec_as_device.h): the
+  // longest block JPEGDEC reads is a DC of 30 bits and 63 AC coefficients of 31, 1,983 bits; with up to 31 bits of the
+  // bit offset carried in, 2,014 bits, 252 bytes, and the window reads 4 bytes past them: 256. The crafted
+  // longest-block files, read with spans shortened by many amounts so a block starts at every data-left value, decode
+  // whole under the poisoned guard and the canaries at every margin from the smallest that holds (found here) up, that
+  // smallest is at most the derived 256, and one byte below it a block runs past the data.
+  ASSERT_EQ(crosshatchJpegBlockMargin, 320);
+  const std::vector<std::vector<uint8_t>> files = {fixtures::longestCodeColourJpeg(true, 96, 64),
+                                                   fixtures::longestCodeColourJpeg(false, 64, 48)};
+  const auto holds = [&files](const int margin) {
+    crosshatchJpegBlockMargin = margin;
+    bool all = true;
+    for (const auto& file : files) {
+      for (int start = 0; start < 300; start += 23) {
+        phase = start;
+        FakeFile f = whole(file);
+        f.watchStrips = false;
+        f.expectPointerInside = false;
+        int result = 0;
+        EXPECT_TRUE(decodeJpeg(f, 0, result, jpegReadPhased)) << margin;
+        all = all && result == 1 && !f.pointerLeft;
+      }
+    }
+    return all;
+  };
+  int smallest = 320;
+  while (smallest > 200 && holds(smallest - 1)) --smallest;
+  crosshatchJpegBlockMargin = 320;
+  std::printf("The smallest block margin that holds: %d\n", smallest);
+  EXPECT_LE(smallest, 256);
+  EXPECT_GT(smallest, 200);  // below it the sweep found a block running past the data
+  for (const int margin : {smallest, 256, 320}) EXPECT_TRUE(holds(margin)) << margin;
+  EXPECT_FALSE(holds(smallest - 1));
+  crosshatchJpegBlockMargin = 320;
+}
+
+TEST(ImageDecoders, AProgressiveFirstScanOfYAloneIsReadInMcuOrder) {
+  // A colour progressive file whose first scan is the DC of Y alone (mozjpeg's default) holds Y's blocks in its own
+  // raster order, while JPEGDEC reads them in the frame's MCU order: in a 4:2:0 frame (four Y blocks a MCU) the picture
+  // comes out block-scrambled with a result of 1, so the walk refuses it (Unsupported, "not supported"); in a 4:4:4
+  // frame (one block of each component a MCU) the orders agree, and it decodes to its interleaved twin's pixels.
+  for (const auto& sample : {bytes(JPEG_PROGRESSIVE_420_Y_FIRST), bytes(JPEG_PROGRESSIVE_420_Y_FIRST_40)}) {
+    FakeFile f;
+    EXPECT_FALSE(walkInto(f, sample, sample.size(), false)) << sample.size();
+  }
+  // What the walk keeps from the decoder: the 4:2:0 file's blocks out of place.
+  std::vector<uint8_t> twin(6 * 4, 0);
+  std::vector<uint8_t> scrambled = twin;
+  FakeFile a = whole(bytes(JPEG_PROGRESSIVE_420_INTERLEAVED));
+  a.pixels = &twin;
+  a.width = 6;
+  FakeFile b;
+  const std::vector<uint8_t> yFirst = bytes(JPEG_PROGRESSIVE_420_Y_FIRST);
+  b.source = std::make_shared<const std::vector<uint8_t>>(yFirst);
+  b.size = yFirst.size();
+  b.reads.walkedSize = static_cast<uint32_t>(yFirst.size());  // as if the walk had let it through
+  b.reads.headerEnd = static_cast<uint32_t>(yFirst.size());
+  b.pixels = &scrambled;
+  b.width = 6;
+  int result = 0;
+  ASSERT_TRUE(decodeJpeg(a, 0, result));
+  ASSERT_EQ(result, 1);
+  ASSERT_TRUE(decodeJpeg(b, 0, result, jpegReadStale));
+  EXPECT_EQ(result, 1);
+  EXPECT_NE(scrambled, twin);
+  for (const int option : {0, JPEG_SCALE_EIGHTH}) {
+    std::vector<uint8_t> interleaved(5 * 3, 0);
+    std::vector<uint8_t> y = interleaved;
+    FakeFile i = whole(bytes(JPEG_PROGRESSIVE_444_INTERLEAVED));
+    i.pixels = &interleaved;
+    i.width = 5;
+    FakeFile g = whole(bytes(JPEG_PROGRESSIVE_444_Y_FIRST));
+    ASSERT_EQ(g.reads.walkedSize, sizeof(JPEG_PROGRESSIVE_444_Y_FIRST));
+    g.pixels = &y;
+    g.width = 5;
+    ASSERT_TRUE(decodeJpeg(i, option, result));
+    EXPECT_EQ(result, 1);
+    ASSERT_TRUE(decodeJpeg(g, option, result));
+    EXPECT_EQ(result, 1);
+    EXPECT_EQ(g.rows, 3);
+    EXPECT_EQ(y, interleaved) << option;
+    EXPECT_NE(std::count(y.begin(), y.end(), y[0]), static_cast<long>(y.size()));
+  }
+}
+
+// The converters' JPEG read (JpegToBmpConverter.cpp's bmpJpegRead): the file's bytes straight from the handle, a
+// failed read taken as 0 bytes, no retry, JPEGFILE.iPos moved by what it gave.
+int32_t jpegReadAsConverter(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
+  FakeFile& f = *static_cast<FakeFile*>(pFile->fHandle);
+  countRead(f);
+  FakeAccess file{f};
+  int32_t n = file.read(buf, len);
+  if (n < 0) n = 0;
+  pFile->iPos += n;
+  return n;
+}
+
+TEST(ImageDecoders, TheConvertersReadsThatFailEndTheDecodeBounded) {
+  // A card whose reads fail from some point on, read as the converters read it (the x4pro converters share the lab's
+  // patched JPEGDEC): JPEGGetMoreData asks again before every block while its position is short of the size, each
+  // answer 0, until the blocks' bits pass the data left and the patch ends the decode. The reads are bounded (about
+  // one a block), the decode fails, and nothing reads past the buffer (the poisoned guard). (That JPEGGetMoreData
+  // itself ends the decode on a read of 0 bytes with the file going on is a library change left for later.)
+  for (const auto& [sample, blocks] :
+       {std::pair{bytes(JPEG_NOISE_BASELINE), 256}, std::pair{bytes(JPEG_NOISE_420), 54}}) {
+    FakeFile clean = whole(sample);
+    clean.reads.walkedSize = static_cast<uint32_t>(sample.size());
+    int result = 0;
+    ASSERT_TRUE(decodeJpeg(clean, 0, result, jpegReadAsConverter));
+    ASSERT_EQ(result, 1);
+    for (int from = 2; from <= clean.fileReads; ++from) {
+      FakeFile f = whole(sample);
+      f.reads.walkedSize = static_cast<uint32_t>(sample.size());
+      f.failFrom = from;
+      f.failCount = 1 << 30;
+      f.watchStrips = false;
+      f.expectPointerInside = false;  // the decode's end may leave it past the data (inside the buffer)
+      ASSERT_TRUE(decodeJpeg(f, 0, result, jpegReadAsConverter)) << from;
+      EXPECT_NE(result, 1) << from;
+      EXPECT_LE(f.reads_, clean.reads_ + blocks + 2) << from;
     }
   }
 }

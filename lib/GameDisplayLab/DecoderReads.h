@@ -31,6 +31,10 @@ constexpr uint32_t JPEG_OPEN_TOP_UPS = 4;
 // starts on a byte of its own), so it fills any span long before this; a run of markers past it (crafted, or a damaged
 // file) ends the decode in an error (DecoderReads::scanFlooded) rather than reading on through the file.
 constexpr uint32_t JPEG_RESTART_READ_ON = 128 * 1024;
+// A decode answer's top-ups read at least this much (or the span's length, when it is shorter) at a time, into
+// DecoderReads::topUp, when the room left in the span is smaller: a run of markers met with a few bytes of room costs a
+// call per 512 bytes of it, not one per byte or two; what the span cannot take goes back to the file (a seek).
+constexpr int32_t JPEG_TOP_UP_BYTES = 512;
 
 // One image's reads: what its walk found (WalkExtent) and what the reads have done. Set by the reader before each
 // decoder's open() (start) and decode() (startDecode).
@@ -56,15 +60,24 @@ struct DecoderReads {
   // A header read was dropped: every later header read is too (the parse buffer is zeroed and the file's position no
   // longer JPEGDEC's), and once open() returns the reader gives up (ImageRead::Open) whatever open() said.
   bool headerFailed = false;
-  // A read of the file failed twice (it is tried once more), or a seek inside the walked size was refused twice: the
-  // picture is the file's failure (ImageRead::Open), never Done; the reader stops drawing and logs it once.
+  // A read of the file failed or came up short twice inside the walked size (it is tried once more), or a seek inside
+  // the walked size was refused twice: the picture is the file's failure (ImageRead::Open), never Done; the reads give
+  // nothing more, the reader stops drawing and logs it once, with `failedAt`, the offset whose read or seek failed.
   bool readFailed = false;
+  uint32_t failedAt = 0;
   // A decode answer read JPEG_RESTART_READ_ON bytes past its span and still found it all restart markers: the decode
   // ends in an error (ImageRead::Decode); the reader stops drawing.
   bool scanFlooded = false;
 
-  // The read can no longer give the picture: the reader stops drawing.
+  // The read can no longer give the picture: the reader stops drawing, and later reads make no file call.
   bool failed() const { return readFailed || scanFlooded; }
+  // The first failure's offset is kept.
+  void fail(const uint32_t at) {
+    if (!readFailed) failedAt = at;
+    readFailed = true;
+  }
+  // A decode answer's top-up reads, when its room is under JPEG_TOP_UP_BYTES.
+  uint8_t topUp[JPEG_TOP_UP_BYTES] = {};
 
   void start(const WalkExtent& extent) {
     *this = DecoderReads{};
@@ -79,23 +92,30 @@ struct DecoderReads {
   }
 };
 
+// A call tried once more when it fails (an SD card's transient error): an open, a seek. True when either try worked.
+template <typename Call>
+bool tryTwice(Call&& call) {
+  return call() || call();
+}
+
 // The file's own read at `reads.position` under the reader's allowance (readAllowance: nothing past the walked size,
-// after a refused seek or, when `stopped`, once the stop is asked; then no file call is made): what the file gives,
-// the position moved by it. A read that fails or comes up short of the allowance (which already ends at the walked
-// size) is tried once more from a seek back to the position (an SD card's transient error), as the walk's reads are;
-// failing again it gives nothing, loses the position (as a refused seek) and marks the read failed
-// (DecoderReads::readFailed); short again, it gives what it got (a file that shrank since its walk). `allowed` is what
-// the file should have given. A read that gave file bytes is progress.
+// after a refused seek or a failed read or, when `stopped`, once the stop is asked; then no file call is made): what
+// the file gives, the position moved by it. A read that fails or comes up short of the allowance (which already ends at
+// the walked size, so a valid file never comes up short) is tried once more from a seek back to the position (the seek
+// itself tried twice: an SD card's transient error), as the walk's reads are; failing or short again, the read is the
+// file's failure (DecoderReads::fail at the position): a failed one gives nothing and loses the position (as a refused
+// seek), a short one gives what it got. `allowed` is what the file should have given. A read that gave file bytes is
+// progress.
 template <typename File>
 int32_t readUnderAllowance(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const bool stopped,
                            int32_t& allowed) {
-  allowed = reads.seekFailed ? 0 : readAllowance(reads.position, len, reads.walkedSize, stopped);
+  allowed = reads.seekFailed || reads.readFailed ? 0 : readAllowance(reads.position, len, reads.walkedSize, stopped);
   if (allowed <= 0) return 0;
   int32_t got = file.read(buf, allowed);
-  if (got != allowed && file.seek(reads.position)) got = file.read(buf, allowed);
+  if (got != allowed && tryTwice([&] { return file.seek(reads.position); })) got = file.read(buf, allowed);
+  if (got != allowed) reads.fail(reads.position);
   if (got < 0) {
     reads.seekFailed = true;
-    reads.readFailed = true;
     return 0;
   }
   if (got == 0) return 0;
@@ -115,17 +135,16 @@ bool readExactlyAt(File& file, const uint32_t offset, uint8_t* out, const size_t
   return false;
 }
 
-// A call tried once more when it fails (an SD card's transient error): an open, a seek. True when either try worked.
-template <typename Call>
-bool tryTwice(Call&& call) {
-  return call() || call();
-}
+// The file shrank since its walk (it was rewritten, or the card answers for a shorter one): its open is the file's
+// failure, not a decode of what is left.
+inline bool shrankSinceWalk(const DecoderReads& reads, const uint64_t realSize) { return realSize < reads.walkedSize; }
 
 // PNGdec's read: the length it asked for always, the rest 0xFF (fillPngRead).
 template <typename File>
 int32_t answerPngRead(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len) {
   int32_t allowed = 0;
-  const int32_t got = file.isOpen() ? readUnderAllowance(file, reads, buf, len, file.stopped(), allowed) : 0;
+  const int32_t got =
+      file.isOpen() && !reads.failed() ? readUnderAllowance(file, reads, buf, len, file.stopped(), allowed) : 0;
   return fillPngRead(buf, len, got);
 }
 
@@ -136,7 +155,9 @@ template <typename File>
 int32_t answerSeek(File& file, DecoderReads& reads, const int32_t position) {
   if (!file.isOpen()) return -1;
   reads.seekFailed = position < 0 || !tryTwice([&] { return file.seek(static_cast<uint32_t>(position)); });
-  if (reads.seekFailed && position >= 0 && static_cast<uint32_t>(position) < reads.walkedSize) reads.readFailed = true;
+  if (reads.seekFailed && position >= 0 && static_cast<uint32_t>(position) < reads.walkedSize) {
+    reads.fail(static_cast<uint32_t>(position));
+  }
   if (reads.seekFailed) return -1;
   reads.position = static_cast<uint32_t>(position);
   return position;
@@ -163,7 +184,7 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
   int32_t answer = 0;
   if (reads.jpegOpening && position < reads.headerEnd) {
     const bool overCap = ++reads.headerReads > jpegHeaderReadCap(reads.windowMoves);
-    if (reads.headerFailed || overCap || !file.isOpen() || reads.seekFailed || file.stopped()) {
+    if (reads.headerFailed || overCap || !file.isOpen() || reads.seekFailed || reads.failed() || file.stopped()) {
       reads.headerFailed = true;
       answer = answerJpegHeaderRead(buf, len, 0, true);
     } else {
@@ -178,21 +199,43 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
     answer = answerJpegHeaderRead(buf, len, 0, false);
   } else {
     int32_t got = 0;
-    if (file.isOpen() && ++reads.decodeReads <= decoderReadCap(reads.walkedSize)) {
+    // Once the read has failed or the scan flooded, the rest is zeros, without a file call.
+    if (file.isOpen() && !reads.failed() && ++reads.decodeReads <= decoderReadCap(reads.walkedSize)) {
       int32_t allowed = 0;
       const int32_t first = readUnderAllowance(file, reads, buf, len, file.stopped(), allowed);
       uint32_t read = first > 0 ? static_cast<uint32_t>(first) : 0;
       got = jpegDropRestartMarkers(buf, first);
+      const int32_t smallRoom = len < JPEG_TOP_UP_BYTES ? len : JPEG_TOP_UP_BYTES;
       while (got < len) {
         if (read >= static_cast<uint32_t>(len) + JPEG_RESTART_READ_ON) {
           reads.scanFlooded = true;
           break;
         }
-        const int32_t extra = readUnderAllowance(file, reads, buf + got, len - got, file.stopped(), allowed);
+        if (len - got >= smallRoom) {
+          const int32_t extra = readUnderAllowance(file, reads, buf + got, len - got, file.stopped(), allowed);
+          if (extra <= 0) break;
+          read += static_cast<uint32_t>(extra);
+          // Over the whole span again: a 0xFF that ended the last read pairs with this one's first byte.
+          got = jpegDropRestartMarkers(buf, got + extra);
+          continue;
+        }
+        // Little room: a whole top-up's worth into the scratch, what the span takes appended (as dropped over the
+        // whole), the rest given back to the file.
+        const uint32_t from = reads.position;
+        const int32_t extra = readUnderAllowance(file, reads, reads.topUp, JPEG_TOP_UP_BYTES, file.stopped(), allowed);
         if (extra <= 0) break;
         read += static_cast<uint32_t>(extra);
-        // Over the whole span again: a 0xFF that ended the last read pairs with this one's first byte.
-        got = jpegDropRestartMarkers(buf, got + extra);
+        int32_t used = 0;
+        got = jpegAppendDroppingRestartMarkers(buf, got, len, reads.topUp, extra, used);
+        if (used < extra) {
+          const uint32_t back = from + static_cast<uint32_t>(used);
+          if (!tryTwice([&] { return file.seek(back); })) {
+            reads.seekFailed = true;
+            reads.fail(back);
+          }
+          reads.position = back;
+          break;
+        }
       }
     }
     answer = answerJpegDecodeRead(buf, len, got);
@@ -215,9 +258,10 @@ int32_t answerJpegSeek(File& file, DecoderReads& reads, const int32_t position, 
 // file call (a wait on the card's mutex can be long and legitimate), and leaving and rejoining feed the watchdog's
 // timer (ESP-IDF's task_wdt.c resets it whenever every other watched task has reset), so a decoder that spins making
 // reads but no progress would never trip it: once the quiet time reaches the limit (the watchdog's timeout), or the
-// wall time twice the limit, less the time in reads that returned bytes (slow failing reads with a loop between them
-// count; a long wait on the card's mutex before a read that gives bytes is no reset; a seek's or an open's wait counts,
-// as they return none), the task stops leaving, and the next file call is watched like the rest.
+// wall time twice the limit, less the time in calls that did their job (a read that returned the bytes asked, a seek,
+// an open or a close that worked: a long wait on the card's mutex while another task uses it is no reset; failed
+// calls and empty or short reads, with a loop between them, count), the task stops leaving, and the next file call is
+// watched like the rest.
 class WatchdogQuiet {
  public:
   explicit WatchdogQuiet(const uint32_t limitMs, const uint32_t nowMs)
@@ -235,11 +279,11 @@ class WatchdogQuiet {
     callMs_ = nowMs;
     return quietMs_ < limitMs_ && nowMs - progressMs_ < 2 * limitMs_;
   }
-  // After the file call: its time is not quiet time; when it returned bytes (a read: a wait on the card's mutex,
-  // however long, before it) not wall time either, so a valid read is never reset for another task's use of the card;
-  // any other call (a failed or short read, a seek, an open, a close) counts.
-  void back(const uint32_t nowMs, const bool gaveBytes = false) {
-    if (gaveBytes) progressMs_ += nowMs - callMs_;
+  // After the file call: its time is not quiet time; when it did its job (a read that returned the bytes asked, a
+  // seek, an open or a close that worked, however long it waited for the card's mutex) not wall time either, so a
+  // valid read is never reset for another task's use of the card; a failed call, or an empty or short read, counts.
+  void back(const uint32_t nowMs, const bool succeeded = false) {
+    if (succeeded) progressMs_ += nowMs - callMs_;
     sinceMs_ = nowMs;
   }
   uint32_t quietMs() const { return quietMs_; }
@@ -309,18 +353,19 @@ class TaskWatchdog {
       left_ = dog_ != nullptr && dog_->quiet_.mayLeave(dog_->dog_.nowMs()) && dog_->owned_ && dog_->dog_.remove() == 0;
     }
     ~Gap() {
-      if (dog_ != nullptr) dog_->endGap(left_, gaveBytes_);
+      if (dog_ != nullptr) dog_->endGap(left_, succeeded_);
     }
     Gap(const Gap&) = delete;
     Gap& operator=(const Gap&) = delete;
     bool left() const { return left_; }
-    // The call was a read that returned the bytes asked: its time is not wall time (any other call's is).
-    void gaveBytes() { gaveBytes_ = true; }
+    // The call did its job (a read that returned the bytes asked, a seek, an open or a close that worked): its time is
+    // not wall time (a failed call's, or an empty or short read's, is).
+    void succeeded() { succeeded_ = true; }
 
    private:
     TaskWatchdog* dog_;
     bool left_ = false;
-    bool gaveBytes_ = false;
+    bool succeeded_ = false;
   };
 
  private:
@@ -328,8 +373,8 @@ class TaskWatchdog {
     const int first = dog_.add();
     return first == 0 ? 0 : dog_.add();
   }
-  void endGap(const bool left, const bool gaveBytes) {
-    quiet_.back(dog_.nowMs(), gaveBytes);
+  void endGap(const bool left, const bool succeeded) {
+    quiet_.back(dog_.nowMs(), succeeded);
     if (!left) return;
     const int error = addTwice();
     if (error == 0) return;

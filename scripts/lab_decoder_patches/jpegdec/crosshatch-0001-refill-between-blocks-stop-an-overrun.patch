@@ -1,5 +1,5 @@
 From: crosshatch-player <dlab-g3@local>
-Subject: [PATCH] Refill between a MCU's blocks, and stop a bit pointer past the data (v4)
+Subject: [PATCH] Refill between a MCU's blocks, and stop a bit pointer past the data (v5)
 
 The display lab's JPEGDEC patch (the x4pro env only, applied after upstream's
 scripts/jpegdec_patches by scripts/patch_lab_decoders.py; the host decoder
@@ -15,7 +15,8 @@ later MCU reading further past ucFileBuf. This:
   left is under JPEG_BLOCK_MARGIN (320: a block of the longest codes any table
   makes, a code's size masked to 4 bits, needs 264 bytes at most with the bit
   offset carried in and the window's read-ahead) or the offset is past the
-  mark: the bit reader's state is in pJPEG->bb between blocks as between MCUs;
+  mark: the bit reader's state is in pJPEG->bb between blocks as between MCUs
+  (the margin is defined only when unset, so the host tests can lower it);
 - loads the bit window again at the end of JPEGGetMoreData, after any move or
   refill (bytes it held past the data were stale, and the refill has put the
   file's there), for the block refills and DecodeJPEG's own;
@@ -34,7 +35,7 @@ The fix is offered as a suggestion for upstream.
 ---
 --- a/src/jpeg.inl
 +++ b/src/jpeg.inl
-@@ -63,6 +63,12 @@
+@@ -63,6 +63,15 @@
  static int JPEGInit(JPEGIMAGE *pJPEG);
  static int JPEGParseInfo(JPEGIMAGE *pPage, int bExtractThumb);
  static void JPEGGetMoreData(JPEGIMAGE *pPage);
@@ -42,12 +43,15 @@ The fix is offered as a suggestion for upstream.
 +// longest block any table codes (a code's size is masked to 4 bits, ucHuff &= 0xf, usHuff &= 0xf): a 16-bit code and
 +// 15 bits for the DC and for each of 63 AC coefficients, 64 x 31 = 1,984 bits; with up to 31 bits of the bit offset
 +// carried in (63 with a 64-bit bit reader) the bits used reach 2,015 (2,047), 252 (256) bytes, and the bit window
-+// reads 4 (8) bytes past them: 256 (264) bytes, under 320 with 64 (56) to spare.
++// reads 4 (8) bytes past them: 256 (264) bytes, under 320 with 64 (56) to spare. Defined unless already (the host
++// tests make it a variable they can lower).
++#ifndef JPEG_BLOCK_MARGIN
 +#define JPEG_BLOCK_MARGIN 320
++#endif
  static int DecodeJPEG(JPEGIMAGE *pImage);
  static int32_t readRAM(JPEGFILE *pFile, uint8_t *pBuf, int32_t iLen);
  static int32_t seekMem(JPEGFILE *pFile, int32_t iPosition);
-@@ -1545,12 +1551,25 @@
+@@ -1545,12 +1554,25 @@
  {
      int iDelta = pPage->iVLCSize - pPage->iVLCOff;
  //    printf("Getting more data...size=%d, off=%d\n", pPage->iVLCSize, pPage->iVLCOff);
@@ -75,7 +79,7 @@ The fix is offered as a suggestion for upstream.
          pPage->iVLCSize -= pPage->iVLCOff;
          pPage->iVLCOff = 0;
          pPage->bb.pBuf = pPage->ucFileBuf; // reset VLC source pointer too
-@@ -1563,6 +1582,11 @@
+@@ -1563,6 +1585,11 @@
          // Filter out the markers
          pPage->iVLCSize += JPEGFilter(&pPage->ucFileBuf[pPage->iVLCSize], &pPage->ucFileBuf[pPage->iVLCSize], i, &pPage->ucFF);
      }
@@ -87,7 +91,7 @@ The fix is offered as a suggestion for upstream.
  } /* JPEGGetMoreData() */
  
  //
-@@ -1832,6 +1856,16 @@
+@@ -1832,6 +1859,16 @@
      my_ulong ulCode, ulBits, ulTemp; // local copies to allow compiler to use register vars
      uint8_t *pBuf;
  
@@ -104,7 +108,7 @@ The fix is offered as a suggestion for upstream.
      ulBitOff = pJPEG->bb.ulBitOff;
      ulBits = pJPEG->bb.ulBits;
      pBuf = pJPEG->bb.pBuf;
-@@ -2113,6 +2147,16 @@
+@@ -2113,6 +2150,16 @@
      
      #define MIN_DCT_THRESHOLD 8
          
@@ -121,7 +125,7 @@ The fix is offered as a suggestion for upstream.
      ulBitOff = pJPEG->bb.ulBitOff;
      ulBits = pJPEG->bb.ulBits;
      pBuf = pJPEG->bb.pBuf;
-@@ -4970,6 +5014,10 @@
+@@ -4970,6 +5017,10 @@
      JPEGDRAW jd;
      int iMaxFill = 16, iScaleShift = 0;
  
@@ -132,7 +136,7 @@ The fix is offered as a suggestion for upstream.
      // Requested the Exif thumbnail
      if (pJPEG->ucMode == 0xc2) { // progressive mode - we only decode the first scan (DC values)
          pJPEG->iOptions |= JPEG_SCALE_EIGHTH; // return 1/8 sized image
-@@ -5365,9 +5413,17 @@
+@@ -5365,9 +5416,17 @@
              } // if there is a restart interval
              // See if we need to feed it more data
              if (pJPEG->iVLCOff >= FILE_HIGHWATER)

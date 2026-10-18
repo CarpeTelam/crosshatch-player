@@ -790,6 +790,25 @@ TEST(JpegSegments, EverySyntheticCase) {
   }
 }
 
+TEST(JpegSegments, AProgressiveFirstScanOfSomeComponentsIsUnsupportedInASubsampledFrame) {
+  // JPEGDEC reads a progressive first scan in the frame's MCU order; one of some of the components holds its blocks in
+  // its own raster order, which differs in a subsampled frame (a block-scrambled picture): Unsupported there; in a
+  // 4:4:4 frame the orders agree, as long as the scan holds the frame's first component (the gray decode's).
+  EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE_420_INTERLEAVED), {.maxReads = 256}), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE_420_Y_FIRST), {.maxReads = 256}), FileLayout::Unsupported);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE_420_Y_FIRST_40), {.maxReads = 256}), FileLayout::Unsupported);
+  EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE_444_INTERLEAVED), {.maxReads = 256}), FileLayout::Complete);
+  std::vector<uint8_t> yFirst = bytes(JPEG_PROGRESSIVE_444_Y_FIRST);
+  EXPECT_EQ(walkJpeg(yFirst, {.maxReads = 256}), FileLayout::Complete);
+  // The same first scan naming Cb (component 2) instead: the frame's first component is not in it.
+  size_t at = 2;
+  while (yFirst[at + 1] != 0xDA) at += 2 + ((static_cast<size_t>(yFirst[at + 2]) << 8) | yFirst[at + 3]);
+  ASSERT_EQ(yFirst[at + 4], 1);  // one component
+  ASSERT_EQ(yFirst[at + 5], 1);  // Y's id
+  yFirst[at + 5] = 2;
+  EXPECT_EQ(walkJpeg(yFirst, {.maxReads = 256}), FileLayout::Unsupported);
+}
+
 TEST(JpegSegments, ACompleteHeaderWalksToSosAndItsEoi) {
   for (const auto& sample : {bytes(JPEG_BASELINE), bytes(JPEG_NOISE_BASELINE), bigExifJpeg()}) {
     WalkExtent extent;
@@ -1229,6 +1248,10 @@ TEST(DecoderReads, OnlyOpensReadsBeforeTheHeadersEndAreLatched) {
   EXPECT_EQ(answerJpegRead(f, reads, parse.data(), JPEG_PARSE_BUFFER, 5000, iPos), 0);
   EXPECT_TRUE(reads.headerFailed);
   for (const uint8_t b : parse) ASSERT_EQ(b, 0);
+  // (Short twice, it is the file's failure too; the latch alone is what a header read over its cap leaves, below.)
+  EXPECT_TRUE(reads.readFailed);
+  EXPECT_EQ(reads.failedAt, 0u);
+  reads.readFailed = false;
   // Every later header read is dropped too, even one the file would give whole.
   f.shortBy = 0;
   f.pos = reads.position = 2048;
@@ -1340,7 +1363,7 @@ TEST(DecoderReads, TheWatchdogIsLeftForFileCallsOnlyWhileTheReadMakesProgress) {
   quiet.back(30000);
   EXPECT_FALSE(quiet.mayLeave(30001));
   EXPECT_LT(quiet.quietMs(), 10u);
-  // Long reads that return bytes (a wait on the card's mutex while another task uses it) are neither quiet nor wall
+  // Long calls that do their job (a wait on the card's mutex while another task uses it) are neither quiet nor wall
   // time.
   quiet.progress(40000);
   for (uint32_t call = 0; call < 5; ++call) {
@@ -1372,18 +1395,20 @@ TEST(DecoderReads, ReadsThatCanGiveNothingMakeNoFileCall) {
   f.stop = true;
   EXPECT_EQ(answerPngRead(f, reads, buf.data(), 256), 256);
   EXPECT_EQ(f.calls, 2);
-  // A read that fails twice (it is tried once more) loses the position: nothing more until a seek succeeds.
+  // A read that fails twice (it is tried once more) loses the position and is the file's failure: nothing more, a seek
+  // that works since included.
   f.stop = false;
   f.fail = true;
   EXPECT_EQ(answerPngRead(f, reads, buf.data(), 256), 256);
   EXPECT_TRUE(reads.seekFailed);
+  EXPECT_TRUE(reads.readFailed);
   f.fail = false;
   EXPECT_EQ(answerPngRead(f, reads, buf.data(), 256), 256);
   EXPECT_EQ(f.calls, 4);
   EXPECT_EQ(answerSeek(f, reads, 10), 10);
   EXPECT_EQ(answerPngRead(f, reads, buf.data(), 16), 16);
-  EXPECT_EQ(buf[0], f.bytes[10]);
-  EXPECT_EQ(f.calls, 5);
+  EXPECT_EQ(buf[0], 0xFF);
+  EXPECT_EQ(f.calls, 4);
   // JPEGFILE's position is the reads' position, held under the size.
   DecoderReads jpeg = readsOf(1000, 10);
   jpeg.startDecode();
@@ -1408,24 +1433,59 @@ TEST(DecoderReads, AFailedReadIsTriedOnceMoreFromItsPosition) {
   EXPECT_EQ(reads.position, 16u);
   EXPECT_EQ(f.calls, 2);
   EXPECT_FALSE(reads.readFailed);
-  // A short read (fewer bytes than allowed, short of the walked size) is tried once more too.
+  // A transient read error then a transient seek error on the way back: the seek is tried once more too, the read
+  // works.
+  f.calls = 0;
+  f.seeks = 0;
+  f.failReads = 1;
+  f.failSeeks = 1;
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 16), 16);
+  EXPECT_EQ(buf[0], f.bytes[16]);
+  EXPECT_EQ(f.calls, 2);
+  EXPECT_EQ(f.seeks, 2);
+  EXPECT_FALSE(reads.readFailed);
+  // A short read (fewer bytes than allowed, inside the walked size) is tried once more too; short twice (the file
+  // rewritten since its walk, or a card answering short), it is the file's failure at its offset, the bytes it got
+  // given, then nothing more.
   f.calls = 0;
   int32_t allowed = 0;
   f.shortBy = 4;
-  EXPECT_EQ(readUnderAllowance(f, reads, buf.data(), 16, false, allowed), 12);  // short twice: what it got
+  EXPECT_EQ(readUnderAllowance(f, reads, buf.data(), 16, false, allowed), 12);
   EXPECT_EQ(f.calls, 2);
-  EXPECT_EQ(reads.position, 28u);
-  EXPECT_FALSE(reads.readFailed);
-  f.shortBy = 0;
-  // A card that keeps failing: one retry, then the position is lost (no loop) and the read is the file's failure.
-  f.calls = 0;
-  f.failReads = 1000;
-  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 16), 16);
-  EXPECT_EQ(buf[0], 0xFF);
-  EXPECT_TRUE(reads.seekFailed);
+  EXPECT_EQ(reads.position, 44u);
   EXPECT_TRUE(reads.readFailed);
-  EXPECT_TRUE(reads.failed());
+  EXPECT_EQ(reads.failedAt, 32u);
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 16), 16);
   EXPECT_EQ(f.calls, 2);
+  // A failed read, then an empty one on the retry: the file's failure (not "0 bytes", which an allowance of 0 gives).
+  MemFile g = memFile(1000);
+  DecoderReads empty = readsOf(1000, 0);
+  g.failReads = 1;
+  g.shortBy = 16;
+  EXPECT_EQ(readUnderAllowance(g, empty, buf.data(), 16, false, allowed), 0);
+  EXPECT_TRUE(empty.readFailed);
+  EXPECT_EQ(empty.failedAt, 0u);
+  // A card that keeps failing: one retry, then the position is lost (no loop) and the read is the file's failure at
+  // its offset.
+  MemFile h = memFile(1000);
+  DecoderReads failing = readsOf(1000, 0);
+  failing.position = h.pos = 100;
+  h.failReads = 1000;
+  EXPECT_EQ(answerPngRead(h, failing, buf.data(), 16), 16);
+  EXPECT_EQ(buf[0], 0xFF);
+  EXPECT_TRUE(failing.seekFailed);
+  EXPECT_TRUE(failing.readFailed);
+  EXPECT_TRUE(failing.failed());
+  EXPECT_EQ(failing.failedAt, 100u);
+  EXPECT_EQ(h.calls, 2);
+  // A later failure (a seek inside the walked size refused twice) keeps the first one's offset in the log.
+  h.failSeeks = 2;
+  EXPECT_EQ(answerSeek(h, failing, 300), -1);
+  EXPECT_EQ(failing.failedAt, 100u);
+  // The file shrank since its walk: its open is the file's failure.
+  EXPECT_TRUE(shrankSinceWalk(readsOf(1000, 0), 999));
+  EXPECT_FALSE(shrankSinceWalk(readsOf(1000, 0), 1000));
+  EXPECT_FALSE(shrankSinceWalk(readsOf(1000, 0), 5000));  // longer: the walked size is all it is given
 }
 
 TEST(DecoderReads, ASeekOrAnOpenIsTriedOnceMore) {
@@ -1501,7 +1561,8 @@ TEST(DecoderReads, RestartMarkersAreDroppedFromTheDecodesReadsAndTheSpanToppedUp
   for (size_t i = 0; i < span.size(); ++i) ASSERT_EQ(span[i], i % 2 == 0 ? 0x11 : 0x22) << i;
   EXPECT_EQ(reads.position, 4094u);  // 2,048 data bytes and the markers between them
   EXPECT_EQ(reads.decodeReads, 1u);  // the top-ups are within the one answer
-  EXPECT_EQ(f.calls, 11);            // 2,048 bytes read, then 1,024, 512 ... 2
+  EXPECT_EQ(f.calls, 4);  // 2,048 bytes read, then 1,024 and 512, then 512 into the scratch for the last 256 of room
+  EXPECT_EQ(f.seeks, 1);  // and what the span did not take given back
   EXPECT_EQ(iPos, 4094);
   // A scan almost all markers (one data byte in 31): topped up until the span is full, 63 KB of the file for 2 KiB.
   MemFile m = memFile(0);
@@ -1519,7 +1580,7 @@ TEST(DecoderReads, RestartMarkersAreDroppedFromTheDecodesReadsAndTheSpanToppedUp
     const uint8_t v = span[static_cast<size_t>(i)];
     ASSERT_TRUE(v == 0x5A || (v == 0xFF && i == told - 1)) << i;
   }
-  EXPECT_EQ(mostly.position, 2048u * 31u - 30u);
+  EXPECT_EQ(mostly.position, 2048u * 31u);  // just past the 2,048th data byte
   EXPECT_FALSE(mostly.scanFlooded);
   // A run of markers past JPEG_RESTART_READ_ON (crafted, or a damaged file): the answer stops reading there, the span
   // zero-filled, and the decode is flagged to end in an error.
@@ -1533,6 +1594,23 @@ TEST(DecoderReads, RestartMarkersAreDroppedFromTheDecodesReadsAndTheSpanToppedUp
   EXPECT_GE(flooded.position, 2048u + JPEG_RESTART_READ_ON);
   EXPECT_LT(flooded.position, 2u * 2048u + JPEG_RESTART_READ_ON);
   EXPECT_TRUE(flooded.failed());
+  // From there every decode answer is zeros, without a file call.
+  const int calls = flood.calls;
+  span.assign(span.size(), 0x77);
+  EXPECT_EQ(answerJpegRead(flood, flooded, span.data(), 2048, static_cast<int32_t>(flood.bytes.size()), iPos), 2048);
+  EXPECT_EQ(flood.calls, calls);
+  EXPECT_EQ(std::count(span.begin(), span.end(), 0), 2048);
+  // The run met with two bytes of room (2,046 data bytes, then the markers): its top-ups read 512 bytes at a time into
+  // the scratch, a few hundred calls for the 128 KiB, not one per two bytes.
+  MemFile late = memFile(0);
+  for (int i = 0; i < 2046; ++i) late.bytes.push_back(0x5A);
+  for (int i = 0; i < 80000; ++i) late.bytes.insert(late.bytes.end(), {0xFF, static_cast<uint8_t>(0xD0 + i % 8)});
+  late.bytes.push_back(0x5A);
+  DecoderReads lateReads = readsOf(static_cast<uint32_t>(late.bytes.size()), 0);
+  lateReads.startDecode();
+  EXPECT_EQ(answerJpegRead(late, lateReads, span.data(), 2048, static_cast<int32_t>(late.bytes.size()), iPos), 2048);
+  EXPECT_TRUE(lateReads.scanFlooded);
+  EXPECT_LE(late.calls, 2 + static_cast<int>((2048 + JPEG_RESTART_READ_ON) / JPEG_TOP_UP_BYTES) + 2);
 }
 
 TEST(DecoderReads, TheDecodeSpanIsFilledWhateverItsLengthAndWhereAMarkerSplits) {
@@ -1555,6 +1633,7 @@ TEST(DecoderReads, TheDecodeSpanIsFilledWhateverItsLengthAndWhereAMarkerSplits) 
   int32_t iPos = 0;
   const int32_t lengths[] = {2047, 1, 333, 1023, 3, 1999};
   for (int n = 0, past = 0; past < 2; ++n) {
+    ASSERT_LT(n, 10000) << "the answers never reached the file's end";
     if (reads.position == f.bytes.size()) ++past;  // and one answer more: zeros
     const int32_t len = lengths[n % 6];
     std::vector<uint8_t> span(static_cast<size_t>(len));
@@ -1629,13 +1708,14 @@ struct FakeDog {
 constexpr uint32_t DOG_LIMIT_MS = 5000;
 
 // One blocking file call of `ms`, after `outsideMs` of work outside it: whether the task left the watchdog for it.
-// `gaveBytes`: a read that returned the bytes asked (its time is then not wall time; any other call's is).
+// `succeeded`: the call did its job (a read that returned the bytes asked, a seek, an open or a close that worked;
+// its time is then not wall time; a failed call's, or an empty or short read's, is).
 bool fileCall(TaskWatchdog<FakeDog>& watchdog, FakeDog& dog, const uint32_t outsideMs, const uint32_t ms,
-              const bool gaveBytes = false) {
+              const bool succeeded = false) {
   dog.clock += outsideMs;
   TaskWatchdog<FakeDog>::Gap gap(&watchdog);
   dog.clock += ms;
-  if (gaveBytes) gap.gaveBytes();
+  if (succeeded) gap.succeeded();
   return gap.left();
 }
 
@@ -1672,26 +1752,31 @@ TEST(DecodeWatchdog, EveryBlockingFileCallIsAGapAndItsTimeIsNotQuiet) {
   EXPECT_TRUE(fileCall(watchdog, dog, 1, 4000));
 }
 
-TEST(DecodeWatchdog, ALongWaitForTheCardBeforeAReadThatGivesBytesIsNeverAReset) {
-  // Another task holds the card's mutex: each of the read's reads waits 12 s (past twice the limit) and then returns
-  // the bytes asked (progress). Every one is a gap: the task is never watched while it waits, so a valid read finishes
-  // instead of resetting the device.
+TEST(DecodeWatchdog, ALongWaitForTheCardBeforeACallThatWorksIsNeverAReset) {
+  // Another task holds the card's mutex: each of the read's calls waits 12 s (past twice the limit) and then does its
+  // job, a seek, a read that gives the bytes asked (progress), a seek and an open. Every one is a gap: the task is
+  // never watched while it waits, so a valid read finishes instead of resetting the device.
   FakeDog dog;
   TaskWatchdog<FakeDog> watchdog(dog, DOG_LIMIT_MS);
   for (int round = 0; round < 4; ++round) {
-    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;
-    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;  // its time is not wall time, even before progress
+    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;  // a seek
+    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;  // a read that gives its bytes
     watchdog.progress();
+    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;  // a seek
+    EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000, true)) << round;  // an open
   }
   EXPECT_TRUE(dog.subscribed);
   EXPECT_TRUE(dog.reports.empty());
-  // A seek and an open return no bytes: their waits count toward the wall time, so after 12 s of them without
-  // progress the task stays watched (a spin of seeks resets the device).
-  EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000));  // a seek
-  EXPECT_FALSE(fileCall(watchdog, dog, 1, 10));    // an open: watched
-  // A short read (fewer bytes than asked) counts too.
+  // A call that did not do its job counts toward the wall time: an empty or a short read, or a failed seek; 12 s of
+  // them without progress, and the task stays watched (a spin of them resets the device).
   watchdog.progress();
-  EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000));
+  EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000));  // an empty read
+  EXPECT_FALSE(fileCall(watchdog, dog, 1, 10, true));
+  watchdog.progress();
+  EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000));  // a short read
+  EXPECT_FALSE(fileCall(watchdog, dog, 1, 10, true));
+  watchdog.progress();
+  EXPECT_TRUE(fileCall(watchdog, dog, 1, 12000));  // a refused seek
   EXPECT_FALSE(fileCall(watchdog, dog, 1, 10, true));
 }
 

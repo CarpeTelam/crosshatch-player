@@ -14,7 +14,8 @@
 #   Lab patch check: the display lab's decoder patches (scripts/lab_decoder_patches) are applied by the x4pro env's
 #   pre-script (scripts/patch_lab_decoders.py) to .pio/libdeps/x4pro only, whatever the flags, so both budget builds
 #   carry them; the job fails when one does not reverse cleanly there (the build ran without it). The default, sticky
-#   and release envs (x4pro-gh_release among them) run no such script and build stock PNGdec and JPEGDEC.
+#   and release envs (x4pro-gh_release among them) run no such script and build PNGdec and JPEGDEC with upstream's
+#   patches only (the x4pro script takes retired lab patches out of every env's copies).
 # - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
 #   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
 #   Run it locally with the same command (AGENTS.md); scripts/dev_setup.py installs libpcre3, which cppcheck needs.

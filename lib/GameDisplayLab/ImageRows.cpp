@@ -262,6 +262,44 @@ int32_t jpegDropRestartMarkers(uint8_t* buf, const int32_t n) {
   return out;
 }
 
+int32_t jpegAppendDroppingRestartMarkers(uint8_t* buf, int32_t got, const int32_t len, const uint8_t* raw,
+                                         const int32_t n, int32_t& used) {
+  // Whether the span ends in a 0xFF whose pair has not come (jpegDropRestartMarkers keeps such a final 0xFF).
+  bool pending = false;
+  for (int32_t i = 0; i < got;) {
+    if (buf[i] == 0xFF && i + 1 < got) {
+      i += 2;
+    } else {
+      pending = buf[i] == 0xFF;
+      ++i;
+    }
+  }
+  used = 0;
+  while (used < n) {
+    const uint8_t c = raw[used];
+    if (pending) {
+      pending = false;
+      if (c >= 0xD0 && c <= 0xD7) {
+        --got;  // the pair is a restart marker: both go
+        ++used;
+        continue;
+      }
+      if (got >= len) {
+        pending = true;  // the 0xFF waits at the span's end; its pair is the next read's first byte
+        break;
+      }
+      buf[got++] = c;
+      ++used;
+      continue;
+    }
+    if (got >= len) break;
+    buf[got++] = c;
+    ++used;
+    pending = c == 0xFF;
+  }
+  return got;
+}
+
 int32_t answerJpegDecodeRead(uint8_t* buf, const int32_t requested, const int32_t got) {
   if (requested <= 0) return 0;
   const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);

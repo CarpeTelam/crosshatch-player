@@ -101,7 +101,8 @@ enum class FileLayout : uint8_t {
   // A read of the file failed.
   ReadFailed,
   // Valid but not decodable here: a JPEG baseline scan that covers only some of the frame's components (a
-  // non-interleaved, several-scan sequential file; JPEGDEC decodes one scan).
+  // non-interleaved, several-scan sequential file; JPEGDEC decodes one scan), or a progressive first scan that does
+  // so in a subsampled frame (JPEGDEC would read its blocks out of order).
   Unsupported,
   // The stop predicate said stop.
   Stopped,
@@ -194,7 +195,8 @@ constexpr size_t JPEG_EOI_SEARCH_BYTES = 4096;
 //   about 20 KB past its object); a baseline scan both tables of each component defined by an earlier DHT, Ss 0, Se 63,
 //   Ah and Al 0, and the whole frame (every component: one of only some is a valid non-interleaved file JPEGDEC cannot
 //   decode, Unsupported); a progressive file's first scan, the one JPEGDEC decodes, DC only and first (Ss and Se 0, Ah
-//   0, its DC tables defined).
+//   0, its DC tables defined), and of every component unless the frame's are all sampled 1x1 and the scan holds the
+//   first (else Unsupported: JPEGDEC reads it in MCU order, a block-scrambled picture).
 // Malformed otherwise. After SOS the picture must end: a baseline file's last two bytes when they are FF D9 and no MPF
 // APP2 says more pictures follow, else its first FF D9 after SOS (a motion photo's video, a second picture such as an
 // MPF preview, or padding after it are not the decoder's); a progressive file's first marker after its first scan
@@ -229,6 +231,8 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
   bool progressive = false;
   uint8_t componentIds[4] = {};
   uint8_t components = 0;
+  // A component of the frame is sampled other than 1x1 (a MCU of more than one block of it).
+  bool subsampled = false;
   uint8_t dcDefined = 0;
   uint8_t acDefined = 0;
   bool mpf = false;
@@ -293,6 +297,11 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
       }
       // A valid baseline scan of some of the frame's components: the file's other scans hold the rest.
       if (!progressive && count != components) return FileLayout::Unsupported;
+      // A progressive first scan of some of the frame's components (mozjpeg's default: the DC of Y alone): JPEGDEC
+      // reads its blocks in the frame's MCU order, while such a scan holds them in its component's raster order, which
+      // differ when the frame is subsampled (a block-scrambled picture); with every component 1x1 they agree, and the
+      // gray decode needs the frame's first component in the scan.
+      if (progressive && count != components && (subsampled || (seen & 1u) == 0)) return FileLayout::Unsupported;
       uint64_t eoiEnd = 0;
       // A baseline file ending in FF D9 with no MPF APP2 (no second picture) ends there.
       if (!progressive && !mpf && fileSize >= end + 2) {
@@ -338,7 +347,11 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
       if (b[0] < 1 || b[0] > 4 || length != 8 + 3u * b[0]) return FileLayout::Malformed;
       components = b[0];
       if (!readAt(static_cast<uint32_t>(offset + 10), b, 3u * components)) return FileLayout::ReadFailed;
-      for (uint32_t c = 0; c < components; ++c) componentIds[c] = b[3 * c];
+      subsampled = false;
+      for (uint32_t c = 0; c < components; ++c) {
+        componentIds[c] = b[3 * c];
+        subsampled = subsampled || b[3 * c + 1] != 0x11;
+      }
       frame = true;
       progressive = marker == 0xFFC2;
     } else if (marker == 0xFFDB) {
@@ -480,6 +493,12 @@ constexpr int32_t JPEG_MCU_MARGIN = 256;
 // more scan data (DecoderReads.h's answerJpegRead tops it up), so a picture with a short restart interval over flat
 // areas, where the markers are most of the data, never starves the decoder.
 int32_t jpegDropRestartMarkers(uint8_t* buf, int32_t n);
+// `n` more bytes of scan data (`raw`) appended to the `got` bytes of `buf` (already dropped) as jpegDropRestartMarkers
+// would drop the two together, up to `len` bytes: the bytes in `buf` after, and in `used` the raw bytes taken (it stops
+// at the first that does not fit; a final 0xFF waits as before, so a pair is never split but by JPEGFilter's own
+// carry).
+int32_t jpegAppendDroppingRestartMarkers(uint8_t* buf, int32_t got, int32_t len, const uint8_t* raw, int32_t n,
+                                         int32_t& used);
 // The decode's answer: `got` bytes of a `requested`-byte read into JPEGDEC's VLC buffer (its tail again: ucFileBuf +
 // iVLCSize, iVLCSize = 2 KiB - requested, jpeg.inl 1562), the rest zeroed, and `requested` returned. JPEGGetMoreData
 // (jpeg.inl 1544-1566) then tops its buffer up and moves its data down once a MCU ends past FILE_HIGHWATER

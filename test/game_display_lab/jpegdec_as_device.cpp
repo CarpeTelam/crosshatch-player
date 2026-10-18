@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The lab patch's block margin as a variable (CMakeLists.txt defines JPEG_BLOCK_MARGIN as its name and gives the
+// patch's value), so the margin test can lower it.
+int crosshatchJpegBlockMargin = CROSSHATCH_LAB_BLOCK_MARGIN;
+
 #undef __x86_64__
 #define ALLOWS_UNALIGNED
 #include "JPEGDEC.cpp"

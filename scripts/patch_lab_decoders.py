@@ -2,14 +2,16 @@
 PlatformIO pre-build script: apply the display lab's decoder patches (the x4pro env only, where the lab is built).
 
 The gray viewer (story dlab-g3) drives PNGdec and JPEGDEC directly; the fork patches them for it, in fork-only folders,
-so no other env changes (PlatformIO keeps one library copy per env):
-  * scripts/lab_decoder_patches/pngdec/  -> .pio/libdeps/<env>/PNGdec
-  * scripts/lab_decoder_patches/jpegdec/ -> .pio/libdeps/<env>/JPEGDEC, after upstream's scripts/jpegdec_patches
-    (scripts/patch_jpegdec.py, in base's extra_scripts, which run first)
+so no other env changes (PlatformIO keeps one library copy per env, under its libdeps folder, $PROJECT_LIBDEPS_DIR:
+.pio/libdeps unless platformio.ini's libdeps_dir or PLATFORMIO_LIBDEPS_DIR moves it):
+  * scripts/lab_decoder_patches/pngdec/  -> <libdeps>/<env>/PNGdec
+  * scripts/lab_decoder_patches/jpegdec/ -> <libdeps>/<env>/JPEGDEC, after upstream's scripts/jpegdec_patches
+    (scripts/patch_jpegdec.py, in base's extra_scripts, which run first, in every env)
 The x4pro env's own converters (covers, chapter images) use the same patched copies.
 
 Retired patches (scripts/lab_decoder_patches/retired/<library>/, patches a copy may still carry from an earlier build
-of this branch) are taken out first: each that reverses cleanly is reversed.
+of this branch) are taken out first, from every env's copy under the libdeps folder (as upstream's patch_jpegdec.py
+walks every env's JPEGDEC): each that reverses cleanly is reversed. The current patches go to this env's copies only.
 
 `git apply` is used as a plain patch tool: GIT_CEILING_DIRECTORIES is the library folder's parent, so git looks for a
 repository in the library folder alone (JPEGDEC's clone has one; PNGdec, from the registry, has none) and never takes
@@ -18,9 +20,9 @@ the project's. Idempotent, as scripts/patch_jpegdec.py is:
   * `git apply --check`            succeeds  -> apply
   * neither succeeds                          -> abort the build, naming the library folder to delete (PlatformIO
                                                  installs it again, unpatched, on the next build)
-A missing patch folder, or a missing library folder in an env whose libdeps exist, aborts the build too; a `clean`
-returns at once, and an env with no libdeps yet returns with a line saying the patches were not applied. The same patches are applied to copies in the host test's build tree by
-test/game_display_lab/CMakeLists.txt.
+A missing patch folder, or this env's PNGdec or JPEGDEC copy missing, aborts the build too, naming the folder (the lab
+is never compiled against stock decoders); a `clean` returns at once. The same patches are applied to copies in the
+host test's build tree by test/game_display_lab/CMakeLists.txt.
 """
 
 Import("env")  # noqa: F821 (SCons-injected global)
@@ -38,16 +40,22 @@ LIBRARIES = (("pngdec", "PNGdec"), ("jpegdec", "JPEGDEC"))
 def patch_lab_decoders(env):
     if env.GetOption("clean") or "clean" in COMMAND_LINE_TARGETS:
         return
-    libdeps_dir = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps", env["PIOENV"])
-    if not os.path.isdir(libdeps_dir):
-        print("Lab decoder patches not applied: %s does not exist yet (lib_deps not installed)" % libdeps_dir)
-        return
+    libdeps_root = env.subst("$PROJECT_LIBDEPS_DIR") or os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")
+    if os.path.isdir(libdeps_root):
+        for env_dir in sorted(os.listdir(libdeps_root)):
+            for folder, library in LIBRARIES:
+                lib_dir = os.path.join(libdeps_root, env_dir, library)
+                if not os.path.isdir(os.path.join(lib_dir, "src")):
+                    continue
+                for patch in _patch_files(os.path.join("retired", folder), required=False):
+                    _retire_one(lib_dir, library, patch)
     for folder, library in LIBRARIES:
-        lib_dir = os.path.join(libdeps_dir, library)
+        lib_dir = os.path.join(libdeps_root, env["PIOENV"], library)
         if not os.path.isdir(os.path.join(lib_dir, "src")):
-            _fail("the lab's %s is not at %s (lib_deps installs it before this script runs)" % (library, lib_dir))
-        for patch in _patch_files(os.path.join("retired", folder), required=False):
-            _retire_one(lib_dir, library, patch)
+            _fail(
+                "the lab's %s is not at %s, so its patches cannot be applied and the lab would be built against the "
+                "stock library (lib_deps installs it before this script runs; build again)" % (library, lib_dir)
+            )
         for patch in _patch_files(folder, required=True):
             _apply_one(lib_dir, library, patch)
 
@@ -92,7 +100,7 @@ def _retire_one(lib_dir, library, patch_path):
             "%s still carries the retired lab patch %s and it cannot be taken out:\n%s%s\n"
             "Delete %s; the next build installs it again." % (library, name, reversed_.stdout, reversed_.stderr, lib_dir)
         )
-    print("Took out retired %s lab patch: %s" % (library, name))
+    print("Took out retired %s lab patch %s from %s" % (library, name, lib_dir))
 
 
 def _apply_one(lib_dir, library, patch_path):

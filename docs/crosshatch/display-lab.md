@@ -510,10 +510,14 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
      - The converters' limits apply: each side up to 32,767 px, 8 MP, and a PNG row within the firmware's PNG buffer
        (about 2,000 px of colour with alpha; the expanded gray row is capped at 8,208 px).
      - Not decoded ("format or size not supported"): interlaced or 16-bit PNGs, a PNG colour type that does not
-       exist, extended or lossless JPEGs, a baseline JPEG of several scans (non-interleaved, one scan per component:
-       JPEGDEC decodes one scan; logged as not supported, not malformed), and a file whose layout is cut or malformed.
-       A JPEG whose DC Huffman codes run past 12 bits (valid, and rare) is refused by JPEGDEC's open() ("could not
-       open"). Against a decoder that never
+       exist, extended or lossless JPEGs, a baseline JPEG whose scans do not each cover every component (a
+       non-interleaved file: JPEGDEC decodes one scan), a colour progressive JPEG whose first scan does not cover every
+       component of a subsampled frame (mozjpeg's default, the DC of Y alone: JPEGDEC reads its blocks in the frame's
+       MCU order, so a 4:2:0 picture would come out block-scrambled; in a 4:4:4 frame the orders agree and it paints),
+       each logged as not supported, not malformed; a JPEG whose Huffman tables JPEGDEC's table builder refuses
+       (JPEG_UNSUPPORTED_FEATURE at open(), valid files all: a DC code over 12 bits, a DC code of 7 bits or more whose
+       first 5 bits are not all ones, an AC code of 11 bits or more whose first 6 bits are not all ones); and a file
+       whose layout is cut or malformed. Against a decoder that never
        returns (PNGdec 1.1.6 spins without end on a truncated file) or writes past its object, the reader has four
        layers:
        - **The walk.** Before a decoder reads anything, the file's layout is walked against its size, and the walked
@@ -550,7 +554,9 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            leave JPEGDEC decoding past the data it has. The log says how long the walk took (`<kind> walked in N
            ms`).
          - A file without IEND (a PNG), SOS or an EOI after it (a JPEG) is refused as "The picture file has no end",
-           one under a signature's worth of bytes as "too short", a read that fails twice as "could not open".
+           one under a signature's worth of bytes as "too short", a read that fails or comes up short twice as "could
+           not
+           open".
        - **The reads.** The decoder is told the walked size, and no read gives it a byte of the file past that size,
          after a seek the file refused, or once a stop is asked. PNGdec always gets the length it asked for, the rest
          0xFF (its IDAT loop moves on and the data ends in an error). JPEGDEC gets zeros for the rest, never 0xFF
@@ -560,11 +566,14 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
          the header parse's last top-up included. The reads keep the file's position themselves (from 0 at the
          open, a seek's target and each read's bytes), so a read that can give nothing (past the walked size, after
          a refused seek or a failed read, once stopped, past the cap) makes no file call at all, and JPEGDEC is told
-         that position. A read that fails or comes up short is tried once more, from a seek back to its position (an
-         SD card's transient error), as are the walk's reads, a refused seek and each open; failing twice, a read
-         (or a seek inside the walked size) is the file's failure, final, never a loop: the decoder is given nothing
-         more, the drawing stops, and the picture is "could not open" (`<kind> read failed during the decode (at byte
-         N; tried twice)`), never painted as done. The callbacks' bookkeeping is one header the host tests run too
+         that position. A read that fails or comes up short of what the walked size allows is tried once more, from a
+         seek back to its position, that seek itself tried twice (an SD card's transient error), as are the walk's
+         reads, a refused seek and each open; failing or short twice, a read (or a seek inside the walked size) is the
+         file's failure, final, never a loop: every later read gives nothing without a file call, the drawing stops,
+         and the picture is "could not open" (`<kind> read failed during the decode (at byte N; tried twice)`, N the
+         offset whose read or seek failed), never painted as done. A file that shrank since its walk (rewritten
+         meanwhile) is refused at its open the same way (`<path>: N bytes now, M when walked`). The callbacks'
+         bookkeeping is one header the host tests run too
          (`DecoderReads.h`):
          - the header parse keeps a read whole or not at all: a stop, a short or failed read, a refused seek, or more
            header reads than the walk's buffer moves and four, and the read is dropped: the whole 2 KiB buffer is
@@ -580,7 +589,9 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            no answer is short of its span (a short one could leave a block fewer bytes than it needs); a valid scan
            has a byte of data at least for every marker, so it fills any span long before 128 KiB of reading on, and a
            run of markers past that (crafted, or damaged) ends the decode, "did not decode" (`JPEG scan: over 128 KiB
-           of restart markers in a row`); a valid picture decodes
+           of restart markers in a row`; every later answer is zeros, without a file call); when the room left is under
+           512 bytes, a top-up reads 512 into a scratch buffer and gives back what the span cannot take (a seek), so a
+           run of markers costs a call per 512 bytes of it; a valid picture decodes
            exactly as it is; it gets the file's bytes for 2 reads per 2 KiB of the file and 64 more (each read on
            through at most 128 KiB of markers past its span), then nothing. open() gets four such reads at most (it
            makes one), then nothing, so a parse
@@ -596,12 +607,13 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
          no exposure there and removes none. The patch files are written as suggestions for upstream. A patch the lab
          no longer carries is kept in `scripts/lab_decoder_patches/retired/<library>`: the script reverses it from a
          library copy that still has it (an older build's), and fails naming the library folder to delete when it
-         neither reverses nor the current patch applies; it does nothing on a clean, and before the libraries are
-         installed it says so in a line. Retirement runs in the x4pro env only: a local build of default, sticky or a
-         release env from a checkout that built this lane between `67efc452` and `46c5c018` (when the sixth batch's
-         0004 sat in upstream's `scripts/jpegdec_patches`, which every env applies) keeps 0004 in that env's
-         `.pio/libdeps/<env>/JPEGDEC` until the folder is deleted (PlatformIO then installs it again, stock). The fork
-         CI checks each lab patch is in the x4pro build's copies and in the test's.
+         neither reverses nor the current patch applies. An x4pro build takes the retired patches out of every env's
+         PNGdec and JPEGDEC copy under the libdeps folder (as upstream's `patch_jpegdec.py` walks every env's JPEGDEC),
+         so an older build's leftover in another env's copy goes too; the current patches go to x4pro's alone. The
+         libdeps folder is PlatformIO's own (`$PROJECT_LIBDEPS_DIR`: `.pio/libdeps` unless `libdeps_dir` or
+         `PLATFORMIO_LIBDEPS_DIR` moves it); the script does nothing on a clean, and stops the build, naming the folder,
+         when x4pro's copies are missing, so the lab is never built against stock decoders. The fork CI checks each lab
+         patch is in the x4pro build's copies and in the test's.
          - PNGdec (`crosshatch-0001-refill-before-palette-copy`): a PLTE or tRNS is copied out of its 2 KiB file
            buffer; one that runs past the bytes in it (an indexed PNG with 1.3 to 2 KB of iCCP or text before its
            palette, or about 1 KB before a palette and its alpha table) is read again from its start first, and one
@@ -611,14 +623,20 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            whole MCU that ends past its refill mark, which keeps 512 bytes, and a colour MCU can be longer (a 4:2:0
            picture of noise-like detail saved at quality 100 runs 510 to 600 bytes; a crafted one of the longest
            codes about 1.24 KB): its bit pointer then ran past the data for good. The patch refills before every block
-           whose data left is under 320 bytes (JPEGDEC masks a code's size to 4 bits, so a block of the longest codes
-           any table makes is 64 codes of 16 bits and 15 more, 1,984 bits; with the bit offset carried in and the 4
-           bytes its bit window reads ahead, 256 bytes, 264 with the host tests' 64-bit window), and JPEGGetMoreData
+           whose data left is under 320 bytes (JPEGDEC masks a code's size to 4 bits, and takes a DC value's high
+           nibble as the code's length, so the longest block any table makes for it is a DC of 30 bits and 63 AC
+           coefficients of 31, 1,983 bits; with up to 31 bits of the bit offset carried in and the 4 bytes its 32-bit
+           bit window reads ahead, 256 bytes; the host tests run that same 32-bit reader, and a sweep of crafted
+           longest-block files finds 248 the smallest margin that holds), and JPEGGetMoreData
            loads the bit window again after every move and refill (its bytes past the data were stale), so such
            pictures decode whole; a
            pointer that still passes the data (a reader that gives less than the file has, as the converters' do
            at a cut) ends the decode with an error, the pointer back at the data's end; and an error from one
-           decode no longer carries into the next decode of the same open.
+           decode no longer carries into the next decode of the same open. The converters' own read (a failed read
+           taken as 0 bytes, no retry) on a card whose reads fail from some point: JPEGGetMoreData asks again before
+           every block while its position is short of the size, so the decode makes about one read a block until the
+           blocks' bits pass the data left, then ends in an error, inside the buffer (host-tested; ending it at the
+           first read of 0 bytes is a library change left for later).
        - **The exit.** A stop waits for the task at most 20 s, in all (below).
        - **The watchdog.** For the whole read of a picture, its walk included, the sweep task joins the task watchdog,
          which the x4pro build configures to reset the device after 5 s without a feed (its prebuilt `dio_opi`
@@ -626,10 +644,10 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
          feeds it on progress: every row a decoder hands over and every read that gives file bytes. Nothing in the SD
          card feeds it: around each blocking file call (open, read, seek, close and a file handle's end, each waiting on
          the card's mutex, which another task may hold for longer than 5 s) the task leaves the watchdog and rejoins
-         after, until it has gone 5 s outside file calls, or 10 s in all less the time in reads that returned bytes,
-         without progress, from when it stays watched through them too: a long wait for the card before a read that
-         gives bytes is never a reset, while slow failing or short reads, seeks and opens (which return no bytes) with a
-         spin between them are. A decoder that spins where no read or
+         after, until it has gone 5 s outside file calls, or 10 s in all less the time in calls that did their job (a
+         read that returned its bytes, a seek, an open or a close that worked), without progress, from when it stays
+         watched through them too: a long wait for the card before a call that works is never a reset, while failed
+         calls and empty or short reads with a spin between them are. A decoder that spins where no read or
          row reaches it, or reads on without progress, then resets the device within about 10 to 15 s instead of holding
          the runner. A task the watchdog already watches is fed but never left; a join or rejoin that fails is tried
          once more. A watchdog that is not configured, a join that fails and a rejoin that fails are each logged once,
@@ -686,10 +704,11 @@ The log, besides the runner's lines (speed, pause and resume, the stack line, th
   (after the reader's own error line, such as `PNG truncated (a chunk or segment runs past the file's N bytes)`, `JPEG
   has no end (no SOS marker, or no EOI after it)`, `JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index,
   codes, over-subscribed), SOS (components, tables, spectral range, approximation), an Exif IFD, or a table or SOS past
-  the 2 KiB parse buffer, or too many buffer moves)`, `JPEG not supported (a baseline file of several scans, one per
-  component)`, `PNG|JPEG read failed during the layout walk`, `PNG|JPEG read failed during its header|the decode (at
-  byte N; tried twice)` or `JPEG scan: over 128 KiB of restart markers in a row; not decoded`), or `gray
-  viewer: <name>: read stopped`;
+  the 2 KiB parse buffer, or too many buffer moves)`, `JPEG not supported (a baseline file whose scans do not each cover
+  every component, or a progressive colour file whose first scan does not cover every component of a subsampled frame)`,
+  `JPEG not supported (error N)` (a table JPEGDEC's builder refuses), `PNG|JPEG read failed during the layout walk`,
+  `PNG|JPEG read failed during its header|the decode (at byte N; tried twice)` or `JPEG scan: over 128 KiB of restart
+  markers in a row; not decoded`), or `gray viewer: <name>: read stopped`;
 - `PNG|JPEG: the N bytes after its end (IEND|EOI at N) are not read: <path>` when a file goes on past its end;
 - `gray viewer: name of 64 bytes or more, skipped: <name>` when the screen opens;
 - `gray viewer stopped: <outcome>`.

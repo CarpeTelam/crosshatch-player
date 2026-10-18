@@ -74,7 +74,7 @@ bool readsStopped() { return readSink != nullptr && readSink->stopped(); }
 // call (open, read, seek, close and a handle's end: each takes the card's mutex, which another task may hold for longer
 // than 5 s, legitimately) runs in a gap, out of the watchdog, while the read is making progress
 // (GameDisplayLab::TaskWatchdog decides, over EspTaskWatchdog: the gaps end once the task has gone the timeout outside
-// file calls, or twice it in all less the time in reads that returned bytes, without progress): a decoder that spins
+// file calls, or twice it in all less the time in calls that did their job, without progress): a decoder that spins
 // where no read or row reaches it, or that keeps reading without progress, then resets the device within seconds
 // instead of holding the task, its runner and maybe the card's mutex for good. The timeout is the core's, shared by
 // every watched task; it is not changed here. A watchdog that is not configured, a join that fails and a rejoin that
@@ -131,8 +131,9 @@ void progressDuringRead() {
 // One blocking file call, from construction to destruction.
 struct FileCall {
   DecodeWatchdog::Gap gap{activeWatchdog};
-  // A read that returned the bytes asked: its wait is not the watchdog's wall time (every other call's is).
-  void gaveBytes() { gap.gaveBytes(); }
+  // The call did its job (a read that returned the bytes asked, a seek, an open or a close that worked): its wait is
+  // not the watchdog's wall time (a failed call's, or an empty or short read's, is).
+  void succeeded() { gap.succeeded(); }
 };
 
 // ---- file callbacks, as the converters' (the HalFile behind fHandle) ----------------------------------------------
@@ -148,8 +149,18 @@ void* openFile(const char* filename, int32_t* size) {
   {
     // The handle's end takes the card's mutex too (HalFile::Impl's destructor), so a failed open ends in the gap. An
     // open that fails is tried once more (an SD card's transient error).
-    const FileCall call;
-    if (!GameDisplayLab::tryTwice([&] { return Storage.openFileForRead("DLAB", filename, *f); })) {
+    FileCall call;
+    if (GameDisplayLab::tryTwice([&] { return Storage.openFileForRead("DLAB", filename, *f); })) {
+      call.succeeded();
+      // A file that shrank since its walk (rewritten meanwhile) is the file's failure, not a decode of what is left.
+      if (GameDisplayLab::shrankSinceWalk(reads, f->size())) {
+        LOG_ERR("DLAB", "%s: %u bytes now, %u when walked; not decoded", filename, static_cast<unsigned>(f->size()),
+                static_cast<unsigned>(reads.walkedSize));
+        f->close();
+        delete f;
+        f = nullptr;
+      }
+    } else {
       delete f;
       f = nullptr;
     }
@@ -158,9 +169,7 @@ void* openFile(const char* filename, int32_t* size) {
     openFailed = true;
     return nullptr;
   }
-  const size_t real = f->size();
-  // The walk's size, or the file's if the file shrank since (its reads then end early and are filled or cut).
-  *size = static_cast<int32_t>(real < reads.walkedSize ? real : reads.walkedSize);
+  *size = static_cast<int32_t>(reads.walkedSize);
   return f;
 }
 
@@ -169,9 +178,10 @@ void* openFile(const char* filename, int32_t* size) {
 void closeFile(void* handle) {
   HalFile* f = reinterpret_cast<HalFile*>(handle);
   if (f) {
-    const FileCall call;
+    FileCall call;
     f->close();
     delete f;
+    call.succeeded();
   }
 }
 
@@ -185,12 +195,14 @@ struct ReaderFile {
   int32_t read(uint8_t* buf, const int32_t n) {
     FileCall call;
     const int32_t got = f->read(buf, static_cast<size_t>(n));
-    if (got == n) call.gaveBytes();
+    if (got == n) call.succeeded();
     return got;
   }
   bool seek(const uint32_t position) {
-    const FileCall call;
-    return f->seek(position);
+    FileCall call;
+    const bool sought = f->seek(position);
+    if (sought) call.succeeded();
+    return sought;
   }
   // Static: the reads' stop and the watchdog are the read's, not the handle's (DecoderReads.h calls them on the file).
   static bool stopped() { return readsStopped(); }
@@ -198,16 +210,19 @@ struct ReaderFile {
 };
 
 // Layer 2, a read that cannot stall a decoder (GameDisplayLab::DecoderReads.h, which the host decoder test runs too):
-// the file gives at most what readAllowance allows (nothing once stopped, past a refused seek or at the walked size),
-// a negative read is taken as nothing, and then:
+// the file gives at most what readAllowance allows (nothing once stopped, past a refused seek or a failed read, or at
+// the walked size); a read that fails or comes up short is tried once more from a seek back, and failing or short
+// twice it is the file's failure (DecoderReads::readFailed: nothing more is read, the drawing stops, the picture is
+// Open, logged at the offset that failed); and then:
 // - PNGdec gets the requested length always, the rest 0xFF (GameDisplayLab::fillPngRead, which names the png.inl lines
 //   this rests on: a short read inside IDAT would spin its loop at png.inl 885-904);
 // - JPEGDEC gets the rest zero-filled, never 0xFF nor the stale buffer (GameDisplayLab::answerJpegHeaderRead and
 //   answerJpegDecodeRead name the jpeg.inl lines): while open() runs, a read starting before the walked header's end
 //   is the header parse's, kept whole or dropped (a stop, a short or failed read, a refused seek, past
 //   jpegHeaderReadCap header reads), a drop zeroing the whole parse buffer and latching, so open() errs (and a latched
-//   failure is Open whatever open() returns); every other read is the decode's, never latched, told the whole span,
-//   its runs of 0xFF 0xFF tamed, the file's bytes for decoderReadCap reads.
+//   failure is Open whatever open() returns); every other read is the decode's, never latched, its restart markers
+//   dropped and the span filled from the file (a run of markers past JPEG_RESTART_READ_ON ends the decode), told the
+//   whole span, its runs of 0xFF 0xFF tamed, the file's bytes for decoderReadCap reads.
 int32_t pngRead(PNGFILE* pFile, uint8_t* pBuf, const int32_t len) {
   ReaderFile file{reinterpret_cast<HalFile*>(pFile->fHandle)};
   return GameDisplayLab::answerPngRead(file, reads, pBuf, len);
@@ -231,11 +246,11 @@ int32_t jpegSeek(JPEGFILE* pFile, const int32_t pos) {
   return GameDisplayLab::answerJpegSeek(file, reads, pos, pFile->iSize, pFile->iPos);
 }
 
-// A read of the file failed twice (DecoderReads::readFailed) during `when`: logged once, the picture is the file's
-// failure ("could not open"), never Done.
+// A read of the file failed or came up short twice, or a seek was refused twice (DecoderReads::readFailed), during
+// `when`: logged once with the offset that failed, the picture is the file's failure ("could not open"), never Done.
 ImageRead readFailedDuring(const char* kind, const char* when, const char* path) {
   LOG_ERR("DLAB", "%s read failed during %s (at byte %u; tried twice): %s", kind, when,
-          static_cast<unsigned>(reads.position), path);
+          static_cast<unsigned>(reads.failedAt), path);
   return ImageRead::Open;
 }
 
@@ -324,9 +339,13 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   {
     // HalFile::Impl's destructor takes the card's mutex: a handle that did not open ends in the call. An open that
     // fails is tried once more (an SD card's transient error).
-    const FileCall call;
+    FileCall call;
     opened = GameDisplayLab::tryTwice([&] { return Storage.openFileForRead("DLAB", path, file); });
-    if (!opened) file = HalFile();
+    if (opened) {
+      call.succeeded();
+    } else {
+      file = HalFile();
+    }
   }
   if (!opened) {
     LOG_ERR("DLAB", "%s cannot be opened: %s", kind, path);
@@ -339,13 +358,15 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   struct WalkFile {
     HalFile& f;
     bool seek(const uint32_t offset) {
-      const FileCall call;
-      return f.seek(offset);
+      FileCall call;
+      const bool sought = f.seek(offset);
+      if (sought) call.succeeded();
+      return sought;
     }
     int32_t read(uint8_t* out, const int32_t n) {
       FileCall call;
       const int32_t got = f.read(out, static_cast<size_t>(n));
-      if (got == n) call.gaveBytes();
+      if (got == n) call.succeeded();
       return got;
     }
   };
@@ -362,9 +383,10 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   const uint32_t walkMs = millis() - walkStartMs;
   {
     // The close and the handle's end (the local's destructor then has nothing to do) in one call.
-    const FileCall call;
+    FileCall call;
     file.close();
     file = HalFile();
+    call.succeeded();
   }
   reads.start(extent);
   const bool png = kind[0] == 'P';
@@ -405,7 +427,10 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
       }
       return ImageRead::Format;
     case GameDisplayLab::FileLayout::Unsupported:
-      LOG_ERR("DLAB", "%s not supported (a baseline file of several scans, one per component): %s", kind, path);
+      LOG_ERR("DLAB",
+              "%s not supported (a baseline file whose scans do not each cover every component, or a progressive "
+              "colour file whose first scan does not cover every component of a subsampled frame): %s",
+              kind, path);
       return ImageRead::Format;
     case GameDisplayLab::FileLayout::ReadFailed:
       LOG_ERR("DLAB", "%s read failed during the layout walk: %s", kind, path);

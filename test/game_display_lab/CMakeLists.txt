@@ -134,6 +134,17 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
                  DISPLAY_LAB_JPEGDEC_H "${DISPLAY_LAB_JPEGDEC_H}")
   file(WRITE "${DISPLAY_LAB_JPEGDEC_SRC}/JPEGDEC.h" "${DISPLAY_LAB_JPEGDEC_H}")
 
+  # The lab JPEGDEC patch's block margin (JPEG_BLOCK_MARGIN, defined there unless already defined) is a variable here,
+  # holding the patch's value, so the margin test (ImageDecoders.TheBlockMarginsDerivedMinimumHolds) can lower it; the
+  # device's is the patch's constant.
+  file(READ "${REPO_ROOT}/scripts/lab_decoder_patches/jpegdec/crosshatch-0001-refill-between-blocks-stop-an-overrun.patch"
+       DISPLAY_LAB_JPEGDEC_PATCH)
+  string(REGEX MATCH "#define JPEG_BLOCK_MARGIN ([0-9]+)" DISPLAY_LAB_MARGIN_LINE "${DISPLAY_LAB_JPEGDEC_PATCH}")
+  if(NOT DISPLAY_LAB_MARGIN_LINE)
+    message(FATAL_ERROR "the lab JPEGDEC patch has no '#define JPEG_BLOCK_MARGIN <n>' for the margin test")
+  endif()
+  set(DISPLAY_LAB_BLOCK_MARGIN ${CMAKE_MATCH_1})
+
   set(DISPLAY_LAB_SANITIZE -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
   file(GLOB DISPLAY_LAB_ZLIB_SOURCES "${DISPLAY_LAB_PNGDEC_SRC}/*.c")
   add_library(display_lab_decoders STATIC
@@ -154,7 +165,11 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
   #   (jpeg.inl 2673 and on), which a corrupt table or scan overflows; it wraps on the device, a wrong pixel, no more.
   # Every other UBSan check, and all of AddressSanitizer, stays on, and the test's own sources keep them all.
   target_compile_options(display_lab_decoders PRIVATE -w ${DISPLAY_LAB_SANITIZE} -fno-sanitize=alignment)
-  set_source_files_properties(jpegdec_as_device.cpp PROPERTIES COMPILE_OPTIONS "-fno-sanitize=shift,signed-integer-overflow")
+  set_source_files_properties(jpegdec_as_device.cpp PROPERTIES COMPILE_OPTIONS "-fno-sanitize=shift,signed-integer-overflow"
+                              COMPILE_DEFINITIONS "JPEG_BLOCK_MARGIN=crosshatchJpegBlockMargin;CROSSHATCH_LAB_BLOCK_MARGIN=${DISPLAY_LAB_BLOCK_MARGIN}")
+  # The only test binary that includes JPEGDEC: test_image_decoders, through jpegdec_as_device.h and the library's
+  # jpegdec_as_device.cpp, both of which static_assert REGISTER_WIDTH == 32, so every decoder test runs the device's
+  # 32-bit bit reader (the host's own build would pick 64).
   add_executable(test_image_decoders
     test_image_decoders.cpp
     ${REPO_ROOT}/lib/GameDisplayLab/ImageRows.cpp
