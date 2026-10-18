@@ -5,11 +5,14 @@
 // fixed rectangles and its settle-and-flip sequence through all twelve transitions, both decided by slotDone; and
 // dlab-c4's holds for photos: the hold marker's rectangle and shade in every turn, the photo spots per mode (Static's
 // settles, Slow's painted bands, full dwell and crossing end, Fast's pause), the resume sequence that drives the marker
-// back before the pattern moves, Hold off, and the session cap's clean dropping a hold.
+// back before the pattern moves, Hold off, and the session cap's clean dropping a hold; and dlab-g1's Ladder: the
+// columns' layout and rectangles in every turn, the base, stage 1's n pulses per column one a slot, the holds, the
+// return, the end, Hold off, and the session cap's clean restarting it from the base.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -77,11 +80,33 @@ TEST(TransitionScene, ToPanelEqualsTheRenderersRotation) {
   }
 }
 
+// Fast's paint settled at sweep clock `atMs` (a slot that drove nothing, Hold off): the sweep starts there.
+void settleFastPaint(TransitionScene& scene, const uint32_t atMs = 0) {
+  GrayModel none;
+  const GrayPreset preset = GrayPreset::inkBoyDefaults();
+  const SceneStep step = scene.slotDone(none, preset, 0, true, 100000, atMs);
+  ASSERT_TRUE(step.fastPainted.has_value());
+}
+
+// A Fast scene whose paint settled at clock 0, so its sweep runs on the sweep clock as dlab-c1's did.
+TransitionScene sweepingFast(const PanelTurn turn, const int lw, const int lh, const int pw, const int ph) {
+  TransitionScene scene(turn, lw, lh, pw, ph);
+  settleFastPaint(scene);
+  return scene;
+}
+
 TEST(TransitionScene, RectangleSweepsThenPauses) {
-  // Fast, the default and today's sweep: 12 px over 5 s, then 1 s hidden.
+  // Fast, the default and today's sweep: 12 px over 5 s, then 1 s hidden, once the paint has settled.
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
   EXPECT_EQ(scene.mode(), SweepMode::Fast);
   for (int pass = 0; pass < 2; ++pass) {
+    // Before the paint settles the rectangles wait just off the left edge, whatever the clock.
+    EXPECT_TRUE(scene.paintPending());
+    EXPECT_EQ(scene.rectX(0), -12);
+    EXPECT_EQ(scene.rectX(2500), -12);
+    EXPECT_EQ(scene.rectX(5500), -12);
+    settleFastPaint(scene);
+    EXPECT_FALSE(scene.paintPending());
     EXPECT_EQ(scene.rectW(), 12);
     EXPECT_EQ(scene.sweepMs(), 5000u);
     EXPECT_EQ(scene.rectX(0), -12);
@@ -97,7 +122,7 @@ TEST(TransitionScene, RectangleSweepsThenPauses) {
 
 TEST(TransitionScene, BandsAndLanesHoldTheOtherShadesInOrder) {
   // 800 x 480: bands of 120, lanes of 40, rectangles 24 high from 8 px into each lane.
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
   EXPECT_EQ(scene.bandHeight(), 120);
   EXPECT_EQ(scene.laneHeight(), 40);
   EXPECT_EQ(scene.rectHeight(), 24);
@@ -150,7 +175,7 @@ TEST(TransitionScene, ApplyAllRetargetsEveryPixelToTheSceneInEveryTurn) {
     SceneBench b(PW, PH);
     const int lw = portrait(turn) ? PH : PW;
     const int lh = portrait(turn) ? PW : PH;
-    const TransitionScene scene(turn, lw, lh, PW, PH);
+    const TransitionScene scene = sweepingFast(turn, lw, lh, PW, PH);
     scene.applyAll(b.model, 1000, b.preset);
     for (int ly = 0; ly < lh; ++ly) {
       for (int lx = 0; lx < lw; ++lx) {
@@ -172,7 +197,7 @@ TEST(TransitionScene, UpdateMovesOnlyTheRectangles) {
     const int pw = portrait(turn) ? HH : W;
     const int ph = portrait(turn) ? W : HH;
     SceneBench b(pw, ph);
-    const TransitionScene scene(turn, W, HH, pw, ph);
+    const TransitionScene scene = sweepingFast(turn, W, HH, pw, ph);
     const uint32_t prev = 1000;  // x 9
     const uint32_t now = 1500;   // x 20: the new rectangle overlaps the old one by a pixel
     scene.applyAll(b.model, prev, b.preset);
@@ -205,7 +230,7 @@ TEST(TransitionScene, UpdateIntoThePauseClearsTheRectanglesAndBackStartsThem) {
   constexpr int W = 96;
   constexpr int HH = 480;
   SceneBench b(W, HH);
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
   scene.applyAll(b.model, 4990, b.preset);
   scene.update(b.model, 4990, 5200, b.preset);
   for (int y = 0; y < HH; ++y) {
@@ -234,7 +259,7 @@ void expectRectanglesMoved(const uint32_t prevMs, const uint32_t nowMs) {
   constexpr int W = 96;
   constexpr int HH = 480;
   SceneBench b(W, HH);
-  const TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
+  const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
   scene.applyAll(b.model, prevMs, b.preset);
   while (b.model.activeCount() > 0) b.model.commit(true, true, b.preset);
   const std::vector<uint8_t> atPrev = b.pixels;
@@ -277,10 +302,11 @@ TEST(TransitionScene, UpdateJumpsFurtherThanARectangleWithinOneSweep) {
   expectRectanglesMoved(1000, 2000);
 }
 
-TEST(TransitionScene, ModeRowCyclesStaticSlowFast) {
+TEST(TransitionScene, ModeRowCyclesStaticSlowFastLadder) {
   EXPECT_EQ(nextMode(SweepMode::Static), SweepMode::Slow);
   EXPECT_EQ(nextMode(SweepMode::Slow), SweepMode::Fast);
-  EXPECT_EQ(nextMode(SweepMode::Fast), SweepMode::Static);
+  EXPECT_EQ(nextMode(SweepMode::Fast), SweepMode::Ladder);
+  EXPECT_EQ(nextMode(SweepMode::Ladder), SweepMode::Static);
 }
 
 // Slow's measurement as a run makes it: one painting slot of `periodUs` whose drive scan was delivered, then a slot
@@ -528,7 +554,9 @@ struct TaskSim {
     }
     sceneMs = clockMs;
     const size_t driven = b.model.activeCount();
-    b.model.commit(true, true, b.preset);
+    // A Ladder stage's slots run with every hold bit set, as the task runs them (one dose a slot); every other slot on
+    // the preset as it is.
+    b.model.commit(true, true, scene.slotPreset(b.preset));
     const SceneStep step = scene.slotDone(b.model, b.preset, driven, true, periodUs, clockMs);
     if (step.reapply) stale = true;
     if (!scene.clockStill()) clockMs += tickMs;
@@ -538,9 +566,31 @@ struct TaskSim {
   uint8_t target(const int x, const int y) const { return b.model.target(x, y); }
 };
 
+bool inRect(const ScreenRect& r, const int lx, const int ly) {
+  return lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h;
+}
+
+// A logical pixel of the pause symbol's two bars (never the gap between them).
 bool inMarker(const TransitionScene& scene, const int lx, const int ly) {
+  for (const ScreenRect& bar : scene.markerBars()) {
+    if (inRect(bar, lx, ly)) return true;
+  }
+  return false;
+}
+
+// The pause symbol inside markerRect: two full-height bars of (w - MARKER_GAP) / 2 at its left and right edges.
+void expectBars(const TransitionScene& scene, const char* what) {
   const ScreenRect m = scene.markerRect();
-  return lx >= m.x && lx < m.x + m.w && ly >= m.y && ly < m.y + m.h;
+  const std::array<ScreenRect, 2> bars = scene.markerBars();
+  const int bar = (m.w - TransitionScene::MARKER_GAP) / 2;
+  EXPECT_EQ(bars[0].x, m.x) << what;
+  EXPECT_EQ(bars[1].x + bars[1].w, m.x + m.w) << what;
+  for (const ScreenRect& b : bars) {
+    EXPECT_EQ(b.w, bar) << what;
+    EXPECT_EQ(b.y, m.y) << what;
+    EXPECT_EQ(b.h, m.h) << what;
+  }
+  EXPECT_EQ(bars[1].x - (bars[0].x + bars[0].w), m.w - 2 * bar) << what;  // the gap
 }
 
 TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
@@ -557,13 +607,16 @@ TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
     EXPECT_EQ(m.w, TransitionScene::MARKER_PX);
     EXPECT_EQ(m.h, TransitionScene::MARKER_PX);
     EXPECT_GE(m.y, 3 * sim.scene.bandHeight()) << int(turn);  // inside the bottom band
-    EXPECT_EQ(sim.scene.markerShade(), Shade::W);             // not out: its band's shade
+    expectBars(sim.scene, "square");                          // 16 wide: bars of 4, a gap of 8
+    EXPECT_EQ(sim.scene.markerBars()[0].w, 4);
+    EXPECT_EQ(sim.scene.markerShade(), Shade::W);  // not out: its band's shade
     // Paint, settle: the marker goes out to the opposite of the bottom band's W, D, and nowhere else.
     std::optional<HoldStart> hold;
     for (int n = 0; n < 50 && !hold; ++n) hold = sim.slot().hold;
     ASSERT_TRUE(hold.has_value()) << int(turn);
     EXPECT_EQ(sim.scene.markerShade(), Shade::D);
-    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square).
+    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square): the bars D,
+    // the gap between them and everything else W.
     for (int ly = std::max(lh - 24, 3 * sim.scene.bandHeight()); ly < lh; ++ly) {
       for (int lx = lw - 24; lx < lw; ++lx) {
         int px = 0;
@@ -817,17 +870,58 @@ TEST(TransitionScene, SlowHoldsAtThePaintAtTheFullDwellAndAtTheCrossingsEnd) {
   }
 }
 
-TEST(TransitionScene, FastHoldsOncePerSweepInItsPause) {
+TEST(TransitionScene, FastHoldsAtThePaintThenOncePerSweepInItsPause) {
   TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-  const std::vector<SpotSeen> seen = runToHolds(sim, 3);
-  ASSERT_EQ(seen.size(), 3u);
+  const std::vector<SpotSeen> seen = runToHolds(sim, 4);
+  ASSERT_EQ(seen.size(), 4u);
+  // The painted bands, before the first sweep: the rectangles still off the left edge.
+  EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);
+  EXPECT_EQ(seen[0].hold.count, 0u);
+  EXPECT_EQ(seen[0].x, -TransitionScene::RECT_W);
+  EXPECT_GT(seen[0].clockMs, 0u);  // the paint took slots, which the sweep does not count
+  // Every pause's spot counted from the settle, not from the run's start.
+  const uint32_t settleMs = seen[0].clockMs;
   const uint32_t cycle = TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS;
   for (uint32_t n = 0; n < 3; ++n) {
-    EXPECT_EQ(seen[n].hold.spot, HoldSpot::FastPause);
-    EXPECT_EQ(seen[n].hold.count, n + 1);
-    EXPECT_EQ(seen[n].clockMs, n * cycle + TransitionScene::SWEEP_MS);  // the pause's first 100 ms slot
-    EXPECT_FALSE(seen[n].x.has_value());
+    EXPECT_EQ(seen[n + 1].hold.spot, HoldSpot::FastPause);
+    EXPECT_EQ(seen[n + 1].hold.count, n + 1);
+    EXPECT_EQ(seen[n + 1].clockMs, settleMs + n * cycle + TransitionScene::SWEEP_MS);  // the pause's first slot
+    EXPECT_FALSE(seen[n + 1].x.has_value());
   }
+}
+
+// Fast waits for the bands' paint (story dlab-g1's batch, the owner's ask): no rectangle pixel is retargeted while the
+// bands fill from white; the slot that drives nothing starts the sweep (Hold off: no hold, the crossing from the next
+// slot's clock), and the settle's line has the paint's slots.
+TEST(TransitionScene, FastRectanglesWaitUntilThePaintSettles) {
+  constexpr int W = 96;
+  constexpr int HH = 480;
+  TaskSim sim(W, HH, SweepMode::Fast, 4, false);
+  SceneStep step;
+  uint32_t paintSlots = 0;
+  for (int n = 0; n < 50 && !step.fastPainted; ++n) {
+    EXPECT_TRUE(sim.scene.paintPending());
+    step = sim.slot();
+    if (!step.fastPainted) ++paintSlots;
+    // Every pixel's target is its band's, the settling slot's included: no rectangle has landed yet.
+    for (int y = 0; y < HH; ++y) {
+      for (int x = 0; x < W; ++x) {
+        const int band = std::min(y / sim.scene.bandHeight(), TransitionScene::BANDS - 1);
+        ASSERT_EQ(sim.target(x, y), static_cast<uint8_t>(TransitionScene::bandShade(band)))
+            << n << " at " << x << "," << y;
+      }
+    }
+  }
+  ASSERT_TRUE(step.fastPainted.has_value());
+  EXPECT_EQ(*step.fastPainted, paintSlots);
+  EXPECT_GT(paintSlots, 0u);
+  EXPECT_FALSE(step.hold.has_value());  // Hold off
+  EXPECT_FALSE(sim.scene.paintPending());
+  // The settle's clock is the crossing's 0: one slot later the rectangles have moved on by one tick's travel.
+  const uint32_t settleMs = sim.clockMs - TaskSim::TICK_MS;
+  EXPECT_EQ(sim.scene.rectX(settleMs), -TransitionScene::RECT_W);
+  EXPECT_EQ(sim.scene.rectX(settleMs + 2500), -12 + (W + 12) / 2);
+  EXPECT_FALSE(sim.scene.rectX(settleMs + TransitionScene::SWEEP_MS).has_value());
 }
 
 TEST(TransitionScene, SessionCapCleanDropsAHoldAndStaticHoldsAgainAtFlipZero) {
@@ -893,6 +987,8 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
     EXPECT_EQ(m.y + m.h, lh);
     EXPECT_GE(m.y, laneBottom) << int(turn);                            // strictly below the last lane's rectangle rows
     EXPECT_GE(m.y, (TransitionScene::BANDS - 1) * scene.bandHeight());  // inside the bottom band
+    expectBars(scene, "dash");
+    EXPECT_EQ(scene.markerBars()[0].w, 12);  // 12, a gap of 8, 12
     // The pattern painted and settled, then a settle with Hold on: the marker's pixels go out to D over the W band,
     // nothing around it moves, and it maps to the panel as every other pixel does.
     scene.applyAll(b.model, 0, b.preset);
@@ -915,7 +1011,7 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
         }
       }
     }
-    EXPECT_EQ(out, static_cast<uint32_t>(m.w * m.h)) << int(turn);
+    EXPECT_EQ(out, static_cast<uint32_t>(2 * 12 * m.h)) << int(turn);  // the bars only: the gap stays the band's
   }
 }
 
@@ -951,13 +1047,14 @@ void restartRun(TaskSim& sim, const SweepMode mode) {
 TEST(TransitionScene, SetModeRestartsTheCrossingSpots) {
   {
     TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-    ASSERT_EQ(runToHolds(sim, 1).size(), 1u);
+    ASSERT_EQ(runToHolds(sim, 2).back().hold.spot, HoldSpot::FastPause);
     restartRun(sim, SweepMode::Fast);
-    const std::vector<SpotSeen> seen = runToHolds(sim, 1);
-    ASSERT_EQ(seen.size(), 1u);
-    EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPause);
-    EXPECT_EQ(seen[0].hold.count, 1u);
-    EXPECT_EQ(seen[0].clockMs, TransitionScene::SWEEP_MS);
+    const std::vector<SpotSeen> seen = runToHolds(sim, 2);
+    ASSERT_EQ(seen.size(), 2u);
+    EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);  // the paint waited for again
+    EXPECT_EQ(seen[1].hold.spot, HoldSpot::FastPause);
+    EXPECT_EQ(seen[1].hold.count, 1u);
+    EXPECT_EQ(seen[1].clockMs, seen[0].clockMs + TransitionScene::SWEEP_MS);
   }
   {
     TaskSim sim(96, 480, SweepMode::Slow, 4, true);
@@ -994,7 +1091,10 @@ TEST(TransitionScene, SlowSkipsTheDwellSpotWhenTheRectanglesReachTheRightEdgeFir
 TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
   {
     TaskSim sim(96, 480, SweepMode::Fast, 4, true);
-    ASSERT_EQ(runToHolds(sim, 1).size(), 1u);  // the first pause, the marker going out
+    const std::vector<SpotSeen> first = runToHolds(sim, 2);  // the paint, then the first pause, the marker going out
+    ASSERT_EQ(first.size(), 2u);
+    ASSERT_EQ(first[1].hold.spot, HoldSpot::FastPause);
+    const uint32_t settleMs = first[0].clockMs;
     sim.b.model.reset(Shade::W);
     const std::optional<DroppedHold> dropped = sim.scene.cancelHold();
     ASSERT_TRUE(dropped.has_value());
@@ -1005,7 +1105,8 @@ TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
     ASSERT_EQ(seen.size(), 1u);
     EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPause);
     EXPECT_EQ(seen[0].hold.count, 2u);  // this pause is not held again
-    EXPECT_EQ(seen[0].clockMs, 2 * TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS);
+    EXPECT_EQ(seen[0].clockMs, settleMs + 2 * TransitionScene::SWEEP_MS + TransitionScene::PAUSE_MS);
+    EXPECT_FALSE(sim.scene.paintPending());  // the repaint under the crossing does not wait again
   }
   {
     TaskSim sim(96, 480, SweepMode::Slow, 4, true);
@@ -1028,11 +1129,14 @@ TEST(TransitionScene, SessionCapCleanInSlowOrFastSkipsTheDroppedSpot) {
 }
 
 TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
-  // Fast with 1.5 s slots: 0, 1.5, 3, 4.5, then 6 s, the next crossing; no slot starts in the 5 to 6 s pause.
+  // Fast with 1.5 s slots: 0, 1.5, 3, 4.5, then 6 s from the paint's settle, the next crossing; no slot starts in the
+  // 5 to 6 s pause.
   TaskSim sim(96, 480, SweepMode::Fast, 4, true);
   sim.tickMs = 1500;
   std::vector<SkippedSpot> skipped;
-  EXPECT_TRUE(runToHolds(sim, 1, &skipped).empty());  // 2,000 slots, never a hold
+  const std::vector<SpotSeen> seen = runToHolds(sim, 2, &skipped);  // 2,000 slots: the painted hold, then never one
+  ASSERT_EQ(seen.size(), 1u);
+  EXPECT_EQ(seen[0].hold.spot, HoldSpot::FastPainted);
   ASSERT_GE(skipped.size(), 3u);
   for (uint32_t n = 0; n < 3; ++n) {
     EXPECT_EQ(skipped[n].spot, HoldSpot::FastPause);
@@ -1045,16 +1149,18 @@ TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
   for (int n = 0; n < 20; ++n) EXPECT_FALSE(off.slot().skipped.has_value());
 }
 
-TEST(TransitionScene, ShadeLettersAndLogNames) {
-  EXPECT_EQ(shadeLetter(Shade::K), 'K');
-  EXPECT_EQ(shadeLetter(Shade::D), 'D');
-  EXPECT_EQ(shadeLetter(Shade::L), 'L');
-  EXPECT_EQ(shadeLetter(Shade::W), 'W');
+TEST(TransitionScene, ShadeNamesAndLogNames) {
+  // D14's seven-level numbers where the user sees a shade: black 0, dark gray 2, light gray 4, white 6.
+  EXPECT_EQ(shadeName(Shade::K), '0');
+  EXPECT_EQ(shadeName(Shade::D), '2');
+  EXPECT_EQ(shadeName(Shade::L), '4');
+  EXPECT_EQ(shadeName(Shade::W), '6');
   EXPECT_STREQ(spotSkipName(SpotSkip::RightEdge), "the rectangles reached the right edge first");
   EXPECT_STREQ(spotSkipName(SpotSkip::PauseOutrun), "no slot started in the pause");
   EXPECT_STREQ(holdDropName(HoldDrop::StaticAgainAtFlipZero), "holds again at flip 0");
   EXPECT_STREQ(holdDropName(HoldDrop::SkippedThisCrossing), "skipped for this crossing");
   EXPECT_STREQ(holdDropName(HoldDrop::WayBackCutOff), "photo taken, the marker's way back cut off");
+  EXPECT_STREQ(holdDropName(HoldDrop::LadderFromBase), "the ladder restarts from the base");
 }
 
 TEST(TransitionScene, HoldSpotNamesForTheLog) {
@@ -1062,7 +1168,475 @@ TEST(TransitionScene, HoldSpotNamesForTheLog) {
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowPainted), "slow painted");
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowDwelt), "slow dwelt");
   EXPECT_STREQ(holdSpotName(HoldSpot::SlowCrossed), "slow crossed");
+  EXPECT_STREQ(holdSpotName(HoldSpot::FastPainted), "fast painted");
   EXPECT_STREQ(holdSpotName(HoldSpot::FastPause), "fast pause");
+  EXPECT_STREQ(holdSpotName(HoldSpot::Ladder), "ladder");
+}
+
+// ---- dlab-g1: the Ladder ------------------------------------------------------------------------------------------
+
+TEST(TransitionScene, LadderLayoutAtTheX4ProsWidthsAndOnNarrowScreens) {
+  const auto expectLayout = [](const int w, const int columns, const int width, const int gutter) {
+    const LadderLayout l = TransitionScene::ladderLayout(w);
+    EXPECT_EQ(l.columns, columns) << w;
+    EXPECT_EQ(l.width, width) << w;
+    EXPECT_EQ(l.gutter, gutter) << w;
+    EXPECT_LE(l.columns * (l.width + l.gutter), w > 0 ? w : 0) << w;  // the columns fit
+  };
+  // A 1 px gutter of the origin after every column wherever the pitch has room for one.
+  expectLayout(480, 24, 19, 1);  // portrait: pitch 20
+  expectLayout(800, 24, 32, 1);  // landscape: pitch 33, 8 px left over
+  expectLayout(72, 24, 2, 1);
+  expectLayout(48, 24, 1, 1);
+  expectLayout(47, 24, 1, 0);  // under 48: 1 px columns, no gutter
+  expectLayout(30, 24, 1, 0);
+  expectLayout(20, 20, 1, 0);  // under 24: as many as fit
+  expectLayout(1, 1, 1, 0);
+  expectLayout(0, 0, 0, 0);
+  expectLayout(-5, 0, 0, 0);
+}
+
+TEST(TransitionScene, LadderModeHasNoRectanglesAndSlotPresetIsHeldOnlyWhilePulsing) {
+  TransitionScene scene(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
+  scene.setMode(SweepMode::Ladder, 4);
+  EXPECT_EQ(scene.mode(), SweepMode::Ladder);
+  EXPECT_FALSE(scene.rectX(0).has_value());
+  EXPECT_FALSE(scene.rectX(3000).has_value());
+  EXPECT_EQ(scene.sweepMs(), 0u);
+  EXPECT_EQ(scene.rectW(), 0);  // no rectangles: the layout carries the columns
+  EXPECT_FALSE(scene.slowPending());
+  EXPECT_EQ(scene.ladderStage(), LadderStage::Base);
+  EXPECT_FALSE(scene.ladderPulsing());
+  EXPECT_EQ(scene.markerBandShade(), Shade::K);
+  // The Ladder holds whatever the Hold row says; the other modes only with it on.
+  EXPECT_FALSE(scene.holdOn());
+  EXPECT_TRUE(scene.holdsAtSpots());
+  scene.setMode(SweepMode::Static, 4);
+  EXPECT_FALSE(scene.holdsAtSpots());
+  scene.setMode(SweepMode::Ladder, 4);
+  // update() moves nothing: no rectangles.
+  SceneBench b(800, 480);
+  scene.update(b.model, 0, 5000, b.preset);
+  EXPECT_EQ(b.model.activeCount(), 0u);
+  // heldRhythm: every hold bit, everything else the preset's.
+  const GrayPreset p = GrayPreset::ultraChipDefaults();
+  const GrayPreset held = TransitionScene::heldRhythm(p);
+  EXPECT_EQ(held.holdMask, 0xFFFF);
+  EXPECT_TRUE(held.valid());
+  for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) {
+    EXPECT_EQ(held.doseAt(i), p.doseAt(i));
+    EXPECT_TRUE(held.holdAt(i));
+  }
+  EXPECT_EQ(held.rateIndex, p.rateIndex);
+  EXPECT_EQ(held.swapPolarity, p.swapPolarity);
+  EXPECT_EQ(held.retargetDarkPercent, p.retargetDarkPercent);
+  EXPECT_EQ(held.retargetLightPercent, p.retargetLightPercent);
+  EXPECT_EQ(held.historyMode, p.historyMode);
+  EXPECT_EQ(held.weakWhiteToLight, p.weakWhiteToLight);
+  // slotPreset: the preset itself at the base, the held copy once stage 1 pulses.
+  EXPECT_EQ(&scene.slotPreset(p), &p);
+  TaskSim sim(96, 72, SweepMode::Ladder, 4, true);
+  EXPECT_EQ(&sim.scene.slotPreset(p), &p);
+  for (int n = 0; n < 50 && !sim.scene.ladderPulsing(); ++n) sim.slot();
+  ASSERT_TRUE(sim.scene.ladderPulsing());
+  const GrayPreset& pulsing = sim.scene.slotPreset(p);
+  EXPECT_NE(&pulsing, &p);
+  EXPECT_EQ(pulsing.holdMask, 0xFFFF);
+  EXPECT_EQ(pulsing.rateIndex, p.rateIndex);
+}
+
+// The X4 Pro's screen in each turn: the columns' rectangles (D14's figures with the gutter), the marker a MARKER_W x
+// MARKER_PX dash at the bottom-right under them, and the base: the top half white, everything below it black, column
+// 24 driven first (end-aligned: its 24 pulses are the whole stage).
+TEST(TransitionScene, LadderColumnsAndMarkerInEveryTurnAtFullSize) {
+  constexpr int PW = 800;
+  constexpr int PH = 480;
+  for (const PanelTurn turn : TURNS) {
+    const int lw = portrait(turn) ? PH : PW;
+    const int lh = portrait(turn) ? PW : PH;
+    TaskSim sim(turn, lw, lh, PW, PH, SweepMode::Ladder, 4, true);
+    const ScreenRect m = sim.scene.markerRect();
+    EXPECT_EQ(m.x, lw - TransitionScene::MARKER_W) << int(turn);
+    EXPECT_EQ(m.y, lh - TransitionScene::MARKER_PX) << int(turn);
+    EXPECT_EQ(m.w, TransitionScene::MARKER_W) << int(turn);
+    EXPECT_EQ(m.h, TransitionScene::MARKER_PX) << int(turn);
+    expectBars(sim.scene, "ladder");
+    const int rows = lh - TransitionScene::MARKER_PX;
+    ASSERT_EQ(sim.scene.ladderHeight(), rows) << int(turn);
+    const int pitch = portrait(turn) ? 20 : 33;
+    const int width = pitch - 1;
+    for (int n = 1; n <= TransitionScene::LADDER_STEPS; ++n) {
+      for (const LadderHalf half : {LadderHalf::FromWhite, LadderHalf::FromBlack}) {
+        const ScreenRect c = sim.scene.ladderColumn(half, n);
+        EXPECT_EQ(c.x, (n - 1) * pitch) << int(turn) << " " << n;
+        EXPECT_EQ(c.w, width);
+        EXPECT_EQ(c.y, half == LadderHalf::FromWhite ? 0 : rows / 2);
+        EXPECT_EQ(c.h, half == LadderHalf::FromWhite ? rows / 2 : rows - rows / 2);
+        EXPECT_LE(c.y + c.h, m.y) << "column " << n << " reaches the marker's rows";
+      }
+    }
+    EXPECT_EQ(sim.scene.ladderColumn(LadderHalf::FromWhite, 0).w, 0);
+    EXPECT_EQ(sim.scene.ladderColumn(LadderHalf::FromWhite, 25).w, 0);
+    SceneStep step;
+    int slots = 0;
+    while (!step.ladderSettled && slots++ < 50) step = sim.slot();
+    ASSERT_TRUE(step.ladderSettled.has_value()) << int(turn);
+    EXPECT_EQ(step.ladderSettled->stage, LadderStage::Base);
+    EXPECT_GT(step.ladderSettled->slots, 0u);
+    EXPECT_FALSE(step.hold.has_value());
+    EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Ladder);
+    EXPECT_TRUE(sim.scene.ladderPulsing());
+    for (int ly = 0; ly < lh; ++ly) {
+      const bool top = ly < rows / 2;
+      for (int lx = 0; lx < lw; ++lx) {
+        const bool column24 = ly < rows && lx >= 23 * pitch && lx < 23 * pitch + width;
+        int px = 0;
+        int py = 0;
+        rendererRotate(turn, lx, ly, &px, &py, PW, PH);
+        const uint8_t origin = static_cast<uint8_t>(top ? Shade::W : Shade::K);
+        const uint8_t end = static_cast<uint8_t>(top ? Shade::K : Shade::W);
+        ASSERT_EQ(sim.b.model.level(px, py), top ? 192 : 0) << int(turn) << " " << lx << "," << ly;
+        ASSERT_EQ(sim.b.model.remaining(px, py), column24 ? 24 : 0) << int(turn) << " " << lx << "," << ly;
+        ASSERT_EQ(sim.b.model.target(px, py), column24 ? end : origin) << int(turn) << " " << lx << "," << ly;
+      }
+    }
+  }
+}
+
+// Column n's doses left and target, per logical pixel, before stage slot `j` (0..24, from 0) of `stage`: end-aligned,
+// column n is driven before slot 24 - n, so a driven column has 24 - j doses left and an undriven one none, its target
+// still the previous stage's end (stage 1: its origin). Gutters and the leftover hold the origin.
+template <typename PixelFn>
+void expectStageSlot(const TransitionScene& scene, const int lw, const int lh, const int j, const LadderStage stage,
+                     PixelFn&& pixel, const char* what) {
+  const int rows = scene.ladderHeight();
+  const LadderLayout l = scene.ladderLayout();
+  const int pitch = l.width + l.gutter;
+  for (int ly = 0; ly < lh; ++ly) {
+    const bool top = ly < rows / 2;
+    const uint8_t origin = static_cast<uint8_t>(top ? Shade::W : Shade::K);
+    const uint8_t opposite = static_cast<uint8_t>(top ? Shade::K : Shade::W);
+    for (int lx = 0; lx < lw; ++lx) {
+      const int n = lx / pitch + 1;
+      const bool column = ly < rows && n <= l.columns && lx % pitch < l.width;
+      const bool driven = column && n >= TransitionScene::LADDER_STEPS - j;
+      const uint8_t stageEnd = stage == LadderStage::Ladder ? opposite : origin;
+      const uint8_t before = stage == LadderStage::Ladder ? origin : opposite;
+      uint8_t remaining = 0;
+      uint8_t target = 0;
+      pixel(lx, ly, remaining, target);
+      ASSERT_EQ(remaining, driven && j < 24 ? 24 - j : 0) << what << " slot " << j << " at " << lx << "," << ly;
+      ASSERT_EQ(target, column ? (driven ? stageEnd : before) : origin)
+          << what << " slot " << j << " at " << lx << "," << ly;
+    }
+  }
+}
+
+// The stage's 24 slots (checked before each, and after the last), then the slot that drove none: its step.
+template <typename PixelFn>
+SceneStep runStage(TaskSim& sim, const int lw, const int lh, const LadderStage stage, PixelFn&& pixel,
+                   const char* what) {
+  for (int j = 0; j < TransitionScene::LADDER_STEPS; ++j) {
+    EXPECT_TRUE(sim.scene.ladderPulsing()) << what << " " << j;
+    expectStageSlot(sim.scene, lw, lh, j, stage, pixel, what);
+    const SceneStep step = sim.slot();
+    EXPECT_FALSE(step.ladderSettled.has_value()) << what << " " << j;
+    EXPECT_FALSE(step.hold.has_value()) << what << " " << j;
+  }
+  expectStageSlot(sim.scene, lw, lh, TransitionScene::LADDER_STEPS, stage, pixel, what);
+  return sim.slot();
+}
+
+// A Ladder run on a small screen: 72 px wide (24 columns of 2 px, 1 px gutters), 64 high (the marker's 16 rows under
+// the halves, which share rows 0..47).
+constexpr int LADDER_W = 72;
+constexpr int LADDER_H = 64;
+
+SceneStep runStage(TaskSim& sim, const LadderStage stage, const char* what) {
+  return runStage(
+      sim, LADDER_W, LADDER_H, stage,
+      [&sim](const int x, const int y, uint8_t& remaining, uint8_t& target) {
+        remaining = sim.b.model.remaining(x, y);
+        target = sim.b.model.target(x, y);
+      },
+      what);
+}
+
+// The marker's slots until it settles (out: `held`; back: `resumed`); the last step.
+SceneStep runMarker(TaskSim& sim, const bool out) {
+  SceneStep step;
+  for (int n = 0; n < 50 && !(out ? step.held : step.resumed); ++n) {
+    EXPECT_FALSE(sim.scene.ladderPulsing());
+    step = sim.slot();
+    EXPECT_FALSE(step.ladderSettled.has_value());
+  }
+  EXPECT_TRUE(out ? step.held : step.resumed);
+  return step;
+}
+
+SceneStep paintBase(TaskSim& sim) {
+  SceneStep step;
+  for (int n = 0; n < 50 && !step.ladderSettled; ++n) {
+    EXPECT_FALSE(sim.scene.ladderPulsing());
+    step = sim.slot();
+  }
+  EXPECT_TRUE(step.ladderSettled.has_value());
+  if (step.ladderSettled) {
+    EXPECT_EQ(step.ladderSettled->stage, LadderStage::Base);
+  }
+  return step;
+}
+
+// Both stages in every turn on a small panel: each logical pixel mapped as the renderer maps it.
+TEST(TransitionScene, LadderStagesAreEndAlignedInEveryTurn) {
+  constexpr int PW = 96;
+  constexpr int PH = 72;
+  for (const PanelTurn turn : TURNS) {
+    const int lw = portrait(turn) ? PH : PW;
+    const int lh = portrait(turn) ? PW : PH;
+    TaskSim sim(turn, lw, lh, PW, PH, SweepMode::Ladder, 4, false);
+    const auto pixel = [&sim, turn](const int lx, const int ly, uint8_t& remaining, uint8_t& target) {
+      int px = 0;
+      int py = 0;
+      rendererRotate(turn, lx, ly, &px, &py, PW, PH);
+      remaining = sim.b.model.remaining(px, py);
+      target = sim.b.model.target(px, py);
+    };
+    paintBase(sim);
+    SceneStep step = runStage(sim, lw, lh, LadderStage::Ladder, pixel, "stage 1");
+    ASSERT_TRUE(step.hold.has_value()) << int(turn);
+    runMarker(sim, true);
+    ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+    runMarker(sim, false);
+    step = runStage(sim, lw, lh, LadderStage::Return, pixel, "stage 2");
+    ASSERT_TRUE(step.hold.has_value()) << int(turn);
+    EXPECT_EQ(step.hold->count, 2u);
+  }
+}
+
+TEST(TransitionScene, LadderHoldsAfterEachStageAndEndsAfterTheReturn) {
+  // Hold on and Hold off alike: the Ladder is nothing but its photos.
+  for (const bool hold : {true, false}) {
+    TaskSim sim(LADDER_W, LADDER_H, SweepMode::Ladder, 4, hold);
+    ASSERT_EQ(sim.scene.ladderHeight(), 48);
+    paintBase(sim);
+    // Stage 1: column n has n pulses, one a slot, its last in the stage's last slot; the stage settles after 24 slots,
+    // and the run holds at `ladder 1`.
+    SceneStep step = runStage(sim, LadderStage::Ladder, "stage 1");
+    ASSERT_TRUE(step.ladderSettled.has_value()) << hold;
+    EXPECT_EQ(step.ladderSettled->stage, LadderStage::Ladder);
+    EXPECT_EQ(step.ladderSettled->slots, 24u);
+    ASSERT_TRUE(step.hold.has_value()) << hold;
+    EXPECT_EQ(step.hold->spot, HoldSpot::Ladder);
+    EXPECT_EQ(step.hold->count, 1u);
+    EXPECT_FALSE(step.finished);
+    EXPECT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerOut);
+    EXPECT_EQ(sim.scene.markerShade(), Shade::L);  // over black, two steps along
+    // Every column landed on its end in the model (top black, bottom white); the stage waits for the resume.
+    EXPECT_EQ(sim.b.model.level(0, 0), 0);
+    EXPECT_EQ(sim.b.model.level(69, 47), 192);
+    EXPECT_EQ(sim.b.model.level(2, 0), 192);  // a gutter: its origin
+    step = runMarker(sim, true);
+    EXPECT_EQ(sim.scene.holdPhase(), HoldPhase::Held);
+    EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Ladder);
+    // Next: the marker back first, then stage 2 starts in the slot it settles.
+    ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+    step = runMarker(sim, false);
+    EXPECT_FALSE(step.finished);
+    EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Return);
+    EXPECT_EQ(sim.scene.markerShade(), Shade::K);
+    // Stage 2: the same pulses back, end-aligned, then the hold at `ladder 2`.
+    step = runStage(sim, LadderStage::Return, "stage 2");
+    ASSERT_TRUE(step.ladderSettled.has_value());
+    EXPECT_EQ(step.ladderSettled->stage, LadderStage::Return);
+    EXPECT_EQ(step.ladderSettled->slots, 24u);
+    ASSERT_TRUE(step.hold.has_value());
+    EXPECT_EQ(step.hold->count, 2u);
+    EXPECT_FALSE(step.finished);
+    EXPECT_EQ(sim.b.model.level(0, 0), 192);
+    EXPECT_EQ(sim.b.model.level(69, 47), 0);
+    runMarker(sim, true);
+    // Next: the marker back, then the run is over.
+    ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+    step = runMarker(sim, false);
+    EXPECT_TRUE(step.finished);
+    EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Done);
+    EXPECT_EQ(sim.b.model.activeCount(), 0u);
+  }
+}
+
+TEST(TransitionScene, NarrowLadderStillRunsTwentyFourSlotsAStage) {
+  // 20 px wide: 20 columns of 1 px; columns 21..24 do not exist, so the stage's first four slots drive nothing, and
+  // still count.
+  TaskSim sim(20, 64, SweepMode::Ladder, 4, true);
+  paintBase(sim);
+  SceneStep step;
+  uint32_t slots = 0;
+  while (!step.ladderSettled && slots < 50) {
+    step = sim.slot();
+    ++slots;
+  }
+  ASSERT_TRUE(step.ladderSettled.has_value());
+  EXPECT_EQ(step.ladderSettled->slots, 24u);
+  EXPECT_EQ(slots, 25u);
+  ASSERT_TRUE(step.hold.has_value());
+  EXPECT_EQ(sim.b.model.level(19, 0), 0);  // column 20 had its 20 pulses
+}
+
+TEST(TransitionScene, SessionCapCleanRestartsTheLadderFromTheBaseOrEndsItAfterBothPhotos) {
+  // The cap's clean, as the task runs it: white, a hold dropped, the ladder restarted or ended, the scene reapplied.
+  const auto capClean = [](TaskSim& sim, bool& ended) {
+    sim.b.model.reset(Shade::W);
+    const std::optional<DroppedHold> dropped = sim.scene.cancelHold();
+    ended = sim.scene.ladderCleaned(dropped);
+    sim.stale = true;
+    return dropped;
+  };
+  bool ended = false;
+  TaskSim sim(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+  const SceneStep base = paintBase(sim);
+  ASSERT_TRUE(base.ladderSettled.has_value());
+  const uint32_t baseSlots = base.ladderSettled->slots;
+  // Mid stage 1 (5 slots in): nothing to drop; the base paints again in as many slots, then stage 1 from its start.
+  for (int n = 0; n < 5; ++n) sim.slot();
+  EXPECT_FALSE(capClean(sim, ended).has_value());
+  EXPECT_FALSE(ended);
+  EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Base);
+  EXPECT_FALSE(sim.scene.ladderPulsing());
+  const SceneStep again = paintBase(sim);
+  ASSERT_TRUE(again.ladderSettled.has_value());
+  EXPECT_EQ(again.ladderSettled->slots, baseSlots);
+  SceneStep step = runStage(sim, LadderStage::Ladder, "stage 1 after the cap");
+  ASSERT_TRUE(step.hold.has_value());
+  EXPECT_EQ(step.hold->count, 1u);
+  // The marker going out at `ladder 1`: dropped, the ladder from the base, holding at `ladder 1` again.
+  sim.slot();
+  ASSERT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerOut);
+  std::optional<DroppedHold> dropped = capClean(sim, ended);
+  ASSERT_TRUE(dropped.has_value());
+  EXPECT_FALSE(ended);
+  EXPECT_EQ(dropped->spot, HoldSpot::Ladder);
+  EXPECT_EQ(dropped->drop, HoldDrop::LadderFromBase);
+  EXPECT_EQ(dropped->markerSlots, 1u);
+  EXPECT_EQ(sim.scene.holdPhase(), HoldPhase::Running);
+  paintBase(sim);
+  step = runStage(sim, LadderStage::Ladder, "stage 1 after a dropped hold");
+  ASSERT_TRUE(step.hold.has_value());
+  EXPECT_EQ(step.hold->count, 1u);
+  // The marker on its way back from `ladder 1`: the photo was taken, but stage 2's is not: from the base, and no
+  // pending stage 2 survives the restart.
+  runMarker(sim, true);
+  ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+  sim.slot();
+  ASSERT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerBack);
+  dropped = capClean(sim, ended);
+  ASSERT_TRUE(dropped.has_value());
+  EXPECT_EQ(dropped->drop, HoldDrop::WayBackCutOff);
+  EXPECT_FALSE(ended);
+  step = paintBase(sim);
+  EXPECT_FALSE(step.resumed);
+  EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Ladder);
+  step = runStage(sim, LadderStage::Ladder, "stage 1 after a cut-off way back");
+  ASSERT_TRUE(step.hold.has_value());
+  EXPECT_EQ(step.hold->count, 1u);
+  // On to `ladder 2`, and the marker on its way back from it: both photos taken, so the run ends.
+  runMarker(sim, true);
+  ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+  runMarker(sim, false);
+  step = runStage(sim, LadderStage::Return, "stage 2 before the cap");
+  ASSERT_TRUE(step.hold.has_value());
+  EXPECT_EQ(step.hold->count, 2u);
+  runMarker(sim, true);
+  ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+  sim.slot();
+  ASSERT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerBack);
+  dropped = capClean(sim, ended);
+  ASSERT_TRUE(dropped.has_value());
+  EXPECT_EQ(dropped->drop, HoldDrop::WayBackCutOff);
+  EXPECT_TRUE(ended);
+  EXPECT_EQ(sim.scene.ladderStage(), LadderStage::Done);
+
+  // Every other clean restarts from the base, and the run holds at `ladder 1` first again: the base painted again,
+  // then stage 1 from its start.
+  const auto expectRestartsFromTheBase = [](TaskSim& again, const char* what) {
+    EXPECT_EQ(again.scene.ladderStage(), LadderStage::Base) << what;
+    EXPECT_EQ(again.scene.holdPhase(), HoldPhase::Running) << what;
+    paintBase(again);
+    const SceneStep held = runStage(again, LadderStage::Ladder, what);
+    ASSERT_TRUE(held.hold.has_value()) << what;
+    EXPECT_EQ(held.hold->count, 1u) << what;
+  };
+  // Into stage 2 (the return), with the marker back from `ladder 1`.
+  const auto toTheReturn = [](TaskSim& run) {
+    paintBase(run);
+    runStage(run, LadderStage::Ladder, "stage 1");
+    runMarker(run, true);
+    ASSERT_TRUE(run.scene.resumeHold(run.b.model, run.b.preset));
+    runMarker(run, false);
+    ASSERT_EQ(run.scene.ladderStage(), LadderStage::Return);
+  };
+  {
+    // The marker going out at `ladder 2`: the photo is not taken yet.
+    TaskSim out(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    toTheReturn(out);
+    const SceneStep spot = runStage(out, LadderStage::Return, "stage 2");
+    ASSERT_TRUE(spot.hold.has_value());
+    EXPECT_EQ(spot.hold->count, 2u);
+    out.slot();
+    ASSERT_EQ(out.scene.holdPhase(), HoldPhase::MarkerOut);
+    const std::optional<DroppedHold> drop = capClean(out, ended);
+    ASSERT_TRUE(drop.has_value());
+    EXPECT_EQ(drop->drop, HoldDrop::LadderFromBase);
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(out, "after a dropped ladder 2");
+  }
+  {
+    // Mid stage 2, no hold in progress.
+    TaskSim mid(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    toTheReturn(mid);
+    for (int n = 0; n < 7; ++n) mid.slot();
+    ASSERT_TRUE(mid.scene.ladderMidStage());
+    EXPECT_FALSE(capClean(mid, ended).has_value());
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(mid, "after a clean mid stage 2");
+  }
+  {
+    // During the base's paint.
+    TaskSim base(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+    base.slot();
+    ASSERT_EQ(base.scene.ladderStage(), LadderStage::Base);
+    ASSERT_GT(base.b.model.activeCount(), 0u);
+    EXPECT_FALSE(capClean(base, ended).has_value());
+    EXPECT_FALSE(ended);
+    expectRestartsFromTheBase(base, "after a clean during the base");
+  }
+}
+
+// A pause breaks a stage's rhythm only between two of its pulse slots: not during the base, not before the first
+// pulse, not after the last, not in the marker's slots.
+TEST(TransitionScene, LadderMidStageIsBetweenAStagesFirstAndLastPulse) {
+  TaskSim sim(LADDER_W, LADDER_H, SweepMode::Ladder, 4, true);
+  EXPECT_FALSE(sim.scene.ladderMidStage());  // the base
+  sim.slot();
+  EXPECT_FALSE(sim.scene.ladderMidStage());
+  paintBase(sim);
+  for (const LadderStage stage : {LadderStage::Ladder, LadderStage::Return}) {
+    ASSERT_TRUE(sim.scene.ladderPulsing());
+    EXPECT_EQ(sim.scene.ladderStageSlots(), 0u);
+    EXPECT_FALSE(sim.scene.ladderMidStage());  // before the first pulse
+    for (uint32_t k = 1; k <= static_cast<uint32_t>(TransitionScene::LADDER_STEPS); ++k) {
+      sim.slot();
+      EXPECT_EQ(sim.scene.ladderStageSlots(), k);
+      EXPECT_EQ(sim.scene.ladderMidStage(), k < 24u) << int(stage) << " after slot " << k;
+    }
+    const SceneStep spot = sim.slot();  // the settle
+    ASSERT_TRUE(spot.hold.has_value());
+    EXPECT_FALSE(sim.scene.ladderMidStage());  // the marker's slots
+    runMarker(sim, true);
+    EXPECT_FALSE(sim.scene.ladderMidStage());
+    ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
+    runMarker(sim, false);
+  }
 }
 
 }  // namespace

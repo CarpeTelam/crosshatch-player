@@ -62,6 +62,22 @@ int routeOf(const uint8_t origin, const uint8_t via) {
   return -1;
 }
 
+// Whether a pixel with doses left is driven toward white: always toward a W target and never toward a K one, whatever
+// its level (a driveRect pulse on a pixel already at that end still goes that way: story dlab-g1), and toward a middle
+// target when it lies above the level (retarget never leaves doses on a pixel already on its target).
+bool lightens(const uint8_t* pixel) {
+  const uint8_t target = targetOf(pixel[SHADES_BYTE]);
+  if (target == TOP_SHADE) return true;
+  if (target == static_cast<uint8_t>(Shade::K)) return false;
+  return target * GrayModel::LEVEL_STEP > pixel[LEVEL_BYTE];
+}
+
+// The shade nearest `level` (a level past white is white).
+uint8_t nearestShadeOf(const uint8_t level) {
+  const unsigned nearest = (level + GrayModel::LEVEL_STEP / 2u) / GrayModel::LEVEL_STEP;
+  return static_cast<uint8_t>(nearest > TOP_SHADE ? TOP_SHADE : nearest);
+}
+
 // Whether the D>L>D or L>D>L route changes a budget, which makes a pixel record its origin on any new target.
 bool midRoutesActive(const GrayPreset& preset) {
   const auto active = [&preset](const Route route) {
@@ -166,6 +182,31 @@ void GrayModel::retargetRect(const int x, const int y, const int w, const int h,
   }
 }
 
+void GrayModel::driveRect(const int x, const int y, const int w, const int h, const Toward toward,
+                          const uint8_t doses) {
+  if (!valid() || w <= 0 || h <= 0 || doses == 0) return;
+  const uint8_t count = doses > DOSE_MAX ? DOSE_MAX : doses;
+  const uint8_t target = toward == Toward::Dark ? static_cast<uint8_t>(Shade::K) : TOP_SHADE;
+  const int x0 = x < 0 ? 0 : x;
+  const int y0 = y < 0 ? 0 : y;
+  const int x1 = x + w > width_ ? width_ : x + w;
+  const int y1 = y + h > height_ ? height_ : y + h;
+  for (int py = y0; py < y1; ++py) {
+    for (int px = x0; px < x1; ++px) {
+      const size_t i = indexOf(px, py);
+      uint8_t* pixel = pixelAt(i);
+      const uint8_t current = pixel[LEVEL_BYTE];
+      if (history_) {
+        history_[3 * i + HISTORY_ORIGIN] = ORIGIN_NONE;
+        history_[3 * i + HISTORY_BLACK] = 0;
+        history_[3 * i + HISTORY_WHITE] = 0;
+      }
+      setWeakBit(i, false);
+      writePixel(pixel, current, count, target, nearestShadeOf(current));
+    }
+  }
+}
+
 bool GrayModel::followsUp(const uint8_t* pixel, const GrayPreset& preset) {
   const uint8_t shades = pixel[SHADES_BYTE];
   return pixel[REMAINING_BYTE] > 1 && (preset.holdMask & holdBit(sourceOf(shades), targetOf(shades))) == 0;
@@ -185,7 +226,7 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
       const size_t i = indexOf(x, y);
       const uint8_t* pixel = pixelAt(i);
       if (pixel[REMAINING_BYTE] == 0) continue;
-      const bool lighten = targetOf(pixel[SHADES_BYTE]) * LEVEL_STEP > pixel[LEVEL_BYTE];
+      const bool lighten = lightens(pixel);
       const bool weak = weakRow && !lighten && weakBit(i);
       const bool again = followsUp(pixel, preset);
       // A weak pixel is set in both masks: the third (weak) row of a backend whose supportsWeakRow() is true. D1 itself
@@ -226,7 +267,7 @@ void GrayModel::commit(const bool driveDone, const bool followDone, const GrayPr
     const uint8_t* pixel = pixelAt(i);
     if (pixel[REMAINING_BYTE] == 0) continue;
     // The direction and the follow-up decision are buildMasks', read from the state it read.
-    const bool lighten = targetOf(pixel[SHADES_BYTE]) * LEVEL_STEP > pixel[LEVEL_BYTE];
+    const bool lighten = lightens(pixel);
     const bool again = followDone && followsUp(pixel, preset);
     deliverDose(i, lighten);
     if (again) deliverDose(i, lighten);
