@@ -38,12 +38,18 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
    the retargets, history mode, the two return deltas, the two reverse percents, rate and the rest; row text names
    levels by index (0 black, 3 the 50 % gray, 6 white). The row list is long, so the tuning screen gets a **Section** row at the top that jumps between
    Doses, Holds and Other (a lab preference, not saved).
-6. **Transparent.** The 3-bit level field's value 7 is reserved as `Shade::TRANSPARENT` (D14, the owner's ask for
+6. **Via levels.** The ladders (D14) show one pulse from black already passes level 2, so level 1 cannot be reached
+   directly from black: the preset gains an optional `via[from][to]` level (7 = none) and a transition with a via
+   runs as two legs, from → via with via's dose, then via → to with that dose, through the model's existing
+   retarget bookkeeping (a pixel mid-leg keeps its remaining doses and its next target); the file carries `via` in
+   version 2; Tuning shows a Via row per transition only in the Other section's "routes" group. Pinned by a test
+   that a 0>1 retarget delivers the 0>2 leg then the 2>1 leg.
+7. **Transparent.** The 3-bit level field's value 7 is reserved as `Shade::TRANSPARENT` (D14, the owner's ask for
    sprites): a level-coded bitmap pixel at 7 is not retargeted. `GrayModel::retargetBitmap(x, y, w, h, levels,
    preset)` (one byte per pixel, 0..6 a level, 7 transparent) retargets the others and skips it, pinned by a test; the
    preset codec rejects 7 anywhere in a table; the game engine's own sprite plumbing over the gray engine is a later
    story and not this one.
-7. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
+8. **Stock bench.** Keeps its four levels through the named constants `K`, `D`, `L`, `W` (0, 2, 4, 6); its
    behaviour and tests unchanged.
 
 ## Boundaries & Constraints
