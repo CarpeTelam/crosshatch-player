@@ -37,6 +37,8 @@ SweepMode nextMode(const SweepMode mode) {
     case SweepMode::Slow:
       return SweepMode::Fast;
     case SweepMode::Fast:
+      return SweepMode::Ladder;
+    case SweepMode::Ladder:
       return SweepMode::Static;
   }
   return SweepMode::Static;
@@ -54,20 +56,25 @@ const char* holdSpotName(const HoldSpot spot) {
       return "slow crossed";
     case HoldSpot::FastPause:
       return "fast pause";
+    case HoldSpot::FastPainted:
+      return "fast painted";
+    case HoldSpot::Ladder:
+      return "ladder";
   }
   return "";
 }
 
-char shadeLetter(const Shade shade) {
+char shadeName(const Shade shade) {
+  // D14's seven-level numbers: the four shades sit on the even levels, so 1, 3 and 5 slot in without renaming.
   switch (shade) {
     case Shade::K:
-      return 'K';
+      return '0';
     case Shade::D:
-      return 'D';
+      return '2';
     case Shade::L:
-      return 'L';
+      return '4';
     case Shade::W:
-      return 'W';
+      return '6';
   }
   return '?';
 }
@@ -90,6 +97,8 @@ const char* holdDropName(const HoldDrop drop) {
       return "skipped for this crossing";
     case HoldDrop::WayBackCutOff:
       return "photo taken, the marker's way back cut off";
+    case HoldDrop::LadderFromBase:
+      return "the ladder restarts from the base";
   }
   return "";
 }
@@ -115,10 +124,12 @@ TransitionScene::TransitionScene(const PanelTurn turn, const int logicalW, const
 void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
   mode_ = mode;
   restartFlips();
+  restartLadder();
   dwellSlots_ = dwellSlots > 0 ? dwellSlots : 1;
-  slowMeasured_ = false;
+  painted_ = false;
+  paintSlots_ = 0;
   slowPeriodUs_ = 0;
-  slowStartMs_ = 0;
+  crossStartMs_ = 0;
   sweepCapped_ = false;
   dropHold();
   resetCrossingSpots(0);
@@ -135,6 +146,10 @@ void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
       rectW_ = RECT_W;
       sweepMs_ = SWEEP_MS;
       return;
+    case SweepMode::Ladder:
+      rectW_ = 0;    // no rectangles (the columns are ladderLayout's)
+      sweepMs_ = 0;  // nothing crosses
+      return;
   }
 }
 
@@ -148,6 +163,7 @@ void TransitionScene::dropHold() {
   markerOut_ = false;
   markerSlots_ = 0;
   flipPending_ = false;
+  ladderPending_ = false;
   spot_.reset();
 }
 
@@ -186,13 +202,16 @@ std::optional<int> TransitionScene::rectX(const uint32_t elapsedMs) const {
       return (logicalW_ - rectW_) / 2;
     case SweepMode::Slow:
     case SweepMode::Fast: {
-      // Slow waits just off the left edge until the period is measured, then crosses from that slot's clock.
-      if (mode_ == SweepMode::Slow && !slowMeasured_) return -rectW_;
+      // Slow and Fast wait just off the left edge until the bands' paint has settled, then cross from that slot's
+      // clock.
+      if (!painted_) return -rectW_;
       const uint32_t t = crossingAt(elapsedMs).ms;
       if (t >= sweepMs_) return std::nullopt;
       const int64_t travel = static_cast<int64_t>(logicalW_) + rectW_;
       return static_cast<int>(-rectW_ + travel * t / sweepMs_);
     }
+    case SweepMode::Ladder:
+      return std::nullopt;
   }
   return std::nullopt;
 }
@@ -204,9 +223,13 @@ int TransitionScene::bandOf(const int ly) const {
 
 Shade TransitionScene::targetAt(const int lx, const int ly, const uint32_t elapsedMs) const {
   if (markerOut_) {
-    const ScreenRect m = markerRect();
-    if (lx >= m.x && lx < m.x + m.w && ly >= m.y && ly < m.y + m.h) return markerShade();
+    // The pause symbol's two bars; the gap between them keeps the band's shade.
+    for (const ScreenRect& bar : markerBars()) {
+      if (lx >= bar.x && lx < bar.x + bar.w && ly >= bar.y && ly < bar.y + bar.h) return markerShade();
+    }
   }
+  // The Ladder's base: the top half white, the bottom half and the marker's rows below it black.
+  if (mode_ == SweepMode::Ladder) return ly < ladderHeight() / 2 ? Shade::W : Shade::K;
   const int band = bandOf(ly);
   const std::optional<int> x = rectX(elapsedMs);
   if (!x || lx < *x || lx >= *x + rectW_ || rectHeight() <= 0) return shown(bandShade(band));
@@ -291,12 +314,17 @@ SceneStep TransitionScene::slotDone(GrayModel& model, const GrayPreset& preset, 
         flip();
         step.reapply = true;
       }
+      if (ladderPending_) {
+        // Ladder: the stage (or the end) the settle held back starts now, the marker back on black.
+        ladderPending_ = false;
+        advanceLadder(model, step);
+      }
       return step;
     case HoldPhase::Running:
       break;
   }
-  const std::optional<HoldStart> spot = patternStep(step, driven, driveDone, periodUs, elapsedMs);
-  if (!spot || !holdOn_) return step;
+  const std::optional<HoldStart> spot = patternStep(model, step, driven, driveDone, periodUs, elapsedMs);
+  if (!spot || !holdsAtSpots()) return step;
   // A photo spot: the marker out to its hold shade, driven by the next slots at a still clock.
   phase_ = HoldPhase::MarkerOut;
   markerOut_ = true;
@@ -307,8 +335,9 @@ SceneStep TransitionScene::slotDone(GrayModel& model, const GrayPreset& preset, 
   return step;
 }
 
-std::optional<HoldStart> TransitionScene::patternStep(SceneStep& step, const size_t driven, const bool driveDone,
-                                                      const uint32_t periodUs, const uint32_t elapsedMs) {
+std::optional<HoldStart> TransitionScene::patternStep(GrayModel& model, SceneStep& step, const size_t driven,
+                                                      const bool driveDone, const uint32_t periodUs,
+                                                      const uint32_t elapsedMs) {
   switch (mode_) {
     case SweepMode::Static:
       if (driven > 0) {
@@ -327,7 +356,7 @@ std::optional<HoldStart> TransitionScene::patternStep(SceneStep& step, const siz
       }
       return HoldStart{HoldSpot::StaticSettle, step.settled->flip};
     case SweepMode::Slow:
-      if (slowMeasured_) return crossingSpot(step, elapsedMs);
+      if (painted_) return crossingSpot(step, elapsedMs);
       if (driven > 0) {
         // Still painting: the longest delivered slot is the period the crossing must hold (a two-scan slot, as the
         // rectangles' will be, outlasts a one-scan one).
@@ -336,20 +365,146 @@ std::optional<HoldStart> TransitionScene::patternStep(SceneStep& step, const siz
       }
       // The paint has settled: size the crossing and start it from here.
       if (slowPeriodUs_ == 0) slowPeriodUs_ = periodUs;
-      slowMeasured_ = true;
-      slowStartMs_ = elapsedMs;
+      painted_ = true;
+      crossStartMs_ = elapsedMs;
       sizeSlow(slowPeriodUs_);
       step.measured = true;
       return HoldStart{HoldSpot::SlowPainted, 0};
     case SweepMode::Fast:
-      return crossingSpot(step, elapsedMs);
+      if (painted_) return crossingSpot(step, elapsedMs);
+      if (driven > 0) {
+        // Still painting: the rectangles wait off-screen, so none lands on a band still filling from white.
+        ++paintSlots_;
+        return std::nullopt;
+      }
+      // The paint has settled: the sweep starts from here (from the resume, with a hold: the clock stands still).
+      painted_ = true;
+      crossStartMs_ = elapsedMs;
+      step.fastPainted = paintSlots_;
+      return HoldStart{HoldSpot::FastPainted, 0};
+    case SweepMode::Ladder:
+      return ladderStep(model, step, driven);
   }
   return std::nullopt;
 }
 
+std::optional<HoldStart> TransitionScene::ladderStep(GrayModel& model, SceneStep& step, const size_t driven) {
+  switch (ladderStage_) {
+    case LadderStage::Base:
+      if (driven > 0) {
+        ++ladderSlots_;
+        return std::nullopt;
+      }
+      // No pixel had a dose left for this slot: the base settled. It is no photo: stage 1 starts at once.
+      step.ladderSettled = LadderSettled{ladderStage_, ladderSlots_};
+      advanceLadder(model, step);
+      return std::nullopt;
+    case LadderStage::Ladder:
+    case LadderStage::Return:
+      break;
+    case LadderStage::Done:
+      return std::nullopt;  // the task ended the run at `finished`
+  }
+  if (ladderSlots_ < static_cast<uint32_t>(LADDER_STEPS)) {
+    // A stage slot ran. End-aligned: column n joins before the stage's slot LADDER_STEPS - n, so its n pulses are the
+    // stage's last n slots.
+    ++ladderSlots_;
+    if (ladderSlots_ < static_cast<uint32_t>(LADDER_STEPS)) {
+      driveLadderColumn(model, LADDER_STEPS - static_cast<int>(ladderSlots_));
+    }
+    return std::nullopt;
+  }
+  // Every column has had its last pulse; the first slot after them that drove none is the stage's end.
+  if (driven > 0) return std::nullopt;
+  step.ladderSettled = LadderSettled{ladderStage_, ladderSlots_};
+  // A photo spot, which always holds (holdsAtSpots): the next stage (or the end) once the marker is back.
+  ladderPending_ = true;
+  return HoldStart{HoldSpot::Ladder, ladderStage_ == LadderStage::Ladder ? 1u : 2u};
+}
+
+void TransitionScene::advanceLadder(GrayModel& model, SceneStep& step) {
+  switch (ladderStage_) {
+    case LadderStage::Base:
+      ladderStage_ = LadderStage::Ladder;
+      break;
+    case LadderStage::Ladder:
+      ladderStage_ = LadderStage::Return;
+      break;
+    case LadderStage::Return:
+      ladderStage_ = LadderStage::Done;
+      step.finished = true;
+      return;
+    case LadderStage::Done:
+      return;  // nothing after it
+  }
+  // A new stage: no slot of it run yet, the longest column (all its slots) driven before the first.
+  ladderSlots_ = 0;
+  driveLadderColumn(model, LADDER_STEPS);
+}
+
+void TransitionScene::driveLadderColumn(GrayModel& model, const int n) const {
+  const bool towardOrigin = ladderStage_ == LadderStage::Return;
+  for (const LadderHalf half : {LadderHalf::FromWhite, LadderHalf::FromBlack}) {
+    // Stage 1 drives each half toward the opposite of its origin, stage 2 back toward it.
+    const bool fromWhite = half == LadderHalf::FromWhite;
+    const Toward toward = fromWhite == towardOrigin ? Toward::Light : Toward::Dark;
+    const ScreenRect r = ladderColumn(half, n);
+    if (r.w <= 0 || r.h <= 0) continue;
+    const ScreenRect panel = toPanel(turn_, r, panelW_, panelH_);
+    model.driveRect(panel.x, panel.y, panel.w, panel.h, toward, static_cast<uint8_t>(n));
+  }
+}
+
+LadderLayout TransitionScene::ladderLayout(const int logicalW) {
+  if (logicalW <= 0) return LadderLayout{0, 0, 0};
+  // Under one pixel a column: as many 1 px columns as fit.
+  if (logicalW < LADDER_STEPS) return LadderLayout{logicalW, 1, 0};
+  const int pitch = logicalW / LADDER_STEPS;
+  if (pitch < 2) return LadderLayout{LADDER_STEPS, 1, 0};  // no room for a gutter
+  // A 1 px gutter of the half's origin after every column: countable columns, and an untouched reference beside each.
+  return LadderLayout{LADDER_STEPS, pitch - 1, 1};
+}
+
+ScreenRect TransitionScene::ladderColumn(const LadderHalf half, const int n) const {
+  const LadderLayout layout = ladderLayout(logicalW_);
+  if (n < 1 || n > layout.columns) return ScreenRect{0, 0, 0, 0};
+  const int rows = ladderHeight() > 0 ? ladderHeight() : 0;
+  const int top = half == LadderHalf::FromWhite ? 0 : rows / 2;
+  const int h = half == LadderHalf::FromWhite ? rows / 2 : rows - rows / 2;
+  return ScreenRect{(n - 1) * (layout.width + layout.gutter), top, layout.width, h};
+}
+
+void TransitionScene::restartLadder() {
+  ladderStage_ = LadderStage::Base;
+  ladderSlots_ = 0;
+  ladderPending_ = false;
+}
+
+GrayPreset TransitionScene::heldRhythm(const GrayPreset& preset) {
+  GrayPreset held = preset;
+  held.holdMask = 0xFFFF;  // every source > target bit: no follow-up scan for any pixel
+  return held;
+}
+
+const GrayPreset& TransitionScene::slotPreset(const GrayPreset& preset) {
+  if (!ladderPulsing()) return preset;
+  held_ = heldRhythm(preset);
+  return held_;
+}
+
+bool TransitionScene::ladderCleaned(const std::optional<DroppedHold>& dropped) {
+  // The way back from `ladder 2` cut off: both photos were taken, and the return's end is all that was left.
+  if (dropped && dropped->spot == HoldSpot::Ladder && dropped->drop == HoldDrop::WayBackCutOff &&
+      ladderStage_ == LadderStage::Return) {
+    ladderStage_ = LadderStage::Done;
+    return true;
+  }
+  restartLadder();
+  return false;
+}
+
 TransitionScene::CrossingTime TransitionScene::crossingAt(const uint32_t elapsedMs) const {
-  const uint32_t since =
-      mode_ == SweepMode::Slow ? (elapsedMs > slowStartMs_ ? elapsedMs - slowStartMs_ : 0) : elapsedMs;
+  const uint32_t since = elapsedMs > crossStartMs_ ? elapsedMs - crossStartMs_ : 0;
   const uint32_t length = sweepMs_ + PAUSE_MS;
   return CrossingTime{since / length, since % length};
 }
@@ -405,20 +560,42 @@ bool TransitionScene::resumeHold(GrayModel& model, const GrayPreset& preset) {
   return true;
 }
 
+namespace {
+
+// The drop of a hold at `spot` whose marker is going out or held (not on its way back).
+HoldDrop dropBeforeTheWayBack(const HoldSpot spot) {
+  switch (spot) {
+    case HoldSpot::StaticSettle:
+      return HoldDrop::StaticAgainAtFlipZero;
+    case HoldSpot::Ladder:
+      return HoldDrop::LadderFromBase;
+    case HoldSpot::SlowPainted:
+    case HoldSpot::SlowDwelt:
+    case HoldSpot::SlowCrossed:
+    case HoldSpot::FastPainted:
+    case HoldSpot::FastPause:
+      return HoldDrop::SkippedThisCrossing;
+  }
+  return HoldDrop::SkippedThisCrossing;
+}
+
+}  // namespace
+
 std::optional<DroppedHold> TransitionScene::cancelHold() {
   if (phase_ == HoldPhase::Running || !spot_) return std::nullopt;
-  HoldDrop drop = HoldDrop::SkippedThisCrossing;
-  if (phase_ == HoldPhase::MarkerBack) {
-    drop = HoldDrop::WayBackCutOff;
-  } else if (*spot_ == HoldSpot::StaticSettle) {
-    drop = HoldDrop::StaticAgainAtFlipZero;
-  }
+  const HoldDrop drop = phase_ == HoldPhase::MarkerBack ? HoldDrop::WayBackCutOff : dropBeforeTheWayBack(*spot_);
   const DroppedHold dropped{*spot_, drop, markerSlots_};
   dropHold();
   return dropped;
 }
 
 ScreenRect TransitionScene::markerRect() const {
+  if (mode_ == SweepMode::Ladder) {
+    // No lanes to keep clear of: a full-height dash, the ladder's columns ending above its rows.
+    const int w = logicalW_ < MARKER_W ? logicalW_ : MARKER_W;
+    const int h = logicalH_ < MARKER_PX ? logicalH_ : MARKER_PX;
+    return ScreenRect{logicalW_ - w, logicalH_ - h, w, h};
+  }
   if (rectHeight() <= 0) {
     // No lanes, so no rectangle to keep clear of: a square in the corner.
     const int w = logicalW_ < MARKER_PX ? logicalW_ : MARKER_PX;
@@ -438,21 +615,32 @@ Shade TransitionScene::markerShade() const {
   return markerOut_ ? shifted(band, 2) : band;
 }
 
+std::array<ScreenRect, 2> TransitionScene::markerBars() const {
+  const ScreenRect m = markerRect();
+  const int bar = (m.w - MARKER_GAP) / 2;
+  // Too narrow for two bars and the gap: one bar, the whole rectangle.
+  if (bar < 1) return {m, ScreenRect{m.x + m.w, m.y, 0, m.h}};
+  return {ScreenRect{m.x, m.y, bar, m.h}, ScreenRect{m.x + m.w - bar, m.y, bar, m.h}};
+}
+
 bool TransitionScene::markerSettled(const GrayModel& model) const {
-  const ScreenRect logical = markerRect();
-  if (logical.w <= 0 || logical.h <= 0) return true;
-  const ScreenRect panel = toPanel(turn_, logical, panelW_, panelH_);
-  for (int y = panel.y; y < panel.y + panel.h; ++y) {
-    for (int x = panel.x; x < panel.x + panel.w; ++x) {
-      if (model.remaining(x, y) > 0) return false;
+  // The bars' pixels only: the gap is never driven.
+  for (const ScreenRect& logical : markerBars()) {
+    if (logical.w <= 0 || logical.h <= 0) continue;
+    const ScreenRect panel = toPanel(turn_, logical, panelW_, panelH_);
+    for (int y = panel.y; y < panel.y + panel.h; ++y) {
+      for (int x = panel.x; x < panel.x + panel.w; ++x) {
+        if (model.remaining(x, y) > 0) return false;
+      }
     }
   }
   return true;
 }
 
 void TransitionScene::retargetMarker(GrayModel& model, const GrayPreset& preset) const {
-  const ScreenRect m = markerRect();
-  retargetLogical(model, m.x, m.x + m.w, m.y, m.h, markerShade(), preset);
+  for (const ScreenRect& bar : markerBars()) {
+    retargetLogical(model, bar.x, bar.x + bar.w, bar.y, bar.h, markerShade(), preset);
+  }
 }
 
 void TransitionScene::restartFlips() {

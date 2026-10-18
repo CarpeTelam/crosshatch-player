@@ -63,6 +63,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - Lane G, second story: `dlab-g2` seven levels: the model, preset (file version 2), defaults, transition test and
   Tuning generalised to seven levels (black, five grays, white); the stock bench keeps four (after dlab-g1's photos;
   D14).
+- Lane G, third story: `dlab-g3` the gray viewer: a lab screen that paints a PNG or JPEG from the SD card, or a
+  built-in test chart, through the gray engine, plain or ordered-dithered, at whatever level count the engine has
+  (after dlab-g1, before or after dlab-g2; D16).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -188,6 +191,21 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
+- D15 (2026-10-18, owner, during dlab-g1's review): three changes to the lab's presentation, landed with dlab-g1.
+  (1) The hold marker is a pause symbol: two bars with a gap inside the marker's rectangle, same place and size as
+  the dash (the margin below the last lane in Static, Slow and Fast; the 16-row strip in Ladder), so a hold reads
+  as a pause at a glance. (2) Shades are named by their seven-level number everywhere the owner sees them: 0 black,
+  2 dark gray, 4 light gray, 6 white (InkBoy's K, D, L, W), so Tuning's rows read `Dose 0>2` and the odd levels
+  1, 3, 5 slot in with dlab-g2 without a rename; the preset file carries no names and is unchanged. (3) Fast waits
+  for the bands to settle before its rectangles enter, as Slow does, with the same `painted` photo spot: the
+  rectangles crossing a still-filling band showed as artifacts, and the only thing that start exercised, pixels
+  retargeted mid-transition, is better tested on purpose (dlab-c3's deferral stands).
+- D16 (2026-10-18, owner, during dlab-g1's review): a grayscale line-art viewer in the lab, to see how the levels can
+  be used on real artwork. Its own story (dlab-g3) rather than part of the ladder lane, which was minutes from done:
+  it reads the level count from the engine, so it shows four shades before dlab-g2 and seven after with no change of
+  its own, and it is built while the owner takes the ladder photos dlab-g2 waits on. Pictures come from
+  `/.crosshatch/display-lab/images/` on the SD card through the firmware's own decoders, plus a built-in test chart
+  so it works with no files; plain or ordered quantisation is a row.
 
 ## Story results
 
@@ -254,6 +272,19 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   their reason. 3 deferrals carried. Hardware check for the owner on the experimental branch: the dash appears within
   about a second of a settle and is gone when the flip starts; the three Slow holds and the Fast hold land where the
   doc says.
+- dlab-g1 (lane G1, D14, after dlab-c4): built by the orchestrator's fallback (plan-and-implement agent plus
+  orchestrator-run lenses): first pass 24 findings, 13 patched, 1 deferred (`dce6f20f`); follow-up pass 22 findings,
+  10 patched plus the owner's three asks (D15), converged (`af1d7113`). 2,236 host tests; x4pro, default, sticky
+  build; pio check x4pro clean; flash gate within budget (240 B RAM to spare, unchanged). A Ladder mode: the bottom
+  half painted black with the preset's 6>0 dose, then column n of 24 in each half takes exactly n one-frame pulses
+  toward the opposite shade, one per slot, end-aligned; the scene holds for the photo (always), Next drives every
+  column back with the same n pulses and holds again, Next ends the run; `GrayModel::driveRect` sets doses toward an
+  extreme without the table (a target of 6 or 0 now drives that way whatever the level); 1 px gutters; the log names
+  the stage, rate, rhythm, pulse interval, base dose, column width and any pause; a cap clean restarts from the base
+  or finishes after the second photo. With D15: the hold marker is a pause symbol, shades are named 0, 2, 4, 6, and
+  Fast waits for the paint to settle with a `fast painted` hold. 2 deferrals carried. Hardware check for the owner on
+  the experimental branch: the two ladder photos at rate index 0 with the room temperature; the orchestrator reads
+  the seven levels and their pulse counts off them for dlab-g2.
 
 ## Measurement (base)
 

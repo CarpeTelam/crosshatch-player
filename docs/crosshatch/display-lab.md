@@ -294,7 +294,7 @@ the launcher row and the lab can be removed once the engine has its own entry.
 ## Transition test and tuning (Part B)
 
 The gray engine is InkBoy's dither-free four-shade model (the research digest D2 round 2) over the scan seam. Each
-pixel has a modelled level (0 = black K, 64 = dark gray D, 128 = light gray L, 192 = white W), a target shade, and a
+pixel has a modelled level (0 black, 64 dark gray, 128 light gray, 192 white), a target shade, and a
 count of doses left; a **dose** is one one-frame scan of that pixel toward its target (`frames = 1`). A pixel moving
 from shade A to shade B gets the dose-table entry for A>B; one between shades gets the two neighbouring shades' doses
 interpolated, rounded up; one interrupted mid-transition gets that scaled by the retarget percent of its direction
@@ -313,36 +313,45 @@ backend (the experimental branch's list {0x06, 0x05, 0x07}). Its retarget, 100 %
 placeholder: on that run 150 % overshot toward white, and the shortfall toward black came through the old 12-dose
 clamp, which the 24 cap lifts, so the range stays 50..150 % for both directions until a run measures them.
 
-| From > To | K>D | K>L | K>W | D>K | D>L | D>W | L>K | L>D | L>W | W>K | W>D | W>L |
+Shades are named by their seven-level number wherever the lab shows them (the epic's D14): **0** black, **2** dark
+gray, **4** light gray, **6** white; levels 1, 3 and 5 arrive with dlab-g2. A transition such as 0>2 is black to dark
+gray, and a shade's model level is its number x 32. The stock bench keeps its own labels.
+
+| From > To | 0>2 | 0>4 | 0>6 | 2>0 | 2>4 | 2>6 | 4>0 | 4>2 | 4>6 | 6>0 | 6>2 | 6>4 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | UltraChip dose | 2 | 7 | 12 | 7 | 2 | 10 | 7 | 6 | 9 | 12 | 5 | 3 |
 
 InkBoy's:
 
-| From > To | K>D | K>L | K>W | D>K | D>L | D>W | L>K | L>D | L>W | W>K | W>D | W>L |
+| From > To | 0>2 | 0>4 | 0>6 | 2>0 | 2>4 | 2>6 | 4>0 | 4>2 | 4>6 | 6>0 | 6>2 | 6>4 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Dose | 2 | 4 | 7 | 4 | 1 | 6 | 4 | 1 | 5 | 7 | 3 | 2 |
 | Hold | on | on | off | off | on | off | off | on | off | off | off | on |
 
-Retarget 100 % both ways, rate index 0, no polarity swap, and InkBoy's routes (L>K>L return -1 and reverse 150 %, the rest
-neutral) are InkBoy's too. History and weak mode are off: this story's choice (InkBoy ships history "both" and weak
+Retarget 100 % both ways, rate index 0, no polarity swap, and InkBoy's routes (4>0>4 return -1 and reverse 150 %, the
+rest neutral) are InkBoy's too. History and weak mode are off: this story's choice (InkBoy ships history "both" and weak
 "normal"); the preset file turns them on.
 
 ### Transition test
 
-Display lab → Transition test. Six rows: **Run** (starts a run; its line says how the last one ended), **Mode**
-(a tap or Confirm steps Static, Slow, Fast; it opens on Static on a UC8179 or UC8279 and on Fast on the SSD1677),
+Display lab → Transition test. Six rows: **Run** (starts a run; its line says how the last one ended), **Mode** (a tap
+or Confirm steps Static, Slow, Fast, Ladder; it opens on Static on a UC8179 or UC8279 and on Fast on the SSD1677),
 **Hold for photos** (On or Off, a tap or Confirm toggles it; On every time the screen opens, never saved with the
-preset; see [Holds for photos](#holds-for-photos)), **Clean** (one cleaning FULL refresh to
-white and the rows back, no run, the Run row unchanged), **Speed** (the last "N.N scans/s, N ms per scan") and
-**Controls**. Run is also the replay: every run cleans to white first and starts from 0.
+preset; it reads "Always in Ladder" while Mode is Ladder, which holds either way; see [Holds for
+photos](#holds-for-photos)), **Clean** (one cleaning FULL refresh to white and the rows back, no run, the Run row
+unchanged), **Speed** (the last "N.N scans/s, N ms per scan") and **Controls**. Run is also the replay: every run cleans
+to white first and starts from 0.
 
 A run is on its own FreeRTOS task (the epic's D11), so the buttons answer while a scan is in flight. The panel is
 cleaned to white with a FULL refresh, then the screen stops drawing: the panel shows only what the scans drive. Four
-shade bands, K, D, L, W from the top, each with three rectangles of the other three shades (in K, D, L, W order),
+shade bands, 0, 2, 4, 6 from the top, each with three rectangles of the other three shades (in 0, 2, 4, 6 order),
 following the screen's orientation. The mode sets the rectangles (story dlab-c3, after the owner's UC8179 run, D12):
 
-- **Fast**: 12-px rectangles sweep from left to right in 5 s, pause 1 s, and repeat (the SSD1677's sweep). On a panel
+- **Fast**: 12-px rectangles sweep from left to right in 5 s, pause 1 s, and repeat (the SSD1677's sweep). Like Slow's,
+  the rectangles wait just off the left edge while the bands paint from white, so none lands on a band still filling;
+  the slot after the paint has settled (a slot with nothing left to drive, `gray fast: paint settled after N slots; the
+  sweep starts`) the sweep starts from its 0, and the run's start line gives the crossing as `5000 ms after the
+  paint`. On a panel
   whose slot is several hundred milliseconds the rectangle moves about 60 px a slot (0.4 s) and retargets only its
   12-px footprint at each, so it leaves spaced stripes of partial transitions rather than a solid track. It is the one
   mode whose rectangles retarget pixels still mid-transition, so it is the one that exercises the retarget split.
@@ -360,7 +369,7 @@ following the screen's orientation. The mode sets the rectangles (story dlab-c3,
   a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M slots
   (offset +K, next +J)` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots that drove
   pixels), and it flips (with Hold for photos On, after the hold: see [Holds for photos](#holds-for-photos)): every
-  pixel takes one full transition, with its table dose, to the shade the next offset along (K, D, L, W, K, ...). The
+  pixel takes one full transition, with its table dose, to the shade the next offset along (0, 2, 4, 6, 0, ...). The
   offsets run +1, +2, +3, +1, ..., so flips 1 to 3 take the pixels through all twelve transitions between them, and
   every later three again. The residue after a flip, per band, is the per-transition answer. The session cap's clean
   (every 2,400 scans) restarts the sequence at flip 0 from white (`gray static: sequence restarted at flip 0 after the
@@ -369,12 +378,51 @@ following the screen's orientation. The mode sets the rectangles (story dlab-c3,
   residues include the history adjustments; a Static run's start logs `gray static: history N is on, so the flips'
   residues include its route adjustments`.
 
+- **Ladder** (story dlab-g1, the epic's D14): no bands or rectangles, but the panel's response to single one-frame
+  pulses, from which the seven levels and their doses are read:
+  - *Layout*: The rows above the marker's 16 (in Ladder the marker's box is 32 x 16 px, with no rectangles to keep clear
+    of) split into a top half that starts from white and a bottom half that starts from black; the marker's rows below
+    them belong to the bottom half. Each half holds 24 columns, column n (1 to 24, left to right, following the
+    orientation), each followed by a 1 px gutter of the half's own shade, so the columns can be counted and an untouched
+    strip of the origin sits beside each: 19 px columns on a portrait screen (480 wide), 32 px on a landscape one (800
+    wide, the 8 px left over on the right holding the half's shade). The rule: the pitch is the width / 24 and a column
+    is the pitch less its 1 px gutter; under 48 px wide, 1 px columns without gutters, as many as fit (`gray ladder:
+    narrow screen: ...`).
+  - *Base*: The clean leaves the panel white, so the bottom half is first driven to black with the preset's 6>0 dose and
+    settles (`gray ladder: base painted after N slots`). The ladder reads only the preset's rate index and polarity, and
+    that 6>0 dose for the base; the other Tuning values do not change the pulses.
+  - *Stage 1, the ladder*: Column n gets exactly n one-frame pulses toward the opposite shade (the top half's toward
+    black, the bottom half's toward white), one a slot, each pulse one scan (the preset with every hold bit set, so no
+    follow-up scan), set directly rather than from the dose table. A stage is 24 slots and its columns are end-aligned:
+    column 24 pulses in all of them, column n in the last n, so every column's last pulse lands in the same slot and all
+    rest equally long before the photo. The run then holds (`ladder 1`).
+  - *Stage 2, the return*: Next drives each column back toward its origin with the same n pulses, end-aligned again; it
+    settles and holds (`ladder 2`). Next again ends the run, as Back does but with "Finished" on the Run row (`gray
+    ladder: done`); Run replays it from the clean.
+  - *Holds and pauses*: The Ladder holds at both photos whatever the Hold for photos row says (it is nothing but its
+    photos): the row reads "Always in Ladder" while Mode is Ladder, and the run's start line says so too. A pause with
+    Next between two of a stage's pulse slots puts a gap in the one-pulse-a-slot rhythm; the stage's line counts such
+    pauses and names the stage slots the first four fell after (a pause before the first pulse or after the last is
+    harmless and not counted).
+  - *Session-cap clean*: It restarts the ladder from the base (`gray ladder: restarted from the base after the
+    session-cap clean`), which holds at `ladder 1` first again, whichever stage it cut; except when it cuts off the
+    marker's way back from `ladder 2`: both photos are taken, so the run ends as a finished one (`gray ladder: done (the
+    session-cap clean came after both photos)`). In practice a Ladder run never meets the cap: the run's own clean
+    resets the count, and a run is some 150 scans against the cap's 2,400.
+  - *Log*: Each stage's end logs what its photo needs: `gray ladder: stage N settled after M slots: rate R (label), swap
+    S, one pulse per slot[, paused P times after stage slots a, b, ...], pulse interval up to I ms, slots up to T ms,
+    base 6>0 dose D, column n has had (has been driven back) n pulses (end-aligned), W px columns, gutter G px`. I is
+    the longest start-to-start interval between two of the stage's pulse slots and T its longest slot.
+
 #### Holds for photos
 
 With **Hold for photos** On (story dlab-c4, the epic's D13) the run holds itself at each mode's photo spots, so a photo
 does not depend on pausing within half a slot:
 
 - **Static**: every settle (`static settle N`, N the flip that settled); the flip waits for the resume.
+- **Ladder**: the end of stage 1 (`ladder 1`) and of stage 2 (`ladder 2`), with Hold for photos Off too; the next
+  stage, or the run's end, waits for the resume and the marker's way back. The base is no photo spot. The marker sits
+  on the black rows below the bottom half and goes to 4, never over a column.
 - **Slow**: the bands once their paint has settled, before the rectangles enter (`slow painted 0`, the slot that sizes
   the crossing); the rectangles once they are wholly on-screen and the preset's longest dose run in slots has passed
   since their left (trailing) edge came on (`slow dwelt N`, N the crossing). The crossing is sized so that the trailing
@@ -384,20 +432,22 @@ does not depend on pausing within half a slot:
   whose rectangles reach the right edge first skips the spot (`gray hold: slow dwelt N skipped (the rectangles reached
   the right edge first)`). Then the end of the crossing, the rectangles off the right edge and their trails behind them
   (`slow crossed N`, the first slot of the pause).
-- **Fast**: the end of each sweep (`fast pause N`, the first slot of its 1 s pause). A slot longer than the pause can
+- **Fast**: the bands once their paint has settled, before the first sweep (`fast painted 0`); then the end of each
+  sweep (`fast pause N`, the first slot of its 1 s pause). A slot longer than the pause can
   leave no slot starting in it; that pause is logged as `gray hold: fast pause N skipped (no slot started in the pause)`
   (Slow's crossing end likewise).
 
-At a spot the run shows the hold marker: a 32 px dash at the bottom-right of the screen, in the bottom band's margin
-below its last row of rectangles (8 rows on a landscape screen, 10 in portrait, following the orientation; a 16 px
-square in the corner on a screen too small for rectangles), so it never shares a row with a rectangle or its trail. It
-is driven by the gray engine's own scans to the band's opposite shade (two steps along K, D, L, W), since nothing can be
-drawn through the renderer while the view is up. On a preset whose dose from the band's shade to that one is weak the
-dash can be faint; the `gray hold:` log line is the reliable signal that the run holds. The sweep clock stands still:
-the task runs slots until the marker has settled, then holds (nothing is driven). Next (or Confirm) resumes: the marker
-is driven back to the band's shade and settles, still with the clock standing, and only then does the run go on
-(Static's flip, Slow's crossing, the rest of the pause). The marker's slots never count toward Static's settle or Slow's
-measurement.
+At a spot the run shows the hold marker, a pause symbol: two bars in the bottom-right corner of the logical screen, each
+12 px wide with an 8 px gap between them in a 32 px box (the gap keeps the band's shade and is never driven). The box
+sits in the bottom band's margin below its last row of rectangles (8 rows on a landscape screen, 10 in portrait,
+following the orientation; a 16 px square, bars of 4, on a screen too small for rectangles; 32 x 16 px under the
+Ladder's columns), so it never shares a row with a rectangle or its trail. The bars are driven by the gray engine's own
+scans to the band's opposite shade (two steps along 0, 2, 4, 6), since nothing can be drawn through the renderer while
+the view is up. On a preset whose dose from the band's shade to that one is weak the bars can be faint; the `gray hold:`
+log line is the reliable signal that the run holds. The sweep clock stands still: the task runs slots until the marker
+has settled, then holds (nothing is driven). Next (or Confirm) resumes: the marker is driven back to the band's shade
+and settles, still with the clock standing, and only then does the run go on (Static's flip, Slow's crossing, the rest
+of the pause). The marker's slots never count toward Static's settle or Slow's measurement.
 
 Two effects of those slots, out and back: pixels still in flight elsewhere (Slow's rectangles, Fast's trails) keep
 receiving their doses with the scene standing still, so the photo shows them a few slots further on than the spot
@@ -412,9 +462,12 @@ keep the device awake for good.
 When the session cap's clean falls in a hold's marker slots the hold is dropped and the panel repaints from white; the
 log says which case it was and how many marker slots the hold had run: `gray hold: <spot> dropped by the session-cap
 clean after N marker slots: holds again at flip 0` (Static, its sequence restarting at flip 0 and holding at its
-settle), `...: skipped for this crossing` (Slow or Fast: the next spot holds, and Slow repaints its bands under the
-crossing without measuring again), or `...: photo taken, the marker's way back cut off` (any mode, dropped on the way
-back). With Hold Off nothing holds, no marker is drawn, and Static flips as soon as it settles.
+settle), `...: the ladder restarts from the base` (Ladder, holding at `ladder 1` first again, whichever stage's hold was
+dropped), `...: skipped for this crossing` (Slow or Fast: the next spot holds, a dropped painted spot starts the
+crossing without its photo, and the bands repaint under the crossing without waiting or measuring again), or `...: photo
+taken, the marker's way back cut off` (any mode, dropped on the way back; the Ladder restarts from the base after
+`ladder 1`'s and ends after `ladder 2`'s). With Hold Off nothing holds but the Ladder, no other marker is drawn, and
+Static flips as soon as it settles.
 
 Controls while it runs (the Controls row says the same, by action: "While it runs: Next or Confirm pauses and resumes,
 and ends a hold for photos; Previous or Back stops"). The X4 Pro has no front buttons and its touch routing is dead
@@ -430,9 +483,9 @@ after the clean in flight (the session cap's clean is one FULL refresh).
   press after that ends) or the run.
 - **Previous** (NavPrevious, the opposite keys; on its release) or **Back** (a front button where there is one, or
   the left-edge swipe, which is checked before the other swipes are consumed): stop and return to the rows with a
-  FULL refresh. The Run row says "Stopped", or how the run ended when a scan was not delivered ("Timed out",
-  "Dropped", "Refused (see log)"), which stops it at once. The Speed row shows the last "N.N scans/s, N ms per
-  scan". Any other swipe does nothing while the test view is up.
+  FULL refresh. The Run row says "Stopped" ("Finished" when a Ladder run ended on its own), or how the run ended when
+  a scan was not delivered ("Timed out", "Dropped", "Refused (see log)"), which stops it at once. The Speed row shows
+  the last "N.N scans/s, N ms per scan". Any other swipe does nothing while the test view is up.
 - Another screen over the test (the light panel's top-edge swipe) stops the sweep: once the screen's loop has not run
   for 0.3 s the task sends no further scan, and when the other screen closes the view ends as Back does, with the rows'
   FULL refresh and "Covered by another screen" on the Run row. The check cannot tell a cover from a stall: a main-loop
@@ -452,29 +505,35 @@ screen change deleted the task, by the screen's loop task). Other lines, by the 
   or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or `...: rate
   index N of N` (the run ends "Refused (see log)"); `gray static: flip N settled after M slots (offset +K, next +J)`;
   `gray static: history N is on, ...`; `gray static: sequence restarted at flip 0 after the session-cap clean`; `gray
-  slow: slot period N ms, crossing N ms, dwell N slots`; `gray hold: <spot> N, marker X over Y` (a photo spot: the
-  marker's shade over its band's), `gray hold: marker settled after N slots; holding, Next resumes`, `gray hold:
-  resumed; marker back to Y`, `gray hold: marker back after N slots; the run goes on`, `gray hold: <spot> N skipped
-  (<reason>)`, `gray hold: <spot> dropped by the session-cap clean after N marker slots: <case>`; the stats, pause,
-  resume, clean and start lines (the start line names the mode, the rectangle width, the crossing, the hold and both
-  retarget percents).
-- loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after
-  the gap; a cover usually logs this line and the sweep task's); `gray sweep: task deleted while it waited for the
-  render lock` (sleep or a screen change ended the task inside a scan or a clean); `Cannot create the sweep task (N
-  byte stack)` (no internal RAM for its stack; the Run row says "Stopped: not enough memory"); `gray sweep stopped:
-  <outcome>` when the view ends; `transition test mode: static|slow|fast` (the Mode row); `transition test: panel
+  slow: slot period N ms, crossing N ms, dwell N slots`; `gray fast: paint settled after N slots; the sweep starts`;
+  `gray hold: <spot> N, marker X over Y` (a photo spot: the marker's shade over its band's, by level number), `gray
+  hold: marker settled after N slots; holding, Next resumes`, `gray hold: resumed; marker back to Y`, `gray hold: marker
+  back after N slots; the run goes on` (`...; the ladder is done` at a Ladder run's end), `gray hold: <spot> N skipped
+  (<reason>)`, `gray hold: <spot> dropped by the session-cap clean after N marker slots: <case>`; `gray ladder: N
+  columns of W px, gutter G px; rows A-B from white, C-D from black (`none` for a half without rows), the marker's rows
+  below black; painting the base` (a Ladder run's start, followed by `gray ladder: narrow screen: N of 24 columns, W px
+  each, no gutter` under 48 px wide), `gray ladder: base painted after N slots; ...`, `gray ladder: stage N settled
+  after M slots: rate R (label), ...`, `gray ladder: restarted from the base after the session-cap clean`, `gray ladder:
+  done` (`... (the session-cap clean came after both photos)`); the stats, pause, resume, clean and start lines (the
+  start line names the mode, the rectangle width ("no rectangles" for the Ladder, whose layout line follows, crossing
+  "none"), the crossing, the hold (for the Ladder: that it always holds) and both retarget percents).
+- loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after the
+  gap; a cover usually logs this line and the sweep task's); `gray sweep: task deleted while it waited for the render
+  lock` (sleep or a screen change ended the task inside a scan or a clean); `Cannot create the sweep task (N byte
+  stack)` (no internal RAM for its stack; the Run row says "Stopped: not enough memory"); `gray sweep stopped:
+  <outcome>` when the view ends; `transition test mode: static|slow|fast|ladder` (the Mode row); `transition test: panel
   cleaned to white` (the Clean row); `transition test hold: on|off` (the Hold row).
 
 How to read it:
 
-- **Rectangle shade against its band** is the dose: a rectangle meant to be L that looks like D on a W band has too
-  many W>L doses (or W>L should not hold); one that never gets dark enough has too few.
+- **Rectangle shade against its band** is the dose: a rectangle meant to be 4 (light gray) that looks like 2 on a 6
+  (white) band has too many 6>4 doses (or 6>4 should not hold); one that never gets dark enough has too few.
 - **The track behind a rectangle** is the return to the band shade (hold and history): a dark or light trail after the
   rectangle passes means the return transition's dose or hold bit is off, or needs the history routes.
 - **Build-up over passes**: a band that drifts darker or lighter over several sweeps means a pair of opposite doses
   (A>B and B>A) does not cancel.
-- **Endpoints**: the K and W bands and rectangles must reach full black and white; if they do not, raise K>W, W>K, or
-  the rows into K and W.
+- **Endpoints**: the 0 and 6 bands and rectangles must reach full black and white; if they do not, raise 0>6, 6>0, or
+  the rows into 0 and 6.
 
 Tuning order, one change per run: the **doses and hold bits** first, judged by Static's settled pattern and its flips
 and by the rectangles and their tracks; then the two **retarget** percents, in **Fast** mode only (Static and Slow retarget settled pixels,
@@ -483,15 +542,45 @@ toward dark for pixels turned toward a darker shade than their level, toward lig
 if trails remain, the **history** routes and the weak row, which the preset file turns on (no row on the device).
 
 What to photograph, with Hold for photos On (each hold has its `gray hold:` line): Static's pattern after each settle,
-Slow's painted bands, its rectangles after a full dwell, and its crossing's end with the tracks, Fast's pause (the
-tracks); the dash in the bottom-right says the run is holding, and the photo is the rest of the panel. The panel after
-five or more full sweeps (build-up) is taken with Hold for photos Off, since each hold's marker slots let the trails
-settle further. Keep the Tuning values and the log's `gray` lines beside each.
+Slow's painted bands, its rectangles after a full dwell, and its crossing's end with the tracks, Fast's painted bands
+and its pause (the tracks); the pause symbol in the bottom-right says the run is holding, and the photo is the rest of
+the panel. The panel after five or more full sweeps (build-up) is taken with Hold for photos Off, since each hold's
+marker slots let the trails settle further. Keep the Tuning values and the log's `gray` lines beside each.
+
+The Ladder's two photos (D14: the seven levels and their pulse counts are read off them), at rate index 0 first (the
+rate the table was measured at; index 2 is the fallback if it separates fewer levels), each held with its `gray
+ladder: stage N settled` line beside it:
+
+- **`ladder 1`**: the top half is the response to n pulses from white, the bottom half to n pulses from black, column
+  n with n pulses, n = 1 at the left, every column's last pulse in the same slot; the 1 px gutters show the untouched
+  origin beside each. Read each column's darkness against black and white: the first column that looks
+  fully black in the top half is the full 6>0 swing in pulses (12 expected on the UC8179 at PLL 0x06, D12), and the
+  levels between are where the curve is steep or flat; the bottom half is the same from black, which is coarser (D14).
+  A level for the seven-level table is a column whose shade sits where that gray should, and n is its dose from white
+  (top) or black (bottom).
+- **`ladder 2`**: every column has had n pulses back toward its origin. A column that is back at the origin shade
+  means n pulses each way cancel; one that is not shows the asymmetry of that direction (top half: n pulses toward
+  white after n toward black; bottom half the reverse), which is the residue a return transition needs a different
+  dose for.
+
+Before reading either photo, check its line:
+
+- **Pulse interval**: the figure to read for the rhythm is the stage's pulse interval, the longest start-to-start
+  time between two pulse slots; a skipped slot period or a pause shows there, where the slot's own length (`slots up
+  to`) does not. An interval well over the slot length means some pulses rested longer than the rest.
+- **Pauses**: a pause after stage slot s puts a gap between the pulses of every column n > 24 - s (the columns already
+  pulsing then); distrust those columns, or take the photo again without pausing.
+- **The base**: the bottom half's black is the preset's 6>0 dose (in the line); if that dose is under the panel's full
+  swing the bottom half starts gray, and its columns measure from that gray, not from black.
+- **Temperature**: note the room temperature with each ladder photo; the pulse response depends on it (the panel's own
+  sensor is a backend read, outside this story).
+- **Rest**: end alignment gives every column the same rest after its last pulse, but not before its first: column 1
+  rests longer than column 24 between the base (the top half: the clean) and its first pulse.
 
 ### Tuning
 
-Display lab → Tuning lists every value of the session's preset, one row each: Dose K>D through Dose W>L (1..24), Hold
-K>D through Hold W>L (on or off), Retarget to dark and Retarget to light (50..150 %, steps of 25: the budget of a pixel
+Display lab → Tuning lists every value of the session's preset, one row each: Dose 0>2 through Dose 6>4 (1..24), Hold
+0>2 through Hold 6>4 (on or off), Retarget to dark and Retarget to light (50..150 %, steps of 25: the budget of a pixel
 turned mid-transition toward a darker, or a lighter, shade than its level), Frame rate (the backend's rate labels),
 Swap polarity, Reset to defaults (the panel's starting values, the UltraChip preset or InkBoy's, into the session at
 once, logged as `DLAB tune reset: ... defaults`; the only way back to them on the device, and Save then writes them),
@@ -518,7 +607,7 @@ save keeps the values in memory and says "Save failed, values kept". Its text, I
 | --- | --- | --- |
 | `version` | the file format; required | 1 |
 | `base` | the defaults the saved values carry: `inkboy` (SSD1677) or `ultrachip` (UC8179, UC8279). Informational and optional: files saved before dlab-c3 have none, and a value naming neither is logged and ignored. When it names other defaults than this panel's, the lab logs an error naming both (`preset ... was saved over InkBoy's defaults, this panel's are UltraChip: loaded anyway`), loads the file all the same, and keeps the file's base, so Save writes it back and the error stays until Tuning's Reset to defaults; Save's log names the base it wrote. On an UltraChip panel a file without the key logs an error that it predates the key and its doses override the UltraChip defaults | `"inkboy"` / `"ultrachip"` |
-| `doses` | the 12 doses in the table order K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W, W>K, W>D, W>L | 1..24 each |
+| `doses` | the 12 doses in the table order 0>2, 0>4, 0>6, 2>0, 2>4, 2>6, 4>0, 4>2, 4>6, 6>0, 6>2, 6>4 | 1..24 each |
 | `hold` | the 12 hold bits in the same order (on: the follow-up scan holds that transition) | `true` / `false` |
 | `retarget_dark_percent` | the budget of a pixel retargeted mid-transition toward a darker shade, percent of its base dose | 50..150 |
 | `retarget_light_percent` | the same toward a lighter shade | 50..150 |
@@ -528,7 +617,7 @@ save keeps the values in memory and says "Save failed, values kept". Its text, I
 | `history` | 1: completed returns, 2: reversals, 3: both (allocates 3 B a pixel of PSRAM) | 0..3 |
 | `return_delta` | per route LKL, DKD, DWD, LWL, DLD, LDL: doses added to a completed return (0 = none) | -11..11 |
 | `reverse_percent` | per route, the same order: a reversal's budget percent (0 = the retarget percent of the new target's direction, as for any other retarget: toward dark when it lies below the pixel's level, toward light when above) | 0..250 |
-| `weak_white_to_light` | W>L pixels settled on white darken through the backend's weak row, when it has one | `true` / `false` |
+| `weak_white_to_light` | 6>4 pixels settled on white darken through the backend's weak row, when it has one | `true` / `false` |
 
 The format stays `version` 1: an older firmware (before dlab-c3) reading a newer file skips the `base` and the two
 new retarget keys and keeps its retarget default, but a file holding any dose above 12 is out of its range, so it
@@ -598,19 +687,23 @@ sent to the panel.
   and the UltraChip defaults, `PresetBase`, the tuning steps, the two retarget percents) and the preset file's codec
   (with the older `retarget_percent` key); pinned by `test/game_display_lab/test_gray_preset.cpp`.
 - `lib/GameDisplayLab/GrayModel.{h,cpp}`: the per-pixel model (level, doses left, target, source; optional history and
-  weak bitmap): the dose lookup, retargets, the mask build, and the commit; `GraySlot.h`'s `runGraySlot` runs one slot
-  (drive scan, follow-up scan, commit) through a caller's scan function; both pinned by `test_gray_model.cpp`.
+  weak bitmap): the dose lookup, retargets, the Ladder's pulses (`driveRect`: doses set directly), the mask build, and
+  the commit; `GraySlot.h`'s `runGraySlot` runs one slot (drive scan, follow-up scan, commit) through a caller's scan
+  function; both pinned by `test_gray_model.cpp`.
 - `lib/GameDisplayLab/SlotScheduler.h`: the slot period (D5), skipped slots, and the speed window; pinned by
   `test_slot_scheduler.cpp`.
 - `lib/GameDisplayLab/SweepControl.h`: the transition test's request word between the screen's loop and its sweep
   task (Stop, Run, Replay, Clean, InPanel) and the loop's heartbeat for the covered check; pinned by
   `test_sweep_control.cpp`.
 - `lib/GameDisplayLab/TransitionScene.{h,cpp}`: the bands and rectangles over the logical screen, mapped to the panel
-  as `GfxRenderer::rotateCoordinates` maps a pixel, and the modes (`SweepMode`): Fast's and Slow's sweeps, Slow's
-  crossing from the slot period and the preset's longest dose run (`slowSweepMs`), Static's still rectangles and its
-  settle-and-flip sequence; `slotDone` makes the per-slot decision for both (reapply after a flip, start Slow's
-  crossing once measured) and for the holds for photos (each mode's photo spots, the hold marker's rectangle and
-  shade, its slots out and back, the resume, the session cap's drop); pinned by `test_transition_scene.cpp`.
+  as `GfxRenderer::rotateCoordinates` maps a pixel, and the modes (`SweepMode`): Fast's and Slow's sweeps (both
+  waiting for the bands' paint), Slow's crossing from the slot period and the preset's longest dose run
+  (`slowSweepMs`), Static's still rectangles and its settle-and-flip sequence, and the Ladder (its column layout and
+  rectangles, the base and the two stages driven through `GrayModel::driveRect`, `slotPreset`'s held rhythm for one
+  pulse a slot); `slotDone` makes the per-slot decision for all of them (reapply after a flip, start Slow's crossing
+  once measured and Fast's once painted, the Ladder's next stage) and for the holds for photos (each mode's photo
+  spots, the hold marker's box, its pause-symbol bars and shade, its slots out and back, the resume, the session cap's
+  drop); the shades' names (`shadeName`, D14's level numbers); pinned by `test_transition_scene.cpp`.
 - `src/activities/games/display_lab/GrayPresetFile.{h,cpp}`: the preset file's path, its load and save through
   `Storage`.
 - `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B

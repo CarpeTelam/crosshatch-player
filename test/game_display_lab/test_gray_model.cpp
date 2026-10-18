@@ -1,6 +1,7 @@
 // The gray engine's per-pixel model and slot (lib/GameDisplayLab/GrayModel, GraySlot.h): the plan's Dose lookup,
 // Retarget, Mask build and Commit matrix rows, InkBoy's level arithmetic (`level += (target*64 - level) /
-// remaining`), its W>L test (192, 160, 128; a retarget at 160 keeping the level), history routes and the weak row.
+// remaining`), its W>L test (192, 160, 128; a retarget at 160 keeping the level), history routes and the weak row; and
+// story dlab-g1's driveRect (the ladder's pulses: doses set directly, the bookkeeping a retarget's, clipped).
 
 #include <gtest/gtest.h>
 
@@ -605,6 +606,113 @@ TEST(GrayModelHistory, StepCountersCountEachDeliveredDose) {
   b.model.commit(true, false, p);
   EXPECT_EQ(b.model.blackSteps(0, 0), 0);
   EXPECT_EQ(b.model.whiteSteps(0, 0), 1);
+}
+
+// story dlab-g1: driveRect sets the doses directly, keeps the level, and keeps a retarget's bookkeeping.
+TEST(GrayModelDriveRect, SetsTheDosesTowardTheEndAndKeepsTheLevel) {
+  Bench b;
+  b.model.reset(Shade::W);
+  b.model.driveRect(2, 1, 3, 2, Toward::Dark, 5);
+  for (int y = 0; y < H; ++y) {
+    for (int x = 0; x < W; ++x) {
+      const bool in = x >= 2 && x < 5 && y >= 1 && y < 3;
+      EXPECT_EQ(b.model.level(x, y), 192) << x << "," << y;
+      EXPECT_EQ(b.model.remaining(x, y), in ? 5 : 0) << x << "," << y;
+      EXPECT_EQ(b.model.target(x, y), shadeOf(in ? Shade::K : Shade::W)) << x << "," << y;
+      EXPECT_EQ(b.model.source(x, y), shadeOf(Shade::W)) << x << "," << y;  // the shade nearest the level
+    }
+  }
+  EXPECT_EQ(b.model.activeCount(), 6u);
+  // Toward::Light: target W, from black.
+  b.model.reset(Shade::K);
+  b.model.driveRect(0, 0, 1, 1, Toward::Light, 3);
+  EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::W));
+  EXPECT_EQ(b.model.remaining(0, 0), 3);
+  EXPECT_EQ(b.model.level(0, 0), 0);
+  EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::K));
+  // Mid-transition: the level is kept, the source is the shade nearest it, the count replaced even on the same target.
+  b.model.reset(Shade::W);
+  b.model.driveRect(0, 0, 1, 1, Toward::Dark, 4);
+  b.model.commit(true, false, GrayPreset::inkBoyDefaults());  // 192 - 192 / 4 = 144
+  ASSERT_EQ(b.model.level(0, 0), 144);
+  b.model.driveRect(0, 0, 1, 1, Toward::Dark, 2);
+  EXPECT_EQ(b.model.level(0, 0), 144);
+  EXPECT_EQ(b.model.remaining(0, 0), 2);
+  EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::L));  // 144 is nearest L (128)
+}
+
+TEST(GrayModelDriveRect, IsClippedAndZeroDosesChangeNothingAndTheCountIsCapped) {
+  Bench b;
+  b.model.reset(Shade::W);
+  b.model.driveRect(-2, 2, 4, 10, Toward::Dark, 3);
+  EXPECT_EQ(b.model.activeCount(), 4u);  // x 0..1, y 2..3
+  EXPECT_EQ(b.model.remaining(1, 3), 3);
+  EXPECT_EQ(b.model.remaining(2, 2), 0);
+  b.model.driveRect(W, 0, 4, 4, Toward::Dark, 3);   // wholly outside
+  b.model.driveRect(0, 0, 0, 4, Toward::Dark, 3);   // empty
+  b.model.driveRect(0, 0, 4, -1, Toward::Dark, 3);  // empty
+  b.model.driveRect(0, 0, W, H, Toward::Dark, 0);   // no pulses
+  EXPECT_EQ(b.model.activeCount(), 4u);
+  EXPECT_EQ(b.model.target(5, 0), shadeOf(Shade::W));
+  b.model.driveRect(5, 0, 1, 1, Toward::Dark, 200);
+  EXPECT_EQ(b.model.remaining(5, 0), DOSE_MAX);
+}
+
+TEST(GrayModelDriveRect, ClearsTheHistoryOriginAndTheWeakBit) {
+  Bench b(true, true);
+  GrayPreset p = GrayPreset::inkBoyDefaults();
+  p.historyMode = HISTORY_RETURN;
+  b.model.reset(Shade::W);
+  b.model.retarget(0, 0, Shade::L, p);  // W>L from settled white: weak-eligible
+  b.model.retarget(1, 0, Shade::K, p);  // origin W recorded
+  b.model.commit(true, true, p);        // step counters run
+  ASSERT_TRUE(b.model.weakEligible(0, 0));
+  ASSERT_EQ(b.model.origin(1, 0), shadeOf(Shade::W));
+  ASSERT_GT(b.model.blackSteps(1, 0), 0);
+  b.model.driveRect(0, 0, 2, 1, Toward::Dark, 4);
+  EXPECT_FALSE(b.model.weakEligible(0, 0));
+  EXPECT_EQ(b.model.origin(0, 0), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.origin(1, 0), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.blackSteps(1, 0), 0);
+  EXPECT_EQ(b.model.whiteSteps(1, 0), 0);
+}
+
+// With every hold bit set (the ladder's held rhythm), n driven doses are n slots of one scan each, and they land on
+// the end; a pixel already on the end takes its n pulses too, in the mask of that end (black for K, white for W: the
+// direction follows an end target, not the level), its level unchanged.
+TEST(GrayModelDriveRect, HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd) {
+  Bench b;
+  GrayPreset held = GrayPreset::inkBoyDefaults();
+  held.holdMask = 0xFFFF;
+  b.model.reset(Shade::W);
+  // Pixel (5, 1) black and settled first (one pulse from white lands on black), then driven toward black 3 times.
+  b.model.driveRect(5, 1, 1, 1, Toward::Dark, 1);
+  b.model.commit(true, false, held);
+  ASSERT_EQ(b.model.level(5, 1), 0);
+  ASSERT_EQ(b.model.activeCount(), 0u);
+  b.model.driveRect(5, 1, 1, 1, Toward::Dark, 3);
+  // Pixel (6, 2) on white, driven toward white 2 times.
+  b.model.driveRect(6, 2, 1, 1, Toward::Light, 2);
+  // Four columns, column n with n pulses toward black.
+  for (int n = 1; n <= 4; ++n) b.model.driveRect(n - 1, 0, 1, 1, Toward::Dark, static_cast<uint8_t>(n));
+  FakeScan scan;
+  for (int slot = 1; slot <= 4; ++slot) {
+    for (int n = 1; n <= 4; ++n) EXPECT_EQ(b.model.remaining(n - 1, 0), n >= slot ? n - slot + 1 : 0) << slot;
+    const SlotResult r = runGraySlot(b.model, b.drive, b.follow, held, false, scan);
+    EXPECT_EQ(r.scans, 1) << slot;
+    EXPECT_FALSE(b.follow.any()) << slot;
+    EXPECT_TRUE(bitSet(scan.sentBlack.back(), 3, 0)) << slot;           // column 4 every slot
+    EXPECT_EQ(bitSet(scan.sentBlack.back(), 0, 0), slot == 1) << slot;  // column 1 only in the first
+    EXPECT_EQ(bitSet(scan.sentBlack.back(), 5, 1), slot <= 3) << slot;  // the black pixel: 3 pulses
+    EXPECT_FALSE(bitSet(scan.sentWhite.back(), 5, 1)) << slot;
+    EXPECT_EQ(bitSet(scan.sentWhite.back(), 6, 2), slot <= 2) << slot;  // the white pixel: 2 pulses, toward white
+    EXPECT_FALSE(bitSet(scan.sentBlack.back(), 6, 2)) << slot;
+  }
+  EXPECT_EQ(b.model.activeCount(), 0u);
+  for (int n = 1; n <= 4; ++n) EXPECT_EQ(b.model.level(n - 1, 0), 0) << n;
+  EXPECT_EQ(b.model.level(5, 1), 0);
+  EXPECT_EQ(b.model.level(6, 2), 192);
+  EXPECT_EQ(scan.calls, 4u);
 }
 
 }  // namespace

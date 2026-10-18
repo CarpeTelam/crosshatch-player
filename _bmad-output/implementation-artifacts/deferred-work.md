@@ -1412,3 +1412,11 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c4-hold-for-photos.md`
   summary: A logical height under 64 px would put the hold marker into band 2.
   evidence: No supported screen is that small; the dash's height is clamped to the bottom band's margin below its last lane. (location: lib/GameDisplayLab/TransitionScene.cpp (markerRect); severity: low)
+
+## dlab-g1
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g1-ladder-scene.md`
+  summary: serve()'s clean branch repaints from white without restarting the ladder (or dropping a hold).
+  evidence: Latent: SweepControl::requestClean has no caller; joins dlab-c4's note: whoever adds a caller drops the hold and restarts the scene in cleanToWhite. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (serve, cleanToWhite); severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g1-ladder-scene.md`
+  summary: The ladder's settled line cannot record the panel temperature, which the pulse response depends on.
+  evidence: The UC8179's sensor is read through the backend, which the story's Never list keeps unchanged; the reading guide asks for the room temperature by hand. A backend story could expose it. (location: lib/GameDisplayLab/ScanBackend.h; severity: low)
