@@ -415,4 +415,31 @@ TEST(SweepControl, AResetClearsTheHoldAndAPendingReplay) {
   EXPECT_FALSE(c.replayPending());
 }
 
+TEST(SweepControl, RunKeepsTheDeviceAwakeAndAHoldOnlyForItsBound) {
+  constexpr uint32_t AWAKE_MS = 600000;
+  const uint32_t run = SweepControl::RUN;
+  const uint32_t held = SweepControl::HELD;
+  EXPECT_TRUE(SweepControl::keepsAwake(run, 5000, 0, AWAKE_MS));
+  EXPECT_FALSE(SweepControl::keepsAwake(0, 5000, 0, AWAKE_MS));  // paused
+  // A hold: awake from its start until AWAKE_MS later, then the idle timeout applies.
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 1000, 1000, AWAKE_MS));
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 1000 + AWAKE_MS - 1, 1000, AWAKE_MS));
+  EXPECT_FALSE(SweepControl::keepsAwake(held, 1000 + AWAKE_MS, 1000, AWAKE_MS));
+  // Across the millisecond clock's wrap.
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 100, UINT32_MAX - 100, AWAKE_MS));
+  // Never once a stop is asked, whatever else the word holds (a task still ending, or detached).
+  for (const uint32_t word : {run, held, run | held}) {
+    EXPECT_FALSE(SweepControl::keepsAwake(word | SweepControl::STOP, 1000, 1000, AWAKE_MS)) << word;
+  }
+  // The member reads one snapshot of the word.
+  SweepControl c;
+  c.reset(0);
+  EXPECT_TRUE(c.keepsAwake(0, 0, AWAKE_MS));
+  c.holdRun();
+  EXPECT_TRUE(c.keepsAwake(10, 0, AWAKE_MS));
+  EXPECT_FALSE(c.keepsAwake(AWAKE_MS, 0, AWAKE_MS));
+  c.requestStop();
+  EXPECT_FALSE(c.keepsAwake(10, 0, AWAKE_MS));
+}
+
 }  // namespace

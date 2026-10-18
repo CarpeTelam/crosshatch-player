@@ -93,7 +93,8 @@ void TransitionTestActivity::onEnter() {
   RenderLock lock(*this);
   shownOnPanel = false;
   notice = nullptr;
-  status = tr(STR_GAMES_DLAB_NOT_RUN);
+  // A task a closed screen detached may never end: say so from the start.
+  status = GrayRunner::detachedTasks() > 0 ? tr(STR_GAMES_DLAB_RESTART_DEVICE) : tr(STR_GAMES_DLAB_NOT_RUN);
   snprintf(statsText, sizeof(statsText), "%s", tr(STR_GAMES_DLAB_NOT_RUN));
   // D12: Static on an UltraChip panel, whose slot is too long for the sweep; Fast stays the SSD1677's sweep.
   sweepMode = isUltraChip(display.getController()) ? SweepMode::Static : SweepMode::Fast;
@@ -221,7 +222,7 @@ bool TransitionTestActivity::handleCustomInput() {
   // swallow it. NavPrevious stops on its release, as Back does, so neither half of the press reaches the rows.
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
       mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
-    leaveView(stopText(runner->stop()));
+    leaveView(runner->stop());
     return true;
   }
   // Any other swipe would scroll the hidden list: consumed while the test view is up.
@@ -253,19 +254,21 @@ void TransitionTestActivity::loop() {
   // onExit here, the runner sees the silent loop), or when the task ended on its own (a failed scan, the cover, a
   // Ladder's end) or was ended by prepareForSleep; the rows come back with their FULL refresh.
   if (shownOnPanel.load() && runner && runner->viewEnds(micros())) {
-    leaveView(stopText(!runner->stillStopping()));
+    leaveView(!runner->stillStopping());
     // This pass's input belonged to the test view: a Back or Confirm release here must not pop the screen or start a
     // run. The next pass serves the rows.
     runner->heartbeat(micros());
     return;
   }
   // A task a stop left running past its bound (logged, "Still stopping" on the Run row) is joined once it ends, and
-  // only then does the row say how the run ended.
+  // only then do the rows say how the run ended and at what speed.
   if (!shownOnPanel.load() && runner && runner->reap()) {
     {
       RenderLock lock(*this);
       status = endText();
+      takeStats();
       rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
+      rowItems[static_cast<size_t>(Row::Stats)].subtitle = statsText;
     }
     requestUpdate();
   }
@@ -283,7 +286,7 @@ void TransitionTestActivity::startRun() {
     LOG_INF("DLAB", "transition test: a sweep task is still stopping; no run");
     {
       RenderLock lock(*this);
-      status = tr(STR_GAMES_DLAB_STILL_STOPPING);
+      status = blockedText();
       rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
     }
     requestUpdate();
@@ -347,6 +350,11 @@ void TransitionTestActivity::cleanFromRows() {
   requestUpdate();
 }
 
+const char* TransitionTestActivity::blockedText() const {
+  // A detached task may never return (its registry entry then never clears): only a restart is sure to free it.
+  return GrayRunner::detachedTasks() > 0 ? tr(STR_GAMES_DLAB_RESTART_DEVICE) : tr(STR_GAMES_DLAB_STILL_STOPPING);
+}
+
 const char* TransitionTestActivity::stopText(const bool joined) const {
   // A task a stop left running has not said how it ended: its end is read only once it is joined.
   return joined ? endText() : tr(STR_GAMES_DLAB_STILL_STOPPING);
@@ -367,15 +375,19 @@ const char* TransitionTestActivity::endText() const {
   return tr(STR_GAMES_DLAB_STOPPED);
 }
 
-void TransitionTestActivity::leaveView(const char* outcome) {
+void TransitionTestActivity::takeStats() {
+  if (!runner->statsReported()) return;
+  snprintf(statsText, sizeof(statsText), tr(STR_GAMES_DLAB_STATS), static_cast<unsigned>(runner->reportedTenths() / 10),
+           static_cast<unsigned>(runner->reportedTenths() % 10), static_cast<unsigned>(runner->reportedMsPerScan()));
+}
+
+void TransitionTestActivity::leaveView(const bool joined) {
+  const char* const outcome = stopText(joined);
   app.clearTapFlash();
   {
     RenderLock lock(*this);
-    if (runner->statsReported()) {
-      snprintf(
-          statsText, sizeof(statsText), tr(STR_GAMES_DLAB_STATS), static_cast<unsigned>(runner->reportedTenths() / 10),
-          static_cast<unsigned>(runner->reportedTenths() % 10), static_cast<unsigned>(runner->reportedMsPerScan()));
-    }
+    // A task still stopping owns its figures: the Speed row waits for reap().
+    if (joined) takeStats();
     status = outcome;
     rowItems[static_cast<size_t>(Row::Run)].subtitle = status;
     rowItems[static_cast<size_t>(Row::Stats)].subtitle = statsText;
@@ -390,7 +402,7 @@ void TransitionTestActivity::leaveView(const char* outcome) {
 
 // ---- sweep task: the runner's client --------------------------------------------------------------------------------
 
-bool TransitionTestActivity::onReplay(GrayModel& model, const GrayPreset& preset) {
+bool TransitionTestActivity::onReplay(GrayRunner& sweep, GrayModel& model, const GrayPreset& preset) {
   scene.restartFlips();
   scene.restartLadder();
   resetLadderStage();
@@ -423,11 +435,10 @@ bool TransitionTestActivity::onReplay(GrayModel& model, const GrayPreset& preset
           static_cast<unsigned>(model.activeCount()), modeName(scene.mode()), rects, crossing, hold,
           static_cast<unsigned>(preset.rateIndex), static_cast<unsigned>(preset.swapPolarity),
           static_cast<unsigned>(preset.retargetDarkPercent), static_cast<unsigned>(preset.retargetLightPercent),
-          static_cast<unsigned>(runner->hasHistory() ? preset.historyMode : 0),
-          static_cast<unsigned>(runner->weakRow()));
+          static_cast<unsigned>(sweep.hasHistory() ? preset.historyMode : 0), static_cast<unsigned>(sweep.weakRow()));
   // With history on, a flip back to a pixel's origin is a completed return or a reversal, budgeted by the route's
   // return_delta or reverse_percent rather than the table dose.
-  if (scene.mode() == SweepMode::Static && runner->hasHistory()) {
+  if (scene.mode() == SweepMode::Static && sweep.hasHistory()) {
     LOG_INF("DLAB", "gray static: history %u is on, so the flips' residues include its route adjustments",
             static_cast<unsigned>(preset.historyMode));
   }
@@ -435,7 +446,8 @@ bool TransitionTestActivity::onReplay(GrayModel& model, const GrayPreset& preset
   return true;
 }
 
-void TransitionTestActivity::onPaused() {
+void TransitionTestActivity::onPaused(GrayRunner& sweep) {
+  (void)sweep;
   // A pause between two pulse slots of a Ladder stage puts a gap in its one-pulse-a-slot rhythm: its settle line
   // counts them and names the first few stage slots they fell after.
   if (scene.ladderMidStage()) {
@@ -446,14 +458,16 @@ void TransitionTestActivity::onPaused() {
   }
 }
 
-void TransitionTestActivity::onResume(GrayModel& model, const GrayPreset& preset) {
+void TransitionTestActivity::onResume(GrayRunner& sweep, GrayModel& model, const GrayPreset& preset) {
+  (void)sweep;
   // A run held at a photo spot: the marker goes back to its band's shade before anything else moves (the scene does
   // nothing unless it holds).
   if (!scene.resumeHold(model, preset)) return;
   LOG_INF("DLAB", "gray hold: resumed; marker back to %c", GameDisplayLab::shadeName(scene.markerShade()));
 }
 
-bool TransitionTestActivity::onCapClean() {
+bool TransitionTestActivity::onCapClean(GrayRunner& sweep) {
+  (void)sweep;
   // A hold in progress is dropped: repainted from white, the marker would settle before the pattern it marks.
   const std::optional<GameDisplayLab::DroppedHold> dropped = scene.cancelHold();
   if (dropped) {
@@ -480,8 +494,9 @@ bool TransitionTestActivity::onCapClean() {
   return true;
 }
 
-bool TransitionTestActivity::prepareSlot(GrayModel& model, const uint32_t prevMs, const uint32_t nowMs,
-                                         const bool stale, const GrayPreset& preset) {
+bool TransitionTestActivity::prepareSlot(GrayRunner& sweep, GrayModel& model, const uint32_t prevMs,
+                                         const uint32_t nowMs, const bool stale, const GrayPreset& preset) {
+  (void)sweep;
   if (stale) {
     scene.applyAll(model, nowMs, preset);
   } else {
@@ -490,7 +505,8 @@ bool TransitionTestActivity::prepareSlot(GrayModel& model, const uint32_t prevMs
   return true;
 }
 
-GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(const GameDisplayLab::SlotResult& slot,
+GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(GrayRunner& sweep,
+                                                                  const GameDisplayLab::SlotResult& slot,
                                                                   const uint32_t slotStartUs, const uint32_t periodUs,
                                                                   const uint32_t elapsedMs) {
   // A Ladder stage's pulse slots, before slotDone moves the stage on: the longest slot, and the longest start-to-start
@@ -504,7 +520,7 @@ GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(const GameDisp
     ladderLastStartUs = slotStartUs;
   }
   const GameDisplayLab::SceneStep step =
-      scene.slotDone(runner->model(), lab.preset(), slot.driven, slot.driveDone, periodUs, elapsedMs);
+      scene.slotDone(sweep.model(), lab.preset(), slot.driven, slot.driveDone, periodUs, elapsedMs);
   if (step.settled) {
     LOG_INF("DLAB", "gray static: flip %lu settled after %lu slots (offset +%u, next +%u)",
             static_cast<unsigned long>(step.settled->flip), static_cast<unsigned long>(step.settled->slots),
@@ -539,7 +555,7 @@ GrayRunner::Client::SlotVerdict TransitionTestActivity::afterSlot(const GameDisp
   }
   if (step.held) {
     // Held for a photo: nothing is driven until Next (or Confirm) resumes, which drives the marker back first.
-    runner->holdForPhoto();
+    sweep.holdForPhoto();
     LOG_INF("DLAB", "gray hold: marker settled after %lu slots; holding, Next resumes",
             static_cast<unsigned long>(step.markerSlots));
   }

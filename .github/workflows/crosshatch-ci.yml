@@ -25,6 +25,11 @@
 #   and check on scratch repositories. docs/crosshatch/fork-scripts.md has the script conventions.
 # - Game packages is not here: it runs only on a labelled pull request, from crosshatch-game-packages.yml, so a label
 #   event never reruns these jobs.
+# - Display lab decoders: builds and runs test/game_display_lab/test_image_decoders (the gray viewer's reads against
+#   the real PNGdec and JPEGDEC, under AddressSanitizer and UndefinedBehaviorSanitizer), which the unit-tests job of
+#   ci.yml leaves out: it has no PlatformIO library folder to build them from. This job fetches PNGdec at the version
+#   platformio.ini pins and JPEGDEC at its pinned commit; test/game_display_lab/CMakeLists.txt applies
+#   scripts/jpegdec_patches to JPEGDEC as the firmware build does, and reads the PNG buffer size from platformio.ini.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
@@ -401,6 +406,49 @@ jobs:
       - name: Run the games check
         run: ctest --test-dir build/test -L games-check --output-on-failure --no-tests=error
 
+  display-lab-decoders:
+    name: Display lab decoders
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      # The versions platformio.ini's lib_deps pins: PNGdec's registry release and JPEGDEC's commit.
+      - name: Fetch PNGdec and JPEGDEC
+        run: |
+          png_version=$(sed -n 's|^[[:space:]]*bitbank2/PNGdec @ \([0-9.]*\)[[:space:]]*$|\1|p' platformio.ini)
+          jpeg_commit=$(sed -n 's|^[[:space:]]*https://github.com/bitbank2/JPEGDEC.git#\([0-9a-f]*\)[[:space:]]*$|\1|p' platformio.ini)
+          test -n "$png_version" && test -n "$jpeg_commit"
+          git clone --quiet --depth 1 --branch "$png_version" https://github.com/bitbank2/PNGdec "$RUNNER_TEMP/PNGdec"
+          git init --quiet "$RUNNER_TEMP/JPEGDEC"
+          git -C "$RUNNER_TEMP/JPEGDEC" fetch --quiet --depth 1 https://github.com/bitbank2/JPEGDEC "$jpeg_commit"
+          git -C "$RUNNER_TEMP/JPEGDEC" checkout --quiet FETCH_HEAD
+
+      # Same key as ci.yml's unit-tests job, so both workflows share one googletest source cache.
+      - name: Cache googletest source
+        uses: actions/cache@v4
+        with:
+          path: build/test/_deps/googletest-src
+          key: ${{ runner.os }}-googletest-${{ hashFiles('test/CMakeLists.txt') }}
+
+      - name: Configure
+        run: >-
+          cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCROSSHATCH_PNGDEC_DIR="$RUNNER_TEMP/PNGdec/src" -DCROSSHATCH_JPEGDEC_DIR="$RUNNER_TEMP/JPEGDEC/src"
+
+      - name: Build
+        run: cmake --build build/test --target test_image_decoders
+
+      - name: Run the decoder tests
+        run: ctest --test-dir build/test -L display-lab-decoders --output-on-failure --no-tests=error
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -415,6 +463,7 @@ jobs:
       - layer-check
       - icons-up-to-date
       - games-check
+      - display-lab-decoders
     if: always()
     runs-on: ubuntu-latest
     permissions:

@@ -51,10 +51,18 @@ class GfxRenderer;
 // so they ask it to stop and join it (stop). onExit() and prepareForSleep() run with the non-recursive render mutex
 // held, which DisplayLabActivity::scan takes, so they must not wait for a task blocked on it: endLocked() deletes the
 // task when it is inside the panel and blocked (waiting for that mutex, holding nothing), and otherwise waits for it to
-// end on its own. Both waits are bounded (STOP_WAIT_MS): stop() then leaves the task running and the screen joins it
-// later (reap); endLocked() detaches the runner, which the task frees itself when it ends. A task that was not
-// detached never deletes itself: it parks after publishing its end, and only the screen (through the runner) deletes
-// it, so a notification never reaches a freed task; a detached one is notified by no one.
+// end on its own. Both waits share one deadline, STOP_WAIT_MS from the first stop asked (Home's stop and the onExit
+// after it wait 20 s in all): stop() then leaves the task running and the screen joins it later (reap); endLocked()
+// detaches the runner, which the task frees itself when it ends. A task that was not detached never deletes itself: it
+// parks after publishing its end, and only the screen (through the runner) deletes it, so a notification never reaches
+// a freed task; a detached one is notified by no one.
+//
+// What a detached task may still touch: its own runner (the model, the masks, the control word, the client text, its
+// fields) and the buffers its call in flight allocated (a decoder and its rows), the SD card through Storage, and the
+// log. Never the screen, which may be gone (every client hook is handed the runner, and the inert client answers them
+// once detached), nor the lab under it (the stop, sticky, is checked after every hook that can take long and before
+// any slot or scan touches the lab's masks or preset). A detached task that never returns keeps all of that for good:
+// the registry (detachedTasks) then never clears, and the screens ask for a restart.
 class GrayRunner {
  public:
   // How often the running sweep logs and keeps its speed.
@@ -70,10 +78,10 @@ class GrayRunner {
   static constexpr int SWEEP_CORE = 1;
   // How often stop() polls for the task's end.
   static constexpr uint32_t STOP_POLL_MS = 5;
-  // The longest stop() and endLocked() wait for the task: past SCAN_TIMEOUT_MS and a decode's row (the SDK's own BUSY
-  // wait can run to 30 s, so a scan stuck there outlasts it: stop() then shows "Still stopping" until it returns).
-  // Past it, stop() leaves the task running undeleted and endLocked() detaches it, so Back, Home and sleep wait at
-  // most this long for a task that does not return.
+  // The longest stop() and endLocked() wait for the task, together, from the first stop asked: past SCAN_TIMEOUT_MS and
+  // a decode's row (the SDK's own BUSY wait can run to 30 s, so a scan stuck there outlasts it: stop() then shows
+  // "Still stopping" until it returns). Past it, stop() leaves the task running undeleted and endLocked() detaches it
+  // at once, so Back, Home and sleep wait at most this long, in all, for a task that does not return.
   static constexpr uint32_t STOP_WAIT_MS = 20000;
   // How long a hold for a photo keeps the device awake from its start: long enough to set up and take the photos,
   // short enough that a forgotten hold does not keep the CPU up indefinitely (main.cpp resets the idle clock and turns
@@ -99,32 +107,46 @@ class GrayRunner {
 
     // A run's start or a replay, after the clean to white (the model reset to white): paint the whole picture from
     // the start (clock 0). False when it cannot (End::PaintFailed, or Stopped when a stop was asked meanwhile).
-    virtual bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) = 0;
+    // Every hook is handed `runner`, the runner it runs for: a hook reaches the runner through it, never through the
+    // screen's own pointer, which is null once the runner is detached.
+    virtual bool onReplay(GrayRunner& runner, GameDisplayLab::GrayModel& model,
+                          const GameDisplayLab::GrayPreset& preset) = 0;
     // The owner paused the run (not a hold), between two slots.
-    virtual void onPaused() {}
+    virtual void onPaused(GrayRunner& runner) { (void)runner; }
     // A resume arrived: true keeps the run holding instead (a picture that is finished and held, which a press does
     // not resume; the client logs it). Asked before the resume line and the slot clock.
-    virtual bool keepHolding() { return false; }
+    virtual bool keepHolding(GrayRunner& runner) {
+      (void)runner;
+      return false;
+    }
     // The run resumes (after a pause or a hold), the hold already released: a client holding at a photo spot drives
     // its marker back.
-    virtual void onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) {
+    virtual void onResume(GrayRunner& runner, GameDisplayLab::GrayModel& model,
+                          const GameDisplayLab::GrayPreset& preset) {
+      (void)runner;
       (void)model;
       (void)preset;
     }
     // The session cap's clean repainted the panel white and reset the model: false when the run is over (Finished).
-    virtual bool onCapClean() = 0;
+    virtual bool onCapClean(GrayRunner& runner) = 0;
     // Before a slot at sweep clock `nowMs` (the last slot's at `prevMs`): move the picture; with `stale`, retarget all
     // of it (after a clean or a reapply). False when it cannot (as onReplay).
-    virtual bool prepareSlot(GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
-                             const GameDisplayLab::GrayPreset& preset) = 0;
+    virtual bool prepareSlot(GrayRunner& runner, GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs,
+                             bool stale, const GameDisplayLab::GrayPreset& preset) = 0;
     // The preset the next slot runs on; `preset` itself by default.
-    virtual const GameDisplayLab::GrayPreset& slotPreset(const GameDisplayLab::GrayPreset& preset) { return preset; }
+    virtual const GameDisplayLab::GrayPreset& slotPreset(GrayRunner& runner, const GameDisplayLab::GrayPreset& preset) {
+      (void)runner;
+      return preset;
+    }
     // After a delivered slot that began at `slotStartUs`, took `periodUs` (its real length) at sweep clock
     // `elapsedMs`; the model has committed it. The client may call holdForPhoto() here.
-    virtual SlotVerdict afterSlot(const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs, uint32_t periodUs,
-                                  uint32_t elapsedMs) = 0;
+    virtual SlotVerdict afterSlot(GrayRunner& runner, const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs,
+                                  uint32_t periodUs, uint32_t elapsedMs) = 0;
     // The sweep clock stands still (a hold's marker slots).
-    virtual bool clockStill() const { return false; }
+    virtual bool clockStill(const GrayRunner& runner) const {
+      (void)runner;
+      return false;
+    }
 
    protected:
     ~Client() = default;
@@ -155,21 +177,26 @@ class GrayRunner {
   // A replay with presses waiting is pending (the gray viewer reads it before it writes the next entry).
   bool replayPending() const { return control.replayPending(); }
   // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (after the scan, the clean
-  // or the decode row in flight) at most STOP_WAIT_MS, and deletes it: true. Past that, logged and left running, false
+  // or the decode row in flight) until STOP_WAIT_MS after the first stop asked, and deletes it: true. Past that, logged
+  // once and left running, false
   // (stillStopping() until reap() joins it; the screen shows "Still stopping" and reads no end until then). The caller
   // holds no render lock.
   bool stop();
-  // A stop left the task running past STOP_WAIT_MS and it has not been joined yet.
+  // A stop left the task running past STOP_WAIT_MS and it has not been joined yet: the runner's results (end(), the
+  // stats, the client code) are the task's until reap() joins it.
   bool stillStopping() const { return sweepTask != nullptr && control.stopRequested(); }
-  // From the rows view's loop: joins a task stop() left running once it has ended; true when it joined one.
+  // From the rows view's loop: joins a task stop() left running once it has ended, and applies a cover the view saw
+  // meanwhile (end() Covered); true when it joined one.
   bool reap();
   // Locked stop (onExit(), prepareForSleep()): the caller holds the render mutex. Asks `owned`'s task to stop and waits
   // for its end, but deletes it at once when it is blocked inside the panel, where it can only be waiting for that
-  // mutex. Waits at most STOP_WAIT_MS: past that the runner is detached (logged once, naming the screen), `owned`
-  // released to the task, which frees it (the model, the masks, every buffer it can touch) when it ends; `owned` is
-  // then null and the caller frees nothing of it.
+  // mutex. Waits until STOP_WAIT_MS after the first stop asked (at once when a stop already gave up): past that the
+  // runner is detached (one LOG_ERR naming the screen), `owned` released to the task, which frees it (the model, the
+  // masks, every buffer it can touch) when it ends, or never, if it never returns; `owned` is then null and the caller
+  // frees nothing of it.
   static void endLocked(std::unique_ptr<GrayRunner>& owned);
-  // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any.
+  // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any (they ask
+  // for a restart). Never back to 0 if such a task never returns.
   static int detachedTasks();
   // The view must end now (a pass of loop() while the view is up at `nowUs`): another screen covered it (a heartbeat
   // older than COVERED_GAP_US, logged), or the task ended on its own or was ended; the task has then been joined. The
@@ -204,11 +231,26 @@ class GrayRunner {
   // preventAutoSleep (one load of both) always sees the run or the hold.
   void holdForPhoto();
   GameDisplayLab::GrayModel& model() { return model_; }
+  // A client's scratch text on the runner (the gray viewer's file path and name), so a decode's caller keeps it off the
+  // task's stack and still has it when the call returns after a detach (the runner is the task's then).
+  static constexpr size_t CLIENT_TEXT_BYTES = 112;
+  char* clientText() { return clientText_; }
 
  private:
   static void sweepEntry(void* param);
   // endLocked's body, on the runner `owned` holds.
   void endLockedOrDetach(std::unique_ptr<GrayRunner>& owned);
+  // Gives the runner up to its task (endLocked past the deadline): the inert client set and the registry counted first,
+  // then one exchange decides against the task's own end. True: detached, `owned` released, and nothing of this runner
+  // may be touched any more (the task may free it at once). False: the task ended just now (both undone); join it.
+  bool detach(std::unique_ptr<GrayRunner>& owned);
+  // Asks the task to stop and wakes it; the first ask starts the shared deadline.
+  void askStop();
+  // Deletes the task, which has published its end, and applies a cover seen while it was stopping.
+  void join();
+  // On the task, after a client hook that can take long (a decode) and before a slot: a stop asked meanwhile ends the
+  // run here (sweepEnd Stopped), before anything touches the lab, which a detached task may have outlived.
+  bool stopSeen();
   // The current client (an inert one once detached).
   Client& client() { return *client_.load(); }
   // The task published its end (and was not detached).
@@ -269,6 +311,13 @@ class GrayRunner {
   // The millis() the run's hold for a photo began at (the hold itself is the request word's Held), written by the
   // sweep task before it holds; read by preventAutoSleep.
   std::atomic<uint32_t> heldSinceMs{0};
+  // The loop task's: a stop was asked at stopAskedMs_ (the shared deadline's start); stop() gave up and logged it; the
+  // view saw a cover while the task was still stopping (applied by join()).
+  bool stopAsked_ = false;
+  uint32_t stopAskedMs_ = 0;
+  bool leftRunning_ = false;
+  bool coveredPending_ = false;
+  char clientText_[CLIENT_TEXT_BYTES] = {};
 
   // ---- the sweep task's own, while it is up (read by the loop task only once it has ended or been deleted) ---------
   GameDisplayLab::GrayModel model_;

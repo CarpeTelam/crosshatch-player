@@ -127,32 +127,41 @@ class TransitionTestActivity final : public UiListActivity, private GrayRunner::
   const char* endText() const;
   // After a stop: endText() when the task was joined, "Still stopping" when it was left running past the bound.
   const char* stopText(bool joined) const;
-  // Back to the rows with `outcome` on the Run row and the task's last speed on the Speed row, repainted with a FULL
-  // refresh. Only once the task is gone.
-  void leaveView(const char* outcome);
+  // Why no run starts while a sweep task is still ending: a restart when one was detached, else "Still stopping".
+  const char* blockedText() const;
+  // The task's last speed into the Speed line (kept as it was when there was none); only once the task is joined.
+  void takeStats();
+  // Back to the rows, repainted with a FULL refresh: when the task was `joined`, how the run ended on the Run row and
+  // its last speed on the Speed row; else "Still stopping", and both wait for reap() to join it.
+  void leaveView(bool joined);
 
   // ---- sweep task: the runner's client --------------------------------------------------------------------------
+  // Every hook reaches the runner through `sweep`, the one it is handed, never through `runner` (null once detached).
   // The run's start: the scene from flip 0 and the Ladder's base, applied at clock 0, and the run's line.
-  bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  bool onReplay(GrayRunner& sweep, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
   // A pause between two pulse slots of a Ladder stage is counted for its settle line.
-  void onPaused() override;
+  void onPaused(GrayRunner& sweep) override;
   // A run held at a photo spot: the marker goes back to its band's shade before anything else moves.
-  void onResume(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  void onResume(GrayRunner& sweep, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
   // The session cap's clean: a hold in progress dropped, Static from flip 0, the Ladder from its base (false: the
   // Ladder's second photo was taken, the run is over).
-  bool onCapClean() override;
+  bool onCapClean(GrayRunner& sweep) override;
   // The rectangles moved to the clock, or the whole scene reapplied.
-  bool prepareSlot(GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
+  bool prepareSlot(GrayRunner& sweep, GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
                    const GameDisplayLab::GrayPreset& preset) override;
-  const GameDisplayLab::GrayPreset& slotPreset(const GameDisplayLab::GrayPreset& preset) override {
+  const GameDisplayLab::GrayPreset& slotPreset(GrayRunner& sweep, const GameDisplayLab::GrayPreset& preset) override {
+    (void)sweep;
     return scene.slotPreset(preset);
   }
   // The Ladder's pulse-slot figures, then TransitionScene::slotDone decides (Static's settle and flip, Slow's measured
   // crossing, a photo spot, the marker settled out or back, a Ladder stage); this logs it and holds the run once the
   // marker is out.
-  SlotVerdict afterSlot(const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs, uint32_t periodUs,
-                        uint32_t elapsedMs) override;
-  bool clockStill() const override { return scene.clockStill(); }
+  SlotVerdict afterSlot(GrayRunner& sweep, const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs,
+                        uint32_t periodUs, uint32_t elapsedMs) override;
+  bool clockStill(const GrayRunner& sweep) const override {
+    (void)sweep;
+    return scene.clockStill();
+  }
   // The Ladder's per-stage figures cleared: at each stage's end, a run's start and the session cap's restart.
   void resetLadderStage();
   // The Ladder's columns and rows at a run's start (`gray ladder:`), and the narrow-screen line when they are 1 px.

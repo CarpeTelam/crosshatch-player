@@ -9,6 +9,7 @@
 #include <array>
 #include <climits>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -671,27 +672,36 @@ std::vector<uint8_t> bytes(const uint8_t (&a)[N]) {
   return std::vector<uint8_t>(a, a + N);
 }
 
-TEST(PngChunks, ACompleteFileWalksThroughIendToTheEnd) {
+TEST(PngChunks, ACompleteFileWalksThroughIend) {
   const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 5000), pngChunk("IDAT", 300), pngChunk("IEND", 0)});
   EXPECT_EQ(walkPng(file), FileLayout::Complete);
   EXPECT_EQ(walkPng(bytes(PNG_GRAY)), FileLayout::Complete);
   EXPECT_EQ(walkPng(bytes(PNG_PALETTE)), FileLayout::Complete);
+  EXPECT_EQ(walkPng(bytes(PNG_NOISE)), FileLayout::Complete);
   // A zero-length IDAT is a whole chunk.
   EXPECT_EQ(walkPng(pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 0), pngChunk("IEND", 0)})), FileLayout::Complete);
-  // Fewer than 8 bytes after IEND are tolerated.
-  auto padded = file;
-  padded.resize(file.size() + 7, 0);
-  EXPECT_EQ(walkPng(padded), FileLayout::Complete);
-  // Whole chunks after IEND are walked too, and pass.
-  auto after = file;
-  const auto extra = pngChunk("tEXt", 20);
-  after.insert(after.end(), extra.begin(), extra.end());
-  EXPECT_EQ(walkPng(after), FileLayout::Complete);
   // An IDAT holding a short zlib stream with bytes after it is whole as a layout (what the bytes mean is PNGdec's).
   auto shortStream = pngChunk("IDAT", 12);
   const uint8_t stream[] = {0x78, 0xDA, 0x63, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xEE, 0xEE, 0xEE};
   std::copy(std::begin(stream), std::end(stream), shortStream.begin() + 8);
   EXPECT_EQ(walkPng(pngFile({pngChunk("IHDR", 13), shortStream, pngChunk("IEND", 0)})), FileLayout::Complete);
+}
+
+TEST(PngChunks, WhatFollowsIendIsNotWalked) {
+  // PNGdec stops at IEND, and its reads past the walked size are filler: anything after IEND, a whole chunk, a cut
+  // one, an oversized tRNS or a few stray bytes, leaves the file Complete, and is not read.
+  const auto file = pngFile({pngChunk("IHDR", 13), pngChunk("IDAT", 50), pngChunk("IEND", 0)});
+  const auto tail = [&file](const std::vector<uint8_t>& after) {
+    auto f = file;
+    f.insert(f.end(), after.begin(), after.end());
+    return walkPng(f, {.maxReads = 4});
+  };
+  EXPECT_EQ(tail(pngChunk("tEXt", 20)), FileLayout::Complete);
+  const auto cut = pngChunk("tEXt", 20);
+  EXPECT_EQ(tail(std::vector<uint8_t>(cut.begin(), cut.begin() + 10)), FileLayout::Complete);
+  EXPECT_EQ(tail(pngChunk("tRNS", 300)), FileLayout::Complete);
+  EXPECT_EQ(tail(std::vector<uint8_t>(7, 0)), FileLayout::Complete);
+  EXPECT_EQ(tail(std::vector<uint8_t>(10, 0)), FileLayout::Complete);
 }
 
 TEST(PngChunks, ATruncatedFileIsRefused) {
@@ -701,16 +711,8 @@ TEST(PngChunks, ATruncatedFileIsRefused) {
   for (const size_t cut : {size_t{33 + 4}, size_t{33 + 100}, size_t{5041 + 2}, size_t{5045 + 4}, file.size() - 1}) {
     EXPECT_EQ(walkPng(file, {.size = cut}), FileLayout::Truncated) << cut;
   }
-  // A partial chunk after IEND (8 bytes or more, not whole) is a cut too.
-  auto after = file;
-  const auto extra = pngChunk("tEXt", 20);
-  after.insert(after.end(), extra.begin(), extra.begin() + 10);
-  EXPECT_EQ(walkPng(after), FileLayout::Truncated);
-  auto zeros = file;
-  zeros.resize(file.size() + 10, 0);  // read as a zero-length chunk's header with no CRC
-  EXPECT_EQ(walkPng(zeros), FileLayout::Truncated);
   // Every cut of the sample files is refused one way or another.
-  for (const auto& sample : {bytes(PNG_GRAY), bytes(PNG_PALETTE)}) {
+  for (const auto& sample : {bytes(PNG_GRAY), bytes(PNG_PALETTE), bytes(PNG_NOISE)}) {
     for (size_t cut = 0; cut < sample.size(); ++cut) {
       EXPECT_NE(walkPng(sample, {.size = cut}), FileLayout::Complete) << cut;
     }
@@ -748,11 +750,6 @@ TEST(PngChunks, PaletteAndTransparencyAreBounded) {
   EXPECT_EQ(with("PLTE", 0), FileLayout::Complete);
   EXPECT_EQ(with("tRNS", 256), FileLayout::Complete);
   EXPECT_EQ(with("tRNS", 257), FileLayout::Malformed);
-  // After IEND too.
-  auto after = pngFile({pngChunk("IHDR", 13), pngChunk("IEND", 0)});
-  const auto big = pngChunk("tRNS", 300);
-  after.insert(after.end(), big.begin(), big.end());
-  EXPECT_EQ(walkPng(after), FileLayout::Malformed);
 }
 
 TEST(PngChunks, AFailedReadIsSaidSo) {
@@ -779,35 +776,66 @@ TEST(PngChunks, TheWalkStopsWhenAsked) {
   EXPECT_EQ(walkPng(file, {.stopAfter = 100}), FileLayout::Complete);
 }
 
-TEST(JpegSegments, ACompleteHeaderWalksToSos) {
+// A JPEG of SOI, `body`, then EOI.
+std::vector<uint8_t> jpegOf(std::initializer_list<uint8_t> body) {
+  std::vector<uint8_t> file = {0xFF, 0xD8};
+  file.insert(file.end(), body.begin(), body.end());
+  file.insert(file.end(), {0xFF, 0xD9});
+  return file;
+}
+
+TEST(JpegSegments, ACompleteHeaderWalksToSosAndTheFileEndsInEoi) {
   EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE)), FileLayout::Complete);
   EXPECT_EQ(walkJpeg(bytes(JPEG_PROGRESSIVE)), FileLayout::Complete);
-  // The scan data after SOS is the decoder's: cut inside it, the header is still whole (JPEGDEC's decode is bounded).
-  EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.size = 400}), FileLayout::Complete);
+  const std::vector<uint8_t> big = bigExifJpeg();
+  EXPECT_EQ(big.size(), 66713u);
+  EXPECT_EQ(walkJpeg(big), FileLayout::Complete);
+}
+
+TEST(JpegSegments, AScanCutShortHasNoEnd) {
+  // The scan data is the decoder's, but a file that does not end in EOI was cut (or never closed): JPEGDEC would
+  // decode past the data it has.
+  const auto file = bytes(JPEG_BASELINE);
+  for (size_t cut = 330; cut < file.size(); ++cut) EXPECT_EQ(walkJpeg(file, {.size = cut}), FileLayout::NoEnd) << cut;
+  // EOI must be the last two bytes: trailing bytes after it are a file that does not end in EOI.
+  auto trailing = file;
+  trailing.push_back(0);
+  EXPECT_EQ(walkJpeg(trailing), FileLayout::NoEnd);
+  // An SOS segment that ends the file leaves no room for EOI.
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::NoEnd);
 }
 
 TEST(JpegSegments, FillBytesAndStandaloneMarkersAreWalkedAsJpegdecWalksThem) {
   // JPEGParseInfo steps over a fill byte (0xFFFF) or anything under 0xFFC0 three bytes at a time (jpeg.inl 1642), so
   // the walk does: a fill byte and the byte after it, then APP0, then SOS.
-  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xFF, 0x00, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xDA, 0x00, 0x02}),
-            FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(jpegOf({0xFF, 0xFF, 0x00, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xDA, 0x00, 0x02})), FileLayout::Complete);
   // TEM (0xFF01) is under 0xFFC0: three bytes.
-  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0x01, 0x00, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(jpegOf({0xFF, 0x01, 0x00, 0xFF, 0xDA, 0x00, 0x02})), FileLayout::Complete);
   // A fill byte straight before a marker takes the marker's first byte with it, as JPEGDEC's parse does: the walk
   // lands inside APP0's length and goes on from there.
-  EXPECT_NE(walkJpeg({0xFF, 0xD8, 0xFF, 0xFF, 0xFF, 0xE0, 0x00, 0x30, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Truncated);
+  EXPECT_NE(walkJpeg(jpegOf({0xFF, 0xFF, 0xFF, 0xE0, 0x00, 0x30, 0xFF, 0xDA, 0x00, 0x02})), FileLayout::Truncated);
   // RSTn and a second SOI are read with a length, as JPEGDEC reads one (its default case, jpeg.inl 1762).
-  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xD0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Complete);
-  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xD8, 0x00, 0x40, 0xFF, 0xDA, 0x00, 0x02}), FileLayout::Truncated);
+  EXPECT_EQ(walkJpeg(jpegOf({0xFF, 0xD0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x02})), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg({0xFF, 0xD8, 0xFF, 0xD8, 0x00, 0x40, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9}), FileLayout::Truncated);
 }
 
-TEST(JpegSegments, TheTablesJpegdecCopiesAreBounded) {
-  const auto withSegment = [](const std::vector<uint8_t>& segment) {
-    std::vector<uint8_t> file = {0xFF, 0xD8};
-    file.insert(file.end(), segment.begin(), segment.end());
-    file.insert(file.end(), {0xFF, 0xDA, 0x00, 0x02});
-    return walkJpeg(file);
-  };
+// A JPEG of SOI, `segments`, an empty SOS and EOI.
+FileLayout withSegments(const std::vector<std::vector<uint8_t>>& segments) {
+  std::vector<uint8_t> file = {0xFF, 0xD8};
+  for (const auto& segment : segments) file.insert(file.end(), segment.begin(), segment.end());
+  file.insert(file.end(), {0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9});
+  return walkJpeg(file);
+}
+
+// A marker segment: `marker`, its length, `body`.
+std::vector<uint8_t> segmentOf(const uint8_t marker, const std::vector<uint8_t>& body) {
+  const size_t length = body.size() + 2;
+  std::vector<uint8_t> seg = {0xFF, marker, static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length)};
+  seg.insert(seg.end(), body.begin(), body.end());
+  return seg;
+}
+
+TEST(JpegSegments, FramesAndQuantisationTablesAreBounded) {
   // SOF0 / SOF2: 1 to 4 components, length 8 + 3 each.
   const auto sof = [](const uint8_t type, const uint8_t count, const uint16_t length) {
     std::vector<uint8_t> seg = {0xFF, type, static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length), 8, 0, 8, 0,
@@ -815,12 +843,12 @@ TEST(JpegSegments, TheTablesJpegdecCopiesAreBounded) {
     seg.resize(2 + static_cast<size_t>(length < 8 ? 8 : length), 0x11);
     return seg;
   };
-  EXPECT_EQ(withSegment(sof(0xC0, 1, 11)), FileLayout::Complete);
-  EXPECT_EQ(withSegment(sof(0xC2, 3, 17)), FileLayout::Complete);
-  EXPECT_EQ(withSegment(sof(0xC0, 5, 23)), FileLayout::Malformed);  // past JPEGDEC's 4-entry table
-  EXPECT_EQ(withSegment(sof(0xC0, 0, 8)), FileLayout::Malformed);
-  EXPECT_EQ(withSegment(sof(0xC0, 3, 11)), FileLayout::Malformed);  // shorter than its components
-  EXPECT_EQ(withSegment(sof(0xC2, 1, 14)), FileLayout::Malformed);  // longer than them
+  EXPECT_EQ(withSegments({sof(0xC0, 1, 11)}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({sof(0xC2, 3, 17)}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({sof(0xC0, 5, 23)}), FileLayout::Malformed);  // past JPEGDEC's 4-entry table
+  EXPECT_EQ(withSegments({sof(0xC0, 0, 8)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({sof(0xC0, 3, 11)}), FileLayout::Malformed);  // shorter than its components
+  EXPECT_EQ(withSegments({sof(0xC2, 1, 14)}), FileLayout::Malformed);  // longer than them
   // DQT: whole tables of 1 + 64 (8-bit) or 1 + 128 (16-bit) bytes.
   const auto dqt = [](const std::vector<uint8_t>& precisions, const int extra) {
     std::vector<uint8_t> body;
@@ -829,16 +857,144 @@ TEST(JpegSegments, TheTablesJpegdecCopiesAreBounded) {
       body.resize(body.size() + (p != 0 ? 128 : 64), 1);
     }
     body.resize(static_cast<size_t>(static_cast<int>(body.size()) + extra), 1);
-    const size_t length = body.size() + 2;
-    std::vector<uint8_t> seg = {0xFF, 0xDB, static_cast<uint8_t>(length >> 8), static_cast<uint8_t>(length)};
-    seg.insert(seg.end(), body.begin(), body.end());
-    return seg;
+    return segmentOf(0xDB, body);
   };
-  EXPECT_EQ(withSegment(dqt({0x00}, 0)), FileLayout::Complete);
-  EXPECT_EQ(withSegment(dqt({0x00, 0x11}, 0)), FileLayout::Complete);
-  EXPECT_EQ(withSegment(dqt({0x00}, 1)), FileLayout::Malformed);
-  EXPECT_EQ(withSegment(dqt({0x00}, -1)), FileLayout::Malformed);
-  EXPECT_EQ(withSegment(dqt({}, 0)), FileLayout::Complete);  // an empty DQT copies nothing
+  EXPECT_EQ(withSegments({dqt({0x00}, 0)}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({dqt({0x00, 0x11}, 0)}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({dqt({0x00}, 1)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dqt({0x00}, -1)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dqt({}, 0)}), FileLayout::Complete);  // an empty DQT copies nothing
+}
+
+// A DHT table: class and index byte `id`, sixteen counts summing to `codes` (all in the first count when it fits),
+// and `codes` values.
+std::vector<uint8_t> huffTable(const uint8_t id, const uint32_t codes) {
+  std::vector<uint8_t> table = {id};
+  uint32_t left = codes;
+  for (int i = 0; i < 16; ++i) {
+    const uint32_t count = left > 255 ? 255 : left;
+    table.push_back(static_cast<uint8_t>(count));
+    left -= count;
+  }
+  table.resize(table.size() + codes, 0x33);
+  return table;
+}
+
+TEST(JpegSegments, HuffmanTablesAreBounded) {
+  const auto dht = [](const std::vector<std::vector<uint8_t>>& tables, const int extra = 0) {
+    std::vector<uint8_t> body;
+    for (const auto& t : tables) body.insert(body.end(), t.begin(), t.end());
+    body.resize(static_cast<size_t>(static_cast<int>(body.size()) + extra), 0x44);
+    return segmentOf(0xC4, body);
+  };
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 12)})}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 12), huffTable(0x10, 162), huffTable(0x01, 12), huffTable(0x13, 162)})}),
+            FileLayout::Complete);
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 256)})}), FileLayout::Complete);
+  // A class past 1 or an index past 3: JPEGDEC's loop never shortens its count for it (jpeg.inl 844-870).
+  EXPECT_EQ(withSegments({dht({huffTable(0x20, 12)})}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dht({huffTable(0x04, 12)})}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dht({huffTable(0x14, 12)})}), FileLayout::Malformed);
+  // Over 256 codes, or totals that are not the segment's length.
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 257)})}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 12)}, 1)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({dht({huffTable(0x00, 12)}, 17)}), FileLayout::Malformed);
+  auto shortTable = huffTable(0x00, 12);
+  shortTable.resize(10);  // fewer than its 17 header bytes
+  EXPECT_EQ(withSegments({dht({shortTable})}), FileLayout::Malformed);
+}
+
+TEST(JpegSegments, TablesMustLieInsideJpegdecsBuffer) {
+  // JPEGParseInfo reads a table segment out of its 2 KiB buffer, which starts at most 1 KiB before the segment: a DHT
+  // or DQT that runs past it is refused, wherever it starts.
+  std::vector<std::vector<uint8_t>> tables;
+  for (int i = 0; i < 8; ++i) tables.push_back(huffTable(static_cast<uint8_t>((i % 2) << 4 | (i / 2)), 250));
+  std::vector<uint8_t> body;
+  for (const auto& t : tables) body.insert(body.end(), t.begin(), t.end());  // 8 x 267 = 2,136 bytes
+  EXPECT_EQ(withSegments({segmentOf(0xC4, body)}), FileLayout::Malformed);
+  // The same 4 tables (1,068 bytes) fit at the start of the file, but not 1,000 bytes into the buffer.
+  body.resize(4 * 267);
+  EXPECT_EQ(withSegments({segmentOf(0xC4, body)}), FileLayout::Complete);
+  EXPECT_EQ(withSegments({segmentOf(0xE0, std::vector<uint8_t>(996, 0)), segmentOf(0xC4, body)}),
+            FileLayout::Malformed);
+  // Past 1 KiB into the buffer, JPEGDEC moves it on: the same tables after a 1,100-byte APP0 fit again.
+  EXPECT_EQ(withSegments({segmentOf(0xE0, std::vector<uint8_t>(1100, 0)), segmentOf(0xC4, body)}),
+            FileLayout::Complete);
+}
+
+// An APP1 Exif segment: the Exif header, a TIFF header in `order` ('M' or 'I') with IFD0 at `ifd`, then `tiffBody`
+// from TIFF offset 8, padded to `length` bytes of body.
+std::vector<uint8_t> exifSegment(const char order, const uint32_t ifd, const std::vector<uint8_t>& tiffBody,
+                                 const size_t length) {
+  const bool motorola = order == 'M';
+  std::vector<uint8_t> body = {'E', 'x', 'i', 'f', 0, 0, static_cast<uint8_t>(order), static_cast<uint8_t>(order)};
+  const auto u16 = [&body, motorola](const uint32_t v) {
+    if (motorola) {
+      body.insert(body.end(), {static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v)});
+    } else {
+      body.insert(body.end(), {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8)});
+    }
+  };
+  u16(42);
+  if (motorola) {
+    body.insert(body.end(), {static_cast<uint8_t>(ifd >> 24), static_cast<uint8_t>(ifd >> 16),
+                             static_cast<uint8_t>(ifd >> 8), static_cast<uint8_t>(ifd)});
+  } else {
+    body.insert(body.end(), {static_cast<uint8_t>(ifd), static_cast<uint8_t>(ifd >> 8), static_cast<uint8_t>(ifd >> 16),
+                             static_cast<uint8_t>(ifd >> 24)});
+  }
+  body.insert(body.end(), tiffBody.begin(), tiffBody.end());
+  if (body.size() < length) body.resize(length, 0);
+  return segmentOf(0xE1, body);
+}
+
+// A big-endian IFD of `count` entries (each 12 zero bytes but the tag) and the next IFD's offset.
+std::vector<uint8_t> ifdOf(const uint32_t count, const uint32_t next) {
+  static constexpr uint8_t ENTRY[12] = {0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 1, 0, 0};  // orientation, a short, 1
+  std::vector<uint8_t> ifd;
+  ifd.reserve(2 + 12 * static_cast<size_t>(count) + 4);
+  ifd.push_back(static_cast<uint8_t>(count >> 8));
+  ifd.push_back(static_cast<uint8_t>(count));
+  for (uint32_t i = 0; i < count; ++i) {
+    for (const uint8_t b : ENTRY) ifd.push_back(b);
+  }
+  for (const int shift : {24, 16, 8, 0}) ifd.push_back(static_cast<uint8_t>(next >> shift));
+  return ifd;
+}
+
+TEST(JpegSegments, ExifIfdsMustLieInsideTheSegmentAndTheBuffer) {
+  // A whole IFD0 of 3 entries, no next IFD; and a second IFD after it.
+  EXPECT_EQ(withSegments({exifSegment('M', 8, ifdOf(3, 0), 200)}), FileLayout::Complete);
+  std::vector<uint8_t> two = ifdOf(2, 8 + 2 + 24 + 4);
+  const auto second = ifdOf(1, 0);
+  two.insert(two.end(), second.begin(), second.end());
+  EXPECT_EQ(withSegments({exifSegment('M', 8, two, 200)}), FileLayout::Complete);
+  // Little-endian too.
+  EXPECT_EQ(withSegments({exifSegment('I', 8, {1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0}, 100)}),
+            FileLayout::Complete);
+  // IFD0's entries past the segment's end (a count of 10, the segment over after 46 bytes of TIFF).
+  EXPECT_EQ(withSegments({exifSegment('M', 8, {0, 10}, 60)}), FileLayout::Malformed);
+  // IFD0 placed past the segment, or at an offset that is negative as JPEGDEC's int.
+  EXPECT_EQ(withSegments({exifSegment('M', 4000, ifdOf(1, 0), 200)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({exifSegment('M', 0x80000000u, ifdOf(1, 0), 200)}), FileLayout::Malformed);
+  // A second IFD JPEGDEC follows (its offset under the buffer's end) that runs past the segment, or sits before the
+  // TIFF header (a negative offset).
+  EXPECT_EQ(withSegments({exifSegment('M', 8, ifdOf(1, 155), 160)}), FileLayout::Malformed);
+  EXPECT_EQ(withSegments({exifSegment('M', 8, ifdOf(1, 0xFFFFFFF0u), 160)}), FileLayout::Malformed);
+  // A second IFD at or past the buffer's end is not followed by JPEGDEC, so not checked.
+  EXPECT_EQ(withSegments({exifSegment('M', 8, ifdOf(1, 3000), 160)}), FileLayout::Complete);
+  // A big APP1 with its IFDs inside JPEGDEC's buffer passes even though the segment runs past it.
+  EXPECT_EQ(withSegments({exifSegment('M', 8, ifdOf(3, 0), 5000)}), FileLayout::Complete);
+  // An IFD whose entries run past the buffer (IFD0 at 1,990 in a 3,000-byte segment, 20 entries) is refused.
+  EXPECT_EQ(withSegments({exifSegment('M', 1990, {}, 3000)}), FileLayout::Complete);  // a count of 0 reads nothing more
+  std::vector<uint8_t> far(1990 - 8, 0);
+  const auto lateIfd = ifdOf(20, 0);
+  far.insert(far.end(), lateIfd.begin(), lateIfd.end());
+  EXPECT_EQ(withSegments({exifSegment('M', 1990, far, 3000)}), FileLayout::Malformed);
+  // Not Exif by JPEGDEC's test (no byte order where it looks): not checked.
+  auto xmp = exifSegment('M', 4000, {}, 60);
+  xmp[10] = 'X';  // the byte order JPEGDEC looks for, 8 bytes on from the length field
+  EXPECT_EQ(withSegments({xmp}), FileLayout::Complete);
 }
 
 TEST(JpegSegments, ACutHeaderIsRefused) {
@@ -850,9 +1006,11 @@ TEST(JpegSegments, ACutHeaderIsRefused) {
   for (const size_t cut : {size_t{90}, size_t{92}, size_t{95}, size_t{101}, size_t{321}}) {
     EXPECT_EQ(walkJpeg(file, {.size = cut}), FileLayout::Truncated) << cut;
   }
-  // Every cut before the SOS segment's end is refused.
+  // Every cut of the samples is refused.
   for (const auto& sample : {bytes(JPEG_BASELINE), bytes(JPEG_PROGRESSIVE)}) {
-    for (size_t cut = 0; cut < 100; ++cut) EXPECT_NE(walkJpeg(sample, {.size = cut}), FileLayout::Complete) << cut;
+    for (size_t cut = 0; cut < sample.size(); ++cut) {
+      EXPECT_NE(walkJpeg(sample, {.size = cut}), FileLayout::Complete) << cut;
+    }
   }
 }
 
@@ -871,8 +1029,8 @@ TEST(JpegSegments, AMalformedHeaderIsRefused) {
   EXPECT_EQ(walkJpeg(bytes(JPEG_BASELINE), {.stopAfter = 1}), FileLayout::Stopped);
   // The segment count is capped as the chunk count is.
   std::vector<uint8_t> many = {0xFF, 0xD8};
-  for (uint32_t i = 0; i < MAX_LAYOUT_CHUNKS; ++i) many.insert(many.end(), {0xFF, 0xE1, 0x00, 0x02});
-  many.insert(many.end(), {0xFF, 0xDA, 0x00, 0x02});
+  for (uint32_t i = 0; i < MAX_LAYOUT_CHUNKS; ++i) many.insert(many.end(), {0xFF, 0xE2, 0x00, 0x02});
+  many.insert(many.end(), {0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9});
   EXPECT_EQ(walkJpeg(many, {.maxReads = 3 * static_cast<int>(MAX_LAYOUT_CHUNKS)}), FileLayout::Malformed);
 }
 
@@ -896,15 +1054,49 @@ TEST(DecoderReads, PngdecAlwaysGetsWhatItAskedFor) {
   EXPECT_EQ(fillPngRead(buf.data(), 8, -1), 8);  // a read error: all filler
   EXPECT_EQ(buf, (std::array<uint8_t, 8>{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
   buf.fill(7);
+  EXPECT_EQ(fillPngRead(buf.data(), 8, 0), 8);  // nothing from the file (a stop, the end): all filler
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+  buf.fill(7);
   EXPECT_EQ(fillPngRead(buf.data(), 8, 8), 8);
   EXPECT_EQ(buf[7], 7);
   EXPECT_EQ(fillPngRead(buf.data(), 0, 0), 0);
 }
 
-TEST(DecoderReads, JpegdecGetsWhatTheFileGaveNeverLessThanNothing) {
-  EXPECT_EQ(clampJpegRead(-1), 0);
-  EXPECT_EQ(clampJpegRead(0), 0);
-  EXPECT_EQ(clampJpegRead(37), 37);
+TEST(DecoderReads, JpegdecGetsZerosNeverAStaleBuffer) {
+  std::array<uint8_t, 8> buf{};
+  // The header parse is told what the file gave; the rest of the span is zeros, not what the buffer held.
+  buf.fill(0xD8);
+  EXPECT_EQ(fillJpegRead(buf.data(), 8, 3, false), 3);
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{0xD8, 0xD8, 0xD8, 0, 0, 0, 0, 0}));
+  buf.fill(0xD8);
+  EXPECT_EQ(fillJpegRead(buf.data(), 8, 0, false), 0);  // nothing from the file
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{}));
+  buf.fill(0xD8);
+  EXPECT_EQ(fillJpegRead(buf.data(), 8, -1, false), 0);  // a read error
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{}));
+  // The decode is told the whole span, so its buffer is always topped up.
+  buf.fill(0xD8);
+  EXPECT_EQ(fillJpegRead(buf.data(), 8, 0, true), 8);
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{}));
+  buf.fill(0xD8);
+  EXPECT_EQ(fillJpegRead(buf.data(), 8, 5, true), 8);
+  EXPECT_EQ(buf, (std::array<uint8_t, 8>{0xD8, 0xD8, 0xD8, 0xD8, 0xD8, 0, 0, 0}));
+  EXPECT_EQ(fillJpegRead(buf.data(), 0, 0, true), 0);
+}
+
+TEST(DecoderReads, JpegdecsPositionStaysUnderItsSize) {
+  EXPECT_EQ(jpegPositionAfterRead(0, 1000), 0);
+  EXPECT_EQ(jpegPositionAfterRead(500, 1000), 500);
+  EXPECT_EQ(jpegPositionAfterRead(999, 1000), 999);
+  EXPECT_EQ(jpegPositionAfterRead(1000, 1000), 999);
+  EXPECT_EQ(jpegPositionAfterRead(5000, 1000), 999);
+}
+
+TEST(DecoderReads, TheReadCapCoversAWholeParseOrDecode) {
+  EXPECT_EQ(decoderReadCap(0), 64u);
+  EXPECT_EQ(decoderReadCap(2047), 64u);
+  EXPECT_EQ(decoderReadCap(2048), 66u);
+  EXPECT_EQ(decoderReadCap(66713), 2u * 32 + 64);
 }
 
 TEST(ImageRows, PngColourTypesThatDoNotExistAreRefused) {

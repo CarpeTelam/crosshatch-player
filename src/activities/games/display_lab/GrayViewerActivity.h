@@ -47,7 +47,8 @@
 // Memory, allocated in onEnter and freed in onExit: the runner's working set (PSRAM), two logical rows of scratch and
 // the file list (MAX_IMAGES names of NAME_BYTES, the first by name; internal RAM, small). A decode adds the decoder
 // (PNGdec about 59 KB with the firmware's PNG row buffer, JPEGDEC about 20 KB, heap, as the converters allocate them)
-// and its row buffers (two source rows for a PNG) while it runs. The task's stack (VIEWER_STACK_BYTES, internal RAM)
+// and its row buffers (PNG: a gray row, two more when it enlarges vertically; JPEG: two strip rows when it enlarges
+// vertically) while it runs. The task's stack (VIEWER_STACK_BYTES, internal RAM)
 // exists only while a run is up.
 class GrayViewerActivity final : public UiListActivity, private GrayRunner::Client {
  public:
@@ -84,10 +85,10 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   enum class Row : uint8_t { Image, Dither, Run, Levels, Controls, Status };
   static constexpr size_t ROW_COUNT = 6;
 
-  // The reader's rows, painted into the model on the sweep task. It holds the runner (a heap object a detached task
-  // keeps) for its stop check, never the screen: a stop is checked before every row, so a task returning after the
-  // screen is gone asks only the runner; the picture, the shade row and the model are touched only by rows, which a
-  // stop ends.
+  // The reader's rows, painted into the model on the sweep task. It holds the runner (handed to the hook; a heap object
+  // a detached task keeps) for its stop check, never the screen: a stop is checked before every row, so a task
+  // returning after the screen is gone asks only the runner; the picture and the shade row are touched only by rows,
+  // which a stop ends.
   class RowSink final : public GrayRowSink {
    public:
     RowSink(GrayRunner& runner, const GameDisplayLab::GrayPicture& picture, GameDisplayLab::Dither dither,
@@ -143,28 +144,34 @@ class GrayViewerActivity final : public UiListActivity, private GrayRunner::Clie
   const char* endText() const;
   // After a stop: endText() when the task was joined, "Still stopping" when it was left running past the bound.
   const char* stopText(bool joined) const;
-  // Back to the rows with `outcome` on the Status row, repainted with a FULL refresh. Only once the task is gone.
-  void leaveView(const char* outcome);
+  // Why no run starts while a sweep task is still ending: a restart when one was detached, else "Still stopping".
+  const char* blockedText() const;
+  // Back to the rows, repainted with a FULL refresh, with how the run ended on the Status row when the task was
+  // `joined`, else "Still stopping" (the end is read once reap() joins it).
+  void leaveView(bool joined);
   // Entry `index`'s name: the chart's, or the file's.
   const char* entryName(size_t index) const;
 
   // ---- sweep task: the runner's client --------------------------------------------------------------------------
+  // Every hook reaches the runner through `sweep`, the one it is handed, never through `runner` (null once detached).
   // A run's start or the next picture: the picture from Painting, painted from the entry.
-  bool onReplay(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
+  bool onReplay(GrayRunner& sweep, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset) override;
   // A resume that finds the picture held: the run holds again (defensive; see the definition).
-  bool keepHolding() override;
+  bool keepHolding(GrayRunner& sweep) override;
   // The session cap's clean: the hold in progress dropped; the next slot paints the entry again.
-  bool onCapClean() override;
+  bool onCapClean(GrayRunner& sweep) override;
   // Nothing moves; after a clean (`stale`) the entry is painted again.
-  bool prepareSlot(GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
+  bool prepareSlot(GrayRunner& sweep, GameDisplayLab::GrayModel& model, uint32_t prevMs, uint32_t nowMs, bool stale,
                    const GameDisplayLab::GrayPreset& preset) override;
   // GrayPicture::slotDone decides: the paint settled (logged with the per-level counts, the marker out), the marker
   // settled (the run holds).
-  SlotVerdict afterSlot(const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs, uint32_t periodUs,
-                        uint32_t elapsedMs) override;
+  SlotVerdict afterSlot(GrayRunner& sweep, const GameDisplayLab::SlotResult& slot, uint32_t slotStartUs,
+                        uint32_t periodUs, uint32_t elapsedMs) override;
   // The current entry into the model: the chart, or the file read through readGrayImage; false when the file could
-  // not be read (the runner's client code says why) or the read was stopped.
-  bool paintEntry(GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset);
+  // not be read (the runner's client code says why) or the read was stopped. A file's path and name are built in the
+  // runner's client text, not on the task's stack, and after the read only it, the runner and locals are touched: a
+  // read that outlasts endLocked's deadline returns to a runner the screen has given up.
+  bool paintEntry(GrayRunner& sweep, GameDisplayLab::GrayModel& model, const GameDisplayLab::GrayPreset& preset);
 
   DisplayLabActivity& lab;
   // Why the screen cannot run (its one row), or null.

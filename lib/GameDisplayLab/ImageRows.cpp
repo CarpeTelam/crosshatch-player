@@ -207,7 +207,26 @@ int32_t fillPngRead(uint8_t* buf, const int32_t requested, const int32_t got) {
   return requested;
 }
 
-int32_t clampJpegRead(const int32_t got) { return got < 0 ? 0 : got; }
+uint32_t decoderReadCap(const uint32_t walkedSize) { return 2 * (walkedSize / JPEG_PARSE_BUFFER) + 64; }
+
+int32_t fillJpegRead(uint8_t* buf, const int32_t requested, const int32_t got, const bool decoding) {
+  if (requested <= 0) return 0;
+  const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);
+  for (int32_t i = kept; i < requested; ++i) buf[i] = 0;
+  return decoding ? requested : kept;
+}
+
+int32_t jpegKeptBytes(const int32_t allowed, const int32_t got, const bool decoding) {
+  if (got <= 0) return 0;
+  if (decoding) return got;
+  return got >= allowed ? allowed : 0;
+}
+
+int32_t jpegPositionAfterRead(const uint32_t position, const uint32_t size) {
+  const uint32_t limit = size > 0 ? size - 1 : 0;
+  const uint32_t held = position < limit ? position : limit;
+  return held > 0x7FFFFFFFu ? 0x7FFFFFFF : static_cast<int32_t>(held);
+}
 
 JpegScale jpegScaleFor(const int srcW, const int srcH, const int fitW, const int fitH, const bool progressive) {
   JpegScale scale{1, 0, srcW, srcH};

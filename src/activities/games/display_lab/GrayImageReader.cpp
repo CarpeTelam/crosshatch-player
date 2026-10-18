@@ -63,6 +63,13 @@ uint32_t walkedSize = 0;
 GrayRowSink* readSink = nullptr;
 
 bool readsStopped() { return readSink != nullptr && readSink->stopped(); }
+// A seek the file refused: the reads give nothing until a seek succeeds, rather than bytes from where the file still
+// is (which the decoder would take for the bytes where it asked).
+bool seekFailed = false;
+// JPEGDEC's phase (its header parse in open(), or decode()) and the reads it has made in it, against
+// GameDisplayLab::decoderReadCap; both set before each open() and each decode().
+bool jpegDecoding = false;
+uint32_t jpegReads = 0;
 
 void yieldDuringDecode(uint32_t& lastYieldMs) {
   const uint32_t now = millis();
@@ -101,15 +108,19 @@ void closeFile(void* handle) {
   }
 }
 
-// Layer 2, a read that cannot stall a decoder: the file gives at most what readAllowance allows (nothing once stopped
-// or at the walked size), a negative read is taken as nothing, and then:
+// Layer 2, a read that cannot stall a decoder: the file gives at most what readAllowance allows (nothing once stopped,
+// past a refused seek or at the walked size), a negative read is taken as nothing, and then:
 // - PNGdec gets the requested length always, the rest 0xFF (GameDisplayLab::fillPngRead, which names the png.inl lines
 //   this rests on: a short read inside IDAT would spin its loop at png.inl 885-904);
-// - JPEGDEC gets what the file gave, possibly nothing (GameDisplayLab::clampJpegRead: 0xFF filler would keep its
-//   marker loop at jpeg.inl 1611 reading, while an empty read ends it at jpeg.inl 1623).
-int32_t readFile(HalFile* f, const int32_t position, uint8_t* pBuf, const int32_t len) {
-  const int32_t allowed = GameDisplayLab::readAllowance(position < 0 ? 0 : static_cast<uint32_t>(position), len,
-                                                        walkedSize, readsStopped());
+// - JPEGDEC gets the rest zero-filled, never the stale buffer, and the file's bytes only for decoderReadCap reads per
+//   open() and per decode(); its header parse is not stopped and keeps a read whole or not at all, and is told the
+//   bytes it kept, its decode the whole span (GameDisplayLab::fillJpegRead names the jpeg.inl lines: 0xFF filler or a
+//   stale buffer would keep its header parse reading at jpeg.inl 1611-1636, zeros inside a segment it began can send a
+//   DQT past its buffer, and short reads in the decode would let its bit pointer leave its buffer).
+// `allowed` is set to what the file should have given.
+int32_t readFile(HalFile* f, const uint32_t position, uint8_t* pBuf, const int32_t len, const bool stopped,
+                 int32_t& allowed) {
+  allowed = seekFailed ? 0 : GameDisplayLab::readAllowance(position, len, walkedSize, stopped);
   if (allowed <= 0) return 0;
   const int got = f->read(pBuf, static_cast<size_t>(allowed));
   return got < 0 ? 0 : got;
@@ -117,31 +128,43 @@ int32_t readFile(HalFile* f, const int32_t position, uint8_t* pBuf, const int32_
 
 int32_t pngRead(PNGFILE* pFile, uint8_t* pBuf, const int32_t len) {
   HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  const int32_t got = f ? readFile(f, static_cast<int32_t>(f->position()), pBuf, len) : 0;
+  int32_t allowed = 0;
+  const int32_t got = f ? readFile(f, static_cast<uint32_t>(f->position()), pBuf, len, readsStopped(), allowed) : 0;
   return GameDisplayLab::fillPngRead(pBuf, len, got);
 }
 
 int32_t pngSeek(PNGFILE* pFile, const int32_t pos) {
   HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
   if (!f) return -1;
-  return f->seek(static_cast<size_t>(pos));
+  seekFailed = pos < 0 || !f->seek(static_cast<size_t>(pos));
+  return seekFailed ? -1 : pos;
 }
 
-// JPEGDEC tracks the file position in pFile->iPos itself (JPEGGetMoreData reads it), so the callbacks keep it in step
-// with the file, as the JPEG converter's do: otherwise a progressive JPEG with a large header fails to parse.
+// JPEGDEC tracks the file position in pFile->iPos itself (JPEGGetMoreData compares it with the size), so the callbacks
+// keep it in step with the file, as the JPEG converter's do (otherwise a progressive JPEG with a large header fails to
+// parse), held under the size (GameDisplayLab::jpegPositionAfterRead); the reads go by the file's own position.
 int32_t jpegRead(JPEGFILE* pFile, uint8_t* pBuf, const int32_t len) {
   HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  if (!f) return 0;
-  const int32_t got = GameDisplayLab::clampJpegRead(readFile(f, pFile->iPos, pBuf, len));
-  pFile->iPos += got;
-  return got;
+  int32_t kept = 0;
+  if (f && ++jpegReads <= GameDisplayLab::decoderReadCap(walkedSize)) {
+    int32_t allowed = 0;
+    // The stop ends the decode, not the header parse (fillJpegRead says why).
+    const int32_t got =
+        readFile(f, static_cast<uint32_t>(f->position()), pBuf, len, jpegDecoding && readsStopped(), allowed);
+    kept = GameDisplayLab::jpegKeptBytes(allowed, got, jpegDecoding);
+  }
+  const int32_t answer = GameDisplayLab::fillJpegRead(pBuf, len, kept, jpegDecoding);
+  pFile->iPos = GameDisplayLab::jpegPositionAfterRead(f ? static_cast<uint32_t>(f->position()) : walkedSize,
+                                                      static_cast<uint32_t>(pFile->iSize));
+  return answer;
 }
 
 int32_t jpegSeek(JPEGFILE* pFile, const int32_t pos) {
   HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
   if (!f) return -1;
-  if (!f->seek(static_cast<size_t>(pos))) return -1;
-  pFile->iPos = pos;
+  seekFailed = pos < 0 || !f->seek(static_cast<size_t>(pos));
+  if (seekFailed) return -1;
+  pFile->iPos = GameDisplayLab::jpegPositionAfterRead(static_cast<uint32_t>(pos), static_cast<uint32_t>(pFile->iSize));
   return pos;
 }
 
@@ -277,6 +300,7 @@ ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRo
             static_cast<unsigned>(MIN_FREE_HEAP_FOR_PNG));
     return ImageRead::Memory;
   }
+  seekFailed = false;
   std::unique_ptr<PNG> png(new (std::nothrow) PNG());
   if (!png) {
     LOG_ERR("DLAB", "OOM: PNG decoder");
@@ -395,10 +419,10 @@ int jpegDraw(JPEGDRAW* pDraw) {
   return 1;
 }
 
-// A JPEG's marker segments are walked from SOI to SOS first (checkLayout); past them JPEGDEC's decode walks every MCU
-// of the frame in bounded loops whatever data arrives (JPEGGetMoreData reads nothing past the walked size and
-// DecodeJPEG goes on over what it has), calling back each strip, so scan data cut short decodes to garbage or a decode
-// error and the stop is still seen per row.
+// A JPEG's header is walked from SOI to SOS, as JPEGDEC parses it, and its last two bytes must be EOI (checkLayout);
+// past that JPEGDEC's decode walks every MCU of the frame in bounded loops whatever data arrives (its reads are topped
+// up with zeros past the walked size, a stop or a failed read: GameDisplayLab::fillJpegRead), calling back each strip,
+// so scan data that runs short decodes to garbage or a decode error and the stop is still seen per row.
 ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayRowSink& sink, ImageReadInfo& info) {
   const ImageRead layout = checkLayout("JPEG", path, sink, [](const uint32_t size, auto& readAt, auto& stopped) {
     return GameDisplayLab::walkJpegSegments(size, readAt, stopped);
@@ -415,6 +439,9 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
     return ImageRead::Memory;
   }
   openFailed = false;
+  seekFailed = false;
+  jpegDecoding = false;
+  jpegReads = 0;
   const int rc = jpeg->open(path, openFile, closeFile, jpegRead, jpegSeek, jpegDraw);
   // Closed on every way out from here, a rejected header included, as the converter closes it.
   struct Closer {
@@ -460,6 +487,8 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
   jpeg->setUserPointer(&ctx);
   const uint32_t start = millis();
+  jpegDecoding = true;
+  jpegReads = 0;
   const int decoded = jpeg->decode(0, 0, scale.option);
   info.ms = millis() - start;
   // A stop seen only by the reads (which then gave nothing of the file) ends a decode in an error, not a draw.

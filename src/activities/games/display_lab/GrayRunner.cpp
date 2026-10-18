@@ -17,23 +17,29 @@ using GameDisplayLab::Shade;
 namespace {
 
 // The client a detached runner answers to (endLocked gave up on its task, and the screen that was its client is
-// gone): whatever the task asks next, the run ends, and nothing of the screen is touched.
+// gone): every hook is answered here, whatever the task asks next the run ends, and nothing of the screen is touched.
 class DetachedClient final : public GrayRunner::Client {
  public:
-  bool onReplay(GrayModel&, const GrayPreset&) override { return false; }
-  bool onCapClean() override { return false; }
-  bool prepareSlot(GrayModel&, uint32_t, uint32_t, bool, const GrayPreset&) override { return false; }
-  SlotVerdict afterSlot(const GameDisplayLab::SlotResult&, uint32_t, uint32_t, uint32_t) override {
+  bool onReplay(GrayRunner&, GrayModel&, const GrayPreset&) override { return false; }
+  void onPaused(GrayRunner&) override {}
+  bool keepHolding(GrayRunner&) override { return false; }
+  void onResume(GrayRunner&, GrayModel&, const GrayPreset&) override {}
+  bool onCapClean(GrayRunner&) override { return false; }
+  bool prepareSlot(GrayRunner&, GrayModel&, uint32_t, uint32_t, bool, const GrayPreset&) override { return false; }
+  const GrayPreset& slotPreset(GrayRunner&, const GrayPreset& preset) override { return preset; }
+  SlotVerdict afterSlot(GrayRunner&, const GameDisplayLab::SlotResult&, uint32_t, uint32_t, uint32_t) override {
     SlotVerdict verdict;
     verdict.finished = true;
     return verdict;
   }
+  bool clockStill(const GrayRunner&) const override { return true; }
 };
 DetachedClient detachedClient;
 
 // The reap registry: runners whose task outlived endLocked's bound. Each such task frees its runner (the model, the
 // masks, every buffer it could still touch) itself when it ends, and counts itself out here; while any is counted, no
-// screen starts a run.
+// screen starts a run. A task that never returns is never counted out: its buffers stay allocated until a restart, by
+// design (freeing them under it would be a use after free), and the screens ask for one.
 std::atomic<int> detachedRunners{0};
 
 }  // namespace
@@ -128,6 +134,9 @@ void GrayRunner::prepare(const bool pressesWaitForFirstPaint) {
   // The task's fields, written before it is created (its creation orders them before its first read). reset() also
   // clears the hold (Held) and a pending next picture (Replaying).
   taskState.store(TASK_RUNNING);
+  stopAsked_ = false;
+  leftRunning_ = false;
+  coveredPending_ = false;
   sweepEnd = End::Stopped;
   failedScan_ = DisplayLabActivity::Scan::Done;
   sweeping = false;
@@ -167,22 +176,34 @@ GrayRunner::Press GrayRunner::press(const bool nextFromHold) {
 bool GrayRunner::reap() {
   // A task that outlived stop()'s bound and has since ended: joined now (it is parked, holding nothing).
   if (!sweepTask || !taskEnded()) return false;
-  vTaskDelete(sweepTask);
-  sweepTask = nullptr;
+  join();
   LOG_INF("DLAB", "%s: the late sweep task ended and was joined", who);
   return true;
 }
 
+void GrayRunner::join() {
+  vTaskDelete(sweepTask);  // parked in vTaskSuspend
+  sweepTask = nullptr;
+  // A cover the view saw while the task was still stopping: its end is read only now.
+  if (coveredPending_ && sweepEnd == End::Stopped) sweepEnd = End::Covered;
+  coveredPending_ = false;
+  leftRunning_ = false;
+}
+
+void GrayRunner::askStop() {
+  control.requestStop();
+  notifySweep();
+  if (!stopAsked_) {
+    stopAsked_ = true;
+    stopAskedMs_ = millis();
+  }
+}
+
 bool GrayRunner::preventAutoSleep() const {
-  if (!sweepTask) return false;
-  // Run and Held from one load: the hold sets one and clears the other in a single step.
-  const uint32_t word = control.snapshot();
-  // A stopped run keeps nothing awake (a task still ending, or detached, must not hold the device up).
-  if ((word & GameDisplayLab::SweepControl::STOP) != 0) return false;
-  if ((word & GameDisplayLab::SweepControl::RUN) != 0) return true;
-  // A hold keeps the device awake for HOLD_AWAKE_MS from its start, then the normal idle timeout applies (a forgotten
-  // hold must not keep the CPU up for good; auto-sleep then ends the run as any leave does).
-  return (word & GameDisplayLab::SweepControl::HELD) != 0 && millis() - heldSinceMs.load() < HOLD_AWAKE_MS;
+  // Run, or a hold within HOLD_AWAKE_MS of its start, and never once a stop is asked (a task still ending, or
+  // detached, must not hold the device up; a forgotten hold must not keep the CPU up for good: auto-sleep then ends the
+  // run as any leave does), from one load of the word (SweepControl::keepsAwake).
+  return sweepTask != nullptr && control.keepsAwake(millis(), heldSinceMs.load(), HOLD_AWAKE_MS);
 }
 
 bool GrayRunner::viewEnds(const uint32_t nowUs) {
@@ -193,9 +214,13 @@ bool GrayRunner::viewEnds(const uint32_t nowUs) {
   const bool covered = control.heartbeatAgeUs(nowUs) > COVERED_GAP_US;
   if (covered) LOG_INF("DLAB", "gray sweep: covered by another screen");
   if (!covered && sweepTask && !taskEnded()) return false;
-  stop();
-  // A cover the loop saw first (the task paused, or ended by the stop above) reads as one too.
-  if (covered && sweepEnd == End::Stopped) sweepEnd = End::Covered;
+  const bool joined = stop();
+  // A cover the loop saw first (the task paused, or ended by the stop above) reads as one too; while the task is still
+  // stopping its end is its own, so the cover waits for join().
+  if (covered) {
+    if (joined && sweepEnd == End::Stopped) sweepEnd = End::Covered;
+    if (!joined) coveredPending_ = true;
+  }
   return true;
 }
 
@@ -207,25 +232,25 @@ void GrayRunner::notifySweep() {
 
 bool GrayRunner::stop() {
   if (!sweepTask) return true;
-  control.requestStop();
-  notifySweep();
+  askStop();
   // Normally ends after the scan, the clean or the client's paint in flight (the run's first clean or the session cap's
   // is one FULL refresh; a scan is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it;
-  // a decode checks stopRequested before every output row). Waited for at most STOP_WAIT_MS: a task still running
-  // then (a decoder that never returns to its callback) is not deleted, since it may hold the Storage mutex, and stays
-  // the runner's (running() true, so no new run starts; it refuses any further scan, the stop being sticky) until it
-  // ends and reap() or a later stop joins it.
-  const uint32_t startMs = millis();
+  // a decode checks stopRequested before every output row, and its reads give nothing once it is asked). Waited for
+  // until STOP_WAIT_MS after the first stop asked: a task still running then (a decoder that never returns to its
+  // callback) is not deleted, since it may hold the Storage mutex, and stays the runner's (running() true, so no new
+  // run starts; it refuses any further scan, the stop being sticky) until it ends and reap() or a later stop joins it.
   while (!taskEnded()) {
-    if (millis() - startMs >= STOP_WAIT_MS) {
-      LOG_ERR("DLAB", "%s: the sweep task did not end within %lu ms of the stop; left running, not deleted", who,
-              static_cast<unsigned long>(STOP_WAIT_MS));
+    if (millis() - stopAskedMs_ >= STOP_WAIT_MS) {
+      if (!leftRunning_) {
+        leftRunning_ = true;
+        LOG_ERR("DLAB", "%s: the sweep task did not end within %lu ms of the stop; left running, not deleted", who,
+                static_cast<unsigned long>(STOP_WAIT_MS));
+      }
       return false;
     }
     vTaskDelay(pdMS_TO_TICKS(STOP_POLL_MS));
   }
-  vTaskDelete(sweepTask);  // parked in vTaskSuspend
-  sweepTask = nullptr;
+  join();
   return true;
 }
 
@@ -235,43 +260,17 @@ void GrayRunner::endLocked(std::unique_ptr<GrayRunner>& owned) {
 }
 
 void GrayRunner::endLockedOrDetach(std::unique_ptr<GrayRunner>& owned) {
-  control.requestStop();
-  notifySweep();
-  // Waited for at most STOP_WAIT_MS, then detached (below): Home and sleep never hang on a task that does not return.
-  const uint32_t startMs = millis();
+  askStop();
   while (!taskEnded()) {
-    if (millis() - startMs >= STOP_WAIT_MS) {
-      // Detached, if the task has still not ended (one exchange decides against its own end): the runner, with the
-      // model, the follow-up masks and its state, is given up to the task, which frees it when it ends (sweepEntry);
-      // it answers to an inert client from here, since the screen is about to go. The stop is sticky, so the task
-      // sends no scan and touches neither the lab's masks nor the screen: after the stop it only returns through the
-      // read or the client call in flight, both of which check the stop first and touch only the runner.
-      uint8_t expected = TASK_RUNNING;
-      if (taskState.compare_exchange_strong(expected, TASK_DETACHED, std::memory_order_acq_rel)) {
-        client_.store(&detachedClient);
-        detachedRunners.fetch_add(1);
-        LOG_ERR("DLAB",
-                "%s: the sweep task did not end within %lu ms of the stop; detached, its buffers kept until it "
-                "ends",
-                who, static_cast<unsigned long>(STOP_WAIT_MS));
-        (void)owned.release();
-        return;
-      }
-      break;  // it ended just now: joined below
-    }
     // Inside the panel the task blocks without the render mutex only while taking it (in DisplayLabActivity::scan or
     // cleanToWhite): blocked there, it waits for the mutex this caller holds and holds nothing, so it is deleted
-    // where it waits (GameVM::abandon deletes a task it has seen safe the same way). The scan lambda checks
-    // DisplayLabActivity::scan's refusals (and logs them) before entering the panel, so no log call, which can block
-    // on the USB serial's lock, runs inside it; the one window left is the display being inverted between that
-    // check and scan()'s own, whose LOG_ERR then runs inside the panel. The mutex wait cannot end while this caller
-    // holds the mutex, the task runs on SWEEP_CORE, the loop task's core, and the sequence from the check to the
-    // delete makes no blocking call, so the task cannot run between them; the logging comes after the delete.
-    // Outside the panel the task is never deleted: it is waited for. The longest such wait is a client's paint (the
-    // gray viewer's decode): its SD reads take the Storage mutex inside the decoder, and the reader checks the stop
-    // once per decoded row, so this caller spins, holding the render mutex, for at most one row's decode and SD read.
-    // No deadlock: the task takes the Storage mutex but never the render mutex while it decodes, and no holder of the
-    // Storage mutex waits on the render mutex (lock order: render, then Storage, never the reverse).
+    // where it waits (GameVM::abandon deletes a task it has seen safe the same way), before any detach: a detached task
+    // must never enter the panel. The scan lambda checks DisplayLabActivity::scan's refusals (and logs them) before
+    // entering the panel, so no log call, which can block on the USB serial's lock, runs inside it; the one window left
+    // is the display being inverted between that check and scan()'s own, whose LOG_ERR then runs inside the panel. The
+    // mutex wait cannot end while this caller holds the mutex, the task runs on SWEEP_CORE, the loop task's core, and
+    // the sequence from the check to the delete makes no blocking call, so the task cannot run between them; the
+    // logging comes after the delete.
     if (control.insidePanel() && eTaskGetState(sweepTask) == eBlocked) {
       const auto freeBytes = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(sweepTask));
       vTaskSuspend(sweepTask);
@@ -284,10 +283,43 @@ void GrayRunner::endLockedOrDetach(std::unique_ptr<GrayRunner>& owned) {
       sweepEnd = End::Stopped;
       return;
     }
+    // Until STOP_WAIT_MS after the first stop asked (a stop that already gave up leaves none: detached at once), then
+    // detached: Home and sleep never hang on a task that does not return. Outside the panel the task is never deleted.
+    // The longest such wait is a client's paint (the gray viewer's decode): its SD reads take the Storage mutex inside
+    // the decoder, and the reader checks the stop once per decoded row, so this caller spins, holding the render
+    // mutex, for at most one row's decode and SD read. No deadlock: the task takes the Storage mutex but never the
+    // render mutex while it decodes, and no holder of the Storage mutex waits on the render mutex (lock order: render,
+    // then Storage, never the reverse).
+    if (millis() - stopAskedMs_ >= STOP_WAIT_MS) {
+      if (detach(owned)) return;  // nothing of this runner from here: the task may free it at any moment
+      break;                      // it ended just now: joined below
+    }
     vTaskDelay(1);
   }
-  vTaskDelete(sweepTask);  // parked in vTaskSuspend
-  sweepTask = nullptr;
+  join();
+}
+
+bool GrayRunner::detach(std::unique_ptr<GrayRunner>& owned) {
+  // Everything the detach needs is taken or set before the exchange: once it succeeds the task owns the runner and may
+  // free it at once, so the log below names the screen from a local.
+  const char* const name = who;
+  Client* const screen = client_.load();
+  // The inert client first: a hook the task calls from here on (it is stopping) answers without the screen.
+  client_.store(&detachedClient);
+  detachedRunners.fetch_add(1);
+  uint8_t expected = TASK_RUNNING;
+  if (!taskState.compare_exchange_strong(expected, TASK_DETACHED, std::memory_order_acq_rel)) {
+    // Its own end won: it has published Done and calls no hook again; the screen keeps its runner and joins it.
+    detachedRunners.fetch_sub(1);
+    client_.store(screen);
+    return false;
+  }
+  (void)owned.release();
+  LOG_ERR("DLAB",
+          "%s: the sweep task did not end within %lu ms of the stop; detached. It frees its runner's buffers when it "
+          "ends; if it never does they are leaked by design until a restart, and no run starts before one",
+          name, static_cast<unsigned long>(STOP_WAIT_MS));
+  return true;
 }
 
 // ---- sweep task -----------------------------------------------------------------------------------------------------
@@ -350,7 +382,7 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     scheduler.stop();
     if (!requests.run) {
       LOG_INF("DLAB", "gray sweep paused at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
-      client().onPaused();
+      client().onPaused(*this);
     }
   }
   const GrayPreset& preset = lab.preset();
@@ -364,10 +396,11 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     control.releaseHold();
     elapsedUs = 0;
     sceneMs = 0;
-    const bool painted = client().onReplay(model_, preset);
+    const bool painted = client().onReplay(*this, model_, preset);
     // Presses count again once the picture is painted (or could not be).
     if (requests.replaying) control.replayServed();
     if (!painted) return paintFailed();
+    if (stopSeen()) return false;
     sceneStale = false;
   } else if (requests.clean) {
     if (!cleanToWhite()) return false;  // the next slot reapplies the picture at the paused clock
@@ -379,7 +412,7 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     // A client whose picture stays held (the gray viewer's finished picture, which a press cannot resume) is asked
     // first: the run holds again, with no resume line, no slot clock started, and the hold's start (and its
     // HOLD_AWAKE_MS bound) unchanged.
-    if (client().keepHolding()) {
+    if (client().keepHolding(*this)) {
       control.holdRun();
       return true;
     }
@@ -393,8 +426,14 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
     if (!requests.replay) LOG_INF("DLAB", "gray sweep resumed at %lu ms", static_cast<unsigned long>(elapsedUs / 1000));
     // A run held at a photo spot: the client drives its marker back before anything else moves (it does nothing
     // unless it holds).
-    client().onResume(model_, preset);
+    client().onResume(*this, model_, preset);
   }
+  return true;
+}
+
+bool GrayRunner::stopSeen() {
+  if (!control.stopRequested()) return false;
+  sweepEnd = End::Stopped;
   return true;
 }
 
@@ -434,7 +473,7 @@ bool GrayRunner::cleanToWhite() {
 }
 
 void GrayRunner::advanceClock(const uint32_t nowUs) {
-  if (sweeping && !client().clockStill()) elapsedUs += nowUs - clockUs;
+  if (sweeping && !client().clockStill(*this)) elapsedUs += nowUs - clockUs;
   clockUs = nowUs;
 }
 
@@ -450,6 +489,7 @@ void GrayRunner::holdForPhoto() {
 }
 
 bool GrayRunner::runSlot(const uint32_t nowUs) {
+  if (stopSeen()) return false;
   advanceClock(nowUs);
   uint32_t slotStartUs = nowUs;
   // A slot is two scans; the lab cleans on its own at the session cap, which must not fall between them.
@@ -460,7 +500,7 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return false;
     }
-    if (!client().onCapClean()) {
+    if (!client().onCapClean(*this)) {
       sweepEnd = End::Finished;
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return false;
@@ -469,9 +509,13 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
     // to the clean, not to the slot: done here, before the clock, the slot and the speed window restart, so it is
     // neither counted as skipped periods nor in the slot's measured length.
     const uint32_t cleanMs = static_cast<uint32_t>(elapsedUs / 1000);
-    if (!client().prepareSlot(model_, sceneMs, cleanMs, true, lab.preset())) {
+    if (!client().prepareSlot(*this, model_, sceneMs, cleanMs, true, lab.preset())) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
       return paintFailed();
+    }
+    if (stopSeen()) {
+      sweeping = false;
+      return false;
     }
     sceneStale = false;
     sceneMs = cleanMs;
@@ -483,7 +527,9 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
   }
   const uint32_t ms = static_cast<uint32_t>(elapsedUs / 1000);
   const GrayPreset& preset = lab.preset();
-  if (!client().prepareSlot(model_, sceneMs, ms, sceneStale, preset)) return paintFailed();
+  if (!client().prepareSlot(*this, model_, sceneMs, ms, sceneStale, preset)) return paintFailed();
+  // The paint may have been a decode the stop outlasted: nothing of the lab (its masks, below) from here.
+  if (stopSeen()) return false;
   sceneStale = false;
   sceneMs = ms;
 
@@ -544,7 +590,7 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
     return true;
   };
   // The client's preset for this slot (the Ladder's held rhythm while it pulses; the preset itself otherwise).
-  const GrayPreset& slotPreset = client().slotPreset(preset);
+  const GrayPreset& slotPreset = client().slotPreset(*this, preset);
   const GameDisplayLab::SlotResult slot =
       GameDisplayLab::runGraySlot(model_, lab.masks(), follow, slotPreset, weakRow_, scan);
   const uint32_t endUs = micros();
@@ -562,7 +608,7 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
   // The slot's real length, from before the picture's update to after the commit: the scans plus the CPU work over
   // every pixel, which the scheduler's period (busy time + MARGIN_US) leaves out.
   const uint32_t periodUs = scheduler.periodUs() > endUs - slotStartUs ? scheduler.periodUs() : endUs - slotStartUs;
-  const Client::SlotVerdict verdict = client().afterSlot(slot, slotStartUs, periodUs, ms);
+  const Client::SlotVerdict verdict = client().afterSlot(*this, slot, slotStartUs, periodUs, ms);
   // A reapply retargets every pixel at the next slot (a Static flip).
   if (verdict.reapply) sceneStale = true;
   if (verdict.finished) {

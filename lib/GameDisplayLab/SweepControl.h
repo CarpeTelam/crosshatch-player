@@ -92,6 +92,19 @@ class SweepControl {
   bool replayPending() const { return (word_.load() & REPLAYING) != 0; }
   // The whole word, for a reader that needs two bits from one moment (preventAutoSleep: Run and Held).
   uint32_t snapshot() const { return word_.load(); }
+  // Whether the run keeps the device awake at `nowMs` (the owner's preventAutoSleep), from one snapshot: never once a
+  // stop is asked (a task still ending, or detached, must not hold the device up); while Run is set; and while Held,
+  // for `awakeMs` from `heldSinceMs` (the hold's start), so a forgotten hold lets auto-sleep end the run. Wraps with
+  // the millisecond clock.
+  static bool keepsAwake(const uint32_t word, const uint32_t nowMs, const uint32_t heldSinceMs,
+                         const uint32_t awakeMs) {
+    if ((word & STOP) != 0) return false;
+    if ((word & RUN) != 0) return true;
+    return (word & HELD) != 0 && nowMs - heldSinceMs < awakeMs;
+  }
+  bool keepsAwake(const uint32_t nowMs, const uint32_t heldSinceMs, const uint32_t awakeMs) const {
+    return keepsAwake(snapshot(), nowMs, heldSinceMs, awakeMs);
+  }
   // Sticky: nothing clears it but reset().
   void requestStop() { change(STOP, 0); }
   bool runRequested() const { return (word_.load() & RUN) != 0; }
