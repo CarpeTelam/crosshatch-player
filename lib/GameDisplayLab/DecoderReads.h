@@ -4,25 +4,31 @@
 
 #include "ImageRows.h"
 
-// The gray viewer's read callbacks for PNGdec and JPEGDEC (story dlab-g3), as pure functions over a small file
-// interface, so the device reader (src/activities/games/display_lab/GrayImageReader.cpp, over HalFile) and the host
-// decoder test (test/game_display_lab/test_image_decoders.cpp, over a fake file) run the same code. The answers they
-// give are ImageRows.h's (readAllowance, the read caps, fillPngRead, answerJpegHeaderRead, answerJpegDecodeRead,
-// jpegPositionAfterRead); this header is the bookkeeping around them: which answer a read gets, the caps' counts, the
-// latch, a refused seek.
+// The gray viewer's read callbacks for PNGdec and JPEGDEC and its task watchdog's decisions (story dlab-g3), as pure
+// code over small interfaces, so the device reader (src/activities/games/display_lab/GrayImageReader.cpp, over HalFile
+// and ESP-IDF's task watchdog) and the host tests (test_image_decoders.cpp over a fake file, test_image_rows.cpp over
+// fakes of both) run the same code. The answers the reads give are ImageRows.h's (readAllowance, the read caps,
+// fillPngRead, answerJpegHeaderRead, answerJpegDecodeRead, jpegDropRestartMarkers, jpegPositionAfterRead); this
+// header is the bookkeeping around them: which answer a read gets, the caps' counts, the latch, a refused seek, the
+// position the reads have reached.
 //
 // `File` has:
 //   bool isOpen() const;                   // a handle (a decoder's open callback may have failed: null)
-//   uint32_t position();                   // the file's own position
-//   int32_t read(uint8_t* buf, int32_t n); // up to n bytes at the position, which moves by them; negative: failed
+//   int32_t read(uint8_t* buf, int32_t n); // up to n bytes at the file's position, which moves by them; negative:
+//                                          // failed (the position is then unknown)
 //   bool seek(uint32_t position);          // false: refused (past the end, or failed)
 //   bool stopped() const;                  // the stop asked of the read (the sink's)
 //   void progress();                       // a read gave file bytes (the reader feeds its watchdog)
+// The file's position is never asked: DecoderReads::position follows it (0 at the open, a seek's target, plus each
+// read's bytes), so a read that can give no bytes makes no file call at all.
 namespace GameDisplayLab {
 
 // How many of open()'s reads from the walked header's end on are answered as the decode's: JPEGParseInfo makes one, its
 // top-up after SOS (jpeg.inl 1780); a parse that went on past the header the walk found gets nothing after these.
 constexpr uint32_t JPEG_OPEN_TOP_UPS = 4;
+// How many more file reads one decode answer makes to fill the span its restart markers left (jpegDropRestartMarkers):
+// each fills the room the last one's markers left, so a scan of up to 15/16 markers fills a 2 KiB span.
+constexpr int JPEG_RESTART_TOP_UPS = 16;
 
 // One image's reads: what its walk found (WalkExtent) and what the reads have done. Set by the reader before each
 // decoder's open() (start) and decode() (startDecode).
@@ -32,8 +38,10 @@ struct DecoderReads {
   // A JPEG's walked header end and the buffer moves its parse takes (WalkExtent::headerEnd, windowMoves).
   uint32_t headerEnd = 0;
   uint32_t windowMoves = 0;
-  // A seek the file refused: the reads give nothing until a seek succeeds, rather than bytes from where the file still
-  // is (which the decoder would take for the bytes where it asked).
+  // The file's position as the reads and seeks have moved it (the file opens at 0).
+  uint32_t position = 0;
+  // A seek the file refused, or a read that failed (the position is unknown): the reads give nothing until a seek
+  // succeeds, rather than bytes from where the file still is (which the decoder would take for the bytes it asked for).
   bool seekFailed = false;
   // JPEGDEC's open() is under way: a read starting before the header's end is the header parse's.
   bool jpegOpening = false;
@@ -60,26 +68,32 @@ struct DecoderReads {
   }
 };
 
-// The file's own read under the reader's allowance (readAllowance: nothing past the walked size, after a refused seek
-// or, when `stopped`, once the stop is asked): what the file gives, a failed read as nothing. `allowed` is what the
-// file should have given. A read that gave file bytes is progress.
+// The file's own read at `reads.position` under the reader's allowance (readAllowance: nothing past the walked size,
+// after a refused seek or, when `stopped`, once the stop is asked; then no file call is made): what the file gives,
+// the position moved by it. A failed read gives nothing and loses the position (as a refused seek). `allowed` is what
+// the file should have given. A read that gave file bytes is progress.
 template <typename File>
-int32_t readUnderAllowance(File& file, const DecoderReads& reads, const uint32_t position, uint8_t* buf,
-                           const int32_t len, const bool stopped, int32_t& allowed) {
-  allowed = reads.seekFailed ? 0 : readAllowance(position, len, reads.walkedSize, stopped);
+int32_t readUnderAllowance(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const bool stopped,
+                           int32_t& allowed) {
+  allowed = reads.seekFailed ? 0 : readAllowance(reads.position, len, reads.walkedSize, stopped);
   if (allowed <= 0) return 0;
-  const int32_t got = file.read(buf, allowed);
-  if (got <= 0) return 0;
+  int32_t got = file.read(buf, allowed);
+  if (got < 0) {
+    reads.seekFailed = true;
+    return 0;
+  }
+  if (got == 0) return 0;
+  if (got > allowed) got = allowed;
+  reads.position += static_cast<uint32_t>(got);
   file.progress();
-  return got < allowed ? got : allowed;
+  return got;
 }
 
 // PNGdec's read: the length it asked for always, the rest 0xFF (fillPngRead).
 template <typename File>
-int32_t answerPngRead(File& file, const DecoderReads& reads, uint8_t* buf, const int32_t len) {
+int32_t answerPngRead(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len) {
   int32_t allowed = 0;
-  const int32_t got =
-      file.isOpen() ? readUnderAllowance(file, reads, file.position(), buf, len, file.stopped(), allowed) : 0;
+  const int32_t got = file.isOpen() ? readUnderAllowance(file, reads, buf, len, file.stopped(), allowed) : 0;
   return fillPngRead(buf, len, got);
 }
 
@@ -89,21 +103,27 @@ template <typename File>
 int32_t answerSeek(File& file, DecoderReads& reads, const int32_t position) {
   if (!file.isOpen()) return -1;
   reads.seekFailed = position < 0 || !file.seek(static_cast<uint32_t>(position));
-  return reads.seekFailed ? -1 : position;
+  if (reads.seekFailed) return -1;
+  reads.position = static_cast<uint32_t>(position);
+  return position;
 }
 
 // JPEGDEC's read. While open() runs, a read starting before the walked header's end is the header parse's, kept whole
 // or dropped (answerJpegHeaderRead): dropped at a stop, a short or failed read, a refused seek, past
-// jpegHeaderReadCap header reads, or once one was (the latch). Every other read is the decode's, never latched
-// (answerJpegDecodeRead): the whole span, the file's bytes for decoderReadCap reads, then zeros; open()'s top-up at the
-// header's end is one (past JPEG_OPEN_TOP_UPS of them in open(), a read gets a zeroed span and 0, so a parse that ran
-// past the walked header ends). Without a handle (the open callback failed) a read is taken as at the walked size. `size` is JPEGFILE.iSize (the walked size, or the file's when it shrank) and `iPos` JPEGFILE.iPos, which
-// JPEGDEC tracks itself (JPEGGetMoreData compares it with the size): it is kept in step with the file's position, held
-// under the size (jpegPositionAfterRead), as the JPEG converter keeps it.
+// jpegHeaderReadCap header reads, or once one was (the latch). Every other read is the decode's, never latched: the
+// file's bytes for decoderReadCap reads, their restart markers dropped (jpegDropRestartMarkers: JPEGDEC counts
+// restarts by its interval, and its filter would drop them anyway) and the span topped up from the file in up to
+// JPEG_RESTART_TOP_UPS more reads (still unfilled with the file going on, the bytes there are told: never zeros inside
+// the scan), then answerJpegDecodeRead (the rest zeroed, the whole span told, runs of 0xFF tamed);
+// open()'s top-up at the header's end is one (past JPEG_OPEN_TOP_UPS of them in open(), a read gets a zeroed span and
+// 0, so a parse that ran past the walked header ends). Without a handle (the open callback failed) a read is taken as
+// at the walked size. `size` is JPEGFILE.iSize (the walked size, or the file's when it shrank) and `iPos`
+// JPEGFILE.iPos, which JPEGDEC tracks itself (JPEGGetMoreData compares it with the size): it is the reads' position,
+// held under the size (jpegPositionAfterRead), as the JPEG converter keeps it in step with the file.
 template <typename File>
 int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const int32_t size,
                        int32_t& iPos) {
-  const uint32_t position = file.isOpen() ? file.position() : reads.walkedSize;
+  const uint32_t position = file.isOpen() ? reads.position : reads.walkedSize;
   int32_t answer = 0;
   if (reads.jpegOpening && position < reads.headerEnd) {
     const bool overCap = ++reads.headerReads > jpegHeaderReadCap(reads.windowMoves);
@@ -113,7 +133,7 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
     } else {
       // The header parse: the file must give all it should, or the read is dropped.
       int32_t expected = 0;
-      const int32_t got = readUnderAllowance(file, reads, position, buf, len, false, expected);
+      const int32_t got = readUnderAllowance(file, reads, buf, len, false, expected);
       const bool dropped = got < expected;
       if (dropped) reads.headerFailed = true;
       answer = answerJpegHeaderRead(buf, len, got, dropped);
@@ -122,13 +142,26 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
     answer = answerJpegHeaderRead(buf, len, 0, false);
   } else {
     int32_t got = 0;
+    bool unfilled = false;
     if (file.isOpen() && ++reads.decodeReads <= decoderReadCap(reads.walkedSize)) {
       int32_t allowed = 0;
-      got = readUnderAllowance(file, reads, position, buf, len, file.stopped(), allowed);
+      got = jpegDropRestartMarkers(buf, readUnderAllowance(file, reads, buf, len, file.stopped(), allowed));
+      for (int more = 0; got < len; ++more) {
+        if (more == JPEG_RESTART_TOP_UPS) {
+          unfilled = true;
+          break;
+        }
+        const int32_t extra = readUnderAllowance(file, reads, buf + got, len - got, file.stopped(), allowed);
+        if (extra <= 0) break;
+        // Over the whole span again: a 0xFF that ended the last read pairs with this one's first byte.
+        got = jpegDropRestartMarkers(buf, got + extra);
+      }
     }
-    answer = answerJpegDecodeRead(buf, len, got);
+    // Still room after every top-up, the file going on (a scan almost all markers): told what there is, never zeros in
+    // the middle of the scan (the lab patch refills again before the next block); otherwise the whole span.
+    answer = unfilled ? got : answerJpegDecodeRead(buf, len, got);
   }
-  iPos = jpegPositionAfterRead(file.isOpen() ? file.position() : reads.walkedSize,
+  iPos = jpegPositionAfterRead(file.isOpen() ? reads.position : reads.walkedSize,
                                static_cast<uint32_t>(size < 0 ? 0 : size));
   return answer;
 }
@@ -141,25 +174,28 @@ int32_t answerJpegSeek(File& file, DecoderReads& reads, const int32_t position, 
   return at;
 }
 
-// The task watchdog's quiet time (GrayImageReader.cpp's DecodeWatchdog): the time the task has spent outside file
-// calls since its last progress (a row, or a read that gave file bytes). The task leaves the watchdog around each
-// blocking file call (a wait on the card's mutex can be long and legitimate), and leaving and rejoining feed the
-// watchdog's timer (ESP-IDF's task_wdt.c resets it whenever every other watched task has reset), so a decoder that
-// spins making reads but no progress would never trip it: once the quiet time reaches the watchdog's timeout the task
-// stops leaving, and the next file call is watched like the rest.
+// The task watchdog's quiet time: the time the task has spent outside file calls since its last progress (a row, or a
+// read that gave file bytes), and the wall time since that progress. The task leaves the watchdog around each blocking
+// file call (a wait on the card's mutex can be long and legitimate), and leaving and rejoining feed the watchdog's
+// timer (ESP-IDF's task_wdt.c resets it whenever every other watched task has reset), so a decoder that spins making
+// reads but no progress would never trip it: once the quiet time reaches the limit (the watchdog's timeout), or the
+// wall time twice the limit (slow failing reads with a loop between them), the task stops leaving, and the next file
+// call is watched like the rest.
 class WatchdogQuiet {
  public:
-  explicit WatchdogQuiet(const uint32_t limitMs, const uint32_t nowMs) : limitMs_(limitMs), sinceMs_(nowMs) {}
+  explicit WatchdogQuiet(const uint32_t limitMs, const uint32_t nowMs)
+      : limitMs_(limitMs), sinceMs_(nowMs), progressMs_(nowMs) {}
   // A row, or a read that gave file bytes.
   void progress(const uint32_t nowMs) {
     quietMs_ = 0;
     sinceMs_ = nowMs;
+    progressMs_ = nowMs;
   }
   // Before a blocking file call: whether the task may leave the watchdog for it.
   bool mayLeave(const uint32_t nowMs) {
     quietMs_ += nowMs - sinceMs_;
     sinceMs_ = nowMs;
-    return quietMs_ < limitMs_;
+    return quietMs_ < limitMs_ && nowMs - progressMs_ < 2 * limitMs_;
   }
   // After the file call: its time is not quiet time.
   void back(const uint32_t nowMs) { sinceMs_ = nowMs; }
@@ -169,6 +205,95 @@ class WatchdogQuiet {
   uint32_t limitMs_;
   uint32_t quietMs_ = 0;
   uint32_t sinceMs_;
+  uint32_t progressMs_;
+};
+
+// What the watchdog said of the task when it was asked to join.
+enum class WatchdogState : uint8_t { NotSubscribed, Subscribed, NotConfigured };
+// What the reader logs, each once: the watchdog is not configured, the join failed (twice), a rejoin failed (twice).
+enum class WatchdogEvent : uint8_t { NotConfigured, JoinFailed, RejoinFailed };
+
+// The sweep task's watchdog for one read, over `Dog`:
+//   WatchdogState state();                     // the task's subscription
+//   int add();                                 // subscribe the task: 0, or the error
+//   int remove();                              // unsubscribe it: 0, or the error
+//   void reset();                              // feed it
+//   uint32_t nowMs();                          // the millisecond clock
+//   void report(WatchdogEvent event, int error);
+// Joined when the task was not subscribed (an add failing is tried once more); a task already subscribed is joined
+// but not owned (progress feeds it, nothing unsubscribes it, no gap leaves it); not configured, nothing. Owned, the
+// task leaves for each blocking file call (gap()) while WatchdogQuiet allows, and rejoins after (tried twice; failing,
+// the rest of the read is unwatched and reported); the read's end leaves.
+template <typename Dog>
+class TaskWatchdog {
+ public:
+  TaskWatchdog(Dog& dog, const uint32_t limitMs) : dog_(dog), quiet_(limitMs, dog.nowMs()) {
+    switch (dog_.state()) {
+      case WatchdogState::Subscribed:
+        joined_ = true;
+        break;
+      case WatchdogState::NotConfigured:
+        dog_.report(WatchdogEvent::NotConfigured, 0);
+        break;
+      case WatchdogState::NotSubscribed: {
+        const int error = addTwice();
+        joined_ = owned_ = error == 0;
+        if (error != 0) dog_.report(WatchdogEvent::JoinFailed, error);
+        break;
+      }
+    }
+  }
+  ~TaskWatchdog() {
+    if (owned_) dog_.remove();
+  }
+  TaskWatchdog(const TaskWatchdog&) = delete;
+  TaskWatchdog& operator=(const TaskWatchdog&) = delete;
+
+  bool joined() const { return joined_; }
+  bool owned() const { return owned_; }
+
+  // A row, or a read that gave file bytes.
+  void progress() {
+    if (joined_) dog_.reset();
+    quiet_.progress(dog_.nowMs());
+  }
+
+  // One blocking file call, from construction to destruction.
+  class Gap {
+   public:
+    explicit Gap(TaskWatchdog* dog) : dog_(dog) {
+      left_ = dog_ != nullptr && dog_->owned_ && dog_->quiet_.mayLeave(dog_->dog_.nowMs()) && dog_->dog_.remove() == 0;
+    }
+    ~Gap() {
+      if (dog_ != nullptr) dog_->endGap(left_);
+    }
+    Gap(const Gap&) = delete;
+    Gap& operator=(const Gap&) = delete;
+    bool left() const { return left_; }
+
+   private:
+    TaskWatchdog* dog_;
+    bool left_ = false;
+  };
+
+ private:
+  int addTwice() {
+    const int first = dog_.add();
+    return first == 0 ? 0 : dog_.add();
+  }
+  void endGap(const bool left) {
+    quiet_.back(dog_.nowMs());
+    if (!left) return;
+    const int error = addTwice();
+    if (error == 0) return;
+    joined_ = owned_ = false;
+    dog_.report(WatchdogEvent::RejoinFailed, error);
+  }
+
+  Dog& dog_;
+  WatchdogQuiet quiet_;
+  bool joined_ = false;
+  bool owned_ = false;
 };
 
 }  // namespace GameDisplayLab

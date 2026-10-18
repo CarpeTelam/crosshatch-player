@@ -245,6 +245,23 @@ int32_t jpegFilteredLength(const uint8_t* buf, const int32_t n) {
   return kept;
 }
 
+int32_t jpegDropRestartMarkers(uint8_t* buf, const int32_t n) {
+  int32_t out = 0;
+  int32_t i = 0;
+  while (i < n) {
+    if (buf[i] == 0xFF && i + 1 < n) {
+      if (buf[i + 1] < 0xD0 || buf[i + 1] > 0xD7) {
+        buf[out++] = buf[i];
+        buf[out++] = buf[i + 1];
+      }
+      i += 2;
+    } else {
+      buf[out++] = buf[i++];
+    }
+  }
+  return out;
+}
+
 int32_t jpegStarvationLength(const uint8_t* buf, const int32_t n) {
   int32_t kept = 0;
   int32_t i = 0;

@@ -1,16 +1,16 @@
 // The gray viewer's layers against the real decoders (story dlab-g3): PNGdec 1.1.6 and JPEGDEC (at the firmware's
-// pinned commit), each with the fork's build-time patches (scripts/pngdec_patches, scripts/jpegdec_patches), JPEGDEC's
-// bit reader 32 bits wide as on the device (jpegdec_as_device.h), fed through the reader's walks and its read
-// callbacks (GameDisplayLab::walkPngChunks, walkJpegSegments, and DecoderReads.h's answerPngRead, answerSeek,
-// answerJpegRead, answerJpegSeek: the very functions GrayImageReader.cpp's callbacks call, over a fake file here),
-// with every cut and a few appends of the sample pictures, a stop at every read, every synthetic header the walk
-// passes, and single-byte changes to a real header, each decode bounded in reads and draws (a decode past the bound
-// throws out of the callback and fails the test). Built with AddressSanitizer and UndefinedBehaviorSanitizer; what they
-// cannot see inside a decoder's object is watched: 64 poisoned bytes after JPEGDEC's file buffer (a test-only field of
-// the build tree's copy, test/game_display_lab/CMakeLists.txt), so a header parse or decode that reads or writes just
-// past it fails the test; JPEGDEC's bit offset stays within the data in its buffer at every strip and after the
-// decode (iVLCOff at most iVLCSize); its Huffman tables after the buffer are untouched by the decode; and the part of
-// PNGdec's row buffer after its palette that no row uses is untouched.
+// pinned commit), each with the fork's build-time patches (upstream's scripts/jpegdec_patches, the lab's
+// scripts/lab_decoder_patches), JPEGDEC's bit reader 32 bits wide as on the device (jpegdec_as_device.h), fed through
+// the reader's walks and its read callbacks (GameDisplayLab::walkPngChunks, walkJpegSegments, and DecoderReads.h's
+// answerPngRead, answerSeek, answerJpegRead, answerJpegSeek: the very functions GrayImageReader.cpp's callbacks call,
+// over a fake file here), with every cut and a few appends of the sample pictures, a stop at every read, every
+// synthetic header the walk passes, and single-byte changes to a real header, each decode bounded in reads and draws (a
+// decode past the bound throws out of the callback and fails the test). Built with AddressSanitizer and
+// UndefinedBehaviorSanitizer; what they cannot see inside a decoder's object is watched: 64 poisoned bytes after
+// JPEGDEC's file buffer (a test-only field of the build tree's copy, test/game_display_lab/CMakeLists.txt), so a header
+// parse or decode that reads or writes just past it fails the test; JPEGDEC's bit offset stays within the data in its
+// buffer at every strip and after the decode (iVLCOff at most iVLCSize); its Huffman tables after the buffer are
+// untouched by the decode; and the part of PNGdec's row buffer after its palette that no row uses is untouched.
 //
 // Built only when the decoders' sources are there (test/game_display_lab/CMakeLists.txt: CROSSHATCH_PNGDEC_DIR,
 // CROSSHATCH_JPEGDEC_DIR, by default PlatformIO's library folder; the fork's CI fetches both).
@@ -90,7 +90,6 @@ struct FakeAccess {
   FakeFile& f;
 
   bool isOpen() const { return true; }
-  uint32_t position() { return static_cast<uint32_t>(f.pos); }
   int32_t read(uint8_t* buf, const int32_t n) {
     int32_t got = 0;
     while (got < n && f.pos < f.size) buf[got++] = (*f.source)[f.pos++];
@@ -175,7 +174,7 @@ int32_t jpegReadFilled(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
   countRead(f);
   FakeAccess file{f};
   int32_t allowed = 0;
-  const int32_t got = readUnderAllowance(file, f.reads, file.position(), buf, len, f.stopped, allowed);
+  const int32_t got = readUnderAllowance(file, f.reads, buf, len, f.stopped, allowed);
   pFile->iPos = static_cast<int32_t>(f.pos);
   return fillPngRead(buf, len, got);
 }
@@ -186,7 +185,7 @@ int32_t jpegReadStale(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
   countRead(f);
   FakeAccess file{f};
   int32_t allowed = 0;
-  const int32_t got = readUnderAllowance(file, f.reads, file.position(), buf, len, f.stopped, allowed);
+  const int32_t got = readUnderAllowance(file, f.reads, buf, len, f.stopped, allowed);
   pFile->iPos = static_cast<int32_t>(f.pos);
   return got;
 }
@@ -197,16 +196,16 @@ int tameable = 0;
 int32_t jpegReadUntamed(JPEGFILE* pFile, uint8_t* buf, const int32_t len) {
   FakeFile& f = *static_cast<FakeFile*>(pFile->fHandle);
   FakeAccess file{f};
-  if (f.reads.jpegOpening && file.position() < f.reads.headerEnd) return jpegRead(pFile, buf, len);
+  if (f.reads.jpegOpening && f.reads.position < f.reads.headerEnd) return jpegRead(pFile, buf, len);
   countRead(f);
   int32_t allowed = 0;
-  const int32_t got = readUnderAllowance(file, f.reads, file.position(), buf, len, f.stopped, allowed);
+  const int32_t got = readUnderAllowance(file, f.reads, buf, len, f.stopped, allowed);
   for (int32_t i = got; i < len; ++i) buf[i] = 0;
   if (static_cast<int32_t>(JPEG_PARSE_BUFFER) - len + jpegFilteredLength(buf, len) <
       JPEG_FILE_HIGHWATER + JPEG_MCU_MARGIN) {
     ++tameable;
   }
-  pFile->iPos = jpegPositionAfterRead(file.position(), static_cast<uint32_t>(pFile->iSize));
+  pFile->iPos = jpegPositionAfterRead(f.reads.position, static_cast<uint32_t>(pFile->iSize));
   return len;
 }
 
@@ -460,7 +459,7 @@ TEST(ImageDecoders, APaletteAfterIendNeverReachesPngdec) {
   EXPECT_TRUE(held);
   EXPECT_NE(result, PNG_SUCCESS);
   // The fourth batch's reader, which gave the whole file: PNGdec as released copied the PLTE on into its row buffer;
-  // scripts/pngdec_patches/0001 now refuses a PLTE over 768 bytes before the copy as well.
+  // scripts/lab_decoder_patches/pngdec now refuses a PLTE over 768 bytes before the copy as well.
   FakeFile unwalked = whole(review);
   unwalked.reads.walkedSize = static_cast<uint32_t>(review.size());
   ASSERT_TRUE(decodePng(unwalked, result, &held));
@@ -718,9 +717,11 @@ TEST(ImageDecoders, JpegdecOpensEveryFileTheWalkCallsComplete) {
   // The walk visits the offsets JPEGParseInfo visits: where it finds a whole file, JPEGDEC parses its header.
   for (const auto& sample : {bytes(JPEG_BASELINE), bytes(JPEG_PROGRESSIVE), bigExifJpeg(), bytes(JPEG_NOISE_BASELINE),
                              bytes(JPEG_NOISE_PROGRESSIVE), bytes(JPEG_PROGRESSIVE_512), bytes(JPEG_NOISE_420),
-                             bytes(JPEG_NOISE_444), bytes(JPEG_LINE_ART_RESTARTS)}) {
+                             bytes(JPEG_NOISE_444), bytes(JPEG_LINE_ART_RESTARTS), bytes(JPEG_FLAT_RESTARTS)}) {
     FakeFile f = whole(sample);
-    ASSERT_EQ(f.reads.walkedSize, sample.size());
+    // A baseline file whole; a progressive one through its first scan (at least 2 KiB).
+    ASSERT_GT(f.reads.headerEnd, 0u);
+    ASSERT_LE(f.reads.walkedSize, sample.size());
     int result = 0;
     bool opened = false;
     ASSERT_TRUE(decodeJpeg(f, 0, result, jpegRead, &opened));
@@ -784,60 +785,130 @@ TEST(ImageDecoders, RestartMarkersAreNeverTamed) {
   }
 }
 
-TEST(ImageDecoders, AColourMcuPastTheBufferEndsTheDecode) {
-  // JPEGGetMoreData moves its data down and refills once a MCU ends past FILE_HIGHWATER, keeping 512 bytes of data past
-  // the mark; as released it returned for good once the bit pointer had passed the data (iVLCOff > iVLCSize), and every
-  // MCU after read on past its buffer, through its object and beyond. Colour noise at quality 100 (MCUs of 500 to 600
-  // bytes) never gets there: it decodes whole at every scale under the canary and the poisoned guard.
-  for (const auto& sample : {bytes(JPEG_NOISE_420), bytes(JPEG_NOISE_444)}) {
+TEST(ImageDecoders, AScanOfMostlyRestartMarkersDecodesWhole) {
+  // Flat gray with a restart marker after every block: two thirds of the scan are markers, so a refill as JPEGFilter
+  // leaves it falls under the refill mark (the sixth batch's patch then ended the decode). The reader drops the markers
+  // and tops the refill up; the lab patch refills block by block anyway. At every scale, through the reader's answers
+  // and through answers that neither drop nor tame, every pixel is the same gray and every row is drawn.
+  const std::vector<uint8_t> flat = bytes(JPEG_FLAT_RESTARTS);
+  for (const int option : JPEG_OPTIONS) {
+    const int scale = option == 0 ? 1 : option;
+    for (JPEG_READ_CALLBACK* read : {jpegRead, jpegReadUntamed}) {
+      std::vector<uint8_t> pixels(static_cast<size_t>(384 / scale) * static_cast<size_t>(288 / scale), 0);
+      FakeFile f = whole(flat);
+      f.pixels = &pixels;
+      f.width = 384 / scale;
+      int result = 0;
+      ASSERT_TRUE(decodeJpeg(f, option, result, read)) << option;
+      EXPECT_EQ(result, 1) << option;
+      EXPECT_EQ(f.rows, 288 / scale) << option;
+      if (read == jpegRead) {
+        EXPECT_GT(f.reads.decodeReads, 0u) << option;  // the untamed reads are not counted
+      }
+      const uint8_t gray = pixels[0];
+      EXPECT_NEAR(gray, 128, 2) << option;
+      EXPECT_EQ(std::count(pixels.begin(), pixels.end(), gray), static_cast<long>(pixels.size())) << option;
+    }
+  }
+}
+
+TEST(ImageDecoders, ColourMcusLongerThanTheMarginDecodeWhole) {
+  // JPEGDEC as released refills only after a whole MCU that ends past FILE_HIGHWATER, keeping 512 bytes past the mark,
+  // and a colour MCU can be longer: valid 4:2:0 colour noise at quality 100 (510 to 600 bytes a MCU,
+  // JPEG_NOISE_420_OUTRUN one that starts just under the mark and outruns the data) and a crafted file of the longest
+  // codes the standard tables have (a block of about 206 bytes, a 4:2:0 MCU about 1.24 KB). As released the pointer
+  // then ran past the data for good. The lab patch refills before every block whose data left is under 256 bytes: each
+  // decodes whole at every scale, under the strip canary (the bit offset within the data) and the poisoned guard.
+  for (const auto& sample : {bytes(JPEG_NOISE_420), bytes(JPEG_NOISE_444), bytes(JPEG_NOISE_420_OUTRUN),
+                             fixtures::longCodeColourJpeg(true, 48, 32), fixtures::longCodeColourJpeg(false, 32, 24)}) {
     for (const int option : JPEG_OPTIONS) {
       FakeFile f = whole(sample);
+      ASSERT_EQ(f.reads.walkedSize, sample.size());
       int result = 0;
       EXPECT_TRUE(decodeJpeg(f, option, result)) << sample.size() << " option " << option;
       EXPECT_EQ(result, 1) << sample.size() << " option " << option;
     }
   }
-  // A valid one of another seed: a MCU of about 600 bytes starts just under the mark and ends past the data in the
-  // buffer (short of its 2 KiB end: the guard stays poisoned; the strip drawn after that MCU, before the refill check,
-  // sees the pointer past the data, so the strip canary is off). The decode ends in an error with the pointer back
-  // inside the data (deferred in the plan: such a file shows "did not decode").
-  for (const int option : JPEG_OPTIONS) {
-    FakeFile f = whole(bytes(JPEG_NOISE_420_OUTRUN));
-    ASSERT_EQ(f.reads.walkedSize, sizeof(JPEG_NOISE_420_OUTRUN));
-    f.watchStrips = false;
-    int result = -1;
-    bool opened = false;
-    ASSERT_TRUE(decodeJpeg(f, option, result, jpegRead, &opened)) << option;
-    ASSERT_TRUE(opened) << option;
-    EXPECT_EQ(result, 0) << option;
+}
+
+TEST(ImageDecoders, ABitPointerPastTheDataEndsTheDecode) {
+  // The lab patch's stop: a reader that gives JPEGDEC only what the file has, as the firmware's converters do (no
+  // zeros after the end), and a scan cut short: once a block's bits run past the data, the decode ends in an error
+  // with the pointer at the data's end, never past it (the guard poisoned, the canary after the decode).
+  for (const auto& sample : {bytes(JPEG_NOISE_BASELINE), bytes(JPEG_NOISE_420_OUTRUN)}) {
+    for (const size_t cut : {sample.size() / 2, sample.size() * 3 / 4, sample.size() - 40}) {
+      FakeFile f = whole(sample);
+      f.size = cut;
+      f.reads.walkedSize = static_cast<uint32_t>(cut);
+      f.watchStrips = false;  // a strip drawn after the last block, before the next check, may see it past
+      int result = -1;
+      bool opened = false;
+      ASSERT_TRUE(decodeJpeg(f, 0, result, jpegReadStale, &opened)) << cut;
+      ASSERT_TRUE(opened) << cut;
+      EXPECT_EQ(result, 0) << cut;
+    }
   }
-  // A crafted file of the longest codes the standard tables have: a 4:2:0 MCU of about 1.24 KB, started under the mark,
-  // ends past the 2 KiB buffer. scripts/jpegdec_patches/0004 puts the pointer back at the data's end and ends the
-  // decode with an error (it runs after every MCU, so no later MCU starts past the data), and the pointer ends inside
-  // the data (decodeJpeg's canary). That one MCU's read past the buffer, at most about 1.24 KB - 512 bytes, stays
-  // inside the JPEGDEC object, its Huffman tables after the buffer (the guard, between them here, is left unpoisoned
-  // for this file): crafted only, deferred in the plan.
-  for (const int option : JPEG_OPTIONS) {
-    const std::vector<uint8_t> crafted = fixtures::longCodeColourJpeg(true, 48, 32);
-    FakeFile f = whole(crafted);
-    ASSERT_EQ(f.reads.walkedSize, crafted.size());
-    f.poisonGuard = false;
-    f.watchStrips = false;
-    int result = -1;
-    bool opened = false;
-    ASSERT_TRUE(decodeJpeg(f, option, result, jpegRead, &opened)) << option;
-    ASSERT_TRUE(opened) << option;
-    EXPECT_EQ(result, 0) << option;  // JPEG_DECODE_ERROR
-  }
+}
+
+TEST(ImageDecoders, ASecondDecodeOfOneOpenDoesNotInheritAnError) {
+  // The lab patch clears JPEGDEC's error at the start of each decode: after a decode that ended in the pointer stop,
+  // the same open() decodes again (the reads given the whole file this time) without failing at once.
+  const std::vector<uint8_t> sample = bytes(JPEG_NOISE_BASELINE);
+  auto jpeg = std::make_unique<JPEGDEC>();
+  FakeFile f = whole(sample);
+  f.size = sample.size() / 2;
+  f.reads.walkedSize = static_cast<uint32_t>(f.size);
+  current = &f;
+  f.reads.startJpegOpen();
+  ASSERT_EQ(jpeg->open("fake.jpg", openFake, closeFake, jpegReadStale, jpegSeek, jpegDraw), 1);
+  jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
+  jpeg->setUserPointer(&f);
+  f.reads.startDecode();
+  EXPECT_EQ(jpeg->decode(0, 0, 0), 0);
+  EXPECT_EQ(jpeg->getLastError(), JPEG_DECODE_ERROR);
+  const int drawsFirst = f.draws;
+  // Again, from the scan's start, with the rest of the file there: it decodes past where the first one stopped.
+  f.size = sample.size();
+  f.reads.walkedSize = static_cast<uint32_t>(sample.size());
+  jpeg->_jpeg.JPEGFile.iSize = static_cast<int32_t>(sample.size());
+  f.draws = 0;
+  jpeg->decode(0, 0, 0);  // its buffer is the first decode's end: garbage, but decoded on (as released: no draw)
+  EXPECT_GT(f.draws, 1);
+  EXPECT_GT(drawsFirst, 0);
+  jpeg->close();
+  ASAN_UNPOISON_MEMORY_REGION(jpeg->_jpeg.ucGuard, sizeof(jpeg->_jpeg.ucGuard));
 }
 
 // ---- PNG palettes ---------------------------------------------------------------------------------------------------
 
+TEST(ImageDecoders, AnAlphaTableAfterALongTextChunkIsReadWhole) {
+  // tRNS too: with a tEXt of 968 to 1,235 bytes (every length) before the PLTE, the 256-byte tRNS after it runs past
+  // the bytes in PNGdec's buffer. Each file decodes to the pixels (composited on white by their alpha) of the file
+  // without the text.
+  std::vector<uint8_t> plain;
+  FakeFile p = whole(fixtures::pngTextPaletteAlpha(0));
+  p.pixels = &plain;
+  int result = -1;
+  ASSERT_TRUE(decodePng(p, result));
+  ASSERT_EQ(result, PNG_SUCCESS);
+  ASSERT_EQ(plain.size(), 256u);
+  for (uint32_t text = 968; text <= 1235; ++text) {
+    const std::vector<uint8_t> file = fixtures::pngTextPaletteAlpha(text);
+    std::vector<uint8_t> pixels;
+    FakeFile f = whole(file);
+    ASSERT_EQ(f.reads.walkedSize, file.size()) << text;
+    f.pixels = &pixels;
+    ASSERT_TRUE(decodePng(f, result)) << text;
+    EXPECT_EQ(result, PNG_SUCCESS) << text;
+    EXPECT_EQ(pixels, plain) << text;
+  }
+}
+
 TEST(ImageDecoders, APaletteAfterALongTextChunkIsReadWhole) {
-  // PNGdec copies PLTE out of its 2 KiB file buffer: with a tEXt of 1,000 to 1,900 bytes before it, the 768-byte
-  // palette runs past the bytes in the buffer (PNGdec 1.1.6 copied from past its object; scripts/pngdec_patches/0001
-  // reads the buffer again from the palette first). Every such file decodes to the pixels of the file without the
-  // text, under AddressSanitizer.
+  // PNGdec copies PLTE out of its 2 KiB file buffer: with a tEXt of 1,236 to 2,004 bytes before it (every length), the
+  // 768-byte palette runs past the bytes in the buffer (PNGdec 1.1.6 copied from past its object;
+  // scripts/lab_decoder_patches/pngdec reads the buffer again from the palette first). Every such file decodes to the
+  // pixels of the file without the text, under AddressSanitizer.
   std::vector<uint8_t> plain;
   FakeFile p = whole(bytes(PNG_PALETTE_256));
   p.pixels = &plain;
@@ -845,7 +916,7 @@ TEST(ImageDecoders, APaletteAfterALongTextChunkIsReadWhole) {
   ASSERT_TRUE(decodePng(p, result));
   ASSERT_EQ(result, PNG_SUCCESS);
   ASSERT_EQ(plain.size(), 256u);
-  for (uint32_t text = 1000; text <= 1900; text += 37) {
+  for (uint32_t text = 1236; text <= 2004; ++text) {
     const std::vector<uint8_t> file = fixtures::pngWithTextBeforePalette(text);
     std::vector<uint8_t> pixels;
     FakeFile f = whole(file);

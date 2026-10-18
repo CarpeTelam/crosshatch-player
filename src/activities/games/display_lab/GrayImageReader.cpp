@@ -70,92 +70,66 @@ bool readsStopped() { return readSink != nullptr && readSink->stopped(); }
 // Layer 4, the task watchdog: for the whole read of a picture (its walk and its decode) the sweep task is subscribed
 // to ESP-IDF's task watchdog, which the x4pro build configures to panic after 5 s without a feed (its prebuilt dio_opi
 // sdkconfig: CONFIG_ESP_TASK_WDT_INIT, CONFIG_ESP_TASK_WDT_PANIC, CONFIG_ESP_TASK_WDT_TIMEOUT_S 5), and feeds it on
-// progress: every row a decoder hands over, and every read that gives file bytes (the walk's too). Around every
-// blocking file call (open, read, seek, position, close: each takes the card's mutex, which another task may hold for
-// longer than 5 s, legitimately) the task leaves the watchdog and rejoins after, unless it has gone the watchdog's
-// timeout outside file calls without progress (GameDisplayLab::WatchdogQuiet): a decoder that spins where no read or
-// row reaches it, or that keeps reading without progress, then resets the device within seconds instead of holding
-// the task, its runner and maybe the card's mutex for good. The timeout is the core's, shared by every watched task;
-// it is not changed here. A watchdog that is not configured, or a join that fails, is logged once.
-class DecodeWatchdog {
- public:
-  DecodeWatchdog() : quiet(TIMEOUT_MS, millis()), lastYieldMs(millis()) {
-    const esp_err_t status = esp_task_wdt_status(nullptr);
-    if (status == ESP_ERR_NOT_FOUND) {
-      const esp_err_t added = esp_task_wdt_add(nullptr);
-      joined = added == ESP_OK;
-      if (!joined) logOnce("cannot join the task watchdog", added);
-    } else if (status != ESP_OK) {
-      logOnce("the task watchdog is not configured", status);
-    }
-    active = this;
-  }
-  ~DecodeWatchdog() {
-    active = nullptr;
-    if (joined) esp_task_wdt_delete(nullptr);
-  }
-  DecodeWatchdog(const DecodeWatchdog&) = delete;
-  DecodeWatchdog& operator=(const DecodeWatchdog&) = delete;
-
-  // A row, or a read that gave file bytes: the watchdog is fed, and a tick is yielded at most every YIELD_MS (as the
-  // converters yield), so lower-priority tasks on the core run.
-  void progress() {
-    if (joined) esp_task_wdt_reset();
-    const uint32_t now = millis();
-    quiet.progress(now);
-    if (now - lastYieldMs < YIELD_MS) return;
-    vTaskDelay(1);
-    lastYieldMs = millis();
-  }
-
-  // Around one blocking file call: the task leaves the watchdog for it and rejoins after (above).
-  class Gap {
-   public:
-    Gap() : dog(active) {
-      left = dog && dog->joined && dog->quiet.mayLeave(millis()) && esp_task_wdt_delete(nullptr) == ESP_OK;
-    }
-    ~Gap() {
-      if (!dog) return;
-      dog->quiet.back(millis());
-      if (left && esp_task_wdt_add(nullptr) != ESP_OK) {
-        dog->joined = false;
-        logOnce("cannot rejoin the task watchdog", ESP_FAIL);
-      }
-    }
-    Gap(const Gap&) = delete;
-    Gap& operator=(const Gap&) = delete;
-
-   private:
-    DecodeWatchdog* dog;
-    bool left = false;
-  };
-
-  // The read's watchdog, for the callbacks (null outside a read).
-  static DecodeWatchdog* active;
-
- private:
+// progress: every row a decoder hands over, and every read that gives file bytes (the walk's too). Every blocking file
+// call (open, read, seek, close and a handle's end: each takes the card's mutex, which another task may hold for longer
+// than 5 s, legitimately) runs in a gap, out of the watchdog, while the read is making progress
+// (GameDisplayLab::TaskWatchdog decides, over EspTaskWatchdog: the gaps end once the task has gone the timeout outside
+// file calls, or twice it in all, without progress): a decoder that spins where no read or row reaches it, or that
+// keeps reading without progress, then resets the device within seconds instead of holding the task, its runner and
+// maybe the card's mutex for good. The timeout is the core's, shared by every watched task; it is not changed here.
+// A watchdog that is not configured, a join that fails and a rejoin that fails are each logged once, with the error.
 #ifdef CONFIG_ESP_TASK_WDT_TIMEOUT_S
-  static constexpr uint32_t TIMEOUT_MS = CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000;
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000;
 #else
-  static constexpr uint32_t TIMEOUT_MS = 5000;
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 5000;
 #endif
 
-  static void logOnce(const char* what, const esp_err_t error) {
-    static bool logged = false;
-    if (logged) return;
-    logged = true;
-    LOG_ERR("DLAB", "gray viewer: %s (%s); decodes run unwatched", what, esp_err_to_name(error));
+// ESP-IDF's task watchdog for the calling task, as GameDisplayLab::TaskWatchdog asks it.
+struct EspTaskWatchdog {
+  GameDisplayLab::WatchdogState state() {
+    const esp_err_t status = esp_task_wdt_status(nullptr);
+    if (status == ESP_OK) return GameDisplayLab::WatchdogState::Subscribed;
+    if (status == ESP_ERR_NOT_FOUND) return GameDisplayLab::WatchdogState::NotSubscribed;
+    notConfiguredError = status;
+    return GameDisplayLab::WatchdogState::NotConfigured;
   }
-
-  bool joined = false;
-  GameDisplayLab::WatchdogQuiet quiet;
-  uint32_t lastYieldMs;
+  int add() { return esp_task_wdt_add(nullptr); }
+  int remove() { return esp_task_wdt_delete(nullptr); }
+  void reset() { esp_task_wdt_reset(); }
+  uint32_t nowMs() { return millis(); }
+  void report(const GameDisplayLab::WatchdogEvent event, int error) {
+    static bool logged[3] = {false, false, false};
+    const auto index = static_cast<size_t>(event);
+    if (logged[index]) return;
+    logged[index] = true;
+    const char* what = "the task watchdog is not configured";
+    if (event == GameDisplayLab::WatchdogEvent::JoinFailed) what = "cannot join the task watchdog";
+    if (event == GameDisplayLab::WatchdogEvent::RejoinFailed) what = "cannot rejoin the task watchdog";
+    if (event == GameDisplayLab::WatchdogEvent::NotConfigured) error = notConfiguredError;
+    LOG_ERR("DLAB", "gray viewer: %s (%s); the rest of the read runs unwatched", what, esp_err_to_name(error));
+  }
+  esp_err_t notConfiguredError = ESP_OK;
 };
-DecodeWatchdog* DecodeWatchdog::active = nullptr;
+using DecodeWatchdog = GameDisplayLab::TaskWatchdog<EspTaskWatchdog>;
 
+// The read's watchdog, for the callbacks (null outside a read), and the yield on progress.
+DecodeWatchdog* activeWatchdog = nullptr;
+uint32_t lastYieldMs = 0;
+
+// A row, or a read that gave file bytes: the watchdog is fed, and a tick is yielded at most every YIELD_MS (as the
+// converters yield), so lower-priority tasks on the core run.
 void progressDuringRead() {
-  if (DecodeWatchdog::active) DecodeWatchdog::active->progress();
+  if (activeWatchdog) activeWatchdog->progress();
+  const uint32_t now = millis();
+  if (now - lastYieldMs < YIELD_MS) return;
+  vTaskDelay(1);
+  lastYieldMs = millis();
 }
+
+// One blocking file call, from construction to destruction.
+struct FileCall {
+  DecodeWatchdog::Gap gap{activeWatchdog};
+};
 
 // ---- file callbacks, as the converters' (the HalFile behind fHandle) ----------------------------------------------
 
@@ -167,13 +141,15 @@ void* openFile(const char* filename, int32_t* size) {
     openFailed = true;
     return nullptr;
   }
-  bool opened = false;
   {
-    const DecodeWatchdog::Gap gap;
-    opened = Storage.openFileForRead("DLAB", filename, *f);
+    // The handle's end takes the card's mutex too (HalFile::Impl's destructor), so a failed open ends in the gap.
+    const FileCall call;
+    if (!Storage.openFileForRead("DLAB", filename, *f)) {
+      delete f;
+      f = nullptr;
+    }
   }
-  if (!opened) {
-    delete f;
+  if (!f) {
     openFailed = true;
     return nullptr;
   }
@@ -183,38 +159,35 @@ void* openFile(const char* filename, int32_t* size) {
   return f;
 }
 
-// Tolerates a null handle (an open that failed), so a decoder's close() is always safe.
+// Tolerates a null handle (an open that failed), so a decoder's close() is always safe. The close and the handle's end
+// are one call out of the watchdog.
 void closeFile(void* handle) {
   HalFile* f = reinterpret_cast<HalFile*>(handle);
   if (f) {
-    {
-      const DecodeWatchdog::Gap gap;
-      f->close();
-    }
+    const FileCall call;
+    f->close();
     delete f;
   }
 }
 
 // The HalFile behind a decoder's handle, as GameDisplayLab::DecoderReads' callbacks take a file (DecoderReads.h): each
-// blocking call out of the watchdog, the sink's stop, and a read that gave file bytes fed to the watchdog.
+// blocking call out of the watchdog, the sink's stop, and a read that gave file bytes fed to the watchdog. Its
+// position is never asked (DecoderReads::position follows it).
 struct ReaderFile {
   HalFile* f;
 
   bool isOpen() const { return f != nullptr; }
-  uint32_t position() {
-    const DecodeWatchdog::Gap gap;
-    return static_cast<uint32_t>(f->position());
-  }
   int32_t read(uint8_t* buf, const int32_t n) {
-    const DecodeWatchdog::Gap gap;
+    const FileCall call;
     return f->read(buf, static_cast<size_t>(n));
   }
   bool seek(const uint32_t position) {
-    const DecodeWatchdog::Gap gap;
+    const FileCall call;
     return f->seek(position);
   }
-  bool stopped() const { return readsStopped(); }
-  void progress() { progressDuringRead(); }
+  // Static: the reads' stop and the watchdog are the read's, not the handle's (DecoderReads.h calls them on the file).
+  static bool stopped() { return readsStopped(); }
+  static void progress() { progressDuringRead(); }
 };
 
 // Layer 2, a read that cannot stall a decoder (GameDisplayLab::DecoderReads.h, which the host decoder test runs too):
@@ -324,16 +297,19 @@ int pngDraw(PNGDRAW* pDraw) {
 }
 
 // Layer 1, a complete walk: the file's layout against its size (GameDisplayLab::walkPngChunks, walkJpegSegments),
-// before its decoder reads anything, inside the watchdog (its file calls out of it, each read that gives the bytes
-// asked fed to it). PNGdec 1.1.6's IDAT loop spins without end when the file ends inside a chunk, and a PNG or JPEG
-// cut short is refused here instead; the walked size is what the decoder is then given (`reads`).
+// before its decoder reads anything, inside the watchdog (its file calls out of it, the handle's end included, each
+// read that gives the bytes asked fed to it), its duration logged. PNGdec 1.1.6's IDAT loop spins without end when the
+// file ends inside a chunk, and a PNG or JPEG cut short is refused here instead; the walked size is what the decoder
+// is then given (`reads`).
 template <typename Walk>
 ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Walk&& walk) {
   HalFile file;
   bool opened = false;
   {
-    const DecodeWatchdog::Gap gap;
+    // HalFile::Impl's destructor takes the card's mutex: a handle that did not open ends in the call.
+    const FileCall call;
     opened = Storage.openFileForRead("DLAB", path, file);
+    if (!opened) file = HalFile();
   }
   if (!opened) {
     LOG_ERR("DLAB", "%s cannot be opened: %s", kind, path);
@@ -344,7 +320,7 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   const auto readAt = [&file](const uint32_t offset, uint8_t* out, const size_t n) {
     bool read = false;
     {
-      const DecodeWatchdog::Gap gap;
+      const FileCall call;
       read = file.seek(offset) && file.read(out, n) == static_cast<int>(n);
     }
     if (read) progressDuringRead();
@@ -352,10 +328,14 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   };
   const auto stopped = [&sink] { return sink.stopped(); };
   GameDisplayLab::WalkExtent extent;
+  const uint32_t walkStartMs = millis();
   const GameDisplayLab::FileLayout layout = walk(size32, readAt, stopped, extent);
+  const uint32_t walkMs = millis() - walkStartMs;
   {
-    const DecodeWatchdog::Gap gap;
+    // The close and the handle's end (the local's destructor then has nothing to do) in one call.
+    const FileCall call;
     file.close();
+    file = HalFile();
   }
   reads.start(extent);
   const bool png = kind[0] == 'P';
@@ -365,10 +345,11 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
         LOG_ERR("DLAB", "%s over 2 GiB: %s", kind, path);
         return ImageRead::Format;
       }
+      LOG_INF("DLAB", "%s walked in %u ms: %s", kind, static_cast<unsigned>(walkMs), path);
       if (extent.end < size) {
         LOG_INF("DLAB", "%s: the %u bytes after its end (%s at %u) are not read: %s", kind,
-                static_cast<unsigned>(size - extent.end), png ? "IEND" : "EOI", static_cast<unsigned>(extent.end),
-                path);
+                static_cast<unsigned>(size - extent.end), png ? "IEND" : "its EOI, or a progressive file's first scan",
+                static_cast<unsigned>(extent.end), path);
       }
       return ImageRead::Done;
     case GameDisplayLab::FileLayout::TooShort:
@@ -387,8 +368,9 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
         LOG_ERR("DLAB", "PNG malformed (signature, a chunk length, PLTE, tRNS, or the chunk count): %s", path);
       } else {
         LOG_ERR("DLAB",
-                "JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index, codes, over-subscribed), an Exif "
-                "IFD, or a table or SOS past the 2 KiB parse buffer, or too many buffer moves): %s",
+                "JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index, codes, over-subscribed), SOS "
+                "(components, tables, spectral range), an Exif IFD, or a table or SOS past the 2 KiB parse buffer, or "
+                "too many buffer moves): %s",
                 path);
       }
       return ImageRead::Format;
@@ -660,8 +642,15 @@ ImageRead readGrayImage(const char* path, const ImageKind kind, const int screen
   struct ClearSink {
     ~ClearSink() { readSink = nullptr; }
   } clearSink;
-  // The whole read, its walk included, is watched (layer 4); declared after the sink, so it is left first.
-  const DecodeWatchdog watchdog;
+  // The whole read, its walk included, is watched (layer 4); declared after the sink, so it is left first, and taken
+  // from the callbacks before it is.
+  EspTaskWatchdog esp;
+  DecodeWatchdog watchdog(esp, WATCHDOG_TIMEOUT_MS);
+  activeWatchdog = &watchdog;
+  lastYieldMs = millis();
+  struct ClearWatchdog {
+    ~ClearWatchdog() { activeWatchdog = nullptr; }
+  } clearWatchdog;
   switch (kind) {
     case ImageKind::Png:
       return readPng(path, screenW, screenH, sink, info);

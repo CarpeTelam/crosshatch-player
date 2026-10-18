@@ -25,7 +25,7 @@
 // detaches); and the task watchdog, which the sweep task joins for the whole read and feeds on progress (a row, a read
 // that gave file bytes), leaving it around each blocking file call, resets the device when a decoder spins where no
 // read or row reaches it or reads on without progress. The decoders carry the fork's build-time patches
-// (scripts/pngdec_patches, scripts/jpegdec_patches).
+// (upstream's scripts/jpegdec_patches, then the lab's scripts/lab_decoder_patches, the x4pro env only).
 // Rows are scaled to GameDisplayLab::fitToScreen's rectangle: bilinear along an axis the fit enlarges (only the 16.16
 // blend arithmetic is the JPEG converter's), nearest at pixel centres along one it shrinks (FitAxis::tap, sampleBlock);
 // a PNG row completes the output rows rowsReadyAt names, a JPEG block the ones outputsEndingIn names, with the row

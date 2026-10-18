@@ -7,8 +7,10 @@ the chunk's data is all in it: an indexed PNG with 1.3 to 2 KB of iCCP or tEXt
 before its palette makes the copy read past the PNG object. This refuses a
 PLTE over 768 bytes or a tRNS over 256 (more than the palette holds), and
 reads the buffer again from the chunk's data when it runs past the bytes read.
-Applied by scripts/patch_pngdec.py (the x4pro build) and by
-test/game_display_lab/CMakeLists.txt (the host decoder tests, on a copy).
+The display lab's PNGdec patch, the x4pro env only: applied by
+scripts/patch_lab_decoders.py and by test/game_display_lab/CMakeLists.txt (the
+host decoder tests, on a copy). Other envs keep PNGdec as released; the fix
+is a suggestion for upstream.
 
 ---
 --- a/src/png.inl

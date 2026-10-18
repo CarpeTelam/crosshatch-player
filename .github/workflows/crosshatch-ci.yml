@@ -10,7 +10,8 @@
 #   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections
 #   more than the RAM limit larger (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so
 #   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
-#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2).
+#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2), and a display lab decoder
+#   patch (scripts/lab_decoder_patches) missing from the games-on build's library copies.
 #   scripts/check_flash_budget.py holds the logic and how to run it locally.
 # - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
 #   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
@@ -28,10 +29,11 @@
 # - Display lab decoders: builds and runs test/game_display_lab/test_image_decoders (the gray viewer's reads against
 #   the real PNGdec and JPEGDEC, under AddressSanitizer and UndefinedBehaviorSanitizer), which the unit-tests job of
 #   ci.yml leaves out: it has no PlatformIO library folder to build them from. This job fetches PNGdec at the version
-#   platformio.ini pins and JPEGDEC at its pinned commit; test/game_display_lab/CMakeLists.txt applies
-#   scripts/pngdec_patches and scripts/jpegdec_patches to copies of them in the build tree, as the firmware build
-#   applies them to its own, builds JPEGDEC as the device does (a 32-bit bit reader), and reads the PNG buffer size from
-#   platformio.ini.
+#   platformio.ini pins and JPEGDEC at its pinned commit; test/game_display_lab/CMakeLists.txt applies upstream's
+#   scripts/jpegdec_patches and the lab's scripts/lab_decoder_patches to copies of them in the build tree, as the x4pro
+#   firmware build applies them to its own (the job then checks each lab patch reverses cleanly there, as the flash
+#   budget job checks them in .pio/libdeps/x4pro), builds JPEGDEC as the device does (a 32-bit bit reader), and reads
+#   the PNG buffer size from platformio.ini.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
@@ -148,6 +150,19 @@ jobs:
       - name: Build x4pro with games on
         id: build-on
         run: python3 scripts/check_flash_budget.py build on
+
+      # The display lab's decoder patches are applied to this env's library copies by scripts/patch_lab_decoders.py
+      # (a pre-script of the x4pro env): each must reverse cleanly there, or the build ran without it.
+      - name: Lab decoder patches in the x4pro build
+        run: |
+          set -euo pipefail
+          for lib in PNGdec:pngdec JPEGDEC:jpegdec; do
+            dir=".pio/libdeps/x4pro/${lib%%:*}"
+            for patch in scripts/lab_decoder_patches/${lib##*:}/*.patch; do
+              (cd "$dir" && GIT_CEILING_DIRECTORIES="$(dirname "$PWD")" git apply --check --reverse "$GITHUB_WORKSPACE/$patch")
+              echo "applied: $patch"
+            done
+          done
 
       - name: Build x4pro with games off
         run: python3 scripts/check_flash_budget.py build off
@@ -444,6 +459,17 @@ jobs:
         run: >-
           cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCROSSHATCH_PNGDEC_DIR="$RUNNER_TEMP/PNGdec/src" -DCROSSHATCH_JPEGDEC_DIR="$RUNNER_TEMP/JPEGDEC/src"
+
+      - name: Lab decoder patches in the build tree's copies
+        run: |
+          set -euo pipefail
+          for lib in pngdec jpegdec; do
+            dir="build/test/game_display_lab/$lib"
+            for patch in scripts/lab_decoder_patches/$lib/*.patch; do
+              (cd "$dir" && GIT_CEILING_DIRECTORIES="$(dirname "$PWD")" git apply --check --reverse "$GITHUB_WORKSPACE/$patch")
+              echo "applied: $patch"
+            done
+          done
 
       - name: Build
         run: cmake --build build/test --target test_image_decoders

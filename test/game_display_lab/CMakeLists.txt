@@ -35,9 +35,9 @@ gtest_discover_tests(test_scan_lut)
 # The gray viewer's reads against the real decoders (test_image_decoders.cpp): PNGdec and JPEGDEC at the firmware's
 # pinned versions, built for the host as their own Linux build (__LINUX__) with the firmware's PNG buffer size, read
 # from platformio.ini's build flag (its one source), and JPEGDEC as the device builds it (a 32-bit bit reader, no SSE:
-# jpegdec_as_device.h), each with the firmware's patches (scripts/pngdec_patches, scripts/jpegdec_patches) applied to
-# a copy of its sources in this build tree, never to PlatformIO's library folder (the firmware build patches that one:
-# scripts/patch_pngdec.py, scripts/patch_jpegdec.py). Built with AddressSanitizer and UndefinedBehaviorSanitizer, the
+# jpegdec_as_device.h), each with the x4pro firmware's patches (upstream's scripts/jpegdec_patches, then the lab's
+# scripts/lab_decoder_patches/<name>) applied to a copy of its sources in this build tree, never to PlatformIO's library
+# folder (the firmware build patches that one: scripts/patch_jpegdec.py, scripts/patch_lab_decoders.py). Built with AddressSanitizer and UndefinedBehaviorSanitizer, the
 # decoders too, so a read past their objects fails the test (test_image_decoders.cpp's canaries, and a poisoned guard
 # after JPEGDEC's file buffer, watch inside them). Only when their sources are there: PlatformIO's library folder by
 # default, which a checkout that has never run a firmware build does not have; the fork's CI (crosshatch-ci.yml's
@@ -52,13 +52,16 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
   endif()
   set(DISPLAY_LAB_PNG_MAX_BUFFERED_PIXELS ${CMAKE_MATCH_1})
 
-  # A decoder's sources copied to <build>/<name>/src on every configure, then the firmware's patches from
-  # scripts/<name>_patches: each already in the sources (it reverses cleanly: PlatformIO's folder after a firmware
-  # build) is left, else applied to the copy, else a stop. git applies them as a plain patch tool:
-  # GIT_CEILING_DIRECTORIES keeps it from taking this build tree's repository. `out` is set to the copy's src folder.
+  # A decoder's sources copied to <build>/<name>/src on every configure, then the firmware's patches from each folder
+  # given (a missing or empty folder is a stop), in order: each already in the sources (it reverses cleanly:
+  # PlatformIO's folder after a firmware build) is left, else applied to the copy, else a stop. git applies them as a
+  # plain patch tool: GIT_CEILING_DIRECTORIES, the copy's parent, keeps it from taking this build tree's repository.
+  # `out` is set to the copy's src folder. The configure reruns when a patch, a decoder source or platformio.ini
+  # changes (CMAKE_CONFIGURE_DEPENDS), so an incremental build never keeps a stale copy.
   find_program(DISPLAY_LAB_GIT git REQUIRED)
   set(DISPLAY_LAB_GIT_APPLY ${CMAKE_COMMAND} -E env "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}"
                             ${DISPLAY_LAB_GIT} apply)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${REPO_ROOT}/platformio.ini")
   function(display_lab_patched_copy name from out)
     set(root "${CMAKE_CURRENT_BINARY_DIR}/${name}")
     file(REMOVE_RECURSE "${root}")
@@ -67,8 +70,21 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
     if(NOT leaf STREQUAL "src")
       file(RENAME "${root}/${leaf}" "${root}/src")
     endif()
-    file(GLOB patches "${REPO_ROOT}/scripts/${name}_patches/*.patch")
-    list(SORT patches)
+    file(GLOB_RECURSE sources LIST_DIRECTORIES false "${from}/*")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${sources})
+    set(patches "")
+    foreach(folder IN LISTS ARGN)
+      if(NOT IS_DIRECTORY "${folder}")
+        message(FATAL_ERROR "${name} patch folder ${folder} is missing")
+      endif()
+      file(GLOB folder_patches "${folder}/*.patch")
+      if(NOT folder_patches)
+        message(FATAL_ERROR "${name} patch folder ${folder} has no patches")
+      endif()
+      list(SORT folder_patches)
+      list(APPEND patches ${folder_patches})
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${folder_patches})
+    endforeach()
     foreach(patch IN LISTS patches)
       execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
                       WORKING_DIRECTORY "${root}" RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
@@ -82,8 +98,10 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
     endforeach()
     set(${out} "${root}/src" PARENT_SCOPE)
   endfunction()
-  display_lab_patched_copy(pngdec "${CROSSHATCH_PNGDEC_DIR}" DISPLAY_LAB_PNGDEC_SRC)
-  display_lab_patched_copy(jpegdec "${CROSSHATCH_JPEGDEC_DIR}" DISPLAY_LAB_JPEGDEC_SRC)
+  display_lab_patched_copy(pngdec "${CROSSHATCH_PNGDEC_DIR}" DISPLAY_LAB_PNGDEC_SRC
+                           "${REPO_ROOT}/scripts/lab_decoder_patches/pngdec")
+  display_lab_patched_copy(jpegdec "${CROSSHATCH_JPEGDEC_DIR}" DISPLAY_LAB_JPEGDEC_SRC
+                           "${REPO_ROOT}/scripts/jpegdec_patches" "${REPO_ROOT}/scripts/lab_decoder_patches/jpegdec")
   # Test-only layout, in the copy alone: 64 bytes after JPEGDEC's file buffer, which test_image_decoders.cpp poisons
   # for AddressSanitizer, so a header parse or decode that reads or writes just past the buffer inside the object
   # (where the sanitizer cannot otherwise see) fails the test. The device's object is unchanged.
