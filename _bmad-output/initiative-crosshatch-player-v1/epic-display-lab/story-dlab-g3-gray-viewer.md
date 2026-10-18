@@ -19,6 +19,9 @@ bands and rectangles. Nothing in the lab paints a picture.
    pure code when the folder is empty or as the first entry: a horizontal ramp of the engine's levels, a continuous
    gradient, hatching at three pitches, concentric circles and a few diagonal strokes, so the viewer works with no
    files and the chart is the same on every device.
+   The repo's `docs/crosshatch/display-lab-images/` holds four generated 480 × 800 PNGs (ink line art, hatch pitches
+   and weights, gradients and halftone, text) as the fixed set the owner copies to the folder; they are not compiled
+   into the firmware.
 2. **Decode.** A file decodes through the existing decoder into the renderer's grayscale framebuffer (as a cover
    does, `useGrayscale`), which is never shown (the view owns the panel, D4); the framebuffer's gray is read back
    into the model's targets through a pure `Quantiser`: **plain** (nearest level) or **ordered** (the 4×4 Bayer
