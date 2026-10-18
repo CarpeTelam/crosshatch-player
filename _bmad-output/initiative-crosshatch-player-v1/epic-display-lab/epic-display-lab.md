@@ -58,6 +58,11 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   UltraChip starting preset (after dlab-c2 and the owner's calibration run; D12).
 - Lane C, fourth story: `dlab-c4` hold for photos: the Hold row, the per-mode photo spots and the hold marker (after
   dlab-c3; D13).
+- Lane G, first story: `dlab-g1` the ladder scene: a Ladder mode that measures the panel's response to 1..24 pulses
+  from white and from black, and the return (after dlab-c4; D14).
+- Lane G, second story: `dlab-g2` seven levels: the model, preset (file version 2), defaults, transition test and
+  Tuning generalised to seven levels (black, five grays, white); the stock bench keeps four (after dlab-g1's photos;
+  D14).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -153,14 +158,36 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   edge swipe, Confirm is a front button the device lacks, touch routing is dead while the view is up): the side
   buttons take them (Down pause/resume, Up stop), Back is checked before the swipe guard, and Clean becomes a row.
   Story dlab-c3. The sweep task itself (D11) behaved: the top-swipe cover ended runs and kept the results, as designed.
+  Calibrated later the same day on Static runs with the self-hold (photos in the session, blacks judged uniform in
+  person): `[2,7,12,7,2,10,7,6,9,12,5,3]` (K>D 3 → 2: 1 did nothing, 3 slightly light, 5 far too light; L>D 2 → 6), the
+  rest of the starting table confirmed; baked into `ultraChipDefaults()` on the epic branch. Still open: route
+  dependence (a W reached from K differs from a clean W: history mode) and the previous screen ghosting through the
+  lightened bands after one clean (a double clean before a run), both for a follow-up story.
 - D13 (2026-10-17, owner's ask during the calibration run): the test holds itself at the photo spots so data collection
   does not depend on pressing pause within half a slot. A Hold row on the test screen (on by default, a lab preference,
   not a preset value) makes the run hold at Static's settles, at Slow's painted bands, its rectangles after a full
   dwell and the crossing's end, and at Fast's end-of-sweep pause; Next resumes. A hold shows an unobtrusive marker,
-  a 16 px square in the bottom-right corner driven by the engine's own scans to the band's opposite shade (the
-  renderer cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
+  a dash in the bottom-right corner driven by the engine's own scans to the band's opposite shade (the renderer
+  cannot draw while the view is up without a full clear, D4) and driven back before the run continues. The
   orchestrator's baseline commit holds Static at every settle unconditionally; story dlab-c4 adds the row, the
-  other modes' spots and the marker.
+  other modes' spots and the marker. Amended at dlab-c4's review: the marker was a 16 px square, which shared rows
+  with the bottom lane's rectangle on every real screen; it is a 32 px dash in the bottom band's margin below its
+  last lane (8 rows at 480 high, 10 at 800), and a hold keeps the device awake for ten minutes, not forever.
+- D14 (2026-10-17, owner: "let's shoot for 8", then "5 shades of grey so there is a 50% grey"): the engine goes to
+  seven levels, black, five grays and white. Why not sixteen: the panel's full swing is 12 one-frame pulses at PLL
+  0x06 and the dark end is coarse (K>D 2, D>K 7), so about this many is what the pulse resolution can separate; the
+  faster frame (rate index 2, 0x07) is the fallback if the ladder shows fewer. Why seven rather than eight: the level
+  scale stays 0..192 with a step of 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6 (the calibrated table
+  stays valid at the anchors, the stock bench keeps its names), the new grays are 1, 3 and 5, and level 3 is the true
+  50 % gray. Why a ladder first: a 7×7 table has 42 doses, not tunable by eye from flips; the ladder scene (dlab-g1)
+  photographs the response to 1..24 pulses from each end and the return, and the seven levels and their doses are
+  read off it (the seven-level UltraChip table is recorded here when the photos arrive). The engine story (dlab-g2)
+  keeps every mechanism and the 3 B/pixel model, moves the table to 7×7 with a 64-bit hold mask, the history routes
+  to two directional ones, the file to version 2 with a version 1 expansion, the test to seven bands with one lane
+  each and six rotating flips, Tuning to grouped rows with a Section jump; the stock bench stays at four levels.
+  The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
+  reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
+  engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
 
 ## Story results
 
@@ -216,6 +243,17 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   cap 24 (model 3 B a pixel); the owner's table as the UltraChip starting preset; the preset file's `base` key and a
   Reset to defaults row. 4 deferrals carried. Hardware check for the owner on the experimental branch: side Down
   pauses, side Up stops; Static settles and flips without a flash; the residue after each flip per band.
+- dlab-c4 (lane C4, D13, after dlab-c3): built by the orchestrator's fallback (plan-and-implement agent plus
+  orchestrator-run lenses): first pass 27 findings, 14 patched, 3 deferred (`fc64cf24`); follow-up pass 17 findings,
+  10 patched, converged (`3ec5d462`). 2,223 host tests; x4pro, default, sticky build; pio check x4pro clean; flash
+  gate within budget (240 B RAM to spare, unchanged from dlab-c3). A Hold row (on each visit) holds the run at each
+  mode's photo spots: Static's settles, Slow's painted bands, its rectangles after the full dwell (a rectangle-wide
+  trail behind them) and the crossing's end, Fast's pause; a 32 px dash in the bottom band's margin, driven by the
+  engine's own slots to the band's opposite shade and back, marks the hold; the sweep clock stands still through it;
+  Next or Confirm resumes; a hold keeps the device awake for ten minutes; skipped and dropped spots are logged with
+  their reason. 3 deferrals carried. Hardware check for the owner on the experimental branch: the dash appears within
+  about a second of a settle and is gone when the flip starts; the three Slow holds and the Fast hold land where the
+  doc says.
 
 ## Measurement (base)
 

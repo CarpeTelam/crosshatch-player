@@ -102,8 +102,9 @@ TEST(GrayPreset, DefaultsAreInkBoysOtherValues) {
 }
 
 TEST(GrayPreset, UltraChipDefaultsAreTheOwnersTableWithInkBoysRest) {
-  // D12: [3,7,12,7,2,10,7,2,9,12,5,3] in the order K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W, W>K, W>D, W>L.
-  const uint8_t table[TRANSITION_COUNT] = {3, 7, 12, 7, 2, 10, 7, 2, 9, 12, 5, 3};
+  // D12, calibrated: [2,7,12,7,2,10,7,6,9,12,5,3] in the order K>D, K>L, K>W, D>K, D>L, D>W, L>K, L>D, L>W, W>K, W>D,
+  // W>L.
+  const uint8_t table[TRANSITION_COUNT] = {2, 7, 12, 7, 2, 10, 7, 6, 9, 12, 5, 3};
   const GrayPreset u = GrayPreset::ultraChipDefaults();
   const GrayPreset ink = GrayPreset::inkBoyDefaults();
   for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) {
@@ -124,7 +125,7 @@ TEST(GrayPreset, UltraChipDefaultsAreTheOwnersTableWithInkBoysRest) {
 TEST(GrayPreset, LongestRunSlotsCountsOneDoseASlotForHeldTransitions) {
   // InkBoy's: K>L 4 held and W>K 7 not held (ceil(7 / 2)) both take 4 slots.
   EXPECT_EQ(GrayPreset::inkBoyDefaults().longestRunSlots(), 4);
-  // UltraChip: K>L 7 held, ahead of K>W and W>K 12 not held (6).
+  // UltraChip: K>L 7 held, ahead of L>D 6 held and K>W and W>K 12 not held (6).
   EXPECT_EQ(GrayPreset::ultraChipDefaults().longestRunSlots(), 7);
   GrayPreset p = GrayPreset::inkBoyDefaults();
   const uint8_t wk = transitionIndex(3, 0);  // W > K, hold off
@@ -337,7 +338,7 @@ TEST(GrayPresetCodec, OldRetargetKeyFillsTheDirectionsANewKeyDoesNotSet) {
 TEST(GrayPresetCodec, BaseKeyIsWrittenAndReadAndMayBeAbsent) {
   char buffer[512];
   ASSERT_GT(encodeGrayPreset(GrayPreset::ultraChipDefaults(), PresetBase::UltraChip, buffer, sizeof(buffer)), 0u);
-  EXPECT_EQ(std::string(buffer).rfind("{\"version\":1,\"base\":\"ultrachip\",\"doses\":[3,7,12,", 0), 0u);
+  EXPECT_EQ(std::string(buffer).rfind("{\"version\":1,\"base\":\"ultrachip\",\"doses\":[2,7,12,", 0), 0u);
   GrayPreset out{};
   GrayPresetLoadInfo info;
   // Read back over the other controller's defaults: loaded all the same, and the info names the file's base (the

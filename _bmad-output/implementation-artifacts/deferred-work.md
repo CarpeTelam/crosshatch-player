@@ -1401,3 +1401,14 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c3-hardware-calibration.md`
   summary: No mode retargets a pixel mid-transition on purpose, so the split retarget percentages are exercised only by Fast's spaced stripes on a slow panel.
   evidence: Static flips only settled pixels and Slow is sized so pixels settle under a rectangle; a deliberate mid-transition flip (a Static flip issued before the pattern settles) would give per-direction figures. Design addition outside this story. (location: lib/GameDisplayLab/TransitionScene.cpp (slotDone); severity: medium)
+
+## dlab-c4
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c4-hold-for-photos.md`
+  summary: Only the session-cap clean drops a hold; serve()'s replay and clean branches repaint from white without cancelHold.
+  evidence: Unreachable today (requestReplay only through reset() in Running, requestClean has no caller); whoever adds a caller drops the hold in cleanToWhite. (location: src/activities/games/display_lab/TransitionTestActivity.cpp (serve, cleanToWhite); severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c4-hold-for-photos.md`
+  summary: The Hold row's wiring (On each visit, toggleHold, scene.setHold), advanceClock's clockStill gate, serve's resumeHold, afterSlot's holdRun and the cap path's order have only the owner's hardware check.
+  evidence: No harness compiles TransitionTestActivity; the test's TaskSim mirrors the task's order and is the host-side record of it. Joins the device-wiring family (dlab-c2, dlab-c3). (location: src/activities/games/display_lab/TransitionTestActivity.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-c4-hold-for-photos.md`
+  summary: A logical height under 64 px would put the hold marker into band 2.
+  evidence: No supported screen is that small; the dash's height is clamped to the bottom band's margin below its last lane. (location: lib/GameDisplayLab/TransitionScene.cpp (markerRect); severity: low)

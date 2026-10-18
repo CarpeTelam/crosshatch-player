@@ -63,7 +63,7 @@ class SweepControl {
   bool insidePanel() const { return (word_.load() & IN_PANEL) != 0; }
 
   // --- task --------------------------------------------------------------------------------------------------------
-  // The task holds itself (a Static settle, held for a photo): Run cleared, so the owner's next
+  // The task holds itself (a photo spot of any mode, once its marker has settled): Run cleared, so the owner's next
   // requestRun(!runRequested()) resumes with one press; nothing else changes.
   void holdRun() { change(0, RUN); }
   // The requests, with Replay and Clean cleared in the same step.

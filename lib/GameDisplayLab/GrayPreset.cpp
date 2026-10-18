@@ -16,11 +16,12 @@ constexpr uint8_t INKBOY_DOSE[SHADE_COUNT][SHADE_COUNT] = {
 };
 // InkBoy's HOLD mask (gray_config.h:48-49), bit source * 4 + target.
 constexpr uint16_t INKBOY_HOLD = 0xc667;
-// The owner's UC8179 table (D12, 2026-10-17), [3,7,12,7,2,10,7,2,9,12,5,3] in the transition order, dose[from][to].
+// The owner's UC8179 table (D12, calibrated by the Static runs of 2026-10-17), [2,7,12,7,2,10,7,6,9,12,5,3] in the
+// transition order, dose[from][to].
 constexpr uint8_t ULTRACHIP_DOSE[SHADE_COUNT][SHADE_COUNT] = {
-    {0, 3, 7, 12},  // K > D, L, W
+    {0, 2, 7, 12},  // K > D, L, W
     {7, 0, 2, 10},  // D > K, L, W
-    {7, 2, 0, 9},   // L > K, D, W
+    {7, 6, 0, 9},   // L > K, D, W
     {12, 5, 3, 0},  // W > K, D, L
 };
 constexpr uint8_t INKBOY_RETARGET = 100;
