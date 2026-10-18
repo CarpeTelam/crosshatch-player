@@ -35,12 +35,13 @@ gtest_discover_tests(test_scan_lut)
 # The gray viewer's reads against the real decoders (test_image_decoders.cpp): PNGdec and JPEGDEC at the firmware's
 # pinned versions, built for the host as their own Linux build (__LINUX__) with the firmware's PNG buffer size, read
 # from platformio.ini's build flag (its one source), and JPEGDEC as the device builds it (a 32-bit bit reader, no SSE:
-# jpegdec_as_device.h) with the firmware's patches (scripts/jpegdec_patches), applied to a copy of its sources in this
-# build tree, never to PlatformIO's library folder (the firmware build patches that one, scripts/patch_jpegdec.py).
-# Built with AddressSanitizer and UndefinedBehaviorSanitizer, the decoders too, so a read past their objects fails the
-# test (test_image_decoders.cpp's canaries watch inside them). Only when their sources are there: PlatformIO's library
-# folder by default, which a checkout that has never run a firmware build does not have; the fork's CI
-# (crosshatch-ci.yml's Display lab decoders job) fetches both and points the two paths at them.
+# jpegdec_as_device.h), each with the firmware's patches (scripts/pngdec_patches, scripts/jpegdec_patches) applied to
+# a copy of its sources in this build tree, never to PlatformIO's library folder (the firmware build patches that one:
+# scripts/patch_pngdec.py, scripts/patch_jpegdec.py). Built with AddressSanitizer and UndefinedBehaviorSanitizer, the
+# decoders too, so a read past their objects fails the test (test_image_decoders.cpp's canaries, and a poisoned guard
+# after JPEGDEC's file buffer, watch inside them). Only when their sources are there: PlatformIO's library folder by
+# default, which a checkout that has never run a firmware build does not have; the fork's CI (crosshatch-ci.yml's
+# Display lab decoders job) fetches both and points the two paths at them.
 set(CROSSHATCH_PNGDEC_DIR "${REPO_ROOT}/.pio/libdeps/x4pro/PNGdec/src" CACHE PATH "PNGdec's src folder")
 set(CROSSHATCH_JPEGDEC_DIR "${REPO_ROOT}/.pio/libdeps/x4pro/JPEGDEC/src" CACHE PATH "JPEGDEC's src folder")
 if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC_DIR}/JPEGDEC.cpp")
@@ -51,46 +52,62 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
   endif()
   set(DISPLAY_LAB_PNG_MAX_BUFFERED_PIXELS ${CMAKE_MATCH_1})
 
-  # JPEGDEC's sources copied here on every configure, then the firmware's patches: each already in the sources (it
-  # reverses cleanly: PlatformIO's folder after a firmware build) is left, else applied to the copy, else a stop. git
-  # applies them as a plain patch tool: GIT_CEILING_DIRECTORIES keeps it from taking this build tree's repository.
-  set(DISPLAY_LAB_JPEGDEC_ROOT "${CMAKE_CURRENT_BINARY_DIR}/jpegdec")
-  file(REMOVE_RECURSE "${DISPLAY_LAB_JPEGDEC_ROOT}")
-  file(COPY "${CROSSHATCH_JPEGDEC_DIR}" DESTINATION "${DISPLAY_LAB_JPEGDEC_ROOT}")
-  get_filename_component(DISPLAY_LAB_JPEGDEC_SRC_NAME "${CROSSHATCH_JPEGDEC_DIR}" NAME)
-  if(NOT DISPLAY_LAB_JPEGDEC_SRC_NAME STREQUAL "src")
-    file(RENAME "${DISPLAY_LAB_JPEGDEC_ROOT}/${DISPLAY_LAB_JPEGDEC_SRC_NAME}" "${DISPLAY_LAB_JPEGDEC_ROOT}/src")
-  endif()
-  set(DISPLAY_LAB_JPEGDEC_SRC "${DISPLAY_LAB_JPEGDEC_ROOT}/src")
-  file(GLOB DISPLAY_LAB_JPEGDEC_PATCHES "${REPO_ROOT}/scripts/jpegdec_patches/*.patch")
-  list(SORT DISPLAY_LAB_JPEGDEC_PATCHES)
+  # A decoder's sources copied to <build>/<name>/src on every configure, then the firmware's patches from
+  # scripts/<name>_patches: each already in the sources (it reverses cleanly: PlatformIO's folder after a firmware
+  # build) is left, else applied to the copy, else a stop. git applies them as a plain patch tool:
+  # GIT_CEILING_DIRECTORIES keeps it from taking this build tree's repository. `out` is set to the copy's src folder.
   find_program(DISPLAY_LAB_GIT git REQUIRED)
   set(DISPLAY_LAB_GIT_APPLY ${CMAKE_COMMAND} -E env "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}"
                             ${DISPLAY_LAB_GIT} apply)
-  foreach(patch IN LISTS DISPLAY_LAB_JPEGDEC_PATCHES)
-    execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
-                    WORKING_DIRECTORY "${DISPLAY_LAB_JPEGDEC_ROOT}" RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
-    if(NOT applied EQUAL 0)
-      execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} "${patch}"
-                      WORKING_DIRECTORY "${DISPLAY_LAB_JPEGDEC_ROOT}" RESULT_VARIABLE patched)
-      if(NOT patched EQUAL 0)
-        message(FATAL_ERROR "JPEGDEC patch ${patch} neither in ${CROSSHATCH_JPEGDEC_DIR} nor applies to it")
-      endif()
-      message(STATUS "Applied JPEGDEC patch ${patch} to the build tree's copy")
+  function(display_lab_patched_copy name from out)
+    set(root "${CMAKE_CURRENT_BINARY_DIR}/${name}")
+    file(REMOVE_RECURSE "${root}")
+    file(COPY "${from}" DESTINATION "${root}")
+    get_filename_component(leaf "${from}" NAME)
+    if(NOT leaf STREQUAL "src")
+      file(RENAME "${root}/${leaf}" "${root}/src")
     endif()
-  endforeach()
+    file(GLOB patches "${REPO_ROOT}/scripts/${name}_patches/*.patch")
+    list(SORT patches)
+    foreach(patch IN LISTS patches)
+      execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
+                      WORKING_DIRECTORY "${root}" RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
+      if(NOT applied EQUAL 0)
+        execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} "${patch}" WORKING_DIRECTORY "${root}" RESULT_VARIABLE patched)
+        if(NOT patched EQUAL 0)
+          message(FATAL_ERROR "${name} patch ${patch} neither in ${from} nor applies to it")
+        endif()
+        message(STATUS "Applied ${name} patch ${patch} to the build tree's copy")
+      endif()
+    endforeach()
+    set(${out} "${root}/src" PARENT_SCOPE)
+  endfunction()
+  display_lab_patched_copy(pngdec "${CROSSHATCH_PNGDEC_DIR}" DISPLAY_LAB_PNGDEC_SRC)
+  display_lab_patched_copy(jpegdec "${CROSSHATCH_JPEGDEC_DIR}" DISPLAY_LAB_JPEGDEC_SRC)
+  # Test-only layout, in the copy alone: 64 bytes after JPEGDEC's file buffer, which test_image_decoders.cpp poisons
+  # for AddressSanitizer, so a header parse or decode that reads or writes just past the buffer inside the object
+  # (where the sanitizer cannot otherwise see) fails the test. The device's object is unchanged.
+  file(READ "${DISPLAY_LAB_JPEGDEC_SRC}/JPEGDEC.h" DISPLAY_LAB_JPEGDEC_H)
+  set(DISPLAY_LAB_FILE_BUF "uint8_t ucFileBuf[JPEG_FILE_BUF_SIZE]; // holds temp data and pixel stack")
+  string(FIND "${DISPLAY_LAB_JPEGDEC_H}" "${DISPLAY_LAB_FILE_BUF}" DISPLAY_LAB_FILE_BUF_AT)
+  if(DISPLAY_LAB_FILE_BUF_AT EQUAL -1)
+    message(FATAL_ERROR "JPEGDEC.h has no '${DISPLAY_LAB_FILE_BUF}' for the guard after it")
+  endif()
+  string(REPLACE "${DISPLAY_LAB_FILE_BUF}" "${DISPLAY_LAB_FILE_BUF}\n    uint8_t ucGuard[64]; // test-only: poisoned"
+                 DISPLAY_LAB_JPEGDEC_H "${DISPLAY_LAB_JPEGDEC_H}")
+  file(WRITE "${DISPLAY_LAB_JPEGDEC_SRC}/JPEGDEC.h" "${DISPLAY_LAB_JPEGDEC_H}")
 
   set(DISPLAY_LAB_SANITIZE -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
-  file(GLOB DISPLAY_LAB_ZLIB_SOURCES "${CROSSHATCH_PNGDEC_DIR}/*.c")
+  file(GLOB DISPLAY_LAB_ZLIB_SOURCES "${DISPLAY_LAB_PNGDEC_SRC}/*.c")
   add_library(display_lab_decoders STATIC
-    ${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp
+    ${DISPLAY_LAB_PNGDEC_SRC}/PNGdec.cpp
     jpegdec_as_device.cpp
     ${DISPLAY_LAB_ZLIB_SOURCES}
   )
   target_compile_definitions(display_lab_decoders PUBLIC
     __LINUX__ PNG_MAX_BUFFERED_PIXELS=${DISPLAY_LAB_PNG_MAX_BUFFERED_PIXELS})
-  target_include_directories(display_lab_decoders SYSTEM PUBLIC ${CROSSHATCH_PNGDEC_DIR} ${DISPLAY_LAB_JPEGDEC_SRC})
-  # Two UBSan checks are off for the decoders' own sources, each for what they do by design, as on the device:
+  target_include_directories(display_lab_decoders SYSTEM PUBLIC ${DISPLAY_LAB_PNGDEC_SRC} ${DISPLAY_LAB_JPEGDEC_SRC})
+  # Three UBSan checks are off for the decoders' own sources, each for what they do by design, as on the device:
   # - alignment: both load and store whole words at unaligned addresses (zlib's inflate.c 1324 in PNGdec; JPEGDEC with
   #   ALLOWS_UNALIGNED, which the ESP32 build sets), which the S3 and x86 allow;
   # - shift, JPEGDEC only: JPEGMakeHuffTables shifts a code right by (bit length - 5), negative for codes of under 5

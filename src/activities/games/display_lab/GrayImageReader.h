@@ -18,12 +18,14 @@
 // free-heap floors (taken from the decoders' real sizes). Against a decoder that never returns or writes past its
 // object there are four layers: the file's layout is walked against its size first (walkPngChunks through a PNG's
 // IEND, walkJpegSegments from a JPEG's SOI to SOS as JPEGDEC parses it, then its EOI), and the walked size ends there;
-// every read is answered so it cannot stall the decoder (readAllowance, fillPngRead, answerJpegHeaderRead,
-// answerJpegDecodeRead, the read caps: nothing past the walked size, which is the size the decoder is given, nothing
-// once stopped, PNGdec's span filled with 0xFF, JPEGDEC's with zeros, a dropped JPEG header read zeroing its whole
-// parse buffer); the sweep task's owner waits for a stop only so long (GrayRunner::endLocked detaches); and the task
-// watchdog, which the sweep task joins for a decode and feeds at every row, resets the device when a decoder spins
-// where no read or row reaches it.
+// every read is answered so it cannot stall the decoder (DecoderReads.h over readAllowance, fillPngRead,
+// answerJpegHeaderRead, answerJpegDecodeRead, the read caps: nothing past the walked size, which is the size the
+// decoder is given, nothing once stopped, PNGdec's span filled with 0xFF, JPEGDEC's with zeros, a dropped JPEG header
+// read zeroing its whole parse buffer); the sweep task's owner waits for a stop only so long (GrayRunner::endLocked
+// detaches); and the task watchdog, which the sweep task joins for the whole read and feeds on progress (a row, a read
+// that gave file bytes), leaving it around each blocking file call, resets the device when a decoder spins where no
+// read or row reaches it or reads on without progress. The decoders carry the fork's build-time patches
+// (scripts/pngdec_patches, scripts/jpegdec_patches).
 // Rows are scaled to GameDisplayLab::fitToScreen's rectangle: bilinear along an axis the fit enlarges (only the 16.16
 // blend arithmetic is the JPEG converter's), nearest at pixel centres along one it shrinks (FitAxis::tap, sampleBlock);
 // a PNG row completes the output rows rowsReadyAt names, a JPEG block the ones outputsEndingIn names, with the row
@@ -33,9 +35,9 @@
 // picture is shown as its pixels are stored. The renderer's framebuffer is not touched. Only GrayImageReader.cpp
 // includes PNGdec.h and JPEGDEC.h (scripts/check_layers.py's FILE_EDGES, D16).
 //
-// It runs on the caller's task (the gray viewer's sweep task): it yields one tick every YIELD_MS so a long decode keeps
-// the idle task fed, as the converters do, and checks the sink's stopped() before every output row, so a stop waits
-// for at most one row's decode and SD read.
+// It runs on the caller's task (the gray viewer's sweep task): it yields one tick at most every YIELD_MS of progress so
+// lower-priority tasks on its core run, as the converters do, and checks the sink's stopped() before every output row,
+// so a stop waits for at most one row's decode and SD read.
 
 // Where the reader's rows go.
 class GrayRowSink {
@@ -53,15 +55,18 @@ class GrayRowSink {
 // How a read ended.
 enum class ImageRead : uint8_t {
   Done,
-  // The file would not open, a read of it failed, or the library rejected its header as corrupt.
+  // The file would not open, a read of it failed (in the walk, or a JPEG header read the reader dropped), or the
+  // library rejected its header as corrupt.
   Open,
-  // A size, depth, colour type or width outside what the converters accept, a feature the library does not decode
-  // (an interlaced or 16-bit PNG, an extended or lossless JPEG), or a truncated or malformed file (a chunk or segment
-  // past its end, a bad signature or length, an oversized PLTE or tRNS, too many chunks or segments).
+  // A size, depth, colour type or width outside what the converters accept, a file over 2 GiB, a feature the library
+  // does not decode (an interlaced or 16-bit PNG, an extended or lossless JPEG), or a truncated or malformed file
+  // (GameDisplayLab::FileLayout Truncated and Malformed: a chunk or segment past its end, a bad signature or length, an
+  // oversized PLTE or tRNS, a JPEG table, SOF, SOS or Exif IFD JPEGDEC would read past or build past its tables, too
+  // many chunks, segments or buffer moves).
   Format,
   // Under a signature's worth of bytes (8 for a PNG, 4 for a JPEG).
   Short,
-  // Whole chunks or segments without the end the decoder needs: no IEND (a PNG), no SOS (a JPEG).
+  // Whole chunks or segments without the end the decoder needs: no IEND (a PNG); no SOS, or no EOI after it (a JPEG).
   NoEnd,
   // The decoder or a row buffer did not fit (the converters' free-heap floor included).
   Memory,

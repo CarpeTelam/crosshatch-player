@@ -24,6 +24,14 @@ deferred:
     evidence: 'review pass 2026-10-18, verification-gap 1: serve, runSlot and the Client hooks order are checked by review and a syntax-only compile; only their pure parts (SweepControl, SlotScheduler, the scenes) are host-tested'
     location: 'src/activities/games/display_lab/GrayRunner.cpp'
     severity: 'low'
+  - summary: "a JPEG MCU longer than the 512 bytes JPEGDEC keeps past its refill mark reads past the data in its buffer once before the fork's JPEGDEC patch 0004 ends the decode with an error: reachable by a valid file of extreme detail (4:2:0 colour noise at quality 100, MCUs of 510 to 600 bytes: stale bytes inside the 2 KiB buffer in the tests, under the poisoned guard) and by a crafted one of the longest codes (up to about 730 bytes past the buffer, into the decoder's own Huffman tables); the file shows 'did not decode'"
+    evidence: 'sixth batch: 8 of 8 Pillow 320x320 4:2:0 quality-100 colour-noise JPEGs, JPEG_NOISE_420_OUTRUN (64x64) and fixtures::longCodeColourJpeg end in JPEG_DECODE_ERROR (ImageDecoders.AColourMcuPastTheBufferEndsTheDecode); the read stays inside the JPEGDEC object (its Huffman tables follow the buffer), read-only, once per file. Exposure: the firmware converters (covers, chapter images) decode the same JPEGs with the same library and get 0004 too (every env), so they now end the same way; before 0004 the bit pointer ran on past the object for every later MCU. Decoding such a file needs JPEGDEC to keep a MCU-sized margin or refill inside a MCU: a change to its refill rule for every JPEG (more, smaller reads), past a build-time stop'
+    location: 'scripts/jpegdec_patches/0004-stop-a-bit-pointer-past-the-vlc-data.patch'
+    severity: 'low'
+  - summary: "a detached sweep task stuck inside an SD read holds the Storage mutex: the next card access after Home or sleep waits behind it for as long as that read lasts"
+    evidence: 'fifth batch, kept: reachable only with a card read that never returns (a failing card), then a press (Home, sleep); a timed Storage lock on the sleep path is a follow-up outside this story (HalStorage is upstream)'
+    location: 'lib/hal/HalStorage.cpp'
+    severity: 'low'
 ---
 
 <intent-contract>
@@ -85,9 +93,9 @@ gray engine:
 | Next/Confirm while painting | the slots or the marker in flight | pause or resume (`SweepControl::press`, one compare-exchange); ignored while the run's first picture or a next one is being cleaned and read; a resume then a pause before the task serves them keeps a hold (the task, not the press, ends it) | a press racing the hold is never lost |
 | Next/Confirm while holding | held | the next entry: clean, paint, settle, hold; after the last entry, the chart; decided in the same compare-exchange as the press (Held cleared; Replay, Run and Replaying set), further presses ignored until that picture is painted | a resume that ever reaches a held picture holds again |
 | Previous/Back | view up | stop, rows back with a FULL refresh, Status "Stopped" | — |
-| Stop past its bound | a task that has not ended 20 s after the first stop (a decoder that never returns, a scan in the SDK's 30 s BUSY wait); Home's stop and the exit after it share the 20 s | Back: logged once, task left undeleted, Status (transition test: Run) "Still stopping", no end, cover or speed read until `reap()` joins it; leaving the screen or sleep: one LOG_ERR naming the screen (its buffers leaked by design if it never ends), the runner detached to the task (`endLocked`, at once when a stop already gave up), which frees it and deletes itself when it ends; Run shows "Still stopping" while this screen's task is undeleted and "Restart the device to run the lab again" (also on opening) while any task is detached | a stopped run never holds off auto-sleep (`SweepControl::keepsAwake`); a detached task touches only its runner (every hook handed the runner, the inert client, the sticky stop checked after long hooks and before every slot); a detached task inside an SD read holds the Storage mutex, so the next card access waits behind it (reopening the lab or the viewer freezes, sleep waits without a bound: a timed Storage lock on the sleep path is a follow-up); the restart notice clears to "Not run" when the task ends, and the screens allocate their working set only then (at Run); a decoder that spins where no read or row reaches it resets the device through the task watchdog (5 s) |
-| Unreadable file | open (missing, unreadable, a read that fails, a corrupt header), format (limits, depth, a colour type that does not exist, an interlaced or 16-bit PNG, an extended or lossless JPEG), short (under a signature), no end (no IEND, SOS, or EOI after it), memory or decode error | run ends; Status row names the reason (`ImageRead` Open, Format, Short, NoEnd, Memory, Decode); logged; the file handle closed on every path | the Image row still steps; the chart still works; a stop during the read or the walk is no error (Stopped) |
-| Truncated or malformed file | a PNG: a chunk up to IEND past the end, a bad signature or chunk length, a PLTE over 768 bytes or not whole triples, a tRNS over 256, over 65,536 chunks (what follows IEND is never given to PNGdec); a JPEG: a marker or segment before SOS past the end, a bad SOI or segment length, a SOF0/SOF2 of 0 or over 4 components or a wrong length, a DQT not whole tables, a DHT not whole tables, of a class past 1, an index past 3, over 256 codes or over-subscribed (the Kraft bound), a table segment, SOS or Exif IFD past JPEGDEC's 2 KiB parse buffer or its segment, over 256 buffer moves; no IEND, SOS, or EOI after it; under 8 (PNG) or 4 (JPEG) bytes | refused before the decoder reads it (`walkPngChunks`, `walkJpegSegments`): "format or size not supported", "The picture file has no end: it may be cut short", "The picture file is too short to be a picture" | the decoder is given the walked size (a PNG through IEND; a JPEG through its EOI: the file's end when its last two bytes are FF D9, else the first EOI after SOS, so a motion photo or padded file paints); reads give nothing past it, after a refused seek or once stopped; PNGdec: the rest 0xFF; JPEGDEC: the rest zeros, a read from before the header's end kept whole or dropped (the whole parse buffer zeroed, every later open() read given nothing, open()'s reads capped by the walk's buffer moves), from there on the whole span with 0xFF runs that would starve it tamed, `decoderReadCap` reads of the file; the task watchdog resets a spin no read or row reaches; a stop waits at most 20 s (row above) |
+| Stop past its bound | a task that has not ended 20 s after the first stop (a decoder that never returns, a scan in the SDK's 30 s BUSY wait); Home's stop and the exit after it share the 20 s | Back: logged once, task left undeleted, Status (transition test: Run) "Still stopping", no end, cover or speed read until `reap()` joins it; leaving the screen or sleep: one LOG_ERR naming the screen (its buffers leaked by design if it never ends), the runner detached to the task (`endLocked`, at once when a stop already gave up), which frees it and deletes itself when it ends; Run shows "Still stopping" while this screen's task is undeleted and "Restart the device to run the lab again" (also on opening) while any task is detached | a stopped run never holds off auto-sleep (`SweepControl::keepsAwake`); a detached task touches only its runner (every hook handed the runner, the inert client, the sticky stop checked after long hooks and before every slot); a detached task inside an SD read holds the Storage mutex, so the next card access waits behind it (reopening the lab or the viewer freezes, sleep waits without a bound: a timed Storage lock on the sleep path is a follow-up); the restart notice clears to "Not run" when the task ends, and the screens allocate their working set only then (at Run; nothing reads the picture, the row scratch or the model before it); the inert client's answers leave the run's end to the stop; a decoder that spins where no read or row reaches it resets the device through the task watchdog (5 s), one that reads on without progress within about 10 s; the task leaves the watchdog around each blocking file call, so a long wait on the card's mutex is not a reset |
+| Unreadable file | open (missing, unreadable, a read that fails, a JPEG header read dropped, a corrupt header), format (limits, depth, a colour type that does not exist, an interlaced or 16-bit PNG, an extended or lossless JPEG), short (under a signature), no end (no IEND, SOS, or EOI after it), memory or decode error | run ends; Status row names the reason (`ImageRead` Open, Format, Short, NoEnd, Memory, Decode); logged; the file handle closed on every path | the Image row still steps; the chart still works; a stop during the read or the walk is no error (Stopped) |
+| Truncated or malformed file | a PNG: a chunk up to IEND past the end, a bad signature or chunk length, a PLTE over 768 bytes or not whole triples, a tRNS over 256, over 65,536 chunks (what follows IEND is never given to PNGdec); a JPEG: a marker or segment before SOS past the end, a bad SOI or segment length, a SOF0/SOF2 of 0 or over 4 components or a wrong length, a DQT not whole tables, a DHT not whole tables, of a class past 1, an index past 1, over 256 codes or over-subscribed (the Kraft bound), a table segment, SOS or Exif IFD past JPEGDEC's 2 KiB parse buffer or its segment, over 256 buffer moves; no IEND, SOS, or EOI after it; under 8 (PNG) or 4 (JPEG) bytes | refused before the decoder reads it (`walkPngChunks`, `walkJpegSegments`): "format or size not supported", "The picture file has no end: it may be cut short", "The picture file is too short to be a picture" | the decoder is given the walked size (a PNG through IEND; a JPEG through the first EOI after SOS, so a motion photo, a picture with an appended preview or a padded file paints); reads give nothing past it, after a refused seek or once stopped; PNGdec: the rest 0xFF; JPEGDEC: the rest zeros, an open() read from before the header's end kept whole or dropped (the whole parse buffer zeroed, every later header read given nothing, the header's reads capped by the walk's buffer moves, a dropped one "could not open"), every other read the decode's, never dropped: the whole span, runs of 0xFF 0xFF that would starve it tamed (stuffed bytes and restart markers never), `decoderReadCap` reads of the file, open()'s top-ups at most four; PNGdec's palette copy re-reads its buffer and JPEGDEC ends a decode whose bit pointer passed its data (build-time patches); the task watchdog resets a spin no read or row reaches; a stop waits at most 20 s (row above) |
 | Dither | Dither row | Plain ↔ Ordered for the next Run | — |
 | Fit | any size or aspect | scaled to fit, aspect kept, centred, white letterbox; bilinear along an axis it enlarges (the previous PNG row, the previous JPEG strip's last row and the previous block's last column kept by `SeamKeeper`, so blends cross seams), nearest at pixel centres along one it shrinks; a JPEG's EXIF orientation ignored, as the converters ignore it | dimensions outside the converters' limits: format error |
 | Levels | any engine | readout `N levels: 0, 2, 4, 6` from `SHADE_COUNT`/`shadeName` | — |
@@ -292,7 +300,9 @@ gray engine:
   repaints before the slot clock and the window restart (the reapply's CPU time no longer inflates that slot);
   `serve` releases Held on a replay or a clean; `prepare`, `launch` and `release` refuse while a task is up.
 - **Four layers against a decoder that never returns or writes past its object (third batch; fourth: JPEG hardened,
-  shared deadline; fifth: the walked size, Kraft, whole-buffer drops, the watchdog):**
+  shared deadline; fifth: the walked size, Kraft, whole-buffer drops, the watchdog; sixth: the forward EOI, two DC
+  and two AC tables, the latch's scope, the narrowed tame, the watchdog's gaps, two build-time library patches, the
+  callbacks in one header):**
   - *Complete walks.* `walkPngChunks` walks through IEND and bounds PLTE (768, whole triples) and tRNS (256), which
     PNGdec copies into its palette unbounded (png.inl 850, 868), and caps the count at 65,536. Its `WalkExtent::end`,
     IEND's end, is the walked size (fifth batch: the fourth's "Complete at IEND whatever follows" handed the decoder
@@ -304,18 +314,25 @@ gray engine:
     that is 1 KiB in, jpeg.inl 1613-1636; fifth batch: at most 256 moves, `WalkExtent::windowMoves`) and checks
     every segment JPEGDEC reads out of it against both the segment and the buffer: SOF0/SOF2 (1 to 4 components,
     length 8 + 3n: a 4-entry table), DQT (whole 65- or 129-byte tables: its 16-bit count wraps otherwise, jpeg.inl
-    1732-1757), DHT (whole tables of class 0 or 1, index 0 to 3, at most 256 codes: any other id never shortens
-    JPEGGetHuffTables' count, jpeg.inl 844-870; fifth batch: code lengths within the Kraft bound, the running
+    1732-1757), DHT (whole tables of class 0 or 1, index 0 or 1, at most 256 codes: any other class or an index past 7
+    never shortens JPEGGetHuffTables' count, jpeg.inl 844-870; sixth batch: index 0 or 1 only, as JPEGDEC keeps two DC
+    and two AC tables and builds a DC table of index 2 or 3 past its two into the AC tables, jpeg.inl 1093-1100, an
+    in-object write; an AC index of 2 or 3 makes JPEGMakeHuffTables fail; the DHT fixtures now use ids 0x01 and 0x11,
+    which JPEG_BASELINE's own DHT does not redefine, so the decoder tests build them; fifth batch: code lengths within the Kraft bound, the running
     `code = (code + count[i])` never over 2^i before `code <<= 1`, or JPEGMakeHuffTables writes past its tables,
     jpeg.inl 1066-1275: the review's twelve 1-bit codes walked Complete and open() wrote past its object), SOS, and an
     APP1 JPEGDEC takes for Exif: the IFD offset and tag count it reads, each IFD's count and 12-byte entries
     (GetTIFFInfo, jpeg.inl 1346-1376) and the next IFD's offset when it follows it (jpeg.inl 1654-1677; an offset
     negative as its int, or whose int sum with the buffer offset wraps, is refused; the second test is implied by the
-    held-in-segment one, kept to say what JPEGDEC does). An EOI must follow SOS (fifth batch): the file's last two
-    bytes, else the first FF D9 after SOS, read forward once in 256-byte reads (a 416-byte frame on the task's stack,
-    measured); its end is the walked size, `WalkExtent::headerEnd` the SOS segment's end. The first EOI rather than
-    the last, as the batch said: appended data (a motion photo's video, an MPF second picture) can hold FF D9 too,
-    and the decoder needs only the picture; a file that ends in FF D9 is taken whole by the tail check. Outcomes:
+    held-in-segment one, kept to say what JPEGDEC does). An EOI must follow SOS (fifth batch): the first FF D9 after
+    SOS, read forward once (sixth batch: no tail shortcut, which handed an appended picture, an MPF preview ending in
+    FF D9, to the decoder; the batch's items 1 and 9 asked for a backward look first and for the forward search, and
+    the forward search was taken, since a backward look finds the appended picture's EOI) in reads of a 4 KB buffer the
+    reader allocates for the walk (`JPEG_EOI_SEARCH_BYTES`; `walkJpegSegments` takes the buffer, its own frame 160 B at
+    `-Os`, was 416 B), a 0xFF ending one read carried into the next (`TheEoiSearchCarriesAnFfAcrossItsReads`, every
+    split at four buffer sizes); its end is the walked size, `WalkExtent::headerEnd` the SOS segment's end. The first
+    EOI rather than the last: appended data (a motion photo's video, an MPF second picture) can hold FF D9 too, and the
+    decoder needs only the picture. Outcomes:
     Complete, TooShort, Truncated, NoEnd, Malformed, ReadFailed (Open), Stopped; the reader's `ImageRead` Open,
     Format, Short, NoEnd. `JpegdecOpensEveryFileTheWalkCallsComplete` and
     `EverySyntheticCaseTheWalkPassesDecodesCleanly` pin the mirror against the real JPEGDEC.
@@ -328,10 +345,17 @@ gray engine:
     reads at the buffer's start, jpeg.inl 1615-1636, and an empty read there leaves SOI and then the APP1 marker read
     as a length, which send it round for ever). Fifth batch: a read starting before `headerEnd` is the header parse's,
     from there on the decode's, so open()'s last top-up (JPEGGetMoreData at jpeg.inl 1780) is answered as the decode.
+    Sixth batch: only while open() runs; decode()'s reads are all the decode's and are never latched, the header cap
+    counts header reads only (a cap trip on open()'s top-up had latched into the decode and starved it), open()'s reads
+    from `headerEnd` on are the decode's for `JPEG_OPEN_TOP_UPS` (4: it makes one) and then get a zeroed span and 0, so
+    a parse that ran past the walked header still ends, unlatched, and a latched header failure is `ImageRead::Open`
+    whatever open() returned. The bookkeeping is `DecoderReads.h` (`answerPngRead`, `answerSeek`, `answerJpegRead`,
+    `answerJpegSeek` over a small file interface), which `GrayImageReader.cpp` runs over `HalFile` and
+    `test_image_decoders.cpp` over its fake file, so the decoder tests run the device's callback logic, not a copy.
     The header parse's read (`answerJpegHeaderRead`) is kept whole or dropped: a stop (honoured again, now safe), a
-    short or failed read, a refused seek, or open()'s reads past `jpegHeaderReadCap(windowMoves)` (the walk's moves
+    short or failed read, a refused seek, or header reads past `jpegHeaderReadCap(windowMoves)` (the walk's moves
     and four). A drop zeroes the whole 2 KiB parse buffer (`buf - (2048 - requested)`: JPEGParseInfo always reads
-    into the buffer's tail, jpeg.inl 1597, 1634), the bytes a move-down kept too, and latches: every later open()
+    into the buffer's tail, jpeg.inl 1597, 1634), the bytes a move-down kept too, and latches: every later header
     read is dropped (the file's position is no longer JPEGDEC's iFilePos). The parse then steps over zeros to its
     `iOffset > iBytesRead` error (jpeg.inl 1623) and no segment it began meets zeros: the fourth batch's zeros in the
     span alone left a DQT straddling a move-down refill with its real length over zero tables read as 8-bit ones, its
@@ -339,12 +363,18 @@ gray engine:
     AddressSanitizer stops it). The decode's read (`answerJpegDecodeRead`) is told the whole span: JPEGGetMoreData
     (jpeg.inl 1544-1566) then tops its buffer up and moves its data down once a MCU ends past FILE_HIGHWATER (1536,
     jpeg.inl 5367), so the bit pointer stays in `ucFileBuf`; short reads would let it pass the data it has, where
-    JPEGGetMoreData returns without moving it (jpeg.inl 1549-1550). And JPEGFilter (jpeg.inl 1431-1538) drops 0xFF
-    pairs as markers and the 0 of a stuffed 0xFF, so a run of 0xFF (an erased sector) filters to nothing; when a
-    refill would leave the filtered buffer under FILE_HIGHWATER + 256 (`jpegFilteredLength`), every 0xFF in it becomes
-    0. Real scan data loses a few bytes a refill (stuffed 0xFF, restart markers) and is never touched
-    (`ScanDataThatWouldStarveTheDecoderIsTamed`); on the real library an erased sector ends in a decode error before
-    starving it (`AnErasedSectorInTheScanIsTamed`), so the pure test is what pins the tame. `iPos` is held under the
+    JPEGGetMoreData returns without moving it (jpeg.inl 1549-1550; sixth batch: the fork's JPEGDEC patch 0004 ends the
+    decode there). And JPEGFilter (jpeg.inl 1431-1538) drops 0xFF pairs as markers and the 0 of a stuffed 0xFF, so a
+    run of 0xFF (an erased sector) filters to nothing; when a refill would leave the buffer under FILE_HIGHWATER + 256,
+    the tame rewrites it. Sixth batch, narrowed: the estimate (`jpegStarvationLength`) counts a restart marker (FF D0
+    to D7) as its two bytes, and the rewrite turns only a 0xFF followed by another 0xFF into 0, never a stuffed FF 00
+    or a marker's second byte: the fifth batch's rule (every 0xFF to 0 when the filtered length was short) turned the
+    restart markers of flat line art with a short restart interval into data. `RestartMarkersAreNeverTamed` decodes
+    a Pillow line-art JPEG with a restart marker after every block (`JPEG_LINE_ART_RESTARTS`, whose refills the fifth
+    batch's rule would have tamed, counted in the test) pixel-identical through the reader's answers and through
+    answers that never tame, at every scale; `ScanDataThatWouldStarveTheDecoderIsTamed` and
+    `RestartMarkersCountWholeTowardStarvation` pin the rule; an erased sector still decodes to an end
+    (`AnErasedSectorInTheScanIsTamed`). Data that still starves the decoder (pairs of FF 00) ends in 0004's error. `iPos` is held under the
     size so JPEGGetMoreData keeps asking to the last MCU; the decode gets the file's bytes for `2 x size / 2048 + 64`
     reads, then only zeros.
   - *Bounded exits.* `stop()` (Back, Home) and `endLocked` (leaving, sleep) share one deadline, `STOP_WAIT_MS` (20 s)
@@ -357,19 +387,52 @@ gray engine:
     `finishTask`, `StopTracker`), pinned with the three races (`TaskHandoff.*`: the exchange lost, a cover while
     stopping, a Back that gave up then Home detaching at once, and two threads racing 2,000 times). Every client hook
     is handed the runner; the inert client answers every hook; the runner checks the sticky stop after `onReplay`
-    and `prepareSlot` and before every slot. A task that never returns keeps its buffers and its registry entry for
+    and `prepareSlot` and before every slot. Sixth batch: the inert answers are neutral (`InertAnswers`: no slot
+    finishes the run, a cap clean never ends it, a paint not made is the stop's), because `detachTask` publishes the
+    inert client before its exchange and a hook in that window gets them even when the task then ends first and the
+    owner joins it and reads its end, which stays the stop's; the race test asserts from the task thread, on a lost
+    finish, that the inert client and the registry were already published. A task that never returns keeps its buffers and its registry entry for
     good (one LOG_ERR says so); the screens then show "Restart the device to run the lab again", fifth batch: without
     allocating their own working set (the detached runner still holds its model), clearing the notice to "Not run"
     when the task ends after all and allocating at Run. `preventAutoSleep` is `SweepControl::keepsAwake`.
-  - *The task watchdog (fifth batch).* The core's sdkconfig (every esp32s3 variant in the package) has
-    CONFIG_ESP_TASK_WDT_INIT, CONFIG_ESP_TASK_WDT_PANIC and a 5 s timeout, so a user task can panic it: the sweep task
-    subscribes for the length of a decode (`DecodeWatchdog`, `esp_task_wdt_add` / `esp_task_wdt_delete`, only when not
-    already subscribed) and feeds it at every row a decoder hands over (`yieldDuringDecode`); SDCardManager feeds a
-    subscribed task in its own long waits. A decoder that spins where no read or row reaches it resets the device
-    within 5 s. The timeout is the core's, shared by every watched task (the batch's ~10 s would mean
-    `esp_task_wdt_reconfigure` for the whole firmware, which this story does not touch). The restart status stays
-    for what the watchdog does not see: a task blocked in the SD card behind the Storage mutex (blocked, it is not
-    spinning, but its subscription would also fire after 5 s of a Storage wait; the SD card's own waits feed it).
+  - *The task watchdog (fifth batch; sixth: the gaps).* The x4pro env builds on the prebuilt `dio_opi` Arduino
+    variant (`board_build.arduino.memory_type = dio_opi`, no custom sdkconfig), whose
+    `framework-arduinoespressif32-libs/esp32s3/dio_opi/include/sdkconfig.h` has CONFIG_ESP_TASK_WDT_EN 1,
+    CONFIG_ESP_TASK_WDT_INIT 1, CONFIG_ESP_TASK_WDT_PANIC 1, CONFIG_ESP_TASK_WDT_TIMEOUT_S 5 and
+    CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0 1 (CPU1's idle task, the sweep task's core, is not checked); a
+    `-fsyntax-only` probe with the x4pro flags asserts the timeout and the panic setting through the reader's own
+    includes. The sweep task subscribes for the whole read of a picture, its walk included (`DecodeWatchdog` in
+    `readGrayImage`, only when not already subscribed), and feeds it on progress: every row a decoder hands over and
+    every read that gives file bytes (the walk's too), with a tick yielded at most every 250 ms of progress. Nothing in
+    the SD card feeds it (the fifth batch's note that SDCardManager does was wrong for this reader): every blocking file
+    call (open, read, seek, position, close: each waits on the Storage mutex with `portMAX_DELAY`, which another task
+    may hold for longer than 5 s, legitimately) runs in a gap (`DecodeWatchdog::Gap`: `esp_task_wdt_delete`, the call,
+    `esp_task_wdt_add`). ESP-IDF's task_wdt.c feeds the timer on a delete or an add when every other watched task has
+    reset, so reads alone would keep it fed: the gaps stop once the task has spent the timeout outside file calls
+    without progress (`WatchdogQuiet`, pinned by `TheWatchdogIsLeftForFileCallsOnlyWhileTheReadMakesProgress`), and
+    from then on file calls are watched too. A decoder that spins where no read or row reaches it resets the device
+    within 5 s; one that keeps reading without progress within about 10 s. A watchdog not configured (status
+    `ESP_ERR_INVALID_STATE`) or a join that fails is logged once a boot (`gray viewer: ...; decodes run unwatched`).
+    The timeout is the core's, shared by every watched task (the batch's ~10 s would mean `esp_task_wdt_reconfigure`
+    for the whole firmware, which this story does not touch). The restart status stays for what the watchdog does not
+    see: a task blocked in the SD card behind the Storage mutex (in a gap, unwatched).
+  - *Library patches (sixth batch).* Two findings inside the decoders are fixed at build time, the way upstream
+    patches JPEGDEC: `scripts/pngdec_patches/0001-refill-before-palette-copy.patch` (PNGdec copied a PLTE or tRNS out
+    of its 2 KiB file buffer without checking it was all there: an indexed PNG with 1.3 to 2 KB of iCCP or text
+    before its palette read past the decoder object; the patch refuses a PLTE over 768 or a tRNS over 256 bytes and
+    reads the buffer again from the chunk's data when it runs past the bytes read), applied to the x4pro env's
+    library copy by `scripts/patch_pngdec.py` (a new pre-script in that env's `extra_scripts`, ledger row 1) and to the
+    host test's copy by the CMake; `scripts/jpegdec_patches/0004-stop-a-bit-pointer-past-the-vlc-data.patch` (once a
+    MCU leaves the bit pointer past the data in the buffer, JPEGGetMoreData as released returned for good and every
+    later MCU read further past `ucFileBuf`; the patch puts the pointer at the data's end, sets JPEG_DECODE_ERROR, and
+    DecodeJPEG's MCU loop takes it into `iErr`, so the decode ends at the next check; a MCU over the 512 bytes kept
+    past the refill mark gets there: a crafted one of the longest codes, and a valid 4:2:0 picture of noise-like
+    detail at quality 100 too, whose MCUs run 510 to 600 bytes: such a file now shows "did not decode" after one
+    MCU's read past the data, inside the object, deferred with its exposure), applied with 0001 to 0003 by
+    upstream's `scripts/patch_jpegdec.py` in every env (so the converters' cover and chapter path gets it too) and by
+    the CMake. The host decoder test's JPEGDEC copy also has a test-only 64-byte `ucGuard` after `ucFileBuf`
+    (inserted by the CMake), poisoned for AddressSanitizer from open() to close(), and the bit-pointer canary checks
+    `iVLCOff <= iVLCSize`, not the buffer's 2 KiB.
 - **The decode window (review):** a stop during a decode waits for the task outside the panel. The reader checks the
   sink's stop before every output row, so the wait is normally one row's decode and SD read (bounded at 20 s in
   `stop` and `endLocked`, above). `endLocked` spins holding
@@ -411,7 +474,13 @@ gray engine:
 - a camera JPEG with an APP1, an APP2 ICC profile and maker notes (a few dozen buffer moves) paints, and the log
   shows the bytes after a motion photo's EOI as not read;
 - the watchdog, if a decoder spin can be produced: the device resets within about 5 s (the reset reason in the next
-  boot's log is the task watchdog), rather than the screen showing "Restart the device";
+  boot's log is the task watchdog), rather than the screen showing "Restart the device"; no `decodes run unwatched`
+  line at the first picture (the x4pro build's watchdog is configured);
+- the watchdog's gaps, if another task can be made to hold the SD card for several seconds while a picture opens:
+  the picture paints late, without a reset;
+- an indexed PNG with a long iCCP profile or text block before its palette (1.3 to 2 KB) paints with the right
+  colours; a JPEG with restart markers (a scanner's or Photoshop's line art saved with a restart interval) paints as
+  on a computer; a picture with an appended preview (a phone's MPF JPEG) paints the main picture;
 - after a detach (Home during a stuck run), reopening the screen shows "Restart the device to run the lab again"; if
   the task then ends, the Status (transition test: Run) row returns to "Not run" and Run works.
 
@@ -705,6 +774,88 @@ Device check: the five changed device files compile `-fsyntax-only` with the x4p
 Stack frames at `-Os` (`-fstack-usage`): `paintEntry` 176 B, `walkJpegSegments` 416 B (its 256-byte scan buffer),
 `jpegRead` 48 B; the walk runs before the decode, not under it.
 
+### Sixth batch (2026-10-18, on top of `e9bf676a`)
+
+All 12 items were patched. Every change is staged; nothing was committed, and no `pio` was run.
+
+1. **(medium) Watchdog around file calls:** `DecodeWatchdog` now spans the whole read (`readGrayImage`, before the
+   walk); every blocking `HalFile` / `Storage` call (open, read, seek, position, close) runs in a `Gap`
+   (`esp_task_wdt_delete`, the call, `esp_task_wdt_add`); progress (a row, a read or walk read that gave file bytes)
+   feeds it and yields a tick every 250 ms. A gap is skipped once the task has spent the timeout outside file calls
+   without progress (`WatchdogQuiet`, since a delete or add feeds the timer). A missing watchdog or a failed join or
+   rejoin is logged once a boot. The x4pro sdkconfig values (Design Notes) are recorded and checked with a
+   `-fsyntax-only` probe; the doc's and the code's claim that the card manager feeds the watchdog is gone. The EOI
+   search runs inside the watchdog with a 4 KB heap buffer, forward only (item 9, below; the item's "backward first"
+   and item 9's "prefer the forward search" conflict, and the forward search was taken).
+2. **(medium) Tame:** `jpegStarvationLength` counts FF D0-D7 whole; the rewrite touches only a 0xFF followed by
+   0xFF. `JPEG_LINE_ART_RESTARTS` (Pillow, 256 x 192, a restart marker after every block) decodes pixel-identical
+   through the reader's answers and through never-tamed answers at every scale, and the test counts the refills the
+   fifth batch's rule would have tamed (`RestartMarkersAreNeverTamed`).
+3. **(medium) PNGdec palette:** `scripts/pngdec_patches/0001`, applied by the new `scripts/patch_pngdec.py` in the
+   x4pro env (idempotent like `patch_jpegdec.py`; ledger row 1's text names it) and by the CMake, which now copies
+   and patches both decoders (`display_lab_patched_copy`). `APaletteAfterALongTextChunkIsReadWhole`: an indexed
+   PNG_PALETTE_256 with 1,000 to 1,900 bytes of tEXt before its 768-byte PLTE decodes to the pixels of the file without
+   the text, plus every cut and stop of the 1,500-byte case. `APaletteAfterIendNeverReachesPngdec`'s unwalked case
+   now holds too (the patch refuses a PLTE over 768).
+4. **(medium) Latch scope:** `answerJpegRead` (DecoderReads.h): the header branch only while open() runs and below
+   `headerEnd`, the cap counting header reads only; every other read is the decode's and never latched; open()'s reads
+   from `headerEnd` on get the decode's answer four times (`JPEG_OPEN_TOP_UPS`) and then a zeroed span and 0, so the
+   no-SOS test's parse still ends (a past-the-header variant added); `readJpeg` returns Open when a header read was
+   dropped, whatever open() returned. Pinned by `OnlyOpensReadsBeforeTheHeadersEndAreLatched`,
+   `JpegHeaderReadsAreDroppedAtAStopAFailureOrTheirCap`.
+5. **(medium) JPEGDEC 0004:** `scripts/jpegdec_patches/0004-stop-a-bit-pointer-past-the-vlc-data.patch` (the iDelta < 0
+   branch sets `iVLCOff = iVLCSize`, `bb.pBuf = ucFileBuf + iVLCSize`, `iError = JPEG_DECODE_ERROR`; DecodeJPEG copies
+   it into `iErr` after the refill call, and both MCU loops stop on `iErr`; `iError` is 0 at decode start, open()
+   clearing the object). Applies after 0001-0003 to a fresh clone (verified). Colour fixtures `JPEG_NOISE_420` (48 x
+   48) and `JPEG_NOISE_444` (32 x 32), quality 100, through every cut, every stop and the whole decode at every scale;
+   the canary checks `iVLCOff <= iVLCSize`. Found while proving the patch: valid 4:2:0 colour noise at quality 100
+   reaches it (8 of 8 Pillow 320 x 320 files, and `JPEG_NOISE_420_OUTRUN`, 64 x 64): such a file now ends in a decode
+   error, which is the deferred entry; `fixtures::longCodeColourJpeg` (the longest standard codes) does too.
+6. **(low) DHT index:** class and index each 0 or 1; DC 0x02 and 0x03 and AC 0x12 cases; the Complete DHT cases use
+   0x01 and 0x11, which JPEG_BASELINE does not redefine, so JPEGDEC builds them (`DHT AC 256 codes` and `DHT AC two
+   1-bit codes` added).
+7. **(low) Tests:** `reads.decodeReads > 0` (decode() only, reset at `startDecode`) in the noise tests, and `== 0`
+   for the small samples; `JPEG_PROGRESSIVE_512` (flat 8 x 8 blocks of random gray, a DC scan of about 3 KB) refills
+   inside decode() at an eighth; `TheEoiSearchCarriesAnFfAcrossItsReads`; the race test asserts from the task thread
+   on a lost finish that the inert client and the registry were published; `InertAnswers` are neutral and pinned
+   (`TheInertAnswersLeaveTheRunsEndToTheStop`); `StopTracker::joined` resetting the give-up is pinned.
+8. **(low) Guard:** the CMake inserts `uint8_t ucGuard[64]` after `ucFileBuf` in the build tree's JPEGDEC.h (a
+   static_assert keeps it whole ASan granules); the test poisons it in its open callback (after JPEGDEC's memset) and
+   unpoisons it after close. The mutation run's span-only drop is now an AddressSanitizer use-after-poison.
+9. **(low) EOI:** the forward search only, no tail shortcut; an appended picture is no longer handed to the decoder.
+10. **(low) Walk buffer:** `walkJpegSegments(..., extent, search, searchBytes)`; the reader allocates
+    `JPEG_EOI_SEARCH_BYTES` (4 KB) on the heap for the JPEG walk; a null or small buffer falls back to the walk's
+    17 bytes. Frames at `-Os`: `walkJpegSegments` 160 B (was 416), `readJpeg` 240 B and `readPng` 224 B (now
+    `noinline`, so the two decoders' contexts do not share `readGrayImage`'s frame, 80 B).
+11. **(low) Shared reads:** `lib/GameDisplayLab/DecoderReads.h` (`DecoderReads`, `readUnderAllowance`,
+    `answerPngRead`, `answerSeek`, `answerJpegRead`, `answerJpegSeek`, `WatchdogQuiet`); the reader adapts `HalFile`
+    (`ReaderFile`, with the gaps), the decoder test its fake file (`FakeAccess`); five pure tests in
+    `test_image_rows.cpp`.
+12. **(low) Comments and audit:** `ImageRead::Open`, `Format` and `NoEnd`; the CMake's "Three UBSan checks"; the
+    watchdog comments; ImageRows.h's layer count. Audit: in both screens the picture (`picture`, `scene`), the row
+    scratch (`grayRow`, `shadeRow`) and the model are read only by the task's hooks, after Run allocated them; Rows,
+    render, loop and reap read the runner's stats and the screens' own text only.
+
+Mutation run (`vg6/mut6.py`, 18 mutants of the walk, the answers, DecoderReads.h and the watchdog's quiet time):
+every one fails the suite. The decoder tests catch the walk's SOS, DQT, DHT and IFD bounds and the DC index (as
+verdict mismatches in the shared cases), the unbounded open top-ups and the reset of decode() reads; the span-only
+drop through the guard; the pure tests catch the rest (EOI carry and tail shortcut, every form of the tame, the
+latch's scope, the header cap, progress on reads, the quiet limit).
+
+Device check: `GrayImageReader.cpp`, `GrayRunner.cpp`, `GrayViewerActivity.cpp` and `TransitionTestActivity.cpp`
+compile `-fsyntax-only` with the x4pro toolchain, no errors or warnings; the watchdog probe passes. The fork CI's
+decoder job was simulated with fresh clones of PNGdec 1.1.6 and JPEGDEC: all five patches applied to the build
+tree's copies, 20 of 20 passed.
+
+Reachability of what remains (the finishing rule):
+
+| Remaining | Valid file | Damaged file | Press | Crafted file |
+| --- | --- | --- | --- | --- |
+| A JPEG MCU over JPEGDEC's 512-byte margin (deferred) | 4:2:0 colour noise at quality 100: "did not decode", no hang, no crash | not seen (zeros, erased sectors and cuts decode to an end) | no | the longest codes: one MCU's read up to about 730 B past the buffer, inside the object, then "did not decode" |
+| A detached task inside a stuck SD read holds the card's mutex (deferred, fifth batch) | no | a card whose read never returns | Home or sleep then waits behind it | no |
+| A decoder spin no read or row reaches | no | none known | no | none known; the watchdog resets within 5 s |
+| A decoder reading on without progress | no | none known (every read path is capped) | no | none known; the watchdog resets within about 10 s |
+
 ## Plan Change Log
 
 ## Review Triage Log
@@ -836,13 +987,13 @@ What was built:
 
 Host verification (this commit's staged tree):
 
-- **Host suite:** `ctest` 2345 of 2345 passed after the fifth batch (2332 after the fourth, 2321 after the third,
+- **Host suite:** `ctest` 2356 of 2356 passed after the sixth batch (2345 after the fifth, 2332 after the fourth, 2321 after the third,
   2298 after the follow-up batch, 2290 after the review batch, 2278 before it; dlab-g1's merge had 2,236). The display
-  lab binary has 264 tests; `test_image_decoders` has 17, under AddressSanitizer and UndefinedBehaviorSanitizer (built
+  lab binary has 272 tests; `test_image_decoders` has 20, under AddressSanitizer and UndefinedBehaviorSanitizer (built
   here from `.pio/libdeps`, and by the fork CI's Display lab decoders job, simulated here with fresh clones; a
-  checkout without the sources builds 2328).
+  checkout without the sources builds 2336).
 - **Fast checks:**
-  - `scripts/check_layers.py`: passed, 884 edges.
+  - `scripts/check_layers.py`: passed, 887 edges.
   - `check_layers_test.py`: 54 tests OK, the new decoder-edge test included.
   - `scripts/check_upstream_touches.py`: PASS. `english.yaml` is ledger row 2.
   - `./bin/clang-format-fix`, run twice: the second run changed nothing, and nothing changed outside these paths.
@@ -858,9 +1009,9 @@ Matrix test audit:
 | Run | `GrayPictureHold.PaintSettlesThenTheMarkerGoesOutThenHolds`, `GrayPaint.TheChartIsTheQuantisedChart` |
 | Next while painting | `SweepControl.APressPausesAndTheNextResumes`, `TwoPressesBeforeTheTaskServesThemCancelOut` |
 | Next while painting / holding | `SweepControl.APressWhileHeldIsTheNextPicture`, `APressWhileAReplayIsPendingIsIgnored`, `TheViewersFirstReplayMakesPressesWait`, `APressWithoutAHoldToggles`, `AResumeThenAPauseBeforeTheTaskServesKeepsTheHold`, `AHoldBetweenTheOwnersLookAndItsWriteCannotDropAPress`, the wrap in `ImageList.FilesAreListedByNameAfterTheChart` |
-| Truncated or malformed file | `PngChunks.*` (9), `JpegSegments.*` (8, `EverySyntheticCase` covering 64 headers), `DecoderReads.*` (8), `ImageDecoders.*` (17, where the decoders' sources are present, and in the fork CI) |
+| Truncated or malformed file | `PngChunks.*` (9), `JpegSegments.*` (9, `EverySyntheticCase` covering 69 headers), `DecoderReads.*` (14), `ImageDecoders.*` (20, where the decoders' sources are present, and in the fork CI) |
 | Previous/Back | `SweepControl.StopIsStickyAndGatesEntry` (existing) |
-| Stop past its bound | the decisions in `TaskHandoff.*` (5); the runner's wait, detach and reap themselves device-only (FreeRTOS); the awake decision in `SweepControl.RunKeepsTheDeviceAwakeAndAHoldOnlyForItsBound`; the stop the reads see in `ImageDecoders.AStopEndsEitherDecodeAndItsReads`, `PngdecReturnsAtAStopOnEveryRead`, `JpegdecReturnsAtAStopOnEveryRead` |
+| Stop past its bound | the decisions in `TaskHandoff.*` (6, the inert answers' neutrality included); the watchdog's gaps in `DecoderReads.TheWatchdogIsLeftForFileCallsOnlyWhileTheReadMakesProgress`; the runner's wait, detach and reap themselves device-only (FreeRTOS); the awake decision in `SweepControl.RunKeepsTheDeviceAwakeAndAHoldOnlyForItsBound`; the stop the reads see in `ImageDecoders.AStopEndsEitherDecodeAndItsReads`, `PngdecReturnsAtAStopOnEveryRead`, `JpegdecReturnsAtAStopOnEveryRead` |
 | Unreadable file | `ImageRows.SizeLimitsAreTheConverters`, `PngDepthsAreTheConverters`, `PngColourTypesThatDoNotExistAreRefused`, `PngBufferNeedIsTheConverters` (the reader's Format checks), `PngChunks.AFailedReadIsSaidSo`; the Status text is device-only |
 | Dither | the `GrayQuantiser.*` tests at 4 and 7 levels |
 | Fit | `ImageRows.FitKeepsTheAspectAndCentres`, `FitAlwaysInsideTheScreen`, `FitAxis*`, `TapsAreNearestWhenShrinkingAndBlendWhenEnlarging`, `BlockSpansPartitionTheOutput`, `RowsReadyAtPartitionTheOutputOnceTheirRowsHaveArrived`, `SampleBlockIs*`, `BlendsCrossStripAndBlockSeams`, `SeamsHoldForJpegdecShapedBlocks`, `SeamKeeperHandsOutTheRowAboveAndTheColumnLeft`, `JpegScaleAndOptionForAFit` |
@@ -868,9 +1019,9 @@ Matrix test audit:
 | Session cap mid-paint | `GrayPictureHold.ASessionCapCleanMidMarkerPaintsAgain` |
 | Cover, sleep, Home | the shared runner, so the transition test's existing `SweepControl` tests apply |
 
-Device-only and not host-tested: the reader's glue (its HalFile callbacks, the sink into the model) and the runner's
-wait, detach and reap. The decoders themselves are host-tested against the read answers, which the test's callbacks
-apply exactly as the reader's do (`test_image_decoders`, here and in the fork CI).
+Device-only and not host-tested: the reader's glue (its `HalFile` adapter and the watchdog calls, the sink into the
+model) and the runner's wait, detach and reap. The decoders themselves are host-tested through the reader's own
+callback logic (`DecoderReads.h`, which both compile; `test_image_decoders`, here and in the fork CI).
 
 Firmware figures: unmeasured (orchestrator builds after review). Not run by this agent: `pio run -e x4pro`,
 `-e default`, `-e sticky`, `pio check -e x4pro`, and the flash gate with D6 (expect +0).
@@ -882,14 +1033,16 @@ Residual risks:
 - A multi-second decode runs on the sweep task: a stop normally waits for one output row (at most 20 s, then the
   task left undeleted or detached), and the cover check only ends the run at the next scan. A detached task keeps
   its runner's PSRAM (the model, about 1.2 MB at 800x480) until it ends, and no run starts meanwhile.
-- The task watchdog's 5 s is the core's: a decode subscribed to it that waits more than 5 s on the Storage mutex
-  without the SD card's own feeding (another task holding the mutex that long) resets the device. Nothing in the
-  firmware holds it that long but a stuck read, which is the case the reset is for.
-- The walk reads a JPEG forward to its EOI when the file does not end in one (a motion photo): up to the whole file
-  once more, a few seconds for a large one on the SD card.
-- With corrupt entropy data a MCU can move JPEGDEC's bit pointer past `ucFileBuf`'s end before the next refill (up
-  to about 1.3 KB for a 4:2:0 MCU of maximum-length codes): the read stays inside the JPEGDEC object (its Huffman
-  tables follow the buffer) and is garbage in, garbage out; the converters share it.
+- The task watchdog's 5 s is the core's. The task leaves it around every blocking file call, so a long wait on the
+  Storage mutex is not a reset; a task stuck in such a call is not watched (the restart status covers it).
+- The walk reads every JPEG forward from SOS to its first EOI (sixth batch: no tail shortcut), so the scan is read
+  twice, once by the walk in 4 KB reads and once by the decoder: about a second more for a multi-megabyte photo on
+  the SD card, Back working throughout.
+- A MCU over JPEGDEC's 512-byte margin past its refill mark (valid 4:2:0 colour at quality 100 with noise-like
+  detail; a crafted file of the longest codes) ends the decode in an error after one MCU's read past the data, inside
+  the object (the fork's JPEGDEC patch 0004, every env): deferred, with its exposure.
+- JPEGDEC 0004 lives in `scripts/jpegdec_patches`, which upstream's `patch_jpegdec.py` applies in every env: the
+  release images' JPEGDEC changes by the patch (both of the flash gate's images carry it, so its delta stays +0).
 - A detached task stuck inside an SD read holds the Storage mutex: the next card access after Home or sleep waits
   behind it for as long as that read lasts (reopening the lab freezes, sleep waits without a bound); a timed Storage
   lock on the sleep path is a follow-up outside this story.

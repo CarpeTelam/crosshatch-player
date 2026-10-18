@@ -17,22 +17,27 @@ using GameDisplayLab::Shade;
 namespace {
 
 // The client a detached runner answers to (endLocked gave up on its task, and the screen that was its client is
-// gone): every hook is answered here, whatever the task asks next the run ends, and nothing of the screen is touched.
+// gone): every hook is answered here with GameDisplayLab::InertAnswers, which change nothing about how the run ends
+// (the stop asked before every detach ends it, Stopped), and nothing of the screen is touched.
 class DetachedClient final : public GrayRunner::Client {
  public:
-  bool onReplay(GrayRunner&, GrayModel&, const GrayPreset&) override { return false; }
+  using Answers = GameDisplayLab::InertAnswers;
+  bool onReplay(GrayRunner&, GrayModel&, const GrayPreset&) override { return Answers::replayPainted; }
   void onPaused(GrayRunner&) override {}
-  bool keepHolding(GrayRunner&) override { return false; }
+  bool keepHolding(GrayRunner&) override { return Answers::keepHolding; }
   void onResume(GrayRunner&, GrayModel&, const GrayPreset&) override {}
-  bool onCapClean(GrayRunner&) override { return false; }
-  bool prepareSlot(GrayRunner&, GrayModel&, uint32_t, uint32_t, bool, const GrayPreset&) override { return false; }
+  bool onCapClean(GrayRunner&) override { return Answers::capCleanGoesOn; }
+  bool prepareSlot(GrayRunner&, GrayModel&, uint32_t, uint32_t, bool, const GrayPreset&) override {
+    return Answers::slotPrepared;
+  }
   const GrayPreset& slotPreset(GrayRunner&, const GrayPreset& preset) override { return preset; }
   SlotVerdict afterSlot(GrayRunner&, const GameDisplayLab::SlotResult&, uint32_t, uint32_t, uint32_t) override {
     SlotVerdict verdict;
-    verdict.finished = true;
+    verdict.reapply = Answers::slotReapplies;
+    verdict.finished = Answers::slotFinishesRun;
     return verdict;
   }
-  bool clockStill(const GrayRunner&) const override { return true; }
+  bool clockStill(const GrayRunner&) const override { return Answers::clockStill; }
 };
 DetachedClient detachedClient;
 

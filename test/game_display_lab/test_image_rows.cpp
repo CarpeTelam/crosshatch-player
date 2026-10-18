@@ -1,7 +1,8 @@
 // The gray viewer's decode arithmetic (lib/GameDisplayLab/ImageRows, story dlab-g3): which files the Image row lists
 // and their order, the converters' size limits and PNG checks, a PNG row to 8-bit gray as the converter converts one
 // (alpha on white), JPEGDEC's coarse scale, the fit to the logical screen (the fit and the I/O matrix's Fit row), the
-// seams between decoder blocks, the PNG and JPEG layout walks, and the answers the reader gives a decoder's reads.
+// seams between decoder blocks, the PNG and JPEG layout walks, the answers the reader gives a decoder's reads, and the
+// bookkeeping around them (DecoderReads.h: which answer a read gets, the caps, the latch, the watchdog's quiet time).
 
 #include <gtest/gtest.h>
 
@@ -14,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "DecoderReads.h"
 #include "ImageRows.h"
 #include "image_fixtures.h"
 
@@ -652,10 +654,15 @@ FileLayout walkPng(const std::vector<uint8_t>& file, const Feed& feed = {}, Walk
       file, feed, extent);
 }
 
-FileLayout walkJpeg(const std::vector<uint8_t>& file, const Feed& feed = {}, WalkExtent* extent = nullptr) {
-  return walkWith([](uint32_t size, auto& readAt, auto& stopped,
-                     WalkExtent* e) { return walkJpegSegments(size, readAt, stopped, e); },
-                  file, feed, extent);
+// The JPEG walk with the reader's EOI search buffer (JPEG_EOI_SEARCH_BYTES), or `searchBytes` of one.
+FileLayout walkJpeg(const std::vector<uint8_t>& file, const Feed& feed = {}, WalkExtent* extent = nullptr,
+                    const size_t searchBytes = JPEG_EOI_SEARCH_BYTES) {
+  std::vector<uint8_t> search(searchBytes);
+  return walkWith(
+      [&search](uint32_t size, auto& readAt, auto& stopped, WalkExtent* e) {
+        return walkJpegSegments(size, readAt, stopped, e, search.empty() ? nullptr : search.data(), search.size());
+      },
+      file, feed, extent);
 }
 
 template <size_t N>
@@ -815,18 +822,56 @@ TEST(JpegSegments, TheWalkedSizeEndsAtTheFirstEoiAfterSos) {
     EXPECT_EQ(walkJpeg(longer, {.maxReads = 256}, &extent), FileLayout::Complete);
     EXPECT_EQ(extent.end, file.size());
   }
-  // A file whose last two bytes are FF D9 (a second picture appended) is taken whole: the tail is checked first.
+  // A second picture appended (an MPF preview) ends the file in FF D9 too: the first picture alone is the decoder's.
   auto twice = file;
   twice.insert(twice.end(), JPEG_PROGRESSIVE, JPEG_PROGRESSIVE + sizeof(JPEG_PROGRESSIVE));
-  WalkExtent whole;
-  EXPECT_EQ(walkJpeg(twice, {}, &whole), FileLayout::Complete);
-  EXPECT_EQ(whole.end, twice.size());
-  // A big tail is read forward once, in 256-byte reads, bounded by the file.
+  WalkExtent first;
+  EXPECT_EQ(walkJpeg(twice, {}, &first), FileLayout::Complete);
+  EXPECT_EQ(first.end, file.size());
+  // The search reads forward in reads of the caller's buffer and stops at the EOI: a big tail is not read (the header
+  // takes 17 reads, the scan's 7.6 KB two more).
   auto big = bytes(JPEG_NOISE_BASELINE);
   big.insert(big.end(), 100000, 0x00);
   WalkExtent extent;
-  EXPECT_EQ(walkJpeg(big, {.maxReads = 64}, &extent), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(big, {.maxReads = 19}, &extent), FileLayout::Complete);
   EXPECT_EQ(extent.end, sizeof(JPEG_NOISE_BASELINE));
+  // Without an EOI the whole rest is read once, JPEG_EOI_SEARCH_BYTES a read.
+  big.erase(big.begin() + static_cast<long>(sizeof(JPEG_NOISE_BASELINE)) - 2,
+            big.begin() + static_cast<long>(sizeof(JPEG_NOISE_BASELINE)));
+  const int rest = static_cast<int>(big.size()) - 330;
+  const int searchReads =
+      (rest + static_cast<int>(JPEG_EOI_SEARCH_BYTES) - 1) / static_cast<int>(JPEG_EOI_SEARCH_BYTES);
+  EXPECT_EQ(walkJpeg(big, {.maxReads = 17 + searchReads}), FileLayout::NoEnd);
+}
+
+TEST(JpegSegments, TheEoiSearchCarriesAnFfAcrossItsReads) {
+  // FF at the end of one read and D9 at the start of the next: found, at every buffer size and every split.
+  const auto file = bytes(JPEG_BASELINE);
+  const size_t sosEnd = 328;
+  for (const size_t searchBytes : {size_t{17}, size_t{64}, size_t{256}, JPEG_EOI_SEARCH_BYTES}) {
+    for (size_t split = 1; split <= searchBytes; ++split) {
+      // Scan bytes (no FF) up to the split, then FF D9.
+      std::vector<uint8_t> f(file.begin(), file.begin() + static_cast<long>(sosEnd));
+      f.resize(sosEnd + split - 1, 0x5A);
+      f.insert(f.end(), {0xFF, 0xD9, 0x00, 0x00});
+      WalkExtent extent;
+      ASSERT_EQ(walkJpeg(f, {.maxReads = 64}, &extent, searchBytes), FileLayout::Complete)
+          << searchBytes << " split " << split;
+      EXPECT_EQ(extent.end, sosEnd + split + 1) << searchBytes << " split " << split;
+    }
+  }
+  // An FF ending a read followed by anything else is no EOI; D9 alone at a read's start after no FF is none either.
+  std::vector<uint8_t> f(file.begin(), file.begin() + static_cast<long>(sosEnd));
+  f.resize(sosEnd + 16, 0x5A);
+  f.push_back(0xFF);
+  f.push_back(0x00);
+  f.resize(sosEnd + 33, 0x5A);
+  f.push_back(0xD9);
+  EXPECT_EQ(walkJpeg(f, {.maxReads = 64}, nullptr, 17), FileLayout::NoEnd);
+  // A buffer smaller than the walk's own (or none) uses its own 17 bytes.
+  f.insert(f.end(), {0xFF, 0xD9});
+  EXPECT_EQ(walkJpeg(f, {.maxReads = 64}, nullptr, 0), FileLayout::Complete);
+  EXPECT_EQ(walkJpeg(f, {.maxReads = 64}, nullptr, 4), FileLayout::Complete);
 }
 
 TEST(JpegSegments, AScanCutShortHasNoEnd) {
@@ -839,9 +884,9 @@ TEST(JpegSegments, AScanCutShortHasNoEnd) {
   // The forward search stops when asked, and says so when a read fails.
   auto big = bytes(JPEG_NOISE_BASELINE);
   big.resize(big.size() - 2);
-  big.insert(big.end(), 5000, 0x00);
+  big.insert(big.end(), 50000, 0x00);
   EXPECT_EQ(walkJpeg(big, {.stopAfter = 10, .maxReads = 64}), FileLayout::Stopped);
-  EXPECT_EQ(walkJpeg(big, {.failOnRead = 25, .maxReads = 64}), FileLayout::ReadFailed);
+  EXPECT_EQ(walkJpeg(big, {.failOnRead = 12, .maxReads = 64}), FileLayout::ReadFailed);
 }
 
 TEST(JpegSegments, TooManyBufferMovesAreRefused) {
@@ -974,6 +1019,20 @@ TEST(DecoderReads, JpegFilteringIsCountedAsJpegdecFilters) {
   EXPECT_EQ(filtered({}), 0);
 }
 
+TEST(DecoderReads, RestartMarkersCountWholeTowardStarvation) {
+  const auto starvation = [](std::initializer_list<uint8_t> bytes) {
+    const std::vector<uint8_t> v(bytes);
+    return jpegStarvationLength(v.data(), static_cast<int32_t>(v.size()));
+  };
+  EXPECT_EQ(starvation({1, 2, 3}), 3);
+  EXPECT_EQ(starvation({1, 0xFF, 0x00, 2}), 3);  // a stuffed 0xFF: as filtered
+  for (uint8_t rst = 0xD0; rst <= 0xD7; ++rst) EXPECT_EQ(starvation({1, 0xFF, rst, 2}), 4) << int{rst};
+  EXPECT_EQ(starvation({1, 0xFF, 0xCF, 2}), 2);  // other markers: as filtered
+  EXPECT_EQ(starvation({1, 0xFF, 0xD8, 2}), 2);
+  EXPECT_EQ(starvation({0xFF, 0xFF, 0xFF, 0xFF}), 0);
+  EXPECT_EQ(starvation({1, 2, 0xFF}), 2);
+}
+
 TEST(DecoderReads, ScanDataThatWouldStarveTheDecoderIsTamed) {
   std::vector<uint8_t> span(1800);
   // Real scan data, a few stuffed 0xFF and a restart marker: untouched.
@@ -985,20 +1044,43 @@ TEST(DecoderReads, ScanDataThatWouldStarveTheDecoderIsTamed) {
   const std::vector<uint8_t> real = span;
   answerJpegDecodeRead(span.data(), 1800, 1800);
   EXPECT_EQ(span, real);
-  // An erased sector (all 0xFF) would filter to nothing: every 0xFF becomes 0, and it filters whole.
+  // An erased sector (all 0xFF) would filter to nothing: each 0xFF before another becomes 0, the last waits.
   std::fill(span.begin(), span.end(), 0xFF);
   answerJpegDecodeRead(span.data(), 1800, 1800);
-  EXPECT_EQ(jpegFilteredLength(span.data(), 1800), 1800);
-  // Pairs of 0xFF 00 would filter to half, under the high-water mark and a MCU's margin from a short base.
+  EXPECT_EQ(jpegFilteredLength(span.data(), 1800), 1799);
+  EXPECT_EQ(span[1799], 0xFF);
+  // A run of 0xFF ending in a stuffed 0xFF 00, a restart marker or other data keeps its last 0xFF and what follows.
+  for (const uint8_t after : {uint8_t{0x00}, uint8_t{0xD5}, uint8_t{0x12}}) {
+    std::fill(span.begin(), span.end(), 0x5A);
+    std::fill(span.begin() + 10, span.begin() + 1200, 0xFF);
+    span[1200] = after;
+    answerJpegDecodeRead(span.data(), 1800, 1800);
+    for (size_t i = 10; i < 1199; ++i) ASSERT_EQ(span[i], 0) << i;
+    EXPECT_EQ(span[1199], 0xFF);
+    EXPECT_EQ(span[1200], after);
+    EXPECT_EQ(span[1201], 0x5A);
+  }
+  // Pairs of 0xFF 00 filter to half but are never touched (stuffed bytes are data; 0004 ends a decode they starve).
   for (size_t i = 0; i < span.size(); ++i) span[i] = i % 2 == 0 ? 0xFF : 0x00;
+  const std::vector<uint8_t> stuffed = span;
   answerJpegDecodeRead(span.data(), 1800, 1800);
-  EXPECT_EQ(jpegFilteredLength(span.data(), 1800), 1800);
-  // The same pairs topping up a buffer that already holds 1,948 bytes leave it over the mark and margin: untouched.
-  std::vector<uint8_t> top(100);
-  for (size_t i = 0; i < top.size(); ++i) top[i] = i % 2 == 0 ? 0xFF : 0x00;
-  const std::vector<uint8_t> pairs = top;
+  EXPECT_EQ(span, stuffed);
+  // Flat line art with a restart marker after every few bytes: under the mark as filtered, but the markers count
+  // whole, so it is never tamed, even with runs of 0xFF 0xFF between them.
+  for (size_t i = 0; i < span.size(); ++i) {
+    const size_t at = i % 4;
+    span[i] = at == 2 ? 0xFF : at == 3 ? static_cast<uint8_t>(0xD0 + (i / 4) % 8) : 0x00;
+  }
+  span[0] = 0xFF;
+  span[1] = 0xFF;
+  const std::vector<uint8_t> restarts = span;
+  answerJpegDecodeRead(span.data(), 1800, 1800);
+  EXPECT_EQ(span, restarts);
+  // An erased run topping up a buffer that already holds 1,948 bytes leaves it over the mark and margin: untouched.
+  std::vector<uint8_t> top(100, 0xFF);
+  const std::vector<uint8_t> erased = top;
   answerJpegDecodeRead(top.data(), 100, 100);
-  EXPECT_EQ(top, pairs);
+  EXPECT_EQ(top, erased);
 }
 
 TEST(DecoderReads, JpegdecsPositionStaysUnderItsSize) {
@@ -1016,6 +1098,203 @@ TEST(DecoderReads, TheReadCapsCoverAWholeParseOrDecode) {
   EXPECT_EQ(decoderReadCap(66713), 2u * 32 + 64);
   EXPECT_EQ(jpegHeaderReadCap(0), 4u);
   EXPECT_EQ(jpegHeaderReadCap(MAX_JPEG_WINDOW_MOVES), MAX_JPEG_WINDOW_MOVES + 4);
+}
+
+// A file for DecoderReads.h's callbacks: `bytes`, the position, a read that fails or gives `shortBy` fewer bytes than
+// asked, a refused seek past the end, the stop, and the progress counted.
+struct MemFile {
+  std::vector<uint8_t> bytes;
+  uint32_t pos = 0;
+  bool open = true;
+  bool fail = false;
+  int32_t shortBy = 0;
+  bool stop = false;
+  int progressed = 0;
+
+  bool isOpen() const { return open; }
+  uint32_t position() { return pos; }
+  int32_t read(uint8_t* buf, const int32_t n) {
+    if (fail) return -1;
+    int32_t got = 0;
+    while (got < n - shortBy && pos < bytes.size()) buf[got++] = bytes[pos++];
+    return got;
+  }
+  bool seek(const uint32_t at) {
+    if (at > bytes.size()) return false;
+    pos = at;
+    return true;
+  }
+  bool stopped() const { return stop; }
+  void progress() { ++progressed; }
+};
+
+MemFile memFile(const size_t size) {
+  MemFile f;
+  f.bytes.resize(size);
+  for (size_t i = 0; i < size; ++i) f.bytes[i] = static_cast<uint8_t>(1 + i % 200);
+  return f;
+}
+
+DecoderReads readsOf(const uint32_t walked, const uint32_t headerEnd, const uint32_t moves = 0) {
+  DecoderReads reads;
+  reads.start(WalkExtent{walked, headerEnd, moves});
+  return reads;
+}
+
+TEST(DecoderReads, PngReadsAreTheFilesBytesThenFiller) {
+  MemFile f = memFile(100);
+  DecoderReads reads = readsOf(90, 0);
+  std::array<uint8_t, 64> buf{};
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 64), 64);
+  EXPECT_EQ(buf[63], 64);
+  EXPECT_EQ(f.progressed, 1);
+  // 26 bytes left of the walked 90, then filler; at the walked size, filler only and no progress.
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 64), 64);
+  EXPECT_EQ(buf[25], 90);
+  EXPECT_EQ(buf[26], 0xFF);
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 64), 64);
+  EXPECT_EQ(buf[0], 0xFF);
+  EXPECT_EQ(f.progressed, 2);
+  // A refused seek gives nothing until a seek succeeds; a failed read, a stop or no handle give filler.
+  EXPECT_EQ(answerSeek(f, reads, 500), -1);
+  EXPECT_TRUE(reads.seekFailed);
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 8), 8);
+  EXPECT_EQ(buf[0], 0xFF);
+  EXPECT_EQ(answerSeek(f, reads, 10), 10);
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 8), 8);
+  EXPECT_EQ(buf[0], 11);
+  EXPECT_EQ(answerSeek(f, reads, -1), -1);
+  f.pos = 0;
+  reads.seekFailed = false;
+  f.stop = true;
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 8), 8);
+  EXPECT_EQ(buf[0], 0xFF);
+  f.stop = false;
+  f.fail = true;
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 8), 8);
+  EXPECT_EQ(buf[0], 0xFF);
+  f.open = false;
+  EXPECT_EQ(answerPngRead(f, reads, buf.data(), 8), 8);
+  EXPECT_EQ(answerSeek(f, reads, 0), -1);
+}
+
+TEST(DecoderReads, OnlyOpensReadsBeforeTheHeadersEndAreLatched) {
+  std::vector<uint8_t> parse(JPEG_PARSE_BUFFER, 0xD8);
+  int32_t iPos = 0;
+  // A header read the file gives short: dropped, the parse buffer zeroed, latched.
+  MemFile f = memFile(5000);
+  DecoderReads reads = readsOf(5000, 3000);
+  reads.startJpegOpen();
+  f.shortBy = 1;
+  EXPECT_EQ(answerJpegRead(f, reads, parse.data(), JPEG_PARSE_BUFFER, 5000, iPos), 0);
+  EXPECT_TRUE(reads.headerFailed);
+  for (const uint8_t b : parse) ASSERT_EQ(b, 0);
+  // Every later header read is dropped too, even one the file would give whole.
+  f.shortBy = 0;
+  f.pos = 2048;
+  EXPECT_EQ(answerJpegRead(f, reads, parse.data() + 1024, 1024, 5000, iPos), 0);
+  // open()'s top-up at the header's end is the decode's: never latched, the file's bytes, the whole span told.
+  f.pos = 3000;
+  std::fill(parse.begin(), parse.end(), 0xD8);
+  EXPECT_EQ(answerJpegRead(f, reads, parse.data() + 1024, 1024, 5000, iPos), 1024);
+  EXPECT_EQ(parse[1024], f.bytes[3000]);
+  EXPECT_EQ(iPos, 4024);
+  // In decode() every read is the decode's, one before the header's end too.
+  reads.startDecode();
+  f.pos = 100;
+  EXPECT_EQ(answerJpegRead(f, reads, parse.data(), 64, 5000, iPos), 64);
+  EXPECT_EQ(parse[0], f.bytes[100]);
+  EXPECT_EQ(reads.decodeReads, 1u);
+}
+
+TEST(DecoderReads, JpegHeaderReadsAreDroppedAtAStopAFailureOrTheirCap) {
+  // Reads into the parse buffer's last 64 bytes (a dropped read zeroes the whole buffer before them).
+  std::vector<uint8_t> parse(JPEG_PARSE_BUFFER, 0xD8);
+  uint8_t* const tail = parse.data() + JPEG_PARSE_BUFFER - 64;
+  int32_t iPos = 0;
+  for (int why = 0; why < 3; ++why) {
+    MemFile f = memFile(5000);
+    DecoderReads reads = readsOf(5000, 3000, 2);
+    reads.startJpegOpen();
+    if (why == 0) f.stop = true;
+    if (why == 1) f.fail = true;
+    if (why == 2) reads.seekFailed = true;
+    EXPECT_EQ(answerJpegRead(f, reads, tail, 64, 5000, iPos), 0) << why;
+    EXPECT_TRUE(reads.headerFailed) << why;
+  }
+  {
+    // No handle (the open callback failed): taken as at the walked size, zeros.
+    MemFile f = memFile(5000);
+    f.open = false;
+    DecoderReads reads = readsOf(5000, 3000, 2);
+    reads.startJpegOpen();
+    EXPECT_EQ(answerJpegRead(f, reads, tail, 64, 5000, iPos), 64);
+    EXPECT_EQ(tail[0], 0);
+    EXPECT_EQ(iPos, 4999);
+  }
+  // The cap: the walk's buffer moves and four header reads are the file's, the next is dropped.
+  MemFile f = memFile(5000);
+  DecoderReads reads = readsOf(5000, 3000, 2);
+  reads.startJpegOpen();
+  for (uint32_t i = 0; i < jpegHeaderReadCap(2); ++i) {
+    f.pos = 0;
+    EXPECT_EQ(answerJpegRead(f, reads, tail, 64, 5000, iPos), 64) << i;
+  }
+  EXPECT_FALSE(reads.headerFailed);
+  f.pos = 0;
+  EXPECT_EQ(answerJpegRead(f, reads, tail, 64, 5000, iPos), 0);
+  EXPECT_TRUE(reads.headerFailed);
+}
+
+TEST(DecoderReads, JpegDecodeReadsAreTheFilesForTheirCapThenZeros) {
+  MemFile f = memFile(4096);
+  DecoderReads reads = readsOf(4096, 10);
+  reads.startDecode();
+  std::vector<uint8_t> buf(16);
+  int32_t iPos = 0;
+  for (uint32_t i = 0; i < decoderReadCap(4096); ++i) {
+    f.pos = 20;
+    ASSERT_EQ(answerJpegRead(f, reads, buf.data(), 16, 4096, iPos), 16);
+    ASSERT_EQ(buf[0], f.bytes[20]) << i;
+  }
+  f.pos = 20;
+  EXPECT_EQ(answerJpegRead(f, reads, buf.data(), 16, 4096, iPos), 16);
+  EXPECT_EQ(buf[0], 0);
+  // A stop gives zeros; the seek keeps JPEGFILE's position under the size.
+  reads.startDecode();
+  f.stop = true;
+  f.pos = 20;
+  EXPECT_EQ(answerJpegRead(f, reads, buf.data(), 16, 4096, iPos), 16);
+  EXPECT_EQ(buf[0], 0);
+  EXPECT_EQ(answerJpegSeek(f, reads, 4096, 4096, iPos), 4096);
+  EXPECT_EQ(iPos, 4095);
+  iPos = 7;
+  EXPECT_EQ(answerJpegSeek(f, reads, 5000, 4096, iPos), -1);
+  EXPECT_EQ(iPos, 7);
+}
+
+TEST(DecoderReads, TheWatchdogIsLeftForFileCallsOnlyWhileTheReadMakesProgress) {
+  WatchdogQuiet quiet(5000, 0);
+  // Time in file calls is not quiet time.
+  EXPECT_TRUE(quiet.mayLeave(1000));
+  quiet.back(60000);
+  EXPECT_TRUE(quiet.mayLeave(62000));
+  EXPECT_EQ(quiet.quietMs(), 3000u);
+  quiet.back(62000);
+  // Reads without progress: the quiet time adds up to the timeout, and then the task stays watched.
+  EXPECT_TRUE(quiet.mayLeave(63999));
+  quiet.back(63999);
+  EXPECT_FALSE(quiet.mayLeave(64000));
+  quiet.back(64000);
+  EXPECT_FALSE(quiet.mayLeave(64001));
+  // Progress starts it again.
+  quiet.progress(70000);
+  EXPECT_EQ(quiet.quietMs(), 0u);
+  EXPECT_TRUE(quiet.mayLeave(74999));
+  // millis() wrapping is counted as elapsed time.
+  WatchdogQuiet wrap(10000, 0xFFFFF000u);
+  EXPECT_TRUE(wrap.mayLeave(0x00000F00u));
+  EXPECT_EQ(wrap.quietMs(), 0x1F00u);
 }
 
 TEST(ImageRows, PngColourTypesThatDoNotExistAreRefused) {

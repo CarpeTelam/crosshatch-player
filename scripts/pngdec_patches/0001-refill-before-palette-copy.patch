@@ -1,0 +1,42 @@
+From: crosshatch-player <dlab-g3@local>
+Subject: [PATCH] Read the buffer again before copying a PLTE or tRNS that runs past it
+
+PNGdec 1.1.6 copies a PLTE (into its 1,024-byte palette) and a tRNS (into the
+palette's alpha) straight out of its 2 KiB file buffer, without checking that
+the chunk's data is all in it: an indexed PNG with 1.3 to 2 KB of iCCP or tEXt
+before its palette makes the copy read past the PNG object. This refuses a
+PLTE over 768 bytes or a tRNS over 256 (more than the palette holds), and
+reads the buffer again from the chunk's data when it runs past the bytes read.
+Applied by scripts/patch_pngdec.py (the x4pro build) and by
+test/game_display_lab/CMakeLists.txt (the host decoder tests, on a copy).
+
+---
+--- a/src/png.inl
++++ b/src/png.inl
+@@ -832,6 +832,26 @@
+         }
+         iMarker = MOTOLONG(&s[iOffset+4]);
+         iOffset += 8; // point to the marker data
++        // CrossPoint patch: PLTE and tRNS are copied out of the file buffer below, which a chunk that starts near the
++        // buffer's end runs past (the copy then reads past this object). Refuse one larger than the palette holds,
++        // and read the buffer again from the chunk's data when it is not all in it.
++        if (iMarker == 0x504c5445 || iMarker == 0x74524e53) {
++            if (iLen > (iMarker == 0x504c5445 ? 768 : 256)) {
++                pPage->iError = PNG_DECODE_ERROR;
++                return 1;
++            }
++            if (iOffset + iLen > iBytesRead) {
++                iFileOffset += (iOffset - iBytesRead); // the chunk's data, in the file
++                (*pPage->pfnSeek)(&pPage->PNGFile, iFileOffset);
++                iBytesRead = (*pPage->pfnRead)(&pPage->PNGFile, s, PNG_FILE_BUF_SIZE);
++                if (iBytesRead < iLen) {
++                    pPage->iError = PNG_DECODE_ERROR;
++                    return 1;
++                }
++                iFileOffset += iBytesRead;
++                iOffset = 0;
++            }
++        }
+         switch (iMarker)
+         {
+             case 0x44474b62: // 'bKGD' DEBUG

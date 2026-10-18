@@ -29,8 +29,9 @@
 #   the real PNGdec and JPEGDEC, under AddressSanitizer and UndefinedBehaviorSanitizer), which the unit-tests job of
 #   ci.yml leaves out: it has no PlatformIO library folder to build them from. This job fetches PNGdec at the version
 #   platformio.ini pins and JPEGDEC at its pinned commit; test/game_display_lab/CMakeLists.txt applies
-#   scripts/jpegdec_patches to a copy of JPEGDEC in the build tree, as the firmware build applies them to its own, builds
-#   it as the device does (a 32-bit bit reader), and reads the PNG buffer size from platformio.ini.
+#   scripts/pngdec_patches and scripts/jpegdec_patches to copies of them in the build tree, as the firmware build
+#   applies them to its own, builds JPEGDEC as the device does (a 32-bit bit reader), and reads the PNG buffer size from
+#   platformio.ini.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.

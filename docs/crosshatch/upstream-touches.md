@@ -30,7 +30,7 @@ cannot be.
 
 | # | Upstream file | Change | Guarded |
 | --- | --- | --- | --- |
-| 1 | `platformio.ini` | `FREEINK_CAP_GAMES=1` in the six x4pro/sticky envs; `FREEINK_CAP_DISPLAY_LAB=1` in the `x4pro` env only (the display lab, spine AD-3 amendment of 2026-10-16; never a release env); `--suppress=*:*/lib/lua/*` in the shared `check_flags` | env-scoped + one shared line |
+| 1 | `platformio.ini` | `FREEINK_CAP_GAMES=1` in the six x4pro/sticky envs; `FREEINK_CAP_DISPLAY_LAB=1` in the `x4pro` env only (the display lab, spine AD-3 amendment of 2026-10-16; never a release env), with `pre:scripts/patch_pngdec.py` added to that env's `extra_scripts` (the fork's PNGdec patches, `scripts/pngdec_patches`, on that env's library copy); `--suppress=*:*/lib/lua/*` in the shared `check_flags` | env-scoped + one shared line |
 | 2 | `lib/I18n/translations/english.yaml` | `STR_GAMES_*` keys added, changed, or removed (the prefix only; no key outside it changes) | prefix-scoped |
 | 3 | `test/CMakeLists.txt` | `add_subdirectory(game_core)`, `add_subdirectory(game_script)` | no |
 | 4 | `src/activities/ActivityManager.h` | `HomeMenuItem::Games`, `goToGames()` | yes |

@@ -19,10 +19,26 @@ inline bool finishTask(std::atomic<TaskState>& state) {
   return state.compare_exchange_strong(expected, TaskState::Done, std::memory_order_acq_rel);
 }
 
+// What the inert client (GrayRunner.cpp's DetachedClient) answers each hook. A detach always follows a stop, and
+// detachTask publishes the inert client before the exchange that decides, so a hook the task calls in that window gets
+// these answers even when the task then ends first and its owner joins it and reads its end. They change nothing
+// about that end, which is the stop's (End::Stopped): a slot never finishes the run, a cap clean never ends it, and a
+// paint that is not made (a replay, a slot) ends it as the stop (GrayRunner::paintFailed reads a stop asked as
+// Stopped); the sweep clock stands still and no hold is kept.
+struct InertAnswers {
+  static constexpr bool replayPainted = false;    // onReplay
+  static constexpr bool keepHolding = false;      // keepHolding
+  static constexpr bool capCleanGoesOn = true;    // onCapClean (false would be End::Finished)
+  static constexpr bool slotPrepared = false;     // prepareSlot
+  static constexpr bool slotReapplies = false;    // afterSlot's reapply
+  static constexpr bool slotFinishesRun = false;  // afterSlot's finished (true would be End::Finished)
+  static constexpr bool clockStill = true;        // clockStill
+};
+
 // The owner's side, past the stop's deadline: `client` set to `inert` and `registry` counted before the one exchange
 // that decides, so a hook the task calls from then on is the inert one's and the registry never misses a detached
 // task. True: detached, and the owner touches nothing the task was given from here (the task may free it at once).
-// False: the task ended first; both are undone and the owner joins it.
+// False: the task ended first; both are undone and the owner joins it (a hook in between had InertAnswers).
 template <typename Client>
 bool detachTask(std::atomic<TaskState>& state, std::atomic<int>& registry, std::atomic<Client*>& client,
                 Client* const inert) {

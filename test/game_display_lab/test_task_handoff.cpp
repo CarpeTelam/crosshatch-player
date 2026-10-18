@@ -13,6 +13,7 @@ namespace {
 
 using GameDisplayLab::detachTask;
 using GameDisplayLab::finishTask;
+using GameDisplayLab::InertAnswers;
 using GameDisplayLab::StopTracker;
 using GameDisplayLab::TaskState;
 
@@ -57,10 +58,18 @@ TEST(TaskHandoff, TheTaskAndItsOwnerRaceToOneEnd) {
     std::atomic<bool> go{false};
     bool finished = false;
     bool detached = false;
+    // What the task sees when it loses: the inert client and the registry already published (detachTask stores both
+    // before its exchange; the task's acquire on losing sees them).
+    Client* lostClient = nullptr;
+    int lostRegistry = -1;
     std::thread task([&] {
       while (!go.load()) {
       }
       finished = finishTask(state);
+      if (!finished) {
+        lostClient = client.load(std::memory_order_relaxed);
+        lostRegistry = registry.load(std::memory_order_relaxed);
+      }
     });
     std::thread owner([&] {
       while (!go.load()) {
@@ -73,7 +82,23 @@ TEST(TaskHandoff, TheTaskAndItsOwnerRaceToOneEnd) {
     ASSERT_NE(finished, detached) << round;
     EXPECT_EQ(registry.load(), detached ? 1 : 0) << round;
     EXPECT_EQ(client.load(), detached ? &inert : &screen) << round;
+    if (!finished) {
+      EXPECT_EQ(lostClient, &inert) << round;
+      EXPECT_EQ(lostRegistry, 1) << round;
+    }
   }
+}
+
+TEST(TaskHandoff, TheInertAnswersLeaveTheRunsEndToTheStop) {
+  // A hook answered by the inert client between detachTask's publish and a lost exchange must not decide the run's end
+  // the owner then joins and reads: no slot or cap clean ends the run (End::Finished), and a paint not made is the
+  // stop's (paintFailed with a stop asked is End::Stopped).
+  static_assert(!InertAnswers::slotFinishesRun, "a slot answered inert never finishes the run");
+  static_assert(InertAnswers::capCleanGoesOn, "a cap clean answered inert never ends the run");
+  static_assert(!InertAnswers::slotReapplies && !InertAnswers::keepHolding, "nothing is reapplied or held");
+  static_assert(!InertAnswers::replayPainted && !InertAnswers::slotPrepared, "no paint is made: the stop ends it");
+  static_assert(InertAnswers::clockStill, "the sweep clock stands still");
+  SUCCEED();
 }
 
 TEST(TaskHandoff, ACoverSeenWhileStoppingWaitsForTheJoin) {
@@ -100,6 +125,10 @@ TEST(TaskHandoff, BackGivesUpThenHomeDetachesAtOnce) {
   EXPECT_FALSE(stops.expired(20999, WAIT_MS));
   EXPECT_TRUE(stops.expired(21000, WAIT_MS));  // Back gives up
   EXPECT_TRUE(stops.giveUp());                 // logged once
+  EXPECT_FALSE(stops.giveUp());
+  // A join forgets the give-up: a later stop that gives up logs again.
+  stops.joined();
+  EXPECT_TRUE(stops.giveUp());
   EXPECT_FALSE(stops.giveUp());
   stops.ask(25000);                            // Home later: the same deadline, already passed
   EXPECT_TRUE(stops.expired(25000, WAIT_MS));  // endLocked detaches at once

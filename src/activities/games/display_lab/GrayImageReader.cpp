@@ -24,6 +24,8 @@
 #include <new>
 #include <utility>
 
+#include "DecoderReads.h"
+
 using GameDisplayLab::FitAxis;
 using GameDisplayLab::FitRect;
 using GameDisplayLab::ImageKind;
@@ -38,7 +40,7 @@ static_assert(static_cast<int>(PngPixel::TruecolorAlpha) == PNG_PIXEL_TRUECOLOR_
 
 namespace {
 
-// As the converters: yield a tick at most this often during a decode, so the idle task (and its watchdog) is fed.
+// As the converters: yield a tick at most this often during a read, so lower-priority tasks on the core run.
 constexpr uint32_t YIELD_MS = 250;
 // The converters' free-heap floors are the decoder object plus 16 KB of headroom (PngToFramebufferConverter.cpp,
 // JpegToFramebufferConverter.cpp), but their PNG figure (44 KiB) predates the firmware's PNG_MAX_BUFFERED_PIXELS of
@@ -52,58 +54,107 @@ constexpr int MAX_GRAY_LINE_BYTES = PNG_MAX_BUFFERED_PIXELS / 2;
 // decode()'s scale options are the denominators by value (GameDisplayLab::jpegScaleFor returns them so).
 static_assert(JPEG_SCALE_HALF == 2 && JPEG_SCALE_QUARTER == 4 && JPEG_SCALE_EIGHTH == 8, "JPEGDEC's scale options");
 
-// One reader at a time (the gray viewer's sweep task), so the open's outcome and the walked size are file statics, set
-// before each decoder's open() and read after it.
+// One reader at a time (the gray viewer's sweep task), so the open's outcome and the reads' state are file statics,
+// set before each decoder's open() and read after it.
 // openFile could not open the file: PNG::open returns 0, which is PNG_SUCCESS, when its open callback fails, so the
 // reader records the failure here.
 bool openFailed = false;
-// The walked size (GameDisplayLab::WalkExtent::end: a PNG through IEND, a JPEG through its EOI): openFile hands it to
-// the decoder as the file's size (PNGFILE.iSize, JPEGFILE.iSize), and the reads give nothing of the file past it.
-uint32_t walkedSize = 0;
-// A JPEG's walked header end and the buffer moves its parse takes (WalkExtent::headerEnd, windowMoves).
-uint32_t jpegHeaderEnd = 0;
-uint32_t jpegWindowMoves = 0;
+// The reads' state (GameDisplayLab::DecoderReads: the walked size, a JPEG's header end and buffer moves, a refused
+// seek, the caps' counts, the header latch).
+GameDisplayLab::DecoderReads reads;
 // The sink's stop, for the read callbacks: once it is asked, every read gives no file bytes (layer 2).
 GrayRowSink* readSink = nullptr;
 
 bool readsStopped() { return readSink != nullptr && readSink->stopped(); }
-// A seek the file refused: the reads give nothing until a seek succeeds, rather than bytes from where the file still
-// is (which the decoder would take for the bytes where it asked).
-bool seekFailed = false;
-// JPEGDEC's open() is under way (its reads all count against jpegHeaderReadCap), the reads it has made in open() and
-// in decode(), and a header read it dropped (from then on open() gets nothing: the parse buffer is zeroed and the
-// file's position no longer JPEGDEC's); all set before each open() and each decode().
-bool jpegOpening = false;
-uint32_t jpegOpenReads = 0;
-uint32_t jpegDecodeReads = 0;
-bool jpegHeaderFailed = false;
 
-// Layer 4, the task watchdog: while a decoder runs, the sweep task is subscribed to ESP-IDF's task watchdog, which the
-// core configures to panic (CONFIG_ESP_TASK_WDT_PANIC, CONFIG_ESP_TASK_WDT_TIMEOUT_S 5, sdkconfig), and feeds it at
-// every row a decoder hands over (yieldDuringDecode); the SD card's own waits feed it too (SDCardManager feeds a
-// subscribed task). A decoder that spins where no read or row reaches it then resets the device within 5 s instead
-// of holding the task, its runner and maybe the SD card's mutex for good. The timeout is the core's, shared by every
-// watched task; it is not changed here.
+// Layer 4, the task watchdog: for the whole read of a picture (its walk and its decode) the sweep task is subscribed
+// to ESP-IDF's task watchdog, which the x4pro build configures to panic after 5 s without a feed (its prebuilt dio_opi
+// sdkconfig: CONFIG_ESP_TASK_WDT_INIT, CONFIG_ESP_TASK_WDT_PANIC, CONFIG_ESP_TASK_WDT_TIMEOUT_S 5), and feeds it on
+// progress: every row a decoder hands over, and every read that gives file bytes (the walk's too). Around every
+// blocking file call (open, read, seek, position, close: each takes the card's mutex, which another task may hold for
+// longer than 5 s, legitimately) the task leaves the watchdog and rejoins after, unless it has gone the watchdog's
+// timeout outside file calls without progress (GameDisplayLab::WatchdogQuiet): a decoder that spins where no read or
+// row reaches it, or that keeps reading without progress, then resets the device within seconds instead of holding
+// the task, its runner and maybe the card's mutex for good. The timeout is the core's, shared by every watched task;
+// it is not changed here. A watchdog that is not configured, or a join that fails, is logged once.
 class DecodeWatchdog {
  public:
-  DecodeWatchdog() : added(esp_task_wdt_status(nullptr) == ESP_ERR_NOT_FOUND && esp_task_wdt_add(nullptr) == ESP_OK) {}
+  DecodeWatchdog() : quiet(TIMEOUT_MS, millis()), lastYieldMs(millis()) {
+    const esp_err_t status = esp_task_wdt_status(nullptr);
+    if (status == ESP_ERR_NOT_FOUND) {
+      const esp_err_t added = esp_task_wdt_add(nullptr);
+      joined = added == ESP_OK;
+      if (!joined) logOnce("cannot join the task watchdog", added);
+    } else if (status != ESP_OK) {
+      logOnce("the task watchdog is not configured", status);
+    }
+    active = this;
+  }
   ~DecodeWatchdog() {
-    if (added) esp_task_wdt_delete(nullptr);
+    active = nullptr;
+    if (joined) esp_task_wdt_delete(nullptr);
   }
   DecodeWatchdog(const DecodeWatchdog&) = delete;
   DecodeWatchdog& operator=(const DecodeWatchdog&) = delete;
 
- private:
-  bool added;
-};
+  // A row, or a read that gave file bytes: the watchdog is fed, and a tick is yielded at most every YIELD_MS (as the
+  // converters yield), so lower-priority tasks on the core run.
+  void progress() {
+    if (joined) esp_task_wdt_reset();
+    const uint32_t now = millis();
+    quiet.progress(now);
+    if (now - lastYieldMs < YIELD_MS) return;
+    vTaskDelay(1);
+    lastYieldMs = millis();
+  }
 
-void yieldDuringDecode(uint32_t& lastYieldMs) {
-  // A row: the decode is moving.
-  if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
-  const uint32_t now = millis();
-  if (now - lastYieldMs < YIELD_MS) return;
-  vTaskDelay(1);
-  lastYieldMs = millis();
+  // Around one blocking file call: the task leaves the watchdog for it and rejoins after (above).
+  class Gap {
+   public:
+    Gap() : dog(active) {
+      left = dog && dog->joined && dog->quiet.mayLeave(millis()) && esp_task_wdt_delete(nullptr) == ESP_OK;
+    }
+    ~Gap() {
+      if (!dog) return;
+      dog->quiet.back(millis());
+      if (left && esp_task_wdt_add(nullptr) != ESP_OK) {
+        dog->joined = false;
+        logOnce("cannot rejoin the task watchdog", ESP_FAIL);
+      }
+    }
+    Gap(const Gap&) = delete;
+    Gap& operator=(const Gap&) = delete;
+
+   private:
+    DecodeWatchdog* dog;
+    bool left = false;
+  };
+
+  // The read's watchdog, for the callbacks (null outside a read).
+  static DecodeWatchdog* active;
+
+ private:
+#ifdef CONFIG_ESP_TASK_WDT_TIMEOUT_S
+  static constexpr uint32_t TIMEOUT_MS = CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000;
+#else
+  static constexpr uint32_t TIMEOUT_MS = 5000;
+#endif
+
+  static void logOnce(const char* what, const esp_err_t error) {
+    static bool logged = false;
+    if (logged) return;
+    logged = true;
+    LOG_ERR("DLAB", "gray viewer: %s (%s); decodes run unwatched", what, esp_err_to_name(error));
+  }
+
+  bool joined = false;
+  GameDisplayLab::WatchdogQuiet quiet;
+  uint32_t lastYieldMs;
+};
+DecodeWatchdog* DecodeWatchdog::active = nullptr;
+
+void progressDuringRead() {
+  if (DecodeWatchdog::active) DecodeWatchdog::active->progress();
 }
 
 // ---- file callbacks, as the converters' (the HalFile behind fHandle) ----------------------------------------------
@@ -116,14 +167,19 @@ void* openFile(const char* filename, int32_t* size) {
     openFailed = true;
     return nullptr;
   }
-  if (!Storage.openFileForRead("DLAB", filename, *f)) {
+  bool opened = false;
+  {
+    const DecodeWatchdog::Gap gap;
+    opened = Storage.openFileForRead("DLAB", filename, *f);
+  }
+  if (!opened) {
     delete f;
     openFailed = true;
     return nullptr;
   }
   const size_t real = f->size();
   // The walk's size, or the file's if the file shrank since (its reads then end early and are filled or cut).
-  *size = static_cast<int32_t>(real < walkedSize ? real : walkedSize);
+  *size = static_cast<int32_t>(real < reads.walkedSize ? real : reads.walkedSize);
   return f;
 }
 
@@ -131,81 +187,68 @@ void* openFile(const char* filename, int32_t* size) {
 void closeFile(void* handle) {
   HalFile* f = reinterpret_cast<HalFile*>(handle);
   if (f) {
-    f->close();
+    {
+      const DecodeWatchdog::Gap gap;
+      f->close();
+    }
     delete f;
   }
 }
 
-// Layer 2, a read that cannot stall a decoder: the file gives at most what readAllowance allows (nothing once stopped,
-// past a refused seek or at the walked size), a negative read is taken as nothing, and then:
+// The HalFile behind a decoder's handle, as GameDisplayLab::DecoderReads' callbacks take a file (DecoderReads.h): each
+// blocking call out of the watchdog, the sink's stop, and a read that gave file bytes fed to the watchdog.
+struct ReaderFile {
+  HalFile* f;
+
+  bool isOpen() const { return f != nullptr; }
+  uint32_t position() {
+    const DecodeWatchdog::Gap gap;
+    return static_cast<uint32_t>(f->position());
+  }
+  int32_t read(uint8_t* buf, const int32_t n) {
+    const DecodeWatchdog::Gap gap;
+    return f->read(buf, static_cast<size_t>(n));
+  }
+  bool seek(const uint32_t position) {
+    const DecodeWatchdog::Gap gap;
+    return f->seek(position);
+  }
+  bool stopped() const { return readsStopped(); }
+  void progress() { progressDuringRead(); }
+};
+
+// Layer 2, a read that cannot stall a decoder (GameDisplayLab::DecoderReads.h, which the host decoder test runs too):
+// the file gives at most what readAllowance allows (nothing once stopped, past a refused seek or at the walked size),
+// a negative read is taken as nothing, and then:
 // - PNGdec gets the requested length always, the rest 0xFF (GameDisplayLab::fillPngRead, which names the png.inl lines
 //   this rests on: a short read inside IDAT would spin its loop at png.inl 885-904);
 // - JPEGDEC gets the rest zero-filled, never 0xFF nor the stale buffer (GameDisplayLab::answerJpegHeaderRead and
-//   answerJpegDecodeRead name the jpeg.inl lines): a read starting before the walked header's end is the header
-//   parse's, kept whole or dropped (a stop, a short or failed read, a refused seek, past jpegHeaderReadCap for all of
-//   open()), a drop zeroing the whole parse buffer and latching, so open() errs; from the header's end on it is the
-//   decode's, told the whole span, its 0xFF runs tamed, the file's bytes for decoderReadCap reads.
-// `allowed` is set to what the file should have given.
-int32_t readFile(HalFile* f, const uint32_t position, uint8_t* pBuf, const int32_t len, const bool stopped,
-                 int32_t& allowed) {
-  allowed = seekFailed ? 0 : GameDisplayLab::readAllowance(position, len, walkedSize, stopped);
-  if (allowed <= 0) return 0;
-  const int got = f->read(pBuf, static_cast<size_t>(allowed));
-  return got < 0 ? 0 : got;
-}
-
+//   answerJpegDecodeRead name the jpeg.inl lines): while open() runs, a read starting before the walked header's end
+//   is the header parse's, kept whole or dropped (a stop, a short or failed read, a refused seek, past
+//   jpegHeaderReadCap header reads), a drop zeroing the whole parse buffer and latching, so open() errs (and a latched
+//   failure is Open whatever open() returns); every other read is the decode's, never latched, told the whole span,
+//   its runs of 0xFF 0xFF tamed, the file's bytes for decoderReadCap reads.
 int32_t pngRead(PNGFILE* pFile, uint8_t* pBuf, const int32_t len) {
-  HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  int32_t allowed = 0;
-  const int32_t got = f ? readFile(f, static_cast<uint32_t>(f->position()), pBuf, len, readsStopped(), allowed) : 0;
-  return GameDisplayLab::fillPngRead(pBuf, len, got);
+  ReaderFile file{reinterpret_cast<HalFile*>(pFile->fHandle)};
+  return GameDisplayLab::answerPngRead(file, reads, pBuf, len);
 }
 
 int32_t pngSeek(PNGFILE* pFile, const int32_t pos) {
-  HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  if (!f) return -1;
-  seekFailed = pos < 0 || !f->seek(static_cast<size_t>(pos));
-  return seekFailed ? -1 : pos;
+  ReaderFile file{reinterpret_cast<HalFile*>(pFile->fHandle)};
+  return GameDisplayLab::answerSeek(file, reads, pos);
 }
 
 // JPEGDEC tracks the file position in pFile->iPos itself (JPEGGetMoreData compares it with the size), so the callbacks
 // keep it in step with the file, as the JPEG converter's do (otherwise a progressive JPEG with a large header fails to
 // parse), held under the size (GameDisplayLab::jpegPositionAfterRead); the reads go by the file's own position.
 int32_t jpegRead(JPEGFILE* pFile, uint8_t* pBuf, const int32_t len) {
-  HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  const uint32_t position = f ? static_cast<uint32_t>(f->position()) : walkedSize;
-  int32_t answer = 0;
-  const bool overOpenCap = jpegOpening && ++jpegOpenReads > GameDisplayLab::jpegHeaderReadCap(jpegWindowMoves);
-  if (jpegHeaderFailed || overOpenCap || (position < jpegHeaderEnd && (!f || seekFailed || readsStopped()))) {
-    jpegHeaderFailed = true;
-    answer = GameDisplayLab::answerJpegHeaderRead(pBuf, len, 0, true);
-  } else if (position < jpegHeaderEnd) {
-    // The header parse: the file must give all it should, or the read is dropped.
-    int32_t expected = 0;
-    const int32_t got = readFile(f, position, pBuf, len, false, expected);
-    const bool dropped = got < expected;
-    if (dropped) jpegHeaderFailed = true;
-    answer = GameDisplayLab::answerJpegHeaderRead(pBuf, len, got, dropped);
-  } else {
-    int32_t got = 0;
-    if (f && (jpegOpening || ++jpegDecodeReads <= GameDisplayLab::decoderReadCap(walkedSize))) {
-      int32_t allowed = 0;
-      got = readFile(f, position, pBuf, len, readsStopped(), allowed);
-    }
-    answer = GameDisplayLab::answerJpegDecodeRead(pBuf, len, got);
-  }
-  pFile->iPos = GameDisplayLab::jpegPositionAfterRead(f ? static_cast<uint32_t>(f->position()) : walkedSize,
-                                                      static_cast<uint32_t>(pFile->iSize));
-  return answer;
+  ReaderFile file{reinterpret_cast<HalFile*>(pFile->fHandle)};
+  return GameDisplayLab::answerJpegRead(file, reads, pBuf, len, pFile->iSize, pFile->iPos);
 }
 
 int32_t jpegSeek(JPEGFILE* pFile, const int32_t pos) {
-  HalFile* f = reinterpret_cast<HalFile*>(pFile->fHandle);
-  if (!f) return -1;
-  seekFailed = pos < 0 || !f->seek(static_cast<size_t>(pos));
-  if (seekFailed) return -1;
-  pFile->iPos = GameDisplayLab::jpegPositionAfterRead(static_cast<uint32_t>(pos), static_cast<uint32_t>(pFile->iSize));
-  return pos;
+  ReaderFile file{reinterpret_cast<HalFile*>(pFile->fHandle)};
+  return GameDisplayLab::answerJpegSeek(file, reads, pos, pFile->iSize, pFile->iPos);
 }
 
 // ---- the fit, shared by both decoders -----------------------------------------------------------------------------
@@ -218,7 +261,6 @@ struct Fitted {
   FitAxis ax{1, 1};
   FitAxis ay{1, 1};
   std::unique_ptr<uint8_t[]> out;
-  uint32_t lastYieldMs = 0;
   bool stopped = false;
 
   // False when the buffer did not fit (logged).
@@ -232,7 +274,6 @@ struct Fitted {
       LOG_ERR("DLAB", "OOM: %d px gray viewer row buffer", rect.w);
       return false;
     }
-    lastYieldMs = millis();
     return true;
   }
 
@@ -260,7 +301,8 @@ int pngDraw(PNGDRAW* pDraw) {
   PngContext* ctx = reinterpret_cast<PngContext*>(pDraw->pUser);
   if (!ctx) return 0;
   Fitted& f = ctx->fitted;
-  yieldDuringDecode(f.lastYieldMs);
+  // A row: the decode is moving.
+  progressDuringRead();
   if (!f.keepGoing()) return 0;
   // The output rows this source row completes (PNGdec delivers rows top to bottom): none when shrinking skips it, and
   // a row that only feeds the next one's blend when enlarging, which is still converted and kept.
@@ -282,27 +324,40 @@ int pngDraw(PNGDRAW* pDraw) {
 }
 
 // Layer 1, a complete walk: the file's layout against its size (GameDisplayLab::walkPngChunks, walkJpegSegments),
-// before its decoder reads anything. PNGdec 1.1.6's IDAT loop spins without end when the file ends inside a chunk,
-// and a PNG or JPEG cut short is refused here instead; the walked size is what the decoder is then given.
+// before its decoder reads anything, inside the watchdog (its file calls out of it, each read that gives the bytes
+// asked fed to it). PNGdec 1.1.6's IDAT loop spins without end when the file ends inside a chunk, and a PNG or JPEG
+// cut short is refused here instead; the walked size is what the decoder is then given (`reads`).
 template <typename Walk>
 ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Walk&& walk) {
   HalFile file;
-  if (!Storage.openFileForRead("DLAB", path, file)) {
+  bool opened = false;
+  {
+    const DecodeWatchdog::Gap gap;
+    opened = Storage.openFileForRead("DLAB", path, file);
+  }
+  if (!opened) {
     LOG_ERR("DLAB", "%s cannot be opened: %s", kind, path);
     return ImageRead::Open;
   }
   const size_t size = file.size();
   const uint32_t size32 = size > INT32_MAX ? static_cast<uint32_t>(INT32_MAX) : static_cast<uint32_t>(size);
   const auto readAt = [&file](const uint32_t offset, uint8_t* out, const size_t n) {
-    return file.seek(offset) && file.read(out, n) == static_cast<int>(n);
+    bool read = false;
+    {
+      const DecodeWatchdog::Gap gap;
+      read = file.seek(offset) && file.read(out, n) == static_cast<int>(n);
+    }
+    if (read) progressDuringRead();
+    return read;
   };
   const auto stopped = [&sink] { return sink.stopped(); };
   GameDisplayLab::WalkExtent extent;
-  const GameDisplayLab::FileLayout layout = walk(size32, readAt, stopped, &extent);
-  file.close();
-  walkedSize = extent.end;
-  jpegHeaderEnd = extent.headerEnd;
-  jpegWindowMoves = extent.windowMoves;
+  const GameDisplayLab::FileLayout layout = walk(size32, readAt, stopped, extent);
+  {
+    const DecodeWatchdog::Gap gap;
+    file.close();
+  }
+  reads.start(extent);
   const bool png = kind[0] == 'P';
   switch (layout) {
     case GameDisplayLab::FileLayout::Complete:
@@ -346,10 +401,12 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   return ImageRead::Format;
 }
 
-ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRowSink& sink, ImageReadInfo& info) {
+// Not inlined into readGrayImage, so the two decoders' contexts never share one frame on the sweep task's stack.
+[[gnu::noinline]] ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRowSink& sink,
+                                    ImageReadInfo& info) {
   const ImageRead layout =
-      checkLayout("PNG", path, sink, [](const uint32_t size, auto& readAt, auto& stopped, auto* extent) {
-        return GameDisplayLab::walkPngChunks(size, readAt, stopped, extent);
+      checkLayout("PNG", path, sink, [](const uint32_t size, auto& readAt, auto& stopped, auto& extent) {
+        return GameDisplayLab::walkPngChunks(size, readAt, stopped, &extent);
       });
   if (layout != ImageRead::Done) return layout;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
@@ -357,8 +414,6 @@ ImageRead readPng(const char* path, const int screenW, const int screenH, GrayRo
             static_cast<unsigned>(MIN_FREE_HEAP_FOR_PNG));
     return ImageRead::Memory;
   }
-  seekFailed = false;
-  const DecodeWatchdog watchdog;
   std::unique_ptr<PNG> png(new (std::nothrow) PNG());
   if (!png) {
     LOG_ERR("DLAB", "OOM: PNG decoder");
@@ -454,7 +509,7 @@ int jpegDraw(JPEGDRAW* pDraw) {
   JpegContext* ctx = reinterpret_cast<JpegContext*>(pDraw->pUser);
   if (!ctx) return 0;
   Fitted* f = &ctx->fitted;
-  yieldDuringDecode(f->lastYieldMs);
+  progressDuringRead();
   if (!f->keepGoing()) return 0;
   // EIGHT_BIT_GRAYSCALE: one byte a pixel, rows `iWidth` apart, `iWidthUsed` of them valid, in JPEGDEC's scaled
   // source coordinates.
@@ -482,11 +537,22 @@ int jpegDraw(JPEGDRAW* pDraw) {
 // zeros past the walked size, a stop or a failed read, and tamed where 0xFF runs would starve it:
 // GameDisplayLab::answerJpegDecodeRead), calling back each strip, so scan data that runs short decodes to garbage or a
 // decode error and the stop is still seen per row.
-ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayRowSink& sink, ImageReadInfo& info) {
-  const ImageRead layout =
-      checkLayout("JPEG", path, sink, [](const uint32_t size, auto& readAt, auto& stopped, auto* extent) {
-        return GameDisplayLab::walkJpegSegments(size, readAt, stopped, extent);
-      });
+[[gnu::noinline]] ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayRowSink& sink,
+                                     ImageReadInfo& info) {
+  ImageRead layout = ImageRead::Memory;
+  {
+    // The walk's buffer for the EOI search, on the heap (the sweep task's stack keeps the walk's frame small).
+    const auto search = makeUniqueNoThrow<uint8_t[]>(GameDisplayLab::JPEG_EOI_SEARCH_BYTES);
+    if (!search) {
+      LOG_ERR("DLAB", "OOM: %u byte JPEG walk buffer", static_cast<unsigned>(GameDisplayLab::JPEG_EOI_SEARCH_BYTES));
+      return ImageRead::Memory;
+    }
+    uint8_t* const buffer = search.get();
+    layout = checkLayout("JPEG", path, sink, [buffer](const uint32_t size, auto& readAt, auto& stopped, auto& extent) {
+      return GameDisplayLab::walkJpegSegments(size, readAt, stopped, &extent, buffer,
+                                              GameDisplayLab::JPEG_EOI_SEARCH_BYTES);
+    });
+  }
   if (layout != ImageRead::Done) return layout;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_JPEG) {
     LOG_ERR("DLAB", "Not enough heap for the JPEG decoder (%u free, need %u)", static_cast<unsigned>(ESP.getFreeHeap()),
@@ -499,14 +565,8 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
     return ImageRead::Memory;
   }
   openFailed = false;
-  seekFailed = false;
-  jpegOpening = true;
-  jpegOpenReads = 0;
-  jpegDecodeReads = 0;
-  jpegHeaderFailed = false;
-  const DecodeWatchdog watchdog;
+  reads.startJpegOpen();
   const int rc = jpeg->open(path, openFile, closeFile, jpegRead, jpegSeek, jpegDraw);
-  jpegOpening = false;
   // Closed on every way out from here, a rejected header included, as the converter closes it.
   struct Closer {
     JPEGDEC* j;
@@ -518,6 +578,12 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
   }
   // A stop during open() (its reads then give nothing of the file) is the stop's, not the file's.
   if (sink.stopped()) return ImageRead::Stopped;
+  // A dropped header read (a short or failed read, a refused seek, past the header's read cap) is the file's, whatever
+  // open() made of the zeros it was given.
+  if (reads.headerFailed) {
+    LOG_ERR("DLAB", "JPEG header read failed (open %d): %s", rc, path);
+    return ImageRead::Open;
+  }
   if (rc != 1) {
     // JPEGDEC's own rejection of what it cannot decode (an extended or lossless JPEG) is the format's.
     const int error = jpeg->getLastError();
@@ -551,7 +617,7 @@ ImageRead readJpeg(const char* path, const int screenW, const int screenH, GrayR
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
   jpeg->setUserPointer(&ctx);
   const uint32_t start = millis();
-  jpegDecodeReads = 0;
+  reads.startDecode();
   const int decoded = jpeg->decode(0, 0, scale.option);
   info.ms = millis() - start;
   // A stop seen only by the reads (which then gave nothing of the file) ends a decode in an error, not a draw.
@@ -594,6 +660,8 @@ ImageRead readGrayImage(const char* path, const ImageKind kind, const int screen
   struct ClearSink {
     ~ClearSink() { readSink = nullptr; }
   } clearSink;
+  // The whole read, its walk included, is watched (layer 4); declared after the sink, so it is left first.
+  const DecodeWatchdog watchdog;
   switch (kind) {
     case ImageKind::Png:
       return readPng(path, screenW, screenH, sink, info);
