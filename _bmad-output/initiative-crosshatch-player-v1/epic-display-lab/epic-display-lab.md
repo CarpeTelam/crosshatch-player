@@ -194,8 +194,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   toward white and 5 to 6 toward black, against 12 at two per slot in the Static calibration: the second pulse of a
   pair does far less, and the pulse interval is part of the dose unit. The return photo shows n pulses back restore
   the origin in both directions with only faint stripes against the untouched gutters: the model is reversible. In-
-  person dark-end counts and a ladder at rate index 2 (shorter pulses, finer steps) are the next readings before the
-  seven-level table is drawn.
+  person the owner reads full black at column 8 to 10 and full white at 4 to 5: nine steps toward black for six
+  intervals (provisionally, from white: level 5 at 1 pulse, 4 at 2, 3 at 3, 2 at 4, 1 at 6, 0 at 9, after the Static
+  calibration's early-pulses-do-more shape) but only four or five toward white, where the first pulse alone takes
+  black to dark gray, so that direction needs a smaller unit: shorter frames (a ladder at rate index 2 decides) or
+  two pulses per slot for the toward-white transitions only (the hold bit, 12 for the full swing in the Static
+  calibration).
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
