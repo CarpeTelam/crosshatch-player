@@ -229,6 +229,11 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   table, all holds on (one pulse per slot, the measured rhythm), in Tuning order 0>2, 0>4, 0>6, 2>0, 2>4, 2>6, 4>0,
   4>2, 4>6, 6>0, 6>2, 6>4: 1, 2, 9, 7, 1, 8, 9, 2, 7, 12, 5, 3 (the gray-to-gray entries interpolated between the
   two curves); the Slow trails are its test.
+  Fast run (four photos: the `fast painted` hold with clean bands, then the pause hold after one, two and many
+  sweeps): D15's wait works; each rectangle pass is a one-slot touch whose marks show the direction asymmetry (light
+  marks strong in the dark and gray bands, dark marks faint on white, the black band's returns falling short after a
+  brief lightening). With Static, Slow and the Ladder this is the complete pre-extraction reference for dlab-g3's
+  hardware check of the shared runner.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
