@@ -243,6 +243,17 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   cap 24 (model 3 B a pixel); the owner's table as the UltraChip starting preset; the preset file's `base` key and a
   Reset to defaults row. 4 deferrals carried. Hardware check for the owner on the experimental branch: side Down
   pauses, side Up stops; Static settles and flips without a flash; the residue after each flip per band.
+- dlab-c4 (lane C4, D13, after dlab-c3): built by the orchestrator's fallback (plan-and-implement agent plus
+  orchestrator-run lenses): first pass 27 findings, 14 patched, 3 deferred (`fc64cf24`); follow-up pass 17 findings,
+  10 patched, converged (`3ec5d462`). 2,223 host tests; x4pro, default, sticky build; pio check x4pro clean; flash
+  gate within budget (240 B RAM to spare, unchanged from dlab-c3). A Hold row (on each visit) holds the run at each
+  mode's photo spots: Static's settles, Slow's painted bands, its rectangles after the full dwell (a rectangle-wide
+  trail behind them) and the crossing's end, Fast's pause; a 32 px dash in the bottom band's margin, driven by the
+  engine's own slots to the band's opposite shade and back, marks the hold; the sweep clock stands still through it;
+  Next or Confirm resumes; a hold keeps the device awake for ten minutes; skipped and dropped spots are logged with
+  their reason. 3 deferrals carried. Hardware check for the owner on the experimental branch: the dash appears within
+  about a second of a settle and is gone when the flip starts; the three Slow holds and the Fast hold land where the
+  doc says.
 
 ## Measurement (base)
 

@@ -23,7 +23,8 @@ have no hold, and nothing on the panel says the test is holding rather than runn
    slots since their trailing edge entered); at the end of the crossing, rectangles off the right edge, trails
    behind them. Fast: at the end of each sweep, in its pause. Each hold logs `gray hold: <spot>` and the Controls row
    says Next resumes.
-3. **A hold marker**: a 16 px square in the bottom-right corner of the logical screen, retargeted to the opposite
+3. **A hold marker**: a 32 px dash in the bottom-right corner of the logical screen, in the bottom band's margin below
+   its last lane (the review found a 16 px square shared rows with that lane's rectangle), retargeted to the opposite
    shade of the band it sits in (`(band + 2) mod 4`) when a hold begins, driven by the engine's own slots (the task
    runs slots until the marker settles, then holds); on resume it is retargeted back to the band shade and settles
    before the run continues, so it never contaminates a flip or a photo of the bands. The marker's pixels are
@@ -53,7 +54,7 @@ screens, or the Tuning screen; no change to the preset file format.
 | Fast hold | Hold on | one hold per sweep, in the pause | Hold off: none |
 | Resume | Next or Confirm while holding | marker driven back to the band shade, settles, then the run continues (the flip, the crossing, the next sweep) | — |
 | Stop while holding | Previous or Back | the view ends with a FULL refresh, marker and all | — |
-| Marker placement | any orientation | bottom-right of the logical screen, inside the bottom band, 16 px | — |
+| Marker placement | any orientation | bottom-right of the logical screen, in the bottom band's margin below its last lane, 32 px wide | — |
 | Session cap during a hold's marker slots | cap reached | the cap clean runs as today; the hold is logged as restarted | — |
 
 ## Verification

@@ -219,8 +219,10 @@ neutral) are InkBoy's too. History and weak mode are off: this story's choice (I
 
 ### Transition test
 
-Display lab → Transition test. Five rows: **Run** (starts a run; its line says how the last one ended), **Mode**
-(a tap or Confirm steps Static, Slow, Fast; it opens on Static on a UC8179 or UC8279 and on Fast on the SSD1677), **Clean** (one cleaning FULL refresh to
+Display lab → Transition test. Six rows: **Run** (starts a run; its line says how the last one ended), **Mode**
+(a tap or Confirm steps Static, Slow, Fast; it opens on Static on a UC8179 or UC8279 and on Fast on the SSD1677),
+**Hold for photos** (On or Off, a tap or Confirm toggles it; On every time the screen opens, never saved with the
+preset; see [Holds for photos](#holds-for-photos)), **Clean** (one cleaning FULL refresh to
 white and the rows back, no run, the Run row unchanged), **Speed** (the last "N.N scans/s, N ms per scan") and
 **Controls**. Run is also the replay: every run cleans to white first and starts from 0.
 
@@ -243,30 +245,78 @@ following the screen's orientation. The mode sets the rectangles (story dlab-c3,
   a band still painting. The run's start line says the crossing is pending; then `gray slow: slot period N ms,
   crossing N ms, dwell N slots` (with `(capped at 120 s, ...)` when the cap left the dwell under the longest run; at
   380 ms the UltraChip preset crosses 800 px in 47 s).
-- **Static**: rectangles a third of the width wide in the middle, standing still. Every pixel runs its whole dose;
-  at every settle the task holds the pattern (nothing is driven; the log says `holding the settled pattern`) so it can
-  be photographed, and Next (or Confirm) resumes with the next flip.
-  Once a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M
-  slots (offset +K, next +J)` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots
-  that drove pixels), and it flips: every pixel takes one full transition, with its table dose, to the shade the next
-  offset along (K, D, L, W, K, ...). The offsets run +1, +2, +3, +1, ..., so flips 1 to 3 take the pixels through all
-  twelve transitions between them, and every later three again. The residue after a flip, per band, is the
-  per-transition answer. The session cap's clean (every 2,400 scans) restarts the sequence at flip 0 from white
-  (`gray static: sequence restarted at flip 0 after the session-cap clean`). With `history` on in the preset file, a
-  flip back to a pixel's origin is a completed return or a reversal, budgeted by that route's `return_delta` or
-  `reverse_percent` instead of the table dose, so those flips' residues include the history adjustments; a Static
-  run's start logs `gray static: history N is on, so the flips' residues include its route adjustments`.
+- **Static**: rectangles a third of the width wide in the middle, standing still. Every pixel runs its whole dose. Once
+  a slot finds no pixel left to drive the pattern has settled, logged as `gray static: flip N settled after M slots
+  (offset +K, next +J)` (flip 0 is the first paint, +K the offset that flip moved the shades by, M the slots that drove
+  pixels), and it flips (with Hold for photos On, after the hold: see [Holds for photos](#holds-for-photos)): every
+  pixel takes one full transition, with its table dose, to the shade the next offset along (K, D, L, W, K, ...). The
+  offsets run +1, +2, +3, +1, ..., so flips 1 to 3 take the pixels through all twelve transitions between them, and
+  every later three again. The residue after a flip, per band, is the per-transition answer. The session cap's clean
+  (every 2,400 scans) restarts the sequence at flip 0 from white (`gray static: sequence restarted at flip 0 after the
+  session-cap clean`). With `history` on in the preset file, a flip back to a pixel's origin is a completed return or a
+  reversal, budgeted by that route's `return_delta` or `reverse_percent` instead of the table dose, so those flips'
+  residues include the history adjustments; a Static run's start logs `gray static: history N is on, so the flips'
+  residues include its route adjustments`.
 
-Controls while it runs (the Controls row says the same, by action: "Next or Confirm pauses and resumes; Previous or
-Back stops"). The X4 Pro has no front buttons and its touch routing is dead while the view is up (D12), so the side
-buttons are the controls there. Pause and resume take effect at the end of the
-slot in flight (a slot's drive scan and its follow-up stay together); a stop takes effect after the scan in flight,
-or after the clean in flight (the session cap's clean is one FULL refresh).
+#### Holds for photos
+
+With **Hold for photos** On (story dlab-c4, the epic's D13) the run holds itself at each mode's photo spots, so a photo
+does not depend on pausing within half a slot:
+
+- **Static**: every settle (`static settle N`, N the flip that settled); the flip waits for the resume.
+- **Slow**: the bands once their paint has settled, before the rectangles enter (`slow painted 0`, the slot that sizes
+  the crossing); the rectangles once they are wholly on-screen and the preset's longest dose run in slots has passed
+  since their left (trailing) edge came on (`slow dwelt N`, N the crossing). The crossing is sized so that the trailing
+  column has had the full run by the first slot with the rectangles wholly on-screen, so the wait does not change the
+  ramp under the rectangle (its full shade at the trailing edge back to the band at the leading edge, which has just
+  arrived); what it adds is a rectangle-wide trail behind it whose oldest column has finished its return. A crossing
+  whose rectangles reach the right edge first skips the spot (`gray hold: slow dwelt N skipped (the rectangles reached
+  the right edge first)`). Then the end of the crossing, the rectangles off the right edge and their trails behind them
+  (`slow crossed N`, the first slot of the pause).
+- **Fast**: the end of each sweep (`fast pause N`, the first slot of its 1 s pause). A slot longer than the pause can
+  leave no slot starting in it; that pause is logged as `gray hold: fast pause N skipped (no slot started in the pause)`
+  (Slow's crossing end likewise).
+
+At a spot the run shows the hold marker: a 32 px dash at the bottom-right of the screen, in the bottom band's margin
+below its last row of rectangles (8 rows on a landscape screen, 10 in portrait, following the orientation; a 16 px
+square in the corner on a screen too small for rectangles), so it never shares a row with a rectangle or its trail. It
+is driven by the gray engine's own scans to the band's opposite shade (two steps along K, D, L, W), since nothing can be
+drawn through the renderer while the view is up. On a preset whose dose from the band's shade to that one is weak the
+dash can be faint; the `gray hold:` log line is the reliable signal that the run holds. The sweep clock stands still:
+the task runs slots until the marker has settled, then holds (nothing is driven). Next (or Confirm) resumes: the marker
+is driven back to the band's shade and settles, still with the clock standing, and only then does the run go on
+(Static's flip, Slow's crossing, the rest of the pause). The marker's slots never count toward Static's settle or Slow's
+measurement.
+
+Two effects of those slots, out and back: pixels still in flight elsewhere (Slow's rectangles, Fast's trails) keep
+receiving their doses with the scene standing still, so the photo shows them a few slots further on than the spot
+itself; and every Fast pause and every Slow crossing's end lasts those slots longer, so the trails settle further than
+they would without a hold. The build-up photo (five or more full sweeps) is therefore taken with Hold Off.
+
+Previous or Back while held stops as always, with the FULL refresh. Auto-sleep waits while the run holds (it would end
+the hold with its FULL refresh), for at most 10 minutes from the hold's start; after that, as during a pause asked for
+with Next, the normal idle timeout applies and auto-sleep ends the run as any leave does, so a forgotten hold does not
+keep the device awake for good.
+
+When the session cap's clean falls in a hold's marker slots the hold is dropped and the panel repaints from white; the
+log says which case it was and how many marker slots the hold had run: `gray hold: <spot> dropped by the session-cap
+clean after N marker slots: holds again at flip 0` (Static, its sequence restarting at flip 0 and holding at its
+settle), `...: skipped for this crossing` (Slow or Fast: the next spot holds, and Slow repaints its bands under the
+crossing without measuring again), or `...: photo taken, the marker's way back cut off` (any mode, dropped on the way
+back). With Hold Off nothing holds, no marker is drawn, and Static flips as soon as it settles.
+
+Controls while it runs (the Controls row says the same, by action: "While it runs: Next or Confirm pauses and resumes,
+and ends a hold for photos; Previous or Back stops"). The X4 Pro has no front buttons and its touch routing is dead
+while the view is up (D12), so the side buttons are the controls there. Pause and resume take effect at the end of the
+slot in flight (a slot's drive scan and its follow-up stay together); a stop takes effect after the scan in flight, or
+after the clean in flight (the session cap's clean is one FULL refresh).
 
 - **Next** (NavNext: side Down or front Right; Up or Left in inverted portrait and counter-clockwise landscape,
   where the axis follows the screen), **Confirm** where there is one, or a tap over the screen's row area on a device
   whose touch routes while the view is up (not the X4 Pro): pause; again to resume (the sweep clock stands still while
-  paused).
+  paused). While the run holds for a photo, one press resumes it. A press while the marker is still being driven out
+  or back pauses as usual, and the next press resumes where it was: the marker's slots, then the hold (which the
+  press after that ends) or the run.
 - **Previous** (NavPrevious, the opposite keys; on its release) or **Back** (a front button where there is one, or
   the left-edge swipe, which is checked before the other swipes are consumed): stop and return to the rows with a
   FULL refresh. The Run row says "Stopped", or how the run ended when a scan was not delivered ("Timed out",
@@ -287,18 +337,22 @@ queued), and at the end of every run `gray sweep task ended: stack N bytes, high
 scan N bytes` (an error line follows when under 1,024 bytes were left; the same line is logged when sleep or a
 screen change deleted the task, by the screen's loop task). Other lines, by the task that logs them:
 
-- sweep task: `gray sweep: loop silent for over N ms, a screen covers the view; ending` (its cover check, before a
-  scan or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or
-  `...: rate index N of N` (the run ends "Refused (see log)"); `gray static: flip N settled after M slots (offset
-  +K, next +J)`; `gray static: history N is on, ...`; `gray static: sequence restarted at flip 0 after the session-cap clean`; `gray slow: slot period N
-  ms, crossing N ms, dwell N slots`; the stats, pause, resume, clean and start lines (the start line names the
-  mode, the rectangle width, the crossing and both retarget percents).
+- sweep task: `gray sweep: loop silent for over N ms, a screen covers the view; ending` (its cover check, before a scan
+  or a clean); `gray sweep: scan refused: no lab session (backend or masks)`, `...: display inverted`, or `...: rate
+  index N of N` (the run ends "Refused (see log)"); `gray static: flip N settled after M slots (offset +K, next +J)`;
+  `gray static: history N is on, ...`; `gray static: sequence restarted at flip 0 after the session-cap clean`; `gray
+  slow: slot period N ms, crossing N ms, dwell N slots`; `gray hold: <spot> N, marker X over Y` (a photo spot: the
+  marker's shade over its band's), `gray hold: marker settled after N slots; holding, Next resumes`, `gray hold:
+  resumed; marker back to Y`, `gray hold: marker back after N slots; the run goes on`, `gray hold: <spot> N skipped
+  (<reason>)`, `gray hold: <spot> dropped by the session-cap clean after N marker slots: <case>`; the stats, pause,
+  resume, clean and start lines (the start line names the mode, the rectangle width, the crossing, the hold and both
+  retarget percents).
 - loop task: `gray sweep: covered by another screen` (its own cover check, when the screen's loop runs again after
   the gap; a cover usually logs this line and the sweep task's); `gray sweep: task deleted while it waited for the
   render lock` (sleep or a screen change ended the task inside a scan or a clean); `Cannot create the sweep task (N
   byte stack)` (no internal RAM for its stack; the Run row says "Stopped: not enough memory"); `gray sweep stopped:
   <outcome>` when the view ends; `transition test mode: static|slow|fast` (the Mode row); `transition test: panel
-  cleaned to white` (the Clean row).
+  cleaned to white` (the Clean row); `transition test hold: on|off` (the Hold row).
 
 How to read it:
 
@@ -317,10 +371,11 @@ which take their table dose; Fast's rectangles move on before their pixels settl
 toward dark for pixels turned toward a darker shade than their level, toward light for the others; then, only
 if trails remain, the **history** routes and the weak row, which the preset file turns on (no row on the device).
 
-What to photograph: Static's pattern after each settle (the log's `settled` line), the panel paused mid-sweep (Next)
-with the rectangles over each band, the panel during the 1 s
-pause (the tracks), and the panel after five or more full sweeps (build-up), each with the Tuning values and the
-log's `gray` line beside it.
+What to photograph, with Hold for photos On (each hold has its `gray hold:` line): Static's pattern after each settle,
+Slow's painted bands, its rectangles after a full dwell, and its crossing's end with the tracks, Fast's pause (the
+tracks); the dash in the bottom-right says the run is holding, and the photo is the rest of the panel. The panel after
+five or more full sweeps (build-up) is taken with Hold for photos Off, since each hold's marker slots let the trails
+settle further. Keep the Tuning values and the log's `gray` lines beside each.
 
 ### Tuning
 
@@ -424,7 +479,8 @@ sent to the panel.
   as `GfxRenderer::rotateCoordinates` maps a pixel, and the modes (`SweepMode`): Fast's and Slow's sweeps, Slow's
   crossing from the slot period and the preset's longest dose run (`slowSweepMs`), Static's still rectangles and its
   settle-and-flip sequence; `slotDone` makes the per-slot decision for both (reapply after a flip, start Slow's
-  crossing once measured); pinned by `test_transition_scene.cpp`.
+  crossing once measured) and for the holds for photos (each mode's photo spots, the hold marker's rectangle and
+  shade, its slots out and back, the resume, the session cap's drop); pinned by `test_transition_scene.cpp`.
 - `src/activities/games/display_lab/GrayPresetFile.{h,cpp}`: the preset file's path, its load and save through
   `Storage`.
 - `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` and `TuningActivity.{h,cpp}`: the two Part B
