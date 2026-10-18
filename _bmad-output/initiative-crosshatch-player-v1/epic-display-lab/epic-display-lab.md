@@ -63,6 +63,9 @@ every panel number a live-tunable parameter, so the device itself is the calibra
 - Lane G, second story: `dlab-g2` seven levels: the model, preset (file version 2), defaults, transition test and
   Tuning generalised to seven levels (black, five grays, white); the stock bench keeps four (after dlab-g1's photos;
   D14).
+- Lane G, third story: `dlab-g3` the gray viewer: a lab screen that paints a PNG or JPEG from the SD card, or a
+  built-in test chart, through the gray engine, plain or ordered-dithered, at whatever level count the engine has
+  (after dlab-g1, before or after dlab-g2; D16).
 - Lane A, first story: `dlab-u1` the UltraChip stock-path bench for both UC8179 and UC8279 (owner option 3, after
   lane 0): times the stock non-flashing previous-to-current transition and exercises the OEM four-level grayscale
   through the facade's public paths; needs no SDK change.
@@ -197,6 +200,12 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   for the bands to settle before its rectangles enter, as Slow does, with the same `painted` photo spot: the
   rectangles crossing a still-filling band showed as artifacts, and the only thing that start exercised, pixels
   retargeted mid-transition, is better tested on purpose (dlab-c3's deferral stands).
+- D16 (2026-10-18, owner, during dlab-g1's review): a grayscale line-art viewer in the lab, to see how the levels can
+  be used on real artwork. Its own story (dlab-g3) rather than part of the ladder lane, which was minutes from done:
+  it reads the level count from the engine, so it shows four shades before dlab-g2 and seven after with no change of
+  its own, and it is built while the owner takes the ladder photos dlab-g2 waits on. Pictures come from
+  `/.crosshatch/display-lab/images/` on the SD card through the firmware's own decoders, plus a built-in test chart
+  so it works with no files; plain or ordered quantisation is a row.
 
 ## Story results
 
