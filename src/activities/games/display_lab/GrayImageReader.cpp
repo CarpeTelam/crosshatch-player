@@ -93,10 +93,11 @@ struct EspTaskWatchdog {
     notConfiguredError = status;
     return GameDisplayLab::WatchdogState::NotConfigured;
   }
-  int add() { return esp_task_wdt_add(nullptr); }
-  int remove() { return esp_task_wdt_delete(nullptr); }
-  void reset() { esp_task_wdt_reset(); }
-  uint32_t nowMs() { return millis(); }
+  // Static: the calling task's watchdog is ESP-IDF's, not this object's (TaskWatchdog calls them through it).
+  static int add() { return esp_task_wdt_add(nullptr); }
+  static int remove() { return esp_task_wdt_delete(nullptr); }
+  static void reset() { esp_task_wdt_reset(); }
+  static uint32_t nowMs() { return millis(); }
   void report(const GameDisplayLab::WatchdogEvent event, int error) {
     static bool logged[3] = {false, false, false};
     const auto index = static_cast<size_t>(event);
@@ -129,6 +130,8 @@ void progressDuringRead() {
 // One blocking file call, from construction to destruction.
 struct FileCall {
   DecodeWatchdog::Gap gap{activeWatchdog};
+  // The call failed: its wait counts toward the watchdog's wall time (a successful call's does not).
+  void failed() { gap.failed(); }
 };
 
 // ---- file callbacks, as the converters' (the HalFile behind fHandle) ----------------------------------------------
@@ -143,8 +146,9 @@ void* openFile(const char* filename, int32_t* size) {
   }
   {
     // The handle's end takes the card's mutex too (HalFile::Impl's destructor), so a failed open ends in the gap.
-    const FileCall call;
+    FileCall call;
     if (!Storage.openFileForRead("DLAB", filename, *f)) {
+      call.failed();
       delete f;
       f = nullptr;
     }
@@ -178,12 +182,16 @@ struct ReaderFile {
 
   bool isOpen() const { return f != nullptr; }
   int32_t read(uint8_t* buf, const int32_t n) {
-    const FileCall call;
-    return f->read(buf, static_cast<size_t>(n));
+    FileCall call;
+    const int32_t got = f->read(buf, static_cast<size_t>(n));
+    if (got < 0) call.failed();
+    return got;
   }
   bool seek(const uint32_t position) {
-    const FileCall call;
-    return f->seek(position);
+    FileCall call;
+    const bool sought = f->seek(position);
+    if (!sought) call.failed();
+    return sought;
   }
   // Static: the reads' stop and the watchdog are the read's, not the handle's (DecoderReads.h calls them on the file).
   static bool stopped() { return readsStopped(); }
@@ -307,9 +315,12 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   bool opened = false;
   {
     // HalFile::Impl's destructor takes the card's mutex: a handle that did not open ends in the call.
-    const FileCall call;
+    FileCall call;
     opened = Storage.openFileForRead("DLAB", path, file);
-    if (!opened) file = HalFile();
+    if (!opened) {
+      call.failed();
+      file = HalFile();
+    }
   }
   if (!opened) {
     LOG_ERR("DLAB", "%s cannot be opened: %s", kind, path);
@@ -317,12 +328,26 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
   }
   const size_t size = file.size();
   const uint32_t size32 = size > INT32_MAX ? static_cast<uint32_t>(INT32_MAX) : static_cast<uint32_t>(size);
-  const auto readAt = [&file](const uint32_t offset, uint8_t* out, const size_t n) {
-    bool read = false;
-    {
-      const FileCall call;
-      read = file.seek(offset) && file.read(out, n) == static_cast<int>(n);
+  // Each seek and read one file call; a read that fails or comes up short is tried once more from its seek
+  // (GameDisplayLab::readExactlyAt), then the walk is ReadFailed.
+  struct WalkFile {
+    HalFile& f;
+    bool seek(const uint32_t offset) {
+      FileCall call;
+      const bool sought = f.seek(offset);
+      if (!sought) call.failed();
+      return sought;
     }
+    int32_t read(uint8_t* out, const int32_t n) {
+      FileCall call;
+      const int32_t got = f.read(out, static_cast<size_t>(n));
+      if (got != n) call.failed();
+      return got;
+    }
+  };
+  WalkFile walkFile{file};
+  const auto readAt = [&walkFile](const uint32_t offset, uint8_t* out, const size_t n) {
+    const bool read = GameDisplayLab::readExactlyAt(walkFile, offset, out, n);
     if (read) progressDuringRead();
     return read;
   };
@@ -368,8 +393,9 @@ ImageRead checkLayout(const char* kind, const char* path, GrayRowSink& sink, Wal
         LOG_ERR("DLAB", "PNG malformed (signature, a chunk length, PLTE, tRNS, or the chunk count): %s", path);
       } else {
         LOG_ERR("DLAB",
-                "JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index, codes, over-subscribed), SOS "
-                "(components, tables, spectral range), an Exif IFD, or a table or SOS past the 2 KiB parse buffer, or "
+                "JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index, codes, over-subscribed, values), "
+                "SOS (components, tables, spectral range, approximation), an Exif IFD, or a table or SOS past the 2 "
+                "KiB parse buffer, or "
                 "too many buffer moves): %s",
                 path);
       }

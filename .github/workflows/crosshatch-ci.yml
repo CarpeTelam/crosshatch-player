@@ -6,13 +6,15 @@
 #   of crosspoint-reader's develop branch stay clean. That file has the rules and how to run the check locally.
 # - x4pro flash budget: caps the flash and the static internal RAM the game runtime adds to the X4 Pro firmware.
 #   Builds x4pro on the PR's commit with FREEINK_CAP_GAMES on (the normal env) and off, both without the dev-only
-#   display lab (FREEINK_CAP_DISPLAY_LAB unflagged, so the gate measures shipped firmware), and fails when the image
-#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections
-#   more than the RAM limit larger (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so
-#   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
-#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2), and a display lab decoder
-#   patch (scripts/lab_decoder_patches) missing from the games-on build's library copies.
-#   scripts/check_flash_budget.py holds the logic and how to run it locally.
+#   display lab's screens (FREEINK_CAP_DISPLAY_LAB unflagged), and fails when the image with games is more than the
+#   flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections more than the RAM limit larger
+#   (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so upstream growth never uses up the
+#   budget. It also fails a game object (lib/Game*, src/games, src/activities/games) with a static initializer or a
+#   mutable static over 64 B (spine AD-2). scripts/check_flash_budget.py holds the logic and how to run it locally.
+#   Lab patch check: the display lab's decoder patches (scripts/lab_decoder_patches) are applied by the x4pro env's
+#   pre-script (scripts/patch_lab_decoders.py) to .pio/libdeps/x4pro only, whatever the flags, so both budget builds
+#   carry them; the job fails when one does not reverse cleanly there (the build ran without it). The default, sticky
+#   and release envs (x4pro-gh_release among them) run no such script and build stock PNGdec and JPEGDEC.
 # - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
 #   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
 #   Run it locally with the same command (AGENTS.md); scripts/dev_setup.py installs libpcre3, which cppcheck needs.

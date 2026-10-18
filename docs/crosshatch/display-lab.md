@@ -526,11 +526,16 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            65- or 129-byte tables; a DHT of whole tables, each of class 0 or 1 and index 0 or 1 (JPEGDEC keeps two
            DC and two AC tables, and builds a DC table of index 2 or 3 past its two), with at most 256
            codes whose lengths are not over-subscribed (the Kraft bound: an over-subscribed table makes JPEGDEC write
-           past its tables as it builds them); an APP1 it takes for Exif with its IFD offset, each IFD's tag count and
+           past its tables as it builds them), and values the standard allows for 8-bit samples: a DC category up to
+           11 and an AC size up to 10 (larger ones would make a block longer than the decode keeps in its buffer, 209
+           bytes at most with these); an APP1 it takes for Exif with its IFD offset, each IFD's tag count and
            entries, and the next IFD's offset inside the segment and the buffer; and the SOS segment, after the frame,
-           as JPEGDEC takes it whole: 1 to 4 of the frame's components, each with DC and AC tables of index 0 or 1
-           defined by an earlier DHT when the scan uses them (an AC index of 3 would have it read about 20 KB past
-           its object), a spectral range within 0 to 63, and a progressive file's first scan DC only and first. Then
+           as JPEGDEC takes it whole (its length checked before its component count is read, so a cut one is
+           malformed): 1 to 4 of the frame's components, each named once, with DC and AC tables of index 0 or 1
+           defined by an earlier DHT (an AC index of 3 would have it read about 20 KB past its object); a baseline
+           scan covers every frame component with a DC and an AC table, over the spectral range 0 to 63 with no
+           successive approximation (Ss 0, Se 63, Ah 0, Al 0); a progressive file's first scan is DC only (Ss and Se
+           0, Ah 0) with its DC tables defined. Then
            the picture must end: a baseline file whose last two bytes are FF D9, with no MPF APP2 saying more
            pictures follow, ends there (one read); otherwise its first FF D9 after SOS, found by reading forward
            from it in 4 KB reads (a motion photo's video, a second picture such as an MPF preview, or padding after
@@ -550,7 +555,10 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
          the header parse's last top-up included. The reads keep the file's position themselves (from 0 at the
          open, a seek's target and each read's bytes), so a read that can give nothing (past the walked size, after
          a refused seek or a failed read, once stopped, past the cap) makes no file call at all, and JPEGDEC is told
-         that position. The callbacks' bookkeeping is one header the host tests run too (`DecoderReads.h`):
+         that position. A read that fails is tried once more, from a seek back to its position (an SD card's
+         transient error), and the walk's reads likewise, before the picture fails as "could not open"; a second
+         failure is final, never a loop. The callbacks' bookkeeping is one header the host tests run too
+         (`DecoderReads.h`):
          - the header parse keeps a read whole or not at all: a stop, a short or failed read, a refused seek, or more
            header reads than the walk's buffer moves and four, and the read is dropped: the whole 2 KiB buffer is
            zeroed, the bytes already in it too, so no segment it began meets zeros (a DQT whose length or tables did
@@ -561,7 +569,11 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            filters to nothing) each 0xFF followed by another 0xFF becomes 0; a stuffed 0xFF 00 is never touched;
            restart markers (0xFF D0 to D7) are taken out of each refill (JPEGDEC counts restarts by its interval,
            and its filter drops them anyway) and the room filled with more of the file, so a picture with a restart
-           marker after every block over flat areas, two thirds markers, never starves it; a valid picture decodes
+           marker after every block over flat areas, two thirds markers, never starves it; after 16 top-ups with the
+           file going on, the bytes it has are told (fewer than asked: the patch below refills again before the next
+           block), and with none yet it reads on until some come or the file ends, so a decode read is never answered
+           with nothing while the scan has data (JPEGDEC's filter, given nothing, reads the byte after a 0xFF it
+           holds); a valid picture decodes
            exactly as it is; it gets the file's bytes for 2 reads per 2 KiB of the file and 64 more (each with up to
            16 top-ups), then nothing. open() gets four such reads at most (it makes one), then nothing, so a parse
            that ran past the walked header still ends.
@@ -570,8 +582,14 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
          `scripts/patch_lab_decoders.py` from the x4pro env's `extra_scripts` to that env's library copies, JPEGDEC's
          after upstream's `scripts/jpegdec_patches`; the host decoder test's copies get the same. PlatformIO keeps one
          library copy per env, so the development X4 Pro build's own converters (covers, chapter images) share the
-         patched libraries; every other env, release images included, keeps the libraries as before. The fork CI
-         checks each lab patch is in the x4pro build's copies and in the test's.
+         patched libraries. The default, sticky and release envs (`x4pro-gh_release*` included) run no such script
+         and build stock PNGdec and JPEGDEC (with upstream's own patches): their converters keep the over-reads below,
+         JPEGDEC's MCU overrun on the cover and chapter-image path included, as upstream has them today; the lab adds
+         no exposure there and removes none. The patch files are written as suggestions for upstream. A patch the lab
+         no longer carries is kept in `scripts/lab_decoder_patches/retired/<library>`: the script reverses it from a
+         library copy that still has it (an older build's), and fails naming the library folder to delete when it
+         neither reverses nor the current patch applies; it does nothing on a clean or before the libraries are
+         installed. The fork CI checks each lab patch is in the x4pro build's copies and in the test's.
          - PNGdec (`crosshatch-0001-refill-before-palette-copy`): a PLTE or tRNS is copied out of its 2 KiB file
            buffer; one that runs past the bytes in it (an indexed PNG with 1.3 to 2 KB of iCCP or text before its
            palette, or about 1 KB before a palette and its alpha table) is read again from its start first, and one
@@ -581,25 +599,28 @@ A run runs on the transition test's sweep runner: the same task, slots, stops, c
            whole MCU that ends past its refill mark, which keeps 512 bytes, and a colour MCU can be longer (a 4:2:0
            picture of noise-like detail saved at quality 100 runs 510 to 600 bytes; a crafted one of the longest
            codes about 1.24 KB): its bit pointer then ran past the data for good. The patch refills before every block
-           whose data left is under 256 bytes (a block is at most about 250), so such pictures decode whole; a
+           whose data left is under 256 bytes (a block of the longest codes the walk lets through is 209 bytes, 213
+           with the 4 bytes its bit window reads ahead), and loads the bit window again from the refilled bytes, so
+           such pictures decode whole; a
            pointer that still passes the data (a reader that gives less than the file has, as the converters' do
            at a cut) ends the decode with an error, the pointer back at the data's end; and an error from one
            decode no longer carries into the next decode of the same open.
        - **The exit.** A stop waits for the task at most 20 s, in all (below).
-       - **The watchdog.** For the whole read of a picture, its walk included, the sweep task joins the task
-         watchdog, which the x4pro build configures to reset the device after 5 s without a feed (its prebuilt
-         `dio_opi` sdkconfig: CONFIG_ESP_TASK_WDT_INIT, CONFIG_ESP_TASK_WDT_PANIC, a 5 s timeout for every watched
-         task), and feeds it on progress: every row a decoder hands over and every read that gives file bytes.
-         Nothing in the SD card feeds it: around each blocking file call (open, read, seek, close and a file
-         handle's end, each waiting on the card's mutex, which another task may hold for longer than 5 s) the task
-         leaves the watchdog and rejoins after, until it has gone 5 s outside file calls, or 10 s in all, without
-         progress, from when it stays watched through them too. A decoder that spins where no read or row reaches
-         it, or reads on without progress, then resets the device within about 10 to 15 s instead of holding the
-         runner. A task the watchdog already watches is fed but never left; a join or rejoin that fails is tried
+       - **The watchdog.** For the whole read of a picture, its walk included, the sweep task joins the task watchdog,
+         which the x4pro build configures to reset the device after 5 s without a feed (its prebuilt `dio_opi`
+         sdkconfig: CONFIG_ESP_TASK_WDT_INIT, CONFIG_ESP_TASK_WDT_PANIC, a 5 s timeout for every watched task), and
+         feeds it on progress: every row a decoder hands over and every read that gives file bytes. Nothing in the SD
+         card feeds it: around each blocking file call (open, read, seek, close and a file handle's end, each waiting on
+         the card's mutex, which another task may hold for longer than 5 s) the task leaves the watchdog and rejoins
+         after, until it has gone 5 s outside file calls, or 10 s in all less the time in calls that succeeded, without
+         progress, from when it stays watched through them too: a long wait for the card before a read that gives bytes
+         is never a reset, while slow failing reads with a spin between them are. A decoder that spins where no read or
+         row reaches it, or reads on without progress, then resets the device within about 10 to 15 s instead of holding
+         the runner. A task the watchdog already watches is fed but never left; a join or rejoin that fails is tried
          once more. A watchdog that is not configured, a join that fails and a rejoin that fails are each logged once,
-         with the error (`gray viewer: ... the rest of the read runs unwatched`). The decisions are
-         `DecoderReads.h`'s `TaskWatchdog`, host-tested over a fake watchdog. The restart status stays for the case
-         it cannot reach, a task stuck in the SD card behind its mutex.
+         with the error (`gray viewer: ... the rest of the read runs unwatched`). The decisions are `DecoderReads.h`'s
+         `TaskWatchdog`, host-tested over a fake watchdog. The restart status stays for the case it cannot reach, a task
+         stuck in the SD card behind its mutex.
      - A JPEG's EXIF orientation is ignored, as the firmware's converters ignore it: a picture is shown as its pixels
        are stored, so a camera's portrait photo may appear on its side.
    - Each row is quantised with the Dither row, and each run of equal shades in a row is one retarget.
@@ -647,9 +668,10 @@ The log, besides the runner's lines (speed, pause and resume, the stack line, th
 - `gray viewer: session-cap clean, the marker dropped; painting <name> again`;
 - `gray viewer: <name>: cannot open|unsupported format|file too short|file has no end|out of memory|decode failed`
   (after the reader's own error line, such as `PNG truncated (a chunk or segment runs past the file's N bytes)`, `JPEG
-  has no end (no SOS marker, or no EOI after it)`, `JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class,
-  index, codes, over-subscribed), an Exif IFD, or a table or SOS past the 2 KiB parse buffer, or too many buffer
-  moves)` or `PNG read failed during the layout walk`), or `gray viewer: <name>: read stopped`;
+  has no end (no SOS marker, or no EOI after it)`, `JPEG malformed (SOI, a segment length, SOF, DQT, DHT (class, index,
+  codes, over-subscribed, values), SOS (components, tables, spectral range, approximation), an Exif IFD, or a table or
+  SOS past the 2 KiB parse buffer, or too many buffer moves)` or `PNG read failed during the layout walk`), or `gray
+  viewer: <name>: read stopped`;
 - `PNG|JPEG: the N bytes after its end (IEND|EOI at N) are not read: <path>` when a file goes on past its end;
 - `gray viewer: name of 64 bytes or more, skipped: <name>` when the screen opens;
 - `gray viewer stopped: <outcome>`.
@@ -832,25 +854,27 @@ memory" and nothing is sent to the panel.
   `nameLess`, `ImageList`: the first 32 by name), the converters' size limits and PNG checks, a PNG row to gray as the
   converter converts it (`pngRowToGray`), JPEGDEC's coarse scale and option (`jpegScaleFor`), the fit (`fitToScreen`,
   `FitAxis` and its taps), the layout walks against a file's size (`walkPngChunks`, `walkJpegSegments`, `FileLayout`),
-  `WalkExtent`, the answers to a decoder's reads (`readAllowance`, `decoderReadCap`, `jpegHeaderReadCap`,
-  `fillPngRead`, `answerJpegHeaderRead`, `answerJpegDecodeRead`, `jpegFilteredLength`, `jpegStarvationLength`,
-  `jpegPositionAfterRead`), the output pixels a decoded row or block makes (`rowsReadyAt`,
-  `outputsEndingIn`), the seams between blocks (`SeamKeeper`) and the sampling across them (`SourceBlock`,
-  `sampleBlock`: bilinear enlarging, nearest shrinking); pinned by `test_image_rows.cpp`, and the reads against the
-  real PNGdec and JPEGDEC (every cut and a few appends of the sample pictures, among them a 3 KB PNG whose IDAT crosses
-  PNGdec's buffer, an indexed PNG with a text chunk before its 768-byte palette, 128 x 128 noise JPEGs whose scans
-  cross JPEGDEC's, colour noise at quality 100 (4:2:0 and 4:4:4), a 512 x 512 progressive JPEG whose DC scan refills
-  inside decode(), restart-marker line art decoded pixel-identical with and without the tame, a crafted colour JPEG of
-  the longest codes, an erased sector, and a 66 KB camera-shaped JPEG whose APP1 crosses JPEGDEC's header buffer; a
-  stop at every read; every synthetic header the walk's tests pass, which `image_fixtures.h` shares between both test
-  files; single-byte changes to a real header; each decode bounded, under AddressSanitizer and
-  UndefinedBehaviorSanitizer, with guards inside the decoders' objects: 64 poisoned bytes after JPEGDEC's file buffer
-  (a test-only field), its bit offset within the data in its buffer and its Huffman tables untouched by the decode,
-  PNGdec's row buffer past its palette untouched) by `test_image_decoders.cpp`, through the reader's own callback
-  logic. JPEGDEC runs there as the device builds it (a 32-bit bit reader, no SSE: `jpegdec_as_device.h`). That test
-  is built where PlatformIO's library folder has the decoders' sources, and by the fork CI's Display lab decoders job,
-  which fetches them at the pinned versions; both decoders get the firmware's patches in a copy in the build tree, and
-  the PNG buffer size is `platformio.ini`'s, both by `test/game_display_lab/CMakeLists.txt`.
+  `WalkExtent`, the answers to a decoder's reads (`readAllowance`, `decoderReadCap`, `jpegHeaderReadCap`, `fillPngRead`,
+  `answerJpegHeaderRead`, `answerJpegDecodeRead`, `jpegFilteredLength`, `jpegDropRestartMarkers`,
+  `jpegPositionAfterRead`), the output pixels a decoded row or block makes (`rowsReadyAt`, `outputsEndingIn`), the seams
+  between blocks (`SeamKeeper`) and the sampling across them (`SourceBlock`, `sampleBlock`: bilinear enlarging, nearest
+  shrinking); pinned by `test_image_rows.cpp`, and the reads against the real PNGdec and JPEGDEC (every cut and a few
+  appends of the sample pictures, among them a 3 KB PNG whose IDAT crosses PNGdec's buffer, an indexed PNG with a text
+  chunk before its 768-byte palette, 128 x 128 noise JPEGs whose scans cross JPEGDEC's, colour noise at quality 100
+  (4:2:0 and 4:4:4), a 512 x 512 progressive JPEG whose DC scan refills inside decode(), a progressive JPEG with restart
+  markers in a first scan past 2 KiB decoded from its walked extent as from the whole file, restart-marker line art
+  decoded pixel-identical with and without the tame, scans with 15, 16 and 40,000 restart markers in a row decoded as
+  without them, a crafted colour JPEG of the longest codes, an erased sector, and a 66 KB camera-shaped JPEG whose APP1
+  crosses JPEGDEC's header buffer; a stop at every read; every synthetic header the walk's tests pass, which
+  `image_fixtures.h` shares between both test files; single-byte changes to a real header; each decode bounded, under
+  AddressSanitizer and UndefinedBehaviorSanitizer, with guards inside the decoders' objects: 64 poisoned bytes after
+  JPEGDEC's file buffer (a test-only field), its bit offset within the data in its buffer and its Huffman tables
+  untouched by the decode, PNGdec's row buffer past its palette untouched) by `test_image_decoders.cpp`, through the
+  reader's own callback logic. JPEGDEC runs there as the device builds it (a 32-bit bit reader, no SSE:
+  `jpegdec_as_device.h`). That test is built where PlatformIO's library folder has the decoders' sources, and by the
+  fork CI's Display lab decoders job, which fetches them at the pinned versions; both decoders get the firmware's
+  patches in a copy in the build tree, and the PNG buffer size is `platformio.ini`'s, both by
+  `test/game_display_lab/CMakeLists.txt`.
 - `lib/GameDisplayLab/DecoderReads.h`: the gray viewer's read callbacks as pure functions over a small file interface
   (`answerPngRead`, `answerSeek`, `answerJpegRead`, `answerJpegSeek`: which answer a read gets, the caps' counts, the
   header latch, a refused seek, the position, restart markers dropped and the span topped up; `DecoderReads`, one

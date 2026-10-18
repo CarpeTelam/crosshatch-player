@@ -70,14 +70,16 @@ struct DecoderReads {
 
 // The file's own read at `reads.position` under the reader's allowance (readAllowance: nothing past the walked size,
 // after a refused seek or, when `stopped`, once the stop is asked; then no file call is made): what the file gives,
-// the position moved by it. A failed read gives nothing and loses the position (as a refused seek). `allowed` is what
-// the file should have given. A read that gave file bytes is progress.
+// the position moved by it. A read that fails is tried once more from a seek back to the position (an SD card's
+// transient error); failing again it gives nothing and loses the position (as a refused seek). `allowed` is what the
+// file should have given. A read that gave file bytes is progress.
 template <typename File>
 int32_t readUnderAllowance(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const bool stopped,
                            int32_t& allowed) {
   allowed = reads.seekFailed ? 0 : readAllowance(reads.position, len, reads.walkedSize, stopped);
   if (allowed <= 0) return 0;
   int32_t got = file.read(buf, allowed);
+  if (got < 0 && file.seek(reads.position)) got = file.read(buf, allowed);
   if (got < 0) {
     reads.seekFailed = true;
     return 0;
@@ -87,6 +89,16 @@ int32_t readUnderAllowance(File& file, DecoderReads& reads, uint8_t* buf, const 
   reads.position += static_cast<uint32_t>(got);
   file.progress();
   return got;
+}
+
+// The walk's read (its readAt): `n` bytes at `offset`, seek and read, tried once more when either fails or the read
+// comes up short (an SD card's transient error); false after the second try. `File` as above (seek, read).
+template <typename File>
+bool readExactlyAt(File& file, const uint32_t offset, uint8_t* out, const size_t n) {
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    if (file.seek(offset) && file.read(out, static_cast<int32_t>(n)) == static_cast<int32_t>(n)) return true;
+  }
+  return false;
 }
 
 // PNGdec's read: the length it asked for always, the rest 0xFF (fillPngRead).
@@ -114,12 +126,13 @@ int32_t answerSeek(File& file, DecoderReads& reads, const int32_t position) {
 // file's bytes for decoderReadCap reads, their restart markers dropped (jpegDropRestartMarkers: JPEGDEC counts
 // restarts by its interval, and its filter would drop them anyway) and the span topped up from the file in up to
 // JPEG_RESTART_TOP_UPS more reads (still unfilled with the file going on, the bytes there are told: never zeros inside
-// the scan), then answerJpegDecodeRead (the rest zeroed, the whole span told, runs of 0xFF tamed);
-// open()'s top-up at the header's end is one (past JPEG_OPEN_TOP_UPS of them in open(), a read gets a zeroed span and
-// 0, so a parse that ran past the walked header ends). Without a handle (the open callback failed) a read is taken as
-// at the walked size. `size` is JPEGFILE.iSize (the walked size, or the file's when it shrank) and `iPos`
-// JPEGFILE.iPos, which JPEGDEC tracks itself (JPEGGetMoreData compares it with the size): it is the reads' position,
-// held under the size (jpegPositionAfterRead), as the JPEG converter keeps it in step with the file.
+// the scan, and never none: with no byte yet it reads on until one comes or the file ends), then answerJpegDecodeRead
+// (the rest zeroed, the whole span told, runs of 0xFF tamed); open()'s top-up at the header's end is one (past
+// JPEG_OPEN_TOP_UPS of them in open(), a read gets a zeroed span and 0, so a parse that ran past the walked header
+// ends). Without a handle (the open callback failed) a read is taken as at the walked size. `size` is JPEGFILE.iSize
+// (the walked size, or the file's when it shrank) and `iPos` JPEGFILE.iPos, which JPEGDEC tracks itself
+// (JPEGGetMoreData compares it with the size): it is the reads' position, held under the size (jpegPositionAfterRead),
+// as the JPEG converter keeps it in step with the file.
 template <typename File>
 int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int32_t len, const int32_t size,
                        int32_t& iPos) {
@@ -147,7 +160,8 @@ int32_t answerJpegRead(File& file, DecoderReads& reads, uint8_t* buf, const int3
       int32_t allowed = 0;
       got = jpegDropRestartMarkers(buf, readUnderAllowance(file, reads, buf, len, file.stopped(), allowed));
       for (int more = 0; got < len; ++more) {
-        if (more == JPEG_RESTART_TOP_UPS) {
+        // Never 0 while the file has scan data: JPEGFilter given nothing reads the byte after a 0xFF it holds.
+        if (more >= JPEG_RESTART_TOP_UPS && got > 0) {
           unfilled = true;
           break;
         }
@@ -179,12 +193,13 @@ int32_t answerJpegSeek(File& file, DecoderReads& reads, const int32_t position, 
 // file call (a wait on the card's mutex can be long and legitimate), and leaving and rejoining feed the watchdog's
 // timer (ESP-IDF's task_wdt.c resets it whenever every other watched task has reset), so a decoder that spins making
 // reads but no progress would never trip it: once the quiet time reaches the limit (the watchdog's timeout), or the
-// wall time twice the limit (slow failing reads with a loop between them), the task stops leaving, and the next file
-// call is watched like the rest.
+// wall time twice the limit, less the time in calls that succeeded (slow failing reads with a loop between them; a long
+// wait on the card's mutex before a call that works is no reset), the task stops leaving, and the next file call is
+// watched like the rest.
 class WatchdogQuiet {
  public:
   explicit WatchdogQuiet(const uint32_t limitMs, const uint32_t nowMs)
-      : limitMs_(limitMs), sinceMs_(nowMs), progressMs_(nowMs) {}
+      : limitMs_(limitMs), sinceMs_(nowMs), progressMs_(nowMs), callMs_(nowMs) {}
   // A row, or a read that gave file bytes.
   void progress(const uint32_t nowMs) {
     quietMs_ = 0;
@@ -195,10 +210,16 @@ class WatchdogQuiet {
   bool mayLeave(const uint32_t nowMs) {
     quietMs_ += nowMs - sinceMs_;
     sinceMs_ = nowMs;
+    callMs_ = nowMs;
     return quietMs_ < limitMs_ && nowMs - progressMs_ < 2 * limitMs_;
   }
-  // After the file call: its time is not quiet time.
-  void back(const uint32_t nowMs) { sinceMs_ = nowMs; }
+  // After the file call: its time is not quiet time; when it succeeded (a wait on the card's mutex, however long,
+  // before a read, a seek, an open or a close that worked) not wall time either, so a valid read is never reset for
+  // another task's use of the card; a call that failed counts.
+  void back(const uint32_t nowMs, const bool succeeded = true) {
+    if (succeeded) progressMs_ += nowMs - callMs_;
+    sinceMs_ = nowMs;
+  }
   uint32_t quietMs() const { return quietMs_; }
 
  private:
@@ -206,6 +227,7 @@ class WatchdogQuiet {
   uint32_t quietMs_ = 0;
   uint32_t sinceMs_;
   uint32_t progressMs_;
+  uint32_t callMs_;
 };
 
 // What the watchdog said of the task when it was asked to join.
@@ -262,18 +284,21 @@ class TaskWatchdog {
   class Gap {
    public:
     explicit Gap(TaskWatchdog* dog) : dog_(dog) {
-      left_ = dog_ != nullptr && dog_->owned_ && dog_->quiet_.mayLeave(dog_->dog_.nowMs()) && dog_->dog_.remove() == 0;
+      left_ = dog_ != nullptr && dog_->quiet_.mayLeave(dog_->dog_.nowMs()) && dog_->owned_ && dog_->dog_.remove() == 0;
     }
     ~Gap() {
-      if (dog_ != nullptr) dog_->endGap(left_);
+      if (dog_ != nullptr) dog_->endGap(left_, succeeded_);
     }
     Gap(const Gap&) = delete;
     Gap& operator=(const Gap&) = delete;
     bool left() const { return left_; }
+    // The call failed (a read error, a refused seek, an open that did not open): its time counts as wall time.
+    void failed() { succeeded_ = false; }
 
    private:
     TaskWatchdog* dog_;
     bool left_ = false;
+    bool succeeded_ = true;
   };
 
  private:
@@ -281,8 +306,8 @@ class TaskWatchdog {
     const int first = dog_.add();
     return first == 0 ? 0 : dog_.add();
   }
-  void endGap(const bool left) {
-    quiet_.back(dog_.nowMs());
+  void endGap(const bool left, const bool succeeded) {
+    quiet_.back(dog_.nowMs(), succeeded);
     if (!left) return;
     const int error = addTwice();
     if (error == 0) return;

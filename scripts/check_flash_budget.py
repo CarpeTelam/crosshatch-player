@@ -5,9 +5,11 @@ static initializer or large mutable static (ARCHITECTURE-SPINE AD-2).
 
 Builds the x4pro env twice on the same commit, as configured (FREEINK_CAP_GAMES=1) and with that define removed,
 and fails when the build with games is more than a limit larger than the build without. Both builds come from the
-same commit, so upstream growth never counts against the budget. The gate measures shipped firmware: the display lab
-(FREEINK_CAP_DISPLAY_LAB) is a development bench that only the x4pro env sets and no release image carries, so both
-builds leave it out (the display-lab epic, D6), and its cost never counts against the games budget. Its screen code
+same commit, so upstream growth never counts against the budget. The display lab (FREEINK_CAP_DISPLAY_LAB) is a
+development bench that only the x4pro env sets and no release image carries, so both builds leave it out (the
+display-lab epic, D6), and its cost never counts against the games budget; its decoder patches
+(scripts/lab_decoder_patches, applied by the x4pro env's pre-script whatever the flags) are in both, so they cancel
+out of the difference, and the release envs build stock decoders. Its screen code
 (src/activities/games/display_lab) therefore compiles empty in both builds and is outside the `objects` scan; its
 pure library (lib/GameDisplayLab) still compiles and is read.
 

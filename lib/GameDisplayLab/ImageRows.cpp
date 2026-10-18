@@ -262,34 +262,14 @@ int32_t jpegDropRestartMarkers(uint8_t* buf, const int32_t n) {
   return out;
 }
 
-int32_t jpegStarvationLength(const uint8_t* buf, const int32_t n) {
-  int32_t kept = 0;
-  int32_t i = 0;
-  while (i < n - 1) {
-    if (buf[i] != 0xFF) {
-      ++kept;
-      ++i;
-    } else if (buf[i + 1] == 0) {
-      ++kept;
-      i += 2;
-    } else {
-      // A restart marker is the decoder's own (it resynchronises on its interval): counted whole, never tamed.
-      if (buf[i + 1] >= 0xD0 && buf[i + 1] <= 0xD7) kept += 2;
-      i += 2;
-    }
-  }
-  if (i == n - 1 && buf[i] != 0xFF) ++kept;
-  return kept;
-}
-
 int32_t answerJpegDecodeRead(uint8_t* buf, const int32_t requested, const int32_t got) {
   if (requested <= 0) return 0;
   const int32_t kept = got < 0 ? 0 : (got > requested ? requested : got);
   for (int32_t i = kept; i < requested; ++i) buf[i] = 0;
   const int32_t base = static_cast<int32_t>(JPEG_PARSE_BUFFER) - requested;
-  if (base + jpegStarvationLength(buf, requested) < JPEG_FILE_HIGHWATER + JPEG_MCU_MARGIN) {
+  if (base + jpegFilteredLength(buf, requested) < JPEG_FILE_HIGHWATER + JPEG_MCU_MARGIN) {
     // Each 0xFF followed by another becomes 0: a run of 0xFF keeps its last, which still pairs with what follows (a
-    // stuffed 0xFF 00 or a restart marker stays as it was; a final 0xFF waits for the next read as before).
+    // stuffed 0xFF 00 stays as it was; a final 0xFF waits for the next read as before).
     for (int32_t i = 0; i + 1 < requested; ++i) {
       if (buf[i] == 0xFF && buf[i + 1] == 0xFF) buf[i] = 0;
     }

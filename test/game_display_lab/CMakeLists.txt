@@ -85,13 +85,29 @@ if(EXISTS "${CROSSHATCH_PNGDEC_DIR}/PNGdec.cpp" AND EXISTS "${CROSSHATCH_JPEGDEC
       list(APPEND patches ${folder_patches})
       set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${folder_patches})
     endforeach()
+    # A retired lab patch the source still carries (PlatformIO's copy from an earlier build of this branch) is taken out
+    # of the copy first; one that cannot be is a stop naming the folder to delete.
+    file(GLOB retired "${REPO_ROOT}/scripts/lab_decoder_patches/retired/${name}/*.patch")
+    list(SORT retired)
+    foreach(patch IN LISTS retired)
+      execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
+                      WORKING_DIRECTORY "${root}" RESULT_VARIABLE carried OUTPUT_QUIET ERROR_QUIET)
+      if(carried EQUAL 0)
+        execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --reverse "${patch}" WORKING_DIRECTORY "${root}"
+                        RESULT_VARIABLE undone)
+        if(NOT undone EQUAL 0)
+          message(FATAL_ERROR "${from} carries the retired ${name} patch ${patch}; delete its library folder")
+        endif()
+        message(STATUS "Took the retired ${name} patch ${patch} out of the build tree's copy")
+      endif()
+    endforeach()
     foreach(patch IN LISTS patches)
       execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} --check --reverse "${patch}"
                       WORKING_DIRECTORY "${root}" RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
       if(NOT applied EQUAL 0)
         execute_process(COMMAND ${DISPLAY_LAB_GIT_APPLY} "${patch}" WORKING_DIRECTORY "${root}" RESULT_VARIABLE patched)
         if(NOT patched EQUAL 0)
-          message(FATAL_ERROR "${name} patch ${patch} neither in ${from} nor applies to it")
+          message(FATAL_ERROR "${name} patch ${patch} neither in ${from} nor applies to it; delete its library folder")
         endif()
         message(STATUS "Applied ${name} patch ${patch} to the build tree's copy")
       endif()

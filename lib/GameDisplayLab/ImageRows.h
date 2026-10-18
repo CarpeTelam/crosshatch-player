@@ -178,17 +178,19 @@ constexpr size_t JPEG_EOI_SEARCH_BYTES = 4096;
 //   jpeg.inl 1732-1757); DHT of whole tables, each a class 0 or 1 and index 0 or 1 byte (any other class or an index
 //   past 7 never shortens its loop's count, jpeg.inl 844-870; JPEGDEC keeps two DC and two AC tables, and builds a DC
 //   table of index 2 or 3 past its two into the AC tables, jpeg.inl 1093-1100), sixteen counts summing to at most
-//   256, and code lengths within the Kraft bound (an over-subscribed table makes JPEGMakeHuffTables write past its
-//   tables, jpeg.inl 1066-1275); SOS
+//   256, code lengths within the Kraft bound (an over-subscribed table makes JPEGMakeHuffTables write past its
+//   tables, jpeg.inl 1066-1275), and values within the legal maxima (a DC category at most 11, an AC size at most
+//   10: the lab's JPEGDEC patch's block margin rests on them); SOS
 //   (jpeg.inl 1764-1768). An APP1 JPEGDEC takes for Exif ('E', 'x' and a byte order 'M' or 'I' where it looks,
 //   jpeg.inl 1654-1677) must hold, inside the segment and the buffer, the IFD offset and tag count it reads, each
 //   IFD's count and its 12-byte entries (GetTIFFInfo, jpeg.inl 1346-1376), and the next IFD's offset when it follows
 //   it, its sum with the buffer offset taken as JPEGDEC's int takes it.
 // - SOS, after a SOF0 or SOF2, lies in the buffer and is what JPEGGetSOS takes whole (1 to 4 components, length
-//   6 + 2 per component): each component one of the frame's, its DC and AC table index 0 or 1 and defined by an earlier
-//   DHT when the scan uses it (DC when Ss is 0, AC when Se is over 0; an undefined or higher index makes JPEGDEC decode
-//   from tables that are not there, an AC index of 3 about 20 KB past its object); Ss <= Se <= 63; a progressive file's
-//   first scan, the one JPEGDEC decodes, DC only and first (Se 0, Ah 0).
+//   6 + 2 per component, the length checked before the count is read): each component one of the frame's, once, its
+//   DC and AC table index 0 or 1 (a higher index makes JPEGDEC decode from tables that are not there, an AC index of 3
+//   about 20 KB past its object); a baseline scan the whole frame (every component, both tables defined by an earlier
+//   DHT, Ss 0, Se 63, Ah and Al 0); a progressive file's first scan, the one JPEGDEC decodes, DC only and first (Ss and
+//   Se 0, Ah 0, its DC tables defined).
 // Malformed otherwise. After SOS the picture must end: a baseline file's last two bytes when they are FF D9 and no MPF
 // APP2 says more pictures follow, else its first FF D9 after SOS (a motion photo's video, a second picture such as an
 // MPF preview, or padding after it are not the decoder's); a progressive file's first marker after its first scan
@@ -252,10 +254,13 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
     // [from, to) is inside the segment and inside JPEGDEC's buffer.
     const auto held = [&](const uint64_t from, const uint64_t to) { return from <= to && to <= end && to <= bufEnd; };
     if (marker == 0xFFDA) {
-      if (end > bufEnd || !frame) return FileLayout::Malformed;
-      // The scan's components, each in the frame with a DC and an AC table of index 0 or 1, defined when the scan
-      // uses it (DC when Ss is 0, AC when Se is over 0); Ss <= Se <= 63; a progressive file's first scan DC only
-      // (Se 0) and first (Ah 0), as JPEGDEC decodes it (JPEGGetSOS).
+      // The segment's length first (a component count needs at least one component's bytes after it), so a cut or
+      // short SOS is Malformed, never a read past it.
+      if (end > bufEnd || !frame || length < 8) return FileLayout::Malformed;
+      // The scan's components, each in the frame once with a DC and an AC table of index 0 or 1. A baseline scan is
+      // the whole frame: every frame component, both tables of each defined by an earlier DHT, Ss 0, Se 63, Ah and
+      // Al 0. A progressive file's first scan, the one JPEGDEC decodes: DC only (Ss and Se 0), first (Ah 0), its DC
+      // tables defined (its AC tables unused). As JPEGGetSOS takes it.
       if (!readAt(static_cast<uint32_t>(offset + 4), b, 1)) return FileLayout::ReadFailed;
       const uint32_t count = b[0];
       if (count < 1 || count > 4 || length != 6 + 2 * count) return FileLayout::Malformed;
@@ -263,16 +268,24 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
       const uint32_t ss = b[2 * count];
       const uint32_t se = b[2 * count + 1];
       const uint32_t ah = b[2 * count + 2] >> 4;
-      if (ss > se || se > 63) return FileLayout::Malformed;
-      if (progressive && (se != 0 || ah != 0)) return FileLayout::Malformed;
+      const uint32_t al = b[2 * count + 2] & 0x0F;
+      if (progressive) {
+        if (ss != 0 || se != 0 || ah != 0) return FileLayout::Malformed;
+      } else if (ss != 0 || se != 63 || ah != 0 || al != 0 || count != components) {
+        return FileLayout::Malformed;
+      }
+      uint32_t seen = 0;
       for (uint32_t c = 0; c < count; ++c) {
-        bool inFrame = false;
-        for (uint32_t f = 0; f < components; ++f) inFrame = inFrame || componentIds[f] == b[2 * c];
+        uint32_t index = components;
+        for (uint32_t f = 0; f < components; ++f) {
+          if (componentIds[f] == b[2 * c]) index = f;
+        }
         const uint32_t dc = b[2 * c + 1] >> 4;
         const uint32_t ac = b[2 * c + 1] & 0x0F;
-        if (!inFrame || dc > 1 || ac > 1) return FileLayout::Malformed;
-        if (ss == 0 && (dcDefined & (1u << dc)) == 0) return FileLayout::Malformed;
-        if (se > 0 && (acDefined & (1u << ac)) == 0) return FileLayout::Malformed;
+        if (index == components || (seen & (1u << index)) != 0 || dc > 1 || ac > 1) return FileLayout::Malformed;
+        seen |= 1u << index;
+        if ((dcDefined & (1u << dc)) == 0) return FileLayout::Malformed;
+        if (!progressive && (acDefined & (1u << ac)) == 0) return FileLayout::Malformed;
       }
       uint64_t eoiEnd = 0;
       // A baseline file ending in FF D9 with no MPF APP2 (no second picture) ends there.
@@ -292,8 +305,8 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
         if (!readAt(static_cast<uint32_t>(at), chunk, n)) return FileLayout::ReadFailed;
         for (size_t i = 0; i < n; ++i) {
           const uint8_t v = chunk[i];
-          const bool marker = lastFF && v != 0x00 && v != 0xFF && (v < 0xD0 || v > 0xD7);
-          if (marker && (progressive || v == 0xD9)) {
+          const bool scanMarker = lastFF && v != 0x00 && v != 0xFF && (v < 0xD0 || v > 0xD7);
+          if (scanMarker && (progressive || v == 0xD9)) {
             eoiEnd = at + i + 1;
             break;
           }
@@ -352,6 +365,20 @@ FileLayout walkJpegSegments(const uint32_t fileSize, ReadAt&& readAt, Stopped&& 
           code <<= 1;
         }
         if (codes > 256) return FileLayout::Malformed;
+        // The values: a DC category at most 11, an AC coefficient size (the low nibble) at most 10, the legal maxima
+        // (JPEG_BLOCK_MARGIN in the lab's JPEGDEC patch rests on them: a block of 209 bytes at most). In reads of the
+        // caller's buffer, or of the walk's own 17 bytes.
+        const bool dcTable = (b[0] >> 4) == 0;
+        uint8_t* const values = search != nullptr && searchBytes >= sizeof(b) ? search : b;
+        const uint32_t valuesBytes = values == b ? sizeof(b) : static_cast<uint32_t>(searchBytes);
+        for (uint32_t at = 0; at < codes;) {
+          const uint32_t n = codes - at < valuesBytes ? codes - at : valuesBytes;
+          if (!readAt(static_cast<uint32_t>(table + 17 + at), values, n)) return FileLayout::ReadFailed;
+          for (uint32_t i = 0; i < n; ++i) {
+            if (dcTable ? values[i] > 11 : (values[i] & 0x0F) > 10) return FileLayout::Malformed;
+          }
+          at += n;
+        }
         table += 17 + codes;
       }
       if (table != end) return FileLayout::Malformed;
@@ -459,9 +486,6 @@ constexpr int32_t JPEG_MCU_MARGIN = 256;
 // more scan data (DecoderReads.h's answerJpegRead tops it up), so a picture with a short restart interval over flat
 // areas, where the markers are most of the data, never starves the decoder.
 int32_t jpegDropRestartMarkers(uint8_t* buf, int32_t n);
-// What the tame below counts of `n` bytes: jpegFilteredLength's count, with a restart marker (0xFF D0 to D7) counted
-// as its two bytes, so a valid picture with a short restart interval and tiny MCUs (flat line art) is never tamed.
-int32_t jpegStarvationLength(const uint8_t* buf, int32_t n);
 // The decode's answer: `got` bytes of a `requested`-byte read into JPEGDEC's VLC buffer (its tail again: ucFileBuf +
 // iVLCSize, iVLCSize = 2 KiB - requested, jpeg.inl 1562), the rest zeroed, and `requested` returned. JPEGGetMoreData
 // (jpeg.inl 1544-1566) then tops its buffer up and moves its data down once a MCU ends past FILE_HIGHWATER
@@ -469,13 +493,15 @@ int32_t jpegStarvationLength(const uint8_t* buf, int32_t n);
 // would let the pointer pass the data it has, where JPEGDEC as released returns without moving it (jpeg.inl
 // 1549-1550) and runs on past the buffer for every MCU left (the lab's JPEGDEC patch,
 // scripts/lab_decoder_patches/jpegdec, refills between a MCU's blocks and ends the decode with an error there). The
-// same holds against what JPEGFilter drops: a run of 0xFF (an erased sector)
-// filters to nothing, so when this refill would leave the buffer under FILE_HIGHWATER + JPEG_MCU_MARGIN
-// (jpegStarvationLength), each 0xFF followed by another 0xFF becomes 0 and the run filters to all but its last byte;
-// a stuffed 0xFF 00, a restart marker and every other byte are never touched, so real scan data is never changed
-// (test_image_decoders.cpp decodes a restart-interval picture pixel-identical with and without the tame). Data that
-// would still starve the decoder (pairs of 0xFF 00, other markers) is refilled block by block by the lab patch, or
-// ends in its decode error.
+// same holds against what JPEGFilter drops: a run of 0xFF (an erased sector) filters to nothing, so when this refill
+// would leave the buffer under FILE_HIGHWATER + JPEG_MCU_MARGIN as filtered (jpegFilteredLength; the restart markers
+// are already out, jpegDropRestartMarkers), each 0xFF followed by another 0xFF becomes 0 and the run filters to all
+// but its last byte; a stuffed 0xFF 00 and every other byte are never touched, so real scan data is never changed
+// (test_image_decoders.cpp decodes restart-interval pictures pixel-identical with and without the tame). Still needed
+// with the lab patch's block refills: a scan erased whole (all 0xFF) leaves the filter nothing, every refill finds no
+// data and the decode ends in an error ("did not decode"); tamed, it decodes to its end
+// (ImageDecoders.AnErasedSectorInTheScanIsTamed). Data that would still starve the decoder (pairs of 0xFF 00, other
+// markers) is refilled block by block by the lab patch, or ends in its decode error.
 int32_t answerJpegDecodeRead(uint8_t* buf, int32_t requested, int32_t got);
 // The position JPEGDEC is told after a read (JPEGFILE.iPos, which only JPEGGetMoreData reads, comparing it with the
 // size, jpeg.inl 1558): the file's `position`, held under `size`, so it keeps asking (above) from the first refill
