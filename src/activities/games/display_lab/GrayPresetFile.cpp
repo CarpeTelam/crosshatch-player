@@ -12,8 +12,9 @@ namespace GrayPresetFile {
 
 namespace {
 
-// The encode buffer: the encoded preset is about 340 bytes, so 512 leaves room for every value at its widest.
-constexpr size_t ENCODE_BYTES = 512;
+// The encode buffer: a version 2 preset is about 700 bytes and under 900 with every value at its widest (42 doses of
+// two digits, 42 "false", 42 vias of "-1").
+constexpr size_t ENCODE_BYTES = 1024;
 
 }  // namespace
 
@@ -40,6 +41,9 @@ GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameD
   switch (result) {
     case GrayPresetLoad::Loaded:
       LOG_INF("DLAB", "preset loaded from %s over %s defaults", PATH, defaultsName);
+      // A four-shade file (story dlab-g2): its table landed on levels 0, 2, 4, 6, the odd levels interpolated; Save
+      // writes version 2.
+      if (info.expandedVersion1) LOG_INF("DLAB", "preset: version 1 file expanded to seven levels");
       // Saved over another controller's defaults: its doses were tuned on another panel. Loaded all the same.
       // The session keeps the file's base, so Save writes it back and this warning stays until the doses are retuned
       // (Tuning's Reset to defaults takes the panel's).
@@ -73,7 +77,7 @@ GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameD
 }
 
 bool save(const GameDisplayLab::GrayPreset& preset, const GameDisplayLab::PresetBase base) {
-  // On the heap, once per save (never per slot): a 512-byte local would break the 256-byte stack rule.
+  // On the heap, once per save (never per slot): a 1,024-byte local would break the 256-byte stack rule.
   auto buffer = makeUniqueNoThrow<char[]>(ENCODE_BYTES);
   if (!buffer) {
     LOG_ERR("DLAB", "OOM: %u byte preset buffer", static_cast<unsigned>(ENCODE_BYTES));

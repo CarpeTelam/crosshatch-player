@@ -20,20 +20,20 @@
 // gray engine on the whole panel. Headed "Transition test", six rows: Run (its line: "Not run", or how the last run
 // ended), Mode (Static, Slow, Fast or Ladder; a tap or Confirm steps it; Static on an UltraChip panel, Fast on the
 // SSD1677 to start), Hold for photos (On or Off; a tap or Confirm toggles it; On on every visit, never saved; story
-// dlab-c4, D13; "Always in Ladder" while Mode is Ladder, which holds whatever the row says), Clean (one cleaning FULL
-// refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
+// dlab-c4, D13; "Always in Ladder" while Mode is Ladder, which holds whatever the row says), Clean (three cleaning FULL
+// refreshes, white, black, white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
 //
 // Run starts the test (GameDisplayLab::TransitionScene in the Mode row's mode) on the shared sweep runner (GrayRunner,
 // extracted by story dlab-g3: the sweep task of D11, its slots, its stops, the cover and the session cap), which
-// cleans the panel to white with a FULL refresh and then drives the mode's pattern from white through the session's
-// gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast four shade bands 0, 2, 4, 6 (black, dark gray,
-// light gray, white: D14's level numbers) top to bottom with three rectangles of the other shades per band, in Ladder
-// its columns. Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat, from the slot after the bands'
-// paint has settled (they wait off-screen until then). Slow: 48-px rectangles whose crossing keeps a pixel under one
-// for the preset's longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of the
+// cleans the panel white, black, then white with three FULL refreshes (story dlab-g2) and then drives the mode's
+// pattern from white through the session's gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast seven
+// level bands 0 (black) .. 6 (white) top to bottom (D14) with one rectangle per band, of level (band + 3) mod 7, in
+// Ladder its columns. Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat, from the slot after the
+// bands' paint has settled (they wait off-screen until then). Slow: 48-px rectangles whose crossing keeps a pixel under
+// one for the preset's longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of the
 // bands' paint; they wait off-screen until that paint has settled, then cross. Static: rectangles a third of the
 // width wide that stand still; once a slot finds no pixel to drive the pattern has settled (logged) and flips, every
-// shade moved on by +1, +2, +3, +1, ... (three flips take the pixels through all twelve transitions), until stopped
+// level moved on by +1, +2, .., +6, +1, ... (six flips take the pixels through all 42 transitions), until stopped
 // (story dlab-c3, D12). Ladder (story dlab-g1, D14): no bands but the panel's response to single pulses: the bottom
 // half painted black (the base), then 24 columns per half, column n getting n pulses toward the opposite shade, one a
 // slot and one scan each (TransitionScene::slotPreset, the preset with every hold bit set), end-aligned so every

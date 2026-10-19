@@ -14,10 +14,11 @@ constexpr const char* DIR = "/.crosshatch";
 constexpr const char* PATH = "/.crosshatch/display-lab.json";
 // save() writes here first and moves it over PATH only after a full write, so a failed save keeps the old file.
 constexpr const char* TMP_PATH = "/.crosshatch/display-lab.json.tmp";
-// The longest file load() reads; the encoded preset is about 340 bytes.
+// The longest file load() reads; a version 2 preset is about 700 bytes.
 constexpr size_t MAX_BYTES = 4096;
 
-// Reads the file into `preset` over `base`'s defaults (absent keys keep them): Loaded, or those defaults when it is
+// Reads the file into `preset` over `base`'s defaults (absent keys keep them; a version 1 file is expanded to seven
+// levels and logged): Loaded, or those defaults when it is
 // Missing (LOG_INF) or Malformed, which covers a file that exists but cannot be read (LOG_ERR); the log names the
 // defaults. A file with the older `retarget_percent` key logs which retarget directions it filled. A file whose `base`
 // key names other defaults than `base` (tuned on another controller) logs an error naming both and loads anyway; one

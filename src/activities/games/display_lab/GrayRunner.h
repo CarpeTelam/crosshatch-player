@@ -32,7 +32,8 @@ class GfxRenderer;
 // allocated in the screen's onEnter and freed in its onExit (release).
 //
 // A run (prepare, then launch, from the loop task with the screen's view up) is the sweep task (the epic's D11): it
-// cleans the panel to white with a FULL refresh, asks the client to paint (onReplay), then runs one slot per
+// cleans the panel white, black, then white with three FULL refreshes (cleanWhiteBlackWhite), asks the client to paint
+// (onReplay), then runs one slot per
 // GameDisplayLab::SlotScheduler period: the client moves its picture (prepareSlot), GameDisplayLab::runGraySlot sends
 // the drive scan and the follow-up scan through DisplayLabActivity::scan and commits what was delivered, and the
 // client decides what the slot means (afterSlot: a settle, a photo spot, the run's end). The loop task keeps polling
@@ -106,10 +107,10 @@ class GrayRunner {
       bool finished = false;
     };
 
-    // A run's start or a replay, after the clean to white (the model reset to white): paint the whole picture from
-    // the start (clock 0). False when it cannot (End::PaintFailed, or Stopped when a stop was asked meanwhile).
-    // Every hook is handed `runner`, the runner it runs for: a hook reaches the runner through it, never through the
-    // screen's own pointer, which is null once the runner is detached.
+    // A run's start or a replay, after the clean (white, black, white; the model reset to white): paint the whole
+    // picture from the start (clock 0). False when it cannot (End::PaintFailed, or Stopped when a stop was asked
+    // meanwhile). Every hook is handed `runner`, the runner it runs for: a hook reaches the runner through it, never
+    // through the screen's own pointer, which is null once the runner is detached.
     virtual bool onReplay(GrayRunner& runner, GameDisplayLab::GrayModel& model,
                           const GameDisplayLab::GrayPreset& preset) = 0;
     // The owner paused the run (not a hold), between two slots.
@@ -196,6 +197,10 @@ class GrayRunner {
   // masks, every buffer it can touch) when it ends, or never, if it never returns; `owned` is then null and the caller
   // frees nothing of it.
   static void endLocked(std::unique_ptr<GrayRunner>& owned);
+  // Three cleaning FULL refreshes through the lab (DisplayLabActivity::cleanNow): the framebuffer white, black, then
+  // white, so the previous screen's text does not ghost through the next paint (story dlab-g2, D14). Every run's clean
+  // before its paint, and the transition test's Clean row. The caller holds the render lock; the panel is its own.
+  static void cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab);
   // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any (they ask
   // for a restart). Never back to 0 if such a task never returns.
   static int detachedTasks();
@@ -263,9 +268,13 @@ class GrayRunner {
   // failed (sweepEnd says why). The screens send Replay to start a run (and the viewer for its next picture) and Clean
   // no longer (the transition test's Clean row runs without the task); SweepControl's protocol keeps both.
   bool serve(const GameDisplayLab::SweepControl::Requests& requests);
-  // White framebuffer, the lab's cleaning FULL refresh under the render lock, the model reset to white, the picture to
-  // reapply; inside the panel gate. False (sweepEnd set) when the gate refused.
-  bool cleanToWhite();
+  // How many cleaning refreshes a clean runs: one to white (the session cap's, a Clean request), or white, black, white
+  // (a run's clean before its paint).
+  enum class CleanPasses : uint8_t { White, WhiteBlackWhite };
+  // The framebuffer filled and the lab's cleaning FULL refresh per pass (`passes`, white last) under the render lock,
+  // the model reset to white, the picture to reapply; inside the panel gate. False (sweepEnd set) when the gate
+  // refused.
+  bool cleanToWhite(CleanPasses passes = CleanPasses::White);
   // The client could not paint: Stopped when a stop was asked meanwhile (its decode ended early), else PaintFailed.
   bool paintFailed();
   // Records a refused gate in sweepEnd; true when `gate` let the task in.

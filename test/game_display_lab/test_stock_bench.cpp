@@ -177,6 +177,8 @@ void expectOverlayEncoding(const Ramp& ramp, const uint16_t width, const uint16_
         case Shade::W:
           base = true;
           break;
+        case Shade::TRANSPARENT:
+          FAIL() << "a ramp band is never transparent " << x << "," << y;
       }
       ASSERT_EQ(bitAt(ramp.base, width, x, y), base) << "base " << x << "," << y;
       ASSERT_EQ(bitAt(ramp.lsb, width, x, y), lsb) << "lsb " << x << "," << y;

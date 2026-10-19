@@ -39,6 +39,16 @@ int DisplayLabActivity::listCount() const {
 
 const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TITLE); }
 
+namespace {
+
+// `out` set to `base`'s defaults (noinline: the returned preset, 120 bytes at seven levels, must not join onEnter's
+// frame beside its own loaded copy: the 256-byte rule).
+[[gnu::noinline]] void setDefaults(GameDisplayLab::GrayPreset& out, const GameDisplayLab::PresetBase base) {
+  out = GameDisplayLab::presetDefaults(base);
+}
+
+}  // namespace
+
 void DisplayLabActivity::onEnter() {
   UiListActivity::onEnter();
   // The gray preset: the file's, over the controller's defaults (the epic's D12: the owner's UltraChip table on a
@@ -57,7 +67,7 @@ void DisplayLabActivity::onEnter() {
   notice = nullptr;
   saveStatus = nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
-  grayPreset = GameDisplayLab::presetDefaults(base);
+  setDefaults(grayPreset, base);
   const bool supported = available();
   stockBench = supported && usesStockBench(display.getController());
   if (stockBench) LOG_INF("DLAB", "UltraChip stock-path bench");

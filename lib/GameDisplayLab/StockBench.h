@@ -17,7 +17,8 @@ namespace GameDisplayLab {
 // `inverted`. `frame` holds MaskPlanes::bytesFor(width, height) bytes ((width + 7) / 8 bytes per row).
 void fillChecker(uint8_t* frame, uint16_t width, uint16_t height, bool inverted);
 
-// The gray ramp's four bands are the gray engine's shades (GrayPreset.h: K, D, L, W, darkest first).
+// The gray ramp's four bands are the gray engine's four named shades (GrayPreset.h: K, D, L, W, darkest first, on
+// levels 0, 2, 4, 6 of seven).
 // The panel axis the ramp's bands run along: X (bands are vertical stripes) or Y (horizontal stripes).
 enum class BandAxis : uint8_t { X, Y };
 

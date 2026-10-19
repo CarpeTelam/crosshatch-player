@@ -376,7 +376,9 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
   // swept once painted.
   const bool run = requests.run;
   if (requests.replay) {
-    if (!cleanToWhite()) return false;
+    // A run's clean before the paint is white, black, white (story dlab-g2, D14): after one the previous screen's text
+    // ghosted through the painted bands.
+    if (!cleanToWhite(CleanPasses::WhiteBlackWhite)) return false;
     // A replay from a hold (the viewer's next picture) ends the hold: the panel is white again.
     control.releaseHold();
     elapsedUs = 0;
@@ -443,13 +445,28 @@ bool GrayRunner::admitted(const GameDisplayLab::SweepControl::Gate gate) {
   return false;
 }
 
-bool GrayRunner::cleanToWhite() {
+void GrayRunner::cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab) {
+  // The lab's clean sends the framebuffer with a FULL refresh: each pass is the framebuffer filled, then a clean.
+  for (const uint8_t fill : {uint8_t{0xFF}, uint8_t{0x00}, uint8_t{0xFF}}) {
+    renderer.clearScreen(fill);
+    lab.cleanNow();
+  }
+}
+
+bool GrayRunner::cleanToWhite(const CleanPasses passes) {
   if (!admitted(control.enterPanel(micros(), COVERED_GAP_US))) return false;
   {
-    // The lab's clean sends the framebuffer with a FULL refresh: white first, so the panel and the model agree.
+    // White last, so the panel and the model agree.
     RenderLock lock;
-    renderer.clearScreen(0xFF);
-    lab.cleanNow();
+    if (passes == CleanPasses::WhiteBlackWhite) {
+      cleanWhiteBlackWhite(renderer, lab);
+    } else {
+      renderer.clearScreen(0xFF);
+      lab.cleanNow();
+    }
+  }
+  if (passes == CleanPasses::WhiteBlackWhite) {
+    LOG_INF("DLAB", "gray sweep: cleaned white, black, white before the paint");
   }
   control.leavePanel();
   model_.reset(Shade::W);

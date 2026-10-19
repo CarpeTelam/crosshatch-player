@@ -1,7 +1,9 @@
 // The gray engine's per-pixel model and slot (lib/GameDisplayLab/GrayModel, GraySlot.h): the plan's Dose lookup,
-// Retarget, Mask build and Commit matrix rows, InkBoy's level arithmetic (`level += (target*64 - level) /
-// remaining`), its W>L test (192, 160, 128; a retarget at 160 keeping the level), history routes and the weak row; and
-// story dlab-g1's driveRect (the ladder's pulses: doses set directly, the bookkeeping a retarget's, clipped).
+// Retarget, Mask build and Commit matrix rows, InkBoy's level arithmetic (`level += (target*32 - level) /
+// remaining` over seven levels since story dlab-g2; K, D, L, W on 0, 64, 128, 192 as before), its W>L test (192, 160,
+// 128; a retarget at 160 keeping the level), the directional history routes and the weak row; story dlab-g1's
+// driveRect (the ladder's pulses: doses set directly, the bookkeeping a retarget's, clipped); and story dlab-g2's via
+// legs and level-coded bitmaps with a transparent value.
 
 #include <gtest/gtest.h>
 
@@ -52,7 +54,7 @@ TEST(GrayModel, BaseDoseOnAShadeIsTheTablesDose) {
   const GrayPreset p = GrayPreset::inkBoyDefaults();
   for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
     for (uint8_t to = 0; to < SHADE_COUNT; ++to) {
-      EXPECT_EQ(GrayModel::baseDose(static_cast<uint8_t>(from * 64), to, p), p.dose[from][to])
+      EXPECT_EQ(GrayModel::baseDose(static_cast<uint8_t>(from * GrayModel::LEVEL_STEP), to, p), p.dose[from][to])
           << int(from) << " > " << int(to);
     }
   }
@@ -124,10 +126,10 @@ TEST(GrayModel, RetargetMidTransitionKeepsTheLevelAndReplacesRemaining) {
   EXPECT_EQ(b.model.level(0, 0), 160);
   EXPECT_EQ(b.model.remaining(0, 0), 6);  // base 6 at 100 %
   EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::K));
-  EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::W));  // nearest shade to 160: (160 + 32) / 64 = 3
+  EXPECT_EQ(b.model.source(0, 0), 5);  // the level nearest 160: (160 + 16) / 32 = 5
 
-  // Scaled by the retarget percent toward the darker side (160 to K), rounded up, clamped 1..24; the light percent
-  // plays no part.
+  // Scaled by the retarget percent toward the darker side (160, level 5, to K: dose[5][0]), rounded up, clamped 1..24;
+  // the light percent plays no part.
   const auto budgetAt = [&b](GrayPreset preset, const uint8_t percent, const Shade to) {
     preset.retargetDarkPercent = percent;
     preset.retargetLightPercent = 50;
@@ -140,22 +142,20 @@ TEST(GrayModel, RetargetMidTransitionKeepsTheLevelAndReplacesRemaining) {
   EXPECT_EQ(budgetAt(p, 150, Shade::K), 9);
   EXPECT_EQ(budgetAt(p, 50, Shade::K), 3);
   EXPECT_EQ(budgetAt(p, 75, Shade::K), 5);  // 4.5, up
-  p.dose[3][0] = 12;
-  p.dose[2][0] = 12;
+  p.dose[5][0] = 12;
   EXPECT_EQ(budgetAt(p, 150, Shade::K), 18);  // under the cap of 24 since dlab-c3
-  p.dose[3][0] = 20;
-  p.dose[2][0] = 20;
+  p.dose[5][0] = 20;
   EXPECT_EQ(budgetAt(p, 150, Shade::K), 24);  // 30 clamps to 24
   p = GrayPreset::inkBoyDefaults();
-  p.dose[3][2] = 1;  // W>L 1, so the base from 150 to L is 1
+  p.dose[5][4] = 1;  // 5>4 1, so the base from 150 to L is 1
   b.model.reset(Shade::W);
   b.model.retarget(0, 0, Shade::D, p);  // W>D 3
   b.model.commit(true, false, p);       // 192 + (64 - 192) / 3 = 150
   ASSERT_EQ(b.model.level(0, 0), 150);
   p.retargetDarkPercent = 50;
-  b.model.retarget(0, 0, Shade::L, p);  // base ceil((0*42 + 1*22) / 64) = 1; 50 % of 1 is 0.5, up, at least 1
+  b.model.retarget(0, 0, Shade::L, p);  // base ceil((0*10 + 1*22) / 32) = 1; 50 % of 1 is 0.5, up, at least 1
   EXPECT_EQ(b.model.remaining(0, 0), 1);
-  EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::L));  // (150 + 32) / 64 = 2
+  EXPECT_EQ(b.model.source(0, 0), 5);  // (150 + 16) / 32 = 5
 }
 
 TEST(GrayModel, RetargetScalesByThePercentOfItsDirection) {
@@ -190,7 +190,7 @@ TEST(GrayModel, RetargetScalesByThePercentOfItsDirection) {
 TEST(GrayModel, TwentyFourDosesLandOnTheTarget) {
   Bench b;
   GrayPreset p = GrayPreset::inkBoyDefaults();
-  p.dose[3][0] = DOSE_MAX;  // W>K 24, hold off
+  p.dose[6][0] = DOSE_MAX;  // W>K 24, hold off
   ASSERT_EQ(DOSE_MAX, 24);
   ASSERT_TRUE(p.valid());
   b.model.reset(Shade::W);
@@ -245,7 +245,7 @@ void expectMasksFollowTheRules(const Bench& b, const GrayPreset& p) {
   for (int y = 0; y < H; ++y) {
     for (int x = 0; x < W; ++x) {
       const bool active = b.model.remaining(x, y) > 0;
-      const bool lighten = b.model.target(x, y) * 64 > b.model.level(x, y);
+      const bool lighten = b.model.target(x, y) * GrayModel::LEVEL_STEP > b.model.level(x, y);
       EXPECT_EQ(b.drive.test(M::White, x, y), active && lighten) << x << "," << y;
       EXPECT_EQ(b.drive.test(M::Black, x, y), active && !lighten) << x << "," << y;
       const bool hold = (p.holdMask & holdBit(b.model.source(x, y), b.model.target(x, y))) != 0;
@@ -302,7 +302,7 @@ TEST(GrayModel, MaskBuildLightensToWhite) {
 TEST(GrayModel, OneDoseLeftWithHoldOffGetsNoFollowUp) {
   Bench b;
   GrayPreset p = GrayPreset::inkBoyDefaults();
-  p.dose[0][3] = 1;  // K>W one dose, hold off
+  p.dose[0][6] = 1;  // K>W one dose, hold off
   b.model.reset(Shade::K);
   b.model.retarget(2, 2, Shade::W, p);
   ASSERT_EQ(b.model.remaining(2, 2), 1);
@@ -508,7 +508,7 @@ TEST(GrayModelHistory, CompletedReturnAddsTheRoutesDelta) {
   EXPECT_EQ(b.model.whiteSteps(0, 0), 0);
   b.model.retarget(0, 0, Shade::L, p);  // L>K>L: base K>L 4, return delta -1
   EXPECT_EQ(b.model.remaining(0, 0), 3);
-  EXPECT_EQ(b.model.origin(0, 0), GrayModel::ORIGIN_NONE);  // new target L, mid routes neutral
+  EXPECT_EQ(b.model.origin(0, 0), shadeOf(Shade::K));  // settled on K: every settled pixel records its origin
   EXPECT_EQ(b.model.blackSteps(0, 0), 0);
 
   // Without the return bit, or with history off, the base stands.
@@ -531,7 +531,7 @@ TEST(GrayModelHistory, ReturnNeedsTheTablesDoseOfSteps) {
   b.model.retarget(0, 0, Shade::K, p);
   b.model.commit(true, true, p);
   b.model.commit(true, true, p);
-  p.dose[2][0] = 5;  // the table changed since: 4 steps no longer match L>K
+  p.dose[4][0] = 5;  // the table changed since: 4 steps no longer match L>K
   b.model.retarget(0, 0, Shade::L, p);
   EXPECT_EQ(b.model.remaining(0, 0), 4);
 }
@@ -560,29 +560,40 @@ TEST(GrayModelHistory, NeutralRouteKeepsTheRetargetBudget) {
   GrayPreset p = GrayPreset::inkBoyDefaults();
   p.historyMode = HISTORY_RETURN | HISTORY_REVERSE;
   b.model.reset(Shade::D);
-  b.model.retarget(0, 0, Shade::K, p);  // D>K 4, origin D
-  b.model.commit(true, true, p);
-  b.model.commit(true, true, p);
-  b.model.retarget(0, 0, Shade::D, p);  // D>K>D: delta 0, the base K>D 2
-  EXPECT_EQ(b.model.remaining(0, 0), 2);
+  b.model.retarget(0, 0, Shade::W, p);  // D>W 6, hold off, origin D
+  for (int i = 0; i < 3; ++i) b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(0, 0), 192);
+  b.model.retarget(0, 0, Shade::D, p);  // D>W>D, a return toward dark: delta 0, the base W>D 3
+  EXPECT_EQ(b.model.remaining(0, 0), 3);
 }
 
-TEST(GrayModelHistory, OriginOnMidShadesOnlyWhenDldOrLdlIsActive) {
+TEST(GrayModelHistory, EveryReturnTakesTheRouteOfItsDirection) {
   Bench b(true);
   GrayPreset p = GrayPreset::inkBoyDefaults();
   p.historyMode = HISTORY_RETURN;
-  b.model.reset(Shade::D);
-  b.model.retarget(0, 0, Shade::L, p);
-  EXPECT_EQ(b.model.origin(0, 0), GrayModel::ORIGIN_NONE);
-  p.returnDelta[static_cast<size_t>(Route::DLD)] = 1;
-  b.model.reset(Shade::D);
-  b.model.retarget(0, 0, Shade::L, p);  // D>L 1, origin D
-  EXPECT_EQ(b.model.origin(0, 0), shadeOf(Shade::D));
-  b.model.commit(true, true, p);
-  ASSERT_EQ(b.model.level(0, 0), 128);
-  EXPECT_EQ(b.model.whiteSteps(0, 0), 1);
-  b.model.retarget(0, 0, Shade::D, p);  // D>L>D: L>D 1 + 1
-  EXPECT_EQ(b.model.remaining(0, 0), 2);
+  p.returnDelta[routeIndex(Toward::Dark)] = 2;
+  p.returnDelta[routeIndex(Toward::Light)] = -1;
+  // 3>5>3, between two grays: origin 3 recorded on any target (story dlab-g2: no per-pair routes), the return toward
+  // dark takes that route's +2 over the base 5>3.
+  b.model.reset(static_cast<Shade>(3));
+  b.model.retarget(0, 0, static_cast<Shade>(5), p);
+  EXPECT_EQ(b.model.origin(0, 0), 3);
+  const uint8_t up = b.model.remaining(0, 0);
+  ASSERT_EQ(up, p.dose[3][5]);
+  for (int i = 0; i < 10 && b.model.activeCount() > 0; ++i) b.model.commit(true, false, p);
+  ASSERT_EQ(b.model.level(0, 0), 5 * GrayModel::LEVEL_STEP);
+  EXPECT_EQ(b.model.whiteSteps(0, 0), up);
+  b.model.retarget(0, 0, static_cast<Shade>(3), p);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[5][3] + 2);
+  EXPECT_EQ(b.model.origin(0, 0), 5);  // settled on 5: the next return would be to 5
+  // 5>1>5: the return toward light takes that route's -1 (L>K>L's in a version 1 file).
+  b.model.reset(static_cast<Shade>(5));
+  b.model.retarget(1, 0, static_cast<Shade>(1), p);
+  for (int i = 0; i < 10 && b.model.activeCount() > 0; ++i) b.model.commit(true, false, p);
+  ASSERT_EQ(b.model.level(1, 0), GrayModel::LEVEL_STEP);
+  ASSERT_EQ(b.model.blackSteps(1, 0), p.dose[5][1]);
+  b.model.retarget(1, 0, static_cast<Shade>(5), p);
+  EXPECT_EQ(b.model.remaining(1, 0), p.dose[1][5] - 1);
   // An unsettled pixel records no origin.
   b.model.reset(Shade::W);
   b.model.retarget(1, 0, Shade::D, p);
@@ -638,7 +649,7 @@ TEST(GrayModelDriveRect, SetsTheDosesTowardTheEndAndKeepsTheLevel) {
   b.model.driveRect(0, 0, 1, 1, Toward::Dark, 2);
   EXPECT_EQ(b.model.level(0, 0), 144);
   EXPECT_EQ(b.model.remaining(0, 0), 2);
-  EXPECT_EQ(b.model.source(0, 0), shadeOf(Shade::L));  // 144 is nearest L (128)
+  EXPECT_EQ(b.model.source(0, 0), 5);  // 144 is nearest level 5 (160)
 }
 
 TEST(GrayModelDriveRect, IsClippedAndZeroDosesChangeNothingAndTheCountIsCapped) {
@@ -683,7 +694,7 @@ TEST(GrayModelDriveRect, ClearsTheHistoryOriginAndTheWeakBit) {
 TEST(GrayModelDriveRect, HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd) {
   Bench b;
   GrayPreset held = GrayPreset::inkBoyDefaults();
-  held.holdMask = 0xFFFF;
+  held.holdMask = HOLD_ALL;
   b.model.reset(Shade::W);
   // Pixel (5, 1) black and settled first (one pulse from white lands on black), then driven toward black 3 times.
   b.model.driveRect(5, 1, 1, 1, Toward::Dark, 1);
@@ -713,6 +724,221 @@ TEST(GrayModelDriveRect, HeldRhythmSlotsSendOneScanAPulseAndLandOnTheEnd) {
   EXPECT_EQ(b.model.level(5, 1), 0);
   EXPECT_EQ(b.model.level(6, 2), 192);
   EXPECT_EQ(scan.calls, 4u);
+}
+
+// story dlab-g2: seven levels on the same 0..192 scale, a step of 32.
+TEST(GrayModelSevenLevels, LevelsAreShadeTimes32AndBaseDoseInterpolatesBetweenNeighbours) {
+  EXPECT_EQ(GrayModel::LEVEL_STEP, 32);
+  EXPECT_EQ(GrayModel::ORIGIN_NONE, 7);
+  Bench b;
+  const GrayPreset p = GrayPreset::ultraChipDefaults();
+  for (uint8_t level = 0; level < SHADE_COUNT; ++level) {
+    b.model.reset(static_cast<Shade>(level));
+    EXPECT_EQ(b.model.level(0, 0), level * 32);
+    EXPECT_EQ(b.model.target(0, 0), level);
+    EXPECT_EQ(b.model.source(0, 0), level);
+  }
+  EXPECT_EQ(shadeOf(Shade::K) * 32, 0);  // the four shades' levels did not move
+  EXPECT_EQ(shadeOf(Shade::D) * 32, 64);
+  EXPECT_EQ(shadeOf(Shade::L) * 32, 128);
+  EXPECT_EQ(shadeOf(Shade::W) * 32, 192);
+  // Between levels 5 (160) and 6 (192) toward 0: dose[5][0] 10 and dose[6][0] 12.
+  EXPECT_EQ(GrayModel::baseDose(160, 0, p), 10);
+  EXPECT_EQ(GrayModel::baseDose(176, 0, p), 11);  // (10*16 + 12*16) / 32
+  EXPECT_EQ(GrayModel::baseDose(161, 0, p), 11);  // (10*31 + 12*1) / 32 = 10.06, up
+  EXPECT_EQ(GrayModel::baseDose(96, 3, p), 0);    // on level 3
+  EXPECT_EQ(GrayModel::baseDose(97, 3, p), 1);    // (0*31 + 1*1) / 32, up
+  EXPECT_EQ(GrayModel::baseDose(255, 0, p), 12);  // past white reads as white
+  EXPECT_EQ(GrayModel::baseDose(0, static_cast<uint8_t>(Shade::TRANSPARENT), p), 0);
+  // Every level-to-level transition runs to its target exactly, one dose a slot.
+  GrayPreset plain = p;
+  memset(plain.via, VIA_NONE, sizeof(plain.via));
+  for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
+    for (uint8_t to = 0; to < SHADE_COUNT; ++to) {
+      if (from == to) continue;
+      b.model.reset(static_cast<Shade>(from));
+      b.model.retarget(2, 2, static_cast<Shade>(to), plain);
+      EXPECT_EQ(b.model.remaining(2, 2), plain.dose[from][to]);
+      for (int i = 0; i < DOSE_MAX && b.model.activeCount() > 0; ++i) b.model.commit(true, false, plain);
+      EXPECT_EQ(b.model.level(2, 2), to * 32) << int(from) << ">" << int(to);
+    }
+  }
+}
+
+TEST(GrayModelSevenLevels, TransparentIsNeverATarget) {
+  Bench b;
+  const GrayPreset p = GrayPreset::ultraChipDefaults();
+  b.model.reset(Shade::W);
+  b.model.retarget(0, 0, Shade::TRANSPARENT, p);
+  b.model.retargetRect(0, 0, W, H, Shade::TRANSPARENT, p);
+  EXPECT_EQ(b.model.activeCount(), 0u);
+  EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::W));
+  b.model.reset(Shade::TRANSPARENT);  // no level to settle on: nothing
+  EXPECT_EQ(b.model.level(0, 0), 192);
+}
+
+// story dlab-g2, item 6 (D14): 0>1 cannot be reached from black in one pulse, so it runs 0>2 then 2>1.
+TEST(GrayModelVia, ZeroToOneDeliversTheZeroToTwoLegThenTheTwoToOneLeg) {
+  Bench b;
+  const GrayPreset p = GrayPreset::ultraChipDefaults();  // via[0][1] = 2; 0>2 1, 2>1 2; every hold on
+  ASSERT_EQ(p.via[0][1], 2);
+  b.model.reset(Shade::K);
+  b.model.retarget(3, 1, static_cast<Shade>(1), p);
+  // Leg 1: toward level 2 with 0>2's dose, the final target kept.
+  EXPECT_EQ(b.model.target(3, 1), 2);
+  EXPECT_EQ(b.model.remaining(3, 1), p.dose[0][2]);
+  EXPECT_EQ(b.model.nextTarget(3, 1), 1);
+  EXPECT_EQ(b.model.source(3, 1), 0);
+  b.model.buildMasks(b.drive, b.follow, p, false);
+  EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::White, 3, 1));  // lightening toward 2
+  b.model.commit(true, true, p);
+  // Leg 1 landed on 64: leg 2 started from the settled via level with 2>1's dose.
+  EXPECT_EQ(b.model.level(3, 1), 64);
+  EXPECT_EQ(b.model.target(3, 1), 1);
+  EXPECT_EQ(b.model.remaining(3, 1), p.dose[2][1]);
+  EXPECT_EQ(b.model.nextTarget(3, 1), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.source(3, 1), 2);
+  b.model.buildMasks(b.drive, b.follow, p, false);
+  EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::Black, 3, 1));  // darkening back toward 1
+  b.model.commit(true, true, p);
+  EXPECT_EQ(b.model.level(3, 1), 48);
+  b.model.commit(true, true, p);
+  EXPECT_EQ(b.model.level(3, 1), 32);
+  EXPECT_EQ(b.model.activeCount(), 0u);
+  // In slots: 1 + 2, one scan each (every hold on).
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  struct Delivered {
+    int scans = 0;
+    bool operator()(const MaskPlanes&, uint32_t& busyUs) {
+      busyUs = 1000;
+      ++scans;
+      return true;
+    }
+  } scan;
+  int slots = 0;
+  while (b.model.activeCount() > 0 && slots < 10) {
+    runGraySlot(b.model, b.drive, b.follow, p, false, scan);
+    ++slots;
+  }
+  EXPECT_EQ(slots, 3);
+  EXPECT_EQ(scan.scans, 3);
+  EXPECT_EQ(b.model.level(0, 0), 32);
+}
+
+TEST(GrayModelVia, SecondLegFollowsUpWhenItsHoldIsOff) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.dose[0][2] = 2;
+  p.dose[2][1] = 3;
+  p.setHold(transitionIndex(0, 2), false);
+  p.setHold(transitionIndex(2, 1), false);
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  b.model.commit(true, true, p);  // leg 1's two doses in one slot: 32, then 64; leg 2 starts
+  EXPECT_EQ(b.model.level(0, 0), 64);
+  EXPECT_EQ(b.model.target(0, 0), 1);
+  EXPECT_EQ(b.model.remaining(0, 0), 3);
+  b.model.commit(true, true, p);  // two of leg 2's three
+  b.model.commit(true, true, p);
+  EXPECT_EQ(b.model.level(0, 0), 32);
+  EXPECT_EQ(b.model.activeCount(), 0u);
+}
+
+TEST(GrayModelVia, RetargetsDuringTheFirstLeg) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.dose[0][2] = 4;  // a longer first leg, so it can be interrupted
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  b.model.commit(true, false, p);  // 16, three left toward 2
+  ASSERT_EQ(b.model.level(0, 0), 16);
+  // The same final target again: nothing changes.
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.remaining(0, 0), 3);
+  EXPECT_EQ(b.model.nextTarget(0, 0), 1);
+  // The via level itself: the second leg is dropped, the doses kept.
+  b.model.retarget(0, 0, static_cast<Shade>(2), p);
+  EXPECT_EQ(b.model.target(0, 0), 2);
+  EXPECT_EQ(b.model.remaining(0, 0), 3);
+  EXPECT_EQ(b.model.nextTarget(0, 0), GrayModel::ORIGIN_NONE);
+  // Back to 1 from 16 (nearest level 1 at 16? (16 + 16) / 32 = 1): no via from level 1, a plain retarget.
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.target(0, 0), 1);
+  EXPECT_EQ(b.model.nextTarget(0, 0), GrayModel::ORIGIN_NONE);
+  // Another target from mid-leg: a plain retarget, the second leg gone.
+  b.model.reset(Shade::K);
+  b.model.retarget(1, 0, static_cast<Shade>(1), p);
+  b.model.retarget(1, 0, Shade::W, p);
+  EXPECT_EQ(b.model.target(1, 0), shadeOf(Shade::W));
+  EXPECT_EQ(b.model.nextTarget(1, 0), GrayModel::ORIGIN_NONE);
+  // A pixel already moving to the via level (a plain 0>2) asked for 1 keeps its doses and takes the second leg.
+  b.model.reset(Shade::K);
+  b.model.retarget(2, 0, static_cast<Shade>(2), p);
+  b.model.retarget(2, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.target(2, 0), 2);
+  EXPECT_EQ(b.model.remaining(2, 0), 4);
+  EXPECT_EQ(b.model.nextTarget(2, 0), 1);
+  // driveRect drops a second leg.
+  b.model.driveRect(2, 0, 1, 1, Toward::Dark, 2);
+  EXPECT_EQ(b.model.nextTarget(2, 0), GrayModel::ORIGIN_NONE);
+  // From the via level itself there is nothing to pass through: 2>1 directly.
+  GrayPreset q = p;
+  q.via[2][1] = 3;
+  b.model.reset(static_cast<Shade>(3));
+  b.model.retarget(3, 0, static_cast<Shade>(1), q);  // via[3][1] none: plain
+  EXPECT_EQ(b.model.nextTarget(3, 0), GrayModel::ORIGIN_NONE);
+  q.via[3][1] = 3;  // invalid (its own from), ignored by the model as the pixel sits on it
+  b.model.reset(static_cast<Shade>(3));
+  b.model.retarget(3, 0, static_cast<Shade>(1), q);
+  EXPECT_EQ(b.model.target(3, 0), 1);
+  EXPECT_EQ(b.model.nextTarget(3, 0), GrayModel::ORIGIN_NONE);
+}
+
+// story dlab-g2, item 8: a level-coded bitmap's transparent value.
+TEST(GrayModelBitmap, TransparentPixelsKeepTheirStateAndTheOthersRetarget) {
+  Bench b;
+  const GrayPreset p = GrayPreset::ultraChipDefaults();
+  b.model.reset(Shade::W);
+  b.model.retarget(1, 1, Shade::K, p);  // mid-transition under a transparent bitmap pixel
+  b.model.commit(true, false, p);
+  const uint8_t level = b.model.level(1, 1);
+  const uint8_t left = b.model.remaining(1, 1);
+  // 3 x 2 at (0, 1): 0 7 3 / 6 5 7.
+  const uint8_t levels[] = {0, 7, 3, 6, 5, 7};
+  EXPECT_EQ(b.model.retargetBitmap(0, 1, 3, 2, levels, p), 0u);
+  EXPECT_EQ(b.model.target(0, 1), 0);
+  EXPECT_EQ(b.model.target(2, 1), 3);
+  EXPECT_EQ(b.model.target(0, 2), 6);  // already white: nothing to drive
+  EXPECT_EQ(b.model.remaining(0, 2), 0);
+  EXPECT_EQ(b.model.target(1, 2), 5);
+  // The transparent pixels: (1, 1) keeps its level, doses and target; (2, 2) stays settled white.
+  EXPECT_EQ(b.model.level(1, 1), level);
+  EXPECT_EQ(b.model.remaining(1, 1), left);
+  EXPECT_EQ(b.model.target(1, 1), shadeOf(Shade::K));
+  EXPECT_EQ(b.model.target(2, 2), shadeOf(Shade::W));
+  EXPECT_EQ(b.model.remaining(2, 2), 0);
+  // Outside the bitmap nothing moved.
+  EXPECT_EQ(b.model.target(3, 1), shadeOf(Shade::W));
+  EXPECT_EQ(b.model.remaining(3, 1), 0);
+}
+
+TEST(GrayModelBitmap, ValuesAboveSevenAreTransparentAndCountedAndTheBitmapIsClipped) {
+  Bench b;
+  const GrayPreset p = GrayPreset::ultraChipDefaults();
+  b.model.reset(Shade::W);
+  const uint8_t levels[] = {8, 0, 255, 0};
+  // At (W - 2, H - 1): 8 lands on the model, the second row (255, 0) is clipped; both values above 7 are counted.
+  EXPECT_EQ(b.model.retargetBitmap(W - 2, H - 1, 2, 2, levels, p), 2u);
+  EXPECT_EQ(b.model.target(W - 2, H - 1), shadeOf(Shade::W));
+  EXPECT_EQ(b.model.remaining(W - 2, H - 1), 0);
+  EXPECT_EQ(b.model.target(W - 1, H - 1), 0);
+  EXPECT_EQ(b.model.activeCount(), 1u);
+  EXPECT_EQ(b.model.retargetBitmap(-1, 0, 2, 2, levels, p), 2u);
+  EXPECT_EQ(b.model.target(0, 0), 0);  // bitmap (1, 0)
+  EXPECT_EQ(b.model.retargetBitmap(0, 0, 2, 2, nullptr, p), 0u);
+  EXPECT_EQ(b.model.retargetBitmap(0, 0, 0, 2, levels, p), 0u);
+  EXPECT_EQ(b.model.retargetBitmap(0, 0, 2, -1, levels, p), 0u);
 }
 
 }  // namespace

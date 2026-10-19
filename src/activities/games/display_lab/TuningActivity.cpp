@@ -22,20 +22,38 @@ TuningActivity::TuningActivity(GfxRenderer& renderer, MappedInputManager& mapped
 
 const char* TuningActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TUNING); }
 
-TuningActivity::Kind TuningActivity::kindOf(const int row) {
-  if (row < HOLD_FIRST) return Kind::Dose;
-  if (row < RETARGET_DARK_ROW) return Kind::Hold;
-  if (row == RETARGET_DARK_ROW) return Kind::RetargetDark;
-  if (row == RETARGET_LIGHT_ROW) return Kind::RetargetLight;
-  if (row == RATE_ROW) return Kind::Rate;
-  if (row == SWAP_ROW) return Kind::Swap;
-  if (row == RESET_ROW) return Kind::Reset;
-  return Kind::Save;
+namespace {
+
+using Toward = GameDisplayLab::Toward;
+
+constexpr int SECTION_ROW = 0;
+
+const char* sectionName(const GameDisplayLab::TuningSection section) {
+  switch (section) {
+    case GameDisplayLab::TuningSection::Doses:
+      return tr(STR_GAMES_DLAB_SECTION_DOSES);
+    case GameDisplayLab::TuningSection::Holds:
+      return tr(STR_GAMES_DLAB_SECTION_HOLDS);
+    case GameDisplayLab::TuningSection::Other:
+      return tr(STR_GAMES_DLAB_SECTION_OTHER);
+  }
+  return "";
 }
 
-uint8_t TuningActivity::transitionOf(const int row) {
-  return static_cast<uint8_t>(row < HOLD_FIRST ? row - DOSE_FIRST : row - HOLD_FIRST);
+const char* historyName(const uint8_t mode) {
+  switch (mode) {
+    case 0:
+      return tr(STR_STATE_OFF);
+    case GameDisplayLab::HISTORY_RETURN:
+      return tr(STR_GAMES_DLAB_HISTORY_RETURNS);
+    case GameDisplayLab::HISTORY_REVERSE:
+      return tr(STR_GAMES_DLAB_HISTORY_REVERSALS);
+    default:
+      return tr(STR_GAMES_DLAB_HISTORY_BOTH);
+  }
 }
+
+}  // namespace
 
 uint8_t TuningActivity::rateCount() const {
   ScanBackend* backend = lab.backend();
@@ -47,40 +65,65 @@ void TuningActivity::onEnter() {
   // The render task may draw this screen while onEnter runs, and it reads the rows.
   RenderLock lock(*this);
   editing = NOT_EDITING;
-  for (uint8_t i = 0; i < GameDisplayLab::TRANSITION_COUNT; ++i) {
-    // The shades' seven-level numbers (D14): transition names such as "0>2" (black to dark gray), not translated text.
-    const char name[4] = {GameDisplayLab::shadeName(static_cast<Shade>(GameDisplayLab::transitionFrom(i))), '>',
-                          GameDisplayLab::shadeName(static_cast<Shade>(GameDisplayLab::transitionTo(i))), '\0'};
-    snprintf(labels[DOSE_FIRST + i], sizeof(labels[0]), tr(STR_GAMES_DLAB_DOSE), name);
-    snprintf(labels[HOLD_FIRST + i], sizeof(labels[0]), tr(STR_GAMES_DLAB_HOLD), name);
-  }
+  section = Section::Doses;
+  saveLine = nullptr;
   buildRows();
 }
 
 void TuningActivity::buildRows() {
-  for (int row = 0; row < static_cast<int>(ROW_COUNT); ++row) {
+  rowCount = GameDisplayLab::tuningRowCount(section);
+  for (int row = 0; row < rowCount; ++row) {
     fui::ListItem item;
-    switch (kindOf(row)) {
-      case Kind::Dose:
-      case Kind::Hold:
+    const Row kind = kindOf(row);
+    switch (kind) {
+      case Row::Section:
+        item.label = tr(STR_GAMES_DLAB_SECTION);
+        break;
+      case Row::Dose:
+      case Row::Hold:
+      case Row::Via: {
+        // The levels' digits (D14): transition names such as "0>1" (black to the darkest gray), not translated text.
+        const uint8_t i = transitionOf(row);
+        const char name[4] = {GameDisplayLab::shadeName(static_cast<Shade>(GameDisplayLab::transitionFrom(i))), '>',
+                              GameDisplayLab::shadeName(static_cast<Shade>(GameDisplayLab::transitionTo(i))), '\0'};
+        const char* format = kind == Row::Dose   ? tr(STR_GAMES_DLAB_DOSE)
+                             : kind == Row::Hold ? tr(STR_GAMES_DLAB_HOLD)
+                                                 : tr(STR_GAMES_DLAB_VIA);
+        snprintf(labels[row], sizeof(labels[row]), format, name);
         item.label = labels[row];
         break;
-      case Kind::RetargetDark:
+      }
+      case Row::RetargetDark:
         item.label = tr(STR_GAMES_DLAB_RETARGET_DARK);
         break;
-      case Kind::RetargetLight:
+      case Row::RetargetLight:
         item.label = tr(STR_GAMES_DLAB_RETARGET_LIGHT);
         break;
-      case Kind::Rate:
+      case Row::History:
+        item.label = tr(STR_GAMES_DLAB_HISTORY);
+        break;
+      case Row::ReturnDark:
+        item.label = tr(STR_GAMES_DLAB_RETURN_DARK);
+        break;
+      case Row::ReturnLight:
+        item.label = tr(STR_GAMES_DLAB_RETURN_LIGHT);
+        break;
+      case Row::ReverseDark:
+        item.label = tr(STR_GAMES_DLAB_REVERSE_DARK);
+        break;
+      case Row::ReverseLight:
+        item.label = tr(STR_GAMES_DLAB_REVERSE_LIGHT);
+        break;
+      case Row::Rate:
         item.label = tr(STR_GAMES_DLAB_FRAME_RATE);
         break;
-      case Kind::Swap:
+      case Row::Swap:
         item.label = tr(STR_GAMES_DLAB_SWAP_POLARITY);
         break;
-      case Kind::Reset:
+      case Row::Reset:
         item.label = tr(STR_GAMES_DLAB_RESET_PRESET);
         break;
-      case Kind::Save:
+      case Row::Save:
         item.label = tr(STR_GAMES_DLAB_SAVE_PRESET);
         break;
     }
@@ -94,29 +137,61 @@ void TuningActivity::buildRows() {
 bool TuningActivity::plainValue(const int row, char* out, const size_t capacity) const {
   const GrayPreset& preset = lab.preset();
   switch (kindOf(row)) {
-    case Kind::Dose:
+    case Row::Section:
+      snprintf(out, capacity, "%s", sectionName(section));
+      return true;
+    case Row::Dose:
       snprintf(out, capacity, "%u", static_cast<unsigned>(preset.doseAt(transitionOf(row))));
       return true;
-    case Kind::Hold:
+    case Row::Hold:
       snprintf(out, capacity, "%s", preset.holdAt(transitionOf(row)) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
       return true;
-    case Kind::RetargetDark:
+    case Row::Via: {
+      const uint8_t via = preset.viaAt(transitionOf(row));
+      if (via < GameDisplayLab::SHADE_COUNT) {
+        snprintf(out, capacity, "%c", GameDisplayLab::shadeName(static_cast<Shade>(via)));
+      } else {
+        snprintf(out, capacity, "%s", tr(STR_NONE_OPT));
+      }
+      return true;
+    }
+    case Row::RetargetDark:
       snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(preset.retargetDarkPercent));
       return true;
-    case Kind::RetargetLight:
+    case Row::RetargetLight:
       snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(preset.retargetLightPercent));
       return true;
-    case Kind::Rate: {
+    case Row::History:
+      snprintf(out, capacity, "%s", historyName(preset.historyMode));
+      return true;
+    case Row::ReturnDark:
+    case Row::ReturnLight: {
+      const Toward toward = kindOf(row) == Row::ReturnDark ? Toward::Dark : Toward::Light;
+      snprintf(out, capacity, "%d", static_cast<int>(preset.returnDelta[GameDisplayLab::routeIndex(toward)]));
+      return true;
+    }
+    case Row::ReverseDark:
+    case Row::ReverseLight: {
+      const Toward toward = kindOf(row) == Row::ReverseDark ? Toward::Dark : Toward::Light;
+      const uint8_t percent = preset.reversePercent[GameDisplayLab::routeIndex(toward)];
+      if (percent == 0) {
+        snprintf(out, capacity, "%s", tr(STR_GAMES_DLAB_AS_RETARGET));
+      } else {
+        snprintf(out, capacity, tr(STR_GAMES_DLAB_PERCENT), static_cast<unsigned>(percent));
+      }
+      return true;
+    }
+    case Row::Rate: {
       ScanBackend* backend = lab.backend();
       const char* label = backend ? backend->rateLabel(preset.rateIndex) : nullptr;
       snprintf(out, capacity, "%s", label ? label : "?");
       return true;
     }
-    case Kind::Swap:
+    case Row::Swap:
       snprintf(out, capacity, "%s", preset.swapPolarity ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
       return true;
-    case Kind::Reset:
-    case Kind::Save:
+    case Row::Reset:
+    case Row::Save:
       return false;
   }
   return false;
@@ -125,11 +200,10 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
 void TuningActivity::writeValue(const int row) {
   char plain[24];
   if (!plainValue(row, plain, sizeof(plain))) {
-    // The action rows say what they do; the Save row then keeps the line save() wrote.
-    if (values[row][0] == '\0') {
-      snprintf(values[row], sizeof(values[row]), "%s",
-               kindOf(row) == Kind::Reset ? tr(STR_GAMES_DLAB_RESET_PRESET_DESC) : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
-    }
+    // The action rows say what they do; the Save row, after a save, whether it worked.
+    const char* line = tr(STR_GAMES_DLAB_RESET_PRESET_DESC);
+    if (kindOf(row) == Row::Save) line = saveLine ? saveLine : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC);
+    snprintf(values[row], sizeof(values[row]), "%s", line);
     return;
   }
   if (row == editing) {
@@ -150,7 +224,7 @@ void TuningActivity::buildScreen(UiScreen& screen) {
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   fui::ListProps props;
   props.items = rowItems;
-  props.count = static_cast<uint16_t>(ROW_COUNT);
+  props.count = static_cast<uint16_t>(rowCount);
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.subtitleText = screen.theme().smallText;
@@ -177,28 +251,49 @@ void TuningActivity::tapStep(const int row) {
   const uint8_t transition = transitionOf(row);
   const uint8_t rates = rateCount();
   switch (kindOf(row)) {
-    case Kind::Dose:
+    case Row::Section:
+      nextSection();
+      return;
+    case Row::Dose:
       edit(row, [transition](GrayPreset& p) { p.cycleDose(transition); });
       return;
-    case Kind::Hold:
+    case Row::Hold:
       edit(row, [transition](GrayPreset& p) { p.toggleHold(transition); });
       return;
-    case Kind::RetargetDark:
-      edit(row, [](GrayPreset& p) { p.cycleRetarget(GameDisplayLab::Toward::Dark); });
+    case Row::Via:
+      edit(row, [transition](GrayPreset& p) { p.cycleVia(transition); });
       return;
-    case Kind::RetargetLight:
-      edit(row, [](GrayPreset& p) { p.cycleRetarget(GameDisplayLab::Toward::Light); });
+    case Row::RetargetDark:
+      edit(row, [](GrayPreset& p) { p.cycleRetarget(Toward::Dark); });
       return;
-    case Kind::Rate:
+    case Row::RetargetLight:
+      edit(row, [](GrayPreset& p) { p.cycleRetarget(Toward::Light); });
+      return;
+    case Row::History:
+      edit(row, [](GrayPreset& p) { p.cycleHistory(); });
+      return;
+    case Row::ReturnDark:
+      edit(row, [](GrayPreset& p) { p.cycleReturnDelta(Toward::Dark); });
+      return;
+    case Row::ReturnLight:
+      edit(row, [](GrayPreset& p) { p.cycleReturnDelta(Toward::Light); });
+      return;
+    case Row::ReverseDark:
+      edit(row, [](GrayPreset& p) { p.cycleReversePercent(Toward::Dark); });
+      return;
+    case Row::ReverseLight:
+      edit(row, [](GrayPreset& p) { p.cycleReversePercent(Toward::Light); });
+      return;
+    case Row::Rate:
       edit(row, [rates](GrayPreset& p) { p.cycleRate(rates); });
       return;
-    case Kind::Swap:
+    case Row::Swap:
       edit(row, [](GrayPreset& p) { p.toggleSwap(); });
       return;
-    case Kind::Reset:
+    case Row::Reset:
       reset();
       return;
-    case Kind::Save:
+    case Row::Save:
       save();
       return;
   }
@@ -208,28 +303,59 @@ void TuningActivity::adjust(const int row, const int direction) {
   const uint8_t transition = transitionOf(row);
   const uint8_t rates = rateCount();
   switch (kindOf(row)) {
-    case Kind::Dose:
+    case Row::Dose:
       edit(row, [transition, direction](GrayPreset& p) { p.stepDose(transition, direction); });
       return;
-    case Kind::Hold:
+    case Row::Hold:
       edit(row, [transition, direction](GrayPreset& p) { p.setHold(transition, direction > 0); });
       return;
-    case Kind::RetargetDark:
-      edit(row, [direction](GrayPreset& p) { p.stepRetarget(GameDisplayLab::Toward::Dark, direction); });
+    case Row::Via:
+      edit(row, [transition, direction](GrayPreset& p) { p.stepVia(transition, direction); });
       return;
-    case Kind::RetargetLight:
-      edit(row, [direction](GrayPreset& p) { p.stepRetarget(GameDisplayLab::Toward::Light, direction); });
+    case Row::RetargetDark:
+      edit(row, [direction](GrayPreset& p) { p.stepRetarget(Toward::Dark, direction); });
       return;
-    case Kind::Rate:
+    case Row::RetargetLight:
+      edit(row, [direction](GrayPreset& p) { p.stepRetarget(Toward::Light, direction); });
+      return;
+    case Row::History:
+      edit(row, [direction](GrayPreset& p) { p.stepHistory(direction); });
+      return;
+    case Row::ReturnDark:
+      edit(row, [direction](GrayPreset& p) { p.stepReturnDelta(Toward::Dark, direction); });
+      return;
+    case Row::ReturnLight:
+      edit(row, [direction](GrayPreset& p) { p.stepReturnDelta(Toward::Light, direction); });
+      return;
+    case Row::ReverseDark:
+      edit(row, [direction](GrayPreset& p) { p.stepReversePercent(Toward::Dark, direction); });
+      return;
+    case Row::ReverseLight:
+      edit(row, [direction](GrayPreset& p) { p.stepReversePercent(Toward::Light, direction); });
+      return;
+    case Row::Rate:
       edit(row, [direction, rates](GrayPreset& p) { p.stepRate(direction, rates); });
       return;
-    case Kind::Swap:
+    case Row::Swap:
       edit(row, [direction](GrayPreset& p) { p.swapPolarity = direction > 0; });
       return;
-    case Kind::Reset:
-    case Kind::Save:
+    case Row::Section:
+    case Row::Reset:
+    case Row::Save:
       return;  // never in edit mode
   }
+}
+
+void TuningActivity::nextSection() {
+  {
+    // The render task reads the rows and their count.
+    RenderLock lock(*this);
+    section = GameDisplayLab::nextTuningSection(section);
+    editing = NOT_EDITING;
+    activeNav().selected = SECTION_ROW;
+    buildRows();
+  }
+  requestUpdate();
 }
 
 void TuningActivity::setEditing(const int row) {
@@ -247,8 +373,8 @@ void TuningActivity::save() {
   const bool saved = lab.savePreset();
   {
     RenderLock lock(*this);
-    snprintf(values[SAVE_ROW], sizeof(values[SAVE_ROW]), "%s",
-             saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED));
+    saveLine = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
+    if (section == Section::Other) writeValue(GameDisplayLab::TUNING_OTHER_SAVE_ROW);
   }
   requestUpdate();
 }
@@ -259,14 +385,14 @@ void TuningActivity::reset() {
     // The render task reads the preset's values through the rows' lines.
     RenderLock lock(*this);
     base = lab.resetPreset();
-    for (int row = 0; row < static_cast<int>(ROW_COUNT); ++row) writeValue(row);
+    for (int row = 0; row < rowCount; ++row) writeValue(row);
   }
   LOG_INF("DLAB", "tune reset: %s defaults", GameDisplayLab::presetBaseName(base));
   requestUpdate();
 }
 
 void TuningActivity::activateIndex(const int index) {
-  if (index < 0 || index >= static_cast<int>(ROW_COUNT)) return;
+  if (index < 0 || index >= rowCount) return;
   // A tap ends edit mode, then acts on the row it landed on.
   if (editing != NOT_EDITING) setEditing(NOT_EDITING);
   tapStep(index);
@@ -298,12 +424,14 @@ bool TuningActivity::handleButtons() {
     const int selected = activeNav().selected;
     if (editing != NOT_EDITING) {
       setEditing(NOT_EDITING);
-    } else if (selected >= 0 && selected < static_cast<int>(ROW_COUNT)) {
-      const Kind kind = kindOf(selected);
-      if (kind == Kind::Save) {
+    } else if (selected >= 0 && selected < rowCount) {
+      const Row kind = kindOf(selected);
+      if (kind == Row::Save) {
         save();
-      } else if (kind == Kind::Reset) {
+      } else if (kind == Row::Reset) {
         reset();
+      } else if (kind == Row::Section) {
+        nextSection();
       } else {
         setEditing(selected);
       }
