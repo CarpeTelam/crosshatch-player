@@ -4,12 +4,12 @@ type: 'feature'
 ticket: 'story-dlab-g2-seven-levels'
 created: '2026-10-19'
 baseline_revision: '7d574d04419259c40b4eb915dc889b60b14cdf5a'
-status: 'in-progress'
+status: 'done'
 route: 'full'
 route_source: 'auto'
 review: ''
 review_source: ''
-lenses_ran: []
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']  # orchestrator-run, two passes
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
@@ -18,7 +18,11 @@ context:
   - '{project-root}/.agents/skills/heap-discipline/SKILL.md'
   - '{project-root}/.agents/skills/scope-discipline/SKILL.md'
 warnings: ['oversized']
-deferred: []
+deferred:
+  - {summary: 'white-black-white fill order and stop checks: no automated check', location: 'src/activities/games/display_lab/GrayRunner.cpp', severity: low}
+  - {summary: 'bitmap values above 7 counted, not logged: no caller until the sprite story', location: 'lib/GameDisplayLab/GrayModel.cpp', severity: low}
+  - {summary: 'version 1 notice lifetime, cap clean, Tuning suffix: device-only', location: 'src/activities/games/display_lab/', severity: low}
+  - {summary: 'nearest-anchor hold rule changes InkBoy defaults: SSD1677 Static/Slow re-check', location: 'lib/GameDisplayLab/GrayPreset.cpp', severity: low}
 ---
 
 <intent-contract>

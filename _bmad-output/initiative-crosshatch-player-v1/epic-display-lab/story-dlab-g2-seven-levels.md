@@ -26,7 +26,7 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
    values. A version 1 file still loads: its 4×4 table lands exactly on levels 0, 2, 4, 6 and the odd levels'
    doses interpolate linearly between their neighbours' (a transition into or out of an odd level is the mean of the
    two anchor transitions, rounded up), its holds by the nearest anchor pair, its six routes collapse to the two
-   directional ones (the L>K>L return gives toward-light), logged `preset: version 1 file expanded to seven
+   directional ones (the L>K>L return gives toward-light, D>W>D toward-dark, the other four dropped and logged when non-zero; amended at merge), logged `preset: version 1 file expanded to seven
    levels`; Save writes version 2.
 3. **Defaults.** `inkBoyDefaults()` is the expansion of InkBoy's table (pinned); `ultraChipDefaults()` is the seven-
    level table the orchestrator read off the ladder photos, recorded in D14 with its pulse counts and its one via
@@ -74,12 +74,12 @@ the stock bench's measurements; no change to the ladder's stages (dlab-g1).
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
 | Level arithmetic | shade s | level s × 32; `baseDose` at a level between two shades interpolates | — |
-| Version 1 file | 12 doses, 16-bit holds, six routes | expands as described, logged; Save writes version 2 | malformed: defaults, LOG_ERR, as today |
+| Version 1 file | 12 doses, 12 holds, six routes | expands as described, logged; Save writes version 2 | malformed: defaults, LOG_ERR, as today |
 | Version 2 file | 42 doses, 42 holds, two routes | loads; round-trips through Save | a dose outside 1..24: rejected whole, as today |
 | Defaults | SSD1677 / UltraChip | the two pinned tables | — |
-| Static flips | Run with Mode = Static | offsets +1 .. +6, every band through all six other levels | — |
+| Static flips | Run with Mode = Static | offsets +1 .. +6, the six flips cover all 42 transitions (no six-flip sequence can also walk every band through every level on a seven-cycle; amended at merge) | — |
 | Tuning | Section row | Doses / Holds / Other; the rows below follow | — |
-| Transparent | retargetBitmap with a 7 | that pixel keeps its level and target; the others retarget | a value above 7: clamped to transparent, LOG_ERR once |
+| Transparent | retargetBitmap with a 7 | that pixel keeps its level and target; the others retarget | a value above 7: clamped to transparent and counted; the caller logs once (the sprite story's: this story adds no caller; amended at merge) |
 | Stock bench | UltraChip without a lab backend | four levels, unchanged | — |
 
 ## Verification

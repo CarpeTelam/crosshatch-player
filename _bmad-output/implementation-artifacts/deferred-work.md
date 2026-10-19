@@ -1440,3 +1440,17 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
   summary: Crafted-file residue inside the decoders: two host-test configures of one libdeps copy can race on the patch step; a decode of a flooded scan is bounded by the walked size and the 128 KiB read-on, not by a time budget.
   evidence: The hosttest lock serialises the fork's own runs. A flood (over 128 KiB of restart markers in a row) ends the decode in error after at most 262 file calls per answer; a press ends it sooner. No valid or damaged file reaches either. (location: test/game_display_lab/CMakeLists.txt, lib/GameDisplayLab/DecoderReads.h; severity: low)
+
+## dlab-g2
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g2-seven-levels.md`
+  summary: The white-black-white clean's fill order and its stop checks have no automated check.
+  evidence: `GrayRunner::cleanWhiteBlackWhite` is firmware-only (tied to GfxRenderer and the lab's clean); every caller resets the model to white afterwards, so the last fill must be white. The owner's run covers it; pinning it means moving the fill sequence into lib/GameDisplayLab. (location: src/activities/games/display_lab/GrayRunner.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g2-seven-levels.md`
+  summary: A bitmap value above 7 is counted but not logged: no caller of retargetBitmap exists until the sprite story.
+  evidence: The story's matrix asked for one LOG_ERR; the model returns the on-model count for the caller to log. (location: lib/GameDisplayLab/GrayModel.cpp (retargetBitmap); severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g2-seven-levels.md`
+  summary: The version 1 notice's lifetime, the session cap's white-black-white clean with its stop checks, and Tuning's "(via N)" suffix are device-only.
+  evidence: The display-lab activities have no host harness (the game harness globs only src/activities/games/*.cpp); the decisions they call (version1NoticeNeeded, farEndOver, the clean passes' order) are host-tested. Joins the device-wiring family. (location: src/activities/games/display_lab/{DisplayLabActivity,GrayRunner,TuningActivity}.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g2-seven-levels.md`
+  summary: The nearest-anchor hold rule changes InkBoy's built-in defaults (ten odd-level transitions held; the longest run 4 to 6 slots, so Slow's crossing on an SSD1677 grows), untested on that panel.
+  evidence: inkBoyDefaults() is the expansion of InkBoy's version 1 table, so the rule reaches the SSD1677's defaults; the owner's panel is UltraChip. An SSD1677 run of Static and Slow is the check. (location: lib/GameDisplayLab/GrayPreset.cpp (expandVersion1Holds); severity: low)

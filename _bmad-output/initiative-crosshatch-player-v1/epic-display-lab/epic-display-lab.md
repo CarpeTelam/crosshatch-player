@@ -383,6 +383,20 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   task watchdog around file calls; the lab's library patches per D17; a fork CI job builds the decoder tests. 6
   deferrals carried. Hardware check for the owner on the experimental branch: the chart and the four generated PNGs
   and the owner's photos paint plain and ordered; the transition test and Ladder behave as before the extraction.
+- dlab-g2 (lane G2, D14, after dlab-g1 and dlab-g3): built by the orchestrator's fallback (plan-and-implement agent
+  plus orchestrator-run lenses): story commit `09e9eb0b`; review pass 22 findings, 3 mediums and 11 lows patched
+  (`3fa04c5c`: a via's second leg keeps leg 1's history, version 1 files load with no vias and the lab menu says so
+  until Save or Reset, nearest hold anchors, hold rows per slot, the triple clean at the cap, the marker to the farther
+  extreme); follow-up pass 33 findings, 0 high, 0 medium, 13 lows patched (`d1ec542a`: returns judged on the final target only, no weak bit on a second leg, the render lock taken per clean pass so sleep is not held, the version 1 notice only where the expansion differs from the defaults, one shared marker rule); the review closed there per the owner's scope decision. 2,417 host tests; x4pro, default, sticky build; pio check x4pro clean;
+  flash gate within budget (18,288 B flash and 240 B RAM to spare, +784 B RAM games delta unchanged). Seven levels: `SHADE_COUNT` 7 with K, D, L, W on 0, 2, 4, 6 and the 50 % gray
+  at 3; `dose[7][7]`, a 64-bit hold mask, an optional via per transition (0>1 goes through 2); preset file version 2
+  with the version 1 expansion; `ultraChipDefaults()` is D14's ladder-derived table; seven bands and six rotating
+  flips covering all 42 transitions; Tuning grouped by Section with "(via N)" on a via's rows; every run cleans white,
+  black, white; `Shade::TRANSPARENT` and `GrayModel::retargetBitmap`; the stock bench at four levels. 4
+  deferrals carried. Hardware check for the owner on the experimental branch: open Tuning and Reset to defaults once
+  (the device's saved version 1 preset otherwise loads as its expansion; the lab menu says so), then Static shows
+  seven bands after the first settle and the six flips show which transitions need a dose change; Slow's trails; the
+  Gray viewer at seven levels on the carvings and photos.
 
 ## Measurement (base)
 
