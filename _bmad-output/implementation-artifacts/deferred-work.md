@@ -1420,3 +1420,23 @@
 - source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g1-ladder-scene.md`
   summary: The ladder's settled line cannot record the panel temperature, which the pulse response depends on.
   evidence: The UC8179's sensor is read through the backend, which the story's Never list keeps unchanged; the reading guide asks for the room temperature by hand. A backend story could expose it. (location: lib/GameDisplayLab/ScanBackend.h; severity: low)
+
+## dlab-g3
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: The shared sweep runner's slot sequencing and the task side of the press handshake have no host harness.
+  evidence: `serve`, `runSlot`, the hooks' order, the replay and hold branches, `replayServed`, `rehold`, the hold landing between `press()`'s load and its compare-exchange, and the detach-then-end path (inert answers pinned as constants, `afterSlot`'s `finished = false`) are device-only; the plan's device checks cover them. A pure sequencer with an injected scan and clock would pin them. Joins the device-wiring family (dlab-c2, dlab-c3, dlab-c4). (location: lib/GameDisplayLab/GrayRunner.cpp, src/activities/games/display_lab/GrayViewerActivity.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: A detached sweep task stuck inside an SD read holds the Storage mutex without a bound.
+  evidence: Only a card whose read never returns reaches it; the next card access (reopening the lab, sleep) waits behind it. A timed Storage lock on the sleep path is outside the story's Never list. (location: src/activities/games/display_lab/GrayImageReader.cpp, lib/hal/HalStorage.cpp; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: Release and non-x4pro envs run the stock decoder libraries, with PNGdec's palette over-read and JPEGDEC's MCU overrun on the cover path.
+  evidence: Pre-existing upstream behaviour, unchanged by this story (D17 confines the lab's patches to x4pro). The patch files under scripts/lab_decoder_patches/ are the upstream suggestion. In the x4pro build the converters' own read callback on a failing card ends bounded (one read per block until the bit pointer passes the remaining data, under the guard, tested); making JPEGGetMoreData fail on an empty read while data remains would turn that garbage tail into a clean failure and is a converter behaviour change left for a decision. (location: scripts/lab_decoder_patches/; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: The retired-patch reversal in the pre-script and the host CMake has no automated test, and nothing beyond the fork CI job checks a firmware build applied the lab's patches.
+  evidence: Verified by hand with real `git apply` over fresh, v3, v2 and 0004 copies (all end identical, a second run is a no-op); a regression fails the build loudly naming the folder. The CI job runs `git apply --check --reverse` against the x4pro libdeps after the build. (location: scripts/patch_lab_decoders.py, test/game_display_lab/CMakeLists.txt; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: The device's mapping of file-call outcomes to the watchdog gap, and the overrun test's bit-offset term and the progressive block decoder's own stop, are untested.
+  evidence: `GrayImageReader.cpp` is compiled by no host target (the decisions it feeds are host-tested over a fake); the two decoder mutants are unobservable without crafted decoder state (the MCU-level stop is covered). The closing pass's verification-gap lens was lost to a container restart and not re-run (the owner closed the review). (location: src/activities/games/display_lab/GrayImageReader.cpp, scripts/lab_decoder_patches/jpegdec/; severity: low)
+- source_plan: `_bmad-output/implementation-artifacts/plan-dlab-g3-gray-viewer.md`
+  summary: Crafted-file residue inside the decoders: two host-test configures of one libdeps copy can race on the patch step; a decode of a flooded scan is bounded by the walked size and the 128 KiB read-on, not by a time budget.
+  evidence: The hosttest lock serialises the fork's own runs. A flood (over 128 KiB of restart markers in a row) ends the decode in error after at most 262 file calls per answer; a press ends it sooner. No valid or damaged file reaches either. (location: test/game_display_lab/CMakeLists.txt, lib/GameDisplayLab/DecoderReads.h; severity: low)

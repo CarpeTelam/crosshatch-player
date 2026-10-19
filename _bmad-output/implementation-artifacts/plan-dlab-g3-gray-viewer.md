@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 'story-dlab-g3-gray-viewer'
 created: '2026-10-18'
 baseline_revision: 'c50e6dd6808a0147d75f2befb5dd76794e0bfff3'
-status: 'in-review'
+status: 'done'
 route: 'full'
 route_source: 'auto'
 review: ''
@@ -77,10 +77,10 @@ gray engine:
 **Never:**
 - No change to:
   - `ScanBackend.h`, the backends, `DisplayLabActivity::scan`, the SDK seam or `freeink-sdk/`;
-  - the decoders or `DitherUtils.h`;
+  - the decoders (the converter files) or `DitherUtils.h`; the decoder libraries change only as D17 says, through the lab's build-time patches in the x4pro env;
   - `GrayPreset`, the preset file or the Tuning screen;
   - the stock bench, or the frame-period and polarity screens.
-- No new ledger row, and no edit of generated I18n files.
+- No new ledger row (row 1's text names the lab's pre-script, D17), and no edit of generated I18n files.
 - No PNGdec or JPEGDEC include outside `GrayImageReader.cpp`.
 
 ## I/O & Edge-Case Matrix

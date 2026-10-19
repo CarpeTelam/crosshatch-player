@@ -266,6 +266,20 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   marker on a picture is driven to 0 or 6, whichever is farther from the mean level under its bars, and is not
   driven back (Next cleans first); Next while the paint runs pauses and resumes as the transition test does; the
   layer check gets a FILE_EDGES entry for the reader's file only.
+- D17 (2026-10-18, orchestrator, at dlab-g3's classification pass, under the owner's "harden JPEG now"): the lab's
+  decoder library patches (PNGdec's palette and alpha copies re-read past its buffer; JPEGDEC's refill between a
+  MCU's blocks, its overrun stop and its bit-window reload) live in fork-only folders under
+  `scripts/lab_decoder_patches/{pngdec,jpegdec}/` and apply to the x4pro env only, through the one fork pre-script
+  named in `[env:x4pro] extra_scripts` (`scripts/patch_lab_decoders.py`); upstream's own patch folder is untouched
+  and ledger row 1's text names the pre-script (no new row). Release and other envs keep the libraries as released,
+  so their cover converters carry PNGdec's palette over-read and JPEGDEC's MCU overrun as before (pre-existing
+  upstream exposure; the patch files are the suggestion for upstream). The development X4 Pro build's cover
+  converters share the patched libraries. Retired versions of a patch are reversed from every env's copy. The host
+  decoder tests and the fork CI's Display lab decoders job apply the same patches and check they applied. The
+  story's "no change to the decoders" means the converter files; the libraries change only as this decision says.
+  Closing the story (owner, 2026-10-18): after ten review batches the owner ended the loop; the viewer had worked
+  since its first commit and the later rounds were closing crafted-file edges inside the decoders that the
+  firmware's own cover path never guarded against; what remains is deferred with its exposure stated.
 
 ## Story results
 
@@ -345,6 +359,20 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   Fast waits for the paint to settle with a `fast painted` hold. 2 deferrals carried. Hardware check for the owner on
   the experimental branch: the two ladder photos at rate index 0 with the room temperature; the orchestrator reads
   the seven levels and their pulse counts off them for dlab-g2.
+- dlab-g3 (lane G3, D16, D17, after dlab-g1, beside dlab-g2): built by the orchestrator's fallback (plan-and-implement
+  agent plus orchestrator-run lenses): story commit `26bc6699`, then ten review batches (one high patched: a truncated
+  PNG hang; the owner chose to harden JPEG rather than defer it, which cost most of the batches, and closed the loop
+  after the tenth), last commit `bf61ccea`. 2,386 host tests (the display-lab binary 286, the decoders 36 under
+  ASan/UBSan on the device's 32-bit bit reader); x4pro, default, sticky build; pio check x4pro clean; flash gate
+  within budget (18,288 B flash and 240 B RAM to spare, +784 B RAM games delta unchanged). A Gray viewer screen: Image row (built-in chart, then the folder's PNG and JPEG files
+  by name, at most 32), Dither row (plain, ordered), Run; clean, paint through the gray engine's levels, settle, hold
+  with the marker (0 or 6, whichever is farther from the mean under its bars), Next paints the next entry, the
+  chart after the last; the sweep task, slot runner and hold extracted into `GrayRunner` and shared with the
+  transition test; a fork-side gray-row reader over PNGdec and JPEGDEC that walks each file's layout before the
+  decoder sees it, answers the decoders' reads from the walked extent, retries a failed call once, and leaves the
+  task watchdog around file calls; the lab's library patches per D17; a fork CI job builds the decoder tests. 6
+  deferrals carried. Hardware check for the owner on the experimental branch: the chart and the four generated PNGs
+  and the owner's photos paint plain and ordered; the transition test and Ladder behave as before the extraction.
 
 ## Measurement (base)
 
