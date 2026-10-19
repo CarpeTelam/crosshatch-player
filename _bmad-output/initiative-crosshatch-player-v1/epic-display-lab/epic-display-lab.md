@@ -244,6 +244,16 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
+  The seven-level UltraChip table (orchestrator, 2026-10-19, for dlab-g2's `ultraChipDefaults()`; rate index 0, one
+  pulse per slot, every hold on): the four-shade anchors are the Slow-validated prediction above; the odd levels and
+  the gray-to-gray entries come from the two measured curves read as pulse positions, toward black from white at
+  levels 6..0 = 0, 2, 3, 4, 5, 7, 12 pulses and toward white from black at levels 0..6 = 0, 0.4, 1, 1.5, 2, 4, 9, a
+  transition's count being the difference along its direction's curve, rounded to the nearest pulse, at least one.
+  In the file's order (from 0..6, to ascending, 42 entries): from 0: 1 (via 2), 1, 2, 2, 4, 9; from 1: 5, 1, 1, 2, 4,
+  8; from 2: 7, 2, 1, 1, 3, 8; from 3: 8, 3, 1, 1, 3, 7; from 4: 9, 4, 2, 1, 2, 7; from 5: 10, 5, 3, 2, 1, 5; from 6:
+  12, 7, 5, 4, 3, 2. One via: 0>1 goes to 2 (one pulse) then 2>1 (two pulses back); every other via is none (7).
+  The history routes keep the four-shade defaults' deltas and percents, collapsed to the two directional routes as the
+  story says. Static's six flips and the Slow trails are the table's test; Tuning corrects what they show.
 - D15 (2026-10-18, owner, during dlab-g1's review): three changes to the lab's presentation, landed with dlab-g1.
   (1) The hold marker is a pause symbol: two bars with a gap inside the marker's rectangle, same place and size as
   the dash (the margin below the last lane in Static, Slow and Fast; the 16-row strip in Ladder), so a hold reads
