@@ -23,26 +23,27 @@
 // Image (the entry the next run paints, "name (n of N)"; a tap or Confirm steps it: the test chart first, then the
 // PNG and JPEG files of IMAGES_DIR sorted by name, then the chart again), Dither (Plain, the nearest level, or Ordered,
 // the 4x4 Bayer matrix scaled to the level count; a tap or Confirm toggles it), Run (paints the entry), Levels (the
-// engine's level count and names, GameDisplayLab::SHADE_COUNT and shadeName: four today, seven after dlab-g2 with no
-// change here), Controls (help text), Status (how the last run ended: "Not run", "Stopped", a scan's outcome, or why
+// engine's level count and names, GameDisplayLab::SHADE_COUNT and shadeName: seven since dlab-g2, with no change
+// here), Controls (help text), Status (how the last run ended: "Not run", "Stopped", a scan's outcome, or why
 // the picture could not be read).
 //
 // Run starts the shared sweep runner (GrayRunner, the transition test's: its task, slots, stops, cover and session
-// cap). Its task cleans the panel to white with a FULL refresh, then paints the entry into the model: the chart
-// (GameDisplayLab::testChartGray, the same pixels on every device) or the file, decoded on the task by readGrayImage
-// (PNGdec or JPEGDEC directly, 8-bit gray rows fitted to the logical screen, white letterbox), each row quantised with
-// the Dither row (GameDisplayLab::GrayPicture::paintGrayRow: one GrayModel::retargetRect per run of equal targets).
-// The renderer's framebuffer is never drawn (D4; the clean's white fill is the lab's own clean). Slots then run until
-// one drives no pixel (the paint settled: `gray viewer: <name> painted after N slots, pixels per level [...]`), the
-// hold marker (a pause symbol at the logical bottom-right, driven to black or white, whichever is farther from the
-// picture under it) is driven out, and once it has settled the run holds. While it paints, NavNext (side Down),
-// Confirm, or a tap where touch routes while the view is up pauses or resumes, as in the transition test; while it
-// holds they paint the next entry (clean first; after the last file, the chart), which the Image row then shows, and
-// further presses are ignored until it is painted, as during the run's first paint (GrayRunner::press, one step on the
-// request word); a resume that ever reaches a held picture holds again (keepHolding). NavPrevious (side Up)
-// or Back stops; the rows come back with a FULL refresh. A file that cannot be read ends the run with the reason on the
-// Status row (logged with the file's name); the Image row still steps, and the chart still works. The session cap's
-// clean drops the hold in progress and paints the entry again (the file decoded again).
+// cap). Its task cleans the panel white, black, then white (the runner's clean, story dlab-g2), then paints the entry
+// into the model: the chart (GameDisplayLab::testChartGray, the same pixels on every device) or the file, decoded on
+// the task by readGrayImage (PNGdec or JPEGDEC directly, 8-bit gray rows fitted to the logical screen, white
+// letterbox), each row quantised with the Dither row (GameDisplayLab::GrayPicture::paintGrayRow: one
+// GrayModel::retargetRect per run of equal targets). The renderer's framebuffer is never drawn (D4; the clean's white
+// fill is the lab's own clean). Slots then run until one drives no pixel (the paint settled: `gray viewer: <name>
+// painted after N slots, pixels per level [...]`), the hold marker (a pause symbol at the logical bottom-right, driven
+// to black or white, whichever is farther from the picture under it) is driven out, and once it has settled the run
+// holds. While it paints, NavNext (side Down), Confirm, or a tap where touch routes while the view is up pauses or
+// resumes, as in the transition test; while it holds they paint the next entry (clean first; after the last file, the
+// chart), which the Image row then shows, and further presses are ignored until it is painted, as during the run's
+// first paint (GrayRunner::press, one step on the request word); a resume that ever reaches a held picture holds again
+// (keepHolding). NavPrevious (side Up) or Back stops; the rows come back with a FULL refresh. A file that cannot be
+// read ends the run with the reason on the Status row (logged with the file's name); the Image row still steps, and the
+// chart still works. The session cap's clean drops the hold in progress and paints the entry again (the file decoded
+// again).
 //
 // Memory, allocated in onEnter and freed in onExit: the runner's working set (PSRAM), two logical rows of scratch and
 // the file list (MAX_IMAGES names of NAME_BYTES, the first by name; internal RAM, small). A decode adds the decoder

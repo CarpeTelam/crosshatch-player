@@ -42,7 +42,7 @@ Shade quantise(uint8_t gray, int x, int y, Dither dither);
 // gradient's.
 uint8_t testChartGray(int x, int y, int w, int h, uint8_t levels);
 
-// The engine's levels by name (shadeName, D15's numbers), black first, joined by ", " ("0, 2, 4, 6" today) into `out`
+// The engine's levels by name (shadeName, D15's numbers), black first, joined by ", " ("0, 1, .., 6") into `out`
 // (NUL-terminated, cut short when `size` is too small); returns the characters written.
 size_t levelNames(char* out, size_t size);
 

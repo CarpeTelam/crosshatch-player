@@ -228,12 +228,13 @@ void GrayRunner::notifySweep() {
 bool GrayRunner::stop() {
   if (!sweepTask) return true;
   askStop();
-  // Normally ends after the scan, the clean or the client's paint in flight (the run's first clean or the session cap's
-  // is one FULL refresh; a scan is bounded by DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it;
-  // a decode checks stopRequested before every output row, and its reads give nothing once it is asked). Waited for
-  // until STOP_WAIT_MS after the first stop asked: a task still running then (a decoder that never returns to its
-  // callback) is not deleted, since it may hold the Storage mutex, and stays the runner's (running() true, so no new
-  // run starts; it refuses any further scan, the stop being sticky) until it ends and reap() or a later stop joins it.
+  // Normally ends after the scan, the clean pass or the client's paint in flight (the run's first clean and the session
+  // cap's are three FULL refreshes, a stop checked between them; a scan is bounded by
+  // DisplayLabActivity::SCAN_TIMEOUT_MS, the SDK's own BUSY limit beyond it; a decode checks stopRequested before every
+  // output row, and its reads give nothing once it is asked). Waited for until STOP_WAIT_MS after the first stop asked:
+  // a task still running then (a decoder that never returns to its callback) is not deleted, since it may hold the
+  // Storage mutex, and stays the runner's (running() true, so no new run starts; it refuses any further scan, the stop
+  // being sticky) until it ends and reap() or a later stop joins it.
   while (!taskEnded()) {
     if (stops.expired(millis(), STOP_WAIT_MS)) {
       if (stops.giveUp()) {
@@ -376,7 +377,11 @@ bool GrayRunner::serve(const GameDisplayLab::SweepControl::Requests& requests) {
   // swept once painted.
   const bool run = requests.run;
   if (requests.replay) {
-    if (!cleanToWhite()) return false;
+    // A run's clean before the paint is white, black, white (story dlab-g2, D14): after one the previous screen's text
+    // ghosted through the painted bands.
+    if (!cleanToWhite(CleanPasses::WhiteBlackWhite)) return false;
+    // A stop during the clean's last pass: no paint (a picture's decode can take seconds).
+    if (stopSeen()) return false;
     // A replay from a hold (the viewer's next picture) ends the hold: the panel is white again.
     control.releaseHold();
     elapsedUs = 0;
@@ -443,15 +448,59 @@ bool GrayRunner::admitted(const GameDisplayLab::SweepControl::Gate gate) {
   return false;
 }
 
-bool GrayRunner::cleanToWhite() {
+namespace {
+
+// The framebuffer's fill for each pass of a run's clean: white, black, white (story dlab-g2, D14).
+constexpr uint8_t CLEAN_FILLS[] = {0xFF, 0x00, 0xFF};
+
+}  // namespace
+
+void GrayRunner::cleanWhiteBlackWhite(const GfxRenderer& renderer, DisplayLabActivity& lab) {
+  // The lab's clean sends the framebuffer with a FULL refresh: each pass is the framebuffer filled, then a clean.
+  for (const uint8_t fill : CLEAN_FILLS) {
+    renderer.clearScreen(fill);
+    lab.cleanNow();
+  }
+}
+
+bool GrayRunner::cleanToWhite(const CleanPasses passes, const bool atCap) {
   if (!admitted(control.enterPanel(micros(), COVERED_GAP_US))) return false;
-  {
-    // The lab's clean sends the framebuffer with a FULL refresh: white first, so the panel and the model agree.
+  bool whole = true;
+  if (passes == CleanPasses::WhiteBlackWhite) {
+    // White last, so the panel and the model agree. One render lock per pass, not one across the three: a caller that
+    // takes the lock first (sleep's prepareForSleep, a screen change) gets it between passes, and with it the stop
+    // (endLocked deletes a task blocked on the lock inside the panel, as for a scan); a stop seen between passes ends
+    // the clean there, so Back answers after one FULL refresh, not three.
+    bool first = true;
+    for (const uint8_t fill : CLEAN_FILLS) {
+      if (!first && control.stopRequested()) {
+        whole = false;
+        break;
+      }
+      first = false;
+      RenderLock lock;
+      renderer.clearScreen(fill);
+      lab.cleanNow();
+    }
+  } else {
     RenderLock lock;
     renderer.clearScreen(0xFF);
     lab.cleanNow();
   }
   control.leavePanel();
+  if (!whole) {
+    LOG_INF("DLAB", "gray sweep: stopped during the white, black, white clean");
+    sweepEnd = End::Stopped;
+    return false;
+  }
+  if (passes == CleanPasses::WhiteBlackWhite) {
+    // The run's own line once per run; the session cap's its own.
+    if (atCap) {
+      LOG_INF("DLAB", "gray sweep: session cap: cleaned white, black, white");
+    } else {
+      LOG_INF("DLAB", "gray sweep: cleaned white, black, white before the paint");
+    }
+  }
   model_.reset(Shade::W);
   sceneStale = true;
   return true;
@@ -481,8 +530,14 @@ bool GrayRunner::runSlot(const uint32_t nowUs) {
   if (lab.scansBeforeClean() < SCANS_PER_SLOT) {
     LOG_INF("DLAB", "gray sweep: session cap near, cleaning first");
     reportStats(nowUs);  // the speed up to the clean
-    if (!cleanToWhite()) {
+    // White, black, white as a run's first clean (story dlab-g2): the repaint follows, and so would a ghost.
+    if (!cleanToWhite(CleanPasses::WhiteBlackWhite, true)) {
       sweeping = false;  // reported already: sweepRun must not report the empty window after it
+      return false;
+    }
+    // A stop during the clean's last pass: Stopped, before the client's repaint (and never overwritten by its end).
+    if (stopSeen()) {
+      sweeping = false;
       return false;
     }
     if (!client().onCapClean(*this)) {

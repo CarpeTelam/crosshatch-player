@@ -186,6 +186,9 @@ TEST(GrayLevels, TheReadoutNamesTheEnginesLevels) {
   if (SHADE_COUNT == 4) {
     EXPECT_STREQ(names, "0, 2, 4, 6");
   }
+  if (SHADE_COUNT == 7) {
+    EXPECT_STREQ(names, "0, 1, 2, 3, 4, 5, 6");  // story dlab-g2: the viewer reads seven with no change of its own
+  }
   // Cut short, still terminated.
   char small[3];
   EXPECT_EQ(levelNames(small, sizeof(small)), 2u);

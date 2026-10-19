@@ -6,16 +6,24 @@ namespace GameDisplayLab {
 
 namespace {
 
-// A pixel's bytes: its level, its doses left, and its shades (target | source << SOURCE_SHIFT).
+// A pixel's bytes: its level, its doses left (with a second leg's target), and its levels (target | source <<
+// SOURCE_SHIFT).
 constexpr size_t LEVEL_BYTE = 0;
 constexpr size_t REMAINING_BYTE = 1;
 constexpr size_t SHADES_BYTE = 2;
 static_assert(SHADES_BYTE < GrayModel::PIXEL_BYTES, "a pixel holds its three bytes");
-constexpr uint8_t SOURCE_SHIFT = 2;
-constexpr uint8_t SHADE_MASK = 0x03;
+constexpr uint8_t SOURCE_SHIFT = 3;
+constexpr uint8_t SHADE_MASK = 0x07;
+static_assert(SHADE_COUNT <= SHADE_MASK + 1, "a level fits three bits");
+// The doses-left byte: the count in its low five bits, a second leg's target + 1 in its high three (0: none).
+constexpr uint8_t DOSES_MASK = 0x1F;
+constexpr uint8_t NEXT_SHIFT = 5;
+static_assert(DOSE_MAX <= DOSES_MASK, "the dose count fits five bits");
+static_assert(SHADE_COUNT < (1u << (8 - NEXT_SHIFT)), "a second leg's target + 1 fits three bits");
 constexpr uint8_t STEPS_MAX = 255;
 constexpr uint8_t TOP_SHADE = SHADE_COUNT - 1;
 constexpr uint8_t TOP_LEVEL = TOP_SHADE * GrayModel::LEVEL_STEP;  // 192, white
+static_assert(GrayModel::ORIGIN_NONE >= SHADE_COUNT, "no origin is no level");
 // History bytes per pixel: origin, black steps, white steps.
 constexpr size_t HISTORY_ORIGIN = 0;
 constexpr size_t HISTORY_BLACK = 1;
@@ -26,12 +34,19 @@ constexpr uint8_t sourceOf(const uint8_t shades) { return (shades >> SOURCE_SHIF
 constexpr uint8_t packShades(const uint8_t target, const uint8_t source) {
   return static_cast<uint8_t>((target & SHADE_MASK) | ((source & SHADE_MASK) << SOURCE_SHIFT));
 }
+constexpr uint8_t dosesOf(const uint8_t* pixel) { return pixel[REMAINING_BYTE] & DOSES_MASK; }
+// The second leg's target, or ORIGIN_NONE.
+constexpr uint8_t nextOf(const uint8_t* pixel) {
+  const uint8_t code = static_cast<uint8_t>(pixel[REMAINING_BYTE] >> NEXT_SHIFT);
+  return code == 0 ? GrayModel::ORIGIN_NONE : static_cast<uint8_t>(code - 1);
+}
 
-// Writes a pixel's three bytes.
+// Writes a pixel's three bytes; `next` is the second leg's target or ORIGIN_NONE.
 void writePixel(uint8_t* pixel, const uint8_t level, const uint8_t remaining, const uint8_t target,
-                const uint8_t source) {
+                const uint8_t source, const uint8_t next = GrayModel::ORIGIN_NONE) {
+  const uint8_t code = next < SHADE_COUNT ? static_cast<uint8_t>(next + 1) : 0;
   pixel[LEVEL_BYTE] = level;
-  pixel[REMAINING_BYTE] = remaining;
+  pixel[REMAINING_BYTE] = static_cast<uint8_t>((remaining & DOSES_MASK) | (code << NEXT_SHIFT));
   pixel[SHADES_BYTE] = packShades(target, source);
 }
 
@@ -47,24 +62,9 @@ uint8_t scaledDose(const uint8_t base, const unsigned percent) {
   return clampDose(static_cast<int>((base * percent + 99u) / 100u));
 }
 
-// The history route of a pixel whose origin is `origin` and whose abandoned target is `via`, or -1.
-int routeOf(const uint8_t origin, const uint8_t via) {
-  constexpr uint8_t K = static_cast<uint8_t>(Shade::K);
-  constexpr uint8_t D = static_cast<uint8_t>(Shade::D);
-  constexpr uint8_t L = static_cast<uint8_t>(Shade::L);
-  constexpr uint8_t W = static_cast<uint8_t>(Shade::W);
-  if (origin == L && via == K) return static_cast<int>(Route::LKL);
-  if (origin == D && via == K) return static_cast<int>(Route::DKD);
-  if (origin == D && via == W) return static_cast<int>(Route::DWD);
-  if (origin == L && via == W) return static_cast<int>(Route::LWL);
-  if (origin == D && via == L) return static_cast<int>(Route::DLD);
-  if (origin == L && via == D) return static_cast<int>(Route::LDL);
-  return -1;
-}
-
-// Whether a pixel with doses left is driven toward white: always toward a W target and never toward a K one, whatever
-// its level (a driveRect pulse on a pixel already at that end still goes that way: story dlab-g1), and toward a middle
-// target when it lies above the level (retarget never leaves doses on a pixel already on its target).
+// Whether a pixel with doses left is driven toward white: always toward a white target and never toward a black one,
+// whatever its level (a driveRect pulse on a pixel already at that end still goes that way: story dlab-g1), and toward
+// a middle target when it lies above the level (retarget never leaves doses on a pixel already on its target).
 bool lightens(const uint8_t* pixel) {
   const uint8_t target = targetOf(pixel[SHADES_BYTE]);
   if (target == TOP_SHADE) return true;
@@ -72,19 +72,10 @@ bool lightens(const uint8_t* pixel) {
   return target * GrayModel::LEVEL_STEP > pixel[LEVEL_BYTE];
 }
 
-// The shade nearest `level` (a level past white is white).
+// The level nearest `level` (a level past white is white).
 uint8_t nearestShadeOf(const uint8_t level) {
   const unsigned nearest = (level + GrayModel::LEVEL_STEP / 2u) / GrayModel::LEVEL_STEP;
   return static_cast<uint8_t>(nearest > TOP_SHADE ? TOP_SHADE : nearest);
-}
-
-// Whether the D>L>D or L>D>L route changes a budget, which makes a pixel record its origin on any new target.
-bool midRoutesActive(const GrayPreset& preset) {
-  const auto active = [&preset](const Route route) {
-    const size_t r = static_cast<size_t>(route);
-    return preset.returnDelta[r] != 0 || preset.reversePercent[r] != 0;
-  };
-  return active(Route::DLD) || active(Route::LDL);
 }
 
 }  // namespace
@@ -93,8 +84,8 @@ GrayModel::GrayModel(uint8_t* pixels, const uint16_t width, const uint16_t heigh
     : pixels_(pixels), history_(history), weak_(weak), width_(width), height_(height) {}
 
 void GrayModel::reset(const Shade shade) {
-  if (!valid()) return;
   const uint8_t s = static_cast<uint8_t>(shade);
+  if (!valid() || s >= SHADE_COUNT) return;
   const uint8_t settledLevel = static_cast<uint8_t>(s * LEVEL_STEP);
   const size_t count = pixelCount(width_, height_);
   for (size_t i = 0; i < count; ++i) writePixel(pixelAt(i), settledLevel, 0, s, s);
@@ -113,20 +104,68 @@ uint8_t GrayModel::baseDose(const uint8_t level, const uint8_t target, const Gra
   const unsigned low = clamped / LEVEL_STEP;
   const unsigned fraction = clamped % LEVEL_STEP;
   const unsigned high = low < TOP_SHADE ? low + 1 : low;
-  const unsigned t = target & SHADE_MASK;
+  if (target >= SHADE_COUNT) return 0;  // TRANSPARENT: no level to move to
+  const unsigned t = target;
   return static_cast<uint8_t>(
       (preset.dose[low][t] * (LEVEL_STEP - fraction) + preset.dose[high][t] * fraction + LEVEL_STEP - 1) / LEVEL_STEP);
 }
 
 void GrayModel::retarget(const int x, const int y, const Shade target, const GrayPreset& preset) {
-  if (!valid() || !inside(x, y)) return;
+  const uint8_t t = static_cast<uint8_t>(target);
+  if (!valid() || !inside(x, y) || t >= SHADE_COUNT) return;
   const size_t i = indexOf(x, y);
+  uint8_t* pixel = pixelAt(i);
+  const uint8_t legTarget = targetOf(pixel[SHADES_BYTE]);
+  const uint8_t next = nextOf(pixel);
+  // Already going there: its second leg's target, or (without one) its target.
+  if (t == (next < SHADE_COUNT ? next : legTarget)) return;
+  if (t == legTarget) {
+    // On its first leg toward the via level, now the target itself: the second leg is dropped, the doses kept.
+    writePixel(pixel, pixel[LEVEL_BYTE], dosesOf(pixel), legTarget, sourceOf(pixel[SHADES_BYTE]));
+    return;
+  }
+  // A via (D14: one pulse from black already passes level 2, so 0>1 goes to 2 first): from the level nearest the
+  // pixel's, unless the pixel is on the via level already (then the transition is a plain one).
+  const uint8_t from = nearestShadeOf(pixel[LEVEL_BYTE]);
+  const uint8_t via = preset.via[from][t];
+  const bool twoLegs = via < SHADE_COUNT && via != t && pixel[LEVEL_BYTE] != via * LEVEL_STEP;
+  if (twoLegs) {
+    retargetLeg(i, via, t, preset);
+  } else {
+    retargetLeg(i, t, ORIGIN_NONE, preset);
+  }
+}
+
+namespace {
+
+// Whether history bytes `h` say a pixel went from `origin` to `to` cleanly: exactly the table's doses, each counted in
+// the direction it drove; for a transition with a via, both legs' (origin > via, then via > to).
+bool cleanRun(const uint8_t* h, const uint8_t origin, const uint8_t to, const GrayPreset& preset) {
+  const uint8_t via = preset.via[origin][to];
+  if (via < SHADE_COUNT && via != origin && via != to) {
+    unsigned white = 0;
+    unsigned black = 0;
+    (via > origin ? white : black) += preset.dose[origin][via];
+    (to > via ? white : black) += preset.dose[via][to];
+    return h[HISTORY_WHITE] == white && h[HISTORY_BLACK] == black;
+  }
+  const uint8_t steps = to < origin ? h[HISTORY_BLACK] : h[HISTORY_WHITE];
+  return steps == preset.dose[origin][to];
+}
+
+}  // namespace
+
+void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next, const GrayPreset& preset,
+                            const bool secondLeg) {
   uint8_t* pixel = pixelAt(i);
   const uint8_t current = pixel[LEVEL_BYTE];
   const uint8_t oldTarget = targetOf(pixel[SHADES_BYTE]);
-  const uint8_t oldRemaining = pixel[REMAINING_BYTE];
-  const uint8_t t = static_cast<uint8_t>(target);
-  if (t == oldTarget) return;
+  const uint8_t oldRemaining = dosesOf(pixel);
+  // A leg toward the level the pixel already moves to (a via leg it is on): keep its doses, take the second leg.
+  if (t == oldTarget && oldRemaining != 0) {
+    writePixel(pixel, current, oldRemaining, t, sourceOf(pixel[SHADES_BYTE]), next);
+    return;
+  }
 
   const uint8_t base = baseDose(current, t, preset);
   // A pixel interrupted mid-transition: the retarget percent of the side its new target lies on (D12: one percent
@@ -135,39 +174,40 @@ void GrayModel::retarget(const int x, const int y, const Shade target, const Gra
   uint8_t budget = oldRemaining != 0 && base != 0 ? scaledDose(base, preset.retargetPercent(toward)) : base;
   const bool settled = oldRemaining == 0 && current % LEVEL_STEP == 0;
 
-  if (history_ && preset.historyMode != 0) {
+  if (history_ && preset.historyMode != 0 && !secondLeg) {
     uint8_t* h = history_ + 3 * i;
     const uint8_t originShade = h[HISTORY_ORIGIN];
-    const int route = originShade == t ? routeOf(originShade, oldTarget) : -1;
-    if (route >= 0) {
+    // A return to the origin: the route of the direction it returns in (story dlab-g2: two directional routes). Judged
+    // on a transition's final target only: a via's first leg (`next` set) toward the origin level is no return.
+    if (originShade == t && oldTarget != originShade && base != 0 && next >= SHADE_COUNT) {
+      const size_t route = routeIndex(toward);
       const uint8_t via = oldTarget;
-      const uint8_t steps = via < originShade ? h[HISTORY_BLACK] : h[HISTORY_WHITE];
-      // A completed return: the pixel went origin > via cleanly (exactly the table's dose) and settled there.
+      // A completed return: the pixel went origin > via cleanly (exactly the table's doses) and settled there.
       if (oldRemaining == 0 && (preset.historyMode & HISTORY_RETURN) != 0 && current == via * LEVEL_STEP &&
-          steps == preset.dose[originShade][via]) {
+          cleanRun(h, originShade, via, preset)) {
         const int delta = preset.returnDelta[route];
         if (delta != 0) budget = clampDose(base + delta);
-      } else if (oldRemaining != 0 && base != 0 && (preset.historyMode & HISTORY_REVERSE) != 0) {
+      } else if (oldRemaining != 0 && (preset.historyMode & HISTORY_REVERSE) != 0) {
         // A reversal: the pixel turns back to its origin before reaching via.
         const uint8_t percent = preset.reversePercent[route];
         if (percent != 0) budget = scaledDose(base, percent);
       }
     }
-    const bool recordOrigin = t == static_cast<uint8_t>(Shade::K) || t == TOP_SHADE || midRoutesActive(preset);
-    h[HISTORY_ORIGIN] = recordOrigin && settled ? static_cast<uint8_t>(current / LEVEL_STEP) : ORIGIN_NONE;
+    // Every settled pixel records where it starts from, so any return to it takes its direction's route.
+    h[HISTORY_ORIGIN] = settled ? static_cast<uint8_t>(current / LEVEL_STEP) : ORIGIN_NONE;
     h[HISTORY_BLACK] = 0;
     h[HISTORY_WHITE] = 0;
   }
 
   if (weak_) {
-    // Eligibility is frozen here: a W > L pixel settled on white. Any other retarget clears it.
-    setWeakBit(
-        i, t == static_cast<uint8_t>(Shade::L) && oldTarget == TOP_SHADE && oldRemaining == 0 && current == TOP_LEVEL);
+    // Eligibility is frozen here: a W > L pixel settled on white. Any other retarget clears it, and so does a via's
+    // second leg: its pixel reached white in the slot that starts the leg, and the weak row's W>L calibration assumes a
+    // white that has rested.
+    setWeakBit(i, !secondLeg && t == static_cast<uint8_t>(Shade::L) && oldTarget == TOP_SHADE && oldRemaining == 0 &&
+                      current == TOP_LEVEL);
   }
 
-  const unsigned nearest = (current + LEVEL_STEP / 2u) / LEVEL_STEP;
-  const uint8_t nearestShade = static_cast<uint8_t>(nearest > TOP_SHADE ? TOP_SHADE : nearest);
-  writePixel(pixel, current, budget, t, nearestShade);
+  writePixel(pixel, current, budget, t, nearestShadeOf(current), next);
 }
 
 void GrayModel::retargetRect(const int x, const int y, const int w, const int h, const Shade target,
@@ -180,6 +220,23 @@ void GrayModel::retargetRect(const int x, const int y, const int w, const int h,
   for (int py = y0; py < y1; ++py) {
     for (int px = x0; px < x1; ++px) retarget(px, py, target, preset);
   }
+}
+
+size_t GrayModel::retargetBitmap(const int x, const int y, const int w, const int h, const uint8_t* levels,
+                                 const GrayPreset& preset) {
+  if (!valid() || levels == nullptr || w <= 0 || h <= 0) return 0;
+  constexpr uint8_t TRANSPARENT = static_cast<uint8_t>(Shade::TRANSPARENT);
+  size_t clamped = 0;
+  for (int j = 0; j < h; ++j) {
+    for (int i = 0; i < w; ++i) {
+      if (!inside(x + i, y + j)) continue;  // clipped: neither retargeted nor counted
+      const uint8_t value = levels[static_cast<size_t>(j) * static_cast<size_t>(w) + static_cast<size_t>(i)];
+      if (value > TRANSPARENT) ++clamped;  // treated as transparent: the caller logs it
+      if (value >= TRANSPARENT) continue;  // a transparent pixel keeps its level, doses and target
+      retarget(x + i, y + j, static_cast<Shade>(value), preset);
+    }
+  }
+  return clamped;
 }
 
 void GrayModel::driveRect(const int x, const int y, const int w, const int h, const Toward toward,
@@ -207,9 +264,10 @@ void GrayModel::driveRect(const int x, const int y, const int w, const int h, co
   }
 }
 
-bool GrayModel::followsUp(const uint8_t* pixel, const GrayPreset& preset) {
+bool GrayModel::followsUp(const uint8_t* pixel, const uint8_t* holdRows) {
   const uint8_t shades = pixel[SHADES_BYTE];
-  return pixel[REMAINING_BYTE] > 1 && (preset.holdMask & holdBit(sourceOf(shades), targetOf(shades))) == 0;
+  const uint8_t source = sourceOf(shades);
+  return dosesOf(pixel) > 1 && source < SHADE_COUNT && ((holdRows[source] >> targetOf(shades)) & 1u) == 0;
 }
 
 size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPreset& preset,
@@ -220,15 +278,17 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
   if (!sized) return 0;
   drive.clear();
   follow.clear();
+  uint8_t holdRows[SHADE_COUNT];
+  holdRowsOf(preset, holdRows);
   size_t driven = 0;
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       const size_t i = indexOf(x, y);
       const uint8_t* pixel = pixelAt(i);
-      if (pixel[REMAINING_BYTE] == 0) continue;
+      if (dosesOf(pixel) == 0) continue;
       const bool lighten = lightens(pixel);
       const bool weak = weakRow && !lighten && weakBit(i);
-      const bool again = followsUp(pixel, preset);
+      const bool again = followsUp(pixel, holdRows);
       // A weak pixel is set in both masks: the third (weak) row of a backend whose supportsWeakRow() is true. D1 itself
       // leaves a both-masks pixel undefined (the SSD1677 holds it), so only `weakRow` sets one.
       if (weak || lighten) {
@@ -245,32 +305,39 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
   return driven;
 }
 
-void GrayModel::deliverDose(const size_t index, const bool lighten) {
+void GrayModel::deliverDose(const size_t index, const bool lighten, const GrayPreset& preset) {
   uint8_t* pixel = pixelAt(index);
-  const uint8_t left = pixel[REMAINING_BYTE];
+  const uint8_t left = dosesOf(pixel);
   if (left == 0) return;
   const int current = pixel[LEVEL_BYTE];
   const int goal = targetOf(pixel[SHADES_BYTE]) * LEVEL_STEP;
+  const uint8_t next = nextOf(pixel);
   // C++ division truncates toward zero, so the level never passes the goal and the last dose lands on it.
   pixel[LEVEL_BYTE] = static_cast<uint8_t>(current + (goal - current) / left);
-  pixel[REMAINING_BYTE] = static_cast<uint8_t>(left - 1);
+  pixel[REMAINING_BYTE] = static_cast<uint8_t>((pixel[REMAINING_BYTE] & ~DOSES_MASK) | (left - 1));
   if (history_) {
     uint8_t& steps = history_[3 * index + (lighten ? HISTORY_WHITE : HISTORY_BLACK)];
     if (steps < STEPS_MAX) ++steps;
   }
+  // The first leg has landed on the via level: the second starts from it, settled, through the retarget bookkeeping
+  // (its own dose, no via of its own; the history kept from the first leg). A follow-up dose can be the one that lands
+  // it: followsUp needed two doses left, so the slot's second dose arrives with one left and starts leg 2 here.
+  if (left == 1 && next < SHADE_COUNT) retargetLeg(index, next, ORIGIN_NONE, preset, true);
 }
 
 void GrayModel::commit(const bool driveDone, const bool followDone, const GrayPreset& preset) {
   if (!valid() || !driveDone) return;
+  uint8_t holdRows[SHADE_COUNT];
+  holdRowsOf(preset, holdRows);
   const size_t count = pixelCount(width_, height_);
   for (size_t i = 0; i < count; ++i) {
     const uint8_t* pixel = pixelAt(i);
-    if (pixel[REMAINING_BYTE] == 0) continue;
+    if (dosesOf(pixel) == 0) continue;
     // The direction and the follow-up decision are buildMasks', read from the state it read.
     const bool lighten = lightens(pixel);
-    const bool again = followDone && followsUp(pixel, preset);
-    deliverDose(i, lighten);
-    if (again) deliverDose(i, lighten);
+    const bool again = followDone && followsUp(pixel, holdRows);
+    deliverDose(i, lighten, preset);
+    if (again) deliverDose(i, lighten, preset);
   }
 }
 
@@ -289,11 +356,15 @@ uint8_t GrayModel::level(const int x, const int y) const {
 }
 
 uint8_t GrayModel::remaining(const int x, const int y) const {
-  return valid() && inside(x, y) ? pixelAt(indexOf(x, y))[REMAINING_BYTE] : 0;
+  return valid() && inside(x, y) ? dosesOf(pixelAt(indexOf(x, y))) : 0;
 }
 
 uint8_t GrayModel::target(const int x, const int y) const {
   return valid() && inside(x, y) ? targetOf(pixelAt(indexOf(x, y))[SHADES_BYTE]) : 0;
+}
+
+uint8_t GrayModel::nextTarget(const int x, const int y) const {
+  return valid() && inside(x, y) ? nextOf(pixelAt(indexOf(x, y))) : ORIGIN_NONE;
 }
 
 uint8_t GrayModel::source(const int x, const int y) const {
@@ -319,7 +390,7 @@ size_t GrayModel::activeCount() const {
   size_t active = 0;
   const size_t count = pixelCount(width_, height_);
   for (size_t i = 0; i < count; ++i) {
-    if (pixelAt(i)[REMAINING_BYTE] != 0) ++active;
+    if (dosesOf(pixelAt(i)) != 0) ++active;
   }
   return active;
 }

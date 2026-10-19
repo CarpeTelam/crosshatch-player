@@ -21,16 +21,16 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
 2. **Preset.** `dose[7][7]` (42 off-diagonal values, 1..24) and a 64-bit hold mask (diagonal bits always set). The
    history routes become directional: two routes (return toward dark, return toward light), each with its return
    delta and reverse percent, replacing the six per-pair routes (a pixel returning to its origin takes the route of
-   the direction it returns in). The preset file's `version` becomes 2: `doses` and `holds` carry 56 entries in the
-   order `from 0..6, to ≠ from ascending`; `history` keeps its mode; `return_delta` and `reverse_percent` carry two
+   the direction it returns in). The preset file's `version` becomes 2: `doses` and `holds` carry 42 entries in the
+   order `from 0..6, to ≠ from ascending` (the orchestrator corrected 56 to 42 at dispatch); `history` keeps its mode; `return_delta` and `reverse_percent` carry two
    values. A version 1 file still loads: its 4×4 table lands exactly on levels 0, 2, 4, 6 and the odd levels'
    doses interpolate linearly between their neighbours' (a transition into or out of an odd level is the mean of the
    two anchor transitions, rounded up), its holds by the nearest anchor pair, its six routes collapse to the two
-   directional ones (the L>K>L return gives toward-light), logged `preset: version 1 file expanded to seven
+   directional ones (the L>K>L return gives toward-light, D>W>D toward-dark, the other four dropped and logged when non-zero; amended at merge), logged `preset: version 1 file expanded to seven
    levels`; Save writes version 2.
 3. **Defaults.** `inkBoyDefaults()` is the expansion of InkBoy's table (pinned); `ultraChipDefaults()` is the seven-
-   level table the orchestrator reads off the ladder photos, recorded in D14 with its pulse counts (until those exist,
-   the expansion of the calibrated four-shade table, and the test pins whichever D14 holds).
+   level table the orchestrator read off the ladder photos, recorded in D14 with its pulse counts and its one via
+   (the test pins that table).
 4. **Transition test.** Seven bands, one rectangle lane each (lane shade `(band + 3) mod 7`, rectangle height the
    band minus two insets), Static's flips rotate the offset +1 .. +6 (six flips cover all 42 transitions, logged as
    today), Slow and Fast unchanged otherwise; the hold marker's dash sits in the bottom band's inset as in dlab-c4.
@@ -74,12 +74,12 @@ the stock bench's measurements; no change to the ladder's stages (dlab-g1).
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
 | Level arithmetic | shade s | level s × 32; `baseDose` at a level between two shades interpolates | — |
-| Version 1 file | 12 doses, 16-bit holds, six routes | expands as described, logged; Save writes version 2 | malformed: defaults, LOG_ERR, as today |
+| Version 1 file | 12 doses, 12 holds, six routes | expands as described, logged; Save writes version 2 | malformed: defaults, LOG_ERR, as today |
 | Version 2 file | 42 doses, 42 holds, two routes | loads; round-trips through Save | a dose outside 1..24: rejected whole, as today |
 | Defaults | SSD1677 / UltraChip | the two pinned tables | — |
-| Static flips | Run with Mode = Static | offsets +1 .. +6, every band through all six other levels | — |
+| Static flips | Run with Mode = Static | offsets +1 .. +6, the six flips cover all 42 transitions (no six-flip sequence can also walk every band through every level on a seven-cycle; amended at merge) | — |
 | Tuning | Section row | Doses / Holds / Other; the rows below follow | — |
-| Transparent | retargetBitmap with a 7 | that pixel keeps its level and target; the others retarget | a value above 7: clamped to transparent, LOG_ERR once |
+| Transparent | retargetBitmap with a 7 | that pixel keeps its level and target; the others retarget | a value above 7: clamped to transparent and counted; the caller logs once (the sprite story's: this story adds no caller; amended at merge) |
 | Stock bench | UltraChip without a lab backend | four levels, unchanged | — |
 
 ## Verification

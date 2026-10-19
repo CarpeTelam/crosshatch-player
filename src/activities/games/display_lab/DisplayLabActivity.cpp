@@ -38,6 +38,16 @@ int DisplayLabActivity::listCount() const {
 
 const char* DisplayLabActivity::headerTitle() const { return tr(STR_GAMES_DLAB_TITLE); }
 
+namespace {
+
+// `out` set to `base`'s defaults (noinline: the returned preset, 120 bytes at seven levels, must not join onEnter's
+// frame beside its own loaded copy: the 256-byte rule).
+[[gnu::noinline]] void setDefaults(GameDisplayLab::GrayPreset& out, const GameDisplayLab::PresetBase base) {
+  out = GameDisplayLab::presetDefaults(base);
+}
+
+}  // namespace
+
 void DisplayLabActivity::onEnter() {
   UiListActivity::onEnter();
   // The gray preset: the file's, over the controller's defaults (the epic's D12: the owner's UltraChip table on a
@@ -50,13 +60,17 @@ void DisplayLabActivity::onEnter() {
   // writes back, so a file from another controller keeps saying so until Reset to defaults).
   panelBase = base;
   presetBase = base;
-  if (available()) GrayPresetFile::load(base, loaded, presetBase);
+  bool version1 = false;
+  if (available()) GrayPresetFile::load(base, loaded, presetBase, &version1);
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
-  saveStatus = nullptr;
+  // A version 1 file whose expansion is not the panel's defaults silently replaces its seven-level table: the Save
+  // preset line says so until a Save or a Reset (story dlab-g2).
+  version1Line = GameDisplayLab::version1NoticeNeeded(version1, loaded, base);
+  saveStatus = version1Line ? tr(STR_GAMES_DLAB_PRESET_VERSION1) : nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
-  grayPreset = GameDisplayLab::presetDefaults(base);
+  setDefaults(grayPreset, base);
   const bool supported = available();
   menu = supported ? labMenuFor(display.getController()) : GameDisplayLab::LabMenu::None;
   const bool stockBench = menu == GameDisplayLab::LabMenu::StockBench;
@@ -141,6 +155,19 @@ void DisplayLabActivity::cleanNow() {
 GameDisplayLab::PresetBase DisplayLabActivity::resetPreset() {
   grayPreset = GameDisplayLab::presetDefaults(panelBase);
   presetBase = panelBase;
+  if (version1Line) {
+    // The version 1 file's values are gone from the session: the Save preset line back to its description.
+    saveStatus = nullptr;
+    version1Line = false;
+    if (!notice) {
+      // The row by its Row, not its index: the menus place the rows differently (D10).
+      for (size_t i = 0; i < rowCount; ++i) {
+        if (rowItems[i].actionValue == static_cast<int16_t>(Row::SavePreset)) {
+          rowItems[i].subtitle = tr(STR_GAMES_DLAB_SAVE_PRESET_DESC);
+        }
+      }
+    }
+  }
   return panelBase;
 }
 
@@ -148,7 +175,12 @@ bool DisplayLabActivity::savePreset() {
   // The SD write runs outside the render lock; only the row's line is shared with the render task.
   const bool saved = GrayPresetFile::save(grayPreset, presetBase);
   RenderLock lock(*this);
-  saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
+  if (saved) {
+    saveStatus = tr(STR_GAMES_DLAB_SAVED);
+    version1Line = false;  // the file is version 2 now, with the session's values
+  } else if (!version1Line) {
+    saveStatus = tr(STR_GAMES_DLAB_SAVE_FAILED);
+  }  // a failed Save keeps the version 1 notice: the file on the card is still that one (the log says why it failed)
   // The Save preset row, found by its Row (only the scan menus have it; Tuning, its other caller, is on them too).
   if (!notice) {
     for (size_t i = 0; i < rowCount; ++i) {

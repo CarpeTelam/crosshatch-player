@@ -20,20 +20,20 @@
 // gray engine on the whole panel. Headed "Transition test", six rows: Run (its line: "Not run", or how the last run
 // ended), Mode (Static, Slow, Fast or Ladder; a tap or Confirm steps it; Static on an UltraChip panel, Fast on the
 // SSD1677 to start), Hold for photos (On or Off; a tap or Confirm toggles it; On on every visit, never saved; story
-// dlab-c4, D13; "Always in Ladder" while Mode is Ladder, which holds whatever the row says), Clean (one cleaning FULL
-// refresh to white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
+// dlab-c4, D13; "Always in Ladder" while Mode is Ladder, which holds whatever the row says), Clean (three cleaning FULL
+// refreshes, white, black, white, no run), Speed (the last "N.N scans/s, N ms per scan"), Controls (help text).
 //
 // Run starts the test (GameDisplayLab::TransitionScene in the Mode row's mode) on the shared sweep runner (GrayRunner,
 // extracted by story dlab-g3: the sweep task of D11, its slots, its stops, the cover and the session cap), which
-// cleans the panel to white with a FULL refresh and then drives the mode's pattern from white through the session's
-// gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast four shade bands 0, 2, 4, 6 (black, dark gray,
-// light gray, white: D14's level numbers) top to bottom with three rectangles of the other shades per band, in Ladder
-// its columns. Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat, from the slot after the bands'
-// paint has settled (they wait off-screen until then). Slow: 48-px rectangles whose crossing keeps a pixel under one
-// for the preset's longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of the
+// cleans the panel white, black, then white with three FULL refreshes (story dlab-g2) and then drives the mode's
+// pattern from white through the session's gray preset (DisplayLabActivity::preset()): in Static, Slow and Fast seven
+// level bands 0 (black) .. 6 (white) top to bottom (D14) with one rectangle per band, of level (band + 3) mod 7, in
+// Ladder its columns. Fast: 12-px rectangles crossing the screen in 5 s, a 1 s pause, repeat, from the slot after the
+// bands' paint has settled (they wait off-screen until then). Slow: 48-px rectangles whose crossing keeps a pixel under
+// one for the preset's longest dose run in slots (GrayPreset::longestRunSlots) at the longest real slot length of the
 // bands' paint; they wait off-screen until that paint has settled, then cross. Static: rectangles a third of the
 // width wide that stand still; once a slot finds no pixel to drive the pattern has settled (logged) and flips, every
-// shade moved on by +1, +2, +3, +1, ... (three flips take the pixels through all twelve transitions), until stopped
+// level moved on by +1, +2, .., +6, +1, ... (six flips take the pixels through all 42 transitions), until stopped
 // (story dlab-c3, D12). Ladder (story dlab-g1, D14): no bands but the panel's response to single pulses: the bottom
 // half painted black (the base), then 24 columns per half, column n getting n pulses toward the opposite shade, one a
 // slot and one scan each (TransitionScene::slotPreset, the preset with every hold bit set), end-aligned so every
@@ -42,20 +42,20 @@
 // the run holds itself at each mode's photo spots (TransitionScene::slotDone decides: Static's settles, Slow's painted
 // bands, its rectangles after a full dwell and its crossing's end, Fast's painted bands and its pause, the Ladder's two
 // stage ends): the scene shows the hold marker, a pause symbol (two bars, TransitionScene::markerBars) in the logical
-// bottom-right corner, in the opposite shade of the band under it, and stops the sweep clock, the task runs slots until
-// the marker has settled, then holds (GrayRunner::holdForPhoto); Next resumes, the marker is driven back and settles,
-// and only then does the run go on (Static's flip included). With Hold off nothing holds but the Ladder, and Static
-// flips at once. In each slot the scene moves the rectangles to the sweep clock (prepareSlot), the runner sends the
-// slot's scans, and the scene decides what it meant (afterSlot). While the test view is up the screen draws nothing
-// (D4: the panel shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows' area where
-// touch routes while the view is up (the X4 Pro's does not, D12: its side buttons are the controls there) pauses or
-// resumes, served at the end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe included,
-// checked before the swipe guard) ends the run after the scan or the clean in flight (the session cap's clean is one
-// FULL refresh); any other swipe does nothing. A non-Done scan ends the run and the view with its outcome on the Run
-// row. Another screen covering the view (the light panel) stops loop(), and the view ends once the cover closes; a
-// forced refresh is swallowed. Leaving the view (only after the task has ended and been deleted) repaints the rows
-// with a FULL refresh. The session cap's clean drops a hold in progress and restarts Static's flips and the Ladder
-// (from its base), or ends a Ladder whose second photo was taken.
+// bottom-right corner, black or white, whichever is farther from the band under it, and stops the sweep clock, the task
+// runs slots until the marker has settled, then holds (GrayRunner::holdForPhoto); Next resumes, the marker is driven
+// back and settles, and only then does the run go on (Static's flip included). With Hold off nothing holds but the
+// Ladder, and Static flips at once. In each slot the scene moves the rectangles to the sweep clock (prepareSlot), the
+// runner sends the slot's scans, and the scene decides what it meant (afterSlot). While the test view is up the screen
+// draws nothing (D4: the panel shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows'
+// area where touch routes while the view is up (the X4 Pro's does not, D12: its side buttons are the controls there)
+// pauses or resumes, served at the end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe
+// included, checked before the swipe guard) ends the run after the scan or the clean pass in flight (a run's clean, the
+// session cap's included, is three FULL refreshes, white, black, white); any other swipe does nothing. A non-Done scan
+// ends the run and the view with its outcome on the Run row. Another screen covering the view (the light panel) stops
+// loop(), and the view ends once the cover closes; a forced refresh is swallowed. Leaving the view (only after the task
+// has ended and been deleted) repaints the rows with a FULL refresh. The session cap's clean drops a hold in progress
+// and restarts Static's flips and the Ladder (from its base), or ends a Ladder whose second photo was taken.
 //
 // Memory, all PSRAM, allocated in onEnter and freed in onExit: the runner's working set (GrayRunner::allocate). When
 // any does not fit, the screen shows one notice row and runs nothing. The task's stack (SWEEP_STACK_BYTES, internal

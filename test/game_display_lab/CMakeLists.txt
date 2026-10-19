@@ -17,6 +17,7 @@ add_executable(test_scan_lut
   test_stock_bench.cpp
   test_sweep_control.cpp
   test_transition_scene.cpp
+  test_tuning_layout.cpp
   test_gray_picture.cpp
   test_image_rows.cpp
   test_task_handoff.cpp

@@ -44,7 +44,10 @@ Shade rampShadeAt(const uint16_t x, const uint16_t y, const uint16_t width, cons
   uint16_t p = axis == BandAxis::X ? x : y;
   p = std::min<uint16_t>(p, static_cast<uint16_t>(length - 1));
   if (reversed) p = static_cast<uint16_t>(length - 1 - p);
-  return static_cast<Shade>(partOf(p, length, 4));
+  // The OEM ramp's four bands keep the engine's four named shades (levels 0, 2, 4, 6 since story dlab-g2).
+  constexpr Shade BANDS[] = {Shade::K, Shade::D, Shade::L, Shade::W};
+  constexpr uint16_t BAND_COUNT = sizeof(BANDS) / sizeof(BANDS[0]);
+  return BANDS[partOf(p, length, BAND_COUNT)];
 }
 
 void fillGrayRamp(uint8_t* base, uint8_t* lsb, uint8_t* msb, const uint16_t width, const uint16_t height,
@@ -71,6 +74,8 @@ void fillGrayRamp(uint8_t* base, uint8_t* lsb, uint8_t* msb, const uint16_t widt
         case Shade::W:
           setBit(base + offset, x);
           break;
+        case Shade::TRANSPARENT:
+          break;  // never a ramp band
       }
     }
   }
