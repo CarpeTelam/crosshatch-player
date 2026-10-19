@@ -928,17 +928,148 @@ TEST(GrayModelBitmap, ValuesAboveSevenAreTransparentAndCountedAndTheBitmapIsClip
   const GrayPreset p = GrayPreset::ultraChipDefaults();
   b.model.reset(Shade::W);
   const uint8_t levels[] = {8, 0, 255, 0};
-  // At (W - 2, H - 1): 8 lands on the model, the second row (255, 0) is clipped; both values above 7 are counted.
-  EXPECT_EQ(b.model.retargetBitmap(W - 2, H - 1, 2, 2, levels, p), 2u);
+  // At (W - 2, H - 1): 8 lands on the model and is counted; the second row (255, 0) is clipped, neither retargeted nor
+  // counted.
+  EXPECT_EQ(b.model.retargetBitmap(W - 2, H - 1, 2, 2, levels, p), 1u);
   EXPECT_EQ(b.model.target(W - 2, H - 1), shadeOf(Shade::W));
   EXPECT_EQ(b.model.remaining(W - 2, H - 1), 0);
   EXPECT_EQ(b.model.target(W - 1, H - 1), 0);
   EXPECT_EQ(b.model.activeCount(), 1u);
-  EXPECT_EQ(b.model.retargetBitmap(-1, 0, 2, 2, levels, p), 2u);
-  EXPECT_EQ(b.model.target(0, 0), 0);  // bitmap (1, 0)
+  EXPECT_EQ(b.model.retargetBitmap(-1, 0, 2, 2, levels, p), 0u);  // 8 and 255 both off the model's left edge
+  EXPECT_EQ(b.model.target(0, 0), 0);                             // bitmap (1, 0)
   EXPECT_EQ(b.model.retargetBitmap(0, 0, 2, 2, nullptr, p), 0u);
   EXPECT_EQ(b.model.retargetBitmap(0, 0, 0, 2, levels, p), 0u);
   EXPECT_EQ(b.model.retargetBitmap(0, 0, 2, -1, levels, p), 0u);
+}
+
+// Review batch P1: a via carries the first leg's origin, so the history routes see the transition, not the via level.
+TEST(GrayModelVia, TheFirstLegsOriginAndStepsCarryAcrossTheVia) {
+  Bench b(true);
+  GrayPreset p = GrayPreset::ultraChipDefaults();  // via[0][1] = 2: 0>2 1 pulse, 2>1 2
+  p.historyMode = HISTORY_RETURN | HISTORY_REVERSE;
+  p.dose[0][1] = 3;  // the plain 0>1 entry differs from the legs, so a clean run is judged on the legs
+  p.returnDelta[routeIndex(Toward::Dark)] = 2;
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.origin(0, 0), 0);
+  b.model.commit(true, true, p);  // leg 1 lands on 2: leg 2 starts, the origin still 0
+  ASSERT_EQ(b.model.target(0, 0), 1);
+  EXPECT_EQ(b.model.origin(0, 0), 0);
+  EXPECT_EQ(b.model.whiteSteps(0, 0), 1);
+  b.model.commit(true, true, p);
+  b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(0, 0), 32);
+  EXPECT_EQ(b.model.origin(0, 0), 0);
+  EXPECT_EQ(b.model.whiteSteps(0, 0), 1);  // leg 1
+  EXPECT_EQ(b.model.blackSteps(0, 0), 2);  // leg 2
+  // 1>0 is the return to the origin, toward dark, after a clean two-leg run: the base 1>0 5 plus the route's 2.
+  b.model.retarget(0, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[1][0] + 2);
+  // The same run, then 1>2: no return (the origin is 0, not the via level), the base 1>2.
+  b.model.reset(Shade::K);
+  b.model.retarget(1, 0, static_cast<Shade>(1), p);
+  for (int i = 0; i < 5 && b.model.activeCount() > 0; ++i) b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(1, 0), 32);
+  p.returnDelta[routeIndex(Toward::Light)] = 5;
+  b.model.retarget(1, 0, static_cast<Shade>(2), p);
+  EXPECT_EQ(b.model.remaining(1, 0), p.dose[1][2]);
+  // A run that was not clean (a different leg dose since) is no completed return.
+  b.model.reset(Shade::K);
+  b.model.retarget(2, 0, static_cast<Shade>(1), p);
+  for (int i = 0; i < 5 && b.model.activeCount() > 0; ++i) b.model.commit(true, true, p);
+  p.dose[2][1] = 3;
+  b.model.retarget(2, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(2, 0), p.dose[1][0]);
+}
+
+// Review batch P14 (a): a reset clears a pending second leg.
+TEST(GrayModelVia, AResetMidFirstLegClearsTheSecondLeg) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.dose[0][2] = 4;
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  b.model.commit(true, false, p);
+  ASSERT_EQ(b.model.nextTarget(0, 0), 1);
+  b.model.reset(Shade::W);
+  EXPECT_EQ(b.model.nextTarget(0, 0), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.remaining(0, 0), 0);
+  // Its old final level is an ordinary target again: a transition starts.
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.target(0, 0), 1);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[6][1]);
+}
+
+// Review batch P14 (b): a second leg never takes a via of its own.
+TEST(GrayModelVia, TheSecondLegIgnoresTheViaOfItsOwnTransition) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.via[2][1] = 3;
+  ASSERT_TRUE(p.valid());
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  b.model.commit(true, true, p);  // leg 1 (0>2, one pulse) lands
+  EXPECT_EQ(b.model.level(0, 0), 64);
+  EXPECT_EQ(b.model.target(0, 0), 1);
+  EXPECT_EQ(b.model.nextTarget(0, 0), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[2][1]);
+}
+
+// Review batch P14 (c): a retarget during the second leg is an ordinary mid-transition retarget.
+TEST(GrayModelVia, RetargetsDuringTheSecondLeg) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.retargetDarkPercent = 150;
+  b.model.reset(Shade::K);
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  b.model.commit(true, true, p);  // on 2, leg 2 toward 1 with 2 doses
+  b.model.commit(true, true, p);  // 48, one left
+  ASSERT_EQ(b.model.level(0, 0), 48);
+  // Its own target again: nothing changes.
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.remaining(0, 0), 1);
+  // Black: from the level nearest 48 (2, which has no via to 0), interpolated between 1>0 and 2>0 and scaled by the
+  // dark percent: ceil((5*16 + 7*16) / 32) = 6, 150 % = 9.
+  b.model.retarget(0, 0, Shade::K, p);
+  EXPECT_EQ(b.model.target(0, 0), 0);
+  EXPECT_EQ(b.model.nextTarget(0, 0), GrayModel::ORIGIN_NONE);
+  EXPECT_EQ(b.model.remaining(0, 0), 9);
+}
+
+// Review batch P14 (d): a via through white to 4 makes its second leg a W>L from settled white, weak-eligible.
+TEST(GrayModelVia, ASecondLegFromWhiteToFourIsWeakEligible) {
+  Bench b(false, true);
+  GrayPreset p = GrayPreset::ultraChipDefaults();
+  p.via[2][4] = 6;
+  ASSERT_TRUE(p.valid());
+  b.model.reset(Shade::D);
+  b.model.retarget(0, 0, Shade::L, p);
+  EXPECT_FALSE(b.model.weakEligible(0, 0));  // leg 1, 2>6
+  for (int i = 0; i < DOSE_MAX && b.model.target(0, 0) != shadeOf(Shade::L); ++i) b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(0, 0), 192);
+  EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::L));
+  EXPECT_TRUE(b.model.weakEligible(0, 0));  // leg 2, 6>4 from settled white
+  b.model.buildMasks(b.drive, b.follow, p, true);
+  EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::Black, 0, 0));
+  EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::White, 0, 0));  // the weak row
+}
+
+// Review batch P7: the per-slot hold rows agree with holdBit.
+TEST(GrayModel, HoldRowsAgreeWithTheHoldBits) {
+  for (const GrayPreset& preset : {GrayPreset::inkBoyDefaults(), GrayPreset::ultraChipDefaults()}) {
+    GrayPreset p = preset;
+    p.setHold(transitionIndex(6, 5), false);
+    p.setHold(transitionIndex(3, 0), !p.holdAt(transitionIndex(3, 0)));
+    uint8_t rows[SHADE_COUNT];
+    memset(rows, 0xAA, sizeof(rows));
+    holdRowsOf(p, rows);
+    for (uint8_t s = 0; s < SHADE_COUNT; ++s) {
+      EXPECT_EQ(rows[s] & 0x80, 0);  // seven bits a row
+      for (uint8_t t = 0; t < SHADE_COUNT; ++t) {
+        EXPECT_EQ(((rows[s] >> t) & 1u) != 0, (p.holdMask & holdBit(s, t)) != 0) << int(s) << ">" << int(t);
+      }
+    }
+  }
 }
 
 }  // namespace

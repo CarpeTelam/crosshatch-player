@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <Memory.h>
 
+#include <cstdio>
 #include <string>
 
 namespace GrayPresetFile {
@@ -16,12 +17,27 @@ namespace {
 // two digits, 42 "false", 42 vias of "-1").
 constexpr size_t ENCODE_BYTES = 1024;
 
+// The version 1 routes the collapse dropped (bit r: route r), named on one line (noinline: its text buffer must not
+// join load()'s frame, which already holds a preset: the 256-byte rule).
+[[gnu::noinline]] void logDroppedRoutes(const uint8_t dropped) {
+  char names[48] = "";
+  size_t used = 0;
+  for (uint8_t r = 0; r < GameDisplayLab::V1_ROUTE_COUNT; ++r) {
+    if ((dropped & (1u << r)) == 0 || used >= sizeof(names)) continue;
+    const int n = snprintf(names + used, sizeof(names) - used, "%s%s", used > 0 ? ", " : "",
+                           GameDisplayLab::version1RouteName(r));
+    if (n > 0) used += static_cast<size_t>(n);
+  }
+  LOG_INF("DLAB", "preset: version 1 routes dropped (only 4>0>4 and 2>6>2 carry over): %s", names);
+}
+
 }  // namespace
 
 GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameDisplayLab::GrayPreset& preset,
-                                    GameDisplayLab::PresetBase& fileBase) {
+                                    GameDisplayLab::PresetBase& fileBase, bool* expandedVersion1) {
   using GameDisplayLab::GrayPresetLoad;
   fileBase = base;
+  if (expandedVersion1) *expandedVersion1 = false;
   const GameDisplayLab::GrayPreset defaults = GameDisplayLab::presetDefaults(base);
   const char* defaultsName = GameDisplayLab::presetBaseName(base);
   if (!Storage.exists(PATH)) {
@@ -43,7 +59,13 @@ GameDisplayLab::GrayPresetLoad load(const GameDisplayLab::PresetBase base, GameD
       LOG_INF("DLAB", "preset loaded from %s over %s defaults", PATH, defaultsName);
       // A four-shade file (story dlab-g2): its table landed on levels 0, 2, 4, 6, the odd levels interpolated; Save
       // writes version 2.
-      if (info.expandedVersion1) LOG_INF("DLAB", "preset: version 1 file expanded to seven levels");
+      if (info.expandedVersion1) {
+        LOG_INF("DLAB", "preset: version 1 file expanded to seven levels");
+        if (expandedVersion1) *expandedVersion1 = true;
+      }
+      // The collapse to two directional routes keeps 4>0>4 (toward light) and 2>6>2 (toward dark); any other route the
+      // file had set is dropped, named once here.
+      if (info.droppedVersion1Routes != 0) logDroppedRoutes(info.droppedVersion1Routes);
       // Saved over another controller's defaults: its doses were tuned on another panel. Loaded all the same.
       // The session keeps the file's base, so Save writes it back and this warning stays until the doses are retuned
       // (Tuning's Reset to defaults takes the panel's).

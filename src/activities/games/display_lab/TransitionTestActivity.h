@@ -42,20 +42,20 @@
 // the run holds itself at each mode's photo spots (TransitionScene::slotDone decides: Static's settles, Slow's painted
 // bands, its rectangles after a full dwell and its crossing's end, Fast's painted bands and its pause, the Ladder's two
 // stage ends): the scene shows the hold marker, a pause symbol (two bars, TransitionScene::markerBars) in the logical
-// bottom-right corner, in the opposite shade of the band under it, and stops the sweep clock, the task runs slots until
-// the marker has settled, then holds (GrayRunner::holdForPhoto); Next resumes, the marker is driven back and settles,
-// and only then does the run go on (Static's flip included). With Hold off nothing holds but the Ladder, and Static
-// flips at once. In each slot the scene moves the rectangles to the sweep clock (prepareSlot), the runner sends the
-// slot's scans, and the scene decides what it meant (afterSlot). While the test view is up the screen draws nothing
-// (D4: the panel shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows' area where
-// touch routes while the view is up (the X4 Pro's does not, D12: its side buttons are the controls there) pauses or
-// resumes, served at the end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe included,
-// checked before the swipe guard) ends the run after the scan or the clean in flight (the session cap's clean is one
-// FULL refresh); any other swipe does nothing. A non-Done scan ends the run and the view with its outcome on the Run
-// row. Another screen covering the view (the light panel) stops loop(), and the view ends once the cover closes; a
-// forced refresh is swallowed. Leaving the view (only after the task has ended and been deleted) repaints the rows
-// with a FULL refresh. The session cap's clean drops a hold in progress and restarts Static's flips and the Ladder
-// (from its base), or ends a Ladder whose second photo was taken.
+// bottom-right corner, black or white, whichever is farther from the band under it, and stops the sweep clock, the task
+// runs slots until the marker has settled, then holds (GrayRunner::holdForPhoto); Next resumes, the marker is driven
+// back and settles, and only then does the run go on (Static's flip included). With Hold off nothing holds but the
+// Ladder, and Static flips at once. In each slot the scene moves the rectangles to the sweep clock (prepareSlot), the
+// runner sends the slot's scans, and the scene decides what it meant (afterSlot). While the test view is up the screen
+// draws nothing (D4: the panel shows only what the scans drive); NavNext (side Down), Confirm, or a tap over the rows'
+// area where touch routes while the view is up (the X4 Pro's does not, D12: its side buttons are the controls there)
+// pauses or resumes, served at the end of the slot in flight; NavPrevious (side Up) or Back (the left-edge swipe
+// included, checked before the swipe guard) ends the run after the scan or the clean pass in flight (a run's clean, the
+// session cap's included, is three FULL refreshes, white, black, white); any other swipe does nothing. A non-Done scan
+// ends the run and the view with its outcome on the Run row. Another screen covering the view (the light panel) stops
+// loop(), and the view ends once the cover closes; a forced refresh is swallowed. Leaving the view (only after the task
+// has ended and been deleted) repaints the rows with a FULL refresh. The session cap's clean drops a hold in progress
+// and restarts Static's flips and the Ladder (from its base), or ends a Ladder whose second photo was taken.
 //
 // Memory, all PSRAM, allocated in onEnter and freed in onExit: the runner's working set (GrayRunner::allocate). When
 // any does not fit, the screen shows one notice row and runs nothing. The task's stack (SWEEP_STACK_BYTES, internal

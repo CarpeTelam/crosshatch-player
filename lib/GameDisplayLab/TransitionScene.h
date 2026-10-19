@@ -32,10 +32,11 @@
 // painted bands and the end of each sweep; the Ladder's two stage ends. At a spot the scene shows the hold marker, a
 // pause symbol: two bars (markerBars) inside markerRect, a MARKER_W px wide box at the bottom-right of the logical
 // screen (in the bottom band's margin below its lane's rectangle; in Ladder MARKER_PX high under the columns), in the
-// opposite level of its band (MARKER_SHIFT along), the gap between them never driven; the sweep clock stands still
-// (clockStill) while the task runs slots until the marker settles, then the run holds (Held). resumeHold turns the
-// marker back to its band's shade; once it has settled the run goes on (Static's flip only then). The marker's slots
-// never reach the modes' decisions, so they never settle Static, count as its slots, or feed Slow's measurement.
+// level farther from its band's (holdLevelOver: 0 or 6, as the gray viewer's marker), the gap between them never
+// driven; the sweep clock stands still (clockStill) while the task runs slots until the marker settles, then the run
+// holds (Held). resumeHold turns the marker back to its band's shade; once it has settled the run goes on (Static's
+// flip only then). The marker's slots never reach the modes' decisions, so they never settle Static, count as its
+// slots, or feed Slow's measurement.
 //
 // Ladder (story dlab-g1, the epic's D14): no bands or rectangles but a measurement of the panel's response to single
 // pulses. The rows above the marker's (ladderHeight; in Ladder the marker is MARKER_PX high at the bottom-right, with
@@ -214,8 +215,6 @@ class TransitionScene {
   static constexpr int BANDS = SHADE_COUNT;
   static constexpr int LANES = 1;
   static constexpr uint8_t LANE_OFFSET = 3;
-  // The marker's hold level: its band's moved on by half the level count (InkBoy's four shades: +2; seven: +3).
-  static constexpr uint8_t MARKER_SHIFT = SHADE_COUNT / 2;
   // The hold marker's box: MARKER_W px wide, at most MARKER_PX high (the bottom band's margin below its last lane's
   // rectangle; in Ladder MARKER_PX); a MARKER_PX square when the bands have no lanes (rectHeight() <= 0). It shows a
   // pause symbol: two bars MARKER_GAP px apart (12, 8, 12 at 32 wide).
@@ -314,8 +313,13 @@ class TransitionScene {
   // edge, full height, the gap between them never driven; on a box too narrow for both and the gap, the whole box and
   // an empty second bar.
   std::array<ScreenRect, 2> markerBars() const;
-  // The marker's shade now: markerBandShade() moved on by MARKER_SHIFT while it is out, markerBandShade() otherwise.
+  // The marker's shade now: holdLevelOver(markerBandShade()) while it is out, markerBandShade() otherwise.
   Shade markerShade() const;
+  // The hold level over a band of `band`: black or white, whichever is farther from it (black from level 3 up), the
+  // gray viewer's rule (story dlab-g2: three along would put the marker over black on 3, the bottom lane's level).
+  static Shade holdLevelOver(Shade band) {
+    return 2 * static_cast<unsigned>(band) >= SHADE_COUNT - 1u ? Shade::K : Shade::W;
+  }
   // No pixel of the marker's bars has a dose left in `model`.
   bool markerSettled(const GrayModel& model) const;
   // The offset flip `flip` moves every level by: 0 for the first paint, then +1, +2, .., +6, +1, ...

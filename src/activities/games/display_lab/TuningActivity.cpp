@@ -8,6 +8,7 @@
 #include <TransitionScene.h>
 
 #include <cstdio>
+#include <cstring>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -51,6 +52,16 @@ const char* historyName(const uint8_t mode) {
     default:
       return tr(STR_GAMES_DLAB_HISTORY_BOTH);
   }
+}
+
+// A dose or hold row whose transition has a via runs its legs' entries instead: " (via 2)" after its value.
+void appendVia(const GrayPreset& preset, const uint8_t transition, char* out, const size_t capacity) {
+  const uint8_t via = preset.viaAt(transition);
+  if (via >= GameDisplayLab::SHADE_COUNT) return;
+  const size_t used = strlen(out);
+  if (used + 1 >= capacity) return;
+  snprintf(out + used, capacity - used, tr(STR_GAMES_DLAB_VIA_SUFFIX),
+           GameDisplayLab::shadeName(static_cast<Shade>(via)));
 }
 
 }  // namespace
@@ -142,9 +153,11 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
       return true;
     case Row::Dose:
       snprintf(out, capacity, "%u", static_cast<unsigned>(preset.doseAt(transitionOf(row))));
+      appendVia(preset, transitionOf(row), out, capacity);
       return true;
     case Row::Hold:
       snprintf(out, capacity, "%s", preset.holdAt(transitionOf(row)) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
+      appendVia(preset, transitionOf(row), out, capacity);
       return true;
     case Row::Via: {
       const uint8_t via = preset.viaAt(transitionOf(row));
@@ -198,7 +211,7 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
 }
 
 void TuningActivity::writeValue(const int row) {
-  char plain[24];
+  char plain[VALUE_CHARS];
   if (!plainValue(row, plain, sizeof(plain))) {
     // The action rows say what they do; the Save row, after a save, whether it worked.
     const char* line = tr(STR_GAMES_DLAB_RESET_PRESET_DESC);
@@ -241,7 +254,7 @@ void TuningActivity::edit(const int row, Change change) {
     change(lab.preset());
     writeValue(row);
   }
-  char plain[24];
+  char plain[VALUE_CHARS];
   // buildRows gave every row a label.
   if (plainValue(row, plain, sizeof(plain))) LOG_INF("DLAB", "tune %s=%s", rowItems[row].label, plain);
   requestUpdate();

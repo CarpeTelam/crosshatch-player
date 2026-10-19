@@ -136,7 +136,27 @@ void GrayModel::retarget(const int x, const int y, const Shade target, const Gra
   }
 }
 
-void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next, const GrayPreset& preset) {
+namespace {
+
+// Whether history bytes `h` say a pixel went from `origin` to `to` cleanly: exactly the table's doses, each counted in
+// the direction it drove; for a transition with a via, both legs' (origin > via, then via > to).
+bool cleanRun(const uint8_t* h, const uint8_t origin, const uint8_t to, const GrayPreset& preset) {
+  const uint8_t via = preset.via[origin][to];
+  if (via < SHADE_COUNT && via != origin && via != to) {
+    unsigned white = 0;
+    unsigned black = 0;
+    (via > origin ? white : black) += preset.dose[origin][via];
+    (to > via ? white : black) += preset.dose[via][to];
+    return h[HISTORY_WHITE] == white && h[HISTORY_BLACK] == black;
+  }
+  const uint8_t steps = to < origin ? h[HISTORY_BLACK] : h[HISTORY_WHITE];
+  return steps == preset.dose[origin][to];
+}
+
+}  // namespace
+
+void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next, const GrayPreset& preset,
+                            const bool secondLeg) {
   uint8_t* pixel = pixelAt(i);
   const uint8_t current = pixel[LEVEL_BYTE];
   const uint8_t oldTarget = targetOf(pixel[SHADES_BYTE]);
@@ -154,17 +174,16 @@ void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next,
   uint8_t budget = oldRemaining != 0 && base != 0 ? scaledDose(base, preset.retargetPercent(toward)) : base;
   const bool settled = oldRemaining == 0 && current % LEVEL_STEP == 0;
 
-  if (history_ && preset.historyMode != 0) {
+  if (history_ && preset.historyMode != 0 && !secondLeg) {
     uint8_t* h = history_ + 3 * i;
     const uint8_t originShade = h[HISTORY_ORIGIN];
     // A return to the origin: the route of the direction it returns in (story dlab-g2: two directional routes).
     if (originShade == t && oldTarget != originShade && base != 0) {
       const size_t route = routeIndex(toward);
       const uint8_t via = oldTarget;
-      const uint8_t steps = via < originShade ? h[HISTORY_BLACK] : h[HISTORY_WHITE];
-      // A completed return: the pixel went origin > via cleanly (exactly the table's dose) and settled there.
+      // A completed return: the pixel went origin > via cleanly (exactly the table's doses) and settled there.
       if (oldRemaining == 0 && (preset.historyMode & HISTORY_RETURN) != 0 && current == via * LEVEL_STEP &&
-          steps == preset.dose[originShade][via]) {
+          cleanRun(h, originShade, via, preset)) {
         const int delta = preset.returnDelta[route];
         if (delta != 0) budget = clampDose(base + delta);
       } else if (oldRemaining != 0 && (preset.historyMode & HISTORY_REVERSE) != 0) {
@@ -207,6 +226,7 @@ size_t GrayModel::retargetBitmap(const int x, const int y, const int w, const in
   size_t clamped = 0;
   for (int j = 0; j < h; ++j) {
     for (int i = 0; i < w; ++i) {
+      if (!inside(x + i, y + j)) continue;  // clipped: neither retargeted nor counted
       const uint8_t value = levels[static_cast<size_t>(j) * static_cast<size_t>(w) + static_cast<size_t>(i)];
       if (value > TRANSPARENT) ++clamped;  // treated as transparent: the caller logs it
       if (value >= TRANSPARENT) continue;  // a transparent pixel keeps its level, doses and target
@@ -241,9 +261,9 @@ void GrayModel::driveRect(const int x, const int y, const int w, const int h, co
   }
 }
 
-bool GrayModel::followsUp(const uint8_t* pixel, const GrayPreset& preset) {
+bool GrayModel::followsUp(const uint8_t* pixel, const uint8_t* holdRows) {
   const uint8_t shades = pixel[SHADES_BYTE];
-  return dosesOf(pixel) > 1 && (preset.holdMask & holdBit(sourceOf(shades), targetOf(shades))) == 0;
+  return dosesOf(pixel) > 1 && ((holdRows[sourceOf(shades)] >> targetOf(shades)) & 1u) == 0;
 }
 
 size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPreset& preset,
@@ -254,6 +274,8 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
   if (!sized) return 0;
   drive.clear();
   follow.clear();
+  uint8_t holdRows[SHADE_COUNT];
+  holdRowsOf(preset, holdRows);
   size_t driven = 0;
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
@@ -262,7 +284,7 @@ size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPr
       if (dosesOf(pixel) == 0) continue;
       const bool lighten = lightens(pixel);
       const bool weak = weakRow && !lighten && weakBit(i);
-      const bool again = followsUp(pixel, preset);
+      const bool again = followsUp(pixel, holdRows);
       // A weak pixel is set in both masks: the third (weak) row of a backend whose supportsWeakRow() is true. D1 itself
       // leaves a both-masks pixel undefined (the SSD1677 holds it), so only `weakRow` sets one.
       if (weak || lighten) {
@@ -294,19 +316,22 @@ void GrayModel::deliverDose(const size_t index, const bool lighten, const GrayPr
     if (steps < STEPS_MAX) ++steps;
   }
   // The first leg has landed on the via level: the second starts from it, settled, through the retarget bookkeeping
-  // (its own dose, no via of its own). A follow-up dose never reaches here with one dose left (followsUp needs two).
-  if (left == 1 && next < SHADE_COUNT) retargetLeg(index, next, ORIGIN_NONE, preset);
+  // (its own dose, no via of its own; the history kept from the first leg). A follow-up dose can be the one that lands
+  // it: followsUp needed two doses left, so the slot's second dose arrives with one left and starts leg 2 here.
+  if (left == 1 && next < SHADE_COUNT) retargetLeg(index, next, ORIGIN_NONE, preset, true);
 }
 
 void GrayModel::commit(const bool driveDone, const bool followDone, const GrayPreset& preset) {
   if (!valid() || !driveDone) return;
+  uint8_t holdRows[SHADE_COUNT];
+  holdRowsOf(preset, holdRows);
   const size_t count = pixelCount(width_, height_);
   for (size_t i = 0; i < count; ++i) {
     const uint8_t* pixel = pixelAt(i);
     if (dosesOf(pixel) == 0) continue;
     // The direction and the follow-up decision are buildMasks', read from the state it read.
     const bool lighten = lightens(pixel);
-    const bool again = followDone && followsUp(pixel, preset);
+    const bool again = followDone && followsUp(pixel, holdRows);
     deliverDose(i, lighten, preset);
     if (again) deliverDose(i, lighten, preset);
   }

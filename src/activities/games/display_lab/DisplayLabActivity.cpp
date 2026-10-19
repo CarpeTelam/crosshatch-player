@@ -61,11 +61,15 @@ void DisplayLabActivity::onEnter() {
   // writes back, so a file from another controller keeps saying so until Reset to defaults).
   panelBase = base;
   presetBase = base;
-  if (available()) GrayPresetFile::load(base, loaded, presetBase);
+  bool version1 = false;
+  if (available()) GrayPresetFile::load(base, loaded, presetBase, &version1);
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
-  saveStatus = nullptr;
+  // A version 1 file silently replaces the panel's seven-level table: the Save preset line says so until a Save or a
+  // Reset (story dlab-g2).
+  saveStatus = version1 ? tr(STR_GAMES_DLAB_PRESET_VERSION1) : nullptr;
+  version1Line = version1;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   setDefaults(grayPreset, base);
   const bool supported = available();
@@ -151,6 +155,12 @@ void DisplayLabActivity::cleanNow() {
 GameDisplayLab::PresetBase DisplayLabActivity::resetPreset() {
   grayPreset = GameDisplayLab::presetDefaults(panelBase);
   presetBase = panelBase;
+  if (version1Line) {
+    // The version 1 file's values are gone from the session: the Save preset line back to its description.
+    saveStatus = nullptr;
+    version1Line = false;
+    if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = tr(STR_GAMES_DLAB_SAVE_PRESET_DESC);
+  }
   return panelBase;
 }
 
@@ -159,6 +169,7 @@ bool DisplayLabActivity::savePreset() {
   const bool saved = GrayPresetFile::save(grayPreset, presetBase);
   RenderLock lock(*this);
   saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
+  version1Line = false;
   if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = saveStatus;
   return saved;
 }

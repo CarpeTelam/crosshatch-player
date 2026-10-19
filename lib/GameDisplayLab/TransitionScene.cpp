@@ -562,7 +562,7 @@ ScreenRect TransitionScene::markerRect() const {
 Shade TransitionScene::markerShade() const {
   // bandOf puts the last rows in the last band.
   const Shade band = markerBandShade();
-  return markerOut_ ? shifted(band, MARKER_SHIFT) : band;
+  return markerOut_ ? holdLevelOver(band) : band;
 }
 
 std::array<ScreenRect, 2> TransitionScene::markerBars() const { return pauseBars(markerRect(), MARKER_GAP); }

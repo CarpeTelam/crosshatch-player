@@ -438,8 +438,10 @@ bool arraysFitVersion(const ReadState& state) {
          fits(state.viaCount, TRANSITION_COUNT) && fits(state.deltaCount, routes) && fits(state.percentCount, routes);
 }
 
-// A version 1 file's arrays, each present one expanded into `preset` (story dlab-g2).
-void expandVersion1(const ReadState& state, GrayPreset& preset) {
+// A version 1 file's arrays, each present one expanded into `preset` (story dlab-g2), and no vias (the file's table was
+// never calibrated for one). Returns the routes the collapse dropped with a non-zero value (bit r: version 1 route r).
+uint8_t expandVersion1(const ReadState& state, GrayPreset& preset) {
+  memset(preset.via, VIA_NONE, sizeof(preset.via));
   if (state.doseCount != 0) {
     uint8_t v1[V1_SHADE_COUNT][V1_SHADE_COUNT] = {};
     for (uint8_t i = 0; i < V1_TRANSITION_COUNT; ++i) v1[v1From(i)][v1To(i)] = state.v1Dose[i];
@@ -451,6 +453,14 @@ void expandVersion1(const ReadState& state, GrayPreset& preset) {
     if (state.deltaCount != 0) preset.returnDelta[route] = state.v1Delta[version1RouteFor(toward)];
     if (state.percentCount != 0) preset.reversePercent[route] = state.v1Percent[version1RouteFor(toward)];
   }
+  uint8_t dropped = 0;
+  for (uint8_t r = 0; r < V1_ROUTE_COUNT; ++r) {
+    if (r == version1RouteFor(Toward::Dark) || r == version1RouteFor(Toward::Light)) continue;
+    const bool delta = state.deltaCount != 0 && state.v1Delta[r] != 0;
+    const bool percent = state.percentCount != 0 && state.v1Percent[r] != 0;
+    if (delta || percent) dropped = static_cast<uint8_t>(dropped | (1u << r));
+  }
+  return dropped;
 }
 
 // The steps a via row takes for transition `index`: VIA_NONE, then the levels other than both ends ascending.
@@ -518,20 +528,42 @@ void expandVersion1Doses(const uint8_t v1[V1_SHADE_COUNT][V1_SHADE_COUNT], uint8
 }
 
 uint64_t expandVersion1Holds(const uint16_t v1) {
-  // An end's anchor: an even level's own shade; an odd level's neighbour away from the transition's other end.
-  const auto anchor = [](const uint8_t level, const uint8_t other) {
-    if (level % 2 == 0) return static_cast<uint8_t>(level / 2);
-    return static_cast<uint8_t>(other < level ? (level + 1) / 2 : (level - 1) / 2);
-  };
   uint64_t mask = HOLD_DIAGONAL;
   for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
     for (uint8_t to = 0; to < SHADE_COUNT; ++to) {
       if (from == to) continue;
-      const unsigned bit = anchor(from, to) * 4u + anchor(to, from);
-      if ((v1 >> bit) & 1u) mask |= holdBit(from, to);
+      // The candidates: an anchor (version 1 shade) of each end, running the same way; the one spanning the fewest
+      // shades, then the one whose source anchor lies farther from `to`.
+      int bestA = -1;
+      int bestB = -1;
+      for (int a = from / 2; a <= (from + 1) / 2; ++a) {
+        for (int b = to / 2; b <= (to + 1) / 2; ++b) {
+          if (a == b || (a < b) != (from < to)) continue;
+          const int span = a < b ? b - a : a - b;
+          const int bestSpan = bestA < 0 ? 0 : (bestA < bestB ? bestB - bestA : bestA - bestB);
+          const int away = 2 * a > to ? 2 * a - to : to - 2 * a;
+          const int bestAway = 2 * bestA > to ? 2 * bestA - to : to - 2 * bestA;
+          if (bestA < 0 || span < bestSpan || (span == bestSpan && away > bestAway)) {
+            bestA = a;
+            bestB = b;
+          }
+        }
+      }
+      if ((v1 >> (bestA * 4 + bestB)) & 1u) mask |= holdBit(from, to);
     }
   }
   return mask;
+}
+
+void holdRowsOf(const GrayPreset& preset, uint8_t rows[SHADE_COUNT]) {
+  for (uint8_t source = 0; source < SHADE_COUNT; ++source) {
+    rows[source] = static_cast<uint8_t>((preset.holdMask >> (source * SHADE_COUNT)) & ((1u << SHADE_COUNT) - 1));
+  }
+}
+
+const char* version1RouteName(const uint8_t route) {
+  constexpr const char* NAMES[V1_ROUTE_COUNT] = {"4>0>4", "2>0>2", "2>6>2", "4>6>4", "2>4>2", "4>2>4"};
+  return route < V1_ROUTE_COUNT ? NAMES[route] : "?";
 }
 
 GrayPreset GrayPreset::inkBoyDefaults() {
@@ -788,7 +820,7 @@ GrayPresetLoad loadGrayPreset(const char* text, const size_t length, const GrayP
   }
   if (!reader.atEnd() || state.version == 0 || !arraysFitVersion(state)) return malformed();
   const bool version1 = state.version == FILE_VERSION_1;
-  if (version1) expandVersion1(state, out);
+  const uint8_t dropped = version1 ? expandVersion1(state, out) : 0;
   // The older single retarget key fills each direction the text did not set itself (its range was checked).
   const bool legacy = state.legacyRetarget >= 0;
   const bool legacyDark = legacy && !state.sawDark;
@@ -802,6 +834,7 @@ GrayPresetLoad loadGrayPreset(const char* text, const size_t length, const GrayP
     info->base = state.base;
     info->unknownBase = state.unknownBase;
     info->expandedVersion1 = version1;
+    info->droppedVersion1Routes = dropped;
   }
   return GrayPresetLoad::Loaded;
 }

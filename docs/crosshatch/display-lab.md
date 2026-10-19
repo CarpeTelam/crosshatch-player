@@ -221,7 +221,8 @@ Levels are named by their number wherever the lab shows them (the epics' D14 and
 gray, **6** white; InkBoy's four shades K, D, L, W are 0, 2, 4, 6. A transition such as 0>2 is black to the middle
 dark gray. The stock bench keeps its own four levels and labels.
 
-The UltraChip table, from (row) > to (column); the 0>1 entry is unused while its via is set:
+The UltraChip table, from (row) > to (column); 0>1 runs through its via (0>2, then 2>1), and `baseDose` still reads
+the 0>1 entry for a pixel between those levels:
 
 | From > To | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -238,13 +239,13 @@ held: 0>2, 0>4, 2>4, 4>2, 6>4) expanded, a held transition marked h:
 
 | From > To | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | | 1 h | 2 h | 3 h | 4 h | 6 | 7 |
-| 1 | 2 | | 1 h | 2 h | 3 h | 5 | 7 |
-| 2 | 4 | 2 | | 1 h | 1 h | 4 | 6 |
-| 3 | 4 | 3 | 1 h | | 1 h | 3 | 6 |
-| 4 | 4 | 3 | 1 h | 1 h | | 3 | 5 |
-| 5 | 6 | 4 | 2 | 2 | 1 h | | 3 |
-| 6 | 7 | 5 | 3 | 3 | 2 h | 1 h | |
+| 0 | | 1 h | 2 h | 3 h | 4 h | 6 h | 7 |
+| 1 | 2 | | 1 h | 2 h | 3 h | 5 h | 7 |
+| 2 | 4 | 2 | | 1 h | 1 h | 4 h | 6 |
+| 3 | 4 | 3 h | 1 h | | 1 h | 3 h | 6 |
+| 4 | 4 | 3 h | 1 h | 1 h | | 3 | 5 |
+| 5 | 6 | 4 h | 2 h | 2 h | 1 h | | 3 |
+| 6 | 7 | 5 | 3 | 3 h | 2 h | 1 h | |
 
 Retarget 100 % both ways, rate index 0, no polarity swap, no via, and InkBoy's routes (4>0>4 return -1 and reverse 150
 %, collapsed to the return toward light; the return toward dark neutral) are InkBoy's too. History and weak mode are
@@ -278,7 +279,7 @@ a seventh of the height (the rows left over belong to the last), each with one r
   mode whose rectangles retarget pixels still mid-transition, so it is the one that exercises the retarget split.
 - **Slow**: 48-px rectangles, the same sweep and pause, over a crossing sized so that a pixel stays under a rectangle
   for the preset's longest dose run in slots: per transition its dose when its hold bit is on (one dose a slot), half
-  of it rounded up when off (the follow-up scan gives a second), a via transition both its legs, the largest of the 42 (4
+  of it rounded up when off (the follow-up scan gives a second), a via transition both its legs, the largest of the 42 (6
   for InkBoy's preset, 12 for the UltraChip one). Crossing = those slots x slot period x (screen width + 48) / 48, at most 120 s. The
   rectangles wait just off the left edge while the bands paint from white; each painting slot is measured (its real
   length, the scans and the work over every pixel, at least the scheduler's period), and once the paint has settled (a
@@ -343,7 +344,7 @@ does not depend on pausing within half a slot:
 - **Static**: every settle (`static settle N`, N the flip that settled); the flip waits for the resume.
 - **Ladder**: the end of stage 1 (`ladder 1`) and of stage 2 (`ladder 2`), with Hold for photos Off too; the next
   stage, or the run's end, waits for the resume and the marker's way back. The base is no photo spot. The marker sits
-  on the black rows below the bottom half and goes to 3, never over a column.
+  on the black rows below the bottom half and goes to 6 (white), never over a column.
 - **Slow**: the bands once their paint has settled, before the rectangles enter (`slow painted 0`, the slot that sizes
   the crossing); the rectangles once they are wholly on-screen and the preset's longest dose run in slots has passed
   since their left (trailing) edge came on (`slow dwelt N`, N the crossing). The crossing is sized so that the trailing
@@ -363,7 +364,8 @@ At a spot the run shows the hold marker, a pause symbol: two bars in the bottom-
 sits in the bottom band's margin below its rectangle (12 rows on a landscape screen, 10 in portrait,
 following the orientation; a 16 px square, bars of 4, on a screen too small for rectangles; 32 x 16 px under the
 Ladder's columns), so it never shares a row with a rectangle or its trail. The bars are driven by the gray engine's own
-scans to the band's opposite level (three along, 0 to 6 and round), since nothing can be drawn through the renderer while
+scans to black or white, whichever is farther from the band's level (black over 3 to 6, white over 0 to 2: the gray
+viewer's rule), since nothing can be drawn through the renderer while
 the view is up. On a preset whose dose from the band's shade to that one is weak the bars can be faint; the `gray hold:`
 log line is the reliable signal that the run holds. The sweep clock stands still: the task runs slots until the marker
 has settled, then holds (nothing is driven). Next (or Confirm) resumes: the marker is driven back to the band's shade
@@ -394,7 +396,8 @@ Controls while it runs (the Controls row says the same, by action: "While it run
 and ends a hold for photos; Previous or Back stops"). The X4 Pro has no front buttons and its touch routing is dead
 while the view is up (D12), so the side buttons are the controls there. Pause and resume take effect at the end of the
 slot in flight (a slot's drive scan and its follow-up stay together); a stop takes effect after the scan in flight, or
-after the clean in flight (the session cap's clean is one FULL refresh, a run's first clean three).
+after the clean in flight (a run's clean, the session cap's included, is three FULL refreshes; a stop between two of
+them ends it there, and a stop during the last one skips the paint).
 
 - **Next** (NavNext: side Down or front Right; Up or Left in inverted portrait and counter-clockwise landscape,
   where the axis follows the screen), **Confirm** where there is one, or a tap over the screen's row area on a device
@@ -415,8 +418,8 @@ after the clean in flight (the session cap's clean is one FULL refresh, a run's 
 - Home and sleep end the sweep task before the screen frees anything; a task that was waiting for the render lock
   when sleep or a screen change took it is deleted where it waits.
 
-Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans to white just before
-it and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
+Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans white, black, white just
+before it (as a run's first clean: the repaint follows, and so would a ghost) and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
 (`skipped` counts the slot periods lost to slow slots in that same window, about 2 s; they are dropped, never
 queued), and at the end of every run `gray sweep task ended: stack N bytes, high-water N bytes free, least before a
 scan N bytes` (an error line follows when under 1,024 bytes were left; the same line is logged when sleep or a
@@ -802,7 +805,9 @@ steps it Doses, Holds, Other):
   InkBoy's, into the session at once, logged as `DLAB tune reset: ... defaults`; the only way back to them on the
   device, and Save then writes them), and Save.
 
-Levels are named by number, 0 black, 3 the 50 % gray, 6 white. A **tap** on a row steps it in place (+1, wrapping; a
+Levels are named by number, 0 black, 3 the 50 % gray, 6 white. A Dose or Hold row whose transition has a via says so
+after its value ("1 (via 2)"): the transition runs through its via's two legs, and `baseDose` still reads the entry for
+a pixel between those levels. A **tap** on a row steps it in place (+1, wrapping; a
 hold or the swap toggles; a via goes None, then each allowed level). **Confirm** on a row enters edit mode for it
 ("editing" on its line): Next and Previous (NavNext and NavPrevious, as above) then change it by one step (+1 / -1,
 clamped; a hold or the swap on / off), and Confirm or Back leaves edit mode. Outside edit mode they move the selection
@@ -820,7 +825,7 @@ save keeps the values in memory and says "Save failed, values kept". Its text (`
 defaults shown:
 
 ```json
-{"version":2,"base":"inkboy","doses":[1,2,3,4,6,7,2,1,2,3,5,7,4,2,1,1,4,6,4,3,1,1,3,6,4,3,1,1,3,5,6,4,2,2,1,3,7,5,3,3,2,1],"hold":[true,true,true,true,false,false,false,true,true,true,false,false,false,false,true,true,false,false,false,false,true,true,false,false,false,false,true,true,false,false,false,false,false,false,true,false,false,false,false,false,true,true],"via":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"retarget_dark_percent":100,"retarget_light_percent":100,"rate":0,"swap_polarity":false,"history":0,"return_delta":[0,-1],"reverse_percent":[0,150],"weak_white_to_light":false}
+{"version":2,"base":"inkboy","doses":[1,2,3,4,6,7,2,1,2,3,5,7,4,2,1,1,4,6,4,3,1,1,3,6,4,3,1,1,3,5,6,4,2,2,1,3,7,5,3,3,2,1],"hold":[true,true,true,true,true,false,false,true,true,true,true,false,false,false,true,true,true,false,false,true,true,true,true,false,false,true,true,true,false,false,false,true,true,true,true,false,false,false,false,true,true,true],"via":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"retarget_dark_percent":100,"retarget_light_percent":100,"rate":0,"swap_polarity":false,"history":0,"return_delta":[0,-1],"reverse_percent":[0,150],"weak_white_to_light":false}
 ```
 
 | Key | Meaning | Range |
@@ -844,9 +849,17 @@ A **version 1** file (dlab-c1 to dlab-g3: 12 doses and 12 hold bits in the order
 4>2, 4>6, 6>0, 6>2, 6>4, six routes L>K>L, D>K>D, D>W>D, L>W>L, D>L>D, L>D>L, no `via`) loads expanded to seven levels,
 logged `preset: version 1 file expanded to seven levels`: its four shades land on levels 0, 2, 4, 6; a dose into or out
 of an odd level is the mean of the two anchor transitions around it (a diagonal one counting 0: 0>1 is half of 0>2),
-one between two odd levels the mean of its four, each rounded up; a hold bit is its nearest anchor pair's, an odd level
-taking its neighbour away from the transition's other end (0>1 takes 0>2's, 3>1 takes 4>0's); the return toward light
-takes L>K>L's values and the return toward dark D>W>D's. Save writes it back as version 2. Firmware from before dlab-g2
+one between two odd levels the mean of its four, each rounded up; a hold bit is its nearest anchor pair's, the anchor
+transition among its ends' anchors (an odd level's two neighbours) that runs the same way and spans the fewest levels,
+a tie (both ends odd) going to the pair whose source lies away from the other end (0>1, 1>2 and 0>3 take 0>2's, 1>3
+takes 0>2's, 3>1 takes 4>2's); the return toward light takes L>K>L's values and the return toward dark D>W>D's, and the
+other four routes are dropped (named once: `preset: version 1 routes dropped (only 4>0>4 and 2>6>2 carry over): ...`);
+it has no vias (its table was never calibrated for one). Save writes it back as version 2.
+
+Migrating: a version 1 file saved on an earlier firmware replaces the panel's whole seven-level table (the UltraChip
+preset's D14 table) with its expansion, so the lab menu's Save preset line says "Version 1 preset expanded; Reset in
+Tuning for the seven-level table" until a Save or a Reset. To move to the ladder table, run Tuning → Other → Reset to
+defaults, then Save; to keep the old values, Save writes them as version 2 and the line goes back. Firmware from before dlab-g2
 rejects a version 2 file as malformed and runs on its defaults. Absent keys keep the defaults (the controller's); unknown
 keys are skipped; a key of the wrong type or out of range, an array whose length is not its version's, a parse error,
 or a missing or unknown `version` makes the whole file malformed. The codec is a small

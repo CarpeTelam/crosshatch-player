@@ -72,15 +72,15 @@ constexpr uint64_t HOLD_DIAGONAL = holdDiagonal();
 constexpr uint64_t HOLD_ALL = (uint64_t{1} << (SHADE_COUNT * SHADE_COUNT)) - 1;
 
 struct GrayPreset {
+  // Bit source * 7 + target set (holdBit): the follow-up scan holds that transition's pixels. Diagonal bits always set,
+  // no bit past HOLD_ALL. First, so the 8-byte member adds no padding after the two 49-byte tables.
+  uint64_t holdMask;
   // dose[from][to]: one-frame activations from level `from` to level `to`, DOSE_MIN..DOSE_MAX; the diagonal is 0.
   uint8_t dose[SHADE_COUNT][SHADE_COUNT];
   // via[from][to]: VIA_NONE, or a level the transition passes through (story dlab-g2, D14: one pulse from black already
   // passes level 2, so 0>1 runs 0>2 with dose[0][2], then 2>1 with dose[2][1]; GrayModel::retarget). VIA_NONE on the
   // diagonal; never `from` or `to`.
   uint8_t via[SHADE_COUNT][SHADE_COUNT];
-  // Bit source * 7 + target set (holdBit): the follow-up scan holds that transition's pixels. Diagonal bits always set,
-  // no bit past HOLD_ALL.
-  uint64_t holdMask;
   // Budget of a pixel retargeted mid-transition, percent of the base dose (50..150): toward a darker level than its
   // own, and toward a lighter one (D12: one value overshot toward white while still falling short toward black).
   uint8_t retargetDarkPercent;
@@ -143,19 +143,29 @@ struct GrayPreset {
   void cycleRate(uint8_t rateCount);                      // +1, the last wraps to 0
   void toggleSwap() { swapPolarity = !swapPolarity; }
 };
+// Two presets on one frame stay within the 256-byte stack rule (holdMask first: no padding after the tables).
+static_assert(sizeof(GrayPreset) <= 120, "a seven-level preset is at most 120 bytes");
+
+// Each source level's hold bits as a byte (bit t: source > t holds), derived from `preset.holdMask` once per slot so
+// the per-pixel follow-up test is a byte lookup, not a 64-bit shift (GrayModel::buildMasks, commit).
+void holdRowsOf(const GrayPreset& preset, uint8_t rows[SHADE_COUNT]);
 
 // The version 1 file's four-shade values expanded to seven levels (story dlab-g2): the shades land on levels 0, 2, 4,
 // 6. A dose into or out of an odd level is the mean of the two anchor transitions around it (the diagonal counting 0),
 // one between two odd levels the mean of its four, rounded up once. `v1` is dose[from][to] over K, D, L, W.
 void expandVersion1Doses(const uint8_t v1[V1_SHADE_COUNT][V1_SHADE_COUNT], uint8_t out[SHADE_COUNT][SHADE_COUNT]);
 // A 16-bit version 1 hold mask (bit source * 4 + target) as seven levels: each transition takes the bit of its nearest
-// anchor pair, an odd level rounding away from the transition's other end (0>1 takes 0>2, 3>1 takes 4>0, 1>3 takes
-// 0>4), so the pair is always an anchor transition in the same direction. Diagonal bits set.
+// anchor pair, the anchor transition among its ends' anchors (an even level's own shade, an odd level's two
+// neighbours) that runs the same way and spans the fewest levels; a tie (both ends odd: 1>3 has 0>2 and 2>4) goes to
+// the pair whose source lies away from the transition's other end (1>3 takes 0>2, 3>1 takes 4>2). So 0>1 takes 0>2, 1>2
+// takes 0>2, 0>3 takes 0>2, 1>4 takes 2>4. Diagonal bits set.
 uint64_t expandVersion1Holds(uint16_t v1);
 // Version 1's six routes (L>K>L, D>K>D, D>W>D, L>W>L, D>L>D, L>D>L, the file's order) as the two directional ones:
 // the index of the version 1 route whose values a direction takes. Toward light takes L>K>L's (a return from black, the
 // story's reading), toward dark its mirror D>W>D's (a return from white).
 constexpr uint8_t version1RouteFor(const Toward toward) { return toward == Toward::Light ? 0 : 2; }
+// A version 1 route's name for the log, by level numbers: "4>0>4", "2>0>2", "2>6>2", "4>6>4", "2>4>2", "4>2>4".
+const char* version1RouteName(uint8_t route);
 
 // Which starting preset a session gets (D12): the UltraChip one on a UC8179 or UC8279 panel, InkBoy's otherwise.
 enum class PresetBase : uint8_t { InkBoy, UltraChip };
@@ -182,8 +192,12 @@ struct GrayPresetLoadInfo {
   std::optional<PresetBase> base;
   // The file has a `base` key whose value names no base: ignored (the caller logs it).
   bool unknownBase = false;
-  // A version 1 file: its four-shade arrays were expanded to seven levels (the caller logs it).
+  // A version 1 file: its four-shade arrays were expanded to seven levels and its vias set to none (the caller logs
+  // it).
   bool expandedVersion1 = false;
+  // A version 1 file: bit r set for each of its routes (version1RouteName) other than the two the collapse keeps that
+  // had a non-zero return delta or reverse percent, which the collapse dropped (the caller logs them once).
+  uint8_t droppedVersion1Routes = 0;
 };
 
 // Reads `length` bytes of `text`, a std-only JSON subset (objects, arrays, integers, booleans, strings; unknown keys
@@ -191,7 +205,8 @@ struct GrayPresetLoadInfo {
 // of the wrong type or out of range (a via of 7 or above included), an array whose length is not its version's
 // (version 1: doses and hold 12, return_delta and reverse_percent 6, no via; version 2: 42, 42, 42, 2 and 2), or
 // `version` absent or not 1 or 2; absent keys keep `defaults`. Keys may come in any order. A version 1 file's arrays
-// are expanded (expandVersion1Doses, expandVersion1Holds, version1RouteFor). The older single key
+// are expanded (expandVersion1Doses, expandVersion1Holds, version1RouteFor) and its vias are none (its table was never
+// calibrated for one). The older single key
 // `retarget_percent` (50..150) is still read: each direction without its own key in the text takes its value, whatever
 // the keys' order. `*info`, when given, says which directions that filled, the file's base (`base` is informational: a
 // value other than "inkboy" or "ultrachip" is skipped and reported as unknownBase) and whether it was version 1. `out`

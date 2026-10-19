@@ -82,8 +82,9 @@ class GrayModel {
   // A level-coded bitmap (story dlab-g2, the owner's ask for sprites): `levels` holds w * h bytes, row-major, one per
   // pixel, 0..6 a level and 7 (Shade::TRANSPARENT) transparent; bitmap pixel (i, j) is model pixel (x + i, y + j),
   // clipped to the model. Every pixel at a level is retargeted to it; a transparent one keeps its level, doses and
-  // target. A value above 7 is treated as transparent and counted: returns how many there were (the caller logs them
-  // once; this model is std-only). Nothing, 0, for a null bitmap or an empty rectangle.
+  // target. A value above 7 is treated as transparent and counted: returns how many of the model's pixels had one
+  // (clipped ones are neither retargeted nor counted; the caller logs them once; this model is std-only). Nothing, 0,
+  // for a null bitmap or an empty rectangle.
   size_t retargetBitmap(int x, int y, int w, int h, const uint8_t* levels, const GrayPreset& preset);
   // The ladder's pulses (story dlab-g1): every pixel of [x, x + w) x [y, y + h), clipped to the model, gets exactly
   // `doses` doses (at most DOSE_MAX) toward black (Toward::Dark: target K) or white (Toward::Light: target W), set
@@ -125,14 +126,16 @@ class GrayModel {
   uint8_t* pixelAt(size_t index) const { return pixels_ + PIXEL_BYTES * index; }
   bool weakBit(size_t index) const;
   void setWeakBit(size_t index, bool on);
-  // Whether the follow-up scan drives pixel `pixel` (its PIXEL_BYTES) again (hold bit off, more than one dose left).
-  static bool followsUp(const uint8_t* pixel, const GrayPreset& preset);
+  // Whether the follow-up scan drives pixel `pixel` (its PIXEL_BYTES) again (hold bit off, more than one dose left);
+  // `holdRows` is holdRowsOf(preset), derived once per slot.
+  static bool followsUp(const uint8_t* pixel, const uint8_t* holdRows);
   // One dose for pixel `index`, counted into its history toward `lighten`; the second leg starts when the first lands.
   void deliverDose(size_t index, bool lighten, const GrayPreset& preset);
   // retarget()'s bookkeeping for one leg of pixel `index` toward level `t` (below SHADE_COUNT, not its current target):
   // the budget, the history routes, the weak bit, and the pixel's bytes with `next` as its second leg (ORIGIN_NONE:
-  // none).
-  void retargetLeg(size_t index, uint8_t t, uint8_t next, const GrayPreset& preset);
+  // none). A `secondLeg` (a via's, started by commit) leaves the history alone: the origin and the step counters are
+  // the first leg's, so a later return is judged against where the transition started, not the via level.
+  void retargetLeg(size_t index, uint8_t t, uint8_t next, const GrayPreset& preset, bool secondLeg = false);
 
   uint8_t* pixels_ = nullptr;
   uint8_t* history_ = nullptr;

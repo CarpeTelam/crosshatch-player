@@ -19,14 +19,12 @@ using namespace GameDisplayLab;
 // InkBoy's defaults as the file writes them: its four-shade table expanded to seven levels.
 constexpr const char* DEFAULT_TEXT =
     "{\"version\":2,\"base\":\"inkboy\",\"doses\":[1,2,3,4,6,7,2,1,2,3,5,7,4,2,1,1,4,6,4,3,1,1,3,6,4,3,1,1,3,5,6,4,2,2,"
-    "1,3,7,5,3,3,2,1],\"hold\":[true,true,true,true,false,false,false,true,true,true,false,false,false,false,true,true,"
-    "false,false,false,false,true,true,false,false,false,false,true,true,false,false,false,false,false,false,true,"
-    "false,"
-    "false,false,false,false,true,true],\"via\":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,"
-    "-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],\"retarget_dark_percent\":100,\"retarget_light_"
-    "percent\":"
-    "100,\"rate\":0,\"swap_polarity\":false,\"history\":0,\"return_delta\":[0,-1],\"reverse_percent\":[0,150],"
-    "\"weak_white_to_light\":false}";
+    "1,3,7,5,3,3,2,1],\"hold\":[true,true,true,true,true,false,false,true,true,true,true,false,false,false,true,true,"
+    "true,false,false,true,true,true,true,false,false,true,true,true,false,false,false,true,true,true,true,false,false,"
+    "false,false,true,true,true],\"via\":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-"
+    "1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],\"retarget_dark_percent\":100,\"retarget_light_percent\":100,"
+    "\"rate\":0,\"swap_polarity\":false,\"history\":0,\"return_delta\":[0,-1],\"reverse_percent\":[0,150],\"weak_white_"
+    "to_light\":false}";
 
 // InkBoy's defaults as a version 1 file wrote them (dlab-c1 .. dlab-g1).
 constexpr const char* V1_DEFAULT_TEXT =
@@ -128,8 +126,8 @@ TEST(GrayPreset, DefaultsAreInkBoysTableExpandedToSevenLevels) {
       {4, 3, 1, 1, 0, 3, 5}, {6, 4, 2, 2, 1, 0, 3}, {7, 5, 3, 3, 2, 1, 0},
   };
   const bool holds[SHADE_COUNT][SHADE_COUNT] = {
-      {1, 1, 1, 1, 1, 0, 0}, {0, 1, 1, 1, 1, 0, 0}, {0, 0, 1, 1, 1, 0, 0}, {0, 0, 1, 1, 1, 0, 0},
-      {0, 0, 1, 1, 1, 0, 0}, {0, 0, 0, 0, 1, 1, 0}, {0, 0, 0, 0, 1, 1, 1},
+      {1, 1, 1, 1, 1, 1, 0}, {0, 1, 1, 1, 1, 1, 0}, {0, 0, 1, 1, 1, 1, 0}, {0, 1, 1, 1, 1, 1, 0},
+      {0, 1, 1, 1, 1, 0, 0}, {0, 1, 1, 1, 1, 1, 0}, {0, 0, 0, 1, 1, 1, 1},
   };
   const GrayPreset p = GrayPreset::inkBoyDefaults();
   for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
@@ -217,18 +215,23 @@ TEST(GrayPreset, Version1DosesExpandByTheMeanOfTheAnchorTransitions) {
   EXPECT_EQ(out[1][5], 9);   // (0>4 8 + 0>6 13 + 2>4 4 + 2>6 11) / 4 = 9
 }
 
-TEST(GrayPreset, Version1HoldsTakeTheNearestAnchorPairAwayFromTheOtherEnd) {
-  // One version 1 bit at a time (bit source * 4 + target over K, D, L, W) and the seven-level transitions it reaches.
+TEST(GrayPreset, Version1HoldsTakeTheNearestAnchorPair) {
+  // One version 1 bit at a time (bit source * 4 + target over K, D, L, W) and the seven-level transitions it reaches:
+  // each transition takes the same-direction anchor pair spanning the fewest shades; on a tie (both ends odd), the one
+  // whose source lies away from the other end.
   const auto expanded = [](const unsigned v1Bit) { return expandVersion1Holds(static_cast<uint16_t>(1u << v1Bit)); };
   const uint64_t kd = expanded(0 * 4 + 1);
   EXPECT_NE(kd & holdBit(0, 2), 0u);                   // K>D itself
-  EXPECT_NE(kd & holdBit(0, 1), 0u);                   // 0>1: 1 rounds away from 0, to 2
-  EXPECT_NE(kd & holdBit(1, 2), 0u);                   // 1>2: 1 rounds away from 2, to 0
-  EXPECT_EQ(kd & holdBit(0, 3), 0u);                   // 0>3: 3 rounds away from 0, to 4 (K>L)
-  EXPECT_NE(expanded(0 * 4 + 2) & holdBit(1, 3), 0u);  // 1>3 takes K>L (0>4)
-  EXPECT_NE(expanded(2 * 4 + 0) & holdBit(3, 1), 0u);  // 3>1 takes L>K (4>0)
+  EXPECT_NE(kd & holdBit(0, 1), 0u);                   // 0>1: 1's anchors 0 and 2, only 0>2 runs the same way
+  EXPECT_NE(kd & holdBit(1, 2), 0u);                   // 1>2: only 0>2 (2>2 is diagonal)
+  EXPECT_NE(kd & holdBit(0, 3), 0u);                   // 0>3: 0>2 spans one shade, 0>4 two
+  EXPECT_NE(kd & holdBit(1, 3), 0u);                   // 1>3: 0>2 and 2>4 tie; the source away from 3 is 0
+  EXPECT_EQ(expanded(0 * 4 + 2) & holdBit(1, 3), 0u);  // not K>L (0>4)
+  EXPECT_NE(expanded(1 * 4 + 2) & holdBit(1, 4), 0u);  // 1>4: 2>4 (D>L) spans one, 0>4 two
+  EXPECT_NE(expanded(2 * 4 + 1) & holdBit(3, 1), 0u);  // 3>1: 2>0 and 4>2 tie; the source away from 1 is 4 (L>D)
   EXPECT_NE(expanded(2 * 4 + 3) & holdBit(5, 6), 0u);  // 5>6 takes L>W (4>6)
   EXPECT_NE(expanded(3 * 4 + 2) & holdBit(6, 5), 0u);  // 6>5 takes W>L (6>4)
+  EXPECT_NE(expanded(3 * 4 + 2) & holdBit(6, 3), 0u);  // 6>3: 6>4 spans one, 6>2 two
   // Every transition takes exactly one anchor bit, never a diagonal one, in its own direction.
   for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
     for (uint8_t to = 0; to < SHADE_COUNT; ++to) {
@@ -250,8 +253,8 @@ TEST(GrayPreset, Version1HoldsTakeTheNearestAnchorPairAwayFromTheOtherEnd) {
 }
 
 TEST(GrayPreset, LongestRunSlotsCountsOneDoseASlotForHeldLegsAndBothLegsOfAVia) {
-  // InkBoy's expansion: 0>4 4 held, and 0>6, 1>6 and 6>0 7 not held (ceil(7 / 2)), all 4 slots.
-  EXPECT_EQ(GrayPreset::inkBoyDefaults().longestRunSlots(), 4);
+  // InkBoy's expansion: 0>5 6 held (it takes 0>4's bit, K>L).
+  EXPECT_EQ(GrayPreset::inkBoyDefaults().longestRunSlots(), 6);
   // UltraChip: every hold on, 6>0 12 the longest (0>1's via is 1 + 2).
   EXPECT_EQ(GrayPreset::ultraChipDefaults().longestRunSlots(), 12);
   GrayPreset p = GrayPreset::ultraChipDefaults();
@@ -265,9 +268,9 @@ TEST(GrayPreset, LongestRunSlotsCountsOneDoseASlotForHeldLegsAndBothLegsOfAVia) 
   EXPECT_EQ(p.longestRunSlots(), 12);  // 24 doses, two a slot
   p.setHold(wk, true);
   EXPECT_EQ(p.longestRunSlots(), 24);  // held: one a slot
-  p.dose[6][0] = 9;
+  p.dose[6][0] = 15;
   p.setHold(wk, false);
-  EXPECT_EQ(p.longestRunSlots(), 5);  // odd: ceil(9 / 2)
+  EXPECT_EQ(p.longestRunSlots(), 8);  // odd: ceil(15 / 2), past 0>5's 6
 }
 
 TEST(GrayPreset, ValidRejectsEveryOutOfRangeField) {
@@ -528,12 +531,13 @@ TEST(GrayPresetCodec, AbsentKeysKeepTheGivenDefaultsAndWhitespaceIsAllowed) {
   GrayPreset expected = GrayPreset::inkBoyDefaults();
   expected.retargetDarkPercent = 125;
   EXPECT_TRUE(samePreset(out, expected));
-  // On an UltraChip panel the absent keys keep the UltraChip doses and via, in a version 2 or a version 1 file (a
-  // version 1 file's absent arrays have nothing to expand).
+  // On an UltraChip panel the absent keys keep the UltraChip doses, and a version 2 file without `via` its via too; a
+  // version 1 file has no vias (its table was never calibrated for one), whatever the defaults.
   for (const char* text : {"{\"version\":2,\"rate\":1}", "{\"version\":1,\"rate\":1}"}) {
     EXPECT_EQ(loadGrayPreset(text, strlen(text), GrayPreset::ultraChipDefaults(), out), GrayPresetLoad::Loaded) << text;
     expected = GrayPreset::ultraChipDefaults();
     expected.rateIndex = 1;
+    if (text[11] == '1') memset(expected.via, VIA_NONE, sizeof(expected.via));
     EXPECT_TRUE(samePreset(out, expected)) << text;
   }
 }
@@ -545,8 +549,9 @@ TEST(GrayPresetCodec, Version1FileExpandsToSevenLevelsAndSavesAsVersion2) {
   EXPECT_EQ(load(V1_DEFAULT_TEXT, out, &info), GrayPresetLoad::Loaded);
   EXPECT_TRUE(info.expandedVersion1);
   EXPECT_TRUE(samePreset(out, GrayPreset::inkBoyDefaults()));
+  EXPECT_EQ(info.droppedVersion1Routes, 0u);  // only 4>0>4 had values
   // The owner's D12 four-shade table over the UltraChip defaults: the doses and holds expand, the routes collapse
-  // (L>K>L to toward light, D>W>D to toward dark), the absent via keeps the defaults'.
+  // (L>K>L to toward light, D>W>D to toward dark), and it has no vias.
   const std::string text =
       "{\"version\":1,\"base\":\"ultrachip\",\"doses\":[2,7,12,7,2,10,7,6,9,12,5,3],\"hold\":[false,false,false,"
       "false,false,false,false,false,false,false,false,true],\"return_delta\":[-3,1,2,4,5,6],\"reverse_percent\":[175,"
@@ -559,13 +564,22 @@ TEST(GrayPresetCodec, Version1FileExpandsToSevenLevelsAndSavesAsVersion2) {
       {7, 7, 6, 3, 0, 5, 9},   {10, 8, 6, 4, 2, 0, 5}, {12, 9, 5, 4, 3, 2, 0},
   };
   EXPECT_EQ(memcmp(out.dose, doses, sizeof(doses)), 0);
-  // W>L (bit 3 * 4 + 2) alone: 6>4, 6>5 (5 away from 6) and 5>4 (5 away from 4); 6>3 rounds 3 to 2 (W>D, off).
-  EXPECT_EQ(out.holdMask, HOLD_DIAGONAL | holdBit(6, 4) | holdBit(6, 5) | holdBit(5, 4));
+  // W>L (bit 3 * 4 + 2) alone, its nearest pair for 6>4, 6>5, 6>3, 5>4 and 5>3 (5>3: 6>4 and 4>2 tie, the source
+  // away from 3 is 6).
+  EXPECT_EQ(out.holdMask,
+            HOLD_DIAGONAL | holdBit(6, 4) | holdBit(6, 5) | holdBit(6, 3) | holdBit(5, 4) | holdBit(5, 3));
   EXPECT_EQ(out.returnDelta[routeIndex(Toward::Light)], -3);
   EXPECT_EQ(out.returnDelta[routeIndex(Toward::Dark)], 2);
   EXPECT_EQ(out.reversePercent[routeIndex(Toward::Light)], 175);
   EXPECT_EQ(out.reversePercent[routeIndex(Toward::Dark)], 50);
-  EXPECT_EQ(memcmp(out.via, GrayPreset::ultraChipDefaults().via, sizeof(out.via)), 0);
+  // No vias: the defaults' 0>1 through 2 is not kept over a table never calibrated for it.
+  for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) EXPECT_EQ(out.viaAt(i), VIA_NONE) << int(i);
+  // The four routes the collapse dropped had values (2>0>2 1/10, 4>6>4 4/20, 2>4>2 5/30, 4>2>4 6/40): reported for
+  // the caller's one log line.
+  EXPECT_EQ(info.droppedVersion1Routes, (1u << 1) | (1u << 3) | (1u << 4) | (1u << 5));
+  EXPECT_STREQ(version1RouteName(0), "4>0>4");
+  EXPECT_STREQ(version1RouteName(2), "2>6>2");
+  EXPECT_STREQ(version1RouteName(5), "4>2>4");
   // Saved again: version 2, and it loads back unchanged, with nothing to expand.
   char buffer[1024];
   const size_t length = encodeGrayPreset(out, PresetBase::UltraChip, buffer, sizeof(buffer));

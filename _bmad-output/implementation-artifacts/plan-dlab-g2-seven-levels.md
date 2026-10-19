@@ -201,6 +201,31 @@ Implemented in the main session (orchestrated-epics § 3 fallback: no nested sub
 
 ## Review Triage Log
 
+### Batch 1 (orchestrator's four lenses over 09e9eb0b; applied in this session, staged, not committed)
+
+Orchestrator verdicts (2026-10-19): 22 findings — high 0, medium 3, low 14, false 0, rejected-by-rule 5 (duplicates across lenses and merge-time items); every medium patched (P1–P3), so one follow-up pass follows this batch and, per the owner's scope decision for this story, only a high after that opens another.
+
+The orchestrator triaged; 14 patches applied, 3 items deferred by the orchestrator (the white-black-white fill order
+check, the bitmap's LOG_ERR once, the matrix's "every band through all six other levels"). The seven readings were
+confirmed, R4 (hold tie) as changed by P4, R5 (marker) by P12, R6 (cap clean) by P9.
+
+| Item | Severity | Action |
+|---|---|---|
+| P1 via breaks history routes | medium | `retargetLeg(.., secondLeg)` leaves the history alone when commit starts leg 2 (origin and step counters are leg 1's); a completed return's clean-run check counts both legs of a via (`cleanRun`). Tests `GrayModelVia.TheFirstLegsOriginAndStepsCarryAcrossTheVia` (0>1 via 2 then 1>0 takes the dark route's delta, 1>2 is no return, an unclean run is no return). |
+| P2 version 1 keeps a via | medium | `expandVersion1` sets every via to none; the codec tests flipped (a version 1 file has no vias; a version 2 file without `via` keeps the defaults'). |
+| P3 version 1 in use is silent | medium | `GrayPresetFile::load(.., bool* expandedVersion1)`; the lab menu's Save preset line reads `STR_GAMES_DLAB_PRESET_VERSION1` until a Save or a Reset (`version1Line`); the doc gains a migration paragraph. |
+| P4 hold "nearest" | low | `expandVersion1Holds`: the same-direction anchor pair spanning the fewest shades, a tie (both ends odd) to the pair whose source lies away from the other end; header, doc and test (`Version1HoldsTakeTheNearestAnchorPair`) agree; the full 7x7 InkBoy hold table re-pinned (InkBoy's longest run is now 6 slots: 0>5 takes K>L's hold). |
+| P5 dropped routes silent | low | `GrayPresetLoadInfo::droppedVersion1Routes` and `version1RouteName`; `GrayPresetFile` logs them once from a noinline helper (its buffer off `load`'s frame). Tested in the version 1 file test. |
+| P6 sizeof(GrayPreset) 128 | low | `holdMask` first; `static_assert(sizeof(GrayPreset) <= 120)`. |
+| P7 64-bit shift per pixel | low | `holdRowsOf(preset, rows)` derived once per `buildMasks` and `commit`; `followsUp` reads a byte. Test `GrayModel.HoldRowsAgreeWithTheHoldBits`. |
+| P8 dose/hold rows of a via | low | Tuning's Dose and Hold values end " (via N)" (`STR_GAMES_DLAB_VIA_SUFFIX`); the doc's table note rewritten. |
+| P9 cap clean single | low | The session cap's clean is `WhiteBlackWhite` too; doc and comments updated. |
+| P10 no stop between passes | low | `cleanWhiteBlackWhite(.., control)` checks the stop between passes (false: `Stopped`, logged); `serve` checks `stopSeen()` after the replay's clean, before `onReplay`. Firmware-only path: syntax-checked, not host-tested. |
+| P11 Tuning value truncation | low | `VALUE_CHARS` 40 for the value lines and both `plain` buffers. |
+| P12 marker on the lane's level | low | `TransitionScene::holdLevelOver` (black from level 3 up, else white: the viewer's rule) replaces `MARKER_SHIFT`; the scene tests and the Ladder's marker (white over black) follow; the deliverDose comment corrected. |
+| P13 clipped bitmap values counted | low | `retargetBitmap` counts on-model pixels only; its test updated. |
+| P14 tests | low | (a) `AResetMidFirstLegClearsTheSecondLeg`; (b) `TheSecondLegIgnoresTheViaOfItsOwnTransition`; (c) `RetargetsDuringTheSecondLeg`; (d) `ASecondLegFromWhiteToFourIsWeakEligible` (pinned: weak-eligible); (e) `TransitionScene.StaticSixFlipsOnTheUltraChipPresetCoverEveryTransitionAndTheVia`. |
+
 ## Design Notes
 
 - Level scale and names: D14 ("the level scale stays 0..192 with a step of 32, today's K, D, L, W sit exactly on levels
@@ -304,4 +329,17 @@ retargeted while on leg 2 behaves as any mid-transition pixel; on a screen under
 can cross into the band above (no device has one). Hardware check for the owner (experimental branch): Static shows
 seven distinguishable bands after the first settle, the six flips show which of the 42 transitions need a dose change,
 Tuning edits them, and a run begins with the white, black, white clean.
+
+### Review batch 1 result
+
+Applied P1 to P14 as the Review Triage Log says; staged with `git add -A`, nothing committed, no `pio` (the
+orchestrator's firmware verification was running in this worktree; the device syntax check shadowed `I18n.h` in scratch
+so the pio-generated `lib/I18n` headers were not touched). Host suite: 2,412 of 2,412 pass (+7 over the first
+pass's 2,405; the display-lab binary 312); its warnings are the pre-existing ones (a full rebuild). `check_layers.py`
+pass (892 edges), `check_upstream_touches.py` PASS (upstream file touched: `english.yaml`, ledger row 2),
+`./bin/clang-format-fix` twice with no change on the second run; the six screen files compile `-fsyntax-only` for x4pro
+with no error or warning. Stack frames re-measured the same way (xtensa `-Os -fstack-usage`): `loadGrayPreset` 160 B,
+`GrayPresetFile::load` 240 B (272 before the noinline log helper), `logDroppedRoutes` 112 B, `DisplayLabActivity::onEnter`
+160 B, `GrayModel::buildMasks` 80 B, `retargetLeg` 80 B; all under 256. Firmware figures: unmeasured (orchestrator builds
+after review).
 
