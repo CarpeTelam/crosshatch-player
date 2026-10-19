@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "GrayModel.h"
@@ -1036,8 +1037,9 @@ TEST(GrayModelVia, RetargetsDuringTheSecondLeg) {
   EXPECT_EQ(b.model.remaining(0, 0), 9);
 }
 
-// Review batch P14 (d): a via through white to 4 makes its second leg a W>L from settled white, weak-eligible.
-TEST(GrayModelVia, ASecondLegFromWhiteToFourIsWeakEligible) {
+// A via through white to 4: its second leg is a W>L, but its pixel reached white in the slot that starts the leg, and
+// the weak row's W>L calibration assumes a white that has rested, so the leg is not weak-eligible (closing batch P3).
+TEST(GrayModelVia, ASecondLegFromWhiteToFourIsNotWeakEligible) {
   Bench b(false, true);
   GrayPreset p = GrayPreset::ultraChipDefaults();
   p.via[2][4] = 6;
@@ -1048,10 +1050,81 @@ TEST(GrayModelVia, ASecondLegFromWhiteToFourIsWeakEligible) {
   for (int i = 0; i < DOSE_MAX && b.model.target(0, 0) != shadeOf(Shade::L); ++i) b.model.commit(true, true, p);
   ASSERT_EQ(b.model.level(0, 0), 192);
   EXPECT_EQ(b.model.target(0, 0), shadeOf(Shade::L));
-  EXPECT_TRUE(b.model.weakEligible(0, 0));  // leg 2, 6>4 from settled white
+  EXPECT_FALSE(b.model.weakEligible(0, 0));  // leg 2, 6>4 from a white that has not rested
   b.model.buildMasks(b.drive, b.follow, p, true);
   EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::Black, 0, 0));
-  EXPECT_TRUE(b.drive.test(MaskPlanes::Mask::White, 0, 0));  // the weak row
+  EXPECT_FALSE(b.drive.test(MaskPlanes::Mask::White, 0, 0));  // no weak row: plain black
+  // A plain 6>4 from settled white still is.
+  b.model.reset(Shade::W);
+  b.model.retarget(1, 0, Shade::L, p);
+  EXPECT_TRUE(b.model.weakEligible(1, 0));
+}
+
+// Closing batch P2: a via's first leg toward the origin level is no return; returns are judged on final targets.
+TEST(GrayModelVia, AFirstLegTowardTheOriginIsNoReturn) {
+  Bench b(true);
+  GrayPreset p = GrayPreset::ultraChipDefaults();  // via[0][1] = 2: 0>2 1 pulse, 2>1 2
+  p.historyMode = HISTORY_RETURN | HISTORY_REVERSE;
+  p.returnDelta[routeIndex(Toward::Light)] = 3;
+  p.returnDelta[routeIndex(Toward::Dark)] = 2;
+  b.model.reset(static_cast<Shade>(2));
+  b.model.retarget(0, 0, Shade::K, p);  // origin 2
+  for (int i = 0; i < DOSE_MAX && b.model.activeCount() > 0; ++i) b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(0, 0), 0);
+  ASSERT_EQ(b.model.origin(0, 0), 2);
+  // 0>1 via 2: leg 1 targets 2, the origin, but it is no return: 0>2's base, not + 3.
+  b.model.retarget(0, 0, static_cast<Shade>(1), p);
+  EXPECT_EQ(b.model.target(0, 0), 2);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[0][2]);
+  EXPECT_EQ(b.model.origin(0, 0), 0);  // the transition starts from 0
+  for (int i = 0; i < DOSE_MAX && b.model.activeCount() > 0; ++i) b.model.commit(true, true, p);
+  ASSERT_EQ(b.model.level(0, 0), 32);
+  // 1>0 is the return to 0 after a clean two-leg run: the dark route's + 2.
+  b.model.retarget(0, 0, Shade::K, p);
+  EXPECT_EQ(b.model.remaining(0, 0), p.dose[1][0] + 2);
+}
+
+// Closing batch P2 (verification): an unclean two-leg run is no completed return, whichever count is off.
+TEST(GrayModelVia, AnUncleanTwoLegRunIsNoReturn) {
+  const auto returnBudget = [](GrayPreset p, const auto change) {
+    Bench b(true);
+    p.historyMode = HISTORY_RETURN;
+    p.returnDelta[routeIndex(Toward::Dark)] = 2;
+    b.model.reset(Shade::K);
+    b.model.retarget(0, 0, static_cast<Shade>(1), p);
+    for (int i = 0; i < DOSE_MAX && b.model.activeCount() > 0; ++i) b.model.commit(true, true, p);
+    change(p);  // the table since: the delivered counts no longer match it
+    b.model.retarget(0, 0, Shade::K, p);
+    return std::pair<int, int>(b.model.remaining(0, 0), p.dose[1][0]);
+  };
+  const GrayPreset u = GrayPreset::ultraChipDefaults();
+  const auto clean = returnBudget(u, [](GrayPreset&) {});
+  EXPECT_EQ(clean.first, clean.second + 2);
+  // Only leg 1's count off (one white step delivered, the table now says two).
+  const auto legOne = returnBudget(u, [](GrayPreset& p) { p.dose[0][2] = 2; });
+  EXPECT_EQ(legOne.first, legOne.second);
+  // A count past the table (two black steps delivered, the table now says one).
+  const auto past = returnBudget(u, [](GrayPreset& p) { p.dose[2][1] = 1; });
+  EXPECT_EQ(past.first, past.second);
+}
+
+// Closing batch P7: the hold rows are read from the preset on every call, so a hold changed on the same preset object
+// between two slots applies at once (no cache keyed on the preset).
+TEST(GrayModel, AHoldChangedOnTheSamePresetAppliesToTheNextSlot) {
+  Bench b;
+  GrayPreset p = GrayPreset::ultraChipDefaults();  // every hold on
+  const uint8_t t = transitionIndex(6, 0);         // 12 doses
+  b.model.reset(Shade::W);
+  b.model.retarget(0, 0, Shade::K, p);
+  b.model.buildMasks(b.drive, b.follow, p, false);
+  EXPECT_FALSE(b.follow.any());
+  b.model.commit(true, true, p);
+  EXPECT_EQ(b.model.remaining(0, 0), 11);  // one dose: held
+  p.setHold(t, false);
+  b.model.buildMasks(b.drive, b.follow, p, false);
+  EXPECT_TRUE(b.follow.test(MaskPlanes::Mask::Black, 0, 0));
+  b.model.commit(true, true, p);
+  EXPECT_EQ(b.model.remaining(0, 0), 9);  // two doses: the follow-up too
 }
 
 // Review batch P7: the per-slot hold rows agree with holdBit.

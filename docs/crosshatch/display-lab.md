@@ -221,8 +221,9 @@ Levels are named by their number wherever the lab shows them (the epics' D14 and
 gray, **6** white; InkBoy's four shades K, D, L, W are 0, 2, 4, 6. A transition such as 0>2 is black to the middle
 dark gray. The stock bench keeps its own four levels and labels.
 
-The UltraChip table, from (row) > to (column); 0>1 runs through its via (0>2, then 2>1), and `baseDose` still reads
-the 0>1 entry for a pixel between those levels:
+The UltraChip table, from (row) > to (column). 0>1 runs through its via (0>2, then 2>1): while a via is set, the
+transition's own hold bit is unused (the legs' holds apply) and its dose is read only by `baseDose`, for a pixel
+between those levels:
 
 | From > To | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -344,7 +345,8 @@ does not depend on pausing within half a slot:
 - **Static**: every settle (`static settle N`, N the flip that settled); the flip waits for the resume.
 - **Ladder**: the end of stage 1 (`ladder 1`) and of stage 2 (`ladder 2`), with Hold for photos Off too; the next
   stage, or the run's end, waits for the resume and the marker's way back. The base is no photo spot. The marker sits
-  on the black rows below the bottom half and goes to 6 (white), never over a column.
+  on the black rows below the bottom half and goes to 6 (white), never over a column; out and back it costs a 0>6 and a
+  6>0 run (9 and 12 slots on the UltraChip preset, every hold on).
 - **Slow**: the bands once their paint has settled, before the rectangles enter (`slow painted 0`, the slot that sizes
   the crossing); the rectangles once they are wholly on-screen and the preset's longest dose run in slots has passed
   since their left (trailing) edge came on (`slow dwelt N`, N the crossing). The crossing is sized so that the trailing
@@ -396,8 +398,9 @@ Controls while it runs (the Controls row says the same, by action: "While it run
 and ends a hold for photos; Previous or Back stops"). The X4 Pro has no front buttons and its touch routing is dead
 while the view is up (D12), so the side buttons are the controls there. Pause and resume take effect at the end of the
 slot in flight (a slot's drive scan and its follow-up stay together); a stop takes effect after the scan in flight, or
-after the clean in flight (a run's clean, the session cap's included, is three FULL refreshes; a stop between two of
-them ends it there, and a stop during the last one skips the paint).
+after the clean pass in flight (a run's clean, the session cap's included, is three FULL refreshes, each under its own
+render lock so sleep or a screen change gets in between them; a stop between two of them ends it there, and a stop
+during the last one skips the paint).
 
 - **Next** (NavNext: side Down or front Right; Up or Left in inverted portrait and counter-clockwise landscape,
   where the axis follows the screen), **Confirm** where there is one, or a tap over the screen's row area on a device
@@ -419,7 +422,8 @@ them ends it there, and a stop during the last one skips the paint).
   when sleep or a screen change took it is deleted where it waits.
 
 Every 2,400 scans the panel needs a cleaning refresh (the lab's session cap): the sweep cleans white, black, white just
-before it (as a run's first clean: the repaint follows, and so would a ghost) and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
+before it (as a run's first clean: the repaint follows, and so would a ghost), logged as its own line, `gray sweep:
+session cap: cleaned white, black, white`, and carries on. The log has `DLAB gray scans_s=N.N ms_per_scan=N skipped=N` about every 2 s and on every stop
 (`skipped` counts the slot periods lost to slow slots in that same window, about 2 s; they are dropped, never
 queued), and at the end of every run `gray sweep task ended: stack N bytes, high-water N bytes free, least before a
 scan N bytes` (an error line follows when under 1,024 bytes were left; the same line is logged when sleep or a
@@ -806,8 +810,10 @@ steps it Doses, Holds, Other):
   device, and Save then writes them), and Save.
 
 Levels are named by number, 0 black, 3 the 50 % gray, 6 white. A Dose or Hold row whose transition has a via says so
-after its value ("1 (via 2)"): the transition runs through its via's two legs, and `baseDose` still reads the entry for
-a pixel between those levels. A **tap** on a row steps it in place (+1, wrapping; a
+after its value: the transition runs through its via's two legs, so its dose ("1 (via 2)") is read only by `baseDose`,
+for a pixel between those levels, and its hold bit ("On (via 2, unused)") not at all, the legs' holds applying. While
+the lab menu's version 1 notice is live, the Reset to defaults row says "This panel's seven-level table, over the
+version 1 preset". A **tap** on a row steps it in place (+1, wrapping; a
 hold or the swap toggles; a via goes None, then each allowed level). **Confirm** on a row enters edit mode for it
 ("editing" on its line): Next and Previous (NavNext and NavPrevious, as above) then change it by one step (+1 / -1,
 clamped; a hold or the swap on / off), and Confirm or Back leaves edit mode. Outside edit mode they move the selection
@@ -854,12 +860,15 @@ transition among its ends' anchors (an odd level's two neighbours) that runs the
 a tie (both ends odd) going to the pair whose source lies away from the other end (0>1, 1>2 and 0>3 take 0>2's, 1>3
 takes 0>2's, 3>1 takes 4>2's); the return toward light takes L>K>L's values and the return toward dark D>W>D's, and the
 other four routes are dropped (named once: `preset: version 1 routes dropped (only 4>0>4 and 2>6>2 carry over): ...`);
-it has no vias (its table was never calibrated for one). Save writes it back as version 2.
+with its own `doses` it has no vias (that table was never calibrated for one; without them the defaults' table keeps
+its vias). Save writes it back as version 2.
 
 Migrating: a version 1 file saved on an earlier firmware replaces the panel's whole seven-level table (the UltraChip
-preset's D14 table) with its expansion, so the lab menu's Save preset line says "Version 1 preset expanded; Reset in
-Tuning for the seven-level table" until a Save or a Reset. To move to the ladder table, run Tuning → Other → Reset to
-defaults, then Save; to keep the old values, Save writes them as version 2 and the line goes back. Firmware from before dlab-g2
+preset's D14 table) with its expansion. When that expansion is not the panel's own defaults (InkBoy's version 1 file on
+the SSD1677 expands to exactly InkBoy's defaults and needs none), the lab menu's Save preset line says "Version 1 preset
+in use: Reset in Tuning" until a Save or a Reset (a failed Save keeps it). To move to the ladder table, run Tuning →
+Other → Reset to defaults, then Save; to keep the old values, Save writes them as version 2 and the line reads
+"Saved". Firmware from before dlab-g2
 rejects a version 2 file as malformed and runs on its defaults. Absent keys keep the defaults (the controller's); unknown
 keys are skipped; a key of the wrong type or out of range, an array whose length is not its version's, a parse error,
 or a missing or unknown `version` makes the whole file malformed. The codec is a small

@@ -789,7 +789,13 @@ TEST(TransitionScene, StaticHoldsAtEverySettleAndFlipsOnlyOnceTheMarkerIsBack) {
     EXPECT_TRUE(sim.scene.clockStill());
     const uint8_t shift = sim.scene.shift();
     const Shade band = TransitionScene::shifted(Shade::W, shift);
-    EXPECT_EQ(sim.scene.markerShade(), TransitionScene::holdLevelOver(band));
+    // Settles 0..3 come at shifts 0, 1, 3, 6: the bottom band on 6, 0, 2, 5, so the marker black, white, white, black.
+    const uint8_t shifts[] = {0, 1, 3, 6};
+    const Shade bands[] = {Shade::W, Shade::K, Shade::D, static_cast<Shade>(5)};
+    const Shade markers[] = {Shade::K, Shade::W, Shade::W, Shade::K};
+    EXPECT_EQ(shift, shifts[flip]);
+    EXPECT_EQ(band, bands[flip]);
+    EXPECT_EQ(sim.scene.markerShade(), markers[flip]) << flip;
     // The marker's slots: held only in the slot it settles, nothing settles or flips meanwhile.
     std::vector<uint8_t> pattern = targets();
     uint32_t markerSlots = 0;
@@ -1228,6 +1234,20 @@ TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
   TaskSim off(96, 480, SweepMode::Fast, 4, false);
   off.tickMs = 1500;
   for (int n = 0; n < 20; ++n) EXPECT_FALSE(off.slot().skipped.has_value());
+}
+
+// The hold marker's rule, shared with the gray viewer (farEndOver): black over levels 3 to 6, white over 0 to 2.
+TEST(TransitionScene, TheMarkerTakesTheEndFartherFromItsBand) {
+  const Shade expected[SHADE_COUNT] = {Shade::W, Shade::W, Shade::W, Shade::K, Shade::K, Shade::K, Shade::K};
+  for (uint8_t level = 0; level < SHADE_COUNT; ++level) {
+    EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(level)), expected[level]) << int(level);
+    EXPECT_EQ(farEndOver(level * 32u, 1), expected[level]) << int(level);
+  }
+  EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(3)), Shade::K);  // the middle: black
+  EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(2)), Shade::W);
+  EXPECT_EQ(farEndOver(95, 1), Shade::W);  // just under the middle level (96)
+  EXPECT_EQ(farEndOver(96 * 4, 4), Shade::K);
+  EXPECT_EQ(farEndOver(0, 0), Shade::K);  // no pixel: black, as the viewer has always had it
 }
 
 TEST(TransitionScene, ShadeNamesAndLogNames) {

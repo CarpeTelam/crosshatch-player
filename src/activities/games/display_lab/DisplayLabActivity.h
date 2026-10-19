@@ -74,8 +74,11 @@ class DisplayLabActivity final : public UiListActivity {
   // render lock while the tuning screen shows the values.
   GameDisplayLab::PresetBase resetPreset();
   // Writes preset() to GrayPresetFile::PATH and sets the Save preset row's line ("Saved", or "Save failed, values
-  // kept"); false when the write failed (logged), the session's values unchanged either way.
+  // kept", or the version 1 notice kept while it is live); false when the write failed (logged), the session's values
+  // unchanged either way.
   bool savePreset();
+  // The Save preset line tells of a version 1 file in use (until a Save or a Reset): Tuning's Reset row says so too.
+  bool version1Notice() const { return version1Line; }
   // Scans left before scan() runs the session cap's cleaning refresh first (0 when it is due).
   uint32_t scansBeforeClean() const {
     return budget.sinceClean() < SESSION_CAP ? SESSION_CAP - budget.sinceClean() : 0;

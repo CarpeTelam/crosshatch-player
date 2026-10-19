@@ -52,7 +52,7 @@ measurements, or the ladder's stages; no game-engine sprite plumbing; nothing be
 | Scenario | Input / State | Expected | Error handling |
 |---|---|---|---|
 | Level arithmetic | shade s | level s × 32; `baseDose` at a level between two shades interpolates | — |
-| Version 1 file | 12 doses, 12 holds, six routes | expands as described, `expandedVersion1` reported (logged); Save writes version 2 | malformed: defaults, LOG_ERR, as today |
+| Version 1 file | 12 doses, 12 holds, six routes | expands as described (with its own doses, no vias), `expandedVersion1` reported (logged); when the expansion is not the panel's defaults, the lab menu's Save preset line says a version 1 preset is in use until a Save or a Reset; Save writes version 2 | malformed: defaults, LOG_ERR, as today |
 | Version 2 file | 42 doses, 42 holds, 42 vias, two routes | loads; round-trips through Save | a dose outside 1..24, a via of 7 or past it, an array of the wrong length for the version: rejected whole |
 | Defaults | SSD1677 / UltraChip | InkBoy's expansion / D14's table, both pinned | — |
 | Static flips | Run with Mode = Static | offsets +1 .. +6, every band through all six other levels (42 transitions in six flips) | — |
@@ -99,47 +99,41 @@ measurements, or the ladder's stages; no game-engine sprite plumbing; nothing be
 
 **Execution:**
 - [x] `lib/GameDisplayLab/GrayPreset.h`, `GrayPreset.cpp` -- `Shade { K = 0, D = 2, L = 4, W = 6, TRANSPARENT = 7 }`
-  (levels 1, 3, 5 by value), `SHADE_COUNT` 7, `TRANSITION_COUNT` 42, `ROUTE_COUNT` 2 indexed by `Toward` (return toward
-  dark, toward light), `VIA_NONE` 7, transition order `from 0..6, to ≠ from ascending`, `holdBit` = bit source × 7 +
-  target of a `uint64_t`, `HOLD_DIAGONAL`, `HOLD_ALL`; `GrayPreset` gains `via[7][7]`; `valid()` checks vias (none on
-  the diagonal, else none or a level other than from and to) and no hold bit past 48; `longestRunSlots` counts a via
-  transition's two legs; tuning steps for via, history mode, return deltas (±1, -11..11) and reverse percents (±25,
-  0..250); version 1 expansion functions (doses, holds, routes) public for tests; `inkBoyDefaults()` = the expansion of
-  InkBoy's table, hold 0xc667 and routes; `ultraChipDefaults()` = D14's table, every hold on, via 0>1 = 2, the same
-  routes; codec version 2 (`doses`, `hold`, `via` 42 each, `via` -1 for none; `return_delta`, `reverse_percent` two
-  each, toward dark then light), version 1 still read (array lengths checked against the version after the object,
-  any key order), `GrayPresetLoadInfo::expandedVersion1`.
+  (levels 1, 3, 5 by value), `SHADE_COUNT` 7, `TRANSITION_COUNT` 42, `ROUTE_COUNT` 2 indexed by `Toward`, `VIA_NONE`
+  7, transition order `from 0..6, to ≠ from ascending`, `holdBit` = bit source × 7 + target of a `uint64_t` (first in
+  the struct; `sizeof(GrayPreset)` ≤ 120, asserted), `HOLD_DIAGONAL`, `HOLD_ALL`, `holdRowsOf`; `via[7][7]`; `valid()`
+  checks vias and no hold bit past 48; `longestRunSlots` counts a via's two legs; tuning steps for via, history, return
+  deltas and reverse percents; the version 1 expansion (doses by mean, holds by the nearest anchor pair, routes to
+  L>K>L and D>W>D, vias cleared when the file has doses, dropped routes reported); `inkBoyDefaults()` = InkBoy's
+  expansion; `ultraChipDefaults()` = D14's table, every hold on, via 0>1 = 2; codec version 2 (`via` -1 for none),
+  version 1 read; `samePresetValues`, `version1NoticeNeeded`.
 - [x] `lib/GameDisplayLab/GrayModel.h`, `GrayModel.cpp` -- `LEVEL_STEP` 32, `ORIGIN_NONE` 7, 3-bit target and source;
-  the doses-left byte keeps the count in its low 5 bits and a pending second-leg target in its high 3 (0 none, else
-  level + 1), so 3 B/pixel stays; `retarget` ignores a target past white (TRANSPARENT), looks up the via of the shade
-  nearest the pixel's level, runs leg 1 to the via through the existing bookkeeping and keeps the final target; a
-  retarget to the pending final target changes nothing, to the leg's own target drops the second leg; `deliverDose`
-  starts leg 2 (the existing bookkeeping, no via of its own) when leg 1's last dose lands; routes directional, the
-  origin recorded on every retarget of a settled pixel; `driveRect` clears a pending leg; `retargetBitmap(x, y, w, h,
-  levels, preset)` returns the count of values above 7 (treated as transparent); `nextTarget(x, y)` accessor.
-- [x] `lib/GameDisplayLab/TransitionScene.h`, `TransitionScene.cpp` -- `BANDS` = `SHADE_COUNT`, `LANES` 1,
-  `laneShade` = (band + 3 + lane) mod 7, `flipOffset` +1..+6, marker shade shifted by `SHADE_COUNT / 2`, `shadeName`
-  the level's digit ('?' past white), `heldRhythm` `HOLD_ALL`; comments say seven bands and six flips.
-- [x] `lib/GameDisplayLab/StockBench.cpp` -- the ramp's part 0..3 to K, D, L, W through the named constants.
-- [x] `src/activities/games/display_lab/GrayRunner.{h,cpp}` -- a public static `cleanWhiteBlackWhite(renderer, lab)`
-  (three FULL refreshes through `lab.cleanNow()`: white, black, white; the caller holds the render lock); the replay's
-  clean uses it and logs `gray sweep: cleaned white, black, white before the paint` once per replay; the cap clean
-  stays one refresh.
-- [x] `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` -- the Clean row runs the same triple clean
-  (its log line says so); comments and doc block say seven bands, one lane, six flips.
-- [x] `src/activities/games/display_lab/TuningActivity.{h,cpp}` -- a Section row first (Doses, Holds, Other; tap or
-  Confirm steps it, Doses on every visit, not saved); Doses: 42 rows `Dose 0>1` .. `Dose 6>5`; Holds: 42 rows; Other:
-  retarget to dark, to light, History (0..3), Return to dark, Return to light, Reverse to dark, Reverse to light, 42
-  `Via 0>1` rows (None or a level), Frame rate, Swap polarity, Reset, Save; arrays sized for the longest section.
-- [x] `src/activities/games/display_lab/GrayPresetFile.cpp` -- encode buffer 1,024 B; `preset: version 1 file expanded
-  to seven levels` logged on load.
-- [x] `lib/I18n/translations/english.yaml` -- new `STR_GAMES_DLAB_*` keys for the Section row and its sections,
-  History and its values, Return and Reverse rows, Via; the transition test and Tuning descriptions updated.
-- [x] `docs/crosshatch/display-lab.md` -- the engine, defaults table, transition test, Tuning, clean and file-format
-  sections rewritten for seven levels.
-- [x] `test/game_display_lab/*` -- the matrix rows above, plus the pins already there regeneralised: level arithmetic,
-  7×7 codec and version 1 expansion, both defaults, directional routes, via legs, retargetBitmap, band and lane
-  geometry, six-flip coverage, stock bench unchanged, the viewer at seven levels.
+  the doses-left byte keeps a via's second-leg target in its high three bits; `retarget` dispatches a via's first leg
+  and keeps the final target; commit starts the second leg with the first leg's history and no weak bit; returns are
+  judged on final targets only, against both legs' counts for a via; directional routes; `retargetBitmap` (on-model
+  values above 7 counted); `nextTarget`; follow-up from per-call hold rows.
+- [x] `lib/GameDisplayLab/PanelGeometry.h` -- `farEndOver`, the hold marker's rule shared by the scene and the viewer.
+- [x] `lib/GameDisplayLab/TransitionScene.h`, `TransitionScene.cpp` -- `BANDS` 7, `LANES` 1, lane (band + 3) mod 7,
+  `flipOffset` +1..+6, `holdLevelOver` (black or white, whichever is farther from the band), `shadeName` the digit,
+  `heldRhythm` `HOLD_ALL`, `setScreen`.
+- [x] `lib/GameDisplayLab/TuningLayout.h` -- Tuning's sections and rows.
+- [x] `lib/GameDisplayLab/StockBench.cpp` -- the ramp's four parts on K, D, L, W.
+- [x] `src/activities/games/display_lab/GrayRunner.{h,cpp}` -- a run's clean (start, replay, session cap) is white,
+  black, white, one render lock per pass, a stop checked between passes and after the clean; the run's and the cap's
+  own log lines; `cleanWhiteBlackWhite` for the Clean row.
+- [x] `src/activities/games/display_lab/TransitionTestActivity.{h,cpp}` -- the Clean row's triple clean; the working
+  set placed with `setScreen`; seven bands, one lane, six flips in its comments.
+- [x] `src/activities/games/display_lab/TuningActivity.{h,cpp}` -- the Section row and three sections; via suffixes on
+  Dose (" (via N)") and Hold (" (via N, unused)") rows; the Reset row's description while the version 1 notice is live;
+  value lines of 64 characters.
+- [x] `src/activities/games/display_lab/DisplayLabActivity.{h,cpp}` -- the version 1 notice on the Save preset line
+  (until a Save or a Reset; a failed Save keeps it); `setDefaults` keeps `onEnter` under 256 B.
+- [x] `src/activities/games/display_lab/GrayPresetFile.{h,cpp}` -- encode buffer 1,024 B; the version 1 flag out; the
+  expansion and the dropped routes logged.
+- [x] `lib/I18n/translations/english.yaml` -- the new `STR_GAMES_DLAB_*` keys; the transition test and Tuning
+  descriptions.
+- [x] `docs/crosshatch/display-lab.md` -- rewritten for seven levels.
+- [x] `test/game_display_lab/*` -- every matrix row and the rules above.
 
 **Acceptance Criteria:**
 - Given a version 1 preset file on the SD card, when the lab opens, then it loads with its doses on levels 0, 2, 4, 6,
@@ -152,54 +146,59 @@ measurements, or the ladder's stages; no game-engine sprite plumbing; nothing be
 
 ## Implementation Notes
 
-Implemented in the main session (orchestrated-epics § 3 fallback: no nested subagents), full route.
+Implemented in the main session (orchestrated-epics § 3 fallback: no nested subagents), full route, then two review
+batches from the orchestrator's lenses (the Review Triage Log). The final state:
 
-- **Model** (`GrayModel`): `LEVEL_STEP` 32, `ORIGIN_NONE` 7, 3-bit target and source; the doses-left byte keeps its
-  count in five bits and a via's second-leg target (+1, 0 none) in three, so 3 B/pixel stays. `retarget` is the via
-  dispatch (no-op when already going to `target`; to the leg's own target drops the second leg; otherwise the via of
-  the level nearest the pixel's, unless it sits on the via) over `retargetLeg`, the old body. Guards kept from the old
-  `retarget`: outside/invalid returns, and "same target" (now "same final target"); `retargetLeg` keeps a pixel's doses
-  when the new leg is the one it already runs (a plain 0>2 asked for 1 via 2). `deliverDose` starts leg 2 when leg 1's
-  last dose lands; its existing early return at 0 doses kept. Routes: the direction of the return
-  (`routeIndex(toward)`), origin recorded for every settled pixel (`routeOf`, `midRoutesActive` gone). New
-  `retargetBitmap` (returns the count above 7) and `nextTarget`.
-- **Preset** (`GrayPreset`): 7x7 doses and vias, `uint64_t` hold mask, two routes indexed by `Toward`; the version 1
-  expansion (`expandVersion1Doses`, `expandVersion1Holds`, `version1RouteFor`) also builds `inkBoyDefaults()`;
-  `ultraChipDefaults()` is D14's table, `HOLD_ALL`, via 0>1 = 2. Codec version 2 with `via` (-1 none); arrays' lengths
-  are checked against the version after the object, so keys may come in any order. To stay under 256 B,
-  `loadGrayPreset` reads into `out` directly (restored to `defaults` on any failure; header says `out` and `defaults`
-  must differ: both callers pass distinct presets) and lists stream into their destinations (no array buffers).
-  Measured on the xtensa toolchain (`-Os -fstack-usage`): `loadGrayPreset` 192 B at baseline, 368 B on the first
-  draft, 208 B now.
-- **Stack** (same method, baseline from `git stash` of this tree): `DisplayLabActivity::onEnter` 128 -> 176 B (a
-  first draft hit 304 with two presets in its frame: fixed by a `[[gnu::noinline]] setDefaults`),
-  `TransitionTestActivity::allocateWorkingSet` 176 -> 32 B (a draft hit 272 through a temporary scene holding its
-  held-rhythm preset: fixed by `TransitionScene::setScreen`), `GrayPresetFile::load` 144 -> 240 B, the viewer's
-  `afterSlot` 224 B (its per-level text grows with `SHADE_COUNT`). All under 256.
-- **Scene**: `BANDS` 7, `LANES` 1, lane (band + 3) mod 7, `flipOffset` +1..+6, marker `MARKER_SHIFT` 3, `shadeName` the
-  digit, `heldRhythm` `HOLD_ALL`. Marker geometry unchanged; with one lane the bottom band's margin is its inset plus
-  the leftover rows (12 rows at 480 high, 10 at 800).
-- **Runner**: `GrayRunner::cleanWhiteBlackWhite` (static, the caller holds the render lock) for the replay clean (one
-  `gray sweep: cleaned white, black, white before the paint` line) and the Clean row; the cap clean stays one.
-- **Tuning**: Section row and three sections via `TuningLayout.h`; arrays sized 54 rows; the Save line kept in
-  `saveLine` across section switches. New keys: Section, Doses, Holds, Other, History (+3 values), Return and Reverse
-  to dark and light, As retarget, Via.
-- **Stock bench**: the ramp maps its four parts to K, D, L, W; its switch gains the unreachable `TRANSPARENT` case.
-- **Viewer**: no code change; three comments that said "four today" now say seven; its tests pass at seven, and the
-  level readout test pins "0, 1, 2, 3, 4, 5, 6".
-- **Doc**: `docs/crosshatch/display-lab.md` engine, defaults tables, transition test, holds, Tuning, preset file
-  (version 2 and the version 1 expansion), memory, code map.
-- **Files**: changed `lib/GameDisplayLab/{GrayModel,GrayPreset,TransitionScene,StockBench}.{h,cpp}`,
-  `lib/GameDisplayLab/GrayPicture.h` (comment), `src/activities/games/display_lab/{GrayRunner,TransitionTestActivity,
-  TuningActivity,GrayPresetFile}.{h,cpp}`, `DisplayLabActivity.cpp`, `GrayViewerActivity.{h,cpp}` (comments),
-  `lib/I18n/translations/english.yaml`, `docs/crosshatch/display-lab.md`,
-  `test/game_display_lab/{test_gray_model,test_gray_preset,test_transition_scene,test_gray_picture,
-  test_stock_bench}.cpp`, `test/game_display_lab/CMakeLists.txt`; new `lib/GameDisplayLab/TuningLayout.h`,
-  `test/game_display_lab/test_tuning_layout.cpp`.
+- **Model** (`GrayModel`): `LEVEL_STEP` 32, `ORIGIN_NONE` 7, 3-bit target and source; the doses-left byte holds the
+  count in five bits and a via's second-leg target (+1, 0 none) in three, so 3 B/pixel stays. `retarget` dispatches:
+  no-op when already going to `target`; to the first leg's own target drops the second leg; otherwise the via of the
+  level nearest the pixel's (unless the pixel is on the via level) over `retargetLeg`, the old body. Guards kept from
+  the old `retarget`: outside/invalid and "same (final) target" return; `deliverDose` keeps its early return at 0
+  doses and starts leg 2 when leg 1's last dose lands (the slot's follow-up dose can be that one). Leg 2 keeps leg 1's
+  history (origin, step counters) and never takes the weak bit. A return to the origin is judged on a final target
+  only (a first leg toward the origin level is no return) and, for a via, against both legs' counts (`cleanRun`).
+  `followsUp` reads per-call hold rows (`holdRowsOf`, each `buildMasks` and `commit`), guarding a source past white.
+  `retargetBitmap` counts on-model values above 7.
+- **Preset** (`GrayPreset`): `holdMask` first, then 7x7 doses and vias, two routes indexed by `Toward`; `sizeof` 120
+  (asserted). Version 1 expansion: doses by the mean of the anchor transitions; holds by the nearest anchor pair
+  (fewest shades spanned, the same direction; a tie, both ends odd, to the pair whose source lies away from the other
+  end); routes to L>K>L (toward light) and D>W>D (toward dark), the other four reported when non-zero; vias cleared
+  when the file has its own doses. `loadGrayPreset` reads into `out` directly and streams lists (no buffers).
+  `version1NoticeNeeded` says whether a loaded version 1 file differs from the panel's defaults.
+- **Scene**: seven bands, one lane at (band + 3) mod 7, six flips, `holdLevelOver` on `farEndOver` (the viewer's rule,
+  shared from `PanelGeometry.h`), `setScreen` (no temporary scene on `allocateWorkingSet`'s frame).
+- **Runner**: a run's clean (start, replay, the session cap's) is white, black, white, one render lock per pass, the
+  stop checked between passes (`Stopped`, logged) and after the clean (no paint, no `onCapClean` over a stop); logged
+  once as the run's line or the cap's own; the Clean row uses `cleanWhiteBlackWhite` under its own lock.
+- **Lab menu and Tuning**: the version 1 notice ("Version 1 preset in use: Reset in Tuning") on the Save preset line
+  when `version1NoticeNeeded`, until a Save or a Reset (a failed Save keeps it), and Tuning's Reset row says so while
+  it is live; Tuning's sections via `TuningLayout.h`; via suffixes on Dose and Hold rows; 64-character value lines.
+- **File**: encode buffer 1,024 B; `preset: version 1 file expanded to seven levels` and the dropped-routes line (a
+  noinline helper, off `load`'s frame).
+- **Stock bench**: four parts on K, D, L, W; the unreachable `TRANSPARENT` case.
+- **Viewer**: no code change but the shared marker rule (`farEndOver`) and three comments.
+- **Stack** (xtensa `-Os -fstack-usage`, this tree, after the closing batch): `loadGrayPreset` 160 B (192 at
+  baseline), `version1NoticeNeeded` 160 B, `GrayPresetFile::load` 240 B (144), `DisplayLabActivity::onEnter` 160 B
+  (128), `TuningActivity::writeValue` 112 B, `edit` inlined into `tapStep` 112 B and `adjust` 128 B,
+  `allocateWorkingSet` 32 B (176), `GrayModel::buildMasks` 80 B, `retargetLeg` 80 B, `GrayRunner::cleanToWhite` 64 B,
+  `runSlot` 176 B; all under 256 (the `buildScreen` frames, 1,136 B, are the list framework's, unchanged).
+- **Files**: changed `lib/GameDisplayLab/{GrayModel,GrayPreset,TransitionScene,StockBench,GrayPicture}.{h,cpp}`,
+  `lib/GameDisplayLab/PanelGeometry.h`, `src/activities/games/display_lab/{GrayRunner,TransitionTestActivity,
+  TuningActivity,GrayPresetFile,DisplayLabActivity}.{h,cpp}`, `GrayViewerActivity.{h,cpp}` (comments),
+  `lib/I18n/translations/english.yaml`, `docs/crosshatch/display-lab.md`, `test/game_display_lab/{test_gray_model,
+  test_gray_preset,test_transition_scene,test_gray_picture,test_stock_bench}.cpp`, `test/game_display_lab/CMakeLists.txt`;
+  new `lib/GameDisplayLab/TuningLayout.h`, `test/game_display_lab/test_tuning_layout.cpp`.
 
 ## Plan Change Log
 
+- Closing batch P13 (orchestrator, 2026-10-19): the matrix's Version 1 row names the no-via rule and the notice; Tasks,
+  Implementation Notes, Design Notes and the readings list rewritten in the present tense for the final rules (batch 1
+  and the closing batch changed the hold tie, the marker, the cap clean, the version 1 vias and the history across a
+  via). The "every band through all six other levels" wording stays for the orchestrator's merge-time amendment.
+
 ## Review Triage Log
+
+Orchestrator verdicts, follow-up pass (2026-10-19, four lenses over 3fa04c5c): 33 findings — high 0, medium 0, low 13 patched (the closing batch below), rejected-by-rule 20 (stale plan text the batch rewrote, duplicates across lenses, device-only test asks deferred). No high, so the review closes here per the owner's scope decision; the deferred items go to deferred-work.md at merge: host tests for the notice's lifetime, the cap's clean and stop checks and Tuning's suffix (no host harness for the display-lab activities); the InkBoy hardware re-check of Static and Slow after the hold rule changed its defaults.
 
 ### Batch 1 (orchestrator's four lenses over 09e9eb0b; applied in this session, staged, not committed)
 
@@ -226,6 +225,28 @@ confirmed, R4 (hold tie) as changed by P4, R5 (marker) by P12, R6 (cap clean) by
 | P13 clipped bitmap values counted | low | `retargetBitmap` counts on-model pixels only; its test updated. |
 | P14 tests | low | (a) `AResetMidFirstLegClearsTheSecondLeg`; (b) `TheSecondLegIgnoresTheViaOfItsOwnTransition`; (c) `RetargetsDuringTheSecondLeg`; (d) `ASecondLegFromWhiteToFourIsWeakEligible` (pinned: weak-eligible); (e) `TransitionScene.StaticSixFlipsOnTheUltraChipPresetCoverEveryTransitionAndTheVia`. |
 
+### Closing batch (orchestrator's follow-up lenses over 3fa04c5c; applied in this session, staged, not committed)
+
+No highs: the last batch. 13 items applied; deferred by the orchestrator: host tests for the notice's lifetime, the
+cap's triple clean and its stop checks and Tuning's suffixes (no host harness for the lab's activities), and the
+InkBoy hardware re-check of Static and Slow after the hold rule (to the story result).
+
+| Item | Severity | Action |
+|---|---|---|
+| P1 v1 without doses drops the via | low | `expandVersion1` clears vias only with `doseCount != 0`; the absent-keys test keeps the via for both versions. |
+| P2 first leg as a return | low | `retargetLeg` judges routes only on final targets (`next >= SHADE_COUNT`). Tests `AFirstLegTowardTheOriginIsNoReturn`, `AnUncleanTwoLegRunIsNoReturn` (leg 1's count off; a count past the table). |
+| P3 second leg weak bit | low | Off on a second leg; the pinned test flips to `ASecondLegFromWhiteToFourIsNotWeakEligible`, which also pins a plain 6>4 from rested white as eligible. |
+| P4 lock and stops in the clean | low | `cleanToWhite` takes the render lock per pass; the cap path checks `stopSeen()` after its clean, before `onCapClean`; the `stop()`, `stop` declaration and `MarkerOut` comments updated. Firmware-only: syntax-checked. |
+| P5 cap log line | low | `gray sweep: session cap: cleaned white, black, white` (`cleanToWhite(.., atCap)`); doc matched. |
+| P6 notice rule | low | `version1NoticeNeeded` (and `samePresetValues`) in `GrayPreset`; test `TheVersion1NoticeIsForAnExpansionThatIsNotThePanelsDefaults`; the string "Version 1 preset in use: Reset in Tuning"; Tuning's Reset row `STR_GAMES_DLAB_RESET_PRESET_VERSION1_DESC` while live (`DisplayLabActivity::version1Notice`); a failed Save keeps the notice; doc "reads Saved". |
+| P7 hold change on the same preset | low | Test `AHoldChangedOnTheSamePresetAppliesToTheNextSlot` (one dose held, then two once the hold is off). |
+| P8 one marker rule | low | `farEndOver` in `PanelGeometry.h` used by `holdLevelOver` and `GrayPicture::markerShadeFor`; test `TheMarkerTakesTheEndFartherFromItsBand` (levels 0-6, literal); literal bands and markers per settle in the Static hold test; the Ladder marker's 0>6 / 6>0 cost in the doc. |
+| P9 "once per slot" | low | Comments say once per `buildMasks` and per `commit` call. |
+| P10 a via's own hold | low | Hold rows read " (via N, unused)" (`STR_GAMES_DLAB_VIA_UNUSED_SUFFIX`); the doc's table note and Tuning text say the own hold is unused and the dose read only by `baseDose`. |
+| P11 template width, source guard | low | `VALUE_CHARS` 64; `followsUp` returns false for a source past white. |
+| P12 frames | low | Re-measured (Implementation Notes, Stack): all under 256 B. |
+| P13 plan | plan | Plan Change Log entry; sections rewritten. |
+
 ## Design Notes
 
 - Level scale and names: D14 ("the level scale stays 0..192 with a step of 32, today's K, D, L, W sit exactly on levels
@@ -240,11 +261,15 @@ confirmed, R4 (hold tie) as changed by P4, R5 (marker) by P12, R6 (cap clean) by
   pixel (the old record rule existed only to gate D>L>D and L>D>L).
 - Version 1 expansion (story item 2): anchors land on 0, 2, 4, 6; a transition with one odd end is the mean of the two
   anchor transitions around it rounded up, the diagonal anchor counting 0 (0>1 = ⌈dose[0][2] / 2⌉); one with both ends
-  odd is the mean of its four anchor transitions, rounded up once (the same linear interpolation in both indices).
-  Holds "by the nearest anchor pair": an odd level is equidistant from two anchors, and the tie goes away from the
-  transition's other end (0>1 takes 0>2, 3>1 takes 4>0), the only tie rule that always yields an anchor transition in
-  the same direction (rounding toward would make 1>2 the diagonal 2>2). A version 1 file has no `via`, so absent-key
-  rules apply (the defaults' vias stay), as for every other absent key.
+  odd is the mean of its four anchor transitions, rounded up once. Holds "by the nearest anchor pair": among the ends'
+  anchors, the same-direction pair spanning the fewest shades; a tie (both ends odd) goes to the pair whose source lies
+  away from the other end (batch 1, P4: 0>1, 1>2, 0>3 and 1>3 take 0>2; 3>1 takes 4>2). A version 1 file with its own
+  doses has no vias (batch 1, P2: that table was never calibrated for one); one without doses keeps the defaults'
+  table and its vias together (closing batch, P1).
+- Version 1 notice (batch 1 P3, closing batch P6): a loaded version 1 file whose expansion differs from the panel's
+  defaults (`version1NoticeNeeded`) puts "Version 1 preset in use: Reset in Tuning" on the lab menu's Save preset line
+  until a Save or a Reset; a failed Save keeps it; Tuning's Reset row says so while it is live. InkBoy's own version 1
+  file expands to InkBoy's defaults exactly, so it raises none.
 - Via encoding (items 6 and 8): in memory `via[from][to]` is 7 for none (item 6); the file writes -1 for none and
   rejects 7 or above anywhere in the table, so TRANSPARENT never appears as a level in a preset (item 8: "the preset
   codec rejects 7 anywhere in a table"); doses and holds carry no levels. A via equal to `from` or `to` is invalid. The
@@ -256,16 +281,22 @@ confirmed, R4 (hold tie) as changed by P4, R5 (marker) by P12, R6 (cap clean) by
   retargets to the stored final target from a settled via level, so leg 2's dose is `dose[via][to]`. `from` is the
   shade nearest the pixel's level; a pixel already on the via level goes straight; leg 2 never takes a via (no chains).
   The pending target sits in the doses-left byte's high three bits (`DOSE_MAX` 24 needs five), keeping 3 B/pixel.
-  `dose[0][1]` stays a valid 1..24 entry (D14's "1 (via 2)"), unused while the via is set.
+  While a via is set, the transition's own dose (D14's "1 (via 2)") is read only by `baseDose` for a pixel between
+  those levels, and its own hold bit not at all (Tuning marks both rows).
+- Via and history (batch 1 P1, closing batch P2, P3): leg 2 keeps leg 1's origin and step counters, so a later return
+  is judged against where the transition started; returns are judged on final targets only (a first leg toward the
+  origin level is no return), and a two-leg run is clean when both legs' counts match the table; leg 2 never takes the
+  weak bit (its pixel reached white in the same slot, and the weak row's W>L calibration assumes a rested white).
 - Defaults: D14's table and "rate index 0, one pulse per slot, every hold on" for `ultraChipDefaults()`; retarget 100 %
   both ways as before.
 - Transition test (item 4): `BANDS` = 7, one lane, lane shade (band + 3) mod 7; the marker margin formula already gives
-  the bottom band's inset with one lane. The marker's "opposite shade" (D13) generalises InkBoy's +2 of four to
-  + `SHADE_COUNT / 2` (+3 of seven), so the pause symbol differs from its band by three levels or more on the
-  wrap side.
-- Double clean (item 7, D14's Slow run): in the shared runner's replay clean so the transition test, the Ladder base and
-  the viewer get it; the session cap's clean is a clean during a run, not "a run's clean before the paint", so it stays
-  one refresh. The cleans go through `lab.cleanNow()`, each restarting the cap count as today.
+  the bottom band's inset with one lane. The hold marker goes to black or white, whichever is farther from its band
+  (batch 1 P12: the gray viewer's rule, `farEndOver`, shared): black over levels 3 to 6, white over 0 to 2; in the
+  Ladder, white over black (a 0>6 and a 6>0 run).
+- Double clean (item 7, D14's Slow run): every clean the shared runner makes before a paint is white, black, white:
+  the run's start, the viewer's next picture, and the session cap's clean (batch 1 P9: the repaint follows it too); the
+  Clean row the same. One render lock per pass, a stop checked between passes and after the clean (closing batch P4);
+  logged once a run, the cap with its own line (P5). Each pass goes through `lab.cleanNow()`, restarting the cap count.
 - Transparent (item 8): `GrayModel` is std-only (the layer check), so `retargetBitmap` returns how many values above 7
   it treated as transparent and the caller logs once; the caller is the later sprite story.
 - Tuning (item 5): the Section row filters the list (the matrix's "the rows below follow"); the routes group (History,
@@ -319,10 +350,10 @@ Verification (host, this tree, the staged diff):
 - Firmware (`pio run` x4pro, default, sticky; `pio check -e x4pro`; the flash-budget gate): unmeasured (orchestrator
   builds after review).
 
-Readings for the orchestrator to confirm (each settled in Design Notes, none blocking): the file's via uses -1 for
-none (item 6's in-memory 7 = none against item 8's "the codec rejects 7 anywhere in a table"); the hold key stays
-`hold`; the version 1 dark route takes D>W>D's values; the hold tie rounds away from the other end; the marker's hold
-level is three along; the session cap's clean stays one refresh; the Section row resets to Doses on each visit.
+Readings, confirmed by the orchestrator (final rules in Design Notes): the file's via uses -1 for none; the hold key
+stays `hold`; the version 1 dark route takes D>W>D's values; holds take the nearest anchor pair, a tie to the source
+away from the other end; the marker takes the end farther from its band; the session cap's clean is white, black,
+white; the Section row resets to Doses on each visit.
 
 Residual risks: the via's second leg runs from the settled via level through the ordinary retarget, so a pixel
 retargeted while on leg 2 behaves as any mid-transition pixel; on a screen under 112 px high the no-lane marker square
@@ -343,3 +374,11 @@ with no error or warning. Stack frames re-measured the same way (xtensa `-Os -fs
 160 B, `GrayModel::buildMasks` 80 B, `retargetLeg` 80 B; all under 256. Firmware figures: unmeasured (orchestrator builds
 after review).
 
+
+### Closing batch result
+
+Applied P1 to P13 as the Review Triage Log says; staged with `git add -A`, nothing committed, no `pio`. Host suite:
+2,417 of 2,417 pass (+5 over batch 1's 2,412; the display-lab binary 317). `check_layers.py` pass (892 edges),
+`check_upstream_touches.py` PASS. `./bin/clang-format-fix` twice, the second run changing nothing. The six screen
+files compile `-fsyntax-only` for x4pro with no error or warning. Stack frames are recorded in Implementation Notes
+(Stack), all under 256 B. Firmware figures: unmeasured (orchestrator builds).

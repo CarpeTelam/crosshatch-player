@@ -89,7 +89,8 @@ const char* spotSkipName(SpotSkip skip);
 enum class HoldPhase : uint8_t {
   // No hold: the sweep clock runs and the marker shows its band's shade.
   Running,
-  // A photo spot: the marker is being driven to the opposite shade; the clock stands still.
+  // A photo spot: the marker is being driven to black or white, whichever is farther from its band (holdLevelOver);
+  // the clock stands still.
   MarkerOut,
   // The marker settled: the task runs nothing until a resume.
   Held,
@@ -318,7 +319,7 @@ class TransitionScene {
   // The hold level over a band of `band`: black or white, whichever is farther from it (black from level 3 up), the
   // gray viewer's rule (story dlab-g2: three along would put the marker over black on 3, the bottom lane's level).
   static Shade holdLevelOver(Shade band) {
-    return 2 * static_cast<unsigned>(band) >= SHADE_COUNT - 1u ? Shade::K : Shade::W;
+    return farEndOver(uint64_t{static_cast<uint8_t>(band)} * GrayModel::LEVEL_STEP, 1);
   }
   // No pixel of the marker's bars has a dose left in `model`.
   bool markerSettled(const GrayModel& model) const;

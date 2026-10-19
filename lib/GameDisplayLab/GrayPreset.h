@@ -146,9 +146,13 @@ struct GrayPreset {
 // Two presets on one frame stay within the 256-byte stack rule (holdMask first: no padding after the tables).
 static_assert(sizeof(GrayPreset) <= 120, "a seven-level preset is at most 120 bytes");
 
-// Each source level's hold bits as a byte (bit t: source > t holds), derived from `preset.holdMask` once per slot so
-// the per-pixel follow-up test is a byte lookup, not a 64-bit shift (GrayModel::buildMasks, commit).
+// Each source level's hold bits as a byte (bit t: source > t holds), derived from `preset.holdMask` once per
+// GrayModel::buildMasks call and once per commit call (twice a slot), so the per-pixel follow-up test is a byte lookup,
+// not a 64-bit shift.
 void holdRowsOf(const GrayPreset& preset, uint8_t rows[SHADE_COUNT]);
+
+// Every value of `a` and `b` the same (doses, vias, holds, retargets, rate, swap, history, routes, weak mode).
+bool samePresetValues(const GrayPreset& a, const GrayPreset& b);
 
 // The version 1 file's four-shade values expanded to seven levels (story dlab-g2): the shades land on levels 0, 2, 4,
 // 6. A dose into or out of an odd level is the mean of the two anchor transitions around it (the diagonal counting 0),
@@ -172,6 +176,10 @@ enum class PresetBase : uint8_t { InkBoy, UltraChip };
 GrayPreset presetDefaults(PresetBase base);
 // For the log: "InkBoy's" or "UltraChip".
 const char* presetBaseName(PresetBase base);
+// Whether the lab menu tells the owner a version 1 file is in use (story dlab-g2): it was loaded (`expandedVersion1`)
+// and its expansion differs from `base`'s defaults (InkBoy's own version 1 file expands to InkBoy's defaults exactly,
+// so it needs no notice; the owner's four-shade UltraChip file replaces D14's whole table, so it does).
+bool version1NoticeNeeded(bool expandedVersion1, const GrayPreset& loaded, PresetBase base);
 
 // The preset file's text (JSON, docs/crosshatch/display-lab.md), version 2: `{"version":2,"base":"inkboy"|"ultrachip",
 // "doses":[...42],"hold":[...42],"via":[...42],"retarget_dark_percent":N,"retarget_light_percent":N,"rate":N,
@@ -192,7 +200,7 @@ struct GrayPresetLoadInfo {
   std::optional<PresetBase> base;
   // The file has a `base` key whose value names no base: ignored (the caller logs it).
   bool unknownBase = false;
-  // A version 1 file: its four-shade arrays were expanded to seven levels and its vias set to none (the caller logs
+  // A version 1 file: its four-shade arrays were expanded to seven levels (with its doses, no vias; the caller logs
   // it).
   bool expandedVersion1 = false;
   // A version 1 file: bit r set for each of its routes (version1RouteName) other than the two the collapse keeps that
@@ -205,13 +213,13 @@ struct GrayPresetLoadInfo {
 // of the wrong type or out of range (a via of 7 or above included), an array whose length is not its version's
 // (version 1: doses and hold 12, return_delta and reverse_percent 6, no via; version 2: 42, 42, 42, 2 and 2), or
 // `version` absent or not 1 or 2; absent keys keep `defaults`. Keys may come in any order. A version 1 file's arrays
-// are expanded (expandVersion1Doses, expandVersion1Holds, version1RouteFor) and its vias are none (its table was never
-// calibrated for one). The older single key
-// `retarget_percent` (50..150) is still read: each direction without its own key in the text takes its value, whatever
-// the keys' order. `*info`, when given, says which directions that filled, the file's base (`base` is informational: a
-// value other than "inkboy" or "ultrachip" is skipped and reported as unknownBase) and whether it was version 1. `out`
-// is the read preset when Loaded and `defaults` otherwise; `out` and `defaults` are two different presets (the text is
-// read into `out` directly).
+// are expanded (expandVersion1Doses, expandVersion1Holds, version1RouteFor), and when it has `doses` its vias are none
+// (that table was never calibrated for one; without `doses` the defaults' table and vias stay together). The older
+// single key `retarget_percent` (50..150) is still read: each direction without its own key in the text takes its
+// value, whatever the keys' order. `*info`, when given, says which directions that filled, the file's base (`base` is
+// informational: a value other than "inkboy" or "ultrachip" is skipped and reported as unknownBase) and whether it was
+// version 1. `out` is the read preset when Loaded and `defaults` otherwise; `out` and `defaults` are two different
+// presets (the text is read into `out` directly).
 GrayPresetLoad loadGrayPreset(const char* text, size_t length, const GrayPreset& defaults, GrayPreset& out,
                               GrayPresetLoadInfo* info = nullptr);
 

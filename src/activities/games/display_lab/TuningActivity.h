@@ -93,8 +93,9 @@ class TuningActivity final : public UiListActivity {
   // The Save row's line after a save (null: its description).
   const char* saveLine = nullptr;
   char labels[MAX_ROWS][16] = {};
-  // A row's value line, and the plain value inside it (the Section row's Other is the longest, 35 characters).
-  static constexpr size_t VALUE_CHARS = 40;
+  // A row's value line, and the plain value inside it: the longest is a hold with its via in the editing template,
+  // "On (via 2, unused), editing: Next and Previous change it" (58 characters).
+  static constexpr size_t VALUE_CHARS = 64;
   char values[MAX_ROWS][VALUE_CHARS] = {};
   freeink::ui::ListItem rowItems[MAX_ROWS] = {};
 };

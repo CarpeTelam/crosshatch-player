@@ -54,14 +54,16 @@ const char* historyName(const uint8_t mode) {
   }
 }
 
-// A dose or hold row whose transition has a via runs its legs' entries instead: " (via 2)" after its value.
-void appendVia(const GrayPreset& preset, const uint8_t transition, char* out, const size_t capacity) {
+// A dose or hold row whose transition has a via runs its legs' entries instead: `suffix` (a format taking the via's
+// digit) after its value: " (via 2)" on a dose, read only for a pixel between those levels; " (via 2, unused)" on a
+// hold, the legs' hold bits applying.
+void appendVia(const GrayPreset& preset, const uint8_t transition, char* out, const size_t capacity,
+               const char* suffix) {
   const uint8_t via = preset.viaAt(transition);
   if (via >= GameDisplayLab::SHADE_COUNT) return;
   const size_t used = strlen(out);
   if (used + 1 >= capacity) return;
-  snprintf(out + used, capacity - used, tr(STR_GAMES_DLAB_VIA_SUFFIX),
-           GameDisplayLab::shadeName(static_cast<Shade>(via)));
+  snprintf(out + used, capacity - used, suffix, GameDisplayLab::shadeName(static_cast<Shade>(via)));
 }
 
 }  // namespace
@@ -153,11 +155,11 @@ bool TuningActivity::plainValue(const int row, char* out, const size_t capacity)
       return true;
     case Row::Dose:
       snprintf(out, capacity, "%u", static_cast<unsigned>(preset.doseAt(transitionOf(row))));
-      appendVia(preset, transitionOf(row), out, capacity);
+      appendVia(preset, transitionOf(row), out, capacity, tr(STR_GAMES_DLAB_VIA_SUFFIX));
       return true;
     case Row::Hold:
       snprintf(out, capacity, "%s", preset.holdAt(transitionOf(row)) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
-      appendVia(preset, transitionOf(row), out, capacity);
+      appendVia(preset, transitionOf(row), out, capacity, tr(STR_GAMES_DLAB_VIA_UNUSED_SUFFIX));
       return true;
     case Row::Via: {
       const uint8_t via = preset.viaAt(transitionOf(row));
@@ -214,7 +216,8 @@ void TuningActivity::writeValue(const int row) {
   char plain[VALUE_CHARS];
   if (!plainValue(row, plain, sizeof(plain))) {
     // The action rows say what they do; the Save row, after a save, whether it worked.
-    const char* line = tr(STR_GAMES_DLAB_RESET_PRESET_DESC);
+    const char* line =
+        lab.version1Notice() ? tr(STR_GAMES_DLAB_RESET_PRESET_VERSION1_DESC) : tr(STR_GAMES_DLAB_RESET_PRESET_DESC);
     if (kindOf(row) == Row::Save) line = saveLine ? saveLine : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC);
     snprintf(values[row], sizeof(values[row]), "%s", line);
     return;

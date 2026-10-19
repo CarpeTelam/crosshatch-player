@@ -179,10 +179,9 @@ class GrayRunner {
   // A replay with presses waiting is pending (the gray viewer reads it before it writes the next entry).
   bool replayPending() const { return control.replayPending(); }
   // Unlocked stop (loop(), handleHomeGesture()): asks the task to stop, waits for its end (after the scan, the clean
-  // or the decode row in flight) until STOP_WAIT_MS after the first stop asked, and deletes it: true. Past that, logged
-  // once and left running, false
-  // (stillStopping() until reap() joins it; the screen shows "Still stopping" and reads no end until then). The caller
-  // holds no render lock.
+  // pass or the decode row in flight) until STOP_WAIT_MS after the first stop asked, and deletes it: true. Past that,
+  // logged once and left running, false (stillStopping() until reap() joins it; the screen shows "Still stopping" and
+  // reads no end until then). The caller holds no render lock.
   bool stop();
   // A stop left the task running past STOP_WAIT_MS and it has not been joined yet: the runner's results (end(), the
   // stats, the client code) are the task's until reap() joins it.
@@ -199,11 +198,9 @@ class GrayRunner {
   static void endLocked(std::unique_ptr<GrayRunner>& owned);
   // Three cleaning FULL refreshes through the lab (DisplayLabActivity::cleanNow): the framebuffer white, black, then
   // white, so the previous screen's text does not ghost through the next paint (story dlab-g2, D14). Every run's clean
-  // before its paint (a run's start, a replay, the session cap's clean), and the transition test's Clean row. The
-  // caller holds the render lock; the panel is its own. With `control`, a stop asked between two passes ends the clean
-  // there (false: the panel as the last pass left it) rather than after three FULL refreshes.
-  static bool cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab,
-                                   const GameDisplayLab::SweepControl* control = nullptr);
+  // before its paint (a run's start, a replay, the session cap's clean) takes these passes in cleanToWhite, one render
+  // lock per pass; the transition test's Clean row calls this with the render lock held, the panel its own.
+  static void cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab);
   // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any (they ask
   // for a restart). Never back to 0 if such a task never returns.
   static int detachedTasks();
@@ -274,10 +271,11 @@ class GrayRunner {
   // How many cleaning refreshes a clean runs: one to white (a Clean request, which no screen sends today), or white,
   // black, white (a run's clean before its paint, the session cap's included).
   enum class CleanPasses : uint8_t { White, WhiteBlackWhite };
-  // The framebuffer filled and the lab's cleaning FULL refresh per pass (`passes`, white last) under the render lock,
-  // the model reset to white, the picture to reapply; inside the panel gate. False (sweepEnd set) when the gate
-  // refused or a stop arrived between two passes (Stopped).
-  bool cleanToWhite(CleanPasses passes = CleanPasses::White);
+  // The framebuffer filled and the lab's cleaning FULL refresh per pass (`passes`, white last), each pass under its own
+  // render lock, the model reset to white, the picture to reapply; inside the panel gate. False (sweepEnd set) when the
+  // gate refused or a stop arrived between two passes (Stopped). Logs the triple clean once: the run's line, or with
+  // `atCap` the session cap's own.
+  bool cleanToWhite(CleanPasses passes = CleanPasses::White, bool atCap = false);
   // The client could not paint: Stopped when a stop was asked meanwhile (its decode ended early), else PaintFailed.
   bool paintFailed();
   // Records a refused gate in sweepEnd; true when `gate` let the task in.

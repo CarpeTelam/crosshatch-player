@@ -531,13 +531,12 @@ TEST(GrayPresetCodec, AbsentKeysKeepTheGivenDefaultsAndWhitespaceIsAllowed) {
   GrayPreset expected = GrayPreset::inkBoyDefaults();
   expected.retargetDarkPercent = 125;
   EXPECT_TRUE(samePreset(out, expected));
-  // On an UltraChip panel the absent keys keep the UltraChip doses, and a version 2 file without `via` its via too; a
-  // version 1 file has no vias (its table was never calibrated for one), whatever the defaults.
+  // On an UltraChip panel the absent keys keep the UltraChip doses and their via, in a version 2 or a version 1 file (a
+  // version 1 file's vias are cleared only with its own doses).
   for (const char* text : {"{\"version\":2,\"rate\":1}", "{\"version\":1,\"rate\":1}"}) {
     EXPECT_EQ(loadGrayPreset(text, strlen(text), GrayPreset::ultraChipDefaults(), out), GrayPresetLoad::Loaded) << text;
     expected = GrayPreset::ultraChipDefaults();
     expected.rateIndex = 1;
-    if (text[11] == '1') memset(expected.via, VIA_NONE, sizeof(expected.via));
     EXPECT_TRUE(samePreset(out, expected)) << text;
   }
 }
@@ -593,6 +592,29 @@ TEST(GrayPresetCodec, Version1FileExpandsToSevenLevelsAndSavesAsVersion2) {
   info.expandedVersion1 = true;
   EXPECT_EQ(load("{\"version\":1,\"doses\":[1]}", out, &info), GrayPresetLoad::Malformed);
   EXPECT_FALSE(info.expandedVersion1);
+}
+
+TEST(GrayPresetCodec, TheVersion1NoticeIsForAnExpansionThatIsNotThePanelsDefaults) {
+  GrayPreset out{};
+  GrayPresetLoadInfo info;
+  // InkBoy's own version 1 file expands to InkBoy's defaults exactly: no notice on the SSD1677.
+  ASSERT_EQ(load(V1_DEFAULT_TEXT, out, &info), GrayPresetLoad::Loaded);
+  EXPECT_FALSE(version1NoticeNeeded(info.expandedVersion1, out, PresetBase::InkBoy));
+  // Over an UltraChip panel it replaces D14's table: a notice.
+  EXPECT_TRUE(version1NoticeNeeded(info.expandedVersion1, out, PresetBase::UltraChip));
+  // The owner's four-shade UltraChip file on the UltraChip panel: a notice.
+  const std::string owners = "{\"version\":1,\"base\":\"ultrachip\",\"doses\":[2,7,12,7,2,10,7,6,9,12,5,3]}";
+  ASSERT_EQ(loadGrayPreset(owners.data(), owners.size(), GrayPreset::ultraChipDefaults(), out, &info),
+            GrayPresetLoad::Loaded);
+  EXPECT_TRUE(version1NoticeNeeded(info.expandedVersion1, out, PresetBase::UltraChip));
+  // A version 2 file never, whatever its values.
+  EXPECT_FALSE(version1NoticeNeeded(false, out, PresetBase::UltraChip));
+  // A version 1 file without its own arrays over the panel's defaults: they are its values, so no notice.
+  ASSERT_EQ(loadGrayPreset("{\"version\":1}", 13, GrayPreset::ultraChipDefaults(), out, &info), GrayPresetLoad::Loaded);
+  EXPECT_TRUE(info.expandedVersion1);
+  EXPECT_FALSE(version1NoticeNeeded(info.expandedVersion1, out, PresetBase::UltraChip));
+  EXPECT_TRUE(samePresetValues(GrayPreset::inkBoyDefaults(), GrayPreset::inkBoyDefaults()));
+  EXPECT_FALSE(samePresetValues(GrayPreset::inkBoyDefaults(), GrayPreset::ultraChipDefaults()));
 }
 
 TEST(GrayPresetCodec, ArraysOfEitherLayoutMayComeBeforeTheVersion) {

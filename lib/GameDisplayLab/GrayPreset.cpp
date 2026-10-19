@@ -438,11 +438,12 @@ bool arraysFitVersion(const ReadState& state) {
          fits(state.viaCount, TRANSITION_COUNT) && fits(state.deltaCount, routes) && fits(state.percentCount, routes);
 }
 
-// A version 1 file's arrays, each present one expanded into `preset` (story dlab-g2), and no vias (the file's table was
-// never calibrated for one). Returns the routes the collapse dropped with a non-zero value (bit r: version 1 route r).
+// A version 1 file's arrays, each present one expanded into `preset` (story dlab-g2); with its doses, no vias (that
+// table was never calibrated for one; without them the defaults' table keeps its vias). Returns the routes the collapse
+// dropped with a non-zero value (bit r: version 1 route r).
 uint8_t expandVersion1(const ReadState& state, GrayPreset& preset) {
-  memset(preset.via, VIA_NONE, sizeof(preset.via));
   if (state.doseCount != 0) {
+    memset(preset.via, VIA_NONE, sizeof(preset.via));
     uint8_t v1[V1_SHADE_COUNT][V1_SHADE_COUNT] = {};
     for (uint8_t i = 0; i < V1_TRANSITION_COUNT; ++i) v1[v1From(i)][v1To(i)] = state.v1Dose[i];
     expandVersion1Doses(v1, preset.dose);
@@ -559,6 +560,20 @@ void holdRowsOf(const GrayPreset& preset, uint8_t rows[SHADE_COUNT]) {
   for (uint8_t source = 0; source < SHADE_COUNT; ++source) {
     rows[source] = static_cast<uint8_t>((preset.holdMask >> (source * SHADE_COUNT)) & ((1u << SHADE_COUNT) - 1));
   }
+}
+
+bool samePresetValues(const GrayPreset& a, const GrayPreset& b) {
+  return memcmp(a.dose, b.dose, sizeof(a.dose)) == 0 && memcmp(a.via, b.via, sizeof(a.via)) == 0 &&
+         a.holdMask == b.holdMask && a.retargetDarkPercent == b.retargetDarkPercent &&
+         a.retargetLightPercent == b.retargetLightPercent && a.rateIndex == b.rateIndex &&
+         a.swapPolarity == b.swapPolarity && a.historyMode == b.historyMode &&
+         memcmp(a.returnDelta, b.returnDelta, sizeof(a.returnDelta)) == 0 &&
+         memcmp(a.reversePercent, b.reversePercent, sizeof(a.reversePercent)) == 0 &&
+         a.weakWhiteToLight == b.weakWhiteToLight;
+}
+
+bool version1NoticeNeeded(const bool expandedVersion1, const GrayPreset& loaded, const PresetBase base) {
+  return expandedVersion1 && !samePresetValues(loaded, presetDefaults(base));
 }
 
 const char* version1RouteName(const uint8_t route) {

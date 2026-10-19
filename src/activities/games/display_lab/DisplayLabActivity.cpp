@@ -66,10 +66,10 @@ void DisplayLabActivity::onEnter() {
   // The render task may draw this screen while onEnter runs, and it reads the rows and the notice.
   RenderLock lock(*this);
   notice = nullptr;
-  // A version 1 file silently replaces the panel's seven-level table: the Save preset line says so until a Save or a
-  // Reset (story dlab-g2).
-  saveStatus = version1 ? tr(STR_GAMES_DLAB_PRESET_VERSION1) : nullptr;
-  version1Line = version1;
+  // A version 1 file whose expansion is not the panel's defaults silently replaces its seven-level table: the Save
+  // preset line says so until a Save or a Reset (story dlab-g2).
+  version1Line = GameDisplayLab::version1NoticeNeeded(version1, loaded, base);
+  saveStatus = version1Line ? tr(STR_GAMES_DLAB_PRESET_VERSION1) : nullptr;
   budget = GameDisplayLab::ScanBudget{SESSION_CAP, SCAN_TIMEOUT_MS * 1000UL, DROPPED_BELOW_US};
   setDefaults(grayPreset, base);
   const bool supported = available();
@@ -168,8 +168,12 @@ bool DisplayLabActivity::savePreset() {
   // The SD write runs outside the render lock; only the row's line is shared with the render task.
   const bool saved = GrayPresetFile::save(grayPreset, presetBase);
   RenderLock lock(*this);
-  saveStatus = saved ? tr(STR_GAMES_DLAB_SAVED) : tr(STR_GAMES_DLAB_SAVE_FAILED);
-  version1Line = false;
+  if (saved) {
+    saveStatus = tr(STR_GAMES_DLAB_SAVED);
+    version1Line = false;  // the file is version 2 now, with the session's values
+  } else if (!version1Line) {
+    saveStatus = tr(STR_GAMES_DLAB_SAVE_FAILED);
+  }  // a failed Save keeps the version 1 notice: the file on the card is still that one (the log says why it failed)
   if (!notice) rowItems[static_cast<size_t>(Row::SavePreset)].subtitle = saveStatus;
   return saved;
 }

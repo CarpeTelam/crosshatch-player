@@ -127,7 +127,8 @@ class GrayModel {
   bool weakBit(size_t index) const;
   void setWeakBit(size_t index, bool on);
   // Whether the follow-up scan drives pixel `pixel` (its PIXEL_BYTES) again (hold bit off, more than one dose left);
-  // `holdRows` is holdRowsOf(preset), derived once per slot.
+  // `holdRows` is holdRowsOf(preset), derived once per buildMasks or commit call. A source past white (never written)
+  // follows up never.
   static bool followsUp(const uint8_t* pixel, const uint8_t* holdRows);
   // One dose for pixel `index`, counted into its history toward `lighten`; the second leg starts when the first lands.
   void deliverDose(size_t index, bool lighten, const GrayPreset& preset);

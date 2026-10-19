@@ -177,8 +177,9 @@ void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next,
   if (history_ && preset.historyMode != 0 && !secondLeg) {
     uint8_t* h = history_ + 3 * i;
     const uint8_t originShade = h[HISTORY_ORIGIN];
-    // A return to the origin: the route of the direction it returns in (story dlab-g2: two directional routes).
-    if (originShade == t && oldTarget != originShade && base != 0) {
+    // A return to the origin: the route of the direction it returns in (story dlab-g2: two directional routes). Judged
+    // on a transition's final target only: a via's first leg (`next` set) toward the origin level is no return.
+    if (originShade == t && oldTarget != originShade && base != 0 && next >= SHADE_COUNT) {
       const size_t route = routeIndex(toward);
       const uint8_t via = oldTarget;
       // A completed return: the pixel went origin > via cleanly (exactly the table's doses) and settled there.
@@ -199,9 +200,11 @@ void GrayModel::retargetLeg(const size_t i, const uint8_t t, const uint8_t next,
   }
 
   if (weak_) {
-    // Eligibility is frozen here: a W > L pixel settled on white. Any other retarget clears it.
-    setWeakBit(
-        i, t == static_cast<uint8_t>(Shade::L) && oldTarget == TOP_SHADE && oldRemaining == 0 && current == TOP_LEVEL);
+    // Eligibility is frozen here: a W > L pixel settled on white. Any other retarget clears it, and so does a via's
+    // second leg: its pixel reached white in the slot that starts the leg, and the weak row's W>L calibration assumes a
+    // white that has rested.
+    setWeakBit(i, !secondLeg && t == static_cast<uint8_t>(Shade::L) && oldTarget == TOP_SHADE && oldRemaining == 0 &&
+                      current == TOP_LEVEL);
   }
 
   writePixel(pixel, current, budget, t, nearestShadeOf(current), next);
@@ -263,7 +266,8 @@ void GrayModel::driveRect(const int x, const int y, const int w, const int h, co
 
 bool GrayModel::followsUp(const uint8_t* pixel, const uint8_t* holdRows) {
   const uint8_t shades = pixel[SHADES_BYTE];
-  return dosesOf(pixel) > 1 && ((holdRows[sourceOf(shades)] >> targetOf(shades)) & 1u) == 0;
+  const uint8_t source = sourceOf(shades);
+  return dosesOf(pixel) > 1 && source < SHADE_COUNT && ((holdRows[source] >> targetOf(shades)) & 1u) == 0;
 }
 
 size_t GrayModel::buildMasks(MaskPlanes& drive, MaskPlanes& follow, const GrayPreset& preset,
