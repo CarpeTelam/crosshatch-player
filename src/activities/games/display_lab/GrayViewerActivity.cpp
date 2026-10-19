@@ -195,7 +195,7 @@ void GrayViewerActivity::buildRows() {
     return;
   }
   formatImageText();
-  // The engine's levels by their names (D15's numbers): "0, 2, 4, 6" today, seven after dlab-g2.
+  // The engine's levels by their names (D15's numbers): "0, 1, 2, 3, 4, 5, 6" since dlab-g2.
   char names[3 * SHADE_COUNT + 1] = {};
   GameDisplayLab::levelNames(names, sizeof(names));
   snprintf(levelsText, sizeof(levelsText), tr(STR_GAMES_DLAB_LEVELS_FMT), static_cast<unsigned>(SHADE_COUNT), names);

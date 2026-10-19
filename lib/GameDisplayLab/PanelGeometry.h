@@ -24,6 +24,13 @@ struct ScreenRect {
   int h;
 };
 
+// The hold marker's level over pixels whose model levels add up to `levelSum` over `count` of them, shared by the gray
+// viewer (its picture under the bars) and the transition test (its band): black or white, whichever is farther from
+// their mean (black from the middle level, 3, up; black over no pixel).
+constexpr Shade farEndOver(const uint64_t levelSum, const uint64_t count) {
+  return 2 * levelSum >= uint64_t{SHADE_COUNT - 1} * GrayModel::LEVEL_STEP * count ? Shade::K : Shade::W;
+}
+
 // GfxRenderer::rotateCoordinates for one pixel: logical (x, y) to panel (px, py) under `turn`.
 void toPanelPixel(PanelTurn turn, int x, int y, int panelW, int panelH, int& px, int& py);
 

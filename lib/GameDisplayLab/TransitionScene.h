@@ -11,10 +11,10 @@
 
 // The transition test's picture (the display-lab epic, R4; InkBoy's tuning.md, digest Q6; story dlab-c3's modes),
 // pure and pinned by test_transition_scene.cpp. Over the logical screen (what the renderer's orientation shows the
-// user): four shade bands K, D, L, W top to bottom, each a quarter of the height; each band has three lanes (a third of
-// the band each) holding a rectangle of one of the other three shades, in K, D, L, W order, inset RECT_INSET px top and
-// bottom in its lane. Pixels below the fourth band (a height not divisible by four) belong to the last band, and lane
-// leftovers to the band's shade. The mode (setMode) sets the rectangles' width and motion:
+// user): seven level bands 0 (black) .. 6 (white) top to bottom (story dlab-g2, the epic's D14), each a seventh of the
+// height; each band has one lane holding a rectangle of level (band + 3) mod 7, inset RECT_INSET px top and bottom in
+// the band. Pixels below the seventh band (a height not divisible by seven) belong to the last band. The mode
+// (setMode) sets the rectangles' width and motion:
 // - Fast: RECT_W px wide, sweeping from just off the left edge (-width) to the right edge over SWEEP_MS, linearly,
 //   then hidden for PAUSE_MS, and the cycle repeats (the SSD1677's sweep, dlab-c1). Like Slow's, the rectangles wait
 //   off-screen while the bands paint from white; the sweep clock's first crossing starts once the paint has settled.
@@ -23,19 +23,20 @@
 //   until its transition can finish. The rectangles wait off-screen while the bands paint from white; once the paint
 //   has settled the crossing is sized from the longest of the paint's slots and starts (slotDone).
 // - Static: a third of the width wide, centred, never moving. The pattern settles, then flips: every target moves on by
-//   the flip's offset, +1, +2, +3, +1, ... (flipOffset), so three flips take every pixel through all twelve
-//   transitions between them (slotDone).
+//   the flip's offset, +1, +2, .., +6, +1, ... (flipOffset); the bands hold every level, so flip k drives every
+//   transition of offset k and six flips take the pixels through all 42 between them (slotDone).
 //
 // Holds for photos (story dlab-c4, the epic's D13), with setHold(true) (the Hold row), and always in Ladder
 // (holdsAtSpots): slotDone also decides when a slot reaches a photo spot (HoldSpot): Static's every settle; Slow's
 // painted bands (the slot that measured), its rectangles after a full dwell, and the end of each crossing; Fast's
 // painted bands and the end of each sweep; the Ladder's two stage ends. At a spot the scene shows the hold marker, a
 // pause symbol: two bars (markerBars) inside markerRect, a MARKER_W px wide box at the bottom-right of the logical
-// screen (in the bottom band's margin below its last lane's rectangle; in Ladder MARKER_PX high under the columns), in
-// the opposite shade of its band, the gap between them never driven; the sweep clock stands still
-// (clockStill) while the task runs slots until the marker settles, then the run holds (Held). resumeHold turns the
-// marker back to its band's shade; once it has settled the run goes on (Static's flip only then). The marker's slots
-// never reach the modes' decisions, so they never settle Static, count as its slots, or feed Slow's measurement.
+// screen (in the bottom band's margin below its lane's rectangle; in Ladder MARKER_PX high under the columns), in the
+// level farther from its band's (holdLevelOver: 0 or 6, as the gray viewer's marker), the gap between them never
+// driven; the sweep clock stands still (clockStill) while the task runs slots until the marker settles, then the run
+// holds (Held). resumeHold turns the marker back to its band's shade; once it has settled the run goes on (Static's
+// flip only then). The marker's slots never reach the modes' decisions, so they never settle Static, count as its
+// slots, or feed Slow's measurement.
 //
 // Ladder (story dlab-g1, the epic's D14): no bands or rectangles but a measurement of the panel's response to single
 // pulses. The rows above the marker's (ladderHeight; in Ladder the marker is MARKER_PX high at the bottom-right, with
@@ -69,8 +70,8 @@ enum class HoldSpot : uint8_t { StaticSettle, SlowPainted, SlowDwelt, SlowCrosse
 // painted", "fast pause", "ladder".
 const char* holdSpotName(HoldSpot spot);
 
-// A shade's name where the user sees it (the log and the Tuning rows): its seven-level number (D14), '0' black, '2'
-// dark gray, '4' light gray, '6' white; the odd levels 1, 3 and 5 arrive with dlab-g2.
+// A level's name where the user sees it (the log and the Tuning rows): its digit (D14, D15), '0' black, '3' the 50 %
+// gray, '6' white; '?' past white (TRANSPARENT).
 char shadeName(Shade shade);
 
 // Why a crossing passed a photo spot without holding (Hold on).
@@ -88,7 +89,8 @@ const char* spotSkipName(SpotSkip skip);
 enum class HoldPhase : uint8_t {
   // No hold: the sweep clock runs and the marker shows its band's shade.
   Running,
-  // A photo spot: the marker is being driven to the opposite shade; the clock stands still.
+  // A photo spot: the marker is being driven to black or white, whichever is farther from its band (holdLevelOver);
+  // the clock stands still.
   MarkerOut,
   // The marker settled: the task runs nothing until a resume.
   Held,
@@ -210,8 +212,10 @@ class TransitionScene {
   static constexpr int RECT_W_SLOW = 48;
   static constexpr uint32_t SLOW_SWEEP_MAX_MS = 120000;
   static constexpr int RECT_INSET = 8;
-  static constexpr int BANDS = 4;
-  static constexpr int LANES = 3;
+  // One band per level, one lane per band (story dlab-g2), its rectangle LANE_OFFSET levels along.
+  static constexpr int BANDS = SHADE_COUNT;
+  static constexpr int LANES = 1;
+  static constexpr uint8_t LANE_OFFSET = 3;
   // The hold marker's box: MARKER_W px wide, at most MARKER_PX high (the bottom band's margin below its last lane's
   // rectangle; in Ladder MARKER_PX); a MARKER_PX square when the bands have no lanes (rectHeight() <= 0). It shows a
   // pause symbol: two bars MARKER_GAP px apart (12, 8, 12 at 32 wide).
@@ -225,6 +229,9 @@ class TransitionScene {
   TransitionScene() = default;
   // A logical screen logicalW x logicalH shown on a panel panelW x panelH (the model's size) under `turn`; Fast.
   TransitionScene(PanelTurn turn, int logicalW, int logicalH, int panelW, int panelH);
+  // The same screen and panel on this scene, everything else kept (setMode and setHold set a run's state): what the
+  // constructor does, without a second scene on the caller's stack (its held-rhythm preset makes one over 200 bytes).
+  void setScreen(PanelTurn turn, int logicalW, int logicalH, int panelW, int panelH);
 
   // The mode's geometry. Slow's crossing waits for its measurement (slotDone) and will hold a pixel under a rectangle
   // for `dwellSlots` slots (the preset's longestRunSlots()), which the other modes ignore; Slow's dwell spot counts
@@ -256,7 +263,7 @@ class TransitionScene {
   // Slow's crossing was cut to SLOW_SWEEP_MAX_MS.
   bool sweepCapped() const { return sweepCapped_; }
 
-  // The rectangles' left edge at `elapsedMs` (all twelve share it); nothing during the pause, and nothing in Ladder,
+  // The rectangles' left edge at `elapsedMs` (all seven share it); nothing during the pause, and nothing in Ladder,
   // which has none. Slow and Fast hold them just off the left edge until the paint has settled, and start the crossing
   // at that slot's clock.
   std::optional<int> rectX(uint32_t elapsedMs) const;
@@ -307,13 +314,18 @@ class TransitionScene {
   // edge, full height, the gap between them never driven; on a box too narrow for both and the gap, the whole box and
   // an empty second bar.
   std::array<ScreenRect, 2> markerBars() const;
-  // The marker's shade now: markerBandShade() moved on by 2 while it is out, markerBandShade() otherwise.
+  // The marker's shade now: holdLevelOver(markerBandShade()) while it is out, markerBandShade() otherwise.
   Shade markerShade() const;
+  // The hold level over a band of `band`: black or white, whichever is farther from it (black from level 3 up), the
+  // gray viewer's rule (story dlab-g2: three along would put the marker over black on 3, the bottom lane's level).
+  static Shade holdLevelOver(Shade band) {
+    return farEndOver(uint64_t{static_cast<uint8_t>(band)} * GrayModel::LEVEL_STEP, 1);
+  }
   // No pixel of the marker's bars has a dose left in `model`.
   bool markerSettled(const GrayModel& model) const;
-  // The offset flip `flip` moves every shade by: 0 for the first paint, then +1, +2, +3, +1, ...
+  // The offset flip `flip` moves every level by: 0 for the first paint, then +1, +2, .., +6, +1, ...
   static uint8_t flipOffset(uint32_t flip);
-  // Static: the sum of the flips' offsets so far (mod 4), which every shade shows moved by.
+  // Static: the sum of the flips' offsets so far (mod 7), which every level shows moved by.
   uint8_t shift() const { return shift_; }
   // Back to flip 0, unshifted, no flip pending (a replay, or the session cap's clean back to white).
   void restartFlips();
@@ -347,7 +359,8 @@ class TransitionScene {
     return mode_ == SweepMode::Ladder && phase_ == HoldPhase::Running &&
            (ladderStage_ == LadderStage::Ladder || ladderStage_ == LadderStage::Return);
   }
-  // `preset` with every transition's hold bit set: buildMasks then leaves the follow-up mask empty, and runGraySlot
+  // `preset` with every transition's hold bit set (HOLD_ALL): buildMasks then leaves the follow-up mask empty, and
+  // runGraySlot
   // sends one scan a slot (one dose a slot for every pixel). Everything else is `preset`'s.
   static GrayPreset heldRhythm(const GrayPreset& preset);
   // The preset the next slot runs on (its runGraySlot): heldRhythm(preset) while ladderPulsing() (kept in the scene,
@@ -357,9 +370,9 @@ class TransitionScene {
   bool holdsAtSpots() const { return holdOn_ || mode_ == SweepMode::Ladder; }
 
   static Shade bandShade(int band) { return static_cast<Shade>(band); }
-  // The shade of lane `lane` (0..2) in band `band`: the other shades in K, D, L, W order.
-  static Shade laneShade(int band, int lane) { return static_cast<Shade>(lane < band ? lane : lane + 1); }
-  // `shade` moved on by `offset` steps, K, D, L, W, K, ...
+  // The level of lane `lane` (0) in band `band`: (band + LANE_OFFSET + lane) mod 7.
+  static Shade laneShade(int band, int lane) { return static_cast<Shade>((band + LANE_OFFSET + lane) % SHADE_COUNT); }
+  // `shade` moved on by `offset` levels, 0, 1, .., 6, 0, ...
   static Shade shifted(Shade shade, uint8_t offset) {
     return static_cast<Shade>((static_cast<uint8_t>(shade) + offset) % SHADE_COUNT);
   }

@@ -170,8 +170,7 @@ ScreenRect GrayPicture::markerRect() const {
 }
 
 Shade GrayPicture::markerShadeFor(const GrayModel& model) const {
-  // The mean level under the bars, as a sum against the midpoint: at or above it white is nearer, so black is farther.
-  constexpr uint32_t TOP_LEVEL = static_cast<uint32_t>(SHADE_COUNT - 1) * GrayModel::LEVEL_STEP;
+  // The mean level under the bars (farEndOver, the transition test's rule too).
   uint64_t sum = 0;
   uint64_t count = 0;
   for (const ScreenRect& logical : markerBars()) {
@@ -184,7 +183,7 @@ Shade GrayPicture::markerShadeFor(const GrayModel& model) const {
       }
     }
   }
-  return 2 * sum >= TOP_LEVEL * count ? Shade::K : static_cast<Shade>(SHADE_COUNT - 1);
+  return farEndOver(sum, count);
 }
 
 PictureStep GrayPicture::slotDone(GrayModel& model, const GrayPreset& preset, const size_t driven) {

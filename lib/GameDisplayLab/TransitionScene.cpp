@@ -37,18 +37,10 @@ const char* holdSpotName(const HoldSpot spot) {
 }
 
 char shadeName(const Shade shade) {
-  // D14's seven-level numbers: the four shades sit on the even levels, so 1, 3 and 5 slot in without renaming.
-  switch (shade) {
-    case Shade::K:
-      return '0';
-    case Shade::D:
-      return '2';
-    case Shade::L:
-      return '4';
-    case Shade::W:
-      return '6';
-  }
-  return '?';
+  // D14's level numbers: the level's digit, '0' black .. '6' white (D15: the four shades sat on the even levels, so the
+  // odd ones slot in without renaming).
+  const uint8_t level = static_cast<uint8_t>(shade);
+  return level < SHADE_COUNT ? static_cast<char>('0' + level) : '?';
 }
 
 const char* spotSkipName(const SpotSkip skip) {
@@ -78,6 +70,15 @@ const char* holdDropName(const HoldDrop drop) {
 TransitionScene::TransitionScene(const PanelTurn turn, const int logicalW, const int logicalH, const int panelW,
                                  const int panelH)
     : turn_(turn), logicalW_(logicalW), logicalH_(logicalH), panelW_(panelW), panelH_(panelH) {}
+
+void TransitionScene::setScreen(const PanelTurn turn, const int logicalW, const int logicalH, const int panelW,
+                                const int panelH) {
+  turn_ = turn;
+  logicalW_ = logicalW;
+  logicalH_ = logicalH;
+  panelW_ = panelW;
+  panelH_ = panelH;
+}
 
 void TransitionScene::setMode(const SweepMode mode, const uint32_t dwellSlots) {
   mode_ = mode;
@@ -239,7 +240,7 @@ void TransitionScene::update(GrayModel& model, const uint32_t prevMs, const uint
 }
 
 uint8_t TransitionScene::flipOffset(const uint32_t flip) {
-  return flip == 0 ? 0 : static_cast<uint8_t>((flip - 1) % 3 + 1);
+  return flip == 0 ? 0 : static_cast<uint8_t>((flip - 1) % (SHADE_COUNT - 1) + 1);
 }
 
 SceneStep TransitionScene::slotDone(GrayModel& model, const GrayPreset& preset, const size_t driven,
@@ -431,7 +432,7 @@ void TransitionScene::restartLadder() {
 
 GrayPreset TransitionScene::heldRhythm(const GrayPreset& preset) {
   GrayPreset held = preset;
-  held.holdMask = 0xFFFF;  // every source > target bit: no follow-up scan for any pixel
+  held.holdMask = HOLD_ALL;  // every source > target bit: no follow-up scan for any pixel
   return held;
 }
 
@@ -561,7 +562,7 @@ ScreenRect TransitionScene::markerRect() const {
 Shade TransitionScene::markerShade() const {
   // bandOf puts the last rows in the last band.
   const Shade band = markerBandShade();
-  return markerOut_ ? shifted(band, 2) : band;
+  return markerOut_ ? holdLevelOver(band) : band;
 }
 
 std::array<ScreenRect, 2> TransitionScene::markerBars() const { return pauseBars(markerRect(), MARKER_GAP); }

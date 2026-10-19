@@ -115,8 +115,8 @@ bool TransitionTestActivity::allocateWorkingSet() {
   const int logicalH = renderer.getScreenHeight();
   if (runner && runner->allocate(logicalW, logicalH)) {
     const GameDisplayLab::MaskPlanes& drive = lab.masks();
-    scene = GameDisplayLab::TransitionScene(turnOf(renderer.getOrientation()), logicalW, logicalH, drive.width(),
-                                            drive.height());
+    // In place: a second scene would put its held-rhythm preset on this frame too (the 256-byte rule).
+    scene.setScreen(turnOf(renderer.getOrientation()), logicalW, logicalH, drive.width(), drive.height());
     return true;
   }
   if (runner) runner->release();
@@ -378,12 +378,11 @@ void TransitionTestActivity::cleanFromRows() {
   if (runner && runner->running()) return;
   app.clearTapFlash();
   {
-    // The lab's clean sends the framebuffer with a FULL refresh: white first. The rows' repaint follows it.
+    // A run's clean: white, black, white (story dlab-g2, D14). The rows' repaint follows it.
     RenderLock lock(*this);
-    renderer.clearScreen(0xFF);
-    lab.cleanNow();
+    GrayRunner::cleanWhiteBlackWhite(renderer, lab);
   }
-  LOG_INF("DLAB", "transition test: panel cleaned to white");
+  LOG_INF("DLAB", "transition test: panel cleaned white, black, white");
   requestUpdate();
 }
 

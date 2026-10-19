@@ -2,7 +2,8 @@
 // GfxRenderer::rotateCoordinates for all four orientations, the bands and lanes, the sweep timing, update() touching
 // only the rectangles' old and new areas (the plan's Transition sweep row, its pure part), and dlab-c3's modes: Slow's
 // crossing from the paint's longest slot and the longest dose run, held off-screen until the paint settles, Static's
-// fixed rectangles and its settle-and-flip sequence through all twelve transitions, both decided by slotDone; and
+// fixed rectangles and its settle-and-flip sequence (dlab-g2: seven bands of one lane, six flips through all 42
+// transitions), both decided by slotDone; and
 // dlab-c4's holds for photos: the hold marker's rectangle and shade in every turn, the photo spots per mode (Static's
 // settles, Slow's painted bands, full dwell and crossing end, Fast's pause), the resume sequence that drives the marker
 // back before the pattern moves, Hold off, and the session cap's clean dropping a hold; and dlab-g1's Ladder: the
@@ -120,31 +121,33 @@ TEST(TransitionScene, RectangleSweepsThenPauses) {
   }
 }
 
-TEST(TransitionScene, BandsAndLanesHoldTheOtherShadesInOrder) {
-  // 800 x 480: bands of 120, lanes of 40, rectangles 24 high from 8 px into each lane.
+TEST(TransitionScene, SevenBandsOfOneLaneEachThreeLevelsAlong) {
+  // 800 x 480: seven bands of 68 (the 4 rows left over belong to the last), one lane each, its rectangle 52 high from 8
+  // px into the band, of level (band + 3) mod 7.
+  EXPECT_EQ(TransitionScene::BANDS, 7);
+  EXPECT_EQ(TransitionScene::LANES, 1);
   const TransitionScene scene = sweepingFast(PanelTurn::LandscapeCounterClockwise, 800, 480, 800, 480);
-  EXPECT_EQ(scene.bandHeight(), 120);
-  EXPECT_EQ(scene.laneHeight(), 40);
-  EXPECT_EQ(scene.rectHeight(), 24);
-  const Shade expected[4][3] = {{Shade::D, Shade::L, Shade::W},
-                                {Shade::K, Shade::L, Shade::W},
-                                {Shade::K, Shade::D, Shade::W},
-                                {Shade::K, Shade::D, Shade::L}};
+  EXPECT_EQ(scene.bandHeight(), 68);
+  EXPECT_EQ(scene.laneHeight(), 68);
+  EXPECT_EQ(scene.rectHeight(), 52);
+  const uint8_t expected[7] = {3, 4, 5, 6, 0, 1, 2};
   const uint32_t ms = 2500;  // x = 394
-  for (int band = 0; band < 4; ++band) {
-    for (int lane = 0; lane < 3; ++lane) {
-      EXPECT_EQ(TransitionScene::laneShade(band, lane), expected[band][lane]);
-      const int top = band * 120 + lane * 40;
-      EXPECT_EQ(scene.targetAt(394, top + 8, ms), expected[band][lane]);
-      EXPECT_EQ(scene.targetAt(405, top + 31, ms), expected[band][lane]);
-      EXPECT_EQ(scene.targetAt(394, top + 7, ms), TransitionScene::bandShade(band));   // inset
-      EXPECT_EQ(scene.targetAt(394, top + 32, ms), TransitionScene::bandShade(band));  // inset
-      EXPECT_EQ(scene.targetAt(393, top + 20, ms), TransitionScene::bandShade(band));  // left of it
-      EXPECT_EQ(scene.targetAt(406, top + 20, ms), TransitionScene::bandShade(band));  // right of it
-    }
+  for (int band = 0; band < 7; ++band) {
+    EXPECT_EQ(TransitionScene::bandShade(band), static_cast<Shade>(band));
+    const Shade lane = static_cast<Shade>(expected[band]);
+    EXPECT_EQ(TransitionScene::laneShade(band, 0), lane);
+    const int top = band * 68;
+    EXPECT_EQ(scene.rectTop(band, 0), top + 8);
+    EXPECT_EQ(scene.targetAt(394, top + 8, ms), lane);
+    EXPECT_EQ(scene.targetAt(405, top + 59, ms), lane);
+    EXPECT_EQ(scene.targetAt(394, top + 7, ms), TransitionScene::bandShade(band));   // inset
+    EXPECT_EQ(scene.targetAt(394, top + 60, ms), TransitionScene::bandShade(band));  // inset
+    EXPECT_EQ(scene.targetAt(393, top + 30, ms), TransitionScene::bandShade(band));  // left of it
+    EXPECT_EQ(scene.targetAt(406, top + 30, ms), TransitionScene::bandShade(band));  // right of it
   }
-  EXPECT_EQ(scene.targetAt(394, 20, 5500), Shade::K);  // paused: bands only
-  EXPECT_EQ(scene.targetAt(0, 479, ms), Shade::W);
+  EXPECT_EQ(scene.targetAt(394, 20, 5500), Shade::K);               // paused: bands only
+  EXPECT_EQ(scene.targetAt(0, 479, ms), Shade::W);                  // the leftover rows: the last band
+  EXPECT_EQ(scene.targetAt(0, 3 * 68, ms), static_cast<Shade>(3));  // the 50 % gray band
 }
 
 // slotDone for a scene that holds nothing (Hold off): no model to drive.
@@ -366,7 +369,7 @@ TEST(TransitionScene, SlowWaitsOffScreenUntilThePaintSettlesThenCrossesAtItsLong
   // Not measured yet: the rectangles stay just off the left edge whatever the clock says.
   for (const uint32_t ms : {0u, 400u, 5000u, 20000u}) EXPECT_EQ(scene.rectX(ms), -TransitionScene::RECT_W_SLOW) << ms;
   const int top = scene.rectTop(2, 0);
-  EXPECT_EQ(scene.targetAt(0, top, 20000), Shade::L);  // no pixel under a rectangle
+  EXPECT_EQ(scene.targetAt(0, top, 20000), Shade::D);  // no pixel under a rectangle: band 2's level
   // The bands paint from white: every slot that drives pixels offers its period, the crossing waits.
   const struct {
     size_t driven;
@@ -434,11 +437,11 @@ TEST(TransitionScene, StaticRectanglesStandStillInTheMiddleThird) {
   scene.setMode(SweepMode::Static, 4);
   EXPECT_EQ(scene.rectW(), 32);
   for (const uint32_t ms : {0u, 2500u, 5500u, 123456u}) EXPECT_EQ(scene.rectX(ms), 32) << ms;
-  const int top = scene.rectTop(2, 1);  // band L, lane D
-  EXPECT_EQ(scene.targetAt(31, top, 0), Shade::L);
-  EXPECT_EQ(scene.targetAt(32, top, 0), Shade::D);
-  EXPECT_EQ(scene.targetAt(63, top, 0), Shade::D);
-  EXPECT_EQ(scene.targetAt(64, top, 0), Shade::L);
+  const int top = scene.rectTop(2, 0);  // band 2, its rectangle level 5
+  EXPECT_EQ(scene.targetAt(31, top, 0), static_cast<Shade>(2));
+  EXPECT_EQ(scene.targetAt(32, top, 0), static_cast<Shade>(5));
+  EXPECT_EQ(scene.targetAt(63, top, 0), static_cast<Shade>(5));
+  EXPECT_EQ(scene.targetAt(64, top, 0), static_cast<Shade>(2));
   scene.applyAll(b.model, 0, b.preset);
   while (b.model.activeCount() > 0) b.model.commit(true, true, b.preset);
   const std::vector<uint8_t> settled = b.pixels;
@@ -446,22 +449,29 @@ TEST(TransitionScene, StaticRectanglesStandStillInTheMiddleThird) {
   EXPECT_EQ(b.pixels, settled);
 }
 
-TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
+// The slots a settled pixel takes from `from` to `to` under `preset` with both scans delivered: its dose when its hold
+// bit is on, half of it rounded up when off.
+uint32_t runSlots(const GrayPreset& preset, const uint8_t from, const uint8_t to) {
+  const uint8_t dose = preset.dose[from][to];
+  return (preset.holdMask & holdBit(from, to)) != 0 ? dose : (dose + 1u) / 2u;
+}
+
+TEST(TransitionScene, StaticSettlesThenFlipsThroughAllFortyTwoTransitions) {
   constexpr int W = 96;
   constexpr int HH = 480;
   SceneBench b(W, HH);
   TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
   scene.setMode(SweepMode::Static, b.preset.longestRunSlots());
-  // The flips' offsets: 0 for the first paint, then +1, +2, +3, +1, ...
-  const uint8_t offsets[] = {0, 1, 2, 3, 1, 2, 3};
-  for (uint32_t n = 0; n < 7; ++n) EXPECT_EQ(TransitionScene::flipOffset(n), offsets[n]) << n;
-  EXPECT_EQ(TransitionScene::shifted(Shade::W, 3), Shade::L);
+  // The flips' offsets: 0 for the first paint, then +1, +2, .., +6, +1, ...
+  const uint8_t offsets[] = {0, 1, 2, 3, 4, 5, 6, 1, 2};
+  for (uint32_t n = 0; n < 9; ++n) EXPECT_EQ(TransitionScene::flipOffset(n), offsets[n]) << n;
+  EXPECT_EQ(TransitionScene::shifted(Shade::W, 3), Shade::D);  // 6 + 3 wraps to 2
 
   // The task's loop without scans: reapply when slotDone says so, one commit per slot.
   bool stale = true;
   bool seen[SHADE_COUNT][SHADE_COUNT] = {};
   std::vector<StaticSettled> settles;
-  for (int slot = 0; slot < 400 && settles.size() < 5; ++slot) {
+  for (int slot = 0; slot < 800 && settles.size() < 8; ++slot) {
     if (stale) {
       const std::vector<uint8_t> before = b.pixels;
       scene.applyAll(b.model, 0, b.preset);
@@ -477,7 +487,7 @@ TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
             ASSERT_EQ(to, static_cast<uint8_t>(TransitionScene::shifted(static_cast<Shade>(was), offset)))
                 << x << "," << y;
             ASSERT_EQ(b.model.remaining(x, y), b.preset.dose[was][to]);
-            if (settles.size() <= 3) seen[was][to] = true;
+            if (settles.size() <= 6) seen[was][to] = true;
           }
         }
       }
@@ -490,22 +500,28 @@ TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
     if (step.settled) settles.push_back(*step.settled);
     stale = step.reapply;
   }
-  ASSERT_EQ(settles.size(), 5u);
-  // InkBoy's doses, two a slot while the hold bit is off and more than one is left: the first paint from white is
-  // W>K 7 (4 slots); flip 1 (+1) has W>K again, flip 2 (+2) K>L 4 (hold on: 4), flip 3 (+3) K>W 7 (4), flip 4 W>K.
-  for (uint32_t n = 0; n < 5; ++n) {
+  ASSERT_EQ(settles.size(), 8u);
+  // Each settle took the slowest of its transitions' runs (InkBoy's expanded doses, two a slot while the hold bit is
+  // off and more than one is left): the first paint every 6>t, flip k every x>x+k (the bands hold every level).
+  for (uint32_t n = 0; n < 8; ++n) {
+    uint32_t slowest = 0;
+    for (uint8_t x = 0; x < SHADE_COUNT; ++x) {
+      const uint8_t from = n == 0 ? 6 : x;
+      const uint8_t to = n == 0 ? x : static_cast<uint8_t>((x + offsets[n]) % SHADE_COUNT);
+      if (from != to) slowest = std::max(slowest, runSlots(b.preset, from, to));
+    }
     EXPECT_EQ(settles[n].flip, n);
     EXPECT_EQ(settles[n].offset, offsets[n]);
-    EXPECT_EQ(settles[n].slots, 4u) << n;
+    EXPECT_EQ(settles[n].slots, slowest) << n;
   }
-  // Flips 1 to 3 took the pixels through every one of the twelve transitions.
+  // Flips 1 to 6 took the pixels through every one of the 42 transitions.
   for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
     for (uint8_t to = 0; to < SHADE_COUNT; ++to) {
       EXPECT_EQ(seen[from][to], from != to) << int(from) << ">" << int(to);
     }
   }
-  // The pending flip 5 is +2 on top of 1 + 2 + 3 + 1: a shift of 1.
-  EXPECT_EQ(scene.shift(), 1);
+  // The pending flip 8 is +2 on top of 1 + 2 + .. + 6 + 1: a shift of 24 mod 7, 3.
+  EXPECT_EQ(scene.shift(), 3);
   scene.restartFlips();
   EXPECT_EQ(scene.shift(), 0);
   const SceneStep first = slot(scene, 0, true, 100000, 0);
@@ -518,6 +534,68 @@ TEST(TransitionScene, StaticSettlesThenFlipsThroughAllTwelveTransitions) {
   EXPECT_EQ(scene.shift(), 0);
   EXPECT_FALSE(slot(scene, 0, true, 100000, 0).settled.has_value());
   EXPECT_EQ(scene.shift(), 0);
+}
+
+// Review batch P14 (e): the UltraChip preset (its via, every hold on) through a settle and six flips: every one of the
+// 42 transitions is asked for, and the 0>1 pixels pass through level 2 on the way.
+TEST(TransitionScene, StaticSixFlipsOnTheUltraChipPresetCoverEveryTransitionAndTheVia) {
+  constexpr int W = 96;
+  constexpr int HH = 480;
+  SceneBench b(W, HH);
+  b.preset = GrayPreset::ultraChipDefaults();
+  ASSERT_EQ(b.preset.via[0][1], 2);
+  TransitionScene scene(PanelTurn::LandscapeCounterClockwise, W, HH, W, HH);
+  scene.setMode(SweepMode::Static, b.preset.longestRunSlots());
+  bool stale = true;
+  bool seen[SHADE_COUNT][SHADE_COUNT] = {};
+  size_t settles = 0;
+  bool viaLegTwo = false;  // a 0>1 pixel seen on level 2 with 1 to go
+  for (int slot = 0; slot < 2000 && settles < 7; ++slot) {
+    if (stale) {
+      const std::vector<uint8_t> before = b.pixels;
+      scene.applyAll(b.model, 0, b.preset);
+      stale = false;
+      for (int y = 0; y < HH && settles > 0; ++y) {
+        for (int x = 0; x < W; ++x) {
+          const size_t i = GrayModel::PIXEL_BYTES * (static_cast<size_t>(y) * W + x);
+          const auto was = static_cast<uint8_t>(before[i] / GrayModel::LEVEL_STEP);
+          const uint8_t next = b.model.nextTarget(x, y);
+          const uint8_t to = next < SHADE_COUNT ? next : b.model.target(x, y);
+          ASSERT_EQ(to, static_cast<uint8_t>(TransitionScene::shifted(
+                            static_cast<Shade>(was), TransitionScene::flipOffset(static_cast<uint32_t>(settles)))));
+          if (was == 0 && to == 1) {
+            // 0>1 runs its first leg to 2 with 0>2's dose.
+            ASSERT_EQ(b.model.target(x, y), 2);
+            ASSERT_EQ(b.model.remaining(x, y), b.preset.dose[0][2]);
+          } else {
+            ASSERT_EQ(b.model.remaining(x, y), b.preset.dose[was][to]);
+          }
+          seen[was][to] = true;
+        }
+      }
+    }
+    const size_t driven = b.model.activeCount();
+    b.model.commit(true, true, b.preset);
+    for (int y = 0; y < HH && !viaLegTwo; ++y) {
+      for (int x = 0; x < W && !viaLegTwo; ++x) {
+        viaLegTwo = b.model.level(x, y) == 64 && b.model.target(x, y) == 1 && b.model.remaining(x, y) > 0;
+      }
+    }
+    const SceneStep step = scene.slotDone(b.model, b.preset, driven, true, 100000, 0);
+    if (step.settled) {
+      ++settles;
+      // Settled: every pixel on its level, none mid-way between two.
+      for (int y = 0; y < HH; ++y) {
+        for (int x = 0; x < W; ++x) ASSERT_EQ(b.model.level(x, y) % GrayModel::LEVEL_STEP, 0) << x << "," << y;
+      }
+    }
+    stale = step.reapply;
+  }
+  ASSERT_EQ(settles, 7u);
+  for (uint8_t from = 0; from < SHADE_COUNT; ++from) {
+    for (uint8_t to = 0; to < SHADE_COUNT; ++to) EXPECT_EQ(seen[from][to], from != to) << int(from) << ">" << int(to);
+  }
+  EXPECT_TRUE(viaLegTwo);
 }
 
 // ---- holds for photos (dlab-c4) ----------------------------------------------------------------------------------
@@ -594,8 +672,9 @@ void expectBars(const TransitionScene& scene, const char* what) {
 }
 
 TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
-  constexpr int PW = 64;
-  constexpr int PH = 160;
+  // Bands of 16 rows in both orientations (112 and 116 high): no room for a lane, and the bottom band holds the square.
+  constexpr int PW = 112;
+  constexpr int PH = 116;
   std::vector<std::pair<uint32_t, uint32_t>> markerSlotsByTurn;
   for (const PanelTurn turn : TURNS) {
     const int lw = portrait(turn) ? PH : PW;
@@ -606,23 +685,24 @@ TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
     EXPECT_EQ(m.y, lh - TransitionScene::MARKER_PX) << int(turn);
     EXPECT_EQ(m.w, TransitionScene::MARKER_PX);
     EXPECT_EQ(m.h, TransitionScene::MARKER_PX);
-    EXPECT_GE(m.y, 3 * sim.scene.bandHeight()) << int(turn);  // inside the bottom band
-    expectBars(sim.scene, "square");                          // 16 wide: bars of 4, a gap of 8
+    EXPECT_LE(sim.scene.rectHeight(), 0) << int(turn);
+    EXPECT_GE(m.y, (TransitionScene::BANDS - 1) * sim.scene.bandHeight()) << int(turn);  // inside the bottom band
+    expectBars(sim.scene, "square");  // 16 wide: bars of 4, a gap of 8
     EXPECT_EQ(sim.scene.markerBars()[0].w, 4);
     EXPECT_EQ(sim.scene.markerShade(), Shade::W);  // not out: its band's shade
-    // Paint, settle: the marker goes out to the opposite of the bottom band's W, D, and nowhere else.
+    // Paint, settle: the marker goes out to the level farther from the bottom band's W, black, and nowhere else.
     std::optional<HoldStart> hold;
     for (int n = 0; n < 50 && !hold; ++n) hold = sim.slot().hold;
     ASSERT_TRUE(hold.has_value()) << int(turn);
-    EXPECT_EQ(sim.scene.markerShade(), Shade::D);
-    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square): the bars D,
+    EXPECT_EQ(sim.scene.markerShade(), Shade::K);
+    // The corner of the bottom band (W) around it (this screen has no lanes, so the marker is the square): the bars K,
     // the gap between them and everything else W.
-    for (int ly = std::max(lh - 24, 3 * sim.scene.bandHeight()); ly < lh; ++ly) {
+    for (int ly = std::max(lh - 24, (TransitionScene::BANDS - 1) * sim.scene.bandHeight()); ly < lh; ++ly) {
       for (int lx = lw - 24; lx < lw; ++lx) {
         int px = 0;
         int py = 0;
         rendererRotate(turn, lx, ly, &px, &py, PW, PH);
-        const Shade wanted = inMarker(sim.scene, lx, ly) ? Shade::D : Shade::W;
+        const Shade wanted = inMarker(sim.scene, lx, ly) ? Shade::K : Shade::W;
         EXPECT_EQ(sim.scene.targetAt(lx, ly, sim.clockMs), wanted) << int(turn) << " " << lx << "," << ly;
         EXPECT_EQ(sim.b.model.target(px, py), static_cast<uint8_t>(wanted)) << int(turn) << " " << lx << "," << ly;
       }
@@ -650,7 +730,7 @@ TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
     }
     ASSERT_TRUE(step.held) << int(turn);
     EXPECT_EQ(step.markerSlots, outSlots);
-    expectMarker(Shade::D);
+    expectMarker(Shade::K);
     ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
     uint32_t backSlots = 0;
     step = SceneStep();
@@ -667,7 +747,7 @@ TEST(TransitionScene, HoldMarkerSitsInTheBottomRightCornerInEveryTurn) {
   ASSERT_EQ(markerSlotsByTurn.size(), 4u);
   for (const auto& slots : markerSlotsByTurn) {
     EXPECT_EQ(slots, markerSlotsByTurn[0]);
-    EXPECT_GE(slots.first, 2u);  // W>D, 3 doses, follow-up on: two slots
+    EXPECT_GE(slots.first, 4u);  // 6>0, 7 doses, follow-up on: four slots
   }
 }
 
@@ -709,7 +789,13 @@ TEST(TransitionScene, StaticHoldsAtEverySettleAndFlipsOnlyOnceTheMarkerIsBack) {
     EXPECT_TRUE(sim.scene.clockStill());
     const uint8_t shift = sim.scene.shift();
     const Shade band = TransitionScene::shifted(Shade::W, shift);
-    EXPECT_EQ(sim.scene.markerShade(), TransitionScene::shifted(band, 2));
+    // Settles 0..3 come at shifts 0, 1, 3, 6: the bottom band on 6, 0, 2, 5, so the marker black, white, white, black.
+    const uint8_t shifts[] = {0, 1, 3, 6};
+    const Shade bands[] = {Shade::W, Shade::K, Shade::D, static_cast<Shade>(5)};
+    const Shade markers[] = {Shade::K, Shade::W, Shade::W, Shade::K};
+    EXPECT_EQ(shift, shifts[flip]);
+    EXPECT_EQ(band, bands[flip]);
+    EXPECT_EQ(sim.scene.markerShade(), markers[flip]) << flip;
     // The marker's slots: held only in the slot it settles, nothing settles or flips meanwhile.
     std::vector<uint8_t> pattern = targets();
     uint32_t markerSlots = 0;
@@ -980,8 +1066,9 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
     scene.setHold(true);
     const ScreenRect m = scene.markerRect();
     const int laneBottom = scene.rectTop(TransitionScene::BANDS - 1, TransitionScene::LANES - 1) + scene.rectHeight();
-    // 480 high: the last rectangle ends at row 472, an 8-row margin; 800 high: at row 790, 10 rows.
-    EXPECT_EQ(m.h, lh == 480 ? 8 : 10) << int(turn);
+    // 480 high: the last rectangle ends at row 468, a 12-row margin (its 8-row inset and the 4 rows left over); 800
+    // high: at row 790, 10 rows.
+    EXPECT_EQ(m.h, lh == 480 ? 12 : 10) << int(turn);
     EXPECT_EQ(m.w, TransitionScene::MARKER_W);
     EXPECT_EQ(m.x, lw - TransitionScene::MARKER_W);
     EXPECT_EQ(m.y + m.h, lh);
@@ -989,7 +1076,7 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
     EXPECT_GE(m.y, (TransitionScene::BANDS - 1) * scene.bandHeight());  // inside the bottom band
     expectBars(scene, "dash");
     EXPECT_EQ(scene.markerBars()[0].w, 12);  // 12, a gap of 8, 12
-    // The pattern painted and settled, then a settle with Hold on: the marker's pixels go out to D over the W band,
+    // The pattern painted and settled, then a settle with Hold on: the marker's pixels go out to K over the W band,
     // nothing around it moves, and it maps to the panel as every other pixel does.
     scene.applyAll(b.model, 0, b.preset);
     while (b.model.activeCount() > 0) b.model.commit(true, true, b.preset);
@@ -1001,7 +1088,7 @@ TEST(TransitionScene, MarkerIsADashBelowTheLastLaneAtFullSizeInEveryTurn) {
         int py = 0;
         rendererRotate(turn, lx, ly, &px, &py, PW, PH);
         const bool in = inMarker(scene, lx, ly);
-        const Shade wanted = in ? Shade::D : scene.targetAt(lx, ly, 0);
+        const Shade wanted = in ? Shade::K : scene.targetAt(lx, ly, 0);
         EXPECT_EQ(scene.targetAt(lx, ly, 0), wanted);
         ASSERT_EQ(b.model.target(px, py), static_cast<uint8_t>(wanted)) << int(turn) << " " << lx << "," << ly;
         if (in) {
@@ -1024,7 +1111,7 @@ TEST(TransitionScene, PressDuringTheMarkersSlotsDoesNotResume) {
   ASSERT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerOut);
   EXPECT_FALSE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
   EXPECT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerOut);
-  EXPECT_EQ(sim.scene.markerShade(), Shade::D);
+  EXPECT_EQ(sim.scene.markerShade(), Shade::K);
   for (int n = 0; n < 50 && !step.held; ++n) step = sim.slot();
   ASSERT_TRUE(step.held);
   ASSERT_TRUE(sim.scene.resumeHold(sim.b.model, sim.b.preset));
@@ -1149,12 +1236,31 @@ TEST(TransitionScene, APauseNoSlotFellInIsLoggedAsSkipped) {
   for (int n = 0; n < 20; ++n) EXPECT_FALSE(off.slot().skipped.has_value());
 }
 
+// The hold marker's rule, shared with the gray viewer (farEndOver): black over levels 3 to 6, white over 0 to 2.
+TEST(TransitionScene, TheMarkerTakesTheEndFartherFromItsBand) {
+  const Shade expected[SHADE_COUNT] = {Shade::W, Shade::W, Shade::W, Shade::K, Shade::K, Shade::K, Shade::K};
+  for (uint8_t level = 0; level < SHADE_COUNT; ++level) {
+    EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(level)), expected[level]) << int(level);
+    EXPECT_EQ(farEndOver(level * 32u, 1), expected[level]) << int(level);
+  }
+  EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(3)), Shade::K);  // the middle: black
+  EXPECT_EQ(TransitionScene::holdLevelOver(static_cast<Shade>(2)), Shade::W);
+  EXPECT_EQ(farEndOver(95, 1), Shade::W);  // just under the middle level (96)
+  EXPECT_EQ(farEndOver(96 * 4, 4), Shade::K);
+  EXPECT_EQ(farEndOver(0, 0), Shade::K);  // no pixel: black, as the viewer has always had it
+}
+
 TEST(TransitionScene, ShadeNamesAndLogNames) {
   // D14's seven-level numbers where the user sees a shade: black 0, dark gray 2, light gray 4, white 6.
   EXPECT_EQ(shadeName(Shade::K), '0');
   EXPECT_EQ(shadeName(Shade::D), '2');
   EXPECT_EQ(shadeName(Shade::L), '4');
   EXPECT_EQ(shadeName(Shade::W), '6');
+  // The grays between them by their digit (story dlab-g2): 1, 3 (the 50 % gray), 5; nothing past white.
+  EXPECT_EQ(shadeName(static_cast<Shade>(1)), '1');
+  EXPECT_EQ(shadeName(static_cast<Shade>(3)), '3');
+  EXPECT_EQ(shadeName(static_cast<Shade>(5)), '5');
+  EXPECT_EQ(shadeName(Shade::TRANSPARENT), '?');
   EXPECT_STREQ(spotSkipName(SpotSkip::RightEdge), "the rectangles reached the right edge first");
   EXPECT_STREQ(spotSkipName(SpotSkip::PauseOutrun), "no slot started in the pause");
   EXPECT_STREQ(holdDropName(HoldDrop::StaticAgainAtFlipZero), "holds again at flip 0");
@@ -1221,7 +1327,7 @@ TEST(TransitionScene, LadderModeHasNoRectanglesAndSlotPresetIsHeldOnlyWhilePulsi
   // heldRhythm: every hold bit, everything else the preset's.
   const GrayPreset p = GrayPreset::ultraChipDefaults();
   const GrayPreset held = TransitionScene::heldRhythm(p);
-  EXPECT_EQ(held.holdMask, 0xFFFF);
+  EXPECT_EQ(held.holdMask, HOLD_ALL);
   EXPECT_TRUE(held.valid());
   for (uint8_t i = 0; i < TRANSITION_COUNT; ++i) {
     EXPECT_EQ(held.doseAt(i), p.doseAt(i));
@@ -1241,7 +1347,7 @@ TEST(TransitionScene, LadderModeHasNoRectanglesAndSlotPresetIsHeldOnlyWhilePulsi
   ASSERT_TRUE(sim.scene.ladderPulsing());
   const GrayPreset& pulsing = sim.scene.slotPreset(p);
   EXPECT_NE(&pulsing, &p);
-  EXPECT_EQ(pulsing.holdMask, 0xFFFF);
+  EXPECT_EQ(pulsing.holdMask, HOLD_ALL);
   EXPECT_EQ(pulsing.rateIndex, p.rateIndex);
 }
 
@@ -1431,7 +1537,7 @@ TEST(TransitionScene, LadderHoldsAfterEachStageAndEndsAfterTheReturn) {
     EXPECT_EQ(step.hold->count, 1u);
     EXPECT_FALSE(step.finished);
     EXPECT_EQ(sim.scene.holdPhase(), HoldPhase::MarkerOut);
-    EXPECT_EQ(sim.scene.markerShade(), Shade::L);  // over black, two steps along
+    EXPECT_EQ(sim.scene.markerShade(), Shade::W);  // over black: white, the farther end
     // Every column landed on its end in the model (top black, bottom white); the stage waits for the resume.
     EXPECT_EQ(sim.b.model.level(0, 0), 0);
     EXPECT_EQ(sim.b.model.level(69, 47), 192);
