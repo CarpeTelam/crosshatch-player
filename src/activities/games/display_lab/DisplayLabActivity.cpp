@@ -11,6 +11,7 @@
 #include "FramePeriodActivity.h"
 #include "GrayPresetFile.h"
 #include "GrayRampActivity.h"
+#include "GrayViewerActivity.h"
 #include "MappedInputManager.h"
 #include "PolarityActivity.h"
 #include "ScanBackends.h"
@@ -188,6 +189,7 @@ void DisplayLabActivity::buildRows() {
   set(Row::FramePeriod, tr(STR_GAMES_DLAB_FRAME_PERIOD), tr(STR_GAMES_DLAB_FRAME_PERIOD_DESC));
   set(Row::Polarity, tr(STR_GAMES_DLAB_POLARITY), tr(STR_GAMES_DLAB_POLARITY_DESC));
   set(Row::TransitionTest, tr(STR_GAMES_DLAB_TRANSITION_TEST), tr(STR_GAMES_DLAB_TRANSITION_TEST_DESC));
+  set(Row::GrayViewer, tr(STR_GAMES_DLAB_GRAY_VIEWER), tr(STR_GAMES_DLAB_GRAY_VIEWER_DESC));
   set(Row::Tuning, tr(STR_GAMES_DLAB_TUNING), tr(STR_GAMES_DLAB_TUNING_DESC));
   set(Row::SavePreset, tr(STR_GAMES_DLAB_SAVE_PRESET), saveStatus ? saveStatus : tr(STR_GAMES_DLAB_SAVE_PRESET_DESC));
   set(Row::Exit, tr(STR_GAMES_DLAB_EXIT), nullptr);
@@ -245,6 +247,9 @@ void DisplayLabActivity::activateIndex(const int index) {
       return;
     case Row::TransitionTest:
       openScreen<TransitionTestActivity>();
+      return;
+    case Row::GrayViewer:
+      openScreen<GrayViewerActivity>();
       return;
     case Row::Tuning:
       openScreen<TuningActivity>();

@@ -6,12 +6,16 @@
 #   of crosspoint-reader's develop branch stay clean. That file has the rules and how to run the check locally.
 # - x4pro flash budget: caps the flash and the static internal RAM the game runtime adds to the X4 Pro firmware.
 #   Builds x4pro on the PR's commit with FREEINK_CAP_GAMES on (the normal env) and off, both without the dev-only
-#   display lab (FREEINK_CAP_DISPLAY_LAB unflagged, so the gate measures shipped firmware), and fails when the image
-#   with games is more than the flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections
-#   more than the RAM limit larger (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so
-#   upstream growth never uses up the budget. It also fails a game object (lib/Game*, src/games,
-#   src/activities/games) with a static initializer or a mutable static over 64 B (spine AD-2).
-#   scripts/check_flash_budget.py holds the logic and how to run it locally.
+#   display lab's screens (FREEINK_CAP_DISPLAY_LAB unflagged), and fails when the image with games is more than the
+#   flash limit larger, or its .dram0.data + .dram0.bss + .noinit + .iram0.* sections more than the RAM limit larger
+#   (IRAM shares internal SRAM on the S3). Both builds come from the same commit, so upstream growth never uses up the
+#   budget. It also fails a game object (lib/Game*, src/games, src/activities/games) with a static initializer or a
+#   mutable static over 64 B (spine AD-2). scripts/check_flash_budget.py holds the logic and how to run it locally.
+#   Lab patch check: the display lab's decoder patches (scripts/lab_decoder_patches) are applied by the x4pro env's
+#   pre-script (scripts/patch_lab_decoders.py) to .pio/libdeps/x4pro only, whatever the flags, so both budget builds
+#   carry them; the job fails when one does not reverse cleanly there (the build ran without it). The default, sticky
+#   and release envs (x4pro-gh_release among them) run no such script and build PNGdec and JPEGDEC with upstream's
+#   patches only (the x4pro script takes retired lab patches out of every env's copies).
 # - x4pro static analysis: runs pio check (cppcheck) on the x4pro env with the flags of ci.yml's cppcheck job. That
 #   job checks only the C3 default env, which leaves FREEINK_CAP_GAMES off, so it never analyzes the game code.
 #   Run it locally with the same command (AGENTS.md); scripts/dev_setup.py installs libpcre3, which cppcheck needs.
@@ -25,6 +29,14 @@
 #   and check on scratch repositories. docs/crosshatch/fork-scripts.md has the script conventions.
 # - Game packages is not here: it runs only on a labelled pull request, from crosshatch-game-packages.yml, so a label
 #   event never reruns these jobs.
+# - Display lab decoders: builds and runs test/game_display_lab/test_image_decoders (the gray viewer's reads against
+#   the real PNGdec and JPEGDEC, under AddressSanitizer and UndefinedBehaviorSanitizer), which the unit-tests job of
+#   ci.yml leaves out: it has no PlatformIO library folder to build them from. This job fetches PNGdec at the version
+#   platformio.ini pins and JPEGDEC at its pinned commit; test/game_display_lab/CMakeLists.txt applies upstream's
+#   scripts/jpegdec_patches and the lab's scripts/lab_decoder_patches to copies of them in the build tree, as the x4pro
+#   firmware build applies them to its own (the job then checks each lab patch reverses cleanly there, as the flash
+#   budget job checks them in .pio/libdeps/x4pro), builds JPEGDEC as the device does (a 32-bit bit reader), and reads
+#   the PNG buffer size from platformio.ini.
 # - API freeze: fails a PR that changes a frozen game API level's docs/crosshatch/api-level-<n>.txt against the
 #   merge-base with develop, or turns lib/GameCore/ApiLevel.h's API_LEVEL_FROZEN from true to false (spine AD-19).
 #   scripts/check_api_freeze.py holds the rule and how to run it locally.
@@ -141,6 +153,19 @@ jobs:
       - name: Build x4pro with games on
         id: build-on
         run: python3 scripts/check_flash_budget.py build on
+
+      # The display lab's decoder patches are applied to this env's library copies by scripts/patch_lab_decoders.py
+      # (a pre-script of the x4pro env): each must reverse cleanly there, or the build ran without it.
+      - name: Lab decoder patches in the x4pro build
+        run: |
+          set -euo pipefail
+          for lib in PNGdec:pngdec JPEGDEC:jpegdec; do
+            dir=".pio/libdeps/x4pro/${lib%%:*}"
+            for patch in scripts/lab_decoder_patches/${lib##*:}/*.patch; do
+              (cd "$dir" && GIT_CEILING_DIRECTORIES="$(dirname "$PWD")" git apply --check --reverse "$GITHUB_WORKSPACE/$patch")
+              echo "applied: $patch"
+            done
+          done
 
       - name: Build x4pro with games off
         run: python3 scripts/check_flash_budget.py build off
@@ -401,6 +426,60 @@ jobs:
       - name: Run the games check
         run: ctest --test-dir build/test -L games-check --output-on-failure --no-tests=error
 
+  display-lab-decoders:
+    name: Display lab decoders
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      # The versions platformio.ini's lib_deps pins: PNGdec's registry release and JPEGDEC's commit.
+      - name: Fetch PNGdec and JPEGDEC
+        run: |
+          png_version=$(sed -n 's|^[[:space:]]*bitbank2/PNGdec @ \([0-9.]*\)[[:space:]]*$|\1|p' platformio.ini)
+          jpeg_commit=$(sed -n 's|^[[:space:]]*https://github.com/bitbank2/JPEGDEC.git#\([0-9a-f]*\)[[:space:]]*$|\1|p' platformio.ini)
+          test -n "$png_version" && test -n "$jpeg_commit"
+          git clone --quiet --depth 1 --branch "$png_version" https://github.com/bitbank2/PNGdec "$RUNNER_TEMP/PNGdec"
+          git init --quiet "$RUNNER_TEMP/JPEGDEC"
+          git -C "$RUNNER_TEMP/JPEGDEC" fetch --quiet --depth 1 https://github.com/bitbank2/JPEGDEC "$jpeg_commit"
+          git -C "$RUNNER_TEMP/JPEGDEC" checkout --quiet FETCH_HEAD
+
+      # Same key as ci.yml's unit-tests job, so both workflows share one googletest source cache.
+      - name: Cache googletest source
+        uses: actions/cache@v4
+        with:
+          path: build/test/_deps/googletest-src
+          key: ${{ runner.os }}-googletest-${{ hashFiles('test/CMakeLists.txt') }}
+
+      - name: Configure
+        run: >-
+          cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCROSSHATCH_PNGDEC_DIR="$RUNNER_TEMP/PNGdec/src" -DCROSSHATCH_JPEGDEC_DIR="$RUNNER_TEMP/JPEGDEC/src"
+
+      - name: Lab decoder patches in the build tree's copies
+        run: |
+          set -euo pipefail
+          for lib in pngdec jpegdec; do
+            dir="build/test/game_display_lab/$lib"
+            for patch in scripts/lab_decoder_patches/$lib/*.patch; do
+              (cd "$dir" && GIT_CEILING_DIRECTORIES="$(dirname "$PWD")" git apply --check --reverse "$GITHUB_WORKSPACE/$patch")
+              echo "applied: $patch"
+            done
+          done
+
+      - name: Build
+        run: cmake --build build/test --target test_image_decoders
+
+      - name: Run the decoder tests
+        run: ctest --test-dir build/test -L display-lab-decoders --output-on-failure --no-tests=error
+
   # The one fork-only check branch protection requires, like upstream's Test Status: jobs can be added, renamed,
   # or split here without changing the repository settings.
   crosshatch-test-status:
@@ -415,6 +494,7 @@ jobs:
       - layer-check
       - icons-up-to-date
       - games-check
+      - display-lab-decoders
     if: always()
     runs-on: ubuntu-latest
     permissions:

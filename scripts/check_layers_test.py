@@ -183,6 +183,17 @@ class CheckLayersTest(unittest.TestCase):
                           'src/games/Other.cpp:1: src/games may not include <StreamingJsonParser.h> '
                           '(lib/JsonParser)')
 
+    def test_decoder_libraries_only_from_the_gray_image_reader(self):
+        # D16's amendment (story dlab-g3): the gray viewer's reader alone includes PNGdec and JPEGDEC.
+        reader = 'src/activities/games/display_lab/GrayImageReader.cpp'
+        code, out = self.run_check(self.tree({reader: '#include <JPEGDEC.h>\n#include <PNGdec.h>\n'}))
+        self.assertEqual(code, 0, out)
+        self.assert_fails({'src/activities/games/display_lab/Other.cpp': '#include <PNGdec.h>\n'},
+                          'src/activities/games/display_lab/Other.cpp:1: src/activities/games may not include '
+                          '<PNGdec.h> (libdep:PNGdec)')
+        self.assert_fails({'src/games/Other.cpp': '#include <JPEGDEC.h>\n'},
+                          'src/games/Other.cpp:1: src/games may not include <JPEGDEC.h> (libdep:JPEGDEC)')
+
     def test_lua_only_from_the_build_anchor(self):
         self.assert_fails({'src/games/Other.cpp': '#include <lua.hpp>\n'},
                           'src/games/Other.cpp:1: src/games may not include <lua.hpp> (lib/lua)')

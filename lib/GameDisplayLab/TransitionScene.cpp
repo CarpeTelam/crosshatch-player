@@ -2,34 +2,6 @@
 
 namespace GameDisplayLab {
 
-namespace {
-
-// GfxRenderer::rotateCoordinates for one pixel: logical (x, y) to panel (px, py).
-void rotate(const PanelTurn turn, const int x, const int y, const int panelW, const int panelH, int& px, int& py) {
-  switch (turn) {
-    case PanelTurn::Portrait:
-      px = y;
-      py = panelH - 1 - x;
-      return;
-    case PanelTurn::LandscapeClockwise:
-      px = panelW - 1 - x;
-      py = panelH - 1 - y;
-      return;
-    case PanelTurn::PortraitInverted:
-      px = panelW - 1 - y;
-      py = x;
-      return;
-    case PanelTurn::LandscapeCounterClockwise:
-      px = x;
-      py = y;
-      return;
-  }
-  px = x;
-  py = y;
-}
-
-}  // namespace
-
 SweepMode nextMode(const SweepMode mode) {
   switch (mode) {
     case SweepMode::Static:
@@ -101,20 +73,6 @@ const char* holdDropName(const HoldDrop drop) {
       return "the ladder restarts from the base";
   }
   return "";
-}
-
-ScreenRect toPanel(const PanelTurn turn, const ScreenRect& r, const int panelW, const int panelH) {
-  int ax = 0;
-  int ay = 0;
-  int bx = 0;
-  int by = 0;
-  rotate(turn, r.x, r.y, panelW, panelH, ax, ay);
-  rotate(turn, r.x + r.w - 1, r.y + r.h - 1, panelW, panelH, bx, by);
-  const int x0 = ax < bx ? ax : bx;
-  const int y0 = ay < by ? ay : by;
-  const int x1 = ax < bx ? bx : ax;
-  const int y1 = ay < by ? by : ay;
-  return ScreenRect{x0, y0, x1 - x0 + 1, y1 - y0 + 1};
 }
 
 TransitionScene::TransitionScene(const PanelTurn turn, const int logicalW, const int logicalH, const int panelW,
@@ -245,24 +203,15 @@ void TransitionScene::applyAll(GrayModel& model, const uint32_t elapsedMs, const
     for (int lx = 0; lx < logicalW_; ++lx) {
       int px = 0;
       int py = 0;
-      rotate(turn_, lx, ly, panelW_, panelH_, px, py);
+      toPanelPixel(turn_, lx, ly, panelW_, panelH_, px, py);
       model.retarget(px, py, targetAt(lx, ly, elapsedMs), preset);
     }
   }
 }
 
-void TransitionScene::retargetLogical(GrayModel& model, int x0, int x1, int y, int h, const Shade shade,
-                                      const GrayPreset& preset) const {
-  if (x0 < 0) x0 = 0;
-  if (x1 > logicalW_) x1 = logicalW_;
-  if (y < 0) {
-    h += y;
-    y = 0;
-  }
-  if (y + h > logicalH_) h = logicalH_ - y;
-  if (x1 <= x0 || h <= 0) return;
-  const ScreenRect panel = toPanel(turn_, ScreenRect{x0, y, x1 - x0, h}, panelW_, panelH_);
-  model.retargetRect(panel.x, panel.y, panel.w, panel.h, shade, preset);
+void TransitionScene::retargetLogical(GrayModel& model, const int x0, const int x1, const int y, const int h,
+                                      const Shade shade, const GrayPreset& preset) const {
+  retargetLogicalRect(model, screen(), x0, x1, y, h, shade, preset);
 }
 
 void TransitionScene::update(GrayModel& model, const uint32_t prevMs, const uint32_t nowMs,
@@ -615,27 +564,9 @@ Shade TransitionScene::markerShade() const {
   return markerOut_ ? shifted(band, 2) : band;
 }
 
-std::array<ScreenRect, 2> TransitionScene::markerBars() const {
-  const ScreenRect m = markerRect();
-  const int bar = (m.w - MARKER_GAP) / 2;
-  // Too narrow for two bars and the gap: one bar, the whole rectangle.
-  if (bar < 1) return {m, ScreenRect{m.x + m.w, m.y, 0, m.h}};
-  return {ScreenRect{m.x, m.y, bar, m.h}, ScreenRect{m.x + m.w - bar, m.y, bar, m.h}};
-}
+std::array<ScreenRect, 2> TransitionScene::markerBars() const { return pauseBars(markerRect(), MARKER_GAP); }
 
-bool TransitionScene::markerSettled(const GrayModel& model) const {
-  // The bars' pixels only: the gap is never driven.
-  for (const ScreenRect& logical : markerBars()) {
-    if (logical.w <= 0 || logical.h <= 0) continue;
-    const ScreenRect panel = toPanel(turn_, logical, panelW_, panelH_);
-    for (int y = panel.y; y < panel.y + panel.h; ++y) {
-      for (int x = panel.x; x < panel.x + panel.w; ++x) {
-        if (model.remaining(x, y) > 0) return false;
-      }
-    }
-  }
-  return true;
-}
+bool TransitionScene::markerSettled(const GrayModel& model) const { return barsSettled(model, markerBars(), screen()); }
 
 void TransitionScene::retargetMarker(GrayModel& model, const GrayPreset& preset) const {
   for (const ScreenRect& bar : markerBars()) {

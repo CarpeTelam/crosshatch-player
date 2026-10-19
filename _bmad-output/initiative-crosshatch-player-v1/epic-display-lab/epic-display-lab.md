@@ -259,6 +259,13 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   its own, and it is built while the owner takes the ladder photos dlab-g2 waits on. Pictures come from
   `/.crosshatch/display-lab/images/` on the SD card through the firmware's own decoders, plus a built-in test chart
   so it works with no files; plain or ordered quantisation is a row.
+  Amended at dlab-g3's clarify step (orchestrator, 2026-10-18): the story's decode-into-the-framebuffer path cannot
+  work (the framebuffer is 1 bpp and the converters cut gray to 2 bits before writing), so the viewer gets a
+  fork-side gray-row reader beside the decoders that drives PNGdec and JPEGDEC directly and feeds 8-bit rows to the
+  quantiser (option B of the three: no upstream change, no ledger row, the full level count for files); the hold
+  marker on a picture is driven to 0 or 6, whichever is farther from the mean level under its bars, and is not
+  driven back (Next cleans first); Next while the paint runs pauses and resumes as the transition test does; the
+  layer check gets a FILE_EDGES entry for the reader's file only.
 
 ## Story results
 
