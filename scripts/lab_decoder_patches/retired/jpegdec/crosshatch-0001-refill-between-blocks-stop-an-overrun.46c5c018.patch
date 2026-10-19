@@ -1,0 +1,133 @@
+Retired: version 2 of the lab JPEGDEC patch (commit 46c5c018); scripts/patch_lab_decoders.py takes it out
+of a copy that still carries it before applying the current version.
+
+From: crosshatch-player <dlab-g3@local>
+Subject: [PATCH] Refill between a MCU's blocks, and stop a bit pointer past the data
+
+The display lab's JPEGDEC patch (the x4pro env only, applied after upstream's
+scripts/jpegdec_patches by scripts/patch_lab_decoders.py; the host decoder
+tests apply it too, test/game_display_lab/CMakeLists.txt).
+
+JPEGDEC moves its VLC data down and refills only after a whole MCU that ends
+past FILE_HIGHWATER (1536), which keeps 512 bytes past that mark. A colour MCU
+can be longer (six blocks at 4:2:0; valid quality-100 colour with noise-like
+detail runs 510 to 600 bytes, a block of the longest codes about 210), and
+when it outran the data JPEGGetMoreData returned for good (iDelta < 0), every
+later MCU reading further past ucFileBuf. This:
+- refills before each block (JPEGDecodeMCU, JPEGDecodeMCU_P) whenever the data
+  left is under JPEG_BLOCK_MARGIN (256) or the offset is past the mark: the bit
+  reader's state is in pJPEG->bb between blocks as between MCUs, so valid
+  pictures decode whole;
+- in JPEGGetMoreData, when the bits used (the pointer plus the whole bytes of
+  the bit offset) are past the data, puts the pointer at the data's end and
+  sets JPEG_DECODE_ERROR; the block decoders return -1 on it and DecodeJPEG's
+  MCU loop takes it into iErr, so the decode ends there; the same test after
+  the last MCU fails a decode whose last blocks ran past the data;
+- clears iError at the start of DecodeJPEG, so a second decode() of one open()
+  does not inherit the first's error;
+- moves the data down with memmove (a block refill can move data that
+  overlaps where it goes).
+
+---
+--- a/src/jpeg.inl
++++ b/src/jpeg.inl
+@@ -63,6 +63,8 @@ int16_t i16_Consts[8] = {0x80, 113, 90, 22, 46, 1,32,2048};
+ static int JPEGInit(JPEGIMAGE *pJPEG);
+ static int JPEGParseInfo(JPEGIMAGE *pPage, int bExtractThumb);
+ static void JPEGGetMoreData(JPEGIMAGE *pPage);
++// CrossPoint lab patch: the data a block decoder wants in the buffer before it starts (JPEGDecodeMCU, _P).
++#define JPEG_BLOCK_MARGIN 256
+ static int DecodeJPEG(JPEGIMAGE *pImage);
+ static int32_t readRAM(JPEGFILE *pFile, uint8_t *pBuf, int32_t iLen);
+ static int32_t seekMem(JPEGFILE *pFile, int32_t iPosition);
+@@ -1545,12 +1547,25 @@ static void JPEGGetMoreData(JPEGIMAGE *pPage)
+ {
+     int iDelta = pPage->iVLCSize - pPage->iVLCOff;
+ //    printf("Getting more data...size=%d, off=%d\n", pPage->iVLCSize, pPage->iVLCOff);
++    // CrossPoint lab patch: the bit reader has used bits past the data in the buffer (its pointer plus the whole
++    // bytes of its bit offset): a block longer than the data left. As released this returned here for good and every
++    // later MCU read further past ucFileBuf. Put the pointer at the data's end and fail the decode (the block
++    // decoders and DecodeJPEG stop on it).
++    if (iDelta < 0 || pPage->iVLCOff + (int)((pPage->bb.ulBitOff + 7) >> 3) > pPage->iVLCSize)
++    {
++        pPage->iVLCOff = pPage->iVLCSize;
++        pPage->bb.pBuf = &pPage->ucFileBuf[pPage->iVLCSize];
++        pPage->bb.ulBitOff = 0;
++        pPage->iError = JPEG_DECODE_ERROR;
++        return;
++    }
+     // move any existing data down
+-    if (iDelta >= (JPEG_FILE_BUF_SIZE-64) || iDelta < 0)
++    if (iDelta >= (JPEG_FILE_BUF_SIZE-64))
+         return; // buffer is already full; no need to read more data
+     if (pPage->iVLCOff != 0)
+     {
+-        memcpy(pPage->ucFileBuf, &pPage->ucFileBuf[pPage->iVLCOff], pPage->iVLCSize - pPage->iVLCOff);
++        // CrossPoint lab patch: memmove, as the block refill can move data that overlaps where it goes.
++        memmove(pPage->ucFileBuf, &pPage->ucFileBuf[pPage->iVLCOff], pPage->iVLCSize - pPage->iVLCOff);
+         pPage->iVLCSize -= pPage->iVLCOff;
+         pPage->iVLCOff = 0;
+         pPage->bb.pBuf = pPage->ucFileBuf; // reset VLC source pointer too
+@@ -1832,6 +1847,16 @@ static int JPEGDecodeMCU_P(JPEGIMAGE *pJPEG, int iMCU, int *iDCPredictor)
+     my_ulong ulCode, ulBits, ulTemp; // local copies to allow compiler to use register vars
+     uint8_t *pBuf;
+ 
++    // CrossPoint lab patch: refill between the blocks of a MCU, whenever the data left in the buffer is under
++    // JPEG_BLOCK_MARGIN (a block of the longest codes is about 210 bytes): as released the refill came only after a
++    // whole MCU (up to six blocks), past FILE_HIGHWATER, and a colour MCU of long codes outran the 512 bytes kept past
++    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs.
++    if (pJPEG->iVLCOff >= FILE_HIGHWATER || pJPEG->iVLCSize - pJPEG->iVLCOff < JPEG_BLOCK_MARGIN)
++    {
++        JPEGGetMoreData(pJPEG);
++        if (pJPEG->iError == JPEG_DECODE_ERROR)
++            return -1;
++    }
+     ulBitOff = pJPEG->bb.ulBitOff;
+     ulBits = pJPEG->bb.ulBits;
+     pBuf = pJPEG->bb.pBuf;
+@@ -2113,6 +2138,16 @@ static int JPEGDecodeMCU(JPEGIMAGE *pJPEG, int iMCU, int *iDCPredictor)
+     
+     #define MIN_DCT_THRESHOLD 8
+         
++    // CrossPoint lab patch: refill between the blocks of a MCU, whenever the data left in the buffer is under
++    // JPEG_BLOCK_MARGIN (a block of the longest codes is about 210 bytes): as released the refill came only after a
++    // whole MCU (up to six blocks), past FILE_HIGHWATER, and a colour MCU of long codes outran the 512 bytes kept past
++    // it. The reader's state is in pJPEG->bb between blocks, as between MCUs.
++    if (pJPEG->iVLCOff >= FILE_HIGHWATER || pJPEG->iVLCSize - pJPEG->iVLCOff < JPEG_BLOCK_MARGIN)
++    {
++        JPEGGetMoreData(pJPEG);
++        if (pJPEG->iError == JPEG_DECODE_ERROR)
++            return -1;
++    }
+     ulBitOff = pJPEG->bb.ulBitOff;
+     ulBits = pJPEG->bb.ulBits;
+     pBuf = pJPEG->bb.pBuf;
+@@ -4970,6 +5005,10 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+     JPEGDRAW jd;
+     int iMaxFill = 16, iScaleShift = 0;
+ 
++    // CrossPoint lab patch: an error from an earlier decode() of the same open() is not this decode's (the refill
++    // reports a pointer past the data through iError).
++    pJPEG->iError = JPEG_SUCCESS;
++
+     // Requested the Exif thumbnail
+     if (pJPEG->ucMode == 0xc2) { // progressive mode - we only decode the first scan (DC values)
+         pJPEG->iOptions |= JPEG_SCALE_EIGHTH; // return 1/8 sized image
+@@ -5365,9 +5404,17 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+             } // if there is a restart interval
+             // See if we need to feed it more data
+             if (pJPEG->iVLCOff >= FILE_HIGHWATER)
++            {
+                 JPEGGetMoreData(pJPEG); // need more 'filtered' VLC data
++                // CrossPoint lab patch: the bit pointer had passed the buffer's data; the decode ends here.
++                if (pJPEG->iError == JPEG_DECODE_ERROR)
++                    iErr = JPEG_DECODE_ERROR;
++            }
+         } // for x
+     } // for y
++    // CrossPoint lab patch: the last blocks used bits past the data (no refill check came after them).
++    if (iErr == 0 && pJPEG->iVLCOff + (int)((pJPEG->bb.ulBitOff + 7) >> 3) > pJPEG->iVLCSize)
++        iErr = JPEG_DECODE_ERROR;
+     if (iErr != 0)
+         pJPEG->iError = JPEG_DECODE_ERROR;
+     return (iErr == 0);

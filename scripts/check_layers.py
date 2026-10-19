@@ -17,8 +17,9 @@ and src/activities/games is resolved to what it reaches:
   - any include to a header under lib/<name>/ or lib/<name>/src/ (the component lib/<name>);
   - an angle include to a src/ path (`<games/GameVM.h>`);
   - otherwise to the C/C++ standard library, the platform (Arduino, ESP-IDF, FreeRTOS, POSIX; its radio and crypto
-    headers apart), or an SDK header, by the tables below. A header none of these know is reported, so a new edge is
-    classified on purpose.
+    headers apart), an SDK header, or a PlatformIO library dependency's header (PNGdec, JPEGDEC: no row has them, a
+    FILE_EDGES entry gives them to one file), by the tables below. A header none of these know is reported, so a new
+    edge is classified on purpose.
 A repository path under src/ outside the game folders is upstream (`src (upstream)`), except src/fontIds.h, which the
 table names on its own. Screens may include upstream src/ code (their screen infrastructure), so the check also:
   - fails any other source file under src/ or lib/ (outside the game folders and the vendored lib/lua) that includes
@@ -176,10 +177,16 @@ UPSTREAM_EDGES = {
 }
 
 # Edges of one file that its component's row does not have. AD-2: GamesBuildAnchor.cpp includes a header of each game
-# library and lua.h, so every env compiles them (lib/GameDisplayLab is a Screens edge, not a src/games one).
+# library and lua.h, so every env compiles them (lib/GameDisplayLab is a Screens edge, not a src/games one). The display
+# lab's gray viewer reads PNG and JPEG files through the decoder libraries the firmware's converters use, PNGdec and
+# JPEGDEC, directly (the display-lab epic's D16 and its amendment at story dlab-g3: the converters cut gray to two bits
+# before they write), from its reader's one file only.
+GRAY_IMAGE_READER = 'src/activities/games/display_lab/GrayImageReader.cpp'
 FILE_EDGES = {
     ('src/games/GamesBuildAnchor.cpp', 'lib/lua'),
     ('src/games/GamesBuildAnchor.cpp', 'lib/GameDisplayLab'),
+    (GRAY_IMAGE_READER, 'libdep:PNGdec'),
+    (GRAY_IMAGE_READER, 'libdep:JPEGDEC'),
 }
 
 # Headers outside the repository. The C and C++ standard library headers the game code may use.
@@ -203,6 +210,9 @@ RADIO_CRYPTO_PATTERNS = (
 PLATFORM_PATTERNS = ('Arduino.h', 'esp_*.h', 'freertos/*', 'sys/*', 'strings.h', 'unistd.h')
 # SDK headers (the freeink-sdk submodule, which the check does not need checked out), each its own edge.
 SDK_HEADERS = {'FreeInkUICore.h', 'SecureHttpClient.h'}
+# Headers of the PlatformIO library dependencies (platformio.ini's lib_deps, outside the repository), each its own edge,
+# which no component's row has: FILE_EDGES gives them to the files that may include them.
+LIBDEP_HEADERS = {'PNGdec.h': 'libdep:PNGdec', 'JPEGDEC.h': 'libdep:JPEGDEC'}
 # SDK headers that stand in for a component the spine's table still names, each mapped to that component. The JSON
 # parser moved from lib/JsonParser into the SDK's JsonSax (upstream 2600a79e); the Domain row's `lib/JsonParser` edge is
 # the parser, wherever it lives.
@@ -266,7 +276,7 @@ def lib_index(root):
 
 
 def classify_external(name):
-    """std, platform, platform radio/crypto, sdk:<name>, or None for a header outside the repository."""
+    """std, platform, platform radio/crypto, sdk:<name>, libdep:<library>, or None, for a header outside the repo."""
     if name in STD_HEADERS:
         return STD
     if any(fnmatch.fnmatchcase(name, pattern) for pattern in RADIO_CRYPTO_PATTERNS):
@@ -277,6 +287,8 @@ def classify_external(name):
         return f'sdk:{name}'
     if name in SDK_HEADERS_AS_COMPONENT:
         return SDK_HEADERS_AS_COMPONENT[name]
+    if name in LIBDEP_HEADERS:
+        return LIBDEP_HEADERS[name]
     return None
 
 

@@ -11,6 +11,7 @@
 #include "FramePeriodActivity.h"
 #include "GrayPresetFile.h"
 #include "GrayRampActivity.h"
+#include "GrayViewerActivity.h"
 #include "MappedInputManager.h"
 #include "PolarityActivity.h"
 #include "ScanBackends.h"
@@ -198,6 +199,10 @@ void DisplayLabActivity::buildRows() {
         item.label = tr(STR_GAMES_DLAB_TRANSITION_TEST);
         item.subtitle = tr(STR_GAMES_DLAB_TRANSITION_TEST_DESC);
         break;
+      case Row::GrayViewer:
+        item.label = tr(STR_GAMES_DLAB_GRAY_VIEWER);
+        item.subtitle = tr(STR_GAMES_DLAB_GRAY_VIEWER_DESC);
+        break;
       case Row::Tuning:
         item.label = tr(STR_GAMES_DLAB_TUNING);
         item.subtitle = tr(STR_GAMES_DLAB_TUNING_DESC);
@@ -272,6 +277,9 @@ void DisplayLabActivity::activateIndex(const int index) {
       return;
     case Row::TransitionTest:
       openScreen<TransitionTestActivity>();
+      return;
+    case Row::GrayViewer:
+      openScreen<GrayViewerActivity>();
       return;
     case Row::Tuning:
       openScreen<TuningActivity>();

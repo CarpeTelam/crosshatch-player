@@ -1,4 +1,4 @@
-// The transition test's request word (lib/GameDisplayLab/SweepControl.h): the requests' coalescing, the sticky Stop
+// The sweep runner's request word (lib/GameDisplayLab/SweepControl.h): the requests' coalescing, the sticky Stop
 // that gates panel entry, the InPanel state, the covered heartbeat and its wrap, and the Stop/InPanel handshake
 // across two threads.
 
@@ -12,9 +12,26 @@
 
 #include "SweepControl.h"
 
+namespace GameDisplayLab {
+
+// The protocol's private owner requests (no firmware caller since press()), for take()'s coalescing tests.
+class SweepControlTestAccess {
+ public:
+  static void requestReplay(SweepControl& c) { c.requestReplay(); }
+  static void requestClean(SweepControl& c) { c.requestClean(); }
+};
+
+}  // namespace GameDisplayLab
+
 namespace {
 
 using GameDisplayLab::SweepControl;
+using GameDisplayLab::SweepControlTestAccess;
+
+// The test's view of the private requests and of the hold bit.
+void requestReplay(SweepControl& c) { SweepControlTestAccess::requestReplay(c); }
+void requestClean(SweepControl& c) { SweepControlTestAccess::requestClean(c); }
+bool held(const SweepControl& c) { return (c.snapshot() & SweepControl::HELD) != 0; }
 using Gate = SweepControl::Gate;
 
 constexpr uint32_t GAP_US = 1000000;
@@ -36,9 +53,9 @@ TEST(SweepControl, ResetAsksForAReplayRunning) {
 TEST(SweepControl, TakeClearsOnlyReplayAndClean) {
   SweepControl c;
   c.reset(0);
-  c.requestClean();
-  c.requestRun(true);
-  c.requestReplay();
+  requestClean(c);
+  (void)c.press(false);  // Run back on after the clean cleared it
+  requestReplay(c);
   ASSERT_EQ(c.enterPanel(0, GAP_US), Gate::Enter);
   const SweepControl::Requests first = c.take();
   EXPECT_TRUE(first.run);
@@ -54,12 +71,12 @@ TEST(SweepControl, TakeClearsOnlyReplayAndClean) {
   EXPECT_TRUE(c.take().stop);  // sticky
 }
 
-TEST(SweepControl, TwoPausesBeforeTheTaskServesThemCancelOut) {
+TEST(SweepControl, TwoPressesBeforeTheTaskServesThemCancelOut) {
   SweepControl c;
   c.reset(0);
   c.take();
-  c.requestRun(!c.runRequested());
-  c.requestRun(!c.runRequested());
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
   const SweepControl::Requests r = c.take();
   EXPECT_TRUE(r.run);
   EXPECT_FALSE(r.replay);
@@ -73,19 +90,19 @@ TEST(SweepControl, HoldRunClearsRunSoOnePressResumes) {
   c.holdRun();
   EXPECT_FALSE(c.runRequested());
   EXPECT_FALSE(c.take().run);
-  c.requestRun(!c.runRequested());  // the screen's toggle: one press
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);  // the screen's press: one resumes
   EXPECT_TRUE(c.runRequested());
   EXPECT_TRUE(c.take().run);
 }
 
-TEST(SweepControl, RequestRunFalsePausesAndTrueResumes) {
+TEST(SweepControl, APressPausesAndTheNextResumes) {
   SweepControl c;
   c.reset(0);
   c.take();
-  c.requestRun(false);
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
   EXPECT_FALSE(c.runRequested());
   EXPECT_FALSE(c.take().run);
-  c.requestRun(true);
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
   EXPECT_TRUE(c.runRequested());
   EXPECT_TRUE(c.take().run);
 }
@@ -94,8 +111,8 @@ TEST(SweepControl, ReplayThenCleanLeavesRunOff) {
   SweepControl c;
   c.reset(0);
   c.take();
-  c.requestReplay();
-  c.requestClean();
+  requestReplay(c);
+  requestClean(c);
   const SweepControl::Requests r = c.take();
   EXPECT_TRUE(r.replay);
   EXPECT_TRUE(r.clean);
@@ -106,9 +123,9 @@ TEST(SweepControl, CleanThenReplayLeavesRunOn) {
   SweepControl c;
   c.reset(0);
   c.take();
-  c.requestClean();
+  requestClean(c);
   EXPECT_FALSE(c.runRequested());
-  c.requestReplay();
+  requestReplay(c);
   const SweepControl::Requests r = c.take();
   EXPECT_TRUE(r.replay);
   EXPECT_TRUE(r.clean);
@@ -121,8 +138,8 @@ TEST(SweepControl, StopIsStickyAndGatesEntry) {
   c.requestStop();
   EXPECT_EQ(c.enterPanel(0, GAP_US), Gate::Stop);
   EXPECT_FALSE(c.insidePanel());
-  c.requestRun(true);
-  c.requestReplay();
+  (void)c.press(false);
+  requestReplay(c);
   EXPECT_EQ(c.enterPanel(0, GAP_US), Gate::Stop);
   EXPECT_TRUE(c.take().stop);
 }
@@ -183,7 +200,7 @@ TEST(SweepControl, StopRequestedIsSeenAndClearedOnlyByReset) {
   c.requestStop();
   EXPECT_TRUE(c.stopRequested());
   c.take();
-  c.requestRun(true);
+  (void)c.press(false);
   EXPECT_TRUE(c.stopRequested());
   c.reset(0);
   EXPECT_FALSE(c.stopRequested());
@@ -193,8 +210,8 @@ TEST(SweepControl, PreviousThenConfirmCleansAndRuns) {
   SweepControl c;
   c.reset(0);
   c.take();
-  c.requestClean();                 // Previous
-  c.requestRun(!c.runRequested());  // Confirm
+  requestClean(c);       // Previous
+  (void)c.press(false);  // Confirm
   const SweepControl::Requests r = c.take();
   EXPECT_TRUE(r.clean);
   EXPECT_TRUE(r.run);
@@ -243,6 +260,186 @@ TEST(SweepControl, ATaskLoopingThroughThePanelSeesStopAndEndsOutside) {
     ASSERT_EQ(shared->entries.load(), seen) << "round " << round;
     ASSERT_FALSE(c.insidePanel()) << "round " << round;
   }
+}
+
+// ---- the hold and the presses (story dlab-g3's review: one compare-exchange per press, the task ends a hold) -------
+
+TEST(SweepControl, HoldSetsHeldAndClearsRunInOneStep) {
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  EXPECT_FALSE(held(c));
+  c.holdRun();
+  const uint32_t word = c.snapshot();
+  EXPECT_NE(word & SweepControl::HELD, 0u);
+  EXPECT_EQ(word & SweepControl::RUN, 0u);
+}
+
+TEST(SweepControl, APressWhileHeldIsTheNextPicture) {
+  // The viewer's press while held: Held cleared, and the task's next take() cleans and paints the next picture,
+  // running, with presses waiting for it.
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  EXPECT_EQ(c.press(true), SweepControl::Press::Next);
+  EXPECT_FALSE(held(c));
+  EXPECT_TRUE(c.replayPending());
+  const SweepControl::Requests r = c.take();
+  EXPECT_TRUE(r.replay);
+  EXPECT_TRUE(r.run);
+  EXPECT_TRUE(r.replaying);
+  EXPECT_FALSE(r.stop);
+  EXPECT_FALSE(r.clean);
+}
+
+TEST(SweepControl, APressWhileAReplayIsPendingIsIgnored) {
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  ASSERT_EQ(c.press(true), SweepControl::Press::Next);
+  const uint32_t before = c.snapshot();
+  EXPECT_EQ(c.press(true), SweepControl::Press::Ignored);
+  EXPECT_EQ(c.press(false), SweepControl::Press::Ignored);
+  EXPECT_EQ(c.snapshot(), before);
+  // Once the task has served it, a press toggles again.
+  (void)c.take();
+  c.replayServed();
+  EXPECT_FALSE(c.replayPending());
+  EXPECT_EQ(c.press(true), SweepControl::Press::Toggled);
+  EXPECT_FALSE(c.runRequested());
+}
+
+TEST(SweepControl, TheViewersFirstReplayMakesPressesWait) {
+  SweepControl c;
+  c.reset(0, true);
+  EXPECT_TRUE(c.replayPending());
+  EXPECT_EQ(c.press(true), SweepControl::Press::Ignored);
+  const SweepControl::Requests r = c.take();
+  EXPECT_TRUE(r.replay);
+  EXPECT_TRUE(r.run);
+  EXPECT_TRUE(r.replaying);
+  c.replayServed();
+  EXPECT_EQ(c.press(true), SweepControl::Press::Toggled);
+  // The transition test's reset keeps presses live from the start.
+  SweepControl t;
+  t.reset(0);
+  EXPECT_FALSE(t.replayPending());
+  EXPECT_EQ(t.press(false), SweepControl::Press::Toggled);
+}
+
+TEST(SweepControl, APressWithoutAHoldToggles) {
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  EXPECT_EQ(c.press(true), SweepControl::Press::Toggled);
+  EXPECT_FALSE(c.runRequested());
+  EXPECT_FALSE(c.replayPending());
+  EXPECT_EQ(c.press(true), SweepControl::Press::Toggled);
+  EXPECT_TRUE(c.runRequested());
+  // The transition test's press while held is a resume, not a next picture; a stop rules out a next picture.
+  c.holdRun();
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
+  EXPECT_TRUE(c.runRequested());
+  SweepControl s;
+  s.reset(0);
+  (void)s.take();
+  s.holdRun();
+  s.requestStop();
+  EXPECT_EQ(s.press(true), SweepControl::Press::Toggled);
+  EXPECT_FALSE(s.replayPending());
+}
+
+TEST(SweepControl, AResumeThenAPauseBeforeTheTaskServesKeepsTheHold) {
+  // The press does not end the hold; the task does, when it serves the resume. Two presses before that leave the run
+  // held, Held set (and preventAutoSleep's bound on it), Run clear.
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);  // resume
+  EXPECT_TRUE(held(c));
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);  // pause
+  EXPECT_TRUE(held(c));
+  EXPECT_FALSE(c.take().run);
+  // A resume the task serves: it releases the hold.
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
+  EXPECT_TRUE(c.take().run);
+  c.releaseHold();
+  EXPECT_FALSE(held(c));
+}
+
+TEST(SweepControl, AHoldBetweenTheOwnersLookAndItsWriteCannotDropAPress) {
+  // The old read-then-write toggle (requestRun(!runRequested()), removed) read Run set, the hold cleared it, and the
+  // write cleared it again: the press vanished into the hold. press() decides on the word as it changes it: after the
+  // hold, the same press resumes (the transition test) or paints the next picture (the viewer); before it, it pauses,
+  // and the hold then holds.
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  EXPECT_EQ(c.press(false), SweepControl::Press::Toggled);
+  EXPECT_TRUE(c.runRequested());
+  SweepControl v;
+  v.reset(0);
+  (void)v.take();
+  v.holdRun();
+  EXPECT_EQ(v.press(true), SweepControl::Press::Next);
+  EXPECT_TRUE(v.runRequested());
+}
+
+TEST(SweepControl, ACleanDoesNotTouchTheHoldTheTaskReleasesIt) {
+  // requestClean (no caller today) clears Run and asks a clean; the task's clean path releases the hold.
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  requestClean(c);
+  const SweepControl::Requests r = c.take();
+  EXPECT_TRUE(r.clean);
+  EXPECT_FALSE(r.run);
+  EXPECT_TRUE(held(c));
+  c.releaseHold();
+  EXPECT_FALSE(held(c));
+}
+
+TEST(SweepControl, AResetClearsTheHoldAndAPendingReplay) {
+  SweepControl c;
+  c.reset(0);
+  (void)c.take();
+  c.holdRun();
+  ASSERT_EQ(c.press(true), SweepControl::Press::Next);
+  c.reset(0);
+  EXPECT_FALSE(held(c));
+  EXPECT_FALSE(c.replayPending());
+}
+
+TEST(SweepControl, RunKeepsTheDeviceAwakeAndAHoldOnlyForItsBound) {
+  constexpr uint32_t AWAKE_MS = 600000;
+  const uint32_t run = SweepControl::RUN;
+  const uint32_t held = SweepControl::HELD;
+  EXPECT_TRUE(SweepControl::keepsAwake(run, 5000, 0, AWAKE_MS));
+  EXPECT_FALSE(SweepControl::keepsAwake(0, 5000, 0, AWAKE_MS));  // paused
+  // A hold: awake from its start until AWAKE_MS later, then the idle timeout applies.
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 1000, 1000, AWAKE_MS));
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 1000 + AWAKE_MS - 1, 1000, AWAKE_MS));
+  EXPECT_FALSE(SweepControl::keepsAwake(held, 1000 + AWAKE_MS, 1000, AWAKE_MS));
+  // Across the millisecond clock's wrap.
+  EXPECT_TRUE(SweepControl::keepsAwake(held, 100, UINT32_MAX - 100, AWAKE_MS));
+  // Never once a stop is asked, whatever else the word holds (a task still ending, or detached).
+  for (const uint32_t word : {run, held, run | held}) {
+    EXPECT_FALSE(SweepControl::keepsAwake(word | SweepControl::STOP, 1000, 1000, AWAKE_MS)) << word;
+  }
+  // The member reads one snapshot of the word.
+  SweepControl c;
+  c.reset(0);
+  EXPECT_TRUE(c.keepsAwake(0, 0, AWAKE_MS));
+  c.holdRun();
+  EXPECT_TRUE(c.keepsAwake(10, 0, AWAKE_MS));
+  EXPECT_FALSE(c.keepsAwake(AWAKE_MS, 0, AWAKE_MS));
+  c.requestStop();
+  EXPECT_FALSE(c.keepsAwake(10, 0, AWAKE_MS));
 }
 
 }  // namespace

@@ -29,6 +29,7 @@ enum class LabRow : uint8_t {
   FramePeriod,
   Polarity,
   TransitionTest,
+  GrayViewer,
   Tuning,
   SavePreset,
   TransitionTiming,
@@ -37,9 +38,9 @@ enum class LabRow : uint8_t {
 };
 constexpr size_t LAB_ROW_COUNT = static_cast<size_t>(LabRow::Exit) + 1;
 
-// The rows of `menu`, in order, into `out`; returns how many. Scan: Frame period, Polarity, Transition test, Tuning,
-// Save preset, Exit; ScanWithStockRows: those with Transition timing and Gray ramp before Exit; StockBench: Transition
-// timing, Gray ramp, Exit; None: none.
+// The rows of `menu`, in order, into `out`; returns how many. Scan: Frame period, Polarity, Transition test, Gray
+// viewer, Tuning, Save preset, Exit; ScanWithStockRows: those with Transition timing and Gray ramp before Exit;
+// StockBench: Transition timing, Gray ramp, Exit; None: none.
 constexpr size_t labMenuRows(const LabMenu menu, LabRow (&out)[LAB_ROW_COUNT]) {
   size_t count = 0;
   const bool scanRows = menu == LabMenu::Scan || menu == LabMenu::ScanWithStockRows;
@@ -48,6 +49,7 @@ constexpr size_t labMenuRows(const LabMenu menu, LabRow (&out)[LAB_ROW_COUNT]) {
     out[count++] = LabRow::FramePeriod;
     out[count++] = LabRow::Polarity;
     out[count++] = LabRow::TransitionTest;
+    out[count++] = LabRow::GrayViewer;
     out[count++] = LabRow::Tuning;
     out[count++] = LabRow::SavePreset;
   }

@@ -188,6 +188,59 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   keeps every mechanism and the 3 B/pixel model, moves the table to 7×7 with a 64-bit hold mask, the history routes
   to two directional ones, the file to version 2 with a version 1 expansion, the test to seven bands with one lane
   each and six rotating flips, Tuning to grouped rows with a Section jump; the stock bench stays at four levels.
+  First ladder (owner, 2026-10-18, rate index 0, one pulse per slot, photos in the session): from white, columns 1
+  to 5 step from light gray to near-black and column 6 onward look alike in the photo; from black, column 1 is dark
+  gray, 2 mid, 3 light and column 4 onward is white. So at one pulse per slot the full swing is about 3 to 4 pulses
+  toward white and 5 to 6 toward black, against 12 at two per slot in the Static calibration: the second pulse of a
+  pair does far less, and the pulse interval is part of the dose unit. The return photo shows n pulses back restore
+  the origin in both directions with only faint stripes against the untouched gutters: the model is reversible. In-
+  person the owner reads full black at column 8 to 10 and full white at 4 to 5: nine steps toward black for six
+  intervals (provisionally, from white: level 5 at 1 pulse, 4 at 2, 3 at 3, 2 at 4, 1 at 6, 0 at 9, after the Static
+  calibration's early-pulses-do-more shape) but only four or five toward white, where the first pulse alone takes
+  black to dark gray, so that direction needs a smaller unit: shorter frames (a ladder at rate index 2 decides) or
+  two pulses per slot for the toward-white transitions only (the hold bit, 12 for the full swing in the Static
+  calibration).
+  Measured off a front-lit photo (2026-10-18, rate index 0, held pulses; tones against the white columns and the
+  deep-black plateau, 1 white, 0 black): from white 1.05, 0.86, 0.68, 0.52, 0.40, 0.31, 0.24, 0.15, 0.11, 0.07,
+  0.05, 0.02 for 1..12 pulses; from black 0.44, 0.72, 0.85, 0.92, 0.95, 0.98, 0.98, 1.00 for 1..8. Toward black the
+  five grays sit at about 2, 3, 4, 6 and 8 pulses from white (level 5 to 1), black at 12. Toward white one pulse
+  already passes level 2 (levels 1 and 2 would need about 0.4 and 0.75 of a pulse), so that direction needs the
+  sub-pulse unit the rate-2 ladder tests. The base black painted with the preset's 6>0 dose (12 at two per slot)
+  measured about tone 0.14, lighter than nine single pulses: the full swings should be one pulse per slot.
+  Second ladder at rate index 2 (PLL 0x07, same lighting, both photos re-measured on a rectified crop against each
+  photo's own white and black): toward black the five grays spread from 1.5..7.1 pulses (0x06) to 2.7..8.8 (0x07)
+  and both reach the same black by 12; toward white the curves coincide (one pulse from black lands at 0.35 at both
+  rates, every level's count the same), so the short frame is not the fine unit for that direction. Consequences for
+  dlab-g2: the table runs at rate index 0 with one pulse per slot; from black, level 2 is one pulse (0.35 against
+  0.33) and level 1 is unreachable directly, so the preset gains a `via` level for such transitions (0>1 goes to 2
+  and one pulse back toward black), using the engine's existing return mechanics; every other entry is a plain
+  count read off the 0x06 curve: from white 6>5 2, 6>4 3, 6>3 4, 6>2 5, 6>1 7, 6>0 12; from black 0>2 1, 0>3 2,
+  0>4 2 to 3, 0>5 4, 0>6 8 (the intermediate-to-intermediate entries interpolate on the same curves until a ladder
+  from a gray measures them).
+  Static run on the dlab-g1 firmware (owner, 2026-10-18, five photos: the settle and four flips, the pre-extraction
+  reference for dlab-g3's hardware check): the flips are cumulative shifts (1, 3, 2, 3) and every hold shows the
+  pause symbol; a faint lighter stripe where the previous rectangles sat shows small route dependence; the dark gray
+  reached from black is lighter and grainier than the one reached from white (K>D 2 overshoots: one pulse from
+  black is level 2 on the ladder, so the seven-level 0>2 is one pulse); the intermediate shades are grainy where
+  black and white are smooth, the panel's own partial-state variation.
+  Slow run (four photos: painted, dwelt, crossed, the next dwelt): the trails behind the rectangles read the table's
+  errors lane by lane and agree with the ladder: K>D 2 lands light (level 3 to 4), L>D 6 lands near black, K>L 7
+  lands white, L>K 7 slightly short; the full swings are near right. The ladder's prediction for the four-shade
+  table, all holds on (one pulse per slot, the measured rhythm), in Tuning order 0>2, 0>4, 0>6, 2>0, 2>4, 2>6, 4>0,
+  4>2, 4>6, 6>0, 6>2, 6>4: 1, 2, 9, 7, 1, 8, 9, 2, 7, 12, 5, 3 (the gray-to-gray entries interpolated between the
+  two curves); the Slow trails are its test.
+  Fast run (four photos: the `fast painted` hold with clean bands, then the pause hold after one, two and many
+  sweeps): D15's wait works; each rectangle pass is a one-slot touch whose marks show the direction asymmetry (light
+  marks strong in the dark and gray bands, dark marks faint on white, the black band's returns falling short after a
+  brief lightening). With Static, Slow and the Ladder this is the complete pre-extraction reference for dlab-g3's
+  hardware check of the shared runner.
+  Slow run with the ladder-predicted table (owner, 2026-10-18, four photos): the trails behind the rectangles are
+  down to faint tints (band 2's near-white and near-black stripes, band 3's white stripe, all gone or slight), so
+  the ladder replaces by-eye tuning as the calibration method. Residuals: K>D at 1 pulse lands a touch light (one
+  pulse is the smallest unit; the via route in dlab-g2 covers it); K>L at 2 slightly light where the curve said
+  slightly dark (route hysteresis, the history routes' job); the Tuning screen's text ghosts through the painted
+  bands after one clean (pixels that were black text arrive at a different gray), so dlab-g2's run cleans white,
+  black, white.
   The owner also asked for a transparent value for the game engine's sprites: the 3-bit field's spare value 7 is
   reserved as transparent (a bitmap pixel at 7 is not retargeted), in dlab-g2; the sprite plumbing over the gray
   engine is a later story. Route dependence (a W reached from K differs from a clean W) becomes the history routes' job.
@@ -206,6 +259,27 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   its own, and it is built while the owner takes the ladder photos dlab-g2 waits on. Pictures come from
   `/.crosshatch/display-lab/images/` on the SD card through the firmware's own decoders, plus a built-in test chart
   so it works with no files; plain or ordered quantisation is a row.
+  Amended at dlab-g3's clarify step (orchestrator, 2026-10-18): the story's decode-into-the-framebuffer path cannot
+  work (the framebuffer is 1 bpp and the converters cut gray to 2 bits before writing), so the viewer gets a
+  fork-side gray-row reader beside the decoders that drives PNGdec and JPEGDEC directly and feeds 8-bit rows to the
+  quantiser (option B of the three: no upstream change, no ledger row, the full level count for files); the hold
+  marker on a picture is driven to 0 or 6, whichever is farther from the mean level under its bars, and is not
+  driven back (Next cleans first); Next while the paint runs pauses and resumes as the transition test does; the
+  layer check gets a FILE_EDGES entry for the reader's file only.
+- D17 (2026-10-18, orchestrator, at dlab-g3's classification pass, under the owner's "harden JPEG now"): the lab's
+  decoder library patches (PNGdec's palette and alpha copies re-read past its buffer; JPEGDEC's refill between a
+  MCU's blocks, its overrun stop and its bit-window reload) live in fork-only folders under
+  `scripts/lab_decoder_patches/{pngdec,jpegdec}/` and apply to the x4pro env only, through the one fork pre-script
+  named in `[env:x4pro] extra_scripts` (`scripts/patch_lab_decoders.py`); upstream's own patch folder is untouched
+  and ledger row 1's text names the pre-script (no new row). Release and other envs keep the libraries as released,
+  so their cover converters carry PNGdec's palette over-read and JPEGDEC's MCU overrun as before (pre-existing
+  upstream exposure; the patch files are the suggestion for upstream). The development X4 Pro build's cover
+  converters share the patched libraries. Retired versions of a patch are reversed from every env's copy. The host
+  decoder tests and the fork CI's Display lab decoders job apply the same patches and check they applied. The
+  story's "no change to the decoders" means the converter files; the libraries change only as this decision says.
+  Closing the story (owner, 2026-10-18): after ten review batches the owner ended the loop; the viewer had worked
+  since its first commit and the later rounds were closing crafted-file edges inside the decoders that the
+  firmware's own cover path never guarded against; what remains is deferred with its exposure stated.
 
 ## Story results
 
@@ -285,6 +359,20 @@ every panel number a live-tunable parameter, so the device itself is the calibra
   Fast waits for the paint to settle with a `fast painted` hold. 2 deferrals carried. Hardware check for the owner on
   the experimental branch: the two ladder photos at rate index 0 with the room temperature; the orchestrator reads
   the seven levels and their pulse counts off them for dlab-g2.
+- dlab-g3 (lane G3, D16, D17, after dlab-g1, beside dlab-g2): built by the orchestrator's fallback (plan-and-implement
+  agent plus orchestrator-run lenses): story commit `26bc6699`, then ten review batches (one high patched: a truncated
+  PNG hang; the owner chose to harden JPEG rather than defer it, which cost most of the batches, and closed the loop
+  after the tenth), last commit `bf61ccea`. 2,386 host tests (the display-lab binary 286, the decoders 36 under
+  ASan/UBSan on the device's 32-bit bit reader); x4pro, default, sticky build; pio check x4pro clean; flash gate
+  within budget (18,288 B flash and 240 B RAM to spare, +784 B RAM games delta unchanged). A Gray viewer screen: Image row (built-in chart, then the folder's PNG and JPEG files
+  by name, at most 32), Dither row (plain, ordered), Run; clean, paint through the gray engine's levels, settle, hold
+  with the marker (0 or 6, whichever is farther from the mean under its bars), Next paints the next entry, the
+  chart after the last; the sweep task, slot runner and hold extracted into `GrayRunner` and shared with the
+  transition test; a fork-side gray-row reader over PNGdec and JPEGDEC that walks each file's layout before the
+  decoder sees it, answers the decoders' reads from the walked extent, retries a failed call once, and leaves the
+  task watchdog around file calls; the lab's library patches per D17; a fork CI job builds the decoder tests. 6
+  deferrals carried. Hardware check for the owner on the experimental branch: the chart and the four generated PNGs
+  and the owner's photos paint plain and ordered; the transition test and Ladder behave as before the extraction.
 
 ## Measurement (base)
 

@@ -7,6 +7,7 @@
 
 #include "GrayModel.h"
 #include "GrayPreset.h"
+#include "PanelGeometry.h"
 
 // The transition test's picture (the display-lab epic, R4; InkBoy's tuning.md, digest Q6; story dlab-c3's modes),
 // pure and pinned by test_transition_scene.cpp. Over the logical screen (what the renderer's orientation shows the
@@ -50,12 +51,10 @@
 // photo spot (HoldSpot::Ladder 1 and 2) that always holds (with Hold off too: the Ladder is nothing but its photos),
 // the next stage (or the end) waiting for the marker to be back.
 //
-// The model is in panel coordinates; toPanel maps a logical rectangle the way GfxRenderer::rotateCoordinates maps a
-// logical pixel for each orientation.
+// The model is in panel coordinates; toPanel (PanelGeometry.h, with PanelTurn and ScreenRect) maps a logical rectangle
+// the way GfxRenderer::rotateCoordinates maps a logical pixel for each orientation; the marker's pause symbol and its
+// settle check are PanelGeometry's pauseBars and barsSettled, which the gray viewer shares.
 namespace GameDisplayLab {
-
-// The four GfxRenderer orientations, in its enum's order.
-enum class PanelTurn : uint8_t { Portrait, LandscapeClockwise, PortraitInverted, LandscapeCounterClockwise };
 
 // The transition test's modes, in the Mode row's order.
 enum class SweepMode : uint8_t { Static, Slow, Fast, Ladder };
@@ -136,16 +135,6 @@ struct LadderLayout {
 
 // The drop's text in the session-cap clean's `gray hold:` log line.
 const char* holdDropName(HoldDrop drop);
-
-struct ScreenRect {
-  int x;
-  int y;
-  int w;
-  int h;
-};
-
-// The panel rectangle that logical rectangle `r` (w, h > 0) covers under `turn`, on a panel panelW x panelH.
-ScreenRect toPanel(PanelTurn turn, const ScreenRect& r, int panelW, int panelH);
 
 // A Static pattern that settled: its flip number (0 is the first paint), the offset that flip moved every shade by (0
 // for the first paint), and the slots that drove pixels until it settled.
@@ -381,6 +370,8 @@ class TransitionScene {
   int rectHeight() const { return laneHeight() - 2 * RECT_INSET; }
 
  private:
+  // This scene's logical screen on the panel.
+  LogicalScreen screen() const { return LogicalScreen{turn_, logicalW_, logicalH_, panelW_, panelH_}; }
   // Retargets the panel pixels of logical rectangle [x0, x1) x [y, y + h), clipped to the logical screen.
   void retargetLogical(GrayModel& model, int x0, int x1, int y, int h, Shade shade, const GrayPreset& preset) const;
   int bandOf(int ly) const;

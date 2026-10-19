@@ -370,11 +370,11 @@ std::vector<LabRow> rowsOf(const LabMenu menu) {
 
 TEST(StockBenchLabMenu, EachMenusRowsInOrder) {
   using R = LabRow;
-  EXPECT_EQ(LAB_ROW_COUNT, 8u);
-  EXPECT_EQ(rowsOf(LabMenu::Scan),
-            (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::Tuning, R::SavePreset, R::Exit}));
+  EXPECT_EQ(LAB_ROW_COUNT, 9u);
+  EXPECT_EQ(rowsOf(LabMenu::Scan), (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::GrayViewer,
+                                                   R::Tuning, R::SavePreset, R::Exit}));
   EXPECT_EQ(rowsOf(LabMenu::ScanWithStockRows),
-            (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::Tuning, R::SavePreset,
+            (std::vector<R>{R::FramePeriod, R::Polarity, R::TransitionTest, R::GrayViewer, R::Tuning, R::SavePreset,
                             R::TransitionTiming, R::GrayRamp, R::Exit}));
   EXPECT_EQ(rowsOf(LabMenu::StockBench), (std::vector<R>{R::TransitionTiming, R::GrayRamp, R::Exit}));
   EXPECT_TRUE(rowsOf(LabMenu::None).empty());

@@ -20,26 +20,27 @@
 // display-lab epic's backend seam and its gray engine, dlab-c1): a bench for the X4 Pro's panel that answers the
 // numbers only the panel can give: the frame period, the drive polarity of the two drive rows, and the gray engine's
 // dose table. Headed "Display lab", its menu per the controller (the epic's D10, StockBenchGate.h's labMenuFor): on an
-// SSD1677 six rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity), Transition test
-// (TransitionTestActivity), Tuning (TuningActivity), Save preset (writes the session's gray preset to
-// GrayPresetFile::PATH; its line then says whether that worked), Exit; on an UltraChip controller with a scan backend
-// (UC8179, UC8279) eight: those with the stock-path bench's Transition timing (TransitionTimingActivity) and Gray ramp
-// (GrayRampActivity) before Exit; on an UltraChip controller without one, the stock bench's three: Transition timing,
-// Gray ramp, Exit. The launcher shows its row only on an X4 Pro that gets one of these menus (available()), and pushes
-// this screen only after the entry warning was confirmed, so Back on the warning sends nothing to the panel.
+// SSD1677 seven rows: Frame period (FramePeriodActivity), Polarity (PolarityActivity), Transition test
+// (TransitionTestActivity), Gray viewer (GrayViewerActivity, story dlab-g3), Tuning (TuningActivity), Save preset
+// (writes the session's gray preset to GrayPresetFile::PATH; its line then says whether that worked), Exit; on an
+// UltraChip controller with a scan backend (UC8179, UC8279) nine: those with the stock-path bench's Transition timing
+// (TransitionTimingActivity) and Gray ramp (GrayRampActivity) before Exit; on an UltraChip controller without one, the
+// stock bench's three: Transition timing, Gray ramp, Exit. The launcher shows its row only on an X4 Pro that gets one
+// of these menus (available()), and pushes this screen only after the entry warning was confirmed, so Back on the
+// warning sends nothing to the panel.
 //
 // It owns the session the experiment screens share: the controller's ScanBackend (ScanBackends.h), the two drive
 // masks (masks(), GameDisplayLab::MaskPlanes over two `display.getBufferSize()` buffers, 48,000 B each in PSRAM), all
 // created in onEnter and freed in onExit (the lab shows one notice row and runs nothing when any of them has no room),
 // the gray preset (preset(), read from GrayPresetFile::PATH in onEnter over the controller's defaults: the UltraChip
-// preset on a UC8179 or UC8279, InkBoy's otherwise; the tuning screen edits it and the transition test reads it), and
-// scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the stock voltages and
-// never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every SESSION_CAP scans
-// the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one FULL_REFRESH when a scan
-// reached the panel since the last clean, and logs the count. An inverted display is refused with a notice, and again
-// at every scan (the control-center panel can invert it after onEnter): the facade drops grayscale calls while
-// inverted, so a scan would measure nothing. A call the facade dropped for another reason returns in well under
-// DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
+// preset on a UC8179 or UC8279, InkBoy's otherwise; the tuning screen edits it, the transition test and the gray
+// viewer read it), and scan(), the controller-neutral safety around backend()->scan(). Safety: the backend keeps the
+// stock voltages and never sends an OTP command, a scan over SCAN_TIMEOUT_MS aborts its run and cleans the panel, every
+// SESSION_CAP scans the panel gets a FULL_REFRESH, and every way out of the lab (Back, Home, sleep) runs one
+// FULL_REFRESH when a scan reached the panel since the last clean, and logs the count. An inverted display is refused
+// with a notice, and again at every scan (the control-center panel can invert it after onEnter): the facade drops
+// grayscale calls while inverted, so a scan would measure nothing. A call the facade dropped for another reason returns
+// in well under DROPPED_BELOW_US, so the budget reports it as Dropped rather than a near-zero busy time.
 class DisplayLabActivity final : public UiListActivity {
  public:
   static constexpr const char* NAME = "DisplayLab";
