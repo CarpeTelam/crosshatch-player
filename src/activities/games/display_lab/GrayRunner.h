@@ -200,7 +200,7 @@ class GrayRunner {
   // white, so the previous screen's text does not ghost through the next paint (story dlab-g2, D14). Every run's clean
   // before its paint (a run's start, a replay, the session cap's clean) takes these passes in cleanToWhite, one render
   // lock per pass; the transition test's Clean row calls this with the render lock held, the panel its own.
-  static void cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab);
+  static void cleanWhiteBlackWhite(const GfxRenderer& renderer, DisplayLabActivity& lab);
   // Runners detached by endLocked whose task has not ended yet; no screen starts a run while there are any (they ask
   // for a restart). Never back to 0 if such a task never returns.
   static int detachedTasks();

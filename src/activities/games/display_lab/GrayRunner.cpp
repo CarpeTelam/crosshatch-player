@@ -455,7 +455,7 @@ constexpr uint8_t CLEAN_FILLS[] = {0xFF, 0x00, 0xFF};
 
 }  // namespace
 
-void GrayRunner::cleanWhiteBlackWhite(GfxRenderer& renderer, DisplayLabActivity& lab) {
+void GrayRunner::cleanWhiteBlackWhite(const GfxRenderer& renderer, DisplayLabActivity& lab) {
   // The lab's clean sends the framebuffer with a FULL refresh: each pass is the framebuffer filled, then a clean.
   for (const uint8_t fill : CLEAN_FILLS) {
     renderer.clearScreen(fill);
