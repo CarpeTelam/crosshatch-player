@@ -21,16 +21,16 @@ the step becomes 32, today's K, D, L, W sit exactly on levels 0, 2, 4, 6, the ne
 2. **Preset.** `dose[7][7]` (42 off-diagonal values, 1..24) and a 64-bit hold mask (diagonal bits always set). The
    history routes become directional: two routes (return toward dark, return toward light), each with its return
    delta and reverse percent, replacing the six per-pair routes (a pixel returning to its origin takes the route of
-   the direction it returns in). The preset file's `version` becomes 2: `doses` and `holds` carry 56 entries in the
-   order `from 0..6, to ≠ from ascending`; `history` keeps its mode; `return_delta` and `reverse_percent` carry two
+   the direction it returns in). The preset file's `version` becomes 2: `doses` and `holds` carry 42 entries in the
+   order `from 0..6, to ≠ from ascending` (the orchestrator corrected 56 to 42 at dispatch); `history` keeps its mode; `return_delta` and `reverse_percent` carry two
    values. A version 1 file still loads: its 4×4 table lands exactly on levels 0, 2, 4, 6 and the odd levels'
    doses interpolate linearly between their neighbours' (a transition into or out of an odd level is the mean of the
    two anchor transitions, rounded up), its holds by the nearest anchor pair, its six routes collapse to the two
    directional ones (the L>K>L return gives toward-light), logged `preset: version 1 file expanded to seven
    levels`; Save writes version 2.
 3. **Defaults.** `inkBoyDefaults()` is the expansion of InkBoy's table (pinned); `ultraChipDefaults()` is the seven-
-   level table the orchestrator reads off the ladder photos, recorded in D14 with its pulse counts (until those exist,
-   the expansion of the calibrated four-shade table, and the test pins whichever D14 holds).
+   level table the orchestrator read off the ladder photos, recorded in D14 with its pulse counts and its one via
+   (the test pins that table).
 4. **Transition test.** Seven bands, one rectangle lane each (lane shade `(band + 3) mod 7`, rectangle height the
    band minus two insets), Static's flips rotate the offset +1 .. +6 (six flips cover all 42 transitions, logged as
    today), Slow and Fast unchanged otherwise; the hold marker's dash sits in the bottom band's inset as in dlab-c4.
